@@ -6026,7 +6026,7 @@ public final class SemanticLowerer {
                     children.add(child);
                     if (creationRuleAnalysis) {
                         recordPositionClassification(BoundaryKind.CLASS_LITERAL_FIELD,
-                            checkedType(providedExpressions.get(field.name())),
+                            producedType(providedExpressions.get(field.name())),
                             field.descriptor(), child.opId());
                     }
                     continue;
@@ -6283,7 +6283,7 @@ public final class SemanticLowerer {
         private void lowerDeclaredInitializer(VariableDeclaration decl, BindingId binding,
                                               BindingCoreIncarnation incarnation) {
             if ((shapeMapAnalysis || e7Calls) && declaredTypeOf(decl) instanceof Type.Func) {
-                Type sourceType = checkedType(decl.initializer());
+                Type sourceType = producedType(decl.initializer());
                 if (AdapterCreationRule.variableDisposition(sourceType,
                         declaredTypeOf(decl)) == AdapterCreationRule.Disposition.ADAPT) {
                     // The shape-map child's adapted declaration (B6-B9):
@@ -6466,7 +6466,7 @@ public final class SemanticLowerer {
          */
         private void lowerAdaptedDeclInitializer(VariableDeclaration decl, BindingId binding,
                                                  BindingCoreIncarnation incarnation) {
-            Type.Func sourceType = (Type.Func) checkedType(decl.initializer());
+            Type.Func sourceType = (Type.Func) producedType(decl.initializer());
             Type.Func targetType = (Type.Func) declaredTypeOf(decl);
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
@@ -6684,20 +6684,20 @@ public final class SemanticLowerer {
          * True exactly when the given statically typed function-value
          * position adapts: the position adaptation runs (the E7 call and
          * project lowering), the position's checked target descriptor is
-         * a function descriptor, the source expression's checked type is a
-         * function type, and the pair re-derives as
-         * assignable-but-not-exact — identical async marker and return
-         * type, {@code M < N} with exactly equal leading M parameter types
-         * (docs/spec-v1.3.md Function type compatibility). Any other pair is
-         * the position's own typed-boundary check's (exact pass, or the
-         * recorded E8010 rejection).
+         * a function descriptor, the source expression produces a function
+         * value ({@link #producedType(ExpressionNode)}) and the pair
+         * re-derives as assignable-but-not-exact — identical async marker
+         * and return type, {@code M < N} with exactly equal leading M
+         * parameter types (docs/spec-v1.3.md Function type compatibility).
+         * Any other pair is the position's own typed-boundary check's
+         * (exact pass, or the recorded E8010 rejection).
          */
         private boolean positionAdapts(ExpressionNode value, RuntimeDescriptor target) {
             if (!(shapeMapAnalysis || e7Calls)
                     || !(target instanceof RuntimeDescriptor.Func targetSignature)) {
                 return false;
             }
-            if (!(checkedType(value) instanceof Type.Func sourceType)) {
+            if (!(producedType(value) instanceof Type.Func sourceType)) {
                 return false;
             }
             // A binding whose tracked identity is already an adapter's is an
@@ -6737,7 +6737,7 @@ public final class SemanticLowerer {
         private ValueId lowerPositionAdapter(ExpressionNode value,
                                              RuntimeDescriptor.Func targetSignature,
                                              java.util.function.Supplier<ValueId> lower) {
-            Type.Func sourceType = (Type.Func) checkedType(value);
+            Type.Func sourceType = (Type.Func) producedType(value);
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(value);
@@ -6898,7 +6898,7 @@ public final class SemanticLowerer {
                 // the boundary machinery's).
                 return;
             }
-            Type sourceType = checkedType(decl.initializer());
+            Type sourceType = producedType(decl.initializer());
             Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts =
                 sourceProducerFactsOf(value);
@@ -6935,7 +6935,7 @@ public final class SemanticLowerer {
                 // window.
                 return;
             }
-            Type sourceType = checkedType(assignment.value());
+            Type sourceType = producedType(assignment.value());
             Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts =
                 sourceProducerFactsOf(value);
@@ -9188,7 +9188,7 @@ public final class SemanticLowerer {
             }
             Type targetType = checkedType(target);
             if ((shapeMapAnalysis || e7Calls) && targetType instanceof Type.Func) {
-                Type sourceType = checkedType(assignment.value());
+                Type sourceType = producedType(assignment.value());
                 if (AdapterCreationRule.variableDisposition(sourceType, targetType)
                         == AdapterCreationRule.Disposition.ADAPT) {
                     // The shape-map child's adapted assignment (B6-B9):
@@ -9587,7 +9587,7 @@ public final class SemanticLowerer {
                 value, elementDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
             if (creationRuleAnalysis) {
                 recordPositionClassification(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
-                    checkedType(assignment.value()), arrayType.element(), value, boundaryOp);
+                    producedType(assignment.value()), arrayType.element(), value, boundaryOp);
             }
             return value;
         }
@@ -9804,7 +9804,7 @@ public final class SemanticLowerer {
                 value, fieldDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
             if (creationRuleAnalysis && classCore) {
                 recordPositionClassification(BoundaryKind.CLASS_FIELD_ASSIGNMENT,
-                    checkedType(assignment.value()), declaredDescriptor,
+                    producedType(assignment.value()), declaredDescriptor,
                     fieldBoundaryOp != null ? fieldBoundaryOp : commitOp);
             }
             return value;
@@ -14545,7 +14545,7 @@ public final class SemanticLowerer {
                 // the positions this walk adapted).
                 for (int i = 0; i < literal.elements().size(); i++) {
                     recordPositionClassification(BoundaryKind.ARRAY_LITERAL_ELEMENT,
-                        checkedType(literal.elements().get(i)), elementType,
+                        producedType(literal.elements().get(i)), elementType,
                         values.get(i), boundaryIds.get(i));
                 }
             }
@@ -15733,6 +15733,40 @@ public final class SemanticLowerer {
                     + "defect — never an invented op)", expr.span());
             }
             return type;
+        }
+
+        /**
+         * The checked type of the value one source expression actually
+         * produces at a statically typed function-value position (the
+         * signature the position's adapter records and validates the
+         * consumed source against). Every expression produces its own
+         * checked type except an assignment expression, which the checker
+         * types by its right-hand side while the lowering commits the
+         * <em>target-typed</em> value: the assignment position's own cell
+         * ({@code VARIABLE_ASSIGNMENT}, {@code ARRAY_ELEMENT_ASSIGNMENT} or
+         * {@code CLASS_FIELD_ASSIGNMENT}) admits exactly the target
+         * binding/field/element descriptor, so an assignable-but-not-exact
+         * function value is adapted by that assignment and an exact one
+         * stores directly — either way the result carries the target type.
+         * Classifying such a source by the right-hand side's static type
+         * would adapt an already target-typed value a second time: the
+         * position's source-signature check would compare the shorter
+         * right-hand side signature with the wider value the assignment
+         * actually produced. The recursion covers a nested assignment
+         * source, which produces the target-typed value of its own
+         * position. A non-function target (a table member, a nullable
+         * function field, a bytes slot) stores the right-hand side as it
+         * is, so the expression keeps its own checked type there.
+         */
+        private Type producedType(ExpressionNode expr) {
+            if (expr instanceof AssignmentExpr assignment) {
+                Type targetType = checkedType(assignment.target());
+                if (targetType instanceof Type.Func
+                        && producedType(assignment.value()) instanceof Type.Func) {
+                    return targetType;
+                }
+            }
+            return checkedType(expr);
         }
 
         /**

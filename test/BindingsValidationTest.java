@@ -1606,6 +1606,77 @@ public class BindingsValidationTest {
             "NO_ADAPTER_AT_BOUNDARY",
             "a class-default adapter published beside a STDLIB_RETURN crossing",
             "STDLIB_RETURN", "CLASS_DEFAULT_FIELD");
+
+        // The variable position's own chain is closed by adjacency: a
+        // VARIABLE_ASSIGNMENT cell that consumes the adapter result but is
+        // not the op immediately following the adapter in its own block is
+        // not the position's own chain — the commit that follows it does
+        // not make it one.
+        BindingId displaced = nextBindingId();
+        ValueId displacedAdapter = nextValue();
+        FunctionAllocationIdentity displacedIdentity = new FunctionAllocationIdentity(
+            displacedAdapter.id());
+        SemanticOp displacedAlloc = allocOp(displaced, INIT_BLOCK, 0);
+        SemanticOp displacedInitValue = constInt();
+        SemanticOp displacedInit = initOp(displaced, 0,
+            (ValueId) displacedInitValue.result());
+        SemanticOp displacedAdapt = adaptOp(CaptureMode.SHARED_CELL,
+            new AdaptSourceRef.SharedCell(displaced, 0), SIG1, SIG2, null, List.of(),
+            List.of(), displacedAdapter);
+        SemanticOp displacedFiller = constInt();
+        SemanticOp displacedAssignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT, SIG2,
+            displacedAdapter);
+        SemanticOp displacedCommit = storeOp(displaced, 0, displacedAdapter);
+        LoweredModuleUnit unitDisplaced = unit(Map.of(),
+            Map.of(displacedIdentity,
+                new FunctionExecutionBinding.AdapterBinding(displacedAdapt.opId(),
+                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(displaced, 0),
+                    SIG1, SIG2)),
+            List.of(displacedAlloc, displacedInitValue, displacedInit, displacedAdapt,
+                displacedFiller, displacedAssignment, displacedCommit));
+        StructuredBodyTable tableDisplaced = tableOf(Map.of(INIT_BLOCK,
+            List.of(displacedAlloc, displacedInitValue, displacedInit, displacedAdapt,
+                displacedFiller, displacedAssignment, displacedCommit)));
+        assertE6005(BindingsProductionValidator.validate(unitDisplaced, tableDisplaced),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "an adapter result whose variable cell is not its immediate successor",
+            "immediately following", "VARIABLE_ASSIGNMENT");
+
+        // The adjacent cell alone is not the chain either: the position's
+        // single commit must follow the cell immediately, storing the
+        // adapter result.
+        BindingId uncommitted = nextBindingId();
+        ValueId uncommittedAdapter = nextValue();
+        FunctionAllocationIdentity uncommittedIdentity =
+            new FunctionAllocationIdentity(uncommittedAdapter.id());
+        SemanticOp uncommittedAlloc = allocOp(uncommitted, INIT_BLOCK, 0);
+        SemanticOp uncommittedInitValue = constInt();
+        SemanticOp uncommittedInit = initOp(uncommitted, 0,
+            (ValueId) uncommittedInitValue.result());
+        SemanticOp uncommittedAdapt = adaptOp(CaptureMode.SHARED_CELL,
+            new AdaptSourceRef.SharedCell(uncommitted, 0), SIG1, SIG2, null, List.of(),
+            List.of(), uncommittedAdapter);
+        SemanticOp uncommittedAssignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT,
+            SIG2, uncommittedAdapter);
+        SemanticOp uncommittedFiller = constInt();
+        SemanticOp uncommittedStore = storeOp(uncommitted, 0, uncommittedAdapter);
+        LoweredModuleUnit unitUncommitted = unit(Map.of(),
+            Map.of(uncommittedIdentity,
+                new FunctionExecutionBinding.AdapterBinding(uncommittedAdapt.opId(),
+                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(uncommitted, 0),
+                    SIG1, SIG2)),
+            List.of(uncommittedAlloc, uncommittedInitValue, uncommittedInit,
+                uncommittedAdapt, uncommittedAssignment, uncommittedFiller,
+                uncommittedStore));
+        StructuredBodyTable tableUncommitted = tableOf(Map.of(INIT_BLOCK,
+            List.of(uncommittedAlloc, uncommittedInitValue, uncommittedInit,
+                uncommittedAdapt, uncommittedAssignment, uncommittedFiller,
+                uncommittedStore)));
+        assertE6005(BindingsProductionValidator.validate(unitUncommitted,
+                tableUncommitted),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "an adapter result whose variable cell is not followed by its commit",
+            "commit", "adapter result");
     }
 
     private static void testBindingInitOnceNegatives() {

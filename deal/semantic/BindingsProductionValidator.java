@@ -2843,9 +2843,12 @@ public final class BindingsProductionValidator {
      *       op immediately following the adapter in its own block is the
      *       position's own boundary, followed immediately by the chain's
      *       single commit (the declaration {@code BINDING_INIT} or the
-     *       assignment {@code BINDING_STORE}); an inferred declaration's
-     *       {@code BINDING_INIT} commits the adapter result directly (no
-     *       boundary op exists there);</li>
+     *       assignment {@code BINDING_STORE}) storing the adapter result;
+     *       a variable-kind cell anywhere else — a free boundary of the
+     *       same block after another op, or of another block — is not this
+     *       adapter's position chain and fails the rule; an inferred
+     *       declaration's {@code BINDING_INIT} commits the adapter result
+     *       directly (no boundary op exists there);</li>
      *   <li>{@code FUNCTION_PARAMETER}/{@code EXTERNAL_PARAMETER}/
      *       {@code STDLIB_PARAMETER}: the boundary is one of its
      *       invocation's parameter cells and the invocation's projected
@@ -2999,11 +3002,7 @@ public final class BindingsProductionValidator {
                 continue;
             }
             Optional<CompilerDiagnostic> failure =
-                checkAdapterVariableChain(model, op, adapterValue, next);
-            if (failure.isPresent()) {
-                return failure;
-            }
-            failure = checkAdapterPositionAgreement(model, op, adapterValue, positionCells);
+                checkAdapterPositionAgreement(model, op, adapterValue, positionCells);
             if (failure.isPresent()) {
                 return failure;
             }
@@ -3034,44 +3033,42 @@ public final class BindingsProductionValidator {
     }
 
     /**
-     * The variable-position arm of the creation-wiring rule: when the op
-     * immediately following the adapter in its own block is the position's
-     * own {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT} boundary,
-     * the chain's single commit (the declaration {@code BINDING_INIT} or the
-     * assignment {@code BINDING_STORE}) must follow it immediately. An
-     * inferred declaration's {@code BINDING_INIT} commits the adapter
-     * directly (no boundary op exists there).
+     * The variable-position arm of the creation-wiring rule: the adapter
+     * result's chain is the closed {@code [FUNCTION_ADAPT,
+     * VARIABLE_DECLARATION|VARIABLE_ASSIGNMENT boundary, commit]} shape, so
+     * the position's own cell is the op immediately following the adapter in
+     * its own block and the chain's single commit (the declaration
+     * {@code BINDING_INIT} or the assignment {@code BINDING_STORE}) must
+     * follow that cell immediately, storing the adapter identity. A variable
+     * cell anywhere else — another block, or a later/earlier free boundary —
+     * is not this adapter's position chain and fails the closed rule.
      */
-    private static Optional<CompilerDiagnostic> checkAdapterVariableChain(
-            Model model, SemanticOp op, ValueId adapterValue, SemanticOp next) {
-        BoundaryKind nextKind = next != null && next.kind() == SemanticOpKind.BOUNDARY
-                && next.payload() instanceof KindPayload.BoundaryPayload payload
-            ? payload.kind() : null;
-        if (nextKind != BoundaryKind.VARIABLE_DECLARATION
-                && nextKind != BoundaryKind.VARIABLE_ASSIGNMENT) {
-            return Optional.empty();
+    private static String variablePositionFailure(Model model, SemanticOp adaptOp,
+                                                  ValueId adapterValue, SemanticOp cell,
+                                                  BoundaryKind kind) {
+        SemanticOp next = model.nextOpInBlock(adaptOp);
+        if (next == null || !next.opId().equals(cell.opId())) {
+            return "the " + kind + " cell " + cell.opId() + " is not the op "
+                + "immediately following the FUNCTION_ADAPT op " + adaptOp.opId()
+                + " in its own block (the adapted variable position's chain is the "
+                + "adapter, its own boundary cell and its single commit, in order)";
         }
-        SemanticOp commit = model.nextOpInBlock(next);
-        boolean committed = false;
-        if (commit != null && commit.kind() == SemanticOpKind.BINDING_INIT
-                && commit.payload() instanceof KindPayload.BindingInitPayload init
-                && adapterValue.equals(init.value())) {
-            committed = true;
-        }
-        if (commit != null && commit.kind() == SemanticOpKind.BINDING_STORE
-                && commit.payload() instanceof KindPayload.BindingStorePayload store
-                && adapterValue.equals(store.value())) {
-            committed = true;
-        }
+        SemanticOp commit = model.nextOpInBlock(cell);
+        boolean committed = commit != null
+            && ((commit.kind() == SemanticOpKind.BINDING_INIT
+                    && commit.payload() instanceof KindPayload.BindingInitPayload init
+                    && adapterValue.equals(init.value()))
+                || (commit.kind() == SemanticOpKind.BINDING_STORE
+                    && commit.payload() instanceof KindPayload.BindingStorePayload store
+                    && adapterValue.equals(store.value())));
         if (!committed) {
-            return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
-                + adapterValue + " of op " + op.opId() + " wires into the " + nextKind
-                + " boundary of op " + next.opId() + " but the chain's single commit "
-                + "(the declaration BINDING_INIT or the assignment BINDING_STORE) does not "
-                + "follow it immediately (the adapter result is the direct input of "
-                + "exactly the adapted position's own boundary chain)");
+            return "the " + kind + " boundary of op " + cell.opId() + " follows the "
+                + "FUNCTION_ADAPT op " + adaptOp.opId() + " but the chain's single "
+                + "commit (the declaration BINDING_INIT or the assignment "
+                + "BINDING_STORE) does not follow it immediately storing the adapter "
+                + "result";
         }
-        return Optional.empty();
+        return null;
     }
 
     /**
@@ -3090,7 +3087,7 @@ public final class BindingsProductionValidator {
         Map<BoundaryKind, String> failures = new LinkedHashMap<>();
         for (SemanticOp cell : positionCells) {
             BoundaryKind kind = ((KindPayload.BoundaryPayload) cell.payload()).kind();
-            String failure = adapterPositionFailure(model, adapterValue, cell, kind);
+            String failure = adapterPositionFailure(model, op, adapterValue, cell, kind);
             if (failure == null) {
                 return Optional.empty();
             }
@@ -3099,7 +3096,7 @@ public final class BindingsProductionValidator {
         String first = failures.values().iterator().next();
         return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
             + adapterValue + " of op " + op.opId() + " feeds a position cell whose "
-            + "consumer stores no such value: " + first);
+            + "consumer agreement fails: " + first);
     }
 
     /**
@@ -3131,14 +3128,15 @@ public final class BindingsProductionValidator {
      * RETURN-value agreement, and a host-declared parameter cell uses the
      * invocation-projection agreement.
      */
-    private static String adapterPositionFailure(Model model, ValueId adapterValue,
+    private static String adapterPositionFailure(Model model, SemanticOp adaptOp,
+                                                 ValueId adapterValue,
                                                  SemanticOp cell, BoundaryKind kind) {
         if (kind == BoundaryKind.EXTERNAL_RETURN) {
             return returnPositionFailure(model, adapterValue, cell);
         }
         switch (kind) {
             case VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT -> {
-                return null;
+                return variablePositionFailure(model, adaptOp, adapterValue, cell, kind);
             }
             case DEAL_TO_HOST -> {
                 SemanticOp parent = parentOpOf(model, cell);

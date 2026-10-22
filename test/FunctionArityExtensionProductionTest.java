@@ -119,6 +119,26 @@ public final class FunctionArityExtensionProductionTest {
         "arity-extension-conversion-shadow";
 
     /**
+     * The assignment-expression-source corpus: an assignment expression
+     * used as a value produces the target-typed value its own assignment
+     * position committed, so every position adapts over that produced value
+     * exactly once rather than over the checker's shorter right-hand side
+     * type. The exact-target positions store it unchanged, the wider targets
+     * adapt it once, the value positions materialize the assignment once,
+     * and the nested chain produces and adapts the inner target-typed value.
+     */
+    private static final String ASSIGNMENT_SOURCE =
+        "arity-extension-assignment-source";
+
+    /**
+     * The assignment-expression-source corpus's adapter count: one adapter
+     * per adapting position (the inner assignment's own adaptation included),
+     * so a second adaptation of an already target-typed produced value is
+     * visible as an extra adapter here.
+     */
+    private static final int ASSIGNMENT_SOURCE_ADAPTERS = 23;
+
+    /**
      * The three conversion shadows' position count: three names across the
      * parameter, return, class supplied-field, class field-write, array
      * literal and array write positions.
@@ -1197,7 +1217,84 @@ public final class FunctionArityExtensionProductionTest {
             project.out()), expected);
     }
 
-    /** The occurrences of one fixed text in an emitted artifact. */
+    /**
+     * The LuaJIT assignment-expression-source corpus: an assignment
+     * expression used as a value produces the target-typed value its own
+     * assignment position committed, so the corpus carries exactly one
+     * adapter per adapting position — never a second adapter over an already
+     * target-typed produced value — and the run's own exact values prove the
+     * produced value, not the shorter right-hand side, reached each position.
+     */
+    private static void testLuaJitAssignmentSource(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the LuaJIT assignment-expression-source corpus and "
+            + "its real luajit run --");
+        Project project = writeProject(root, ASSIGNMENT_SOURCE);
+        assertProductionEmission(productionCompile(project, Backend.LUAJIT),
+            "luajit:" + ASSIGNMENT_SOURCE);
+        Path artifact = project.out().resolve(ENTRY_MODULE + ".lua");
+        check(Files.isRegularFile(artifact), "luajit: the assignment-source compile "
+            + "stages the entry chunk " + artifact);
+        if (Files.isRegularFile(artifact)) {
+            String chunk = Files.readString(artifact, StandardCharsets.UTF_8);
+            checkEq(ASSIGNMENT_SOURCE_ADAPTERS,
+                countOccurrences(chunk, "[__dealCarrierKeys.mode] = "),
+                "luajit: the corpus emits exactly one adapter per adapting "
+                    + "position (no second adapter over a produced value)");
+        }
+        assertExecution("luajit", runProcess(
+            List.of("luajit", ENTRY_MODULE + ".lua"), project.out()), expected);
+    }
+
+    /**
+     * The JVM assignment-expression-source corpus: the emitted artifact
+     * carries exactly one adapter per adapting position, and the run's own
+     * exact values prove the produced value reached each position.
+     */
+    private static void testJvmAssignmentSource(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the JVM assignment-expression-source corpus --");
+        JvmArtifacts artifacts = compileJvm(root, ASSIGNMENT_SOURCE);
+        Path emitted = artifacts.project().out().resolve(
+            artifacts.className() + ".java");
+        if (Files.isRegularFile(emitted)) {
+            String source = Files.readString(emitted, StandardCharsets.UTF_8);
+            checkEq(ASSIGNMENT_SOURCE_ADAPTERS,
+                countOccurrences(source, "new JvmRuntime.AdapterValue("),
+                "jvm: the corpus emits exactly one adapter per adapting position "
+                    + "(no second adapter over a produced value)");
+        }
+        assertExecution("jvm", runProcess(List.of("java", "-cp",
+            artifacts.classes() + File.pathSeparator + absoluteClasspath(),
+            artifacts.className()), artifacts.project().out()), expected);
+    }
+
+    /**
+     * The JS assignment-expression-source corpus: the emitted wrappers are
+     * exactly one per adapting position, and the run's own exact values
+     * prove the produced value reached each position.
+     */
+    private static void testJsAssignmentSource(Path root,
+            ExpectedExecution expected) throws Exception {
+        System.out.println("-- the JS assignment-expression-source corpus --");
+        Project project = writeProject(root, ASSIGNMENT_SOURCE);
+        assertProductionEmission(productionCompile(project, Backend.JS),
+            "js:" + ASSIGNMENT_SOURCE);
+        Path artifact = project.out().resolve(ENTRY_MODULE + ".js");
+        if (Files.isRegularFile(artifact)) {
+            String chunk = Files.readString(artifact, StandardCharsets.UTF_8);
+            checkEq(ASSIGNMENT_SOURCE_ADAPTERS,
+                countOccurrences(chunk, ".$src = "),
+                "js: the corpus emits exactly one adapter per adapting position "
+                    + "(no second adapter over a produced value)");
+        }
+        assertExecution("js", runProcess(List.of("node", ENTRY_MODULE + ".js"),
+            project.out()), expected);
+    }
+
+    /**
+     * The occurrences of one fixed text in an emitted artifact.
+     */
     private static int countOccurrences(String text, String needle) {
         int count = 0;
         int index = 0;
@@ -1694,11 +1791,13 @@ public final class FunctionArityExtensionProductionTest {
             expectedByBackend(ADAPTER_VALUED_SOURCE);
         Map<String, ExpectedExecution> conversionShadow =
             expectedByBackend(CONVERSION_SHADOW);
+        Map<String, ExpectedExecution> assignmentSource =
+            expectedByBackend(ASSIGNMENT_SOURCE);
         Map<String, ExpectedExecution> hostParameter = hostParameterExpected();
         expectedByBackend(DYNAMIC_SOURCE_ASYNC);
         for (Map<String, ExpectedExecution> expected : List.of(positions,
                 asyncPositions, boundaries, dynamicSource, adapterValued,
-                conversionShadow, hostParameter)) {
+                conversionShadow, assignmentSource, hostParameter)) {
             for (ExpectedExecution execution : expected.values()) {
                 checkEq("", new String(execution.stderr(), StandardCharsets.UTF_8),
                     "every pinned lane carries an empty stderr");
@@ -1786,6 +1885,12 @@ public final class FunctionArityExtensionProductionTest {
                 conversionShadow.get("jvm"));
             testJsConversionShadow(root.resolve("js-conversion-shadow"),
                 conversionShadow.get("js"));
+            testLuaJitAssignmentSource(root.resolve("luajit-assignment-source"),
+                assignmentSource.get("luajit"));
+            testJvmAssignmentSource(root.resolve("jvm-assignment-source"),
+                assignmentSource.get("jvm"));
+            testJsAssignmentSource(root.resolve("js-assignment-source"),
+                assignmentSource.get("js"));
             testLuaJitHostParameter(root.resolve("luajit-host-parameter"),
                 hostParameter.get("luajit"));
             testJvmHostParameter(root.resolve("jvm-host-parameter"),
