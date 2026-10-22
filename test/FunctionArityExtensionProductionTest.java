@@ -1473,11 +1473,11 @@ public final class FunctionArityExtensionProductionTest {
         """;
 
     /**
-     * Lowers one callback project through the production frontend and the
-     * one project lowering with the scenario's callback export set (the
+     * Lowers one single-module project through the production frontend and
+     * the one project lowering with the scenario's callback export set (the
      * production orchestrator's own emission names no callback export).
      */
-    private static SemanticLowerer.ProjectLoweringResult lowerCallbackProject(
+    private static SemanticLowerer.ProjectLoweringResult lowerProjectSource(
             Path root, String source, java.util.Set<String> callbacks)
             throws Exception {
         writeFile(root, "deal.json",
@@ -1520,7 +1520,7 @@ public final class FunctionArityExtensionProductionTest {
      */
     private static void testCallbackReturnPosition(Path root) throws Exception {
         System.out.println("-- the callback export's return position --");
-        SemanticLowerer.ProjectLoweringResult lowering = lowerCallbackProject(
+        SemanticLowerer.ProjectLoweringResult lowering = lowerProjectSource(
             root, CALLBACK_RETURN_SOURCE, java.util.Set.of("cb"));
         check(lowering != null && !lowering.hasErrors()
             && lowering.project() != null, "callback return: the project "
@@ -1737,6 +1737,96 @@ public final class FunctionArityExtensionProductionTest {
         }
     }
 
+    /**
+     * The assignment-expression-source oracle-parity subject: the same
+     * produced-value shapes in a compact project — a call argument over an
+     * assignment expression (exact and widened), a return position and an
+     * escaping adapter over the assignment expression that produced it, so
+     * the oracle must descend the creation-time captured source after the
+     * creating invocation returns.
+     */
+    private static final String ASSIGNMENT_SOURCE_ORACLE_SOURCE = """
+        function one(x: int): int { return x; }
+
+        function pairExact(x: int, y: int): int { return x + y; }
+
+        function needPair(f: (x: int, y: int) => int): int { return f(5, 6); }
+
+        function needTriple(f: (x: int, y: int, z: int) => int): int {
+          return f(5, 6, 7);
+        }
+
+        function onceReturned(): (x: int, y: int) => int {
+          let f: (x: int, y: int) => int = pairExact;
+          return (f = one);
+        }
+
+        function returnedWide(): (x: int, y: int, z: int) => int {
+          let f: (x: int, y: int) => int = pairExact;
+          return (f = one);
+        }
+
+        export function main(): null {
+          let f: (x: int, y: int) => int = pairExact;
+          let argument: int = needPair((f = one));
+          let widenedArgument: int = needTriple((f = one));
+          let escaped: (x: int, y: int) => int = onceReturned();
+          let escapingArgument: int = escaped(7, 8);
+          let returned: int = returnedWide()(5, 6, 7);
+          if (argument !== 5 || widenedArgument !== 5 || escapingArgument !== 7
+              || returned !== 5) {
+            throw { code: "TEST_FAIL", message: "assignment-source value" };
+          }
+          return null;
+        }
+        """;
+
+    /**
+     * The assignment-expression-source corpus on the oracle-driven parity
+     * case: the produced target-typed value an assignment position commits is
+     * the position's source, so the semantic oracle executes exactly the
+     * values the emitted artifacts do — the assignment's own effect once at a
+     * value position, the wider position's single adaptation of the produced
+     * value and the post-state the produced value carries.
+     */
+    private static void testAssignmentSourceOracleParity(Path root) throws Exception {
+        System.out.println("-- the assignment-expression-source shapes on the "
+            + "oracle-driven parity case --");
+        SemanticLowerer.ProjectLoweringResult lowering = lowerProjectSource(root,
+            ASSIGNMENT_SOURCE_ORACLE_SOURCE, java.util.Set.of());
+        check(lowering != null && !lowering.hasErrors()
+            && lowering.project() != null, "assignment source: the parity subject "
+            + "lowers with zero diagnostics: "
+            + (lowering == null ? "null" : lowering.diagnostics()));
+        if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
+            return;
+        }
+        Path workspace = Files.createTempDirectory(root.getFileName().toString());
+        try {
+            deal.test.SemanticDifferentialHarness.Verdict verdict =
+                deal.test.SemanticDifferentialHarness.runProject(
+                    lowering.project(), lowering.tables(), lowering.registries(),
+                    deal.test.SemanticDifferentialHarness.Expectation.success(
+                        "the assignment-expression-source shapes", List.of(), "null"),
+                    workspace);
+            checkEq(3, verdict.runs().size(), "assignment source: the parity case "
+                + "produces the three consumers: " + verdict.failures());
+            check(verdict.pass(), "assignment source: the oracle and both shared "
+                + "artifacts agree event-for-event: " + verdict.failures()
+                + "\n" + verdict.report());
+            for (deal.semantic.SemanticRuntimeModel.ConsumerRun run
+                    : verdict.runs()) {
+                check(run.terminal() instanceof
+                        deal.semantic.SemanticRuntimeModel.Terminal.Success success
+                        && "null".equals(success.resultAtom()),
+                    run.consumer() + ": the assignment-source shapes complete the "
+                        + "entry export with null: " + run.terminal());
+            }
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
     // =========================================================================
     // The shared failure tuple
     // =========================================================================
@@ -1909,6 +1999,8 @@ public final class FunctionArityExtensionProductionTest {
             testHostParameterEmissionFact(root.resolve("host-parameter-facts"));
             testCallbackReturnPosition(root.resolve("callback-return"));
             testNestedAdapterOracleParity(root.resolve("nested-adapter-parity"));
+            testAssignmentSourceOracleParity(
+                root.resolve("assignment-source-parity"));
             testLuaJitHostDynamicSource(root.resolve("luajit-host-dynamic"));
             testJvmHostDynamicSource(root.resolve("jvm-host-dynamic"));
             testJsHostDynamicSource(root.resolve("js-host-dynamic"));

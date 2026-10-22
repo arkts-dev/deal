@@ -1026,6 +1026,18 @@ public final class SemanticOracle {
         final IdentityHashMap<Value, Cell> adapterSourceCells =
             new IdentityHashMap<>();
         /**
+         * The materialized source value one adapter value captured at its
+         * creation (the VALUE source mode): the emitters' wrappers resolve
+         * their source once and hold that value, so an adapter over an
+         * invocation's own expression result (an assignment expression's
+         * produced value, a call result) keeps the value it consumed after
+         * the creating invocation returns, exactly as the emitted carriers
+         * do. A source the creation state has not published yet stays
+         * unrecorded and resolves by value id at invocation.
+         */
+        final IdentityHashMap<Value, Value> adapterSourceValues =
+            new IdentityHashMap<>();
+        /**
          * The most recent adapter identity each {@code FUNCTION_ADAPT} op
          * published. A static adapter callee records the binding inline and
          * no callee value of its own, so the adapter arm resolves the
@@ -5002,7 +5014,15 @@ public final class SemanticOracle {
         private Value loadAdapterSource(Value adapterValue,
                                         FunctionExecutionBinding.AdapterBinding adapter) {
             return switch (adapter.sourceRef()) {
-                case AdaptSourceRef.Value value -> valueOf(value.value());
+                case AdaptSourceRef.Value value -> {
+                    // The materialized value the creation site captured (the
+                    // emitters' wrapper holds its resolved source), or the
+                    // current state's publication of that value id when the
+                    // creation state recorded none.
+                    Value captured = adapterValue == null
+                        ? null : adapterSourceValues.get(adapterValue);
+                    yield captured != null ? captured : valueOf(value.value());
+                }
                 case AdaptSourceRef.SharedCell cell -> {
                     Cell captured = adapterValue == null
                         ? null : adapterSourceCells.get(adapterValue);
@@ -5318,7 +5338,12 @@ public final class SemanticOracle {
          * creation site resolves, the emitters' allocation-time capture: the
          * adapter keeps reading that cell per invocation, so an adapter over
          * an invocation's parameter or local cell keeps it after the
-         * invocation returns.
+         * invocation returns. A VALUE source records the materialized value
+         * the creation site already published, the emitters' wrapper holding
+         * its resolved source from creation: an adapter over an invocation's
+         * own expression result (an assignment expression's produced value,
+         * a call result) keeps that value after the invocation returns
+         * instead of re-reading a value id the finished activation owned.
          */
         private String executeFunctionAdapt(SemanticOp op) {
             KindPayload.FunctionAdaptPayload payload =
@@ -5331,6 +5356,11 @@ public final class SemanticOracle {
                 Cell captured = cellOf(cell.binding(), cell.generation(), false);
                 if (captured != null) {
                     adapterSourceCells.put(adapter, captured);
+                }
+            } else if (payload.source() instanceof AdaptSourceRef.Value source) {
+                Value captured = valueOf(source.value());
+                if (captured != null) {
+                    adapterSourceValues.put(adapter, captured);
                 }
             }
             return publish(op, adapter);
