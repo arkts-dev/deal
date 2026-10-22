@@ -1370,7 +1370,9 @@ public class DiagnosticRangeTest {
     private static void testCatchVariableIdentifierRange() {
         System.out.println("-- Catch-variable identifier range (ISSUE-0884) --");
 
-        String[] catchVars = { "bad$name", "b$ad", "bad$" };
+        // First-, middle-, and last-position $ are each rejected; the bare
+        // $ is the shortest identifier the leading position produces.
+        String[] catchVars = { "$bad", "$", "bad$name", "b$ad", "bad$" };
         for (String catchVar : catchVars) {
             String src = "export function main(): null {\n"
                 + "  try { throw {}; } catch (" + catchVar + ") {}\n"

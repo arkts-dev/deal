@@ -4,6 +4,6 @@
 // @features: error-handling, catch, dollar-prohibition, diagnostics
 
 export function main(): null {
-  try { throw {}; } catch (bad$name) {}
+  try { throw {}; } catch ($bad) {}
   return null;
 }

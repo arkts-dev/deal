@@ -3926,7 +3926,9 @@ public class CheckerTest {
     static void testE2008_dollarInCatchVar() {
         System.out.println("-- ISSUE-0884: dollar in catch variable (E2008) --");
 
-        String[] catchVars = { "bad$name", "b$ad", "bad$" };
+        // First-, middle-, and last-position $ are each rejected; the bare
+        // $ is the shortest identifier the leading position produces.
+        String[] catchVars = { "$bad", "$", "bad$name", "b$ad", "bad$" };
         for (String catchVar : catchVars) {
             CheckerOutput out = checkProgram(
                 "export function main(): null {\n"
@@ -4017,7 +4019,8 @@ public class CheckerTest {
     /**
      * ISSUE-0884: the catch declaration is rejected on every target
      * request before any artifact is published, with the identifier range
-     * and the canonical E2008 wording.
+     * and the canonical E2008 wording — first- and middle-position $
+     * included, each anchored on its own identifier span.
      */
     static void testE2008_dollarInCatchVarRejectedOnAllTargets() {
         System.out.println("-- ISSUE-0884: dollar in catch variable on all targets --");
@@ -4030,28 +4033,42 @@ public class CheckerTest {
                 + e.getMessage());
             return;
         }
+        // name, identifier range on line 2 (start-(start+length))
+        String[][] cases = {
+            { "$bad", "main.deal:2:28-2:32" },
+            { "bad$name", "main.deal:2:28-2:36" },
+        };
         try {
-            Path entry = cliProject(root, "catch_dollar",
-                "export function main(): null {\n"
-                + "  try { throw {}; } catch (bad$name) {}\n"
-                + "  return null;\n"
-                + "}\n");
-            for (String backend : List.of("lua", "luajit", "jvm", "js")) {
-                Path out = root.resolve("out-" + backend);
-                CliResult result = cliCompile(entry, backend, out);
-                check(result.exitCode() == 1,
-                    "dollar catch variable is rejected on " + backend
-                        + ": " + result.output());
-                check(result.output().contains("ERROR E2008: Identifier"
-                        + " 'bad$name' must not contain '$'"),
-                    "dollar catch variable keeps the canonical E2008 wording"
-                        + " on " + backend + ": " + result.output());
-                check(result.output().contains("main.deal:2:28-2:36"),
-                    "dollar catch rejection keeps the exact identifier range"
-                        + " on " + backend + ": " + result.output());
-                check(!Files.exists(out),
-                    "dollar catch rejection publishes no artifact directory"
-                        + " on " + backend);
+            int index = 0;
+            for (String[] c : cases) {
+                String catchVar = c[0];
+                String range = c[1];
+                Path entry = cliProject(root, "catch_dollar_" + index++,
+                    "export function main(): null {\n"
+                    + "  try { throw {}; } catch (" + catchVar + ") {}\n"
+                    + "  return null;\n"
+                    + "}\n");
+                for (String backend : List.of("lua", "luajit", "jvm", "js")) {
+                    Path out = root.resolve("out-" + catchVar.replace("$", "s")
+                        + "-" + backend);
+                    CliResult result = cliCompile(entry, backend, out);
+                    check(result.exitCode() == 1,
+                        "dollar catch variable '" + catchVar
+                            + "' is rejected on " + backend
+                            + ": " + result.output());
+                    check(result.output().contains("ERROR E2008: Identifier '"
+                            + catchVar + "' must not contain '$'"),
+                        "dollar catch variable '" + catchVar + "' keeps the"
+                            + " canonical E2008 wording on " + backend
+                            + ": " + result.output());
+                    check(result.output().contains(range),
+                        "dollar catch '" + catchVar + "' keeps the exact"
+                            + " identifier range on " + backend
+                            + ": " + result.output());
+                    check(!Files.exists(out),
+                        "dollar catch '" + catchVar + "' publishes no artifact"
+                            + " directory on " + backend);
+                }
             }
         } catch (IOException e) {
             fail("dollar catch variable on all targets: " + e.getMessage());
