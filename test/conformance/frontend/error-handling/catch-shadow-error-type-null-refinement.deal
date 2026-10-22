@@ -1,0 +1,17 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: A null-refined outer binding of the catch identifier's name never types the catch read: the catch variable is Error on the null branch as well
+// @expected: compile-ok
+// @features: error-handling, try-catch, nullable, narrowing, shadowing
+
+export function main(): null {
+  let e: int | null = null;
+  if (e === null) {
+    try {
+      throw { code: "C_NULL", message: "null refinement" };
+    } catch (e) {
+      let captured: Error = e;
+      let message: string = e.message;
+    }
+  }
+  return null;
+}

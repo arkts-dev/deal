@@ -1,0 +1,16 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: A string-refined outer binding of the catch identifier's name does not make the catch binding a string: transferring the Error binding to a string target is rejected
+// @expected: compile-error E3001
+// @features: error-handling, try-catch, nullable, narrowing, shadowing
+
+export function main(): null {
+  let e: string | null = "outer";
+  if (e !== null) {
+    try {
+      throw { code: "C_STR", message: "string refinement" };
+    } catch (e) {
+      let unsound: string = e;
+    }
+  }
+  return null;
+}

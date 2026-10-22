@@ -1,0 +1,17 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: A catch block that assigns the enclosing binding invalidates its refinement: the read after the try/catch sees the declared nullable type and is rejected
+// @expected: compile-error E3001
+// @features: error-handling, try-catch, nullable, narrowing, assignment
+
+export function main(): null {
+  let value: int | null = 1;
+  if (value !== null) {
+    try {
+      throw { code: "C_SET_NULL", message: "set null" };
+    } catch (err) {
+      value = null;
+    }
+    let unsound: int = value;
+  }
+  return null;
+}

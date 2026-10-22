@@ -1,0 +1,18 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: The catch identifier is a new Error binding, so an int-refined outer binding of the same name never types the catch read: the Error transfer and the error's message read are valid, and the outer int refinement is still usable after the catch scope exits
+// @expected: compile-ok
+// @features: error-handling, try-catch, nullable, narrowing, shadowing
+
+export function main(): null {
+  let e: int | null = 1;
+  if (e !== null) {
+    try {
+      throw { code: "C_INT", message: "int refinement" };
+    } catch (e) {
+      let captured: Error = e;
+      let message: string = e.message;
+    }
+    let afterCatch: int = e;
+  }
+  return null;
+}

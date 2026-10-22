@@ -1,0 +1,195 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: The catch identifier is a new Error binding, so a same-named outer null refinement never types it and the catch scope's exit restores that refinement: int-, string- and null-refined outer bindings read their own catch Error value and can be read as their refined type after the catch, nested catches, nested blocks, renamed and unrefined catches and a reassigned catch binding keep the outer refinement, and a parameter refinement behaves like a local one
+// @expected: runtime-ok
+// @features: error-handling, try-catch, nullable, narrowing, shadowing, blocks, parameters
+
+import * as console from "std/console";
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "CHECK_FAIL", message: what };
+  }
+  return null;
+}
+
+function expectError(what: string, value: Error): null {
+  let code: string = value.code;
+  if (code === "") {
+    throw { code: "CHECK_FAIL", message: what };
+  }
+  return null;
+}
+
+function checkIntRefinement(): null {
+  let e: int | null = 41;
+  if (e !== null) {
+    try {
+      throw { code: "C_INT", message: "int refinement" };
+    } catch (e) {
+      let captured: Error = e;
+      expectError("the int-refined catch binding lost its Error value", captured);
+      let message: string = e.message;
+      expectTrue("the int-refined catch binding's message field",
+        message === "int refinement");
+    }
+    let afterCatch: int = e;
+    expectTrue("the outer refinement after the catch", afterCatch === 41);
+  }
+  return null;
+}
+
+function checkStringRefinement(): null {
+  let e: string | null = "outer";
+  if (e !== null) {
+    try {
+      throw { code: "C_STR", message: "string refinement" };
+    } catch (e) {
+      let captured: Error = e;
+      expectError("the string-refined catch binding lost its Error value", captured);
+      let message: string = e.message;
+      expectTrue("the string-refined catch binding's message field",
+        message === "string refinement");
+    }
+    let afterCatch: string = e;
+    expectTrue("the outer string refinement after the catch", afterCatch === "outer");
+  }
+  return null;
+}
+
+function checkNullRefinement(): null {
+  let e: int | null = null;
+  if (e === null) {
+    try {
+      throw { code: "C_NULL", message: "null refinement" };
+    } catch (e) {
+      let captured: Error = e;
+      expectError("the null-refined catch binding lost its Error value", captured);
+      let message: string = e.message;
+      expectTrue("the null-refined catch binding's message field",
+        message === "null refinement");
+    }
+  }
+  return null;
+}
+
+function checkNestedCatch(): null {
+  let e: int | null = 7;
+  if (e !== null) {
+    try {
+      throw { code: "C_OUTER", message: "outer" };
+    } catch (e) {
+      try {
+        throw { code: "C_INNER", message: "inner" };
+      } catch (e) {
+        let message: string = e.message;
+        expectTrue("the inner catch binding", message === "inner");
+      }
+      let outerMessage: string = e.message;
+      expectTrue("the outer catch binding after the inner catch",
+        outerMessage === "outer");
+    }
+    let afterCatch: int = e;
+    expectTrue("the outer refinement after a nested catch", afterCatch === 7);
+  }
+  return null;
+}
+
+function checkNestedBlock(): null {
+  let e: int | null = 9;
+  if (e !== null) {
+    try {
+      throw { code: "C_BLOCK", message: "block" };
+    } catch (e) {
+      {
+        let captured: Error = e;
+        expectError("the catch binding inside a nested block", captured);
+        let message: string = e.message;
+        expectTrue("the catch binding's message inside a nested block",
+          message === "block");
+      }
+      let capturedAfter: Error = e;
+      expectError("the catch binding after a nested block", capturedAfter);
+    }
+    let afterCatch: int = e;
+    expectTrue("the outer refinement after a nested block", afterCatch === 9);
+  }
+  return null;
+}
+
+function checkRenamedCatch(): null {
+  let e: int | null = 11;
+  if (e !== null) {
+    try {
+      throw { code: "C_RENAMED", message: "renamed" };
+    } catch (err) {
+      let message: string = err.message;
+      expectTrue("the renamed catch binding", message === "renamed");
+      let refined: int = e;
+      expectTrue("the refined outer binding inside the renamed catch", refined === 11);
+    }
+    let afterCatch: int = e;
+    expectTrue("the outer refinement after a renamed catch", afterCatch === 11);
+  }
+  return null;
+}
+
+function checkNoRefinement(): null {
+  let e: int | null = null;
+  try {
+    throw { code: "C_NONE", message: "no refinement" };
+  } catch (e) {
+    let captured: Error = e;
+    expectError("the unrefined catch binding", captured);
+    let message: string = e.message;
+    expectTrue("the unrefined catch binding's message field",
+      message === "no refinement");
+  }
+  return null;
+}
+
+function checkCatchAssignment(): null {
+  let e: int | null = 13;
+  if (e !== null) {
+    try {
+      throw { code: "C_ASSIGN", message: "assign" };
+    } catch (e) {
+      e = { code: "C_REPLACED", message: "replaced" };
+      let message: string = e.message;
+      expectTrue("the reassigned catch binding", message === "replaced");
+    }
+    let afterCatch: int = e;
+    expectTrue("the outer refinement after a catch assignment", afterCatch === 13);
+  }
+  return null;
+}
+
+function checkParameterBinding(e: int | null): null {
+  if (e !== null) {
+    try {
+      throw { code: "C_PARAM", message: "parameter" };
+    } catch (e) {
+      let captured: Error = e;
+      expectError("the parameter-shadowing catch binding", captured);
+      let message: string = e.message;
+      expectTrue("the parameter-shadowing catch binding's message field",
+        message === "parameter");
+    }
+    let afterCatch: int = e;
+    expectTrue("the parameter refinement after the catch", afterCatch === 17);
+  }
+  return null;
+}
+
+export function main(): null {
+  checkIntRefinement();
+  checkStringRefinement();
+  checkNullRefinement();
+  checkNestedCatch();
+  checkNestedBlock();
+  checkRenamedCatch();
+  checkNoRefinement();
+  checkCatchAssignment();
+  checkParameterBinding(17);
+  console.log("OK");
+  return null;
+}

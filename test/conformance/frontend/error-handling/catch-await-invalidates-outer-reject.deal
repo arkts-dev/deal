@@ -1,0 +1,26 @@
+// @spec: Error handling — try / catch; Async/Await; Nullable semantics
+// @description: An await inside the catch block invalidates the enclosing function's refinements, so the saved pre-catch refinement of the same-named outer binding is never resurrected at catch-scope exit and the read after the try/catch is rejected
+// @expected: compile-error E3001
+// @features: error-handling, try-catch, async-await, nullable, narrowing
+
+async function echoInt(value: int): int {
+  return value;
+}
+
+async function probe(e: int | null): int {
+  if (e !== null) {
+    try {
+      throw { code: "C_AWAIT", message: "await" };
+    } catch (e) {
+      let captured: Error = e;
+      let resumed: int = await echoInt(1);
+      let afterResume: Error = e;
+    }
+    let unsound: int = e;
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

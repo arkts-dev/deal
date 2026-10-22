@@ -1,0 +1,16 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: An int-refined outer binding of the catch identifier's name does not type the catch binding: transferring the Error binding to an int target is rejected
+// @expected: compile-error E3001
+// @features: error-handling, try-catch, nullable, narrowing, shadowing
+
+export function main(): null {
+  let e: int | null = 1;
+  if (e !== null) {
+    try {
+      throw { code: "C_INT", message: "int refinement" };
+    } catch (e) {
+      let unsound: int = e;
+    }
+  }
+  return null;
+}

@@ -107,8 +107,14 @@ public final class TypeChecker {
     //    resolution (a shadowing block-local declaration never contributes).
     private final Set<ExpressionNode> narrowedReads = new HashSet<>();
 
-    // -- Tracking variables assigned in try blocks --
-    private final Set<String> varsAssignedInTry = new HashSet<>();
+    // -- Tracking the bindings assigned inside an open try block, one
+    //    frame per open try statement. Entries are the resolved binding
+    //    symbols (identity, never value equality): a try-block declaration
+    //    or a catch binding that shadows an enclosing binding is a
+    //    distinct binding, so a revert after the try/catch never drops an
+    //    enclosing refinement the try did not assign
+    //    (docs/spec-v1.3.md §Narrowing across try/catch). --
+    private final Deque<Set<Symbol>> tryAssignments = new ArrayDeque<>();
     private boolean insideTry = false;
 
     // -- Async/await tracking --
@@ -976,13 +982,12 @@ public final class TypeChecker {
      * Declaration bookkeeping: a new binding neither inherits a
      * same-named binding's narrowing (the shadowing branch above clears
      * the entry) nor assigns an enclosing binding, so it is never
-     * recorded as a loop-body assignment.
+     * recorded as a loop-body or try-block assignment — the revert of an
+     * open loop or try statement is keyed by the resolved binding, and a
+     * declaration is a different binding.
      */
     private void recordDeclaration(String varName) {
         narrowing.onAssignment(varName);
-        if (insideTry) {
-            varsAssignedInTry.add(varName);
-        }
     }
 
     /**
@@ -995,14 +1000,18 @@ public final class TypeChecker {
      */
     private void recordAssignment(String varName) {
         narrowing.onAssignment(varName);
-        if (insideTry) {
-            varsAssignedInTry.add(varName);
+        if (!insideTry && loopAssignments.isEmpty()) {
+            return;
+        }
+        Symbol binding = resolveVisibleBinding(varName);
+        if (binding == null) {
+            return;
+        }
+        if (insideTry && !tryAssignments.isEmpty()) {
+            tryAssignments.peek().add(binding);
         }
         if (!loopAssignments.isEmpty()) {
-            Symbol binding = resolveVisibleBinding(varName);
-            if (binding != null) {
-                loopAssignments.peek().add(binding);
-            }
+            loopAssignments.peek().add(binding);
         }
     }
 
@@ -1242,7 +1251,7 @@ public final class TypeChecker {
         loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
         loopDepth++;
-        loopAssignments.push(newLoopAssignmentSet());
+        loopAssignments.push(newBindingAssignmentSet());
         walkStatement(ws.body());
         // The loop back-edge invalidates every binding assigned in the
         // body (v1.2 narrowing does not cross loop back-edges).
@@ -1310,7 +1319,7 @@ public final class TypeChecker {
         loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
         loopDepth++;
-        loopAssignments.push(newLoopAssignmentSet());
+        loopAssignments.push(newBindingAssignmentSet());
         walkStatement(fs.body());
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
@@ -1320,9 +1329,10 @@ public final class TypeChecker {
     }
 
     /**
-     * The fresh binding-identity assignment set of one loop body.
+     * The fresh binding-identity assignment set of one loop body or try
+     * block (symbols compare by identity, never by value).
      */
-    private static Set<Symbol> newLoopAssignmentSet() {
+    private static Set<Symbol> newBindingAssignmentSet() {
         return Collections.newSetFromMap(new IdentityHashMap<>());
     }
 
@@ -1379,7 +1389,7 @@ public final class TypeChecker {
         loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
         loopDepth++;
-        loopAssignments.push(newLoopAssignmentSet());
+        loopAssignments.push(newBindingAssignmentSet());
         walkStatement(fos.body()); // Enters Block scope via scopeMap
         Set<Symbol> assigned = loopAssignments.pop();
         loopDepth--;
@@ -1414,16 +1424,59 @@ public final class TypeChecker {
 
     private void checkTryStatement(TryStatement ts) {
         boolean savedInsideTry = insideTry;
+        tryAssignments.push(newBindingAssignmentSet());
         insideTry = true;
 
         walkStatement(ts.tryBlock());
 
         insideTry = savedInsideTry;
 
+        // The catch identifier declares a fresh `Error` binding in the catch
+        // scope (docs/spec-v1.3.md §try / catch: the bound variable has
+        // type Error), so a same-named enclosing binding's refinement is
+        // another binding's flow fact and never types the catch read: an
+        // `int`/`null` refinement must not reject a valid Error read, and a
+        // `string` refinement must not admit an unsound transfer. The
+        // enclosing entry is saved in the catch scope's shadow frame exactly
+        // like a block-local declaration's entry, so the catch scope's exit
+        // restores it — unless the language's own assignment rule removed
+        // it (the entry is saved after the try block, so a try-block
+        // assignment to that binding saves nothing) or an await's
+        // invalidation cleared the frame.
+        narrowing.pushShadowFrame();
+        Type outerRefinement = narrowing.getNarrowedType(ts.catchVar());
+        if (outerRefinement != null) {
+            narrowing.onAssignment(ts.catchVar());
+            narrowing.recordShadowed(ts.catchVar(), outerRefinement);
+        }
+
         walkStatement(ts.catchBlock());
 
-        narrowing.revertAll(varsAssignedInTry);
-        varsAssignedInTry.clear();
+        narrowing.popShadowFrame();
+
+        closeTryAssignments(tryAssignments.pop());
+    }
+
+    /**
+     * Closes one try statement's assignment frame
+     * (docs/spec-v1.3.md §Narrowing across try/catch: after a try/catch
+     * every variable assigned inside the try block reverts to its declared
+     * type). The recorded bindings propagate to an enclosing try statement's
+     * frame — a re-narrowing later inside that try block must not outlive
+     * the enclosing catch — and each binding still visible after the
+     * try/catch loses its narrowed entry. A binding recorded inside the try
+     * block whose scope ended with the block never invalidates the
+     * same-named enclosing binding, which the try did not assign.
+     */
+    private void closeTryAssignments(Set<Symbol> assigned) {
+        if (!tryAssignments.isEmpty()) {
+            tryAssignments.peek().addAll(assigned);
+        }
+        for (Symbol binding : assigned) {
+            if (resolveVisibleBinding(binding.name()) == binding) {
+                narrowing.invalidate(binding.name());
+            }
+        }
     }
 
     // =======================================================================

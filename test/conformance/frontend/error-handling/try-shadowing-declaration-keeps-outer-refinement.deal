@@ -1,0 +1,17 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: A try-block declaration that shadows a refined binding declares a new binding and never assigns the enclosing one, so the outer refinement survives the try/catch
+// @expected: compile-ok
+// @features: error-handling, try-catch, nullable, narrowing, shadowing, blocks
+
+export function main(): null {
+  let e: int | null = 1;
+  if (e !== null) {
+    try {
+      let e: string = "inner";
+      let inner: string = e;
+    } catch (err) {
+    }
+    let afterCatch: int = e;
+  }
+  return null;
+}

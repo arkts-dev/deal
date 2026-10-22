@@ -21,7 +21,9 @@ import java.util.function.Function;
  * On {@code if (x !== null)}, the true branch narrows {@code x} to its
  * unwrapped type; the false branch narrows it to {@code NullType}.
  * Assignment to a variable clears its narrowed entry.
- * After try/catch, all variables assigned inside the try body revert.</p>
+ * After try/catch, the checker reverts every binding assigned inside the
+ * try body — by resolved binding, never by name, so a shadowing
+ * declaration or catch binding never drops an enclosing refinement.</p>
  *
  * <p>The {@code declaredTypeResolver} function is used to look up the
  * declared type of a variable so that nullable unwrapping can be performed.</p>
@@ -33,11 +35,14 @@ public final class NullNarrowing {
 
     // -- Shadow frames: one frame per open block, holding the narrowed
     //    entries a block-local declaration removed from the enclosing
-    //    binding. Frames live on the narrowing object, so the frame
-    //    state is scoped to the enclosing function exactly like the
-    //    narrowed entries (a function boundary swaps the object; an
-    //    await's invalidateAll clears the frames together with the
-    //    entries, so an invalidated snapshot is never restored). --
+    //    binding. The catch scope opens the same frame for the catch
+    //    identifier's enclosing entry (the catch binding is a fresh
+    //    binding, so the entry is saved and restored). Frames live on the
+    //    narrowing object, so the frame state is scoped to the enclosing
+    //    function exactly like the narrowed entries (a function boundary
+    //    swaps the object; an await's invalidateAll clears the frames
+    //    together with the entries, so an invalidated snapshot is never
+    //    restored). --
     private final Deque<List<Map.Entry<String, Type>>> shadowFrames =
         new ArrayDeque<>();
 
@@ -181,16 +186,6 @@ public final class NullNarrowing {
      */
     public void invalidate(String varName) {
         narrowed.remove(varName);
-    }
-
-    /**
-     * Reverts all narrowed entries for variables in the given set (used
-     * after try/catch).
-     */
-    public void revertAll(Set<String> varNames) {
-        for (String name : varNames) {
-            narrowed.remove(name);
-        }
     }
 
     /**

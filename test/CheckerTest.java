@@ -146,6 +146,20 @@ public class CheckerTest {
         check(found, context + ": expected diagnostic " + code);
     }
 
+    /** Asserts one exact diagnostic code naming one exact message. */
+    private static void assertErrorMessage(CheckerOutput out, String code,
+            String message, String context) {
+        List<CompilerDiagnostic> diags = out.result.diagnostics();
+        boolean found = diags.stream().anyMatch(
+            d -> d.code().equals(code) && message.equals(d.message()));
+        if (!found) {
+            System.err.println("  Expected " + code + " '" + message
+                + "' but got: " + diags);
+        }
+        check(found, context + ": expected diagnostic " + code + " '"
+            + message + "'");
+    }
+
     private record CliResult(int exitCode, String output) {}
 
     private static Path cliProject(Path root, String name, String source) throws IOException {
@@ -227,6 +241,7 @@ public class CheckerTest {
         testNestedAwaitSuppression();
         testUnawaitedAsyncInArgument_E3014();
         testNarrowingInvalidatedAfterAwait();
+        testCatchBindingNarrowingIsolation();
         testAwait42DoesNotCrash();
         testAsyncFuncNotAssignableToSync();
         testSyncFuncNotAssignableToAsync();
@@ -5224,6 +5239,248 @@ public class CheckerTest {
             "}"
         );
         assertError(out, "E3001", "narrowing invalidated after await → E3001");
+    }
+
+    /** The Error class type the builtin `Error` declaration names. */
+    private static Type intrinsicErrorType() {
+        return Types.classType("Error", NameResolver.intrinsicErrorIdentity());
+    }
+
+    /** The first statement (depth-first, source order) of the given type. */
+    private static <T extends StatementNode> T findStatement(
+            List<StatementNode> statements, Class<T> type) {
+        for (StatementNode statement : statements) {
+            if (type.isInstance(statement)) {
+                return type.cast(statement);
+            }
+            for (List<StatementNode> children : childStatementLists(statement)) {
+                T found = findStatement(children, type);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static <T extends StatementNode> T findStatement(
+            StatementNode statement, Class<T> type) {
+        return findStatement(List.of(statement), type);
+    }
+
+    /** The nested statement lists of one statement, in source order. */
+    private static List<List<StatementNode>> childStatementLists(
+            StatementNode statement) {
+        List<List<StatementNode>> children = new ArrayList<>();
+        switch (statement) {
+            case ExportDeclaration ed -> children.add(List.of(ed.declaration()));
+            case FunctionDeclaration fd -> children.add(fd.body().statements());
+            case Block b -> children.add(b.statements());
+            case IfStatement is -> {
+                children.add(is.thenBlock().statements());
+                is.elseBranch().ifPresent(branch -> {
+                    if (branch instanceof Either.Left<IfStatement, Block> left) {
+                        children.add(List.of(left.value()));
+                    } else if (branch instanceof Either.Right<IfStatement, Block> right) {
+                        children.add(right.value().statements());
+                    }
+                });
+            }
+            case WhileStatement ws -> children.add(ws.body().statements());
+            case ForStatement fs -> children.add(fs.body().statements());
+            case ForOfStatement fos -> children.add(fos.body().statements());
+            case TryStatement ts -> {
+                children.add(ts.tryBlock().statements());
+                children.add(ts.catchBlock().statements());
+            }
+            default -> { }
+        }
+        return children;
+    }
+
+    /** The identifier initializer of the statement list's index-th declaration. */
+    private static IdentifierExpr identifierInitializer(
+            List<StatementNode> statements, int index) {
+        if (index < 0 || index >= statements.size()) {
+            return null;
+        }
+        if (statements.get(index) instanceof VariableDeclaration declaration
+                && declaration.initializer() instanceof IdentifierExpr id) {
+            return id;
+        }
+        return null;
+    }
+
+    /**
+     * The read type of the statement at {@code index} of {@code statements}
+     * (a `let` declaration initialized directly by an identifier), or null.
+     */
+    private static Type readTypeAt(CheckerOutput out, List<StatementNode> statements,
+            int index) {
+        IdentifierExpr read = identifierInitializer(statements, index);
+        return read == null ? null : out.result.typeMap().get(read);
+    }
+
+    /**
+     * The catch identifier is a fresh `Error` binding (docs/spec-v1.3.md
+     * §try / catch: "The bound variable e has type Error"), so a same-named
+     * outer binding's null refinement never types the catch read and never
+     * outlives — or overrides — the outer binding's own flow facts
+     * (ISSUE-0888).
+     */
+    static void testCatchBindingNarrowingIsolation() {
+        System.out.println("-- Catch binding isolated from same-named outer refinements --");
+        Type errorType = intrinsicErrorType();
+
+        // -- The positive: an int-refined outer binding does not type the
+        //    catch read, and the refinement is restored after the catch.
+        String intRefined =
+            "export function main(): null {" +
+            "  let e: int | null = 1;" +
+            "  if (e !== null) {" +
+            "    try { throw { code: \"C_INT\", message: \"c\" }; }" +
+            "    catch (e) { let captured: Error = e; }" +
+            "    let afterCatch: int = e;" +
+            "  }" +
+            "  return null;" +
+            "}";
+        CheckerOutput out = checkProgram(intRefined);
+        assertNoErrors(out, "the catch Error read under an int refinement");
+        IfStatement refinedIf = findStatement(out.program().statements(), IfStatement.class);
+        check(refinedIf != null, "the int-refinement source carries its if statement");
+        TryStatement tryStatement = refinedIf == null ? null
+            : findStatement(refinedIf.thenBlock(), TryStatement.class);
+        check(tryStatement != null, "the int-refinement source carries its try statement");
+        if (tryStatement != null) {
+            check(Types.equals(errorType, readTypeAt(out,
+                    tryStatement.catchBlock().statements(), 0)),
+                "the catch read's checked type is the Error class type, got "
+                    + readTypeAt(out, tryStatement.catchBlock().statements(), 0));
+        }
+        check(Types.equals(Type.Int.INSTANCE, readTypeAt(out,
+                refinedIf == null ? List.of() : refinedIf.thenBlock().statements(), 1)),
+            "the int refinement is restored after the catch scope exits, got "
+                + (refinedIf == null ? null : readTypeAt(out,
+                    refinedIf.thenBlock().statements(), 1)));
+
+        // -- The null refinement is the same distinct binding.
+        CheckerOutput nullRefined = checkProgram(
+            "export function main(): null {" +
+            "  let e: int | null = null;" +
+            "  if (e === null) {" +
+            "    try { throw { code: \"C_NULL\", message: \"n\" }; }" +
+            "    catch (e) { let captured: Error = e; }" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertNoErrors(nullRefined, "the catch Error read under a null refinement");
+        TryStatement nullTry = findStatement(nullRefined.program().statements(), TryStatement.class);
+        check(nullTry != null && Types.equals(errorType,
+                readTypeAt(nullRefined, nullTry.catchBlock().statements(), 0)),
+            "the null-refined catch read's checked type is the Error class type");
+
+        // -- The unsound inverse: a string refinement must not turn the
+        //    catch binding into a string.
+        CheckerOutput stringTransfer = checkProgram(
+            "export function main(): null {" +
+            "  let e: string | null = \"outer\";" +
+            "  if (e !== null) {" +
+            "    try { throw { code: \"C_STR\", message: \"s\" }; }" +
+            "    catch (e) { let unsound: string = e; }" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertErrorMessage(stringTransfer, "E3001",
+            "Cannot assign Error to string",
+            "a string-refined catch binding is not a string");
+
+        // -- The reported defect's mirror: the catch binding is never the
+        //    outer int either.
+        CheckerOutput intTransfer = checkProgram(
+            "export function main(): null {" +
+            "  let e: int | null = 1;" +
+            "  if (e !== null) {" +
+            "    try { throw { code: \"C_INT\", message: \"i\" }; }" +
+            "    catch (e) { let unsound: int = e; }" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertErrorMessage(intTransfer, "E3001",
+            "Cannot assign Error to int",
+            "an int-refined catch binding is not an int");
+
+        // -- A try-block declaration shadows a distinct binding, so the
+        //    outer refinement survives the try/catch.
+        CheckerOutput tryShadow = checkProgram(
+            "export function main(): null {" +
+            "  let e: int | null = 1;" +
+            "  if (e !== null) {" +
+            "    try { let e: string = \"inner\"; } catch (err) { }" +
+            "    let afterCatch: int = e;" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertNoErrors(tryShadow, "a try-block shadowing declaration keeps the outer refinement");
+        IfStatement shadowIf = findStatement(tryShadow.program().statements(), IfStatement.class);
+        check(Types.equals(Type.Int.INSTANCE, readTypeAt(tryShadow,
+                shadowIf == null ? List.of() : shadowIf.thenBlock().statements(), 1)),
+            "the outer refinement survives a try-block shadowing declaration");
+
+        // -- The catch scope's exit never resurrects a refinement the
+        //    language invalidated: an await clears it and an assignment to
+        //    the enclosing binding removes it.
+        CheckerOutput awaited = checkProgram(
+            "async function g(): int { return 5; }" +
+            "async function f(e: int | null): int {" +
+            "  if (e !== null) {" +
+            "    try { throw { code: \"C_AWAIT\", message: \"a\" }; }" +
+            "    catch (e) { let captured: Error = e; let resumed: int = await g(); }" +
+            "    let unsound: int = e;" +
+            "  }" +
+            "  return 0;" +
+            "}");
+        assertErrorMessage(awaited, "E3001", "Cannot assign int | null to int",
+            "an await inside the catch never resurrects the outer refinement");
+        CheckerOutput outerAssigned = checkProgram(
+            "export function main(): null {" +
+            "  let value: int | null = 1;" +
+            "  if (value !== null) {" +
+            "    try { throw { code: \"C_SET\", message: \"s\" }; }" +
+            "    catch (err) { value = null; }" +
+            "    let unsound: int = value;" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertErrorMessage(outerAssigned, "E3001", "Cannot assign int | null to int",
+            "a catch-block assignment to the enclosing binding invalidates its refinement");
+
+        // -- The resolver's own fact: the catch identifier is a distinct
+        //    binding declared with the Error type.
+        String source =
+            "export function main(): null {" +
+            "  let e: int | null = 1;" +
+            "  if (e !== null) {" +
+            "    try { throw { code: \"C\", message: \"c\" }; }" +
+            "    catch (e) { let captured: Error = e; }" +
+            "  }" +
+            "  return null;" +
+            "}";
+        LexResult lex = new Lexer(source, "test.deal").tokenize();
+        ParseResult parse = new Parser(lex.tokens(), "test.deal",
+            lex.directiveEvents()).parse();
+        NameResolver nr = new NameResolver("test.deal", new StubModuleResolver());
+        SymbolTable symTable = nr.resolve(parse.program());
+        FunctionDeclaration main = findStatement(parse.program().statements(), FunctionDeclaration.class);
+        TryStatement resolvedTry = findStatement(parse.program().statements(), TryStatement.class);
+        SymbolTable catchScope = resolvedTry == null ? null : nr.scopeMap().get(resolvedTry);
+        Symbol catchSymbol = catchScope == null ? null : catchScope.resolveLocal("e");
+        check(catchSymbol instanceof Symbol.VariableSymbol catchVar
+                && Types.equals(errorType, catchVar.type()),
+            "the catch identifier declares the Error type, got " + catchSymbol);
+        SymbolTable bodyScope = main == null ? null : nr.scopeMap().get(main.body());
+        Symbol outerSymbol = bodyScope == null ? null : bodyScope.resolve("e");
+        check(outerSymbol != null && outerSymbol != catchSymbol,
+            "the catch identifier is a distinct binding from the same-named outer binding");
     }
 
     /** await 42 does NOT crash the TypeChecker — instanceof guard works. */

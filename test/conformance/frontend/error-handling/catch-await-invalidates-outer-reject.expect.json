@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E3001",
+    "line": 19,
+    "column": 24,
+    "message": "Cannot assign int | null to int"
+  }
+}
