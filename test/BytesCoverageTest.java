@@ -1679,10 +1679,14 @@ public class BytesCoverageTest {
 
     /**
      * The class-literal field boundary (ISSUE-0768): a function-typed
-     * declared field receives a mismatched function through the class
-     * literal, so the class construction's field cell publishes the
-     * canonical signature texts — the oracle's and the JVM's projection,
-     * never the Lua prelude's internal {@code function(int;int)} dialect.
+     * declared field receives a value the capturing closure cleared behind
+     * its refinement, so the class construction's field cell owns the value
+     * and publishes its canonical kind arm ({@code E8001}, expected
+     * {@code function}, actual null) at the class literal's own expression
+     * origin on the oracle and both production artifacts. The dynamic value
+     * reaches the field through the specification-admitted narrowed read
+     * (docs/spec-v1.3.md §Reading table fields: a table read nested in a
+     * literal is E3003 at the read), never through a nested dynamic read.
      */
     private static final String CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE = """
         function identity(x: int): int {
@@ -1693,13 +1697,16 @@ public class BytesCoverageTest {
           f: (x: int) => int = identity;
         }
 
-        function asString(x: int): string {
-          return "s";
-        }
-
         export function main(): null {
-          let holder: table = { g: asString };
-          let b: Box = { f: holder.g };
+          let inner: ((x: int) => int) | null = identity;
+          let clear: () => null = function(): null {
+            inner = null;
+            return null;
+          };
+          if (inner !== null) {
+            clear();
+            let b: Box = { f: inner };
+          }
           return null;
         }
         """;
@@ -1732,13 +1739,14 @@ public class BytesCoverageTest {
 
     /**
      * The canonical function-signature projection at field/class
-     * boundaries (ISSUE-0768): the emitted Lua field and class boundary
-     * cells carry the descriptor's canonical spec text as the boundary
-     * check's trailing argument, so a mismatched carried signature
-     * projects {@code (int)->int} / {@code (int)->string} — the identical
-     * tuple the oracle's boundary engine and the JVM production artifact
-     * render — at the class literal expression and the assignment
-     * expression origins.
+     * boundaries (ISSUE-0768): the class-literal field cell owns a cleared
+     * function value and publishes its canonical kind arm at the literal's
+     * own origin, and the class-field assignment boundary carries the
+     * descriptor's canonical spec text as its check's trailing argument, so
+     * a mismatched carried signature projects {@code (int)->int} /
+     * {@code (int)->string} — the identical tuple the oracle's boundary
+     * engine and the JVM production artifact render — at the assignment
+     * expression origin.
      */
     private static void testCanonicalFunctionSignatureFieldBoundaries()
             throws Exception {
@@ -1747,10 +1755,8 @@ public class BytesCoverageTest {
 
         driveFocusedFailures(
             new FocusedFailure("class literal function field mismatch",
-                CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 15, 16,
-                new Tuple("E8010",
-                    "function signature mismatch: expected (int)->int, got (int)->string",
-                    "(int)->int", "(int)->string")),
+                CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 17, 18,
+                new Tuple("E8001", "expected function", "function", "null")),
             new FocusedFailure("class field assignment function mismatch",
                 CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, 16, 3,
                 new Tuple("E8010",
@@ -1808,11 +1814,12 @@ public class BytesCoverageTest {
 
     /**
      * The recursive array position (ISSUE-0767): a class field declared
-     * {@code ((x: int) => int)[]} receives an array whose element is not a
-     * function (read from a dynamic table alias), so the field boundary's
-     * array recursion must project the canonical element text
-     * {@code (int)->int} in its E8003 row, never the internal
-     * {@code function(int;int)} dialect.
+     * {@code ((x: int) => int)[]} receives a typed array whose deleted slot
+     * is not a function, so the field boundary's array recursion must
+     * project the canonical element text {@code (int)->int} in its E8003
+     * row, never the internal {@code function(int;int)} dialect. The array
+     * arrives through a typed binding (the closed contextual-read admission
+     * makes a nested table read E3003 at the read).
      */
     private static final String CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE = """
         function identity(x: int): int {
@@ -1824,8 +1831,9 @@ public class BytesCoverageTest {
         }
 
         export function main(): null {
-          let holder: table = { xs: [1] };
-          let b: Box = { fs: holder.xs };
+          let inner: ((x: int) => int)[] = [identity];
+          delete inner[0];
+          let b: Box = { fs: inner };
           return null;
         }
         """;
@@ -1857,9 +1865,9 @@ public class BytesCoverageTest {
                     "function signature mismatch: expected (int)->int, got (int)->string",
                     "(int)->int", "(int)->string")),
             new FocusedFailure("class field function array element mismatch",
-                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 11, 16,
+                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 12, 16,
                 new Tuple("E8003", "array element 1 type mismatch",
-                    "(int)->int", "int")));
+                    "(int)->int", "nil")));
     }
 
     private record FocusedFailure(String label, String source, int line, int column,
@@ -2707,8 +2715,9 @@ public class BytesCoverageTest {
      * emitted static async entry) — each with the same bytes-aware host
      * implementation. The fixture's own assertions (the once-per-attempt
      * default order, the isolated mutable buffers, the retained host-returned
-     * identity, both E8001 catches, and the {@code json.stringify} rejection)
-     * are the pinned outcome.
+     * identity, the default-evaluation E8001 catch, the dynamic provided
+     * value's read-boundary E8001 catch that runs no default, and the
+     * {@code json.stringify} rejection) are the pinned outcome.
      */
     private static void driveHostFixture(BytesFixture spec) throws Exception {
         BytesFixture entry = new BytesFixture(BYTES_DIR, spec.relativePath(), "main",
@@ -2729,7 +2738,7 @@ public class BytesCoverageTest {
             check(oracle.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                 spec.what() + ": the oracle runs the async host fixture to success: "
                     + oracle.terminal());
-            checkEq(4, host.calls(), spec.what() + ": the oracle's host counter reaches "
+            checkEq(3, host.calls(), spec.what() + ": the oracle's host counter reaches "
                 + "the fixture's phase-order total");
             hostLuaProduction(drive, spec);
             hostJvmProduction(drive, spec);

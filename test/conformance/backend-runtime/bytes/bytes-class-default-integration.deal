@@ -1,5 +1,5 @@
 // @spec: Bytes
-// @description: ISSUE-0552 integrated verification: bytes-bearing class fields/defaults through the production plan machinery — nested bytes[] and bytes[][] defaults, sync/async first-class function defaults, once-per-attempt evaluation with zero load-time runs, fresh isolated mutable buffers, retained identity of a host-returned bytes default, no partial instance on default-evaluation or provided-value validation failure (no defaults run after the failure), and json.stringify rejection.
+// @description: ISSUE-0552 integrated verification: bytes-bearing class fields/defaults through the production plan machinery — nested bytes[] and bytes[][] defaults, sync/async first-class function defaults, once-per-attempt evaluation with zero load-time runs, fresh isolated mutable buffers, retained identity of a host-returned bytes default, no partial instance on a default-evaluation failure (no defaults run after the failure), a dynamic wrong-kind provided value rejected at its own typed read before any construction (so the failed attempt runs no default), and json.stringify rejection.
 // @expected: runtime-ok
 // @features: bytes, classes, defaults, arrays, functions, async-await, host-abi, json
 
@@ -71,27 +71,28 @@ export async function test_bytes_class_default_integration(): int {
   if (!caught) {
     throw { code: "TEST_FAIL", message: "validation failure did not raise E8001" };
   }
-  // A provided-value validation failure (a dynamic string crossing the
-  // bytes field boundary at phase 3) raises E8001 and publishes no
-  // instance; the D5 phase order still ran the omitted defaults once
-  // (the count moves 2 -> 3), and the clean attempt after it runs them
-  // once more (3 -> 4).
+  // A dynamic wrong-kind value reaches the bytes field only through its
+  // own typed read (docs/spec-v1.3.md §Reading table fields): the read's
+  // boundary check raises E8001 before any construction, so no default
+  // runs for the failed attempt (the count stays 2) and no partial
+  // instance can exist. The clean attempt after it runs the defaults once
+  // more (2 -> 3).
   let holderBad: table = { b: "not-bytes" };
   let providedCaught: boolean = false;
   try {
-    let c: PlanBox = { buf: holderBad.b };
+    let provided: bytes = holderBad.b;
   } catch (e) {
     providedCaught = e.code === "E8001";
   }
   if (!providedCaught) {
-    throw { code: "TEST_FAIL", message: "provided-value validation failure did not raise E8001" };
+    throw { code: "TEST_FAIL", message: "dynamic provided-value read did not raise E8001" };
   }
-  if (host.callCount() !== 3) {
-    throw { code: "TEST_FAIL", message: "phase-3 validation did not follow the once-per-attempt defaults" };
+  if (host.callCount() !== 2) {
+    throw { code: "TEST_FAIL", message: "the failed provided-value read ran a default" };
   }
   // A clean attempt after the failures still constructs correctly.
   let c2: PlanBox = {};
-  if (c2.buf.length !== 2 || host.callCount() !== 4) {
+  if (c2.buf.length !== 2 || host.callCount() !== 3) {
     throw { code: "TEST_FAIL", message: "post-failure attempt did not construct cleanly" };
   }
   let holder2: table = { box: a.buf };

@@ -1,0 +1,15 @@
+// @spec: Tables — Reading table fields
+// @description: A class literal field value is not one of the five direct read positions: a table read nested in the class literal is E3003 at the read — the dotted and the computed form alike (the class-object-literal half of the confirmed nested-literal shape).
+// @expected: compile-error E3003
+// @features: tables, dynamic-read, literals, classes, computed-key
+
+class Box {
+  n: int = 0;
+  m: int = 0;
+}
+
+export function main(): null {
+  let t: table = { x: 1, m: 2 };
+  let b: Box = { n: t.x, m: t["m"] };
+  return null;
+}

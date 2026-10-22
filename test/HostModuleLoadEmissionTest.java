@@ -2030,7 +2030,9 @@ public class HostModuleLoadEmissionTest {
           let ns: (int | null)[] = intsDoc.ns;
 
           let cfgDoc: table = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
-          let cfg: host.Cfg = { count: cfgDoc.count, ratio: cfgDoc.ratio };
+          let count: int = cfgDoc.count;
+          let ratio: number = cfgDoc.ratio;
+          let cfg: host.Cfg = { count: count, ratio: ratio };
 
           return json.stringify(box) + "\\n"
             + host.observeNumbers(ms) + "\\n"

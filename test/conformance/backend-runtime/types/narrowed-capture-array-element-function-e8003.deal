@@ -1,14 +1,21 @@
 // @spec: Runtime execution model — Array runtime checks (E8003)
-// @description: A function-typed array literal element keeps the closed ARRAY_ELEMENT_DESCRIPTOR row: a mismatched signature is reported as the specified E8003 arm (array element 1 type mismatch, the element descriptor as expected, function as actual) — never the bare E8010 row and never the array element's own E8001.
+// @description: A narrowed function-typed read used as an array literal element is validated by the array-element cell: the failure is the specified E8003 arm (array element 1 type mismatch, the element descriptor as expected, null as actual) at the element read on every backend — never the bare E8010 row and never the array element's own E8001.
 // @expected: runtime-error E8003
-// @features: type-system, arrays, functions, descriptors, runtime-errors
+// @features: type-system, nullable, narrowing, arrays, functions, descriptors, runtime-errors
 
-function asString(value: int): string {
-  return "s";
+function asInt(value: int): int {
+  return value;
 }
 
 export function main(): null {
-  let holder: table = { f: asString };
-  let xs: ((value: int) => int)[] = [holder.f];
+  let f: ((value: int) => int) | null = asInt;
+  let clear: () => null = function(): null {
+    f = null;
+    return null;
+  };
+  if (f !== null) {
+    clear();
+    let xs: ((value: int) => int)[] = [f];
+  }
   return null;
 }

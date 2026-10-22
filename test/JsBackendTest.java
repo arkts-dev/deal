@@ -6183,8 +6183,9 @@ public class JsBackendTest {
               let variants: string = json.stringify(box);
 
               let w: table = json.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
+              let tags: string[] = w.tags;
               let sc: cfg.ServerConfig = { port: 7, endpoint: { path: "/p" },
-                tags: w.tags, note: null };
+                tags: tags, note: null };
               let field: string = cfg.describe(sc);
 
               return "joined=" + joined + "\\n"

@@ -1,0 +1,10 @@
+// @spec: Tables — Reading table fields
+// @description: An array literal element is not one of the five direct read positions: a table read nested in the literal is E3003 at the read — the dotted and the computed form alike (the confirmed nested-literal shape of v1.3).
+// @expected: compile-error E3003
+// @features: tables, dynamic-read, literals, computed-key
+
+export function main(): null {
+  let t: table = { x: 1 };
+  let xs: int[] = [t.x, t["x"]];
+  return null;
+}

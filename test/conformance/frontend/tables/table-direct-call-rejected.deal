@@ -1,6 +1,6 @@
 // @spec: Tables
-// @description: Calling a function-valued table field directly is rejected.
-// @expected: compile-error E3008
+// @description: Calling a function-valued table field directly is rejected: the callee is not one of the five direct read positions, so the read itself is E3003 and the call is never admitted through a table.
+// @expected: compile-error E3003
 // @features: tables, functions, diagnostics
 
 function plusOne(value: int): int { return value + 1; }

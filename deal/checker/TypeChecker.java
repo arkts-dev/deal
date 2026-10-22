@@ -37,6 +37,22 @@ public final class TypeChecker {
     // -- Contextual expected type (for table reads and class construction) --
     private Type expectedType = null;
 
+    // -- Direct contextual-read position: true only while the expression
+    //    being checked is the outermost expression of one of the five
+    //    admitted positions (docs/spec-v1.3.md §Reading table fields — a
+    //    let initializer, an assignment value, a return expression, a call
+    //    argument, an if condition). A table read the check descends into
+    //    (a literal element or class-literal field value, a template
+    //    interpolation part, a composite operand, an index key, a callee)
+    //    is not the position's own expression and takes no contextual
+    //    target type. --
+    private boolean contextualReadPosition = false;
+
+    // -- The one-shot marker a read position sets for its own outermost
+    //    expression: the next checked expression is that position's
+    //    expression, every later one is nested. --
+    private boolean pendingContextualReadPosition = false;
+
     // -- The exact class declaration that supplies the current contextual
     //    type. Set only where a binding or an annotated declaration is the
     //    context's source: an object literal constructed under that context
@@ -870,7 +886,7 @@ public final class TypeChecker {
                     : exactAnnotationClassSymbol(currentScope, vd.typeAnnotation().get());
             }
         }
-        Type exprType = checkExpression(vd.initializer());
+        Type exprType = checkContextualReadPosition(vd.initializer());
         expectedType = savedExpected;
         contextualClassDecl = savedContextualClass;
 
@@ -1116,7 +1132,7 @@ public final class TypeChecker {
                     && contextualClassDecl == null) {
                 contextualClassDecl = currentReturnContext;
             }
-            Type exprType = checkExpression(rs.expr().get());
+            Type exprType = checkContextualReadPosition(rs.expr().get());
             expectedType = savedExpected;
             contextualClassDecl = savedContextual;
 
@@ -1151,7 +1167,7 @@ public final class TypeChecker {
         // the loop conditions are not.
         Type savedExpected = expectedType;
         expectedType = Type.Boolean.INSTANCE;
-        Type condType = checkExpression(is.condition());
+        Type condType = checkContextualReadPosition(is.condition());
         expectedType = savedExpected;
 
         if (condType != Type.Error.INSTANCE && !(condType instanceof Type.Boolean)) {
@@ -1505,15 +1521,46 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkExpression(ExpressionNode expr) {
-        Type t = computeExpressionType(expr);
-        typeMap.put(expr, t);
-        // A class-typed expression the enclosing annotations did not
-        // already attribute records the exact declaration its own bound
-        // carrier names (a call result, an awaited value, an array
-        // element read): the one lowering and the field-operation checks
-        // then select the declaring provider without a name/identity scan.
-        recordInferredClassDecl(expr, t);
-        return t;
+        // Only a read position's own outermost expression is direct: the
+        // marker is consumed here, so every expression this check descends
+        // into — an array literal element, a class-literal field value, a
+        // template interpolation part, a composite operand, an index key —
+        // is checked as a nested expression with no direct-read permission
+        // (docs/spec-v1.3.md §Reading table fields, whose allowed contexts
+        // name the position's whole expression E, never a subexpression).
+        boolean direct = pendingContextualReadPosition;
+        pendingContextualReadPosition = false;
+        boolean savedDirect = contextualReadPosition;
+        contextualReadPosition = direct;
+        try {
+            Type t = computeExpressionType(expr);
+            typeMap.put(expr, t);
+            // A class-typed expression the enclosing annotations did not
+            // already attribute records the exact declaration its own bound
+            // carrier names (a call result, an awaited value, an array
+            // element read): the one lowering and the field-operation checks
+            // then select the declaring provider without a name/identity scan.
+            recordInferredClassDecl(expr, t);
+            return t;
+        } finally {
+            contextualReadPosition = savedDirect;
+        }
+    }
+
+    /**
+     * Checks the outermost expression of one admitted contextual-read
+     * position (docs/spec-v1.3.md §Reading table fields): the position's
+     * own expression E may be a direct table read, and no subexpression
+     * it descends into may be.
+     */
+    private Type checkContextualReadPosition(ExpressionNode expr) {
+        boolean savedPending = pendingContextualReadPosition;
+        pendingContextualReadPosition = true;
+        try {
+            return checkExpression(expr);
+        } finally {
+            pendingContextualReadPosition = savedPending;
+        }
     }
 
     Type typeOf(ExpressionNode expr) {
@@ -1543,7 +1590,13 @@ public final class TypeChecker {
                 for (int i = 0; i < tl.parts().size(); i++) {
                     ExpressionNode part = tl.parts().get(i);
                     Type partType = checkExpression(part);
-                    if (i % 2 == 1 && !(partType instanceof Type.String)) {
+                    // The interpolation's string requirement is the whole
+                    // context of an embedded expression (docs/spec-v1.3.md
+                    // §Template literals): it grants no contextual-read
+                    // position, and an already-rejected part is not
+                    // re-reported against it.
+                    if (i % 2 == 1 && partType != Type.Error.INSTANCE
+                            && !(partType instanceof Type.String)) {
                         error(DiagnosticCode.E3016,
                             "Template literal interpolation must have type string, got "
                             + typeName(partType), part.span());
@@ -1881,7 +1934,7 @@ public final class TypeChecker {
                     && i < paramClassDeclsForContext.size()) {
                 contextualClassDecl = paramClassDeclsForContext.get(i);
             }
-            argTypes.add(checkExpression(arg));
+            argTypes.add(checkContextualReadPosition(arg));
             expectedType = savedExpected;
             contextualClassDecl = savedContextual;
         }
@@ -2119,14 +2172,15 @@ public final class TypeChecker {
         // five specification positions (let initializer, assignment value,
         // return expression, call argument, if condition): the expected
         // type must be present and the read must be the position's own
-        // outermost expression (`directContextualRead`). Every other table
-        // read — a loop condition or a composite operand included — is
+        // outermost expression (`contextualReadPosition`). Every other table
+        // read — a loop condition, a composite operand, an array or class
+        // literal element, a template interpolation part included — is
         // E3003 at the read.
         if (objType instanceof Type.Table) {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
             }
-            if (expectedType != null) {
+            if (expectedType != null && contextualReadPosition) {
                 return expectedType;
             }
             error(DiagnosticCode.E3003,
@@ -2173,7 +2227,7 @@ public final class TypeChecker {
                     idx.index().span());
                 return Type.Error.INSTANCE;
             }
-            if (expectedType != null) {
+            if (expectedType != null && contextualReadPosition) {
                 return expectedType;
             }
             error(DiagnosticCode.E3003,
@@ -2730,7 +2784,7 @@ public final class TypeChecker {
                     : exactAnnotationClassSymbol(currentScope, vs.declaredType());
             }
         }
-        Type valueType = checkExpression(assign.value());
+        Type valueType = checkContextualReadPosition(assign.value());
         expectedType = savedExpected;
         contextualClassDecl = savedContextualClass;
 

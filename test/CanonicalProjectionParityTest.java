@@ -149,14 +149,15 @@ import java.util.stream.Stream;
  *       descriptor's canonical expected text, the failing value's own
  *       reference-kind actual token, and the boundary child's own
  *       lowerer-owned origin — identically on the three consumers for
- *       the composite element, the nested literal's element, the second
- *       literal position, a DEAL table carrier, and a nested element
- *       walk failure, while the admitted deferred and absent nullable
- *       elements succeed and the production artifacts publish the same
- *       code; the emitted Lua prelude's {@code __typedBoundaryKind}
- *       projects a mark-less table as the actual {@code table} token at
- *       an array-named cell (never the expected array kind) under real
- *       {@code luajit}.</li>
+ *       the deleted-slot element, the nested literal's element and the
+ *       second literal position, while the admitted element and the
+ *       absent nullable element succeed and the production artifacts
+ *       publish the same code; every seed's runtime value arrives through
+ *       a specification-admitted shape (a typed array carrier whose slot
+ *       was deleted); the emitted Lua prelude's
+ *       {@code __typedBoundaryKind} projects a mark-less table as the
+ *       actual {@code table} token at an array-named cell (never the
+ *       expected array kind) under real {@code luajit}.</li>
  *   <li><b>The negatives.</b> The row/arm completeness invariants and the
  *       single-source control fail by name (an unbound retained template,
  *       a foreign template, a duplicate binding, an {@code INNER_ONLY}
@@ -8752,15 +8753,18 @@ public class CanonicalProjectionParityTest {
     // =========================================================================
 
     /**
-     * The composite element seed: the literal child's own recorded
-     * {@code ARRAY_ELEMENT_DESCRIPTOR} policy decides the deferred
-     * contextual array read, so the element cell — never the generic
-     * descriptor cell — renders the failure at {@code t.x}.
+     * The element-walk seed: the element's statically typed value is an
+     * array carrier whose element walk fails at its deleted slot, so the
+     * literal child's own recorded {@code ARRAY_ELEMENT_DESCRIPTOR} policy
+     * — never the generic descriptor cell — renders the failure at the
+     * element read with the value's own reference kind as the actual
+     * token.
      */
-    private static final String ARRAY_LITERAL_COMPOSITE_ELEMENT_SOURCE = """
+    private static final String ARRAY_LITERAL_WALK_ELEMENT_SOURCE = """
         function main(): null {
-          let t: table = { x: "bad" };
-          let ys: int[][] = [t.x];
+          let inner: int[] = [1, 2];
+          delete inner[0];
+          let ys: int[][] = [inner];
           return null;
         }
         """;
@@ -8772,8 +8776,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String ARRAY_LITERAL_NESTED_ELEMENT_SOURCE = """
         function main(): null {
-          let t: table = { x: "bad" };
-          let ys: int[][][] = [[t.x]];
+          let inner: int[] = [1, 2];
+          delete inner[0];
+          let ys: int[][][] = [[inner]];
           return null;
         }
         """;
@@ -8784,59 +8789,30 @@ public class CanonicalProjectionParityTest {
      */
     private static final String ARRAY_LITERAL_SECOND_ELEMENT_SOURCE = """
         function main(): null {
-          let t: table = { x: "bad" };
-          let ys: int[][] = [[1, 2], t.x];
-          return null;
-        }
-        """;
-
-    /**
-     * The table-carrier seed: the deferred read's value is a DEAL table,
-     * so the element arm's actual field is the value's own table kind.
-     */
-    private static final String ARRAY_LITERAL_TABLE_ELEMENT_SOURCE = """
-        function main(): null {
-          let t: table = { x: { y: 1 } };
-          let ys: int[][] = [t.x];
-          return null;
-        }
-        """;
-
-    /**
-     * The nested-element-failure seed: the failing cell's own value is an
-     * array carrier whose element walk fails at its deleted slot, so the
-     * literal cell's tuple is the outer element arm over the array token
-     * (the one-based literal index, the element descriptor's expected
-     * text, and the value's own reference kind).
-     */
-    private static final String ARRAY_LITERAL_NESTED_FAILURE_SOURCE = """
-        function main(): null {
           let inner: int[] = [1, 2];
-          let t: table = { xs: inner };
           delete inner[0];
-          let ys: int[][] = [t.xs];
+          let ys: int[][] = [[1, 2], inner];
           return null;
         }
         """;
 
-    /** The admitted composite element control: the deferred read passes the cell. */
+    /** The admitted element control: the typed element value passes the cell. */
     private static final String ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE = """
         function main(): null {
-          let t: table = { x: [1, 2] };
-          let ys: int[][] = [t.x];
+          let inner: int[] = [1, 2];
+          let ys: int[][] = [inner];
           return null;
         }
         """;
 
     /**
-     * The admitted absent element control: the deferred read of an absent
-     * key reaches the nullable element cell, whose named missing→null
-     * mapping admits the element on every consumer.
+     * The admitted absent element control: the nullable element cell admits
+     * the language null element through its named null arm on every
+     * consumer.
      */
     private static final String ARRAY_LITERAL_MISSING_ELEMENT_SOURCE = """
         function main(): null {
-          let t: table = { y: 1 };
-          let ys: (int | null)[] = [t.x];
+          let ys: (int | null)[] = [null];
           return null;
         }
         """;
@@ -8849,11 +8825,13 @@ public class CanonicalProjectionParityTest {
      * canonical text as expected, the failing value's own reference-kind
      * token as actual, and the boundary child's own lowerer-owned origin —
      * identically on the oracle, the LuaJIT artifact, and the JVM
-     * artifact. The composite element, the nested literal's element, the
-     * second literal position, a DEAL table carrier, and a nested element
-     * walk failure inside the element value are each driven through the
-     * three consumers, and the deferred admitted element and the absent
-     * nullable element stay successes.
+     * artifact. The deleted-slot element, the nested literal's element and
+     * the second literal position are each driven through the three
+     * consumers, and the admitted element and the absent nullable element
+     * stay successes. Every seed reaches its runtime value through a
+     * specification-admitted shape (docs/spec-v1.3.md §Reading table
+     * fields): a table read nested in a literal is E3003 at the read, so
+     * the array carrier is a typed binding whose slot was deleted.
      */
     private static void testArrayLiteralElementCells() throws Exception {
         System.out.println("-- the array-literal element cells: the recorded "
@@ -8861,34 +8839,26 @@ public class CanonicalProjectionParityTest {
             + "consumers --");
         Path workspace = Files.createTempDirectory("projection-array-literal");
         try {
-            driveArrayLiteralElementFailure("the composite element",
-                ARRAY_LITERAL_COMPOSITE_ELEMENT_SOURCE,
-                workspace.resolve("composite"), "test.deal:3:22", 1, "[int]",
-                "string");
+            driveArrayLiteralElementFailure("the deleted-slot element",
+                ARRAY_LITERAL_WALK_ELEMENT_SOURCE,
+                workspace.resolve("deleted-slot"), "test.deal:4:22", 1, "[int]",
+                "array");
             driveArrayLiteralElementFailure("the nested literal element",
                 ARRAY_LITERAL_NESTED_ELEMENT_SOURCE,
-                workspace.resolve("nested-literal"), "test.deal:3:25", 1, "[int]",
-                "string");
+                workspace.resolve("nested-literal"), "test.deal:4:25", 1, "[int]",
+                "array");
             driveArrayLiteralElementFailure("the second literal element",
                 ARRAY_LITERAL_SECOND_ELEMENT_SOURCE,
-                workspace.resolve("second-element"), "test.deal:3:30", 2, "[int]",
-                "string");
-            driveArrayLiteralElementFailure("the table carrier element",
-                ARRAY_LITERAL_TABLE_ELEMENT_SOURCE,
-                workspace.resolve("table-carrier"), "test.deal:3:22", 1, "[int]",
-                "table");
-            driveArrayLiteralElementFailure("the nested element walk failure",
-                ARRAY_LITERAL_NESTED_FAILURE_SOURCE,
-                workspace.resolve("nested-failure"), "test.deal:5:22", 1, "[int]",
+                workspace.resolve("second-element"), "test.deal:4:30", 2, "[int]",
                 "array");
-            driveArrayLiteralElementAdmission("the admitted composite element",
+            driveArrayLiteralElementAdmission("the admitted element",
                 ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE,
                 workspace.resolve("admitted"));
             driveArrayLiteralElementAdmission("the admitted absent nullable "
                 + "element", ARRAY_LITERAL_MISSING_ELEMENT_SOURCE,
                 workspace.resolve("admitted-missing"));
             driveArrayLiteralElementProduction("the production element terminal",
-                ARRAY_LITERAL_COMPOSITE_ELEMENT_SOURCE,
+                ARRAY_LITERAL_WALK_ELEMENT_SOURCE,
                 workspace.resolve("production"));
         } finally {
             deleteRecursively(workspace);

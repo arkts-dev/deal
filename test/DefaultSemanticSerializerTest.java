@@ -331,7 +331,7 @@ public class DefaultSemanticSerializerTest {
                   c: int[] = [1, 2];
                   d: table = { k: 5 };
                   e: string = `v=${label()}`;
-                  f: int = tableOf().k;
+                  f: int = box().weight;
                   g: int = arrayOf()[0];
                   h: boolean = has(box().tag);
                   i: int = helper(2);
@@ -342,6 +342,7 @@ public class DefaultSemanticSerializerTest {
 
                 class HasBox {
                   tag?: int = 0;
+                  weight: int = 3;
                 }
 
                 function helper(v: int): int {

@@ -365,6 +365,12 @@ public class CheckerTest {
         // ISSUE-0815: the retained corner-case frontend contracts
         testRetainedCornerCaseFrontendContract();
 
+        // The closed direct contextual-read admission: nested literal and
+        // template-interpolation reads reject, the direct positions stay
+        // admitted (v1.3 §Reading table fields).
+        testV13NestedLiteralReadRejected();
+        testV13DirectContextualReadControls();
+
         // F8: Break/continue outside loops
         testBreakOutsideLoop();
         testContinueOutsideLoop();
@@ -1518,6 +1524,144 @@ public class CheckerTest {
             "function g(n: int): null {return null;}"
                 + " export function f(t: table): null {g(t.n); return null;}\n"),
             "the direct argument read stays admitted");
+    }
+
+    /**
+     * The closed direct contextual-read admission (docs/spec-v1.3.md
+     * §Reading table fields): only the position's own outermost
+     * expression may be the read. A read nested in an array literal
+     * element, a class literal field value or a template interpolation
+     * part is E3003 at the read — the dotted and the computed form
+     * alike — and the surrounding literal's own diagnostic never
+     * replaces or doubles it.
+     */
+    static void testV13NestedLiteralReadRejected() {
+        System.out.println("-- nested literal/template table reads reject E3003 --");
+
+        // Array literal element (dotted).
+        CheckerOutput arrayElement = checkProgram(
+            "let t: table = {x:1}; let xs: int[] = [t.x];");
+        assertError(arrayElement, "E3003",
+            "array literal element table read rejects E3003");
+        checkExactRange(arrayElement, "E3003", 1, 40, 1, 43,
+            "the array element read carries its own exact range");
+        checkNoCode(arrayElement, "E3011",
+            "the rejected element is not re-reported as a mixed literal");
+
+        // Computed array literal element: the static string key grants no
+        // admission either.
+        CheckerOutput computedElement = checkProgram(
+            "let t: table = {x:1}; let xs: int[] = [t[\"x\"]];");
+        assertError(computedElement, "E3003",
+            "computed array literal element table read rejects E3003");
+        checkExactRange(computedElement, "E3003", 1, 40, 1, 46,
+            "the computed element read carries its own exact range");
+
+        // Class literal field value.
+        CheckerOutput classField = checkProgram(
+            "class Box {n: int = 0;} let t: table = {x:1};"
+                + " let b: Box = {n:t.x};");
+        assertError(classField, "E3003",
+            "class literal field table read rejects E3003");
+        checkExactRange(classField, "E3003", 1, 63, 1, 66,
+            "the class literal field read carries its own exact range");
+        checkNoCode(classField, "E4003",
+            "the rejected field value is not re-reported as a field type mismatch");
+
+        // Computed class literal field value: the static string key grants
+        // no admission either.
+        CheckerOutput computedField = checkProgram(
+            "class Box {n: int = 0;} let t: table = {x:1};"
+                + " let b: Box = {n:t[\"x\"]};");
+        assertError(computedField, "E3003",
+            "computed class literal field table read rejects E3003");
+        checkExactRange(computedField, "E3003", 1, 63, 1, 69,
+            "the computed field read carries its own exact range");
+
+        // A class literal nested in an array literal keeps the read's own
+        // diagnostic at the read.
+        CheckerOutput nestedClass = checkProgram(
+            "class Box {n: int = 0;} let t: table = {x:1};"
+                + " let bs: Box[] = [{n:t.x}];");
+        assertError(nestedClass, "E3003",
+            "a read nested two literals deep rejects E3003");
+        checkExactRange(nestedClass, "E3003", 1, 67, 1, 70,
+            "the doubly nested read carries its own exact range");
+
+        // Template interpolation: the part's string requirement is not a
+        // dynamic-read context, and the already-rejected part is never
+        // re-reported as E3016.
+        CheckerOutput interpolation = checkProgram(
+            "let t: table = {s:\"a\"}; let n: string = `v${t.s}`;");
+        assertError(interpolation, "E3003",
+            "template interpolation table read rejects E3003");
+        checkExactRange(interpolation, "E3003", 1, 45, 1, 48,
+            "the interpolation read carries its own exact range");
+        checkNoCode(interpolation, "E3016",
+            "the rejected interpolation part is not re-reported as E3016");
+
+        // The computed interpolation form rejects at its own read too.
+        CheckerOutput computedInterpolation = checkProgram(
+            "let t: table = {s:\"a\"}; let n: string = `a${t[\"s\"]}`;");
+        assertError(computedInterpolation, "E3003",
+            "computed interpolation table read rejects E3003");
+        checkExactRange(computedInterpolation, "E3003", 1, 45, 1, 51,
+            "the computed interpolation read carries its own exact range");
+        checkNoCode(computedInterpolation, "E3016",
+            "the rejected computed part is not re-reported as E3016");
+    }
+
+    /**
+     * The direct-read controls of the same admission: all five admitted
+     * positions (parenthesized forms included), the computed direct read,
+     * an explicitly typed intermediate used inside an array/class literal,
+     * contextual class and array construction, and an ordinary template
+     * interpolation of a statically typed string.
+     */
+    static void testV13DirectContextualReadControls() {
+        System.out.println("-- the five direct read positions and typed"
+            + " intermediates stay admitted --");
+
+        assertNoErrors(checkProgram(
+            "function take(n: int): int {return n;}"
+                + " function readN(t: table): int {return t.n;}"
+                + " let t: table = {n:1, flag:true};"
+                + " let a: int = (t.n); a = t.n; a = take(t.n);"
+                + " if (t.flag) {a = 1;} a = readN(t);"),
+            "the five direct positions (parenthesized initializer included)"
+                + " stay admitted");
+
+        assertNoErrors(checkProgram(
+            "let t: table = {n:1}; let c: int = t[\"n\"];"),
+            "the direct computed read stays admitted");
+
+        assertNoErrors(checkProgram(
+            "class Box {n: int = 0;} let t: table = {n:1, s:\"a\"};"
+                + " let v: int = t.n; let xs: int[] = [v];"
+                + " let b: Box = {n: v}; let bs: Box[] = [{n: v}];"
+                + " let sv: string = t.s; let s: string = `v${sv}`;"),
+            "a typed intermediate inside literals, contextual class/array"
+                + " construction and an ordinary template stay admitted");
+
+        assertNoErrors(checkProgram(
+            "class Box {n: int = 0;} let t: table = {x:1};"
+                + " let xs: int[] = [0]; xs[0] = t.x;"
+                + " let b: Box = {}; b.n = t.x;"),
+            "an assignment value is a direct position: the array-element"
+                + " and class-field write values stay admitted");
+    }
+
+    /** Asserts that no diagnostic of one code was reported. */
+    private static void checkNoCode(CheckerOutput out, String code,
+            String context) {
+        boolean found = out.result.diagnostics().stream()
+            .anyMatch(d -> d.code().equals(code));
+        if (found) {
+            for (CompilerDiagnostic d : out.result.diagnostics()) {
+                System.err.println("  Diagnostic: " + d);
+            }
+        }
+        check(!found, context + ": unexpected " + code);
     }
 
     /** Asserts one exact diagnostic range (start and end line/column). */

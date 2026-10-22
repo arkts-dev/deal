@@ -6684,6 +6684,137 @@ public class ProductionDispatchTest {
         """;
 
     /**
+     * The nested-literal table read of the closed direct contextual-read
+     * admission (docs/spec-v1.3.md §Reading table fields): an array
+     * literal element is not the position's own expression.
+     */
+    private static final String NESTED_ARRAY_LITERAL_READ_REJECT =
+        "export function f(): int {let t: table = {n:1};"
+            + " let xs: int[] = [t.n]; return xs[0];}\n";
+
+    /** The same admission's class literal field value. */
+    private static final String NESTED_CLASS_LITERAL_READ_REJECT =
+        "class Box {n: int = 0;}\n"
+            + "export function f(): int {let t: table = {n:1};"
+            + " let b: Box = {n:t.n}; return b.n;}\n";
+
+    /** The same admission's template interpolation part. */
+    private static final String NESTED_TEMPLATE_READ_REJECT =
+        "export function f(): string {let t: table = {s:\"a\"};"
+            + " let v: string = `v${t.s}`; return v;}\n";
+
+    /** The computed form of the nested array literal element. */
+    private static final String NESTED_COMPUTED_LITERAL_READ_REJECT =
+        "export function f(): int {let t: table = {n:1};"
+            + " let xs: int[] = [t[\"n\"]]; return xs[0];}\n";
+
+    /** The computed form of the class literal field value. */
+    private static final String NESTED_COMPUTED_CLASS_READ_REJECT =
+        "class Box {n: int = 0;}\n"
+            + "export function f(): int {let t: table = {n:1};"
+            + " let b: Box = {n:t[\"n\"]}; return b.n;}\n";
+
+    /** The computed form of the template interpolation part. */
+    private static final String NESTED_COMPUTED_TEMPLATE_READ_REJECT =
+        "export function f(): string {let t: table = {s:\"a\"};"
+            + " let v: string = `v${t[\"s\"]}`; return v;}\n";
+
+    /**
+     * The legal control of the same admission: the five direct positions
+     * (parenthesized initializer and computed direct read included), a
+     * typed intermediate inside array/class literals, contextual class and
+     * array construction, and an ordinary template interpolation of a
+     * statically typed string.
+     */
+    private static final String LEGAL_NESTED_LITERAL_DIRECT_READS = """
+        import * as c from "std/console";
+        class Box {n: int = 0;}
+        function take(n: int): int {return n;}
+        function readN(t: table): int {return t.n;}
+        export function main(): null {
+         let t: table = {n: 1, flag: true, s: "a"};
+         let n: int = (t.n);
+         let computed: int = t["n"];
+         n = t.n;
+         n = take(t.n) + n;
+         if (t.flag) {n = n + 1;}
+         n = n + readN(t);
+         let xs: int[] = [n];
+         let b: Box = {n: n};
+         let bs: Box[] = [{n: n}];
+         let v: string = t.s;
+         let s: string = `v${v}`;
+         if (computed !== 1 || xs[0] !== 4 || b.n !== 4 || bs[0].n !== 4 || s !== "va") {
+          throw {code: "TEST_FAIL", message: "direct read admission"};
+         }
+         c.log("nested-literal-direct-reads");
+         return null;
+        }
+        """;
+
+    /**
+     * The direct contextual table-read admission (docs/spec-v1.3.md
+     * §Reading table fields) on all three production backends: a table
+     * read nested in an array literal element, a class literal field
+     * value or a template interpolation part is E3003 at the read — the
+     * dotted and computed forms alike — and the compile fails closed
+     * before any publication. The legal control measures every admitted
+     * direct position (parenthesized initializer, computed direct read, a
+     * typed intermediate inside array/class literals, contextual class
+     * and array construction, and an ordinary template interpolation of a
+     * static string) on every target.
+     */
+    private static void testV13NestedLiteralReadAdmission() throws Exception {
+        System.out.println("-- the closed direct contextual-read admission"
+            + " rejects nested literal reads on every target --");
+        for (String backend : List.of("luajit", "jvm", "js")) {
+            checkCornerCaseReject(backend, "nested-array-literal-read",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", NESTED_ARRAY_LITERAL_READ_REJECT),
+                "E3003", "src/subject.deal", 1, 66, 1, 69, null);
+            checkCornerCaseReject(backend, "nested-class-literal-read",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", NESTED_CLASS_LITERAL_READ_REJECT),
+                "E3003", "src/subject.deal", 2, 65, 2, 68, null);
+            checkCornerCaseReject(backend, "nested-template-read",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", NESTED_TEMPLATE_READ_REJECT),
+                "E3003", "src/subject.deal", 1, 74, 1, 77, null);
+            checkCornerCaseReject(backend, "nested-computed-literal-read",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", NESTED_COMPUTED_LITERAL_READ_REJECT),
+                "E3003", "src/subject.deal", 1, 66, 1, 72, null);
+            checkCornerCaseReject(backend, "nested-computed-class-read",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", NESTED_COMPUTED_CLASS_READ_REJECT),
+                "E3003", "src/subject.deal", 2, 65, 2, 71, null);
+            checkCornerCaseReject(backend, "nested-computed-template-read",
+                Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
+                    "src/subject.deal", NESTED_COMPUTED_TEMPLATE_READ_REJECT),
+                "E3003", "src/subject.deal", 1, 74, 1, 80, null);
+
+            // The legal control compiles and completes normally on every
+            // target.
+            Path legal = Files.createTempDirectory(
+                "production-legal-nested-literal-reads-");
+            try {
+                write(legal, "deal.json", retainedManifest(backend));
+                write(legal, "src/main.deal",
+                    LEGAL_NESTED_LITERAL_DIRECT_READS);
+                if (compileRetainedSubject(legal,
+                        backend + ": legal nested-literal direct reads",
+                        true)) {
+                    checkRetainedSubjectRun(legal, backend,
+                        "legal nested-literal direct reads",
+                        "nested-literal-direct-reads\n");
+                }
+            } finally {
+                deleteRecursively(legal);
+            }
+        }
+    }
+
+    /**
      * The retained corner-case negatives (ISSUE-0815 subjects 3 and
      * 9-11) on all three production backends: each raw subject remains an
      * imported file with unchanged origins, fails closed before any
@@ -7479,6 +7610,7 @@ public class ProductionDispatchTest {
         testDefaultReentrantAttemptScratchBothTargets();
         testRetainedCornerCaseDiamond();
         testRetainedCornerCaseNegatives();
+        testV13NestedLiteralReadAdmission();
         testFunctionBindingCurrentValueThreeLanes();
         testForLetFunctionCounterThreeLanes();
 

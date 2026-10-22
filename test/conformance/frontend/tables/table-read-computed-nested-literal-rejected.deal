@@ -1,0 +1,10 @@
+// @spec: Tables — Reading table fields
+// @description: A computed table read nested in an array literal element is E3003 at the read exactly like its dotted form: the literal element is not a direct read position and the static string key grants no admission.
+// @expected: compile-error E3003
+// @features: tables, dynamic-read, literals, computed-key
+
+export function main(): null {
+  let t: table = { x: 1 };
+  let xs: int[] = [t["x"]];
+  return null;
+}
