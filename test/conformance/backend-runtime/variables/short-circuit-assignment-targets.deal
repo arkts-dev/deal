@@ -1,0 +1,252 @@
+// @spec: Runtime execution model — Operational semantics summary (rules 1-4)
+// @description: An &&/|| right operand keeps its branch ownership through every assignment target (variable, array element, table member/index, class field): a skipped right operand's throw and effects never run, the selected right operand runs exactly once, nested logical results and the receiver→key→RHS order hold, and the declaration/return controls keep their own passing shape. The entry prints the recorded order markers, so a lane that flattens a conditional operand out of its branch either aborts with the module's SC_BAD code or reports the wrong order.
+// @expected: runtime-ok
+// @features: short-circuit, assignment, evaluation-order, arrays, tables, classes, corner-case
+
+import * as c from "std/console";
+
+// The skipped right operand of every assignment below: reaching it is the
+// defect (a conditional operand flattened out of its branch executes even
+// though the short-circuit decided the result from the left operand).
+function boom(): boolean {
+  throw { code: "SC_BAD", message: "a skipped right operand executed" };
+}
+
+class Flags {
+  on: boolean = false;
+}
+
+// A parameter target: the caller's value is irrelevant, the logical
+// assignment commits the target position's own cell.
+function assignParameter(flag: boolean): boolean {
+  flag = true || boom();
+  let both: boolean = true;
+  both = false && boom();
+  return flag && !both;
+}
+
+// A captured target: the closure stores into the captured array cell.
+function captureWriter(cell: boolean[]): () => boolean {
+  return function (): boolean {
+    cell[0] = true || boom();
+    let nested: boolean = true;
+    nested = false && boom();
+    return cell[0] && !nested;
+  };
+}
+
+export function main(): null {
+  let calls: int = 0;
+  let order: string = "";
+  let array: boolean[] = [false];
+
+  function effect(): boolean { calls = calls + 1; return true; }
+  function markOrder(s: string): null { order = order + s; return null; }
+  function pickReceiver(): boolean[] { markOrder("V"); return array; }
+  function pickIndex(): int { markOrder("K"); return 0; }
+  function pickKey(flag: boolean): int {
+    if (!flag) {
+      throw { code: "TEST_FAIL", message: "key argument lost the logical result" };
+    }
+    markOrder("k");
+    return 0;
+  }
+  function pickWith(flag: boolean): boolean[] {
+    if (!flag) {
+      throw { code: "TEST_FAIL", message: "receiver argument lost the logical result" };
+    }
+    markOrder("v");
+    return array;
+  }
+  function rhsValue(): boolean { markOrder("R"); return true; }
+  function falseOperand(): boolean { markOrder("L"); return false; }
+  function trueOperand(): boolean { markOrder("T"); return true; }
+  function idb(value: boolean): boolean { return value; }
+
+  // -- variable target: both operators, skipped abrupt + skipped effectful
+  let flag: boolean = false;
+  flag = true || boom();
+  flag = true || effect();
+  flag = false && boom();
+  flag = false && effect();
+  if (flag !== false || calls !== 0) {
+    throw { code: "TEST_FAIL", message: "variable: a skipped right operand ran" };
+  }
+
+  // -- variable target: the selected right operand runs exactly once
+  flag = false || effect();
+  if (flag !== true || calls !== 1) {
+    throw { code: "TEST_FAIL", message: "variable: selected OR right operand" };
+  }
+  flag = true && effect();
+  if (flag !== true || calls !== 2) {
+    throw { code: "TEST_FAIL", message: "variable: selected AND right operand" };
+  }
+
+  // -- array element target
+  array[0] = true || boom();
+  array[0] = false && boom();
+  if (array[0] !== false || calls !== 2) {
+    throw { code: "TEST_FAIL", message: "array element: a skipped right operand ran" };
+  }
+  array[0] = false || effect();
+  if (array[0] !== true || calls !== 3) {
+    throw { code: "TEST_FAIL", message: "array element: selected right operand" };
+  }
+
+  // -- table member target
+  let table: table = {};
+  table.on = true || boom();
+  let member: boolean = table.on;
+  if (member !== true || calls !== 3) {
+    throw { code: "TEST_FAIL", message: "table member: skipped right operand or value" };
+  }
+  table.on = false || effect();
+  let memberSelected: boolean = table.on;
+  if (memberSelected !== true || calls !== 4) {
+    throw { code: "TEST_FAIL", message: "table member: selected right operand" };
+  }
+
+  // -- table index target
+  table["flag"] = false && boom();
+  let indexed: boolean = table["flag"];
+  if (indexed !== false || calls !== 4) {
+    throw { code: "TEST_FAIL", message: "table index: skipped right operand or value" };
+  }
+  table["flag"] = true && effect();
+  let indexedSelected: boolean = table["flag"];
+  if (indexedSelected !== true || calls !== 5) {
+    throw { code: "TEST_FAIL", message: "table index: selected right operand" };
+  }
+
+  // -- class field target
+  let flags: Flags = {};
+  flags.on = true || boom();
+  if (flags.on !== true || calls !== 5) {
+    throw { code: "TEST_FAIL", message: "class field: skipped right operand or value" };
+  }
+  flags.on = false && boom();
+  if (flags.on !== false || calls !== 5) {
+    throw { code: "TEST_FAIL", message: "class field: skipped AND right operand" };
+  }
+  flags.on = false || effect();
+  if (flags.on !== true || calls !== 6) {
+    throw { code: "TEST_FAIL", message: "class field: selected right operand" };
+  }
+
+  // -- nested logical results, both operators on both sides
+  flag = (true || boom()) && (false || effect());
+  if (flag !== true || calls !== 7) {
+    throw { code: "TEST_FAIL", message: "nested: OR-then-AND result" };
+  }
+  flag = (false && boom()) || (true && effect());
+  if (flag !== true || calls !== 8) {
+    throw { code: "TEST_FAIL", message: "nested: AND-then-OR result" };
+  }
+  flag = (false && boom()) && boom();
+  if (flag !== false || calls !== 8) {
+    throw { code: "TEST_FAIL", message: "nested: skipped outer AND" };
+  }
+  flag = (true || boom()) || boom();
+  if (flag !== true || calls !== 8) {
+    throw { code: "TEST_FAIL", message: "nested: skipped outer OR" };
+  }
+
+  // -- logical expressions inside call arguments (the RHS operand closure)
+  flag = idb(true || boom());
+  if (flag !== true || calls !== 8) {
+    throw { code: "TEST_FAIL", message: "call argument: skipped OR right operand" };
+  }
+  flag = idb(true && effect());
+  if (flag !== true || calls !== 9) {
+    throw { code: "TEST_FAIL", message: "call argument: selected AND right operand" };
+  }
+  flag = idb(false && boom());
+  if (flag !== false || calls !== 9) {
+    throw { code: "TEST_FAIL", message: "call argument: skipped AND right operand" };
+  }
+  flag = idb(false || effect());
+  if (flag !== true || calls !== 10) {
+    throw { code: "TEST_FAIL", message: "call argument: selected OR right operand" };
+  }
+
+  // -- a skipped right operand's own write never commits
+  let inner: boolean = false;
+  flag = false && (inner = true);
+  if (flag !== false || inner !== false) {
+    throw { code: "TEST_FAIL", message: "skipped AND write committed" };
+  }
+  flag = true || (inner = true);
+  if (flag !== true || inner !== false) {
+    throw { code: "TEST_FAIL", message: "skipped OR write committed" };
+  }
+  flag = false || (inner = true);
+  if (flag !== true || inner !== true) {
+    throw { code: "TEST_FAIL", message: "selected write did not commit" };
+  }
+
+  // -- receiver → key → RHS order with the RHS skipped, then selected
+  pickReceiver()[pickIndex()] = true || rhsValue();
+  if (order !== "VK" || array[0] !== true) {
+    throw { code: "TEST_FAIL", message: "order: skipped RHS order " + order };
+  }
+  pickReceiver()[pickIndex()] = false || rhsValue();
+  if (order !== "VKVKR" || array[0] !== true) {
+    throw { code: "TEST_FAIL", message: "order: selected RHS order " + order };
+  }
+
+  // -- logical inside the key computation and inside the receiver computation
+  array[pickKey(true || boom())] = true || boom();
+  if (order !== "VKVKRk" || array[0] !== true) {
+    throw { code: "TEST_FAIL", message: "order: skipped key operand " + order };
+  }
+  array[pickKey(false || effect())] = false || effect();
+  if (order !== "VKVKRkk" || array[0] !== true || calls !== 12) {
+    throw { code: "TEST_FAIL", message: "order: selected key operand " + order };
+  }
+  pickWith(true || boom())[0] = true || boom();
+  if (order !== "VKVKRkkv" || array[0] !== true) {
+    throw { code: "TEST_FAIL", message: "order: skipped receiver operand " + order };
+  }
+  pickWith(false || effect())[0] = false && boom();
+  if (order !== "VKVKRkkvv" || array[0] !== false || calls !== 13) {
+    throw { code: "TEST_FAIL", message: "order: selected receiver operand " + order };
+  }
+
+  // -- the left operand completes after the receiver and key, before the
+  //    right operand the short-circuit selects or skips
+  pickReceiver()[pickIndex()] = falseOperand() || rhsValue();
+  if (order !== "VKVKRkkvvVKLR" || array[0] !== true) {
+    throw { code: "TEST_FAIL", message: "order: left then selected right " + order };
+  }
+  pickReceiver()[pickIndex()] = trueOperand() || boom();
+  if (order !== "VKVKRkkvvVKLRVKT" || array[0] !== true) {
+    throw { code: "TEST_FAIL", message: "order: left then skipped OR right " + order };
+  }
+  pickReceiver()[pickIndex()] = falseOperand() && boom();
+  if (order !== "VKVKRkkvvVKLRVKTVKL" || array[0] !== false) {
+    throw { code: "TEST_FAIL", message: "order: left then skipped AND right " + order };
+  }
+
+  // -- captured and parameter targets
+  if (!captureWriter(array)() || !assignParameter(false)) {
+    throw { code: "TEST_FAIL", message: "captured or parameter target" };
+  }
+
+  // -- declaration initializer and return-expression controls
+  let declaredOr: boolean = true || boom();
+  let declaredAnd: boolean = false && boom();
+  if (declaredOr !== true || declaredAnd !== false) {
+    throw { code: "TEST_FAIL", message: "declaration controls" };
+  }
+  if (!returnControl(true || boom()) || returnControl(false && boom())) {
+    throw { code: "TEST_FAIL", message: "return controls" };
+  }
+
+  c.log("short-circuit-assignment-order:" + order);
+  return null;
+}
+
+function returnControl(flag: boolean): boolean {
+  return flag;
+}

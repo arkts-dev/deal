@@ -1,0 +1,58 @@
+// @spec: Runtime execution model — Operational semantics summary (rules 1-4)
+// @description: The &&/|| branch ownership holds on the async continuation path: an awaited right operand that the short-circuit skips never starts its operation, a selected awaited right operand completes exactly once, and the variable, array-element, class-field and table targets all commit the logical result after the resumption.
+// @expected: runtime-ok
+// @features: short-circuit, assignment, evaluation-order, async, arrays, tables, classes, corner-case
+
+import * as c from "std/console";
+
+// The skipped awaited right operand: starting it at all is the defect
+// (a conditional operand flattened out of its branch starts the operation
+// even though the short-circuit decided the result).
+async function failAsync(): boolean {
+  throw { code: "SC_BAD", message: "a skipped awaited right operand started" };
+}
+
+async function okAsync(): boolean { return true; }
+
+class Flags {
+  on: boolean = false;
+}
+
+export async function awaitedShortCircuitAssignments(): null {
+  let flag: boolean = false;
+  flag = true || await failAsync();
+  if (flag !== true) { throw { code: "TEST_FAIL", message: "await: skipped OR result" }; }
+  flag = false && await failAsync();
+  if (flag !== false) { throw { code: "TEST_FAIL", message: "await: skipped AND result" }; }
+  flag = false || await okAsync();
+  if (flag !== true) { throw { code: "TEST_FAIL", message: "await: selected OR result" }; }
+  flag = true && await okAsync();
+  if (flag !== true) { throw { code: "TEST_FAIL", message: "await: selected AND result" }; }
+
+  let box: Flags = {};
+  box.on = true || await failAsync();
+  if (box.on !== true) { throw { code: "TEST_FAIL", message: "await: skipped class field" }; }
+  box.on = false || await okAsync();
+  if (box.on !== true) { throw { code: "TEST_FAIL", message: "await: selected class field" }; }
+
+  let cells: boolean[] = [false];
+  cells[0] = false && await failAsync();
+  if (cells[0] !== false) { throw { code: "TEST_FAIL", message: "await: skipped array element" }; }
+  cells[0] = true && await okAsync();
+  if (cells[0] !== true) { throw { code: "TEST_FAIL", message: "await: selected array element" }; }
+
+  let table: table = {};
+  table.on = true || await failAsync();
+  let member: boolean = table.on;
+  if (member !== true) { throw { code: "TEST_FAIL", message: "await: skipped table member" }; }
+  table.on = false || await okAsync();
+  let selected: boolean = table.on;
+  if (selected !== true) { throw { code: "TEST_FAIL", message: "await: selected table member" }; }
+
+  c.log("awaited-short-circuit-assignment");
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

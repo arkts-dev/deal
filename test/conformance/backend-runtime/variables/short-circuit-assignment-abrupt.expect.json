@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: SC_SELECTED\nDEAL_ERROR_SNAPSHOT: {\"code\":\"SC_SELECTED\",\"message\":\"the selected right operand executed\",\"sourceFile\":\"backend-runtime/variables/short-circuit-assignment-abrupt.deal\",\"line\":17,\"column\":3}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "SC_SELECTED",
+      "message": "the selected right operand executed",
+      "sourceFile": "backend-runtime/variables/short-circuit-assignment-abrupt.deal",
+      "line": 17,
+      "column": 3
+    }
+  }
+}
