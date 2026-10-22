@@ -17,7 +17,10 @@ import deal.semantic.RequirementManifestResult;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SemanticLowerer;
+import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BoundaryKind;
+import deal.semantic.ir.CaptureMode;
+import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.FailurePolicyId;
@@ -1564,8 +1567,13 @@ public final class FunctionArityExtensionProductionTest {
      * event-for-event trace and the same success terminal. The oracle
      * descends each nested adapter level's own published source with its own
      * leading-M projection, admits the invoked value's target parameters and
-     * reads the cell each adapter captured at creation (the escaping
-     * parameter cell included), exactly as the emitted protocols do.
+     * reads the cell each adapter captured at creation. The fixture makes
+     * that cell escape its creating invocation: a parameter cell assigned
+     * after the adaptation (the {@code SHARED_CELL} source mode) is read by
+     * the returned adapter and by a static adapter callee inside the escaped
+     * closure, so the case covers the creation-identity resolution a static
+     * callee needs — not only the value-carried arms that pass a loaded
+     * adapter value.
      */
     private static void testNestedAdapterOracleParity(Path root) throws Exception {
         System.out.println("-- the adapter-valued-source corpus on the "
@@ -1580,6 +1588,31 @@ public final class FunctionArityExtensionProductionTest {
         if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
             return;
         }
+        int sharedCellAdapters = 0;
+        int staticAdapterCallees = 0;
+        for (LoweredModuleUnit unit : lowering.project().modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.payload() instanceof KindPayload.FunctionAdaptPayload adapt
+                        && adapt.mode() == CaptureMode.SHARED_CELL
+                        && adapt.source() instanceof AdaptSourceRef.SharedCell) {
+                    sharedCellAdapters++;
+                }
+                if (op.kind() == SemanticOpKind.CALL
+                        && op.payload() instanceof KindPayload.CallPayload call
+                        && call.callee()
+                            instanceof KindPayload.CallCallee.Static staticCallee
+                        && staticCallee.binding()
+                            instanceof FunctionExecutionBinding.AdapterBinding) {
+                    staticAdapterCallees++;
+                }
+            }
+        }
+        check(sharedCellAdapters >= 1, "nested adapter: the corpus carries a "
+            + "SHARED_CELL adapter over the assigned parameter cell (the "
+            + "escaping capture); got " + sharedCellAdapters);
+        check(staticAdapterCallees >= 1, "nested adapter: the corpus carries a "
+            + "static adapter callee inside the escaped closure (the "
+            + "creation-identity resolution); got " + staticAdapterCallees);
         Path workspace = Files.createTempDirectory(root.getFileName().toString());
         try {
             deal.test.SemanticDifferentialHarness.Verdict verdict =

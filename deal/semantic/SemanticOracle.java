@@ -1026,6 +1026,16 @@ public final class SemanticOracle {
         final IdentityHashMap<Value, Cell> adapterSourceCells =
             new IdentityHashMap<>();
         /**
+         * The most recent adapter identity each {@code FUNCTION_ADAPT} op
+         * published. A static adapter callee records the binding inline and
+         * no callee value of its own, so the adapter arm resolves the
+         * creation's published identity here and reaches the same cell
+         * capture — a closure that escapes with an adapter over its
+         * invocation's parameter cell keeps reading that cell per
+         * invocation, exactly as the emitted carriers' upvalue does.
+         */
+        final Map<OpId, Value> adapterValuesByOp = new LinkedHashMap<>();
+        /**
          * The per-run published export surfaces (M3): one recorded
          * published value per {@code (module, name)} of the run, written
          * exactly once by the owning module's {@code EXPORT_PUBLISH} — the
@@ -4433,17 +4443,14 @@ public final class SemanticOracle {
                     resolveDynamicCalleeBinding(dynamic.callee());
             };
             // The runtime callee value when the callee is value-carried
-            // (the INDIRECT and DYNAMIC arms): the resolved body's closure
+            // (the INDIRECT and DYNAMIC arms) or a statically resolved adapter
+            // (whose creation identity the adapter arm needs for its
+            // creation-site cell capture): the resolved body's closure
             // allocation carries the captured cells an escaped closure's
             // body reads, so the invocation installs them as the body's
-            // capture overlay. A static callee records no runtime value.
-            Value calleeValue = switch (payload.callee()) {
-                case KindPayload.CallCallee.Static ignored -> null;
-                case KindPayload.CallCallee.Indirect indirect ->
-                    valueOf(indirect.callee());
-                case KindPayload.CallCallee.Dynamic dynamic ->
-                    valueOf(dynamic.callee());
-            };
+            // capture overlay. Every other static callee records no runtime
+            // value.
+            Value calleeValue = calleeValueOf(op);
             Value returned;
             activeCallOrigins.addLast(op.origin());
             try {
@@ -5319,6 +5326,7 @@ public final class SemanticOracle {
             Value.AdapterValue adapter = new Value.AdapterValue(payload.targetSignature());
             FunctionExecutionBinding binding = resolveBindingOf((ValueId) op.result());
             bindingsByValue.put(adapter, binding);
+            adapterValuesByOp.put(op.opId(), adapter);
             if (payload.source() instanceof AdaptSourceRef.SharedCell cell) {
                 Cell captured = cellOf(cell.binding(), cell.generation(), false);
                 if (captured != null) {
@@ -5367,15 +5375,10 @@ public final class SemanticOracle {
                     resolveDynamicCalleeBinding(dynamic.callee());
             };
             // The runtime callee value of a value-carried async start (the
-            // dynamic and indirect arms): the resolved body's closure
-            // allocation installs its captured cells for the task.
-            Value calleeValue = switch (payload.callee()) {
-                case KindPayload.CallCallee.Static ignored -> null;
-                case KindPayload.CallCallee.Indirect indirect ->
-                    valueOf(indirect.callee());
-                case KindPayload.CallCallee.Dynamic dynamic ->
-                    valueOf(dynamic.callee());
-            };
+            // dynamic and indirect arms) and of a statically resolved adapter
+            // start (its creation identity, for the creation-site cell
+            // capture).
+            Value calleeValue = calleeValueOf(op);
             AsyncTokenId token = (AsyncTokenId) op.result();
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic) {
                 executeDynamicAsyncStart(op, binding, checkedArgs, token, calleeValue);
@@ -5645,9 +5648,12 @@ public final class SemanticOracle {
         /**
          * The callee value of one invocation (sync CALL or ASYNC_START): the
          * value identity the callee names — the dynamic callee's carrier whose
-         * own registration resolved the class, or the indirect arm's tracked
-         * identity; a static binding has no value identity of its own. A
-         * closure body invocation installs this value's captured cells.
+         * own registration resolved the class, the indirect arm's tracked
+         * identity, or the published identity of a statically resolved
+         * adapter callee (a Static callee records no value of its own, but the
+         * adapter arm needs the creation's identity to reach the cell it
+         * captured at creation). A closure body invocation installs this
+         * value's captured cells.
          */
         private Value calleeValueOf(SemanticOp op) {
             KindPayload.CallCallee callee = switch (op.payload()) {
@@ -5663,8 +5669,32 @@ public final class SemanticOracle {
                     valueOf(indirect.callee());
                 case KindPayload.CallCallee.Dynamic dynamic ->
                     valueOf(dynamic.callee());
-                case KindPayload.CallCallee.Static ignored -> null;
+                case KindPayload.CallCallee.Static staticCallee ->
+                    staticAdapterValue(staticCallee.binding());
             };
+        }
+
+        /**
+         * The published identity of one statically resolved adapter callee,
+         * or {@code null} for every other binding kind. The op's own current
+         * activation wins (a re-executed adapter publishes its own identity in
+         * the invocation overlay), and the last creation is the fallback that
+         * reaches an adapter whose creating invocation has already returned —
+         * the escaped-closure shape.
+         */
+        private Value staticAdapterValue(FunctionExecutionBinding binding) {
+            if (!(binding instanceof FunctionExecutionBinding.AdapterBinding adapter)) {
+                return null;
+            }
+            UnitState owner = units.get(adapter.adaptOpId().module());
+            SemanticOp adaptOp = owner == null ? null : owner.opsById.get(adapter.adaptOpId());
+            if (adaptOp != null && adaptOp.result() instanceof ValueId id) {
+                Value published = valueOf(id);
+                if (published != null) {
+                    return published;
+                }
+            }
+            return adapterValuesByOp.get(adapter.adaptOpId());
         }
 
         private Value runTaskBodyWithRecordedCell(SemanticOp op,

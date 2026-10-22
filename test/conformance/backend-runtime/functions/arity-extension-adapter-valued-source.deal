@@ -1,5 +1,5 @@
 // @spec: Functions — Function type compatibility; Arity extension adapter
-// @description: A function value whose declared type is a shorter signature adapts at a further statically typed position, whether the source value was itself produced by an arity-extension adapter: the binding, field, array element, argument and return positions each add exactly one adapter over the value's declared signature and the nested invocation protocol forwards only each level's leading parameters.
+// @description: A function value whose declared type is a shorter signature adapts at a further statically typed position, whether the source value was itself produced by an arity-extension adapter: the binding, field, array element, argument and return positions each add exactly one adapter over the value's declared signature and the nested invocation protocol forwards only each level's leading parameters. An adapter over an invocation's parameter cell that the body assigns keeps that cell after the invocation returns, so the escaped adapter and the escaped closure's static adapter callee both read the cell's current value (captured by binding).
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, arrays, closures
 
@@ -36,11 +36,20 @@ function bump(marker: Marker): int {
 }
 
 function widenPair(f: (x: int, y: int) => int): (x: int, y: int, z: int) => int {
-  return f;
+  let widened: (x: int, y: int, z: int) => int = f;
+  f = function(x: int, y: int): int { return x + y; };
+  return widened;
 }
 
 function widenZero(f: () => int): (x: int, y: int) => int {
   return f;
+}
+
+function escapingCall(f: (x: int, y: int) => int): () => int {
+  let widened: (x: int, y: int, z: int) => int = f;
+  f = function(x: int, y: int): int { return x + y; };
+  let call: () => int = function(): int { return widened(7, 8, 9); };
+  return call;
 }
 
 export function main(): null {
@@ -60,7 +69,11 @@ export function main(): null {
 
   // --- a return position ---------------------------------------------------
   let widened: (x: int, y: int, z: int) => int = widenPair(pair);
-  check(widened(7, 8, 9) === 7, "an adapted value adapts at a return position");
+  check(widened(7, 8, 9) === 15,
+    "an adapter over an escaping parameter cell reads the cell's assigned value");
+  let call: () => int = escapingCall(pair);
+  check(call() === 15,
+    "a static adapter callee in an escaped closure reads its captured cell");
 
   // --- an assignment position ---------------------------------------------
   let assigned: (x: int, y: int, z: int) => int = one;

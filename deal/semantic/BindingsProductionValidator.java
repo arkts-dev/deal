@@ -2879,14 +2879,20 @@ public final class BindingsProductionValidator {
      * so an adapted return that is not the source-first {@code RETURN} is
      * still a position consumer.</p>
      *
-     * <p>An adapter result whose every boundary consumer is a typed
-     * boundary of another kind — a host/external return or crossing, a
-     * callback cell, an array/table element read or delete, a JSON field, a
-     * refinement, and every other kind — is invalid IR. After the position's
+     * <p>The rule is closed, not a preference: every direct boundary
+     * consumer of the adapter result must be an admitted position cell of
+     * the kind admitted above. A single consumer of another kind — a
+     * host/external return or crossing, a callback cell, an array/table
+     * element read or delete, a JSON field, a refinement, and every other
+     * kind — makes the unit invalid IR even when one position cell also
+     * agrees, and the class-default publisher admits no boundary consumer
+     * beyond its own {@code CLASS_DEFAULT_FIELD} construction cells (its
+     * declaring unit may legitimately contain none). After the position's
      * own cell the adapter identity is an ordinary function value:
      * loads/reads/passes/returns preserve it, so a later load's boundary of
      * any kind may legitimately name the same identity, and those ordinary
-     * flows are never this rule's concern.</p>
+     * flows are never this rule's concern (the adapter result is no longer
+     * their input).</p>
      */
     private static Optional<CompilerDiagnostic> checkNoAdapterAtBoundary(Model model) {
         for (SemanticOp op : model.unit.ops()) {
@@ -2894,17 +2900,15 @@ public final class BindingsProductionValidator {
                     || !(op.result() instanceof ValueId adapterValue)) {
                 continue;
             }
-            if (classDefaultPublisher(model, adapterValue)) {
-                // The class-default position's own publisher: the
-                // CLASS_DEFAULT op result is the adapted value's published
-                // identity, so the declaring unit's admission never depends
-                // on a construction existing there. A same-unit omission
-                // construction's CLASS_DEFAULT_FIELD cell, a cross-module
-                // construction's shared-factory default and a supplied-only
-                // construction all consume the published value; none of
-                // them is the adapter's only wiring point.
-                continue;
-            }
+            // The class-default position's own publisher: the CLASS_DEFAULT
+            // op result is the adapted value's published identity, so the
+            // declaring unit's admission never depends on a construction
+            // existing there. A same-unit omission construction's
+            // CLASS_DEFAULT_FIELD cell, a cross-module construction's
+            // shared-factory default and a supplied-only construction all
+            // consume the published value; none of them is the adapter's
+            // only wiring point, and no construction is required.
+            boolean classDefault = classDefaultPublisher(model, adapterValue);
             List<SemanticOp> consumers = new ArrayList<>();
             Set<OpId> consumerIds = new LinkedHashSet<>();
             for (SemanticOp candidate : model.unit.ops()) {
@@ -2937,6 +2941,12 @@ public final class BindingsProductionValidator {
             }
             SemanticOp next = model.nextOpInBlock(op);
             if (consumers.isEmpty()) {
+                if (classDefault) {
+                    // The class-default position's own publisher: zero
+                    // boundary consumers is complete (the construction may
+                    // live in another unit, or none may exist).
+                    continue;
+                }
                 if (next != null && next.kind() == SemanticOpKind.BINDING_INIT
                         && next.payload() instanceof KindPayload.BindingInitPayload init
                         && adapterValue.equals(init.value())) {
@@ -2954,23 +2964,39 @@ public final class BindingsProductionValidator {
             for (SemanticOp candidate : consumers) {
                 BoundaryKind kind =
                     ((KindPayload.BoundaryPayload) candidate.payload()).kind();
-                if (ADAPTER_POSITION_BOUNDARIES.contains(kind)
-                        && adapterPositionAdmits(model, candidate, kind)) {
-                    positionCells.add(candidate);
+                boolean admitted = ADAPTER_POSITION_BOUNDARIES.contains(kind)
+                    && adapterPositionAdmits(model, candidate, kind)
+                    && (!classDefault || kind == BoundaryKind.CLASS_DEFAULT_FIELD);
+                if (!admitted) {
+                    return fail(op, model, NO_ADAPTER_AT_BOUNDARY,
+                        "the FUNCTION_ADAPT result " + adapterValue + " of op "
+                        + op.opId() + " is the direct input of " + consumers.size()
+                        + " typed-boundary op(s) and the " + kind + " boundary op "
+                        + candidate.opId() + " is not the adapted position's own "
+                        + (classDefault
+                            ? "cell (a class default's published result wires only its "
+                                + "own CLASS_DEFAULT_FIELD construction cells)"
+                            : "cell (an adapter result is created at a statically typed "
+                                + "function-value position — the variable "
+                                + "declaration/assignment, parameter, return, class "
+                                + "field/default, class field write and array "
+                                + "literal/write cells — and is then the direct input of "
+                                + "that position's own cell only, never of a "
+                                + "host/external crossing, a runtime read, or any other "
+                                + "typed boundary)"));
                 }
+                positionCells.add(candidate);
             }
-            if (positionCells.isEmpty()) {
-                SemanticOp cell = consumers.get(0);
-                BoundaryKind kind = ((KindPayload.BoundaryPayload) cell.payload()).kind();
-                return fail(op, model, NO_ADAPTER_AT_BOUNDARY, "the FUNCTION_ADAPT result "
-                    + adapterValue + " of op " + op.opId() + " is the direct input of "
-                    + consumers.size() + " typed-boundary op(s) only (" + kind
-                    + " among them) and of no adapted position's own cell (an adapter "
-                    + "result is created at a statically typed function-value position — "
-                    + "the variable declaration/assignment, parameter, return, class "
-                    + "field/default, class field write and array literal/write cells — "
-                    + "never at a host/external crossing, a runtime read, or any other "
-                    + "typed boundary)");
+            if (classDefault) {
+                // Every consumer is one of the class-default position's own
+                // construction cells: their published-default agreement is
+                // the position's consumer check.
+                Optional<CompilerDiagnostic> agreement =
+                    checkAdapterPositionAgreement(model, op, adapterValue, positionCells);
+                if (agreement.isPresent()) {
+                    return agreement;
+                }
+                continue;
             }
             Optional<CompilerDiagnostic> failure =
                 checkAdapterVariableChain(model, op, adapterValue, next);
@@ -2992,7 +3018,9 @@ public final class BindingsProductionValidator {
      * owned by the declaring unit's declaration walk, so a class whose
      * function-valued default adapts needs no construction in that unit
      * (a same-unit omission, a cross-module construction and a
-     * supplied-only construction consume the published result).
+     * supplied-only construction consume the published result). Its closed
+     * consumer set is that publisher's own boundary consumers: none, or the
+     * unit's {@code CLASS_DEFAULT_FIELD} construction cells.
      */
     private static boolean classDefaultPublisher(Model model, ValueId adapterValue) {
         for (SemanticOp candidate : model.unit.ops()) {
