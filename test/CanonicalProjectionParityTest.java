@@ -525,6 +525,18 @@ public class CanonicalProjectionParityTest {
         // with fresh bindings, break and continue intact; a cleared binding
         // raises its own catchable E8001 with zero body visits.
         mainEntry("types/narrowed-capture-for-of-controls"),
+        // The narrowed string iterable admission controls (ISSUE-0886): the
+        // iterable's current value is admitted once before the loop setup, so
+        // a cleared local or parameter raises the canonical catchable E8001
+        // (code and message) with zero body visits, while a valid refinement
+        // keeps the once-admitted value under a later closure replacement or
+        // body clear, an empty string visits nothing, astral and combining
+        // scalars iterate one scalar per visit, every iteration captures its
+        // own fresh binding, break and continue still target the loop, and an
+        // awaited resumption inside the body continues the scalar traversal
+        // (the async probe runs through the corpus gate on all three
+        // backends).
+        mainEntry("types/narrowed-capture-for-of-string-controls"),
         // The index-position controls: the refined receiver/key flows
         // through array, table and bytes reads and writes unchanged, and a
         // cleared binding raises its own catchable E8001 at each position.

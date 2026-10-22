@@ -1022,11 +1022,18 @@ public class ControlFlowLoweringTest {
             (KindPayload.ForEachPayload) forEach.payload();
         check(payload.mode() == mode, label + ": the mode is " + mode);
         SemanticOp admission = null;
+        List<SemanticOp> admissions = new ArrayList<>();
         for (SemanticOp op : ofKind(ops, SemanticOpKind.BOUNDARY)) {
             if (op.payload() instanceof KindPayload.BoundaryPayload boundary
                     && boundary.kind() == BoundaryKind.NARROWED_READ) {
-                admission = op;
+                admissions.add(op);
             }
+        }
+        check(admissions.size() == 1,
+            label + ": the iterable carries exactly one NARROWED_READ admission; got "
+                + admissions.size());
+        if (admissions.size() == 1) {
+            admission = admissions.get(0);
         }
         check(admission != null,
             label + ": the iterable carries one NARROWED_READ admission");
@@ -1043,10 +1050,17 @@ public class ControlFlowLoweringTest {
         check(admission.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
             label + ": the admission carries the TYPE_DESCRIPTOR policy");
         SemanticOp load = null;
+        List<SemanticOp> loads = new ArrayList<>();
         for (SemanticOp op : ofKind(ops, SemanticOpKind.BINDING_LOAD)) {
             if (op.result().equals(boundary.input())) {
-                load = op;
+                loads.add(op);
             }
+        }
+        check(loads.size() == 1,
+            label + ": the iterable's binding read completes exactly once; got "
+                + loads.size());
+        if (loads.size() == 1) {
+            load = loads.get(0);
         }
         check(load != null,
             label + ": the admission input is the iterable's binding read");
