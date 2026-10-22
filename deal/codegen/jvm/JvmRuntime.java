@@ -548,6 +548,47 @@ public final class JvmRuntime {
         return published;
     }
 
+    /**
+     * The failure the THROW of a constructed Error value publishes. The
+     * value carries no transport yet: the failure is synthesized at the
+     * THROW site's own origin with no expected/actual and no cause
+     * (absent fields stay absent) and the active frames, and the value
+     * adopts it. Binding the pair here keeps the spec's
+     * reference-identical class instance: the catch binding is the value
+     * the program threw (so {@code caught === original} and every alias
+     * mutation is visible through all of them), and the value's
+     * conditional-transport field carries the origin/expected/actual/
+     * frames/cause a rethrow must preserve.
+     */
+    public static DealError raise(ErrorValue value, String origin) {
+        DealError published = new DealError(value.code, value.message, origin,
+            null, null, framesText(), null);
+        published.reified = value;
+        value.transport = published;
+        return published;
+    }
+
+    /**
+     * The replacement failure a catch block publishes when a genuinely new
+     * failure is raised while it handles the caught one: the same failure
+     * facts, the caught failure linked as the cause, and — when the new
+     * failure reifies a carried Error value (the constructed Error thrown
+     * inside the handler) — that very value's identity adopted, so the
+     * enclosing catch binds the identical Error instance and a later
+     * rethrow keeps the linked cause. A failure with no carried identity
+     * (a runtime check) wraps exactly as before.
+     */
+    public static DealError wrap(DealError previous, DealError cause) {
+        DealError wrapped = new DealError(previous.code, previous.msg,
+            previous.origin, previous.expected, previous.actual,
+            previous.frames, cause);
+        wrapped.reified = previous.reified;
+        if (wrapped.reified != null) {
+            wrapped.reified.transport = wrapped;
+        }
+        return wrapped;
+    }
+
     private static boolean sameText(String left, String right) {
         return left == null ? right == null : left.equals(right);
     }

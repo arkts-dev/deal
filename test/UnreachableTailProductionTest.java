@@ -632,10 +632,21 @@ public class UnreachableTailProductionTest {
                         if (occurrences != 1) {
                             continue;
                         }
-                        check(lines.get(originLine).contains(
-                                "new JvmRuntime.DealError("),
+                        // The failure construction of the terminator: a
+                        // constructed Error's THROW binds its synthesized
+                        // failure to the thrown Error value itself
+                        // (JvmRuntime.raise, so the catch binding keeps the
+                        // spec's reference identity), while a RETURN tail
+                        // boundary re-projects its failure by constructing the
+                        // DealError directly. Either way the origin literal
+                        // sits on the construction statement that immediately
+                        // precedes the transfer.
+                        String construction = lines.get(originLine);
+                        check(construction.contains("JvmRuntime.raise(")
+                                || construction.contains(
+                                    "new JvmRuntime.DealError("),
                             stem + " [jvm]: the terminator origin line is the THROW "
-                                + "arm's DealError construction");
+                                + "arm's failure construction");
                         int after = originLine + 1;
                         while (after < lines.size() && (lines.get(after).isBlank()
                                 || lines.get(after).trim().equals("}"))) {

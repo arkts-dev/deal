@@ -1,0 +1,151 @@
+// @spec: Error handling — throw, catch, Error values
+// @description: An Error class instance keeps its reference identity and its alias-visible fields from its first throw on: the catch binds the identical instance (two aliases agree), a field write through either alias is visible through the other, a rethrow, a handler's replacement caught by the enclosing catch, a returned/parameter-crossed Error and an awaited error all keep that one instance. The entry terminal runs every synchronous postcondition and prints one marker per group, so a lane that never executes a group cannot match the pinned transcript.
+// @expected: runtime-ok
+// @features: error-handling, throw, catch, classes, async
+
+import * as console from "std/console";
+
+// A parameter crossing and a return crossing of one Error value: the
+// callee mutates the received instance and returns the identical one.
+function mutateReturned(e: Error): Error {
+  e.message = "returned";
+  return e;
+}
+
+// The first throw happens inside the callee, the rethrow in its handler.
+function rethrowCaught(e: Error): int {
+  try {
+    throw e;
+  } catch (caught) {
+    throw caught;
+  }
+  return 0;
+}
+
+function assertFirstThrowIdentity(): null {
+  let original: Error = { code: "X", message: "x" };
+  let alias: Error = original;
+  let caughtOnce: boolean = false;
+  try {
+    throw original;
+  } catch (e) {
+    caughtOnce = true;
+    if (e !== original || e !== alias) {
+      throw { code: "TEST_FAIL", message: "the first throw lost the Error identity" };
+    }
+    e.message = "changed";
+    if (original.message !== "changed" || alias.message !== "changed") {
+      throw { code: "TEST_FAIL", message: "the caught Error is not the alias-visible instance" };
+    }
+  }
+  if (!caughtOnce) {
+    throw { code: "TEST_FAIL", message: "the first throw did not reach its catch" };
+  }
+  if (original.message !== "changed" || alias.message !== "changed") {
+    throw { code: "TEST_FAIL", message: "the alias field write is not visible after the catch" };
+  }
+  return null;
+}
+
+function assertRethrowIdentity(): null {
+  let original: Error = { code: "R", message: "r" };
+  let caughtAgain: boolean = false;
+  try {
+    let x: int = rethrowCaught(original);
+  } catch (again) {
+    caughtAgain = true;
+    if (again !== original) {
+      throw { code: "TEST_FAIL", message: "the rethrow lost the Error identity" };
+    }
+    if (again.message !== "r") {
+      throw { code: "TEST_FAIL", message: "the rethrown Error lost its message" };
+    }
+  }
+  if (!caughtAgain) {
+    throw { code: "TEST_FAIL", message: "the rethrown Error did not reach its catch" };
+  }
+  return null;
+}
+
+function assertNestedCatchIdentity(): null {
+  let outer: Error = { code: "OUTER", message: "outer" };
+  let handled: boolean = false;
+  try {
+    try {
+      throw { code: "INNER", message: "inner" };
+    } catch (inner) {
+      if (inner.code !== "INNER") {
+        throw { code: "TEST_FAIL", message: "the handled Error lost its code" };
+      }
+      throw outer;
+    }
+  } catch (o) {
+    handled = true;
+    if (o !== outer) {
+      throw { code: "TEST_FAIL", message: "the handler's replacement lost the Error identity" };
+    }
+    o.code = "OUTER2";
+  }
+  if (!handled) {
+    throw { code: "TEST_FAIL", message: "the handler's replacement did not reach the enclosing catch" };
+  }
+  if (outer.code !== "OUTER2") {
+    throw { code: "TEST_FAIL", message: "the enclosing catch did not bind the thrown instance" };
+  }
+  return null;
+}
+
+function assertErrorCrossingIdentity(): null {
+  let original: Error = { code: "P", message: "p" };
+  let returned: Error = mutateReturned(original);
+  if (returned !== original) {
+    throw { code: "TEST_FAIL", message: "the returned Error is not the passed instance" };
+  }
+  if (original.message !== "returned") {
+    throw { code: "TEST_FAIL", message: "the callee's field write is not visible through the caller's alias" };
+  }
+  return null;
+}
+
+// The awaited propagation: the error an awaited operation raises is the
+// same instance the async body threw, so the awaiting catch binds it and
+// its field write is visible through both aliases. Driven as the
+// fixture's declared zero-arity assertion export on every lane.
+export async function test_awaited_error_identity(): string {
+  let original: Error = { code: "A", message: "a" };
+  let alias: Error = original;
+
+  async function asyncThrow(): int {
+    throw original;
+  }
+
+  let caught: boolean = false;
+  try {
+    let x: int = await asyncThrow();
+  } catch (e) {
+    caught = true;
+    if (e !== original || e !== alias) {
+      throw { code: "TEST_FAIL", message: "the awaited error lost the Error identity" };
+    }
+    e.code = "A2";
+    if (original.code !== "A2" || alias.code !== "A2") {
+      throw { code: "TEST_FAIL", message: "the awaited error is not the alias-visible instance" };
+    }
+  }
+  if (!caught) {
+    throw { code: "TEST_FAIL", message: "the awaited error did not reach its catch" };
+  }
+  return "awaited";
+}
+
+export function main(): null {
+  assertFirstThrowIdentity();
+  console.log("OK|first-throw");
+  assertRethrowIdentity();
+  console.log("OK|rethrow");
+  assertNestedCatchIdentity();
+  console.log("OK|nested-catch");
+  assertErrorCrossingIdentity();
+  console.log("OK|crossing");
+  return null;
+}

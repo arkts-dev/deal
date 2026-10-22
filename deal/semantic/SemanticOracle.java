@@ -749,14 +749,17 @@ public final class SemanticOracle {
             private String message;
             /**
              * The failure this Error value reifies, or {@code null} for a
-             * constructed Error (the builtin Error class literal). The
-             * transport travels with the value: a rethrow of a caught
-             * error preserves its origin, expected/actual, frames and
-             * cause — never a synthesized replacement — and one failure
-             * reifies to exactly one value identity, so a rethrown error
-             * caught again is the identical Error value.
+             * constructed Error (the builtin Error class literal) that was
+             * never thrown. The transport travels with the value: the THROW
+             * of a constructed Error binds the synthesized failure to this
+             * very value, so the catch binding is the identical instance
+             * the program threw ({@code caught === original}), a rethrow
+             * preserves origin, expected/actual, frames and cause — never a
+             * synthesized replacement — and one failure reifies to exactly
+             * one value identity, so a rethrown error caught again is the
+             * identical Error value.
              */
-            private final DealFailure transport;
+            private DealFailure transport;
 
             ErrorValue(String code, String message) {
                 this(code, message, null);
@@ -787,6 +790,18 @@ public final class SemanticOracle {
             /** The caught failure this value reifies, or {@code null}. */
             DealFailure transport() {
                 return transport;
+            }
+
+            /**
+             * Binds the failure this value carries. The THROW of a
+             * constructed Error and the identity-adopting catch wrapper are
+             * the only writers: the value keeps the spec's
+             * reference-identical class identity across throw, catch and
+             * rethrow, and the bound failure carries the diagnostic
+             * projection (origin, expected/actual, frames, cause).
+             */
+            void bindTransport(DealFailure failure) {
+                this.transport = failure;
             }
 
             /** Commits one checked field write in place (K13's field surface). */
@@ -2233,6 +2248,16 @@ public final class SemanticOracle {
                     // exactly as both production artifacts compare the
                     // carrier objects (REFERENCE_EQ).
                     new ComparisonOperandView.Ref(refIdentity(classValue));
+                case Value.ErrorValue errorValue ->
+                    // The builtin Error is a class (spec "Error type"): its
+                    // values compare by reference identity like every other
+                    // class instance, so a thrown Error caught by its own
+                    // catch compares equal to the thrown alias and two
+                    // distinct constructed errors compare unequal — exactly
+                    // the carrier-object comparison both production
+                    // artifacts execute (REFERENCE_EQ over the one thrown
+                    // instance).
+                    new ComparisonOperandView.Ref(refIdentity(errorValue));
                 case Value.AdapterValue adapter ->
                     // An adapter is a function value with reference identity.
                     new ComparisonOperandView.Ref(refIdentity(adapter));
@@ -6834,10 +6859,20 @@ public final class SemanticOracle {
                     throw replacement;
                 }
                 // A replacement failure raised while handling the caught
-                // one links the caught failure as its cause.
-                throw new DealFailure(replacement.code, replacement.message,
-                    replacement.origin, replacement.expected, replacement.actual,
-                    caught, replacement.frames);
+                // one links the caught failure as its cause — and, when the
+                // replacement carries an Error value's own identity (the
+                // constructed Error thrown inside the handler), adopts that
+                // identity, so the enclosing catch binds the identical
+                // instance the program threw and a later rethrow keeps the
+                // linked cause.
+                DealFailure wrapped = new DealFailure(replacement.code,
+                    replacement.message, replacement.origin, replacement.expected,
+                    replacement.actual, caught, replacement.frames);
+                wrapped.reified = replacement.reified;
+                if (wrapped.reified != null) {
+                    wrapped.reified.bindTransport(wrapped);
+                }
+                throw wrapped;
             }
             return null;
         }
@@ -6865,9 +6900,16 @@ public final class SemanticOracle {
             }
             // A constructed Error carries no origin: the failure is
             // synthesized at the THROW origin with no expected/actual and no
-            // cause (absent fields stay absent), frames active.
-            throw new DealFailure(error.code(), error.message(), op.origin(), null, null,
-                null, List.copyOf(frames));
+            // cause (absent fields stay absent), frames active — and it is
+            // bound to the identical Error value, so the catch binding is
+            // the instance the program threw (caught === original, every
+            // alias mutation visible through all of them) and a rethrow
+            // keeps the synthesized origin/expected/actual/frames/cause.
+            DealFailure published = new DealFailure(error.code(), error.message(),
+                op.origin(), null, null, null, List.copyOf(frames));
+            published.reified = error;
+            error.bindTransport(published);
+            throw published;
         }
 
         private String executeReturn(SemanticOp op) {

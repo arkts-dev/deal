@@ -5857,17 +5857,19 @@ public final class JvmSemanticEmitter {
                 // A transported rethrow propagates unchanged (identity
                 // preserved, no invented cause); a genuinely new failure
                 // raised while handling the caught one links the caught
-                // failure as its cause.
+                // failure as its cause, and — when that new failure carries
+                // an Error value's own identity (the constructed Error
+                // thrown inside the handler) — adopts that identity, so the
+                // enclosing catch binds the identical Error instance the
+                // program threw instead of a replacement.
                 out.append(indent(indent)).append("      if (__cerr.transported) {\n");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "JvmRuntime.errtext(__cerr)", indent + 4);
                 out.append(indent(indent)).append("        throw __cerr;\n");
                 out.append(indent(indent)).append("      }\n");
                 out.append(indent(indent))
-                    .append("      JvmRuntime.DealError __wrapped = new "
-                        + "JvmRuntime.DealError(__cerr.code, __cerr.msg, "
-                        + "__cerr.origin, __cerr.expected, __cerr.actual, "
-                        + "__cerr.frames, " + caught + ");\n");
+                    .append("      JvmRuntime.DealError __wrapped = "
+                        + "JvmRuntime.wrap(__cerr, " + caught + ");\n");
                 emitFailureEvent(op.opId(), op.kind().name(), op,
                     "JvmRuntime.errtext(__wrapped)", indent + 3);
                 out.append(indent(indent)).append("      throw __wrapped;\n");
@@ -6054,7 +6056,9 @@ public final class JvmSemanticEmitter {
             // survives. A constructed Error carries no transport: the
             // failure is synthesized at the THROW origin with no
             // expected/actual and no cause (absent fields stay absent),
-            // frames active.
+            // frames active, and it binds to the identical Error value
+            // (JvmRuntime.raise) so the catch binding and every alias are
+            // the one instance the program threw.
             out.append(indent(indent)).append("JvmRuntime.ErrorValue __tv")
                 .append(id).append(" = (JvmRuntime.ErrorValue) ").append(value)
                 .append(";\n");
@@ -6066,10 +6070,8 @@ public final class JvmSemanticEmitter {
                 .append(" = JvmRuntime.rethrow(__tv").append(id).append(");\n");
             out.append(indent(indent)).append("} else {\n");
             out.append(indent(indent)).append("  __thrown").append(id)
-                .append(" = new JvmRuntime.DealError(__tv").append(id)
-                .append(".code, __tv").append(id).append(".message, ")
-                .append(javaString(originOf(op)))
-                .append(", null, null, JvmRuntime.framesText(), null);\n");
+                .append(" = JvmRuntime.raise(__tv").append(id).append(", ")
+                .append(javaString(originOf(op))).append(");\n");
             out.append(indent(indent)).append("}\n");
             emitFailureEvent(op.opId(), op.kind().name(), op,
                 "JvmRuntime.errtext(__thrown" + id + ")", indent);
