@@ -1593,10 +1593,6 @@ A backend must preserve these source-level rules:
 
 Backend strategies are not source-language observable.
 
-A LuaJIT backend may implement async lowering with internal coroutines, continuation-passing style, or explicit state-machine tables.
-
-A JVM backend may implement async lowering with virtual threads, blocking calls, futures, or explicit state machines.
-
 All async function completion values cross the typed boundary defined in the backend conformance contract.
 
 ---
@@ -1685,18 +1681,9 @@ For import specifier `S` from source file `A`:
  - `S/index.deal`
  - `S.d.deal`
  - `S/index.d.deal`
-4. Candidate runtime modules, in order:
- - emitted path for `S.deal`
- - host `require(S)`
-5. Resolution failure is compile-time error unless the module is explicitly marked external.
+4. Resolution failure is compile-time error unless the module is explicitly marked external.
 
-`require` is compiler/runtime-only and is not source-visible. Source code must use `import`.
-
-The backend converts `./a/b` to a `require` path according to the configured module root. The default maps path separators to dots and strips `.deal`:
-
-```txt
-./math/vector.deal -> require("math.vector")
-```
+Loading and linking are backend-defined and not source-visible; use `import`.
 
 ### Module initialization and cycles
 
@@ -1960,7 +1947,7 @@ Backend globals and APIs are unavailable to source code unless exposed through a
 
 #### Value mapping
 
-Value mapping is backend-specific. See [LuaJIT value mapping](#luajit-value-mapping) and [JVM value mapping](#jvm-value-mapping) for per-backend representations.
+See [Backend contracts](#backend-contracts) for backend-specific representations.
 
 #### Boundary checks
 
@@ -1982,33 +1969,7 @@ A compiler targeting a backend without C FFI support rejects `// @extern-c` with
 
 #### Function ABI decision
 
-Function values are **wrappers**. The backend always emits explicit `.f(...)` calls; it does not hide wrappers behind metatable `__call`.
-
-```lua
-{ __kind = "function", sig = "(int,int)->int", f = function(...) ... end }
-```
-
-```ts
-let x: int = add(1, 2);
-```
-
-Emitted:
-
-```lua
-local x = __rt.check_int(add.f(1, 2))
-```
-
-When passing a DEAL function to host code, use an adapter exported by the runtime:
-
-```lua
-__rt.as_lua_function(add) -- returns plain host function that delegates to add.f
-```
-
-When accepting a host function as a typed function, the runtime creates a checked wrapper:
-
-```lua
-__rt.from_lua_function("(int)->int", raw_f)
-```
+Function representation and invocation are backend-defined, preserving signature checks and identity.
 
 ### Host error and debugging
 
@@ -2031,20 +1992,13 @@ cause (if applicable)
 - The backend emits source comments before generated statement groups.
 - Compiler emits source map sidecars mapping generated positions to original `.deal` files, lines and columns across modules.
 - Runtime errors report original `.deal` locations: one-based lines and Unicode-scalar columns; tabs count one column; CRLF counts one line break.
-- Stack traces include both generated function names and original source function names.
-
----
+- Stack traces include generated and original function names.
 
 ---
 
 ## Runtime execution model
 
 ### Runtime sentinels
-
-```lua
-local __NULL = {} -- JSON null
-local __MISSING = {} -- missing optional field
-```
 
 | Semantic value | Runtime role |
 |---|---|
@@ -2106,78 +2060,6 @@ Typed boundaries are exactly:
 - external declaration function parameter and return
 - `@jsonable` `fromJson` field validation
 - `@jsonable` `toJson` field serialization input validation
-
-#### Backend representation
-
-The following sections define required value mappings for supported backends. These mappings are representation contracts, not additional source-language semantics.
-
-When a backend mapping conflicts with the source-language semantics or the backend conformance contract, the source-language semantics and backend conformance contract are authoritative.
-
-### LuaJIT value mapping
-
-| Type | LuaJIT representation |
-|---|---|
-| `null` | unique sentinel `__NULL` |
-| missing optional field | absent key or `__MISSING` internally |
-| `boolean` | Lua boolean |
-| `int` | checked Lua number in `[-2147483648, 2147483647]` |
-| `number` | Lua number |
-| `string` | Lua string containing valid UTF-8 |
-| `bytes` | backend byte buffer object or LuaJIT `uint8_t[]` wrapper |
-| `table` | Lua table |
-| `ClassName` | Lua table tagged with class symbol |
-| `T[]` | Lua table with 1-based contiguous storage |
-| `T | null` | either representation of `T` or `__NULL` |
-| `(params) => R` | wrapper table `{ __kind = "function", sig, f }` |
-| module type | Lua export table |
-
-### JVM value mapping
-
-| Type | JVM representation |
-|---|---|
-| `null` | Java `null` reference |
-| missing optional field | per-field presence bit or `Missing` sentinel |
-| `boolean` | primitive `boolean` |
-| `int` | primitive `int` |
-| `number` | primitive `double` |
-| `string` | `java.lang.String` with no unpaired surrogate code units |
-| `bytes` | `byte[]`, `ByteBuffer`, or runtime-owned byte buffer wrapper |
-| `table` | `TTable` runtime object, e.g. ordered map |
-| `ClassName` | generated record class or `TClassObject` runtime shape |
-| `T[]` | `TArray<T>` runtime object or specialized primitive array |
-| `T | null` | nullable JVM reference or tagged nullable wrapper for primitives |
-| `(params) => R` | generated function wrapper with descriptor |
-| module type | generated module object/export map |
-
-### JVM backend contract
-
-A conforming JVM backend emits Java source, JVM bytecode, or an interpreter over checked DEAL IR.
-
-The JVM backend must preserve the backend conformance contract.
-
-The JVM backend may use JVM primitive types, final classes, verifier-checked bytecode, method signatures, and JIT optimization to prove typed-boundary checks redundant.
-
-Recommended JVM representation:
-
-| DEAL type | JVM representation |
-|---|---|
-| `boolean` | `boolean` where statically known; boxed `Boolean` at dynamic boundaries |
-| `int` | `int` where statically known; boxed `Integer` at dynamic boundaries |
-| `number` | `double` where statically known; boxed `Double` at dynamic boundaries |
-| `string` | non-null `java.lang.String` with no unpaired surrogate code units |
-| `null` | `DealNull.INSTANCE` at dynamic boundaries; Java `null` only where representation is statically nullable |
-| required class field `T` | Java field of representation of `T` |
-| required nullable field `T | null` | nullable representation or tagged wrapper |
-| optional field `p?: T` | presence bit plus field storage |
-| optional nullable field `p?: T | null` | presence bit plus nullable storage |
-| `table` | `DealTable` |
-| `bytes` | runtime-owned byte buffer wrapper over `byte[]` or `ByteBuffer` |
-| `T[]` | `DealArray<T>` or specialized primitive array wrapper |
-| `(…) => R` | `DealFunction` wrapper with runtime descriptor |
-| `async (…) => R` | `DealAsyncFunction` wrapper with runtime descriptor |
-| module type | generated module class or export object |
-
-The JVM backend must not expose Java `null` as DEAL `null` across untyped boundaries without validation.
 
 ### Runtime type descriptor format
 
@@ -2243,9 +2125,62 @@ Equality semantics for `===`:
 - Arrays, bytes, tables, classes, and functions compare by reference identity.
 - Values of different static types cannot be compared, except `T | null` vs `null`.
 
-### Runtime library
+### Class runtime
+
+The runtime:
+1. Uses evaluated provided fields; evaluates omitted required defaults per construction, in declaration order.
+2. Freshly deep-constructs mutable literal defaults.
+3. Rejects extra fields and validates present fields.
+4. Tags and returns the instance only after success. Failure retains earlier effects.
+
+Optional field reads convert absence to `null`; `has(obj.field)` distinguishes absence from explicit `null`.
+
+## Backend contracts
+
+The following sections define required value mappings for supported backends. These mappings are representation contracts, not additional source-language semantics.
+
+When a backend mapping conflicts with the source-language semantics or the backend conformance contract, the source-language semantics and backend conformance contract are authoritative.
+
+### LuaJIT backend contract
+
+#### LuaJIT value mapping
+
+| Type | LuaJIT representation |
+|---|---|
+| `null` | unique sentinel `__NULL` |
+| missing optional field | absent key or `__MISSING` internally |
+| `boolean` | Lua boolean |
+| `int` | checked Lua number in `[-2147483648, 2147483647]` |
+| `number` | Lua number |
+| `string` | Lua string containing valid UTF-8 |
+| `bytes` | backend byte buffer object or LuaJIT `uint8_t[]` wrapper |
+| `table` | Lua table |
+| `ClassName` | Lua table tagged with class symbol |
+| `T[]` | Lua table with 1-based contiguous storage |
+| `T | null` | either representation of `T` or `__NULL` |
+| `(params) => R` | wrapper table `{ __kind = "function", sig, f }` |
+| module type | Lua export table |
+
+#### Module loading
+
+Runtime candidates: emitted path for `S.deal`, then host `require(S)`. Default conversion under the configured module root replaces separators with dots and strips `.deal`: `./math/vector.deal` becomes `require("math.vector")`.
+
+#### Function ABI
+
+Function values are wrappers with explicit `.f(...)` calls, never metatable `__call`. Runtime adapters `as_lua_function` and `from_lua_function` expose DEAL functions to hosts and wrap incoming host functions with signature checks, respectively.
+
+#### Async lowering
+
+A LuaJIT backend may implement async lowering with internal coroutines, continuation-passing style, or explicit state-machine tables.
+
+#### Runtime library
 
 Generated into every module or available as a shared runtime module:
+
+```lua
+local __NULL = {} -- JSON null
+local __MISSING = {} -- missing optional field
+```
 
 ```lua
 local __rt = require("deal.runtime")
@@ -2351,7 +2286,7 @@ function __rt.function_(sig, f)
 end
 ```
 
-### Function wrapper
+#### Function wrapper
 
 Every declared function is wrapped so that argument and return checks are inlined:
 
@@ -2366,7 +2301,7 @@ end)
 local result = __rt.check_int(add.f(1, 2))
 ```
 
-### Arity extension adapter
+#### Arity extension adapter
 
 When a shorter function is assigned to a longer target signature, the compiler emits an adapter:
 
@@ -2378,7 +2313,7 @@ __rt.function_("(int,int)->int", function(x, y)
 end)
 ```
 
-### Class runtime
+#### Class representation
 
 ```lua
 __rt.class_("User",
@@ -2387,13 +2322,59 @@ __rt.class_("User",
 )
 ```
 
-The runtime:
-1. Uses evaluated provided fields; evaluates omitted required defaults per construction, in declaration order.
-2. Freshly deep-constructs mutable literal defaults.
-3. Rejects extra fields and validates present fields.
-4. Tags and returns the instance only after success. Failure retains earlier effects.
-
 Optional fields not provided are represented internally via key absence (`nil`) or side-table metadata. Direct source-level field reads translate missing to `__NULL`; `has(obj.field)` distinguishes missing from explicit `null`.
+
+### JVM backend contract
+
+#### JVM value mapping
+
+| Type | JVM representation |
+|---|---|
+| `null` | Java `null` reference |
+| missing optional field | per-field presence bit or `Missing` sentinel |
+| `boolean` | primitive `boolean` |
+| `int` | primitive `int` |
+| `number` | primitive `double` |
+| `string` | `java.lang.String` with no unpaired surrogate code units |
+| `bytes` | `byte[]`, `ByteBuffer`, or runtime-owned byte buffer wrapper |
+| `table` | `TTable` runtime object, e.g. ordered map |
+| `ClassName` | generated record class or `TClassObject` runtime shape |
+| `T[]` | `TArray<T>` runtime object or specialized primitive array |
+| `T | null` | nullable JVM reference or tagged nullable wrapper for primitives |
+| `(params) => R` | generated function wrapper with descriptor |
+| module type | generated module object/export map |
+
+#### JVM implementation
+
+A conforming JVM backend emits Java source, JVM bytecode, or an interpreter over checked DEAL IR.
+
+The JVM backend must preserve the backend conformance contract.
+
+The JVM backend may use JVM primitive types, final classes, verifier-checked bytecode, method signatures, and JIT optimization to prove typed-boundary checks redundant.
+
+Recommended JVM representation:
+
+| DEAL type | JVM representation |
+|---|---|
+| `boolean` | `boolean` where statically known; boxed `Boolean` at dynamic boundaries |
+| `int` | `int` where statically known; boxed `Integer` at dynamic boundaries |
+| `number` | `double` where statically known; boxed `Double` at dynamic boundaries |
+| `string` | non-null `java.lang.String` with no unpaired surrogate code units |
+| `null` | `DealNull.INSTANCE` at dynamic boundaries; Java `null` only where representation is statically nullable |
+| required class field `T` | Java field of representation of `T` |
+| required nullable field `T | null` | nullable representation or tagged wrapper |
+| optional field `p?: T` | presence bit plus field storage |
+| optional nullable field `p?: T | null` | presence bit plus nullable storage |
+| `table` | `DealTable` |
+| `bytes` | runtime-owned byte buffer wrapper over `byte[]` or `ByteBuffer` |
+| `T[]` | `DealArray<T>` or specialized primitive array wrapper |
+| `(…) => R` | `DealFunction` wrapper with runtime descriptor |
+| `async (…) => R` | `DealAsyncFunction` wrapper with runtime descriptor |
+| module type | generated module class or export object |
+
+The JVM backend must not expose Java `null` as DEAL `null` across untyped boundaries without validation.
+
+A JVM backend may implement async lowering with virtual threads, blocking calls, futures, or explicit state machines.
 
 ---
 
