@@ -1,6 +1,6 @@
 # DEAL — Language Specification v1.4
 
-DEAL (Directly Embeddable Agentic Language) is a statically, fully invariant typed language with TypeScript syntax and runtime-enforced types. The primary target is safe, embeddable AI scripting with explicit interoperability boundaries. This document defines the feature set, type system, and runtime execution model.
+DEAL (Directly Embeddable Agentic Language) is a statically typed language with TypeScript syntax and runtime-enforced types. The primary target is safe, embeddable AI scripting with explicit interoperability boundaries. This document defines the feature set, type system, and runtime execution model.
 
 Features not described in this specification do not exist in the language.
 
@@ -13,7 +13,7 @@ Features not described in this specification do not exist in the language.
   - Compiler-generated identifiers may contain `$`.
   - Generated identifiers are source-visible only when this specification defines them, such as `C$fromJson` and `C$toJson`.
   - A user declaration, import alias, parameter, field, or local variable containing `$` is a compile-time error.
-- Keywords: `let`, `class`, `function`, `async`, `await`, `return`, `if`, `else`, `while`, `for`, `break`, `continue`, `null`, `true`, `false`, `import`, `export`, `from`, `delete`, `has`, `try`, `catch`, `throw`, `of`
+- Keywords are defined by `Keyword` in the [lexical grammar](#lexical-grammar-normative).
   - `async` and `await` are keywords. They cannot be used as identifiers, type names, field names, import aliases, or parameter names.
   - `async` is a function/type marker and does not participate in name resolution.
   - `await` is expression syntax and does not participate in name resolution.
@@ -99,7 +99,7 @@ Token ::= Keyword | Identifier | Literal | Operator | Punctuator
 Keyword ::= 'let' | 'class' | 'function' | 'async' | 'await' | 'return' | 'if' | 'else'
           | 'while' | 'for' | 'break' | 'continue'
  | 'null' | 'true' | 'false'
-          | 'import' | 'export' | 'from' | 'delete' | 'has'
+          | 'import' | 'export' | 'from' | 'as' | 'delete' | 'has'
           | 'try' | 'catch' | 'throw' | 'of'
 
 Identifier ::= [a-zA-Z_$] [a-zA-Z0-9_$]*
@@ -167,7 +167,7 @@ ClassField ::= Identifier '?'? ':' Type ';'
 
 FunctionDeclaration ::= 'async'? 'function' Identifier '(' ParameterList? ')' ':' Type Block
 
-ExternalFunctionDeclaration ::= 'function' Identifier '(' ParameterList? ')' ':' Type ';' /* declaration files only */
+ExternalFunctionDeclaration ::= 'async'? 'function' Identifier '(' ParameterList? ')' ':' Type ';' /* declaration files only */
 
 ParameterList ::= Parameter (',' Parameter)*
 
@@ -300,7 +300,7 @@ LeftHandSideExpression ::= Identifier
 
 ### Semicolon rules
 
-Every statement ends with a semicolon `;`.
+Semicolons are required only where shown in the grammar.
 
 ### Statement/expression separation
 
@@ -317,7 +317,7 @@ Semantics:
 - A `while` loop evaluates the condition before each iteration.
 - `break` exits the nearest enclosing loop.
 - `continue` proceeds to the next iteration of the nearest enclosing loop.
-- `return` in function body immediately transfers control to the caller. `return` with no expression is valid only for `null` return type.
+- `return` in function body immediately transfers control to the caller. `return` with no expression is valid only for `null` return type and returns language `null`.
 
 ### Assignment targets
 
@@ -503,11 +503,9 @@ async function use(x: string | null): null {
 }
 ```
 
-### Invariance
+### Type compatibility
 
-All type constructors are invariant.
-
-Function types follow [Function type compatibility](#function-type-compatibility).
+Types must match exactly unless an explicit compatibility rule permits otherwise.
 
 ### Equality and comparison operand rules
 
@@ -585,7 +583,8 @@ let x: T_target = expr;
 2. If `T_expr` equals `T_target` exactly → OK
 3. If `T_target` is `Nullable<T>` and `T_expr` equals `T` → OK
 4. If `T_target` is `Nullable<T>` and `T_expr` equals `null` → OK
-5. Otherwise → compile-time Error
+5. If both are function types satisfying [Function type compatibility](#function-type-compatibility) → OK
+6. Otherwise → compile-time Error
 
 ---
 
@@ -638,9 +637,7 @@ export class User {
 - `table`
 - `T[]` where `T` is jsonable
 - `T | null` where `T` is jsonable
-- class type `C` only if `C` has generated or declared JSON functions visible to the compiler
-
-Jsonable types follow the list above; classes require visible `C$fromJson` and `C$toJson` functions.
+- class type `C` with visible generated or declared `C$fromJson` and `C$toJson` of the signatures below
 
 Non-jsonable fields produce compile-time errors at their declarations.
 
@@ -655,15 +652,15 @@ C$fromJson(s: string): C | null
 C$toJson(v: C): string
 ```
 
-**fromJson.** Parses an object; rejects extra keys and missing required-present keys. Recursively decodes provided fields in declaration order; missing optionals stay absent. Any failure returns `null`, never throws or publishes partial instances.
+**fromJson.** Parses an object; rejects extra keys, missing required-present keys, and duplicate decoded property names at every object nesting level. Decodes fields recursively in declaration order; missing optionals stay absent. Failure returns `null`, never throws or publishes partial instances.
 
 ```ts
 let invalid: User | null = User$fromJson("{\"name\":\"Ada\",\"naem\":\"Bob\"}"); // null: extra key
 ```
 
-**toJson.** Serializes each declared field to its JSON representation. Omits missing optional fields. Preserves `null` for nullable fields.
+**toJson.** Serializes declared fields, omitting absent optionals and preserving nullable `null`. Raises `Error` (`E8001`) if any serialized number is non-finite.
 
-For a `table` field, `fromJson` accepts only a JSON object and maps it to a DEAL table as untyped JSON-shaped data. `toJson` accepts only finite acyclic JSON-shaped table values: string-keyed objects, arrays, and `null`/`boolean`/`number`/`string` leaves. Otherwise, it raises `Error`.
+For a `table` field, `fromJson` accepts only a JSON object and maps it to a DEAL table as untyped JSON-shaped data. `toJson` accepts only acyclic JSON-shaped table values: string-keyed objects, arrays, and `null`/`boolean`/`number`/`string` leaves. Otherwise, it raises `Error`.
 
 **Optional-nullable roundtrip.** The three states of `field?: T | null` are preserved exactly:
 
@@ -879,17 +876,14 @@ function name(p1: T1, ..., pN: TN): R {
 }
 ```
 
-- Parameter types required.
-- Return type required.
-- Return type may be `T`, `T | null`, or `null` (for no-return).
-- No optional parameters.
-- No nullable shorthand on parameter types; use explicit `T | null` on the parameter.
+- Parameter and return types are required.
+- Return type may be `T`, `T | null`, or `null`.
+- Parameters cannot be optional; nullable parameters use explicit `T | null`.
 
 ### Return type requirements
 
 - Every `return` expression must have type `R`.
 - The function body must not “fall off” without a return.
-- A function with return type `null` must return `null`.
 
 ```ts
 function f(): null { // ok
@@ -906,16 +900,14 @@ function findName(): string | null { // ok: returns null or string
 
 ### Function type compatibility
 
-A function value `f_actual` with type `A (p1: T1, ..., pM: TM) => R` is assignable to a target of type `B (p1: T1, ..., pN: TN) => R` **if and only if**:
+An `M`-parameter function is assignable to an `N`-parameter function target **iff**:
 
-- Async markers are identical: `A` equals `B`, where each marker is either absent or `async`
-- Return types are identical (including nullable wrapper)
-- `M <= N` (target has at least as many parameters)
-- For each `i` in `1..M`, `T_i` of actual equals `T_i` of target exactly
+- Async markers match: both absent or both `async`.
+- Return types are identical, including nullable wrappers.
+- `M <= N`.
+- Corresponding first `M` parameter types are identical.
 
-The extra `N - M` target parameters are accepted and silently ignored.
-
-The reverse direction — actual-function-with-more-parameters to target-with-fewer — is **always rejected**.
+Extra target arguments are silently ignored. More actual parameters than target parameters are always rejected.
 
 ### Nullable return types
 
@@ -1094,7 +1086,7 @@ A function with return type `R` must return on all reachable paths.
 
 Definitely-returning statements:
 
-- `return expr;`
+- `ReturnStatement`
 - `if (cond) { A } else { B }` where both `A` and `B` definitely return
 - block whose final reachable statement definitely returns
 
@@ -2047,7 +2039,7 @@ Recommended JVM representation:
 | `boolean` | `boolean` where statically known; boxed `Boolean` at dynamic boundaries |
 | `number` | `double` where statically known; boxed `Double` at dynamic boundaries |
 | `string` | non-null `java.lang.String` with no unpaired surrogate code units |
-| `null` | `DealNull.INSTANCE` at dynamic boundaries; Java `null` only where representation is statically nullable |
+| `null` | as defined in [JVM value mapping](#jvm-value-mapping) |
 | required class field `T` | Java field of representation of `T` |
 | required nullable field `T | null` | nullable representation or tagged wrapper |
 | optional field `p?: T` | presence bit plus field storage |
@@ -2135,7 +2127,7 @@ Evaluation is strict and left-to-right:
 
 1. Evaluate receiver expression before member/index/call arguments.
 2. Evaluate call arguments left-to-right.
-3. Assignment evaluates receiver, index (if present), then RHS once, before validation and write. Variables evaluate only RHS. Failed validation leaves the target unwritten; earlier effects remain.
+3. Assignment evaluates receiver, index (if present), then RHS once, before validation and write. Variables evaluate only RHS. Its static type is the RHS type; after successful storage, it yields the original RHS value. Any arity adapter is stored, not yielded. Failed validation leaves the target unwritten; earlier effects remain.
 4. Short-circuit `&&` and `||`.
 5. Function calls create a new local scope.
 6. Class object literals follow [Construction](#construction).
