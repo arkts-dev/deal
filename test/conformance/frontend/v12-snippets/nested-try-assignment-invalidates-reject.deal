@@ -1,0 +1,13 @@
+// @spec: Error handling
+// @description: Corner-case subject nested-try-assignment-invalidates-reject — An assignment in a nested try block belongs to the enclosing try region, so the binding reverts to its declared type at the enclosing join. (basis: Narrowing across try/catch)
+// @expected: compile-error E3001
+// @features: v1.3, frontend, reject
+
+export function f(x: int | null): int {
+  if (x !== null) {
+    try { try { x = 2; } catch (e) {} } catch (e) {}
+    let y: int = x;
+    return y;
+  }
+  return 0;
+}

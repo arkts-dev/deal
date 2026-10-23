@@ -325,6 +325,9 @@ public class CheckerTest {
         testIfJoinPropagatesInvalidation();
         testShadowStateSurvivesBranch();
         testForOfAssignmentInvalidatesEnclosingNarrowing();
+        testTryAssignmentBookkeepingUsesBindingIdentity();
+        testTryAssignmentFunctionBodyIsolation();
+        testNestedTryAssignmentCollection();
         testForHeadDeclarationOrder();
         testClassProvenanceAtInitializationAndNullableTarget();
         testSameNameSiblingDeclarationsPublicCompile();
@@ -2350,6 +2353,270 @@ public class CheckerTest {
         assertNoErrors(control,
             "a same-named iteration binding is distinct; the enclosing "
                 + "refinement survives the for-of");
+    }
+
+    /**
+     * ISSUE-0889: the try/catch revert is binding-identity bookkeeping
+     * (docs/spec-v1.3.md Narrowing across try/catch), so only the
+     * resolved binding the try region actually assigns reverts. A new
+     * block-local declaration of the same name is a different binding and
+     * neither its declaration nor an assignment to it erases the
+     * enclosing binding's refinement, in the non-null and the null
+     * branch.
+     */
+    static void testTryAssignmentBookkeepingUsesBindingIdentity() {
+        System.out.println("-- the try/catch revert records the assigned "
+            + "bindings, never same-named declarations --");
+        CheckerOutput shadow = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { let n: int = 2; } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(shadow,
+            "a try-local shadow declaration is not an assignment to the "
+                + "enclosing binding; the refinement survives the try");
+
+        CheckerOutput shadowAssigned = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { let n: int = 2; n = 3; } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(shadowAssigned,
+            "an assignment to the try-local shadow binding leaves the "
+                + "enclosing binding's refinement intact");
+
+        CheckerOutput nullBranch = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n === null) {\n" +
+            "    try { let n: int = 2; } catch (e) {}\n" +
+            "    let x: null = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(nullBranch,
+            "the null-branch refinement is the same binding's claim and "
+                + "survives a try-local shadow declaration");
+
+        CheckerOutput direct = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { n = null; } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(direct, "E3001",
+            "a genuine direct write to the enclosing binding inside the "
+                + "try still reverts its refinement after the try");
+
+        CheckerOutput otherBinding = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  let m: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { m = null; } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(otherBinding,
+            "a write to a different binding inside the try never reverts "
+                + "this binding's refinement");
+    }
+
+    /**
+     * ISSUE-0889: declaring a function does not execute its body
+     * (docs/spec-v1.3.md Calls do not invalidate refinements), so a write
+     * to an enclosing binding inside a function declaration or function
+     * expression declared in a try region is the nested function's own
+     * flow and never reverts the enclosing refinement. An actual call
+     * keeps the static refinement too: the spec's required runtime check
+     * is the catchable E8001 at the later typed read, not a frontend
+     * rejection.
+     */
+    static void testTryAssignmentFunctionBodyIsolation() {
+        System.out.println("-- a nested function body's write inside a try "
+            + "region never reverts the enclosing refinement --");
+        CheckerOutput expression = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try {\n" +
+            "      let f: () => null = function(): null { n = null; return null; };\n" +
+            "    } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(expression,
+            "the uncalled function expression's body write does not revert "
+                + "the enclosing refinement");
+
+        CheckerOutput declaration = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try {\n" +
+            "      function clear(): null { n = null; return null; }\n" +
+            "    } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(declaration,
+            "the uncalled nested function declaration's body write does "
+                + "not revert the enclosing refinement");
+
+        CheckerOutput called = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  let clear: () => null = function(): null { n = null; return null; };\n" +
+            "  if (n !== null) {\n" +
+            "    try {\n" +
+            "      clear();\n" +
+            "      let x: int = n;\n" +
+            "    } catch (e) {}\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(called,
+            "a predeclared closure actually called inside the try keeps "
+                + "the static refinement; the lowering's runtime check owns "
+                + "the cleared value");
+
+        CheckerOutput nestedTryBody = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try {\n" +
+            "      function outer(): null {\n" +
+            "        try { n = null; } catch (e) {}\n" +
+            "        return null;\n" +
+            "      }\n" +
+            "    } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(nestedTryBody,
+            "a try inside a nested function body is that function's own "
+                + "try region and never reverts the enclosing refinement");
+    }
+
+    /**
+     * ISSUE-0889: a nested try statement is part of the enclosing try
+     * region, so an assignment in the nested try block or its catch block
+     * still reverts the binding after the enclosing try, while a
+     * nested-try shadow declaration does not (docs/spec-v1.3.md
+     * Narrowing across try/catch).
+     */
+    static void testNestedTryAssignmentCollection() {
+        System.out.println("-- a nested try assignment is collected by the "
+            + "enclosing try region --");
+        CheckerOutput nestedBlock = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { try { n = null; } catch (e) {} } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nestedBlock, "E3001",
+            "an assignment in a nested try block reverts the binding after "
+                + "the enclosing try");
+
+        CheckerOutput nestedCatch = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { try { } catch (e) { n = null; } } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nestedCatch, "E3001",
+            "an assignment in a nested try's catch block is inside the "
+                + "enclosing try region and reverts the binding");
+
+        CheckerOutput nestedShadow = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { try { let n: int = 2; } catch (e) {} } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertNoErrors(nestedShadow,
+            "a nested-try shadow declaration still never reverts the "
+                + "enclosing binding");
+
+        CheckerOutput nestedControlFlow = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { if (true) { while (false) { n = null; } } } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(nestedControlFlow, "E3001",
+            "an assignment in nested control flow inside the try still "
+                + "reverts the binding");
+
+        CheckerOutput loopRegion = checkProgram(
+            "export function main(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { while (false) { n = null; } } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}"
+        );
+        assertError(loopRegion, "E3001",
+            "an assignment in a loop inside the try reverts the binding "
+                + "after the try");
+
+        CheckerOutput awaitRegion = checkProgram(
+            "async function tick(): null { return null; }\n" +
+            "async function run(): null {\n" +
+            "  let n: int | null = 1;\n" +
+            "  if (n !== null) {\n" +
+            "    try { let n: int = 2; await tick(); } catch (e) {}\n" +
+            "    let x: int = n;\n" +
+            "  }\n" +
+            "  return null;\n" +
+            "}\n" +
+            "export function main(): null { return null; }"
+        );
+        assertError(awaitRegion, "E3001",
+            "an enclosing async await invalidates every refinement even "
+                + "beside a try-local shadow declaration");
     }
 
     /**

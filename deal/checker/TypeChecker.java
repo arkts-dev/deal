@@ -107,15 +107,19 @@ public final class TypeChecker {
     //    resolution (a shadowing block-local declaration never contributes).
     private final Set<ExpressionNode> narrowedReads = new HashSet<>();
 
-    // -- Tracking the bindings assigned inside an open try block, one
-    //    frame per open try statement. Entries are the resolved binding
-    //    symbols (identity, never value equality): a try-block declaration
-    //    or a catch binding that shadows an enclosing binding is a
-    //    distinct binding, so a revert after the try/catch never drops an
-    //    enclosing refinement the try did not assign
-    //    (docs/spec-v1.3.md §Narrowing across try/catch). --
-    private final Deque<Set<Symbol>> tryAssignments = new ArrayDeque<>();
-    private boolean insideTry = false;
+    // -- Assignment tracking for the open try regions of the current
+    //    function: one frame per open try block, holding the resolved
+    //    bindings assigned inside that region. Entries are binding
+    //    symbols (identity, never value equality: two same-named
+    //    declarations are distinct bindings), so a try-block declaration,
+    //    a catch binding or a catch-local declaration that shadows an
+    //    enclosing binding and a write inside a nested function body never
+    //    revert another binding's refinement
+    //    (docs/spec-v1.3.md §Narrowing across try/catch). The stack is
+    //    swapped at function boundaries: declaring a function does not
+    //    execute its body, so its writes are the nested function's own
+    //    flow and the enclosing try region never records them. --
+    private Deque<Set<Symbol>> tryAssignments = new ArrayDeque<>();
 
     // -- Async/await tracking --
     private boolean insideAsyncFunction = false;
@@ -994,24 +998,27 @@ public final class TypeChecker {
      * Assignment bookkeeping shared by assignment expressions: the
      * narrowed entry is cleared immediately, and the resolved binding is
      * recorded for the enclosing loop (a loop back-edge invalidates the
-     * entry for the code after the loop). The binding is identified by
-     * its resolved symbol, never by name: a loop-local declaration's
-     * same-named binding is not an assignment to the enclosing binding.
+     * entry for the code after the loop) and for the open try blocks of
+     * the current function (after a try/catch every binding assigned
+     * inside the try region reverts to its declared type). The binding is
+     * identified by its resolved symbol, never by name: a loop-local or
+     * try-local declaration's same-named binding is not an assignment to
+     * the enclosing binding.
      */
     private void recordAssignment(String varName) {
         narrowing.onAssignment(varName);
-        if (!insideTry && loopAssignments.isEmpty()) {
+        if (loopAssignments.isEmpty() && tryAssignments.isEmpty()) {
             return;
         }
         Symbol binding = resolveVisibleBinding(varName);
         if (binding == null) {
             return;
         }
-        if (insideTry && !tryAssignments.isEmpty()) {
-            tryAssignments.peek().add(binding);
-        }
         if (!loopAssignments.isEmpty()) {
             loopAssignments.peek().add(binding);
+        }
+        if (!tryAssignments.isEmpty()) {
+            tryAssignments.peek().add(binding);
         }
     }
 
@@ -1058,14 +1065,17 @@ public final class TypeChecker {
         //
         // Narrowed flow types are not captured and do not cross function
         // boundaries (v1.2 narrowing invalidation); break/continue bind
-        // only to loops of the same function body, and the loop
-        // assignment bookkeeping is isolated with the narrowing state (an
-        // assignment inside the nested body never invalidates an enclosing
-        // loop's bindings).
+        // only to loops of the same function body, and the loop and
+        // try-region assignment bookkeeping is isolated with the narrowing
+        // state (an assignment inside the nested body never invalidates an
+        // enclosing loop's or try region's bindings: declaring a function
+        // does not execute its body).
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         Deque<Set<Symbol>> savedLoopAssignments = loopAssignments;
         loopAssignments = new ArrayDeque<>();
+        Deque<Set<Symbol>> savedTryAssignments = tryAssignments;
+        tryAssignments = new ArrayDeque<>();
         Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
@@ -1073,6 +1083,7 @@ public final class TypeChecker {
         walkStatement(fd.body());
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
+        tryAssignments = savedTryAssignments;
         loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 
@@ -1329,8 +1340,8 @@ public final class TypeChecker {
     }
 
     /**
-     * The fresh binding-identity assignment set of one loop body or try
-     * block (symbols compare by identity, never by value).
+     * The fresh binding-identity assignment set of one loop body or one
+     * try region (symbols compare by identity, never by value).
      */
     private static Set<Symbol> newBindingAssignmentSet() {
         return Collections.newSetFromMap(new IdentityHashMap<>());
@@ -1423,8 +1434,6 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkTryStatement(TryStatement ts) {
-        boolean savedInsideTry = insideTry;
-        tryAssignments.push(newBindingAssignmentSet());
         // The try statement's own catch scope is current here
         // (walkStatement enters scopeMap's entry before dispatch), so the
         // code after the catch block lives in that scope's parent. The
@@ -1432,11 +1441,16 @@ public final class TypeChecker {
         SymbolTable catchScope = scopeMap.get(ts);
         SymbolTable afterCatchScope = catchScope != null && catchScope.parent() != null
             ? catchScope.parent() : currentScope;
-        insideTry = true;
 
+        // The try block's own assignment frame. It is closed before the
+        // catch block is walked: an assignment in this try statement's own
+        // catch block is its own flow (a direct assignment already cleared
+        // the entry), while a try nested in an enclosing try region leaves
+        // that enclosing frame open and collects the assignment there.
+        Set<Symbol> assigned = newBindingAssignmentSet();
+        tryAssignments.push(assigned);
         walkStatement(ts.tryBlock());
-
-        insideTry = savedInsideTry;
+        tryAssignments.pop();
 
         // The catch identifier declares a fresh `Error` binding in the catch
         // scope (docs/spec-v1.3.md §try / catch: the bound variable has
@@ -1461,7 +1475,7 @@ public final class TypeChecker {
 
         narrowing.popShadowFrame();
 
-        closeTryAssignments(tryAssignments.pop(), afterCatchScope);
+        closeTryAssignments(assigned, afterCatchScope);
     }
 
     /**
@@ -2689,11 +2703,16 @@ public final class TypeChecker {
         // F1: Use walkStatement(fe.body()) instead of walkStatements(fe.body().statements())
         // so that the Block's scope is entered. A function expression body
         // sees only declared types (no captured narrowing) and no
-        // enclosing loop context.
+        // enclosing loop context. The try-region assignment bookkeeping is
+        // isolated like the loop bookkeeping: declaring a function does not
+        // execute its body, so a write in the body never reverts an
+        // enclosing try region's refinement.
         NullNarrowing savedNarrowing = narrowing;
         narrowing = new NullNarrowing();
         Deque<Set<Symbol>> savedLoopAssignments = loopAssignments;
         loopAssignments = new ArrayDeque<>();
+        Deque<Set<Symbol>> savedTryAssignments = tryAssignments;
+        tryAssignments = new ArrayDeque<>();
         Deque<NullNarrowing> savedLoopSavedNarrowing = loopSavedNarrowing;
         loopSavedNarrowing = new ArrayDeque<>();
         int savedLoopDepth = loopDepth;
@@ -2701,6 +2720,7 @@ public final class TypeChecker {
         walkStatement(fe.body());
         narrowing = savedNarrowing;
         loopAssignments = savedLoopAssignments;
+        tryAssignments = savedTryAssignments;
         loopSavedNarrowing = savedLoopSavedNarrowing;
         loopDepth = savedLoopDepth;
 

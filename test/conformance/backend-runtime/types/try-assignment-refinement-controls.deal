@@ -1,0 +1,245 @@
+// @spec: Error handling — try / catch narrowing revert by binding
+// @description: The try/catch refinement join is per assigned binding. A try-local shadow declaration (before or after an assignment to that shadow) leaves the enclosing refinement and value of the non-null and the null branch intact; an uncalled nested function expression or declaration that writes the enclosing binding inside the try never reverts it, while a predeclared closure actually called inside the try keeps the static refinement and the cleared binding raises the catchable canonical E8001 at the later typed read; a genuine direct write, a nested try block write and a nested try catch write still revert the binding after the try, so the re-narrowed read observes the assigned null. The controls assert each result, so an over-invalidating revert or a lost refinement fails instead of silently returning the other branch.
+// @expected: runtime-ok
+// @features: type-system, nullable, narrowing, try, closures
+
+function expectEqual(what: string, actual: int, expected: int): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + ": value mismatch" };
+  }
+  return null;
+}
+
+function expectTrue(what: string, condition: boolean): null {
+  if (!condition) {
+    throw { code: "CONTROL_FAIL", message: what + ": condition is false" };
+  }
+  return null;
+}
+
+function expectCode(what: string, actual: string, expected: string): null {
+  if (actual !== expected) {
+    throw { code: "CONTROL_FAIL", message: what + ": expected " + expected + ", got " + actual };
+  }
+  return null;
+}
+
+// The issue's first snippet: a shadow declaration inside the try is not an
+// assignment to the enclosing binding. The outer n stays refined to int and
+// its value is unchanged.
+function shadowDeclarationKeepsRefinement(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      let n: int = 2;
+      expectEqual("shadow initializer", n, 2);
+    } catch (e) {
+      return 0;
+    }
+    let x: int = n;
+    return x + 10;
+  }
+  return 0;
+}
+
+// An assignment to the try-local shadow binding still targets the shadow.
+function shadowAssignmentKeepsRefinement(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      let n: int = 2;
+      n = 3;
+      expectEqual("shadow write", n, 3);
+    } catch (e) {
+      return 0;
+    }
+    let x: int = n;
+    return x + 10;
+  }
+  return 0;
+}
+
+// The same binding identity rule on the null branch: the refinement to null
+// survives a try-local shadow declaration.
+function nullBranchKeepsRefinement(): int {
+  let n: int | null = null;
+  if (n === null) {
+    try {
+      let n: int = 2;
+    } catch (e) {
+      return 0;
+    }
+    let x: null = n;
+    expectTrue("null branch", x === null);
+    return 1;
+  }
+  return 0;
+}
+
+// A string-typed nullable binding takes the same path.
+function shadowDeclarationKeepsStringRefinement(): int {
+  let s: string | null = "ok";
+  if (s !== null) {
+    try {
+      let s: int = 2;
+    } catch (e) {
+      return 0;
+    }
+    let text: string = s;
+    expectTrue("string shadow", text === "ok");
+    return 1;
+  }
+  return 0;
+}
+
+// The issue's second snippet: declaring an uncalled function expression or
+// declaration whose body writes the enclosing binding executes nothing, so
+// the refinement and the value survive the try.
+function uncalledFunctionWritesDoNotRevert(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      let f: () => null = function(): null { n = null; return null; };
+      function clear(): null { n = null; return null; }
+    } catch (e) {
+      return 0;
+    }
+    let x: int = n;
+    return x + 10;
+  }
+  return 0;
+}
+
+// A write inside a try region nested in a function body declared in the
+// enclosing try is the nested function's own flow.
+function nestedFunctionTryDoesNotRevert(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      function attempt(): null {
+        try {
+          n = null;
+        } catch (e) {
+          return null;
+        }
+        return null;
+      }
+    } catch (e) {
+      return 0;
+    }
+    let x: int = n;
+    return x + 10;
+  }
+  return 0;
+}
+
+// A genuine direct write still reverts the refinement after the try; the
+// re-narrowed read observes the assigned null.
+function directWriteRevertsAndRenarrows(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      n = null;
+    } catch (e) {
+      return 0;
+    }
+    if (n !== null) {
+      return 1;
+    }
+    return 2;
+  }
+  return 0;
+}
+
+// A write in a nested try block belongs to the enclosing try region too.
+function nestedTryWriteRevertsAndRenarrows(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      try {
+        n = null;
+      } catch (e) {
+        return 0;
+      }
+    } catch (e) {
+      return 0;
+    }
+    if (n !== null) {
+      return 1;
+    }
+    return 2;
+  }
+  return 0;
+}
+
+// A write in a nested try's catch block is inside the enclosing try region.
+function nestedCatchWriteRevertsAndRenarrows(): int {
+  let n: int | null = 1;
+  if (n !== null) {
+    try {
+      try {
+        throw { code: "INNER", message: "inner" };
+      } catch (e) {
+        n = null;
+      }
+    } catch (e) {
+      return 0;
+    }
+    if (n !== null) {
+      return 1;
+    }
+    return 2;
+  }
+  return 0;
+}
+
+// The specification's required runtime check: calls do not invalidate the
+// static refinement, so a predeclared closure that clears the binding leaves
+// the typed read to raise the canonical catchable E8001.
+function callInducedMutationIsCatchable(): int {
+  let n: int | null = 1;
+  let clear: () => null = function(): null { n = null; return null; };
+  if (n !== null) {
+    try {
+      clear();
+      let x: int = n;
+      return x + 100;
+    } catch (e) {
+      expectCode("closure call", e.code, "E8001");
+      return 1;
+    }
+  }
+  return 0;
+}
+
+// The same control with a nested function declaration.
+function declarationCallIsCatchable(): int {
+  let n: int | null = 1;
+  function clear(): null { n = null; return null; }
+  if (n !== null) {
+    try {
+      clear();
+      let x: int = n;
+      return x + 100;
+    } catch (e) {
+      expectCode("function declaration", e.code, "E8001");
+      return 1;
+    }
+  }
+  return 0;
+}
+
+export function main(): null {
+  expectEqual("shadow declaration", shadowDeclarationKeepsRefinement(), 11);
+  expectEqual("shadow assignment", shadowAssignmentKeepsRefinement(), 11);
+  expectEqual("null branch", nullBranchKeepsRefinement(), 1);
+  expectEqual("string shadow", shadowDeclarationKeepsStringRefinement(), 1);
+  expectEqual("uncalled function writes", uncalledFunctionWritesDoNotRevert(), 11);
+  expectEqual("nested function try", nestedFunctionTryDoesNotRevert(), 11);
+  expectEqual("direct write", directWriteRevertsAndRenarrows(), 2);
+  expectEqual("nested try write", nestedTryWriteRevertsAndRenarrows(), 2);
+  expectEqual("nested catch write", nestedCatchWriteRevertsAndRenarrows(), 2);
+  expectEqual("call-induced mutation", callInducedMutationIsCatchable(), 1);
+  expectEqual("declaration call", declarationCallIsCatchable(), 1);
+  return null;
+}
