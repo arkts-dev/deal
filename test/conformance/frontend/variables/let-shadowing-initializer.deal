@@ -4,9 +4,9 @@
 // @features: variables, declaration-order, shadowing
 
 export function main(): null {
-  let x: int = 3;
+  let x: number = 3;
   {
-    let x: int = x;
+    let x: number = x;
   }
   return null;
 }

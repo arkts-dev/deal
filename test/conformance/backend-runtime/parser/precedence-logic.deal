@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: parser, precedence
 
-export function test_logic_prec(): int {
+export function test_logic_prec(): number {
   // && binds tighter than ||
   // true || false && false = true || (false && false) = true || false = true
   let a: boolean = true || false && false;

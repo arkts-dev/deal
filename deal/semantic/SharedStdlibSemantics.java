@@ -60,14 +60,14 @@ public final class SharedStdlibSemantics {
     }
 
     // =========================================================================
-    // The closed value view of the 21 operations
+    // The closed value view of the 18 operations
     // =========================================================================
 
     /**
      * The closed value view the executor consumes and produces over the
-     * semantic value model: exactly the values the 21 operations resolve,
+     * semantic value model: exactly the values the 18 operations resolve,
      * compare, store, encode, and publish — language null, boolean,
-     * signed32 int, IEEE-754 number, string (carrying the closed
+     * IEEE-754 number, string (carrying the closed
      * {@link UnicodeScalars.ScalarString} classification), table
      * ({@link SemanticTable}, first-insertion order), array
      * ({@link SemanticArray}, index order), and the unsupported-value
@@ -80,7 +80,7 @@ public final class SharedStdlibSemantics {
      * classifications and carriers only, never target representations.
      */
     public sealed interface Value
-        permits Value.Null, Value.Bool, Value.Int, Value.Number, Value.String,
+        permits Value.Null, Value.Bool, Value.Number, Value.String,
                 Value.Table, Value.Array, Value.Other {
 
         /** The canonical actual kind this value renders as. */
@@ -130,16 +130,8 @@ public final class SharedStdlibSemantics {
             }
         }
 
-        /** A signed32 integer value. */
-        record Int(int value) implements Value {
 
-            @Override
-            public ActualKind actualKind() {
-                return ActualKind.INT;
-            }
-        }
-
-        /** An IEEE-754 number value (NaN and infinity included). */
+/** An IEEE-754 number value (NaN and infinity included). */
         record Number(double value) implements Value {
 
             @Override
@@ -298,8 +290,7 @@ public final class SharedStdlibSemantics {
      * primitive never selects message text) paired with the operation
      * origin of the closed table's rule — the {@code STDLIB_CALL} call
      * origin for every stdlib row ({@code JSON_PARSE_SYNTAX},
-     * {@code JSON_TO_ERROR}, {@code SQRT_NEGATIVE} operation origin,
-     * {@code INT32_RESULT} at the call origin).
+     * {@code JSON_TO_ERROR}, {@code SQRT_NEGATIVE} operation origin).
      */
     public record StdlibFailure(BoundaryFailure failure, SourceOrigin origin) {
 
@@ -357,12 +348,9 @@ public final class SharedStdlibSemantics {
      * a string parameter is a {@link Value.String} whose scalar is
      * {@link UnicodeScalars.Valid} (an {@code Invalid} carrier is a
      * {@link Defect} — the parameter boundary rejects it first, so the
-     * primitive is never reached with an invalid carrier); an int
-     * parameter is {@link Value.Int} or an in-range integral
-     * {@link Value.Number} (the int boundary's admission set, passed
-     * unchanged); a number parameter is {@link Value.Number} or
-     * {@link Value.Int} (converted exactly, {@code int} → {@code double}
-     * is exact); a table parameter is {@link Value.Table}. Any other
+     * primitive is never reached with an invalid carrier); a number
+     * parameter is {@link Value.Number}, preserving its binary64 value;
+     * a table parameter is {@link Value.Table}. Any other
      * carrier fails closed. Console calls require the injected
      * {@link ConsoleSink} whose {@code channel()} matches the call's
      * channel; non-console calls ignore the sink.</p>
@@ -444,8 +432,8 @@ public final class SharedStdlibSemantics {
             case STRING_LENGTH ->
                 stringLength(origin, validTextOf(argv, 0, function));
             case STRING_SUBSTRING -> stringSubstring(origin,
-                validTextOf(argv, 0, function), intOf(argv, 1, function),
-                intOf(argv, 2, function));
+                validTextOf(argv, 0, function), numberOf(argv, 1, function),
+                numberOf(argv, 2, function));
             case STRING_CONTAINS -> stringContains(origin,
                 validTextOf(argv, 0, function), validTextOf(argv, 1, function));
             case STRING_STARTS_WITH -> stringStartsWith(origin,
@@ -464,13 +452,11 @@ public final class SharedStdlibSemantics {
             case MATH_FLOOR -> mathFloor(origin, numberOf(argv, 0, function));
             case MATH_CEIL -> mathCeil(origin, numberOf(argv, 0, function));
             case MATH_SQRT -> mathSqrt(origin, numberOf(argv, 0, function));
-            case MATH_ABS_INT -> mathAbsInt(origin, intOf(argv, 0, function));
+
             case MATH_ABS_NUMBER ->
                 mathAbsNumber(origin, numberOf(argv, 0, function));
-            case MATH_MIN_INT -> mathMinInt(origin, intOf(argv, 0, function),
-                intOf(argv, 1, function));
-            case MATH_MAX_INT -> mathMaxInt(origin, intOf(argv, 0, function),
-                intOf(argv, 1, function));
+
+
             case TIME_NOW_MILLIS -> timeNowMillis(origin, clock);
         };
     }
@@ -482,11 +468,8 @@ public final class SharedStdlibSemantics {
     private static int declaredArity(StdlibFunctionId function) {
         return switch (function) {
             case TIME_NOW_MILLIS -> 0;
-            case CONSOLE_LOG, CONSOLE_ERROR, STRING_LENGTH, STRING_TRIM, TABLE_KEYS,
-                 JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT,
-                 MATH_ABS_INT, MATH_ABS_NUMBER -> 1;
-            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT,
-                 MATH_MIN_INT, MATH_MAX_INT -> 2;
+            case CONSOLE_LOG, CONSOLE_ERROR, STRING_LENGTH, STRING_TRIM, TABLE_KEYS, JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT, MATH_ABS_NUMBER -> 1;
+            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_SPLIT -> 2;
             case STRING_SUBSTRING, STRING_REPLACE -> 3;
         };
     }
@@ -514,33 +497,13 @@ public final class SharedStdlibSemantics {
             + " — the primitive is never reached with an invalid carrier");
     }
 
-    /** An int parameter carrier: {@link Value.Int} or an in-range integral {@link Value.Number}. */
-    private static int intOf(List<Value> args, int index, StdlibFunctionId function) {
-        Value arg = args.get(index);
-        return switch (arg) {
-            case Value.Int intValue -> intValue.value();
-            case Value.Number number -> {
-                double value = number.value();
-                if (!Double.isFinite(value) || value != Math.rint(value)
-                        || value < -2147483648d || value > 2147483647d) {
-                    throw new Defect("STDLIB_CALL(" + function + ") argument " + (index + 1)
-                        + " must be a signed32 int carrier (the int boundary's admission "
-                        + "set); got number " + value);
-                }
-                yield (int) value;
-            }
-            default -> throw new Defect("STDLIB_CALL(" + function + ") argument "
-                + (index + 1) + " must be a signed32 int carrier; got " + describe(arg));
-        };
-    }
 
-    /** A number parameter carrier: {@link Value.Number} or {@link Value.Int} (exact double). */
+/** A number parameter carrier: {@link Value.Number} (binary64). */
     private static double numberOf(List<Value> args, int index, StdlibFunctionId function) {
         Value arg = args.get(index);
         return switch (arg) {
             case Value.Number number -> number.value();
-            case Value.Int intValue ->
-                SharedValueSemantics.numberFromInt(intValue.value());
+
             default -> throw new Defect("STDLIB_CALL(" + function + ") argument "
                 + (index + 1) + " must be a number carrier; got " + describe(arg));
         };
@@ -641,7 +604,7 @@ public final class SharedStdlibSemantics {
         return switch (value) {
             case Value.Null ignored -> FailureProjections.CarrierKind.LANGUAGE_NULL;
             case Value.Bool ignored -> FailureProjections.CarrierKind.BOOLEAN;
-            case Value.Int ignored -> FailureProjections.CarrierKind.NUMBER;
+
             case Value.Number ignored -> FailureProjections.CarrierKind.NUMBER;
             case Value.String ignored -> FailureProjections.CarrierKind.STRING;
             case Value.Table ignored -> FailureProjections.CarrierKind.TABLE;
@@ -658,16 +621,7 @@ public final class SharedStdlibSemantics {
     }
 
     /** The signed32 gate ({@code INT32_RESULT}): success publishes the int, overflow E8004. */
-    private static Outcome<Value> int32Gate(long value, SourceOrigin origin) {
-        SharedValueSemantics.Int32Result result =
-            SharedValueSemantics.checkInt32Integral(value, origin);
-        return switch (result) {
-            case SharedValueSemantics.Int32Result.Value intValue ->
-                new Outcome.Success<>(new Value.Int(intValue.value()));
-            case SharedValueSemantics.Int32Result.Fail ignored -> failOf(
-                FailurePolicyId.INT32_RESULT, 0, null, null, new LinkedHashMap<>(), origin);
-        };
-    }
+
 
     // =========================================================================
     // Console (D5): byte-exact one-effect contract over the injected sink
@@ -732,20 +686,13 @@ public final class SharedStdlibSemantics {
     // String family (Unicode scalar domain)
     // =========================================================================
 
-    /**
-     * {@code STRING_LENGTH}: the Unicode scalar count (code points — a
-     * surrogate pair is one scalar) as signed32; a count outside
-     * {@code [-2147483648, 2147483647]} fails E8004
-     * {@code int out of safe range} ({@code INT32_RESULT} at the call origin).
-     * Defensive: the model's counts are bounded, but the closed policy
-     * pins the gate.
-     *
-     */
+    /** {@code STRING_LENGTH}: Unicode scalar count as a binary64 number. */
     public static Outcome<Value> stringLength(SourceOrigin origin,
                                               UnicodeScalars.Valid input) {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
-        return int32Gate(input.carrier().codePointCount(0, input.carrier().length()), origin);
+        return new Outcome.Success<>(new Value.Number(
+            input.carrier().codePointCount(0, input.carrier().length())));
     }
 
     /**
@@ -757,12 +704,17 @@ public final class SharedStdlibSemantics {
      */
     public static Outcome<Value> stringSubstring(SourceOrigin origin,
                                                  UnicodeScalars.Valid input,
-                                                 int start, int end) {
+                                                 double start, double end) {
         Objects.requireNonNull(origin, "origin must not be null");
         Objects.requireNonNull(input, "input must not be null");
+        if (!Double.isFinite(start) || start != Math.rint(start)
+                || !Double.isFinite(end) || end != Math.rint(end)) {
+            return failOf(FailurePolicyId.SUBSTRING_BOUNDS, 0, null, null,
+                new LinkedHashMap<>(), origin);
+        }
         int[] codePoints = input.carrier().codePoints().toArray();
-        int lo = Math.max(0, start);
-        int hi = Math.min(Math.max(0, end), codePoints.length);
+        int lo = (int) Math.min(Math.max(0, start), codePoints.length);
+        int hi = (int) Math.min(Math.max(0, end), codePoints.length);
         if (lo >= hi) {
             return new Outcome.Success<>(Value.string(""));
         }
@@ -1064,10 +1016,8 @@ public final class SharedStdlibSemantics {
      * scalar-valid) input; object order follows text; a member key whose
      * decoded scalar text equals an earlier member key of the same object
      * is a syntax defect ({@code duplicate key}) at the second key's
-     * opening quote; a numeric lexeme whose exact mathematical decimal
-     * value is integral and inside signed32 becomes {@link Value.Int}
-     * ({@code -0}/{@code -0.0} normalized to {@code 0}) and every other
-     * numeric lexeme becomes {@link Value.Number}; a syntax defect fails
+     * opening quote; every numeric lexeme becomes {@link Value.Number},
+     * rounded to binary64 with negative zero preserved; a syntax defect fails
      * with policy {@code JSON_PARSE_SYNTAX} — E8001
      * {@code JSON parse error at position {oneBasedByteOffset}: {reason}}
      * with metadata {@code {oneBasedByteOffset}} (the defect's 1-based
@@ -1324,13 +1274,13 @@ public final class SharedStdlibSemantics {
         switch (value) {
             case Value.Null ignored -> out.append("null");
             case Value.Bool bool -> out.append(bool.value() ? "true" : "false");
-            case Value.Int intValue -> out.append(Integer.toString(intValue.value()));
+
             case Value.Number number -> {
                 if (!Double.isFinite(number.value())) {
                     throw new JsonStringifyFailure(pathText(parentPath, segment),
                         FailureProjections.CarrierKind.NUMBER);
                 }
-                out.append(Double.toString(number.value()));
+                out.append((number.value() == 0 ? "0" : Double.toString(number.value())));
             }
             case Value.String string -> {
                 if (string.scalar() instanceof UnicodeScalars.Invalid) {
@@ -1606,13 +1556,9 @@ public final class SharedStdlibSemantics {
         Value parseNumber() {
             // The exact decimal classification (DEAL v1.3): the lexeme
             // denotes an Int exactly when its mathematical value is
-            // integral and inside signed32; every other lexeme denotes
+            // rounded to binary64; every numeric lexeme denotes
             // the binary64 value of the standard conversion.
             JsonScan.CodePointCursor.NumberScan scan = parseNumberText();
-            Integer exact = JsonNumberClassifier.exactInt32OrNull(scan.text());
-            if (exact != null) {
-                return new Value.Int(exact);
-            }
             return new Value.Number(JsonNumberClassifier.toDouble(scan.text()));
         }
     }
@@ -1660,20 +1606,8 @@ public final class SharedStdlibSemantics {
         return new Outcome.Success<>(new Value.Number(Math.sqrt(value)));
     }
 
-    /**
-     * {@code MATH_ABS_INT}: signed32 absolute value;
-     * {@code -2147483648} fails {@code INT32_RESULT} (E8004
-     * {@code int out of safe range} at the call origin) — the exact long
-     * intermediate makes the overflow visible before any narrowing.
-     *
-     */
-    public static Outcome<Value> mathAbsInt(SourceOrigin origin, int value) {
-        Objects.requireNonNull(origin, "origin must not be null");
-        long absolute = value < 0 ? -(long) value : value;
-        return int32Gate(absolute, origin);
-    }
 
-    /**
+/**
      * {@code MATH_ABS_NUMBER}: IEEE absolute value ({@code -0.0} →
      * {@code +0.0}, {@code NaN} → {@code NaN},
      * {@code -Infinity} → {@code +Infinity}). Policy
@@ -1685,29 +1619,8 @@ public final class SharedStdlibSemantics {
         return new Outcome.Success<>(new Value.Number(Math.abs(value)));
     }
 
-    /**
-     * {@code MATH_MIN_INT}: the selected signed32 operand; equal
-     * operands return that operand value. Policy
-     * {@code NO_DEAL_FAILURE} — never fails.
-     *
-     */
-    public static Outcome<Value> mathMinInt(SourceOrigin origin, int a, int b) {
-        Objects.requireNonNull(origin, "origin must not be null");
-        return new Outcome.Success<>(new Value.Int(Math.min(a, b)));
-    }
 
-    /**
-     * {@code MATH_MAX_INT}: the selected signed32 operand; equal
-     * operands return that operand value. Policy
-     * {@code NO_DEAL_FAILURE} — never fails.
-     *
-     */
-    public static Outcome<Value> mathMaxInt(SourceOrigin origin, int a, int b) {
-        Objects.requireNonNull(origin, "origin must not be null");
-        return new Outcome.Success<>(new Value.Int(Math.max(a, b)));
-    }
-
-    /**
+/**
      * {@code TIME_NOW_MILLIS} — the K7 {@code std.time}/{@code nowMillis}
      * operation: the target-clock reading returned as a
      * {@link Value.Number} (epoch milliseconds — an exact double for

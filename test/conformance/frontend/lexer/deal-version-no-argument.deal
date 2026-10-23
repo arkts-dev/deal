@@ -4,4 +4,4 @@
 // @features: lexer, directives, deal-version, v1.4
 
 // @deal-version
-class A { x: int = 0; }
+class A { x: number = 0; }

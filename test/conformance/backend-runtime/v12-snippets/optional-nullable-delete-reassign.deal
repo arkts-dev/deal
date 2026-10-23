@@ -4,13 +4,13 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-class C {value?: int | null;}
+class C {value?: number | null;}
 export function main(): null {
  let x:C={value:null}; let alias:C=x;
  if(!has(alias.value)) {throw {message:"explicit null absent"};}
  delete x.value; if(has(alias.value)) {throw {message:"deletion not shared"};}
  alias.value=null; if(!has(x.value)) {throw {message:"null assignment erased presence"};}
- let n:int | null=x.value; if(n!==null) {throw {message:"null read"};}
- x.value=4; let m:int | null=alias.value; if(m!==null) {if(m!==4) {throw {message:"value"};}} else {throw {message:"value absent"};}
+ let n:number | null=x.value; if(n!==null) {throw {message:"null read"};}
+ x.value=4; let m:number | null=alias.value; if(m!==null) {if(m!==4) {throw {message:"value"};}} else {throw {message:"value absent"};}
  c.log("optional-nullable-delete-reassign"); return null;
 }

@@ -6,7 +6,7 @@
 import * as LibA from "./modid_lib_a/lib_a";
 import * as LibB from "./modid_lib_b/lib_b";
 
-export function test_cross_module_class_identity(): int {
+export function test_cross_module_class_identity(): number {
   let holder: table = { item: LibA.make(5) };
   return LibB.needBox(holder.item);
 }

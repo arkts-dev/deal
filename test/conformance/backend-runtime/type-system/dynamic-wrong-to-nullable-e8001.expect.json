@@ -8,17 +8,17 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal\",\"line\":8,\"column\":23,\"expected\":\"int\",\"actual\":\"string\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal\",\"line\":8,\"column\":26,\"expected\":\"number\",\"actual\":\"string\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "expected int",
+      "message": "expected number",
       "sourceFile": "backend-runtime/type-system/dynamic-wrong-to-nullable-e8001.deal",
       "line": 8,
-      "column": 23,
-      "expected": "int",
+      "column": 26,
+      "expected": "number",
       "actual": "string"
     }
   }

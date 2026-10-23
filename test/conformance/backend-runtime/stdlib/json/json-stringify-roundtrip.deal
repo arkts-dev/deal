@@ -19,7 +19,7 @@ export function main(): null {
     throw { code: "TEST_FAIL", message: "null must serialize as JSON null" };
   }
   let back: table = json.parse(encoded);
-  let count: int = back.count;
+  let count: number = back.count;
   let ratio: number = back.ratio;
   let flag: boolean = back.flag;
   let name: string = back.name;

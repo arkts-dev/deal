@@ -1,8 +1,8 @@
 // IR golden fixture: type-descriptors-function-type-descriptor-nullable-return
 // Migrated IR-containment pin for legacy case 'function-type-descriptor-nullable-return' (ISSUE-0358).
 
-function maybe(x: int): int | null { if (x === 0) { return null; } return x; }
+function maybe(x: number): number | null { if (x === 0) { return null; } return x; }
 export function main(): null {
-let f: (x: int) => int | null = maybe;
+let f: (x: number) => number | null = maybe;
 return null;
 }

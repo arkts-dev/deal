@@ -335,22 +335,22 @@ public class LexerTest {
 
         LexResult r = tokenize("0");
         assertNoDiagnostics(r.diagnostics(), "int 0");
-        assertToken(r.tokens().get(0), TokenType.INT_LITERAL, "0", 1, 1);
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, "0", 1, 1);
 
         r = tokenize("42");
         assertNoDiagnostics(r.diagnostics(), "int 42");
-        assertToken(r.tokens().get(0), TokenType.INT_LITERAL, "42", 1, 1);
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, "42", 1, 1);
         assertEOFToken(r);
 
         r = tokenize("-1");
         assertNoDiagnostics(r.diagnostics(), "int -1");
         check(r.tokens().size() == 3, "-1: expected 3 tokens (minus, int, eof)");
         assertToken(r.tokens().get(0), TokenType.MINUS, "-", 1, 1);
-        assertToken(r.tokens().get(1), TokenType.INT_LITERAL, "1", 1, 2);
+        assertToken(r.tokens().get(1), TokenType.NUMBER_LITERAL, "1", 1, 2);
 
         r = tokenize("9007199254740991");
         assertNoDiagnostics(r.diagnostics(), "int large");
-        assertToken(r.tokens().get(0), TokenType.INT_LITERAL, "9007199254740991", 1, 1);
+        assertToken(r.tokens().get(0), TokenType.NUMBER_LITERAL, "9007199254740991", 1, 1);
     }
 
     // =========================================================================
@@ -727,9 +727,9 @@ public class LexerTest {
         assertToken(tokens.get(2), TokenType.COLON,      ":",   1, 6);
         assertToken(tokens.get(3), TokenType.IDENTIFIER, "int", 1, 8);
         assertToken(tokens.get(4), TokenType.EQ_SIGN,    "=",   1, 12);
-        assertToken(tokens.get(5), TokenType.INT_LITERAL,"1",   1, 14);
+        assertToken(tokens.get(5), TokenType.NUMBER_LITERAL,"1",   1, 14);
         assertToken(tokens.get(6), TokenType.PLUS,       "+",   1, 16);
-        assertToken(tokens.get(7), TokenType.INT_LITERAL,"2",   1, 18);
+        assertToken(tokens.get(7), TokenType.NUMBER_LITERAL,"2",   1, 18);
         assertToken(tokens.get(8), TokenType.SEMICOLON,  ";",   1, 19);
         assertToken(tokens.get(9), TokenType.EOF,        "",    1, 20);
 
@@ -841,9 +841,9 @@ public class LexerTest {
         r = tokenize("1 /* add */ + 2");
         assertNoDiagnostics(r.diagnostics(), "inline block comment");
         tokens = r.tokens();
-        assertTokenTypeOnly(tokens.get(0), TokenType.INT_LITERAL, "first token");
+        assertTokenTypeOnly(tokens.get(0), TokenType.NUMBER_LITERAL, "first token");
         assertTokenTypeOnly(tokens.get(1), TokenType.PLUS, "second token");
-        assertTokenTypeOnly(tokens.get(2), TokenType.INT_LITERAL, "third token");
+        assertTokenTypeOnly(tokens.get(2), TokenType.NUMBER_LITERAL, "third token");
     }
 
     // =========================================================================
@@ -926,7 +926,7 @@ public class LexerTest {
         // 1..2 — correct tokenization: INT(1) + DOT + NUMBER(.2)
         r = tokenize("1..2");
         List<Token> tokens = r.tokens();
-        check(tokens.get(0).type() == TokenType.INT_LITERAL
+        check(tokens.get(0).type() == TokenType.NUMBER_LITERAL
                 && tokens.get(0).lexeme().equals("1"),
             "1..2: first token is INT 1");
         check(tokens.get(1).type() == TokenType.DOT,
@@ -935,7 +935,7 @@ public class LexerTest {
                 && tokens.get(2).lexeme().equals(".2"),
             "1..2: third token is NUMBER .2");
         assertNoDiagnostics(r.diagnostics(), "1..2 valid");
-        check(tokens.get(0).type() == TokenType.INT_LITERAL
+        check(tokens.get(0).type() == TokenType.NUMBER_LITERAL
                 && tokens.get(0).lexeme().equals("1"),
             "1..2: first token INT 1");
         check(tokens.get(1).type() == TokenType.DOT,
@@ -1034,7 +1034,7 @@ public class LexerTest {
         assertToken(tokens.get(2), TokenType.EQ_SIGN, "=", 1, 7);
         check(tokens.get(2).length() == 1, "= length is 1");
 
-        assertToken(tokens.get(3), TokenType.INT_LITERAL, "42", 1, 9);
+        assertToken(tokens.get(3), TokenType.NUMBER_LITERAL, "42", 1, 9);
         check(tokens.get(3).length() == 2, "42 length is 2");
 
         assertToken(tokens.get(4), TokenType.SEMICOLON, ";", 1, 11);
@@ -1051,7 +1051,7 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "1.toString");
         List<Token> tokens = r.tokens();
         check(tokens.size() == 4, "1.toString: 3 tokens + EOF, got " + tokens.size());
-        assertToken(tokens.get(0), TokenType.INT_LITERAL, "1", 1, 1);
+        assertToken(tokens.get(0), TokenType.NUMBER_LITERAL, "1", 1, 1);
         assertToken(tokens.get(1), TokenType.DOT, ".", 1, 2);
         assertToken(tokens.get(2), TokenType.IDENTIFIER, "toString", 1, 3);
 
@@ -1059,7 +1059,7 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "1. at EOF");
         tokens = r.tokens();
         check(tokens.size() == 3, "1. at EOF: 2 tokens + EOF, got " + tokens.size());
-        assertToken(tokens.get(0), TokenType.INT_LITERAL, "1", 1, 1);
+        assertToken(tokens.get(0), TokenType.NUMBER_LITERAL, "1", 1, 1);
         assertToken(tokens.get(1), TokenType.DOT, ".", 1, 2);
 
         r = tokenize(".");

@@ -4,8 +4,8 @@
 // @features: parser, semicolon, line-break, index-access, v1.2
 
 export function main(): null {
-  let values: int[] = [1];
-  let value: int = values[
+  let values: number[] = [1];
+  let value: number = values[
     0];
   return null;
 }

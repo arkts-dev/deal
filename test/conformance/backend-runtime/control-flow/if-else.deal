@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: control-flow, if
 
-export function test_ifelse(): int {
-  let x: int = 0;
+export function test_ifelse(): number {
+  let x: number = 0;
   if (x === 0) {
     x = 1;
   } else {

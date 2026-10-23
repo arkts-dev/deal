@@ -20,10 +20,7 @@ public enum StdlibFunctionId implements ClosedSelector {
     MATH_FLOOR,
     MATH_CEIL,
     MATH_SQRT,
-    MATH_ABS_INT,
     MATH_ABS_NUMBER,
-    MATH_MIN_INT,
-    MATH_MAX_INT,
     TIME_NOW_MILLIS;
 
     /**

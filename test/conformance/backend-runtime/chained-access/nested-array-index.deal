@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: arrays, chained-access
 
-export function test_nested_array_index_chain(): int {
-  let rows: int[][] = [[1, 2], [3, 4]];
-  let result: int = rows[1][0];
+export function test_nested_array_index_chain(): number {
+  let rows: number[][] = [[1, 2], [3, 4]];
+  let result: number = rows[1][0];
   if (result !== 3) { throw { code: "TEST_FAIL", message: "arr[0][1] lowering failed" }; }
   return result;
 }

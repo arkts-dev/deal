@@ -47,7 +47,6 @@ import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.DefaultOwner;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -121,7 +120,7 @@ public class SemanticIrValidatorTest {
     private static final String LCH =
         LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
 
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor BOOL = RuntimeDescriptor.Boolean.INSTANCE;
     private static final RuntimeDescriptor STR = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor.Func SIG_II = new RuntimeDescriptor.Func(List.of(INT), INT);
@@ -324,7 +323,7 @@ public class SemanticIrValidatorTest {
     }
 
     private static SemanticOp constOp() {
-        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
@@ -474,14 +473,13 @@ public class SemanticIrValidatorTest {
         assertAdmission("realization RepresentationProof", List.of(
             op(SemanticOpKind.BOUNDARY,
                 new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_ASSIGNMENT, INT,
-                    nextValue(), new BoundaryRealization.RepresentationProof("jvm-int-proof")),
+                    nextValue(), new BoundaryRealization.RepresentationProof("jvm-number-proof")),
                 null, null, FailurePolicyId.TYPE_DESCRIPTOR, null)), Map.of());
     }
 
     private static void testSelectorPolicies() {
         Map<BinarySelector, FailurePolicyId> binary = Map.of(
-            BinarySelector.INT32_ADD, FailurePolicyId.INT32_RESULT,
-            BinarySelector.INT32_DIV_TRUNC, FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
+            BinarySelector.NUMBER_DIV_IEEE, FailurePolicyId.NO_DEAL_FAILURE,
             BinarySelector.NUMBER_ADD, FailurePolicyId.NO_DEAL_FAILURE,
             BinarySelector.NULLABLE_EQ, FailurePolicyId.NO_DEAL_FAILURE);
         for (var entry : binary.entrySet()) {
@@ -495,12 +493,12 @@ public class SemanticIrValidatorTest {
         }
         Map<StdlibFunctionId, FailurePolicyId> stdlib = Map.of(
             StdlibFunctionId.CONSOLE_LOG, FailurePolicyId.INFRASTRUCTURE_ONLY,
-            StdlibFunctionId.STRING_LENGTH, FailurePolicyId.INT32_RESULT,
+            StdlibFunctionId.STRING_LENGTH, FailurePolicyId.NO_DEAL_FAILURE,
             StdlibFunctionId.TIME_NOW_MILLIS, FailurePolicyId.NO_DEAL_FAILURE,
             StdlibFunctionId.JSON_PARSE, FailurePolicyId.JSON_PARSE_SYNTAX,
             StdlibFunctionId.JSON_STRINGIFY, FailurePolicyId.JSON_TO_ERROR,
             StdlibFunctionId.MATH_SQRT, FailurePolicyId.SQRT_NEGATIVE,
-            StdlibFunctionId.MATH_ABS_INT, FailurePolicyId.INT32_RESULT,
+            StdlibFunctionId.STRING_SUBSTRING, FailurePolicyId.SUBSTRING_BOUNDS,
             StdlibFunctionId.MATH_FLOOR, FailurePolicyId.NO_DEAL_FAILURE);
         for (var entry : stdlib.entrySet()) {
             assertAdmission("stdlib policy " + entry.getKey(), List.of(
@@ -570,9 +568,9 @@ public class SemanticIrValidatorTest {
         // R-POLICY-KIND: a policy not allowed for its selector.
         assertE6005(SemanticIrValidator.validate(unit(List.of(
                 op(SemanticOpKind.BINARY,
-                    new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
+                    new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
                     nextValue(), INT, FailurePolicyId.JSON_PARSE_SYNTAX, null))), FACTS),
-            "R-POLICY-KIND", "JSON_PARSE_SYNTAX", "INT32_ADD");
+            "R-POLICY-KIND", "JSON_PARSE_SYNTAX", "NUMBER_ADD");
 
         // R-BOUNDARY-TRIPLE: an invocation-kind boundary outside any invocation.
         assertE6005(SemanticIrValidator.validate(unit(List.of(
@@ -624,7 +622,7 @@ public class SemanticIrValidatorTest {
 
         // R-FUNCTION-BINDING: a function-typed result without a binding.
         assertE6005(SemanticIrValidator.validate(unit(List.of(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     new ValueId(7), SIG_II, FailurePolicyId.NO_DEAL_FAILURE, null))), FACTS),
             "R-FUNCTION-BINDING", "ValueId 7");
 
@@ -693,9 +691,31 @@ public class SemanticIrValidatorTest {
                 "R-TOKEN-REUSE", "consumed twice");
         }
 
+        // Numeric payloads use the binary64 wire atom, independently of
+        // internal integer IDs. Even an integral value cannot use an ID atom.
+        {
+            String numeric = SemanticIrValidator.toUnitText(unit(List.of(constOp())));
+            CanonicalJson.Obj payload = (CanonicalJson.Obj) at(firstOp(parseObj(numeric)), "payload");
+            String integerAtom = substituteMirrored(numeric, "payload", "payload",
+                withEntry(payload, "value", CanonicalJson.intValue(1)), false);
+            Optional<CompilerDiagnostic> rejected = SemanticIrValidator.validateText(integerAtom, FACTS);
+            check(rejected.isPresent(), "an integer transport atom cannot stand for a binary64 scalar");
+            for (double value : new double[] { -0.0, Double.MIN_VALUE, 9007199254740992.0,
+                    Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN }) {
+                SemanticOp scalar = op(SemanticOpKind.CONST,
+                    new KindPayload.ConstPayload(new ScalarValue.Number(value)),
+                    nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
+                String encoded = SemanticIrValidator.toUnitText(unit(List.of(scalar)));
+                CanonicalJson.Num atom = (CanonicalJson.Num) at(
+                    (CanonicalJson.Obj) at(firstOp(parseObj(encoded)), "payload"), "value");
+                check(Double.doubleToLongBits(value) == Double.doubleToLongBits(atom.value()),
+                    "binary64 scalar bits survive canonical transport: " + Double.toHexString(value));
+            }
+        }
+
         // R-DIGEST: a wrong (stale) contract digest — T3's recomputation disagrees.
         {
-            KindPayload payload = new KindPayload.ConstPayload(new ScalarValue.Int(1));
+            KindPayload payload = new KindPayload.ConstPayload(new ScalarValue.Number(1));
             OperationContractSnapshot stale = contractFor(SemanticOpKind.CONST, payload, INT,
                 List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 "0000000000000000000000000000000000000000000000000000000000000000");
@@ -753,11 +773,11 @@ public class SemanticIrValidatorTest {
         {
             LoweredModuleUnit base = unit(List.of(
                 op(SemanticOpKind.BINARY,
-                    new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null)));
+                    new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
+                    nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null)));
             assertPass(SemanticIrValidator.validate(base, FACTS), "binary injection base");
             String text = substitutePolicy(SemanticIrValidator.toUnitText(base),
-                "INT32_RESULT", "NOT_A_POLICY");
+                "NO_DEAL_FAILURE", "NOT_A_POLICY");
             assertE6005(SemanticIrValidator.validateText(text, FACTS),
                 "R-ENUM", "NOT_A_POLICY");
         }
@@ -809,10 +829,10 @@ public class SemanticIrValidatorTest {
                 "STDLIB_PARAMETER", "STDLIB_RETURN")) {
             LoweredModuleUnit base = unit(List.of(
                 op(SemanticOpKind.BINARY,
-                    new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
-                    nextValue(), INT, FailurePolicyId.INT32_RESULT, null)));
+                    new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
+                    nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null)));
             String text = substitutePolicy(SemanticIrValidator.toUnitText(base),
-                "INT32_RESULT", reserved);
+                "NO_DEAL_FAILURE", reserved);
             assertE6005(SemanticIrValidator.validateText(text, FACTS),
                 "R-RESERVED-NAME", reserved);
         }
@@ -957,7 +977,7 @@ public class SemanticIrValidatorTest {
         // Two independent defects in one unit: the S6 enumeration order
         // decides — R-COVERAGE (rule 1) before R-DIGEST (rule 13).
         {
-            KindPayload payload = new KindPayload.ConstPayload(new ScalarValue.Int(1));
+            KindPayload payload = new KindPayload.ConstPayload(new ScalarValue.Number(1));
             OperationContractSnapshot stale = contractFor(SemanticOpKind.CONST, payload, INT,
                 List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -1165,7 +1185,7 @@ public class SemanticIrValidatorTest {
     }
 
     private static SemanticOp nextConst() {
-        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(2)),
+        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(2)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
@@ -1185,13 +1205,13 @@ public class SemanticIrValidatorTest {
             // A claim without evidence: the typed and text surfaces report
             // the identical R-CAPABILITY rejection, originless.
             LoweredModuleUnit forged = unit("mod.a",
-                Set.of(SemanticCapability.SIGNED_INT32),
+                Set.of(SemanticCapability.DESCRIPTORS),
                 Map.of(), Map.of(), List.of());
             Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(forged, FACTS);
-            assertE6005(typed, "R-CAPABILITY", "SIGNED_INT32");
+            assertE6005(typed, "R-CAPABILITY", "DESCRIPTORS");
             Optional<CompilerDiagnostic> text = SemanticIrValidator.validateText(
                 SemanticIrValidator.toUnitText(forged), FACTS);
-            assertE6005(text, "R-CAPABILITY", "SIGNED_INT32");
+            assertE6005(text, "R-CAPABILITY", "DESCRIPTORS");
             check(typed.get().message().equals(text.get().message()),
                 "both surfaces report the identical R-CAPABILITY rejection for the "
                     + "evidence-less SIGNED_INT32 claim");
@@ -1203,7 +1223,7 @@ public class SemanticIrValidatorTest {
             // The removed routing-marker capability name is rejected at the
             // closed position (R-ENUM), never admitted.
             String removedName = SemanticIrValidator.toUnitText(forged)
-                .replace("\"SIGNED_INT32\"", "\"STDLIB_TIME_CONFLICT\"");
+                .replace("\"DESCRIPTORS\"", "\"STDLIB_TIME_CONFLICT\"");
             assertE6005(SemanticIrValidator.validateText(removedName, FACTS),
                 "R-ENUM", "STDLIB_TIME_CONFLICT");
         }
@@ -1221,8 +1241,8 @@ public class SemanticIrValidatorTest {
                         new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
                         nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
                     op(SemanticOpKind.BINARY,
-                        new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null),
-                        nextValue(), INT, FailurePolicyId.INT32_RESULT, null),
+                        new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
+                        nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null),
                     op(SemanticOpKind.STRING_CONCAT,
                         new KindPayload.StringConcatPayload(List.of(nextValue())),
                         nextValue(), STR, FailurePolicyId.NO_DEAL_FAILURE, null)));
@@ -1327,9 +1347,6 @@ public class SemanticIrValidatorTest {
         bindings.put(new FunctionAllocationIdentity(17),
             new FunctionExecutionBinding.ExternalFunction(MOD_B, "helper", SIG_II,
                 ExternalExecutionOwner.RETAINED_ABI));
-        bindings.put(new FunctionAllocationIdentity(18),
-            new FunctionExecutionBinding.IntrinsicFunction(IntrinsicKind.INT_CONVERT,
-                IntrinsicKind.INT_CONVERT.declaredSignature()));
         bindings.put(new FunctionAllocationIdentity(19),
             new FunctionExecutionBinding.DynamicFunctionValue(boundaryOp, SIG_II_ASYNC));
 
@@ -1360,7 +1377,7 @@ public class SemanticIrValidatorTest {
 
         check(text.contains("\"formatVersion\":\"deal.semantic-ir/2\""),
             "the unit header carries deal.semantic-ir/2");
-        checkEq(9, reparsed.bindings().size(),
+        checkEq(8, reparsed.bindings().size(),
             "all binding variants plus the three adapter sourceRef shapes round-trip");
         checkEq(text, CanonicalJson.serializeText(
                 ContractSnapshotCanonicalizer.toJson(reparsed)),
@@ -1618,7 +1635,7 @@ public class SemanticIrValidatorTest {
             expectDecodeFailure(extraMemberAt(complete, "extra", path),
                 "unknown semantic-id/sourceRef member at " + List.of(path));
         }
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < 8; i++) {
             expectDecodeFailure(extraMemberAt(complete, "extra", "functionBindings", i, "binding"),
                 "unknown binding member at variant " + i);
         }
@@ -1876,7 +1893,7 @@ public class SemanticIrValidatorTest {
                             ExternalModuleKind.HOST)),
                     List.of(new ExportInterface("main", "() => null")),
                     List.of(new ClassInterface(new ClassId("mod.a", "Point"),
-                        List.of(new FieldInterface("x", "int", false, false, true),
+                        List.of(new FieldInterface("x", "number", false, false, true),
                             new FieldInterface("label", "string", true, true, false)),
                         new ClassFactoryId(7))),
                     InitializationMode.ONCE_AFTER_DEPENDENCIES));
@@ -2052,7 +2069,7 @@ public class SemanticIrValidatorTest {
         // A malformed seed descriptor text is a transport decode failure, not
         // an unchecked parser failure: truncated parameter-list forms
         // normalize to SemanticIrTextDecodeException at the descriptor owner.
-        for (String truncated : List.of("(", "(int", "(int,", "(int)->", "async(")) {
+        for (String truncated : List.of("(", "(number", "(number,", "(number)->", "async(")) {
             expectProjectDecodeFailure(withEntryAt(text, "descriptor",
                     CanonicalJson.str(truncated), "classSeeds", 0, "layout", "fields", 0),
                 "a truncated seed descriptor \"" + truncated + "\" rejects as a "
@@ -2127,7 +2144,7 @@ public class SemanticIrValidatorTest {
             new KindPayload.ModuleInitPayload(MOD, List.of(MOD_B, MOD_B), BATTERY_INIT_BLOCK),
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null)));
         ops.add(userOp(opWith(BATTERY_BODY_CONST, SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)), new ValueId(51), INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)), new ValueId(51), INT,
             FailurePolicyId.NO_DEAL_FAILURE, null)));
         return ops;
     }
@@ -2228,7 +2245,7 @@ public class SemanticIrValidatorTest {
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)),
             ExportPlan.empty(), Map.of(),
             List.of(opWith(constOp, SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new ScalarValue.Int(2)), new ValueId(91), INT,
+                new KindPayload.ConstPayload(new ScalarValue.Number(2)), new ValueId(91), INT,
                 FailurePolicyId.NO_DEAL_FAILURE, null)),
             table, new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
             ClassBindingFacts.empty());

@@ -418,7 +418,7 @@ public final class TypeChecker {
         return switch (t) {
             case Type.Null ignored       -> true;
             case Type.Boolean ignored    -> true;
-            case Type.Int ignored        -> true;
+
             case Type.Number ignored     -> true;
             case Type.String ignored     -> true;
             case Type.Table ignored      -> true;
@@ -1684,7 +1684,7 @@ public final class TypeChecker {
         return switch (lit.value()) {
             case LiteralValue.NullLiteral n -> Type.Null.INSTANCE;
             case LiteralValue.BooleanLiteral b -> Type.Boolean.INSTANCE;
-            case LiteralValue.IntLiteral i -> Type.Int.INSTANCE;
+
             case LiteralValue.NumberLiteral n -> Type.Number.INSTANCE;
             case LiteralValue.StringLiteral s -> Type.String.INSTANCE;
         };
@@ -1786,8 +1786,7 @@ public final class TypeChecker {
 
         if (op == BinaryOp.LT || op == BinaryOp.LTE || op == BinaryOp.GT || op == BinaryOp.GTE) {
             if (Types.equals(leftType, rightType)) {
-                if (leftType instanceof Type.Int || leftType instanceof Type.Number
-                    || leftType instanceof Type.String) {
+                if (leftType instanceof Type.Number || leftType instanceof Type.String) {
                     return Type.Boolean.INSTANCE;
                 }
             }
@@ -1799,8 +1798,7 @@ public final class TypeChecker {
         // For +, check special case first
         if (op == BinaryOp.ADD) {
             if (Types.equals(leftType, rightType)) {
-                if (leftType instanceof Type.Int || leftType instanceof Type.Number
-                    || leftType instanceof Type.String) {
+                if (leftType instanceof Type.Number || leftType instanceof Type.String) {
                     return leftType;
                 }
             }
@@ -1809,14 +1807,14 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // Other arithmetic: types must match and be int or number.
+        // Other arithmetic: both operands must be numbers.
         if (!Types.equals(leftType, rightType)) {
             error(DiagnosticCode.E3007, "Invalid operand types for '" + opSymbol(op) + "': "
                 + typeName(leftType) + " and " + typeName(rightType), bin.span());
             return Type.Error.INSTANCE;
         }
 
-        if (leftType instanceof Type.Int || leftType instanceof Type.Number) {
+        if (leftType instanceof Type.Number) {
             return leftType;
         }
 
@@ -1853,8 +1851,8 @@ public final class TypeChecker {
                 yield Type.Boolean.INSTANCE;
             }
             case NEG -> {
-                if (!(exprType instanceof Type.Int) && !(exprType instanceof Type.Number)) {
-                    error(DiagnosticCode.E3007, "Operand of unary '-' must be int or number, got "
+                if (!(exprType instanceof Type.Number)) {
+                    error(DiagnosticCode.E3007, "Operand of unary '-' must be number, got "
                         + typeName(exprType), un.expr().span());
                     yield Type.Error.INSTANCE;
                 }
@@ -2079,7 +2077,7 @@ public final class TypeChecker {
         // string lengths are stdlib `string.length(s)` measured in scalar
         // values).
         if (objType instanceof Type.Array && field.equals("length")) {
-            return Type.Int.INSTANCE;
+            return Type.Number.INSTANCE;
         }
 
         // Module symbol via identifier (must be checked before Table)
@@ -2214,9 +2212,9 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
-        // For arrays and reads, the index must be int
-        if (!(indexType instanceof Type.Int)) {
-            error(DiagnosticCode.E3007, "Array index must be int, got " + typeName(indexType),
+        // Integrality and bounds are runtime checks; static indexes are numbers.
+        if (!(indexType instanceof Type.Number)) {
+            error(DiagnosticCode.E3007, "Array index must be number, got " + typeName(indexType),
                 idx.index().span());
             return Type.Error.INSTANCE;
         }
@@ -3112,7 +3110,7 @@ public final class TypeChecker {
         return switch (t) {
             case Type.Null ignored -> "null";
             case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
+
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";

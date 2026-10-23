@@ -58,7 +58,6 @@ import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -166,11 +165,11 @@ public class ProjectLoweringTest {
     private static final ClassId BUILTIN_ERROR = ClassId.ERROR;
 
     private static final String UTIL_SOURCE = """
-        export function add(a: int, b: int): int {
+        export function add(a: number, b: number): number {
           return a + b;
         }
 
-        export function twice(x: int): int {
+        export function twice(x: number): number {
           return x * 2;
         }
 
@@ -190,10 +189,10 @@ public class ProjectLoweringTest {
     private static final String HOST_DECLARATION = """
         export class Endpoint {
           path: string;
-          port?: int;
+          port?: number;
         }
 
-        export function version(): int;
+        export function version(): number;
         """;
 
     /**
@@ -202,10 +201,10 @@ public class ProjectLoweringTest {
      * corpus host fixture also implements.
      */
     private static final String RETAINED_DEFAULT_DECLARATION = """
-        export function retained(): int[];
-        export function provideFirst(): int[];
+        export function retained(): number[];
+        export function provideFirst(): number[];
         export function bump(): null;
-        export function calls(): int;
+        export function calls(): number;
         """;
 
     /**
@@ -221,14 +220,14 @@ public class ProjectLoweringTest {
         import * as state from "host/retained_default";
 
         class A {
-          x: int = combine(state.calls(), build());
+          x: number = combine(state.calls(), build());
         }
 
-        function combine(a: int, b: int): int {
+        function combine(a: number, b: number): number {
           return a * 1000 + b;
         }
 
-        function build(): int {
+        function build(): number {
           if (state.calls() >= 1) {
             return 100;
           }
@@ -268,11 +267,11 @@ public class ProjectLoweringTest {
         import * as state from "host/retained_default";
 
         class A {
-          x: int = state.calls();
-          y: int = build();
+          x: number = state.calls();
+          y: number = build();
         }
 
-        function build(): int {
+        function build(): number {
           if (state.calls() >= 1) {
             return 100;
           }
@@ -310,11 +309,11 @@ public class ProjectLoweringTest {
         import * as state from "host/retained_default";
 
         export class A {
-          x: int = state.calls();
-          y: int = build();
+          x: number = state.calls();
+          y: number = build();
         }
 
-        function build(): int {
+        function build(): number {
           if (state.calls() >= 1) {
             return 100;
           }
@@ -358,20 +357,20 @@ public class ProjectLoweringTest {
         import * as u from "util";
         import * as cfg from "host/cfg";
 
-        function inc(x: int): int {
+        function inc(x: number): number {
           return x + 1;
         }
 
-        function helper(x: int): int {
+        function helper(x: number): number {
           return u.add(x, 1);
         }
 
         export function main(): null {
-          let f: (x: int) => int = inc;
-          let h: (a: int, b: int) => int = f;
-          let total: int = helper(2);
-          let extended: int = h(3, 9);
-          let doubled: int = u.twice(3);
+          let f: (x: number) => number = inc;
+          let h: (a: number, b: number) => number = f;
+          let total: number = helper(2);
+          let extended: number = h(3, 9);
+          let doubled: number = u.twice(3);
           return null;
         }
         """;
@@ -403,7 +402,7 @@ public class ProjectLoweringTest {
           peer: Hidden;
         }
 
-        export function version(): int;
+        export function version(): number;
         """;
 
     /**
@@ -440,15 +439,15 @@ public class ProjectLoweringTest {
      */
     private static final String CLASS_UTIL_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 1;
+          x: number = 0;
+          y: number = 1;
         }
 
         class Hidden {
           label: string = "hidden";
         }
 
-        export function makePoint(x: int): Point {
+        export function makePoint(x: number): Point {
           let p: Point = {x: x};
           let h: Hidden = {label: "local"};
           return p;
@@ -466,15 +465,15 @@ public class ProjectLoweringTest {
 
     private static final String IMPORTED_CLASS_UTIL_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 1;
+          x: number = 0;
+          y: number = 1;
         }
 
         export class Segment {
-          length: int = 0;
+          length: number = 0;
         }
 
-        export function makePoint(x: int): Point {
+        export function makePoint(x: number): Point {
           return {x: x};
         }
         """;
@@ -501,7 +500,7 @@ public class ProjectLoweringTest {
     private static final String SAME_SPELLED_ALPHA_SOURCE = """
         // @jsonable
         export class Point {
-          x: int = 0;
+          x: number = 0;
           nick?: string;
         }
         """;
@@ -546,7 +545,7 @@ public class ProjectLoweringTest {
           if (n === null) { throw { code: "WRONG_NULLABLE", message: "n" }; }
           let w: Wrap = {};
           let json: string = Wrap$toJson(w);
-          if (json !== "{\\\"a\\\":{\\\"x\\\":1},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
+          if (json !== "{\\\"a\\\":{\\\"x\\\":1.0},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
             throw { code: "WRONG_JSON", message: json };
           }
           let back: Wrap | null = Wrap$fromJson(json);
@@ -569,14 +568,14 @@ public class ProjectLoweringTest {
      * exact declaration of every construction.
      */
     private static final String SIBLING_IR_SOURCE = """
-        export class Ir { a: int = 7; }
-        export function useIr(x: Ir): int { return x.a; }
+        export class Ir { a: number = 7; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String SIBLING_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
-        export class Codec { b: int = 9; }
-        export function useCodec(y: Codec): int { return y.b; }
+        export class Ir { a: number = 93; }
+        export class Codec { b: number = 9; }
+        export function useCodec(y: Codec): number { return y.b; }
         """;
 
     private static final String SIBLING_APP_SOURCE = """
@@ -610,15 +609,15 @@ public class ProjectLoweringTest {
      * exact declaring provider.
      */
     private static final String FIELD_SIBLING_IR_SOURCE = """
-        export class Ir { a: int = 7; nick?: string; }
+        export class Ir { a: number = 7; nick?: string; }
         """;
 
     private static final String FIELD_SIBLING_CODEC_SOURCE = """
-        export class Ir { nick: int = 93; }
+        export class Ir { nick: number = 93; }
         """;
 
     private static final String FIELD_SIBLING_OTHER_SOURCE = """
-        export class Point { nick: int = 1; }
+        export class Point { nick: number = 1; }
         """;
 
     private static final String FIELD_SIBLING_APP_SOURCE = """
@@ -660,7 +659,7 @@ public class ProjectLoweringTest {
      */
     private static final String JSON_SIBLING_IR_SOURCE = """
         // @jsonable
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         """;
 
     private static final String JSON_SIBLING_CODEC_SOURCE = """
@@ -726,7 +725,7 @@ public class ProjectLoweringTest {
      */
     private static final String PLAN_IMPORTED_OTHER_SOURCE = """
         // @jsonable
-        export class Point { a: int = 7; }
+        export class Point { a: number = 7; }
         """;
 
     /**
@@ -751,7 +750,7 @@ public class ProjectLoweringTest {
         export function main(): null {
           let w: Wrap = {};
           let s: string = Wrap$toJson(w);
-          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7.0}}") {
             throw { code: "WRONG", message: s };
           }
           let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{}}");
@@ -777,12 +776,12 @@ public class ProjectLoweringTest {
      * declaration's 5 — never the imported sibling's 7 or 93.
      */
     private static final String LOCAL_ATTRIBUTION_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         export function id(x: Ir): Ir { return x; }
         """;
 
     private static final String LOCAL_ATTRIBUTION_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
+        export class Ir { a: number = 93; }
         export function id(x: Ir): Ir { return x; }
         """;
 
@@ -790,7 +789,7 @@ public class ProjectLoweringTest {
         import * as ir from "./ir";
         import * as codec from "./codec";
 
-        class Ir { a: int = 5; }
+        class Ir { a: number = 5; }
 
         function id(x: Ir): Ir { return x; }
 
@@ -834,13 +833,13 @@ public class ProjectLoweringTest {
      * return annotations name it.
      */
     private static final String PARAM_RETURN_PROVIDER_IR_SOURCE = """
-        export class Ir { a: int = 7; }
-        export function useIr(x: Ir): int { return x.a; }
+        export class Ir { a: number = 7; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     /** A second same-named sibling provider (the differing default 93). */
     private static final String PARAM_RETURN_PROVIDER_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
+        export class Ir { a: number = 93; }
         """;
 
     /**
@@ -851,14 +850,14 @@ public class ProjectLoweringTest {
      * an entry whose parameter names it.
      */
     private static final String CALL_RECEIVER_IR_SOURCE = """
-        export class Ir { a: int = 7; nick?: string; }
+        export class Ir { a: number = 7; nick?: string; }
         export function make(): Ir { return { a: 7 }; }
-        export function useIr(x: Ir): int { return x.a; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     /** The same-named sibling of the call-receiver provider (93). */
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
-        export class Ir { a: int = 93; nick: int = 1; }
+        export class Ir { a: number = 93; nick: number = 1; }
         """;
 
     /**
@@ -875,13 +874,13 @@ public class ProjectLoweringTest {
         function wrap(): ir.Ir { return { a: 7 }; }
 
         export function main(): null {
-          let v: int = ir.make().a;
-          let f: (x: ir.Ir) => int = ir.useIr;
-          let n: int = f({});
+          let v: number = ir.make().a;
+          let f: (x: ir.Ir) => number = ir.useIr;
+          let n: number = f({});
           let y = ir.make();
           y.a = 11;
-          let w: int = y.a;
-          let q: int = wrap().a;
+          let w: number = y.a;
+          let q: number = wrap().a;
           let z = ir.make();
           let had: boolean = has(z.nick);
           delete z.nick;
@@ -920,15 +919,15 @@ public class ProjectLoweringTest {
             + "\n"
             + (localFieldsOnly
                 ? "class Ir { b: string = \"local\"; }\n"
-                : "class Ir { a: int = 5; }\n")
+                : "class Ir { a: number = 5; }\n")
             + "\n"
-            + "function g(x: ir.Ir): int { return x.a; }\n"
+            + "function g(x: ir.Ir): number { return x.a; }\n"
             + "function make(): ir.Ir { return {}; }\n"
             + "\n"
             + "export function main(): null {\n"
-            + "  let n: int = ir.useIr({});\n"
+            + "  let n: number = ir.useIr({});\n"
             + "  if (n !== 7) { throw { code: \"WRONG_PARAM\", message: \"n\" }; }\n"
-            + "  let m: int = g({});\n"
+            + "  let m: number = g({});\n"
             + "  if (m !== 7) { throw { code: \"WRONG_LOCAL_PARAM\", message: \"m\" }; }\n"
             + "  let r: ir.Ir = make();\n"
             + "  if (r.a !== 7) { throw { code: \"WRONG_RETURN\", message: \"r\" }; }\n"
@@ -971,14 +970,14 @@ public class ProjectLoweringTest {
     private static final String BINDING_CLASS_UTIL_SOURCE = """
         // @jsonable
         export class Point {
-          x: int = 4;
+          x: number = 4;
           label: string = "p";
           note?: string;
         }
 
-        export function makeCounter(start: int, step: int): () => int {
-          let n: int = start;
-          function bump(): int {
+        export function makeCounter(start: number, step: number): () => number {
+          let n: number = start;
+          function bump(): number {
             n = n + step;
             return n;
           }
@@ -988,23 +987,23 @@ public class ProjectLoweringTest {
 
     /** The host declaration of the binding/class fixture: a function-valued return. */
     private static final String BINDING_CLASS_DECLARATION = """
-        export function pick(): (x: int) => int;
+        export function pick(): (x: number) => number;
         """;
 
     private static final String BINDING_CLASS_APP_SOURCE = """
         import * as u from "util";
         import * as cfg from "host/cfg";
 
-        function twice(x: int): int {
+        function twice(x: number): number {
           return x + x;
         }
 
         export function main(): null {
           let p: u.Point = {x: 5};
-          let c: () => int = u.makeCounter(1, 2);
-          let a: (x: int, y: int) => int = twice;
-          let h: (x: int) => int = cfg.pick();
-          let n: int = c();
+          let c: () => number = u.makeCounter(1, 2);
+          let a: (x: number, y: number) => number = twice;
+          let h: (x: number) => number = cfg.pick();
+          let n: number = c();
           return null;
         }
         """;
@@ -1013,13 +1012,13 @@ public class ProjectLoweringTest {
 
     private static final String OWNERSHIP_UTIL_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 1;
+          x: number = 0;
+          y: number = 1;
         }
 
-        export function makeCounter(start: int): () => int {
-          let n: int = start;
-          function bump(): int {
+        export function makeCounter(start: number): () => number {
+          let n: number = start;
+          function bump(): number {
             n = n + 1;
             return n;
           }
@@ -1028,7 +1027,7 @@ public class ProjectLoweringTest {
         """;
 
     private static final String OWNERSHIP_MID_SOURCE = """
-        export function answer(): int {
+        export function answer(): number {
           return 42;
         }
         """;
@@ -1039,8 +1038,8 @@ public class ProjectLoweringTest {
 
         export function main(): null {
           let p: u.Point = {x: 4};
-          let c: () => int = u.makeCounter(1);
-          let v: int = m.answer();
+          let c: () => number = u.makeCounter(1);
+          let v: number = m.answer();
           return null;
         }
         """;
@@ -1187,7 +1186,6 @@ public class ProjectLoweringTest {
             project.index(), project.manifests(), project.surface(),
             project.declarationIdentities(), BuiltinErrorDeclaration.synthesized(
                 project.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -1340,41 +1338,22 @@ public class ProjectLoweringTest {
                     "required-present is the declaration's optional-negation");
             }
 
-            // The closed IntrinsicFunction bindings of the two seeded
-            // intrinsics, per unit, with their declared signatures.
+            // Every executable binding has an ordinary production producer.
             for (LoweredModuleUnit unit : result.project().modules().values()) {
-                List<FunctionExecutionBinding.IntrinsicFunction> intrinsics =
-                    new ArrayList<>();
-                for (FunctionExecutionBinding binding
-                        : unit.functionBindings().values()) {
-                    if (binding
-                            instanceof FunctionExecutionBinding.IntrinsicFunction
-                            intrinsic) {
-                        intrinsics.add(intrinsic);
+                for (SemanticOp init : unit.ops()) {
+                    if (init.kind() != SemanticOpKind.BINDING_INIT) continue;
+                    for (ValueId operand : init.operands()) {
+                        check(unit.ops().stream().anyMatch(op -> operand.equals(op.result())),
+                            "binding initialization has an actual producing operation");
                     }
                 }
-                check(intrinsics.size() == 2,
-                    "module " + unit.moduleId() + " carries exactly the two closed "
-                        + "intrinsic bindings; got " + intrinsics.size());
-                Set<IntrinsicKind> kinds = new LinkedHashSet<>();
-                for (FunctionExecutionBinding.IntrinsicFunction intrinsic
-                        : intrinsics) {
-                    kinds.add(intrinsic.kind());
-                    check(intrinsic.descriptor()
-                            .equals(intrinsic.kind().declaredSignature()),
-                        "the intrinsic binding of " + intrinsic.kind()
-                            + " carries its pinned declared signature");
-                }
-                checkEq(Set.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT), kinds,
-                    "the int and number seeded intrinsics are registered");
                 // The dump carries the registration: the closed shape tag and
                 // the alias cells of the module's completions.
                 String dump = new String(
                     SemanticIrDumper.dumpModule(unit), StandardCharsets.UTF_8);
-                check(dump.contains("intrinsicFunction"),
+                check(!dump.contains("intrinsicFunction"),
                     "the dump of module " + unit.moduleId()
-                        + " records the closed intrinsicFunction binding shape");
+                        + " has no retired intrinsicFunction binding shape");
                 if (unit.ops().stream().anyMatch(op ->
                         op.kind() == SemanticOpKind.MODULE_IMPORT)) {
                     check(dump.contains("aliasCells"),
@@ -2269,12 +2248,12 @@ public class ProjectLoweringTest {
                             }
                             return switch (export) {
                                 case "calls" -> new SyncOutcome.Returned(
-                                    new SemanticOracle.Value.IntValue(calls[0]));
+                                    new SemanticOracle.Value.NumValue(calls[0]));
                                 case "provideFirst" -> {
                                     calls[0]++;
                                     yield new SyncOutcome.Returned(
                                         new SemanticOracle.Value.ArrayValue(
-                                            List.of(), RuntimeDescriptor.Int.INSTANCE,
+                                            List.of(), RuntimeDescriptor.Number.INSTANCE,
                                             false));
                                 }
                                 default -> new SyncOutcome.Thrown("E9001",
@@ -2722,7 +2701,7 @@ public class ProjectLoweringTest {
         Path proj = Files.createTempDirectory("project-lowering-crossing");
         try {
             writeFileIn(proj, "src/other.deal", """
-                export class Point { nick: int = 1; }
+                export class Point { nick: number = 1; }
                 """);
             writeFileIn(proj, "src/app.deal", """
                 import * as other from "./other";
@@ -2840,7 +2819,7 @@ public class ProjectLoweringTest {
         Path proj = Files.createTempDirectory("project-lowering-unrep");
         try {
             writeFileIn(proj, "src/a@b.deal", """
-                export class Item { value: int = 1; }
+                export class Item { value: number = 1; }
                 export function make(): Item { return {}; }
                 """);
             writeFileIn(proj, "src/app.deal", """
@@ -2867,7 +2846,7 @@ public class ProjectLoweringTest {
      * argument literal must be laid out by the parameter's declaration.
      */
     private static final String NESTED_CALL_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         export function g(x: Ir): Ir { return x; }
         """;
 
@@ -2880,7 +2859,7 @@ public class ProjectLoweringTest {
 
         export function main(): null {
           let p: Ir = f(ir.g({}));
-          let n: int = ir.g({}).a;
+          let n: number = ir.g({}).a;
           if (n !== 7) { throw { code: "WRONG_N", message: "n" }; }
           if (p.b !== "local") { throw { code: "WRONG_B", message: "b" }; }
           return null;
@@ -2969,20 +2948,20 @@ public class ProjectLoweringTest {
      */
     private static final String NESTED_FIELD_IR_SOURCE = """
         import * as codec from "./codec";
-        export class Ir { inner: codec.Ir = {}; a: int = 7; }
+        export class Ir { inner: codec.Ir = {}; a: number = 7; }
         """;
 
     private static final String NESTED_FIELD_CODEC_SOURCE = """
-        export class Ir { b: int = 93; }
+        export class Ir { b: number = 93; }
         """;
 
     private static final String NESTED_FIELD_APP_SOURCE = """
         import * as ir from "./m/ir";
         export function main(): null {
           let x: ir.Ir = { inner: {} };
-          let b: int = x.inner.b;
+          let b: number = x.inner.b;
           if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
-          let a: int = x.a;
+          let a: number = x.a;
           if (a !== 7) { throw { code: "WRONG_A", message: "a" }; }
           return null;
         }
@@ -3089,14 +3068,14 @@ public class ProjectLoweringTest {
         """;
 
     private static final String TRANSITIVE_CODEC_SOURCE = """
-        export class Part { b: int = 93; }
+        export class Part { b: number = 93; }
         """;
 
     private static final String TRANSITIVE_APP_SOURCE = """
         import * as ir from "./m/ir";
         export function main(): null {
           let x: ir.Outer = { inner: {} };
-          let b: int = x.inner.b;
+          let b: number = x.inner.b;
           if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
           return null;
         }
@@ -3412,8 +3391,6 @@ public class ProjectLoweringTest {
                     project.manifests(), project.surface(),
                     project.declarationIdentities(), BuiltinErrorDeclaration.synthesized(
                         modules.get(0).ast().span()),
-                    List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT),
                     Set.of());
             check(!result.hasErrors() && result.project() != null,
                 "the exact-identity field operation needs no recorded receiver "
@@ -3942,10 +3919,10 @@ public class ProjectLoweringTest {
             + "its argument literal's construction beside a same-named "
             + "local declaration --");
         String app = "import * as ir from \"./ir\";\n\n"
-            + "class Ir { a: int = 5; }\n\n"
+            + "class Ir { a: number = 5; }\n\n"
             + "export function main(): null {\n"
-            + "  let f: (x: ir.Ir) => int = ir.useIr;\n"
-            + "  let n: int = f({});\n"
+            + "  let f: (x: ir.Ir) => number = ir.useIr;\n"
+            + "  let n: number = f({});\n"
             + "  if (n !== 7) { throw { code: \"WRONG_N\", message: \"n\" }; }\n"
             + "  return null;\n"
             + "}\n";
@@ -4010,7 +3987,7 @@ public class ProjectLoweringTest {
         // declaration resolves the sole declaration (the parameter
         // carrier's provider) and executes its default.
         RealProject control = compileProject(
-            app.replace("class Ir { a: int = 5; }\n\n", ""),
+            app.replace("class Ir { a: number = 5; }\n\n", ""),
             Map.of("src/ir.deal", PARAM_RETURN_PROVIDER_IR_SOURCE), Map.of());
         try {
             SemanticLowerer.ProjectLoweringResult result =
@@ -4219,8 +4196,6 @@ public class ProjectLoweringTest {
                     manifests, project.surface(), project.declarationIdentities(),
                     BuiltinErrorDeclaration.synthesized(
                         modules.get(0).ast().span()),
-                    List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT),
                     Set.of());
             check(result.hasErrors() && result.project() == null,
                 "the stripped provider produces no project: "
@@ -4306,8 +4281,6 @@ public class ProjectLoweringTest {
                     manifests, project.surface(), project.declarationIdentities(),
                     BuiltinErrorDeclaration.synthesized(
                         modules.get(0).ast().span()),
-                    List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT),
                     Set.of());
             check(result.hasErrors() && result.project() == null,
                 "the inconsistent-fact seed produces no project: "
@@ -4730,7 +4703,6 @@ public class ProjectLoweringTest {
                 project.surface(), project.declarationIdentities(),
                 BuiltinErrorDeclaration.synthesized(
                     project.checkedProject().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 Set.of());
             check(result.hasErrors() && result.project() == null,
                 "the unresolved alias produces no project");
@@ -5379,18 +5351,18 @@ public class ProjectLoweringTest {
             "NOT_AN_OWNER"), documents,
             "a manifest seed carrying an unknown owner rejects");
         expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
-            "Endpoint", "path", "int"), documents,
+            "Endpoint", "path", "number"), documents,
             "a manifest seed whose field descriptor contradicts the interface's "
                 + "declared type rejects");
         expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
-            "Endpoint", "path", "?int"), documents,
+            "Endpoint", "path", "?number"), documents,
             "a manifest seed whose nullable field descriptor contradicts the "
                 + "interface's declared type rejects");
         expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
             "Endpoint", "port", "string"), documents,
             "a manifest seed field descriptor mutation on a non-defaulted field "
                 + "rejects");
-        for (String truncated : List.of("(", "(int")) {
+        for (String truncated : List.of("(", "(number")) {
             expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
                 "Endpoint", "path", truncated), documents,
                 "a truncated seed descriptor \"" + truncated + "\" rejects as a "
@@ -5474,7 +5446,7 @@ public class ProjectLoweringTest {
                     + "the module's referring CLASS_NEW");
             expectProjectAdmissionFailure(SemanticIrValidator.validateText(
                     asText(manifestWithSeedFieldDescriptor(
-                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "path", "int")),
+                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "path", "number")),
                     facts),
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE,
                 "carries a layout that differs from the resolved layout",
@@ -5594,7 +5566,7 @@ public class ProjectLoweringTest {
 
             // A truncated function descriptor is a transport decode failure on
             // the reassembly and text admission surfaces alike.
-            for (String truncated : List.of("(", "(int")) {
+            for (String truncated : List.of("(", "(number")) {
                 expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
                     "Endpoint", "peer", truncated), documents,
                     "a truncated seed descriptor \"" + truncated + "\" rejects at "
@@ -5620,7 +5592,7 @@ public class ProjectLoweringTest {
         RealProject imported = compileProject("""
             import * as cfg from "host/cfg";
             export function main(): null { return null; }
-            """, Map.of("src/util.deal", "export class Point { x: int = 0; }",
+            """, Map.of("src/util.deal", "export class Point { x: number = 0; }",
                 "src/cfg.d.deal", """
                     import * as u from "util";
                     export class Endpoint { point: u.Point; }
@@ -5666,17 +5638,17 @@ public class ProjectLoweringTest {
                 SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(project);
                 assertReassembly(text, dump, "unchanged private declaration read reassembles");
                 expectReassemblyFailure(manifestWithSeedFieldDescriptor(dump.manifest(),
-                    "Hidden", "secret", "int"), documentsOf(dump),
+                    "Hidden", "secret", "number"), documentsOf(dump),
                     "private seed/read disagreement rejects without CLASS_NEW");
                 expectProjectAdmissionFailure(SemanticIrValidator.validateText(asText(
                     manifestWithSeedFieldDescriptor(text.getBytes(StandardCharsets.UTF_8),
-                        "Hidden", "secret", "int")), facts),
+                        "Hidden", "secret", "number")), facts),
                     ClassConstructionValidator.FIELD_OPERATION_SHAPE, "Hidden.secret",
                     "text admission rejects private seed/read disagreement");
                 expectProjectAdmissionFailure(SemanticIrValidator.validate(
                     new ExecutableLoweredProject(project.semanticProfile(), project.interfaceIndex(),
                         project.modules(), project.entryModule(), withSeedFieldDescriptor(
-                            project.classSeeds(), HOST_HIDDEN, "secret", RuntimeDescriptor.Int.INSTANCE)), facts),
+                            project.classSeeds(), HOST_HIDDEN, "secret", RuntimeDescriptor.Number.INSTANCE)), facts),
                     ClassConstructionValidator.FIELD_OPERATION_SHAPE, "Hidden.secret",
                     "typed admission rejects private seed/read disagreement");
             } finally { deleteRecursively(hidden.root()); }
@@ -6205,7 +6177,7 @@ public class ProjectLoweringTest {
                 }
             }
             checkEq(Set.of("loweredBody", "adapter", "hostFunction", "hostFunctionValue",
-                    "externalFunction", "intrinsicFunction", "dynamicFunctionValue"),
+                    "externalFunction", "dynamicFunctionValue"),
                 variants, "the transported project carries every complete binding variant");
             check(twoCapture != null, "the fixture carries the two-capture ordinary closure");
             if (twoCapture == null) {
@@ -6355,8 +6327,8 @@ public class ProjectLoweringTest {
                                RuntimeDescriptor.Func target, String detail) { }
             for (AdapterCase row : List.of(
                     new AdapterCase("signature", adapter.sourceRef(),
-                        new RuntimeDescriptor.Func(Collections.nCopies(3, RuntimeDescriptor.Int.INSTANCE),
-                            RuntimeDescriptor.Int.INSTANCE), "registration carries signatures"),
+                        new RuntimeDescriptor.Func(Collections.nCopies(3, RuntimeDescriptor.Number.INSTANCE),
+                            RuntimeDescriptor.Number.INSTANCE), "registration carries signatures"),
                     new AdapterCase("sourceRef",
                         new AdaptSourceRef.SharedCell(shared.binding(), shared.generation() + 1),
                         adapter.targetSignature(), "registration carries mode"))) {
@@ -6563,7 +6535,6 @@ public class ProjectLoweringTest {
             case FunctionExecutionBinding.HostFunction ignored -> "hostFunction";
             case FunctionExecutionBinding.HostFunctionValue ignored -> "hostFunctionValue";
             case FunctionExecutionBinding.ExternalFunction ignored -> "externalFunction";
-            case FunctionExecutionBinding.IntrinsicFunction ignored -> "intrinsicFunction";
             case FunctionExecutionBinding.DynamicFunctionValue ignored -> "dynamicFunctionValue";
         };
     }

@@ -1,12 +1,13 @@
-// @spec: Runtime execution model — Intrinsic conversions
-// @description: int(NaN) raises E8001 because NaN is not a valid int value
-// @expected: runtime-error E8001
+// @spec: Type system
+// @description: Binary64 arithmetic admits and preserves the computed value without signed32 refinement
+// @expected: runtime-ok
 // @features: runtime, int, conversion, nan
 
-export function test_int_nan(): int {
+export function test_int_nan(): number {
   let z: number = 0.0;
   let n: number = z / z;
-  return int(n);
+  if (n === n) { throw { code: "TEST_FAIL", message: "zero divided by zero must be NaN" }; }
+  return n;
 }
 
 export function main(): null {

@@ -1,26 +1,26 @@
 // @spec: Arrays — recursive array/nullable closure
-// @description: Arbitrary-depth Array/Nullable int[] compositions — int[][][], (int[] | null)[], and int[][] | null — read, write, append, and alias with LuaJIT semantics: reference identity, alias-observed mutation, the DEAL null element, and reference-identity equality (v1.2)
+// @description: Arbitrary-depth Array/Nullable number[] compositions — number[][][], (number[] | null)[], and number[][] | null — read, write, append, and alias with LuaJIT semantics: reference identity, alias-observed mutation, the DEAL null element, and reference-identity equality (v1.2)
 // @expected: runtime-ok
-// @features: int[], arrays, descriptors
+// @features: number[], arrays, descriptors
 
-function stamp(xs: int[][][]): int {
+function stamp(xs: number[][][]): number {
   xs[0][0][0] = 7;
   return xs[0][0][0];
 }
 
-export function test_array_array_closure(): int {
-  let b: int[] = [0, 0];
-  let xs: int[][][] = [[b]];
+export function test_array_array_closure(): number {
+  let b: number[] = [0, 0];
+  let xs: number[][][] = [[b]];
   if (stamp(xs) !== 7) {
-    throw { code: "TEST_FAIL", message: "nested int[] write failed" };
+    throw { code: "TEST_FAIL", message: "nested number[] write failed" };
   }
   if (b[0] !== 7) {
     throw { code: "TEST_FAIL", message: "alias mutation not visible through the source buffer" };
   }
-  let ns: (int[] | null)[] = [];
+  let ns: (number[] | null)[] = [];
   ns[ns.length] = [0];
   ns[ns.length] = null;
-  let first: int[] | null = ns[0];
+  let first: number[] | null = ns[0];
   if (first !== null) {
     first[0] = 9;
     if (first[0] !== 9) {
@@ -30,16 +30,16 @@ export function test_array_array_closure(): int {
   if (ns[1] !== null) {
     throw { code: "TEST_FAIL", message: "null element lost" };
   }
-  let alias: int[][] = xs[0];
+  let alias: number[][] = xs[0];
   alias[0][0] = 11;
   if (b[0] !== 11) {
     throw { code: "TEST_FAIL", message: "array alias must share storage" };
   }
-  let distinct: int[][] = [[0, 0]];
+  let distinct: number[][] = [[0, 0]];
   if (distinct === xs[0]) {
     throw { code: "TEST_FAIL", message: "distinct arrays must not be reference-equal" };
   }
-  let maybe: int[][] | null = alias;
+  let maybe: number[][] | null = alias;
   if (maybe !== null) {
     if (maybe[0] === b) {
       return 0;

@@ -6,30 +6,30 @@
 import * as host from "host/array_roundtrip";
 
 export function test_host_array_roundtrip(): string {
-  let b: int[] = [0, 0, 0];
+  let b: number[] = [0, 0, 0];
   b[0] = 1;
   b[1] = 2;
   b[2] = 200;
-  let back: int[] = host.echoArray(b);
+  let back: number[] = host.echoArray(b);
   if (back.length !== 3) {
-    throw { code: "TEST_FAIL", message: "host int[] roundtrip length mismatch" };
+    throw { code: "TEST_FAIL", message: "host number[] roundtrip length mismatch" };
   }
   if (back[0] !== 1 || back[1] !== 2 || back[2] !== 200) {
-    throw { code: "TEST_FAIL", message: "host int[] roundtrip content mismatch" };
+    throw { code: "TEST_FAIL", message: "host number[] roundtrip content mismatch" };
   }
-  let fresh: int[] = host.makeArray(2);
+  let fresh: number[] = host.makeArray(2);
   if (fresh.length !== 2) {
     throw { code: "TEST_FAIL", message: "host-created buffer length mismatch" };
   }
   if (host.readElement(fresh) !== 0) {
     throw { code: "TEST_FAIL", message: "host-created buffer is not zero-filled" };
   }
-  let alias: int[] = back;
+  let alias: number[] = back;
   alias[0] = 9;
   if (back[0] !== 9) {
     throw { code: "TEST_FAIL", message: "returned array local alias mutation is invisible" };
   }
-  let second: int[] = host.makeArray(2);
+  let second: number[] = host.makeArray(2);
   fresh[0] = 8;
   if (second[0] !== 0 || fresh === second) {
     throw { code: "TEST_FAIL", message: "host-created arrays share storage" };

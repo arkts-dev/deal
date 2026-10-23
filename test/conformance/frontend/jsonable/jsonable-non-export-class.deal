@@ -5,7 +5,7 @@
 
 // @jsonable
 class C {
-  x: int = 0;
+  x: number = 0;
 }
 
 export function test_exists(): null {

@@ -5,8 +5,8 @@
 // explicit classification, and companions must keep compiling standalone.
 import * as deep from "./async_chain_deep_lib";
 
-export async function midAnswer(): int {
-  let x: int = await deep.deepAnswer();
+export async function midAnswer(): number {
+  let x: number = await deep.deepAnswer();
   return x + 2;
 }
 

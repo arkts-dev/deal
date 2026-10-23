@@ -35,7 +35,7 @@ local function step(x)
 end
 
 local function functionValue()
-  return { [K.kind] = "function", sig = "(int)->int", f = step }
+  return { [K.kind] = "function", sig = "(number)->number", f = step }
 end
 
 local function widget(label, weight)

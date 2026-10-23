@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: tables, aliasing, mutation
 
-export function test_table_alias_mutation(): int {
+export function test_table_alias_mutation(): number {
   let a: table = { value: 1 };
   let b: table = a;
   b.value = 9;
-  let result: int = a.value;
+  let result: number = a.value;
   if (result !== 9) { throw { code: "TEST_FAIL", message: "table alias mutation failed" }; }
   return result;
 }

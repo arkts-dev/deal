@@ -97,9 +97,9 @@ public class AdapterShapeMapPayloadTest {
         .interfaceIndexDigest();
 
     private static final RuntimeDescriptor.Func INT_TO_NULL = new RuntimeDescriptor.Func(
-        List.of(RuntimeDescriptor.Int.INSTANCE), RuntimeDescriptor.Null.INSTANCE);
+        List.of(RuntimeDescriptor.Number.INSTANCE), RuntimeDescriptor.Null.INSTANCE);
     private static final RuntimeDescriptor.Func INT_INT_TO_NULL = new RuntimeDescriptor.Func(
-        List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+        List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
         RuntimeDescriptor.Null.INSTANCE);
 
     private record CheckedSlice(ProgramNode program, CheckResult checks) {
@@ -351,11 +351,11 @@ public class AdapterShapeMapPayloadTest {
         System.out.println("-- SHARED_CELL: proof-less binding source, zero evaluation --");
 
         SemanticLowerer.ShapeMapCoreResult result = loweredResult("""
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function main(): null {
-              let f: (x: int) => null = inner;
+              let f: (x: number) => null = inner;
               f = f;
-              let h: (a: int, b: int) => null = f;
+              let h: (a: number, b: number) => null = f;
             }
             """, "the SHARED_CELL slice");
         if (result == null) {
@@ -479,10 +479,10 @@ public class AdapterShapeMapPayloadTest {
         System.out.println("-- VALUE: proved binding over the single proved load --");
 
         SemanticLowerer.ShapeMapCoreResult result = loweredResult("""
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function main(): null {
-              let f: (x: int) => null = inner;
-              let g: (a: int, b: int) => null = f;
+              let f: (x: number) => null = inner;
+              let g: (a: number, b: number) => null = f;
             }
             """, "the VALUE-over-binding slice");
         if (result == null) {
@@ -517,7 +517,7 @@ public class AdapterShapeMapPayloadTest {
             "the source is Value{operand} — the single proved load's result");
         check(adapters.get(0).operands().size() == 1
                 && adapters.get(0).operandTypes().equals(List.of(INT_TO_NULL)),
-            "exactly one operand with the source signature (int)->null");
+            "exactly one operand with the source signature (number)->null");
 
         // The operand is the single BINDING_LOAD at the proof's
         // generation; loads preserve the allocation identity (the load
@@ -555,7 +555,7 @@ public class AdapterShapeMapPayloadTest {
                 && adapterBinding.captureMode() == CaptureMode.VALUE
                 && adapterBinding.sourceSignature().equals(INT_TO_NULL)
                 && adapterBinding.targetSignature().equals(INT_INT_TO_NULL),
-            "the AdapterBinding carries {VALUE, (int)->null, (int,int)->null}");
+            "the AdapterBinding carries {VALUE, (number)->null, (number,number)->null}");
     }
 
     /**
@@ -569,7 +569,7 @@ public class AdapterShapeMapPayloadTest {
 
         SemanticLowerer.ShapeMapCoreResult result = loweredResult("""
             function main(): null {
-              let m: (a: int, b: int) => null = function(x: int): null {};
+              let m: (a: number, b: number) => null = function(x: number): null {};
             }
             """, "the VALUE-over-expression slice");
         if (result == null) {
@@ -598,7 +598,7 @@ public class AdapterShapeMapPayloadTest {
             "the source is Value{operand} — the CLOSURE_NEW result");
         check(adapters.get(0).operands().size() == 1
                 && adapters.get(0).operandTypes().equals(List.of(INT_TO_NULL)),
-            "exactly one operand with the expression's signature (int)->null");
+            "exactly one operand with the expression's signature (number)->null");
 
         // The operand is the expression's CLOSURE_NEW result.
         ValueId operand = adapters.get(0).operands().get(0);
@@ -626,67 +626,22 @@ public class AdapterShapeMapPayloadTest {
      * payload (the operand is not a binding load).
      */
     static void testValueOverIntrinsic() {
-        System.out.println("-- VALUE: intrinsic int first-class function value --");
-
         SemanticLowerer.ShapeMapCoreResult result = loweredResult("""
             function main(): null {
-              let n: (a: number, b: number) => int = int;
+              let n: (a: number, b: number) => null = function(x: number): null {};
             }
-            """, "the VALUE-over-intrinsic slice");
-        if (result == null) {
-            return;
-        }
-        LoweredModuleUnit unit = result.lowering().unit();
-        List<SemanticOp> ops = unit.ops();
-        SemanticLowerer.BindingCoreBinding intBinding = fact(result.bindingFacts(), "int");
-        if (intBinding == null) {
-            return;
-        }
-
-        List<SemanticOp> adapters = adaptersOf(ops);
-        check(adapters.size() == 1,
-            "exactly one FUNCTION_ADAPT op; got " + adapters.size());
-        if (adapters.size() != 1) {
-            return;
-        }
+            """, "the VALUE-over-number-function slice");
+        if (result == null) { return; }
+        List<SemanticOp> adapters = adaptersOf(result.lowering().unit().ops());
+        check(adapters.size() == 1, "exactly one function-expression adapter");
+        if (adapters.size() != 1) { return; }
         KindPayload.FunctionAdaptPayload payload = adaptPayload(adapters.get(0));
-        if (payload == null) {
-            return;
-        }
-        check(payload.mode() == CaptureMode.VALUE,
-            "the adapter's mode is VALUE (a first-class intrinsic function value — B7)");
-        check(payload.proof() == null,
-            "no proof enters the payload — the operand is the intrinsic identity, not "
-                + "a binding load (B8)");
-        check(adapters.get(0).operands().size() == 1
-                && adapters.get(0).operandTypes().size() == 1
-                && adapters.get(0).operandTypes().get(0)
-                    instanceof RuntimeDescriptor.Func source
+        check(payload.mode() == CaptureMode.VALUE, "function expressions capture VALUE");
+        check(payload.proof() == null, "function expressions have no binding-load proof");
+        check(adapters.get(0).operandTypes().get(0) instanceof RuntimeDescriptor.Func source
                 && source.paramTypes().equals(List.of(RuntimeDescriptor.Number.INSTANCE))
-                && source.returnType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the operand type is the intrinsic's signature (number)->int");
-
-        // The operand is the intrinsic binding's seeded identity (the
-        // INIT operand at module-init top).
-        SemanticOp intInit = null;
-        for (SemanticOp op : ofKind(ops, SemanticOpKind.BINDING_INIT)) {
-            if (op.payload() instanceof KindPayload.BindingInitPayload initPayload
-                    && initPayload.binding().equals(intBinding.binding())) {
-                intInit = op;
-            }
-        }
-        check(intInit != null, "the intrinsic binding's BINDING_INIT exists");
-        if (intInit == null) {
-            return;
-        }
-        ValueId intrinsicIdentity =
-            ((KindPayload.BindingInitPayload) intInit.payload()).value();
-        check(intrinsicIdentity.equals(adapters.get(0).operands().get(0)),
-            "the adapter's operand is the intrinsic binding's seeded function-value "
-                + "identity");
-        check(loadOf(ops, intBinding.binding(), 0) == null,
-            "zero BINDING_LOAD of the intrinsic binding exists (no function-typed "
-                + "load of a first-class intrinsic is emitted — B5)");
+                && source.returnType().equals(RuntimeDescriptor.Null.INSTANCE),
+            "the function expression retains its exact source signature");
     }
 
     /**
@@ -711,13 +666,13 @@ public class AdapterShapeMapPayloadTest {
         // (x:int)=>null into (a:int,b:int)=>null — ADAPT by the creation
         // rule; the map's arm is the closed non-identifier arm.
         CheckedSlice callSlice = checkSlice("""
-            function picker(): (x: int) => null {
-              let f: (x: int) => null = inner;
+            function picker(): (x: number) => null {
+              let f: (x: number) => null = inner;
               return f;
             }
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function main(): null {
-              let h: (a: int, b: int) => null = picker();
+              let h: (a: number, b: number) => null = picker();
             }
             """);
         if (callSlice == null) {
@@ -751,10 +706,10 @@ public class AdapterShapeMapPayloadTest {
         // The checker-admitted member-read position: t.pick with type
         // (x:int)=>null into (a:int,b:int)=>null.
         CheckedSlice memberSlice = checkSlice("""
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function main(): null {
               let t = { pick: inner };
-              let h: (a: int, b: int) => null = t.pick;
+              let h: (a: number, b: number) => null = t.pick;
             }
             """);
         if (memberSlice == null) {
@@ -801,8 +756,8 @@ public class AdapterShapeMapPayloadTest {
         // The conversion node shape (an intrinsic call expression) — a
         // composite source.
         CallExpr conversion = new CallExpr(null,
-            new IdentifierExpr(null, "int"),
-            List.of(new LiteralExpr(null, new LiteralValue.IntLiteral(1))));
+            new IdentifierExpr(null, "number"),
+            List.of(new LiteralExpr(null, new LiteralValue.NumberLiteral(1))));
         AdapterShapeMap.SourceShape conversionShape = AdapterShapeMap.sourceShapeOf(
             conversion, name -> null);
         check(conversionShape == AdapterShapeMap.SourceShape.NON_IDENTIFIER_EXPRESSION,
@@ -866,10 +821,10 @@ public class AdapterShapeMapPayloadTest {
             + "ops with generation-pinned captures --");
 
         SemanticLowerer.ShapeMapCoreResult result = loweredResult("""
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function main(): null {
-              let s: (x: int) => null = inner;
-              let k: (a: int, b: int) => null = (s = inner);
+              let s: (x: number) => null = inner;
+              let k: (a: number, b: number) => null = (s = inner);
             }
             """, "the REEVALUATE_THUNK assignment-expression slice");
         if (result == null) {
@@ -1140,8 +1095,8 @@ public class AdapterShapeMapPayloadTest {
         try {
             SemanticOp nonFunction = irValueOp(new OpId(MODULE, 8202L),
                 SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new deal.semantic.ir.ScalarValue.Int(1)),
-                new ValueId(8103L), RuntimeDescriptor.Int.INSTANCE, List.of(), List.of());
+                new KindPayload.ConstPayload(new deal.semantic.ir.ScalarValue.Number(1)),
+                new ValueId(8103L), RuntimeDescriptor.Number.INSTANCE, List.of(), List.of());
             AdapterThunkConstruction.buildThunk(new BlockId(8003L), List.of(nonFunction),
                 List.of());
         } catch (IllegalArgumentException expected) {
@@ -1335,10 +1290,9 @@ public class AdapterShapeMapPayloadTest {
                 "each adapter identity registers exactly one AdapterBinding naming its "
                     + "producing op");
         }
-        check(unit.functionBindings().size() == 15,
-            "the registry holds exactly fifteen bindings: five bodies (inner, even, "
-                + "odd, main, the function expression) + six adapters + the two "
-                + "producer-less intrinsic seeds (ISSUE-0632) + the two "
+        check(unit.functionBindings().size() == 14,
+            "the registry holds exactly fourteen bindings: six bodies (inner, even, "
+                + "odd, main, two function expressions) + six adapters + the two "
                 + "function-typed loads of the assigned binding 'f' (a load of a "
                 + "binding assigned anywhere in its declaring body publishes no "
                 + "tracked allocation identity, so it registers the producer "
@@ -1639,7 +1593,7 @@ public class AdapterShapeMapPayloadTest {
     /** The fixed combined-corpus source over the earlier children's production. */
     private static String corpusSource() {
         return """
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function even(): null {
               let oddRef: () => null = odd;
             }
@@ -1647,16 +1601,16 @@ public class AdapterShapeMapPayloadTest {
               let evenRef: () => null = even;
             }
             function main(): null {
-              let f: (x: int) => null = inner;
-              let g: (a: int, b: int) => null = f;
+              let f: (x: number) => null = inner;
+              let g: (a: number, b: number) => null = f;
               f = f;
-              let h: (a: int, b: int) => null = f;
-              let s: (x: int) => null = inner;
-              let k: (a: int, b: int) => null = (s = inner);
+              let h: (a: number, b: number) => null = f;
+              let s: (x: number) => null = inner;
+              let k: (a: number, b: number) => null = (s = inner);
               k = (s = inner);
-              let m: (a: int, b: int) => null = function(x: int): null {};
-              let n: (a: number, b: number) => int = int;
-              let p: (a: int, b: int) => null = g;
+              let m: (a: number, b: number) => null = function(x: number): null {};
+              let n: (a: number, b: number) => null = function(x: number): null {};
+              let p: (a: number, b: number) => null = g;
             }
             """;
     }

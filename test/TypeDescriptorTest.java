@@ -112,13 +112,13 @@ public class TypeDescriptorTest {
     static void testIrSpecFormatNotLegacy() {
         System.out.print("  testIrSpecFormatNotLegacy... ");
         CompileResult cr = compile("""
-            function f(a: int[], b: int | null, c: string | null): null { return; }
+            function f(a: number[], b: number | null, c: string | null): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "[int]", "array uses spec [T] format");
-        assertContains(ir, "?int", "nullable uses spec ?T format");
+        assertContains(ir, "[number]", "array uses spec [T] format");
+        assertContains(ir, "?number", "nullable uses spec ?T format");
         assertContains(ir, "?string", "second nullable uses spec ?T format");
-        assertNotContains(ir, "int[]", "no legacy int[] format");
+        assertNotContains(ir, "number[]", "no legacy number[] format");
         assertNotContains(ir, "|null", "no legacy |null format");
         System.out.println("OK");
     }
@@ -126,12 +126,12 @@ public class TypeDescriptorTest {
     static void testIrArrayDescriptors() {
         System.out.print("  testIrArrayDescriptors... ");
         CompileResult cr = compile("""
-            function f(a: int[], b: string[]): null { return; }
+            function f(a: number[], b: string[]): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "param a: [int]", "array param of int uses [int]");
+        assertContains(ir, "param a: [number]", "array param of number uses [number]");
         assertContains(ir, "param b: [string]", "array param of string uses [string]");
-        assertNotContains(ir, "int[]", "no legacy array format");
+        assertNotContains(ir, "number[]", "no legacy array format");
         assertNotContains(ir, "string[]", "no legacy array format");
         System.out.println("OK");
     }
@@ -139,10 +139,10 @@ public class TypeDescriptorTest {
     static void testIrNullableDescriptorsOnParams() {
         System.out.print("  testIrNullableDescriptorsOnParams... ");
         CompileResult cr = compile("""
-            function f(a: int | null, b: string | null): null { return; }
+            function f(a: number | null, b: string | null): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "param a: ?int", "nullable int param uses ?int");
+        assertContains(ir, "param a: ?number", "nullable number param uses ?number");
         assertContains(ir, "param b: ?string", "nullable string param uses ?string");
         assertNotContains(ir, "|null", "no legacy |null format");
         System.out.println("OK");
@@ -164,46 +164,46 @@ public class TypeDescriptorTest {
     static void testIrFunctionDescriptorsOnIdents() {
         System.out.print("  testIrFunctionDescriptorsOnIdents... ");
         CompileResult cr = compile("""
-            function add(a: int, b: int): int { return a + b; }
-            function process(x: int, s: string): boolean { return true; }
-            let f: (a: int, b: int) => int = add;
-            let g: (x: int, s: string) => boolean = process;
+            function add(a: number, b: number): number { return a + b; }
+            function process(x: number, s: string): boolean { return true; }
+            let f: (a: number, b: number) => number = add;
+            let g: (x: number, s: string) => boolean = process;
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "(int,int)->int", "function type descriptor (int,int)->int");
-        assertContains(ir, "(int,string)->boolean", "function type descriptor (int,string)->boolean");
+        assertContains(ir, "(number,number)->number", "function type descriptor (number,number)->number");
+        assertContains(ir, "(number,string)->boolean", "function type descriptor (number,string)->boolean");
         System.out.println("OK");
     }
 
     static void testIrNestedArrayDescriptors() {
         System.out.print("  testIrNestedArrayDescriptors... ");
         CompileResult cr = compile("""
-            function f(a: int[][]): null { return; }
+            function f(a: number[][]): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "[[int]]", "nested array uses [[int]]");
-        assertNotContains(ir, "int[][]", "no legacy nested array format");
+        assertContains(ir, "[[number]]", "nested array uses [[number]]");
+        assertNotContains(ir, "number[][]", "no legacy nested array format");
         System.out.println("OK");
     }
 
     static void testIrNullableArrayParam() {
         System.out.print("  testIrNullableArrayParam... ");
         CompileResult cr = compile("""
-            function f(a: int[] | null): null { return; }
+            function f(a: number[] | null): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "?[int]", "nullable array uses ?[int]");
-        assertNotContains(ir, "int[]|null", "no legacy format");
+        assertContains(ir, "?[number]", "nullable array uses ?[number]");
+        assertNotContains(ir, "number[]|null", "no legacy format");
         System.out.println("OK");
     }
 
     static void testIrArrayOfNullableInt() {
         System.out.print("  testIrArrayOfNullableInt... ");
         CompileResult cr = compile("""
-            function f(a: (int | null)[]): null { return; }
+            function f(a: (number | null)[]): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "[?int]", "array of nullable int uses [?int]");
+        assertContains(ir, "[?number]", "array of nullable number uses [?number]");
         System.out.println("OK");
     }
 
@@ -221,11 +221,11 @@ public class TypeDescriptorTest {
     static void testIrNullableReturnFunctionDescriptor() {
         System.out.print("  testIrNullableReturnFunctionDescriptor... ");
         CompileResult cr = compile("""
-            function maybe(x: int): int | null { if (x === 0) { return null; } return x; }
-            let f: (x: int) => int | null = maybe;
+            function maybe(x: number): number | null { if (x === 0) { return null; } return x; }
+            let f: (x: number) => number | null = maybe;
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "(int)->?int", "nullable-return function uses (int)->?int");
+        assertContains(ir, "(number)->?number", "nullable-return function uses (number)->?number");
         assertNotContains(ir, "|null", "no legacy |null format in function descriptor");
         System.out.println("OK");
     }
@@ -233,14 +233,14 @@ public class TypeDescriptorTest {
     static void testIrAsyncFuncDescriptor() {
         System.out.print("  testIrAsyncFuncDescriptor... ");
         CompileResult cr = compile("""
-            async function fetch(x: int): string { return ""; }
+            async function fetch(x: number): string { return ""; }
             export function probe(): null {
-              let f: async (x: int) => string = fetch;
+              let f: async (x: number) => string = fetch;
               return;
             }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "ident fetch : async(int)->string", "async function type uses async prefix");
+        assertContains(ir, "ident fetch : async(number)->string", "async function type uses async prefix");
         System.out.println("OK");
     }
 
@@ -258,11 +258,11 @@ public class TypeDescriptorTest {
     static void testIrFixedParamsDescriptor() {
         System.out.print("  testIrFixedParamsDescriptor... ");
         CompileResult cr = compile("""
-            function describe(sep: string, values: int[]): null { return; }
-            let d: (sep: string, values: int[]) => null = describe;
+            function describe(sep: string, values: number[]): null { return; }
+            let d: (sep: string, values: number[]) => null = describe;
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "(string,[int])->null", "fixed params descriptor (string,[int])->null");
+        assertContains(ir, "(string,[number])->null", "fixed params descriptor (string,[number])->null");
         assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
         System.out.println("OK");
     }
@@ -270,11 +270,11 @@ public class TypeDescriptorTest {
     static void testIrArrayParamDescriptor() {
         System.out.print("  testIrArrayParamDescriptor... ");
         CompileResult cr = compile("""
-            function sum(values: int[]): int { return 0; }
-            let f: (values: int[]) => int = sum;
+            function sum(values: number[]): number { return 0; }
+            let f: (values: number[]) => number = sum;
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "([int])->int", "array param uses [int] descriptor");
+        assertContains(ir, "([number])->number", "array param uses [number] descriptor");
         assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
         System.out.println("OK");
     }

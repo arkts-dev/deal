@@ -5,11 +5,11 @@
 
 import * as Lib from "./closure_batch2_lib";
 
-export function test_closure_captures_imported_function(): int {
-  let f: (x: int) => int = function(x: int): int {
+export function test_closure_captures_imported_function(): number {
+  let f: (x: number) => number = function(x: number): number {
     return Lib.add(x, 3);
   };
-  let result: int = f(4);
+  let result: number = f(4);
   if (result !== 7) { throw { code: "TEST_FAIL", message: "closure imported function failed" }; }
   return result;
 }

@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: error-handling, try, return, for-loop
 
-export function test_return_in_try_loop(): int {
+export function test_return_in_try_loop(): number {
   let catchRan: boolean = false;
-  function findFive(): int {
-    let found: int = 0;
-    { let v14Loop0: int = 0; while (v14Loop0 < 10) { let i: int = v14Loop0; {
+  function findFive(): number {
+    let found: number = 0;
+    { let v14Loop0: number = 0; while (v14Loop0 < 10) { let i: number = v14Loop0; {
       try {
         if (i === 5) { return i; }
       } catch (e) {
@@ -17,7 +17,7 @@ export function test_return_in_try_loop(): int {
     } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
     return found;
   }
-  let got: int = findFive();
+  let got: number = findFive();
   if (got !== 5 || catchRan !== false) {
     throw { code: "TEST_FAIL", message: "return inside try in loop: wrong result or catch executed" };
   }

@@ -3,12 +3,12 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-// @spec: Functions — int[]-bearing cross-module function values
+// @spec: Functions — number[]-bearing cross-module function values
 
-function id(b: int[]): int[] { return b; }
+function id(b: number[]): number[] { return b; }
 
-export function makeId(): (b: int[]) => int[] { return id; }
+export function makeId(): (b: number[]) => number[] { return id; }
 
-export function sameId(f: (b: int[]) => int[], g: (b: int[]) => int[]): boolean {
+export function sameId(f: (b: number[]) => number[], g: (b: number[]) => number[]): boolean {
   return f === g;
 }

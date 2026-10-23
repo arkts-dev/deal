@@ -3,4 +3,4 @@
 // @expected: compile-error E1024
 // @features: modules, exports, diagnostics, v1.2
 
-export default function value(): int { return 1; }
+export default function value(): number { return 1; }

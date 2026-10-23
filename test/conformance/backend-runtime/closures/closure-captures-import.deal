@@ -5,12 +5,12 @@
 
 import * as Lib from "./closure_import_lib";
 
-export function test_closure_import_capture(): int {
-  let base: int = 5;
-  let f: (x: int) => int = function(x: int): int {
+export function test_closure_import_capture(): number {
+  let base: number = 5;
+  let f: (x: number) => number = function(x: number): number {
     return Lib.add(base, x);
   };
-  let result: int = f(7);
+  let result: number = f(7);
   if (result !== 12) { throw { code: "TEST_FAIL", message: "closure import capture failed" }; }
   return result;
 }

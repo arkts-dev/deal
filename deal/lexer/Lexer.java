@@ -578,11 +578,8 @@ public final class Lexer {
     // =========================================================================
 
     /**
-     * Reads an integer or number literal.
-     *
-     * <p>Integer: {@code [0-9]+}
-     * <br>Number:  {@code ([0-9]* '.' [0-9]+ ([eE] [+-]? [0-9]+)?)
-     *                    | ([0-9]+ [eE] [+-]? [0-9]+)}</p>
+     * Reads a number literal: decimal digits with an optional fractional
+     * or exponent part, or a leading decimal point followed by digits.
      *
      * <p>Multiple decimal points produce E1002.</p>
      */
@@ -667,9 +664,7 @@ public final class Lexer {
         }
 
         String lexeme = source.substring(startPos, pos);
-        boolean isFloat = hasDot || hasExponent;
-
-        return makeToken(isFloat ? TokenType.NUMBER_LITERAL : TokenType.INT_LITERAL, lexeme);
+        return makeToken(TokenType.NUMBER_LITERAL, lexeme);
     }
 
     // =========================================================================

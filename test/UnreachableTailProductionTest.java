@@ -41,7 +41,6 @@ import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.InitializationMode;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -143,7 +142,7 @@ public class UnreachableTailProductionTest {
      * {@code break}/{@code continue}, at the pinned source lines the
      * assertions read back from the ops' origins.
      */
-    private static final String TAIL_BATTERY_SOURCE = "function returnsTail(): null {\n  return null;\n  let returnTail: int = 2;\n  returnTail = 3;\n}\nfunction throwsTail(): null {\n  try {\n    \"boom\";\n  } catch (err) {\n    throw err;\n    let throwTail: int = 4;\n  }\n  return null;\n}\nfunction breaksTail(): null {\n  {  while (true) { {\n    break;\n    let breakTail: int = 5;\n  }  } }\n  return null;\n}\nfunction continuesTail(): null {\n  {  while (true) { {\n    {  continue; }\n    let continueTail: int = 6;\n  }  } }\n  return null;\n}\n";
+    private static final String TAIL_BATTERY_SOURCE = "function returnsTail(): null {\n  return null;\n  let returnTail: number = 2;\n  returnTail = 3;\n}\nfunction throwsTail(): null {\n  try {\n    \"boom\";\n  } catch (err) {\n    throw err;\n    let throwTail: number = 4;\n  }\n  return null;\n}\nfunction breaksTail(): null {\n  {  while (true) { {\n    break;\n    let breakTail: number = 5;\n  }  } }\n  return null;\n}\nfunction continuesTail(): null {\n  {  while (true) { {\n    {  continue; }\n    let continueTail: number = 6;\n  }  } }\n  return null;\n}\n";
 
     private record CheckedSlice(ProgramNode program, SymbolTable symbols,
                                 CheckResult checks) {
@@ -434,7 +433,6 @@ public class UnreachableTailProductionTest {
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(result.project() != null, name + ": the oracle closure lowers with "
             + "zero diagnostics: " + result.diagnostics());
@@ -781,21 +779,21 @@ public class UnreachableTailProductionTest {
     }
 
     private static final String IF_ELSE_TAIL_SOURCE = """
-        export function f(): int {
+        export function f(): number {
           if (true) {
             return 1;
             "ifElseTailMarker";
-            let ifTail: int = 2;
+            let ifTail: number = 2;
           } else {
             return 3;
             "elseTailMarker";
-            let elseTail: int = 4;
+            let elseTail: number = 4;
           }
           return 5;
         }
 
         export function main(): null {
-          let value: int = f();
+          let value: number = f();
           if (value !== 1) {
             throw { code: "TEST_FAIL", message: "f returned the wrong value" };
           }
@@ -804,21 +802,21 @@ public class UnreachableTailProductionTest {
         """;
 
     private static final String TRY_CATCH_TAIL_SOURCE = """
-        export function g(): int {
+        export function g(): number {
           try {
             return 1;
             "tryTailMarker";
-            let tryTail: int = 2;
+            let tryTail: number = 2;
           } catch (err) {
             return 3;
             "catchTailMarker";
-            let catchTail: int = 4;
+            let catchTail: number = 4;
           }
           return 5;
         }
 
         export function main(): null {
-          let value: int = g();
+          let value: number = g();
           if (value !== 1) {
             throw { code: "TEST_FAIL", message: "g returned the wrong value" };
           }
@@ -1151,15 +1149,15 @@ public class UnreachableTailProductionTest {
                                  boolean directInTry) {
     }
 
-    private static final String IN_TRY_BREAK_SOURCE = "export function main(): null {\n  try {\n    {  while (true) { {\n      break;\n      \"loopBreakTail\";\n      let breakTail: int = 1;\n    }  } }\n  } catch (e) {\n  }\n  return null;\n}\n";
+    private static final String IN_TRY_BREAK_SOURCE = "export function main(): null {\n  try {\n    {  while (true) { {\n      break;\n      \"loopBreakTail\";\n      let breakTail: number = 1;\n    }  } }\n  } catch (e) {\n  }\n  return null;\n}\n";
 
-    private static final String IN_TRY_CONTINUE_SOURCE = "export function main(): null {\n  try {\n    { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {\n      if (i === 0) {\n        { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }\n        \"loopContinueTail\";\n        let continueTail: int = 2;\n      }\n    } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  } catch (e) {\n  }\n  return null;\n}\n";
+    private static final String IN_TRY_CONTINUE_SOURCE = "export function main(): null {\n  try {\n    { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {\n      if (i === 0) {\n        { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }\n        \"loopContinueTail\";\n        let continueTail: number = 2;\n      }\n    } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  } catch (e) {\n  }\n  return null;\n}\n";
 
     private static final String FOR_EACH_BREAK_TAIL_SOURCE = """
         export function main(): null {
-          let arr: int[] = [1, 2, 3];
-          let n: int = 0;
-          for (let x: int of arr) {
+          let arr: number[] = [1, 2, 3];
+          let n: number = 0;
+          for (let x: number of arr) {
             try {
               break;
               "foreachBreakTail";
@@ -1176,9 +1174,9 @@ public class UnreachableTailProductionTest {
 
     private static final String FOR_EACH_CONTINUE_TAIL_SOURCE = """
         export function main(): null {
-          let arr: int[] = [1, 2, 3];
-          let sum: int = 0;
-          for (let x: int of arr) {
+          let arr: number[] = [1, 2, 3];
+          let sum: number = 0;
+          for (let x: number of arr) {
             try {
               continue;
               "foreachContinueTail";
@@ -1369,7 +1367,7 @@ public class UnreachableTailProductionTest {
         return """
             export function main(): null {
               try {
-                for (let i: int = 0; i < 2; i = i + 1) {
+                for (let i: number = 0; i < 2; i = i + 1) {
                   %s
                   %s
                   "%s";
@@ -1390,10 +1388,10 @@ public class UnreachableTailProductionTest {
     private static String forContinueSource(String body) {
         return """
             export function main(): null {
-              let ticks: int = 0;
-              let guard: int = 0;
+              let ticks: number = 0;
+              let guard: number = 0;
               try {
-                for (let i: int = 0; i < 1000000; ticks = ticks + 1) {
+                for (let i: number = 0; i < 1000000; ticks = ticks + 1) {
                   guard = guard + 1;
                   %s
                 }

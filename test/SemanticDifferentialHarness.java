@@ -530,7 +530,7 @@ public final class SemanticDifferentialHarness {
     /** One scripted host argument as the semantic oracle's value. */
     private static SemanticOracle.Value oracleValueOf(CallbackArg arg) {
         return switch (arg) {
-            case CallbackArg.Int value -> new SemanticOracle.Value.IntValue(value.value());
+            case CallbackArg.Int value -> new SemanticOracle.Value.NumValue(value.value());
             case CallbackArg.Number value -> new SemanticOracle.Value.NumValue(value.value());
             case CallbackArg.Str value -> new SemanticOracle.Value.StrValue(value.value());
             case CallbackArg.Null ignored -> SemanticOracle.Value.NullValue.INSTANCE;
@@ -551,7 +551,7 @@ public final class SemanticDifferentialHarness {
         for (CallbackArg element : array.elements()) {
             RuntimeDescriptor elementDescriptor = switch (element) {
                 case CallbackArg.Str ignored -> RuntimeDescriptor.String.INSTANCE;
-                case CallbackArg.Int ignored -> RuntimeDescriptor.Int.INSTANCE;
+                case CallbackArg.Int ignored -> RuntimeDescriptor.Number.INSTANCE;
                 case CallbackArg.Number ignored -> RuntimeDescriptor.Number.INSTANCE;
                 default -> throw new IllegalArgumentException("the harness array "
                     + "argument carries an unsupported element shape: " + element);
@@ -1345,7 +1345,7 @@ public final class SemanticDifferentialHarness {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return "bool";
         }
-        if (descriptor instanceof RuntimeDescriptor.Int) {
+        if (descriptor instanceof RuntimeDescriptor.Number) {
             return "int";
         }
         if (descriptor instanceof RuntimeDescriptor.Number) {

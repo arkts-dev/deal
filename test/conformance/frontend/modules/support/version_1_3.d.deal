@@ -4,4 +4,4 @@
 // @features: companion, declarations
 
 
-export function value(): int;
+export function value(): number;

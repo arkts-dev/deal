@@ -36,7 +36,6 @@ import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.ir.ExecutableLoweredProject;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
 import deal.types.Type;
 import deal.types.Types;
@@ -1945,7 +1944,6 @@ public final class CompilationOrchestrator {
             requirementManifests.manifests(), hostDeclarationSurface,
             declarationModuleIdentities(),
             builtinErrorDeclaration(checked.input()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;

@@ -1,37 +1,37 @@
-// @spec: Functions — arity extension over int[]-bearing signatures
-// @description: compatible M<N prefix adapters over int[]-bearing function values delegate only the source prefix and silently ignore extras (v1.2)
+// @spec: Functions — arity extension over number[]-bearing signatures
+// @description: compatible M<N prefix adapters over number[]-bearing function values delegate only the source prefix and silently ignore extras (v1.2)
 // @expected: runtime-ok
-// @features: int[], functions, arity
+// @features: number[], functions, arity
 
-function id(b: int[]): int[] { return b; }
+function id(b: number[]): number[] { return b; }
 
-function bump(b: int[], v: int): int[] {
+function bump(b: number[], v: number): number[] {
   b[0] = b[0] + v;
   return b;
 }
 
-export function test_array_fn_adapters(): int {
-  let h: (b: int[], v: int) => int[] = id;
-  let out: int[] = h([0, 0], 999);
+export function test_array_fn_adapters(): number {
+  let h: (b: number[], v: number) => number[] = id;
+  let out: number[] = h([0, 0], 999);
   if (out[0] !== 0) {
     throw { code: "TEST_FAIL", message: "adapter ignored extra failed" };
   }
-  let b: int[] = [0];
-  let again: int[] = h(b, 12345);
+  let b: number[] = [0];
+  let again: number[] = h(b, 12345);
   if (again !== b) {
     throw { code: "TEST_FAIL", message: "adapter prefix identity failed" };
   }
-  let h2: (b: int[], v: int) => int[] = id;
+  let h2: (b: number[], v: number) => number[] = id;
   if (h2([0], 1)[0] !== 0) {
     throw { code: "TEST_FAIL", message: "second adapter failed" };
   }
-  let two: (b: int[], v: int, extra: string) => int[] = id;
-  let r: int[] = two([0, 0], 7, "ignored");
+  let two: (b: number[], v: number, extra: string) => number[] = id;
+  let r: number[] = two([0, 0], 7, "ignored");
   if (r[0] !== 0) {
     throw { code: "TEST_FAIL", message: "three-param adapter failed" };
   }
-  let withBump: (b: int[], v: int) => int[] = bump;
-  let rb: int[] = withBump([0, 0], 5);
+  let withBump: (b: number[], v: number) => number[] = bump;
+  let rb: number[] = withBump([0, 0], 5);
   if (rb[0] !== 5) {
     throw { code: "TEST_FAIL", message: "same-arity failed" };
   }

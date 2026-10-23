@@ -135,7 +135,7 @@ test("std/json loads and exports exactly the .d.deal member set", function() {
 
 test("std/math loads and exports exactly the .d.deal member set", function() {
   assertEqual(JSON.stringify(Object.keys(math)), JSON.stringify(
-    ["floor", "ceil", "sqrt", "absInt", "absNumber", "minInt", "maxInt"]),
+    ["floor", "ceil", "sqrt", "absNumber"]),
     "math member set");
 });
 
@@ -147,8 +147,8 @@ test("every stdlib member is a $rt.function wrapper with the pinned signature", 
   const surfaces = [
     [consoleMod, "std/console", { log: "(string)->null", error: "(string)->null" }],
     [string, "std/string", {
-      length: "(string)->int",
-      substring: "(string,int,int)->string",
+      length: "(string)->number",
+      substring: "(string,number,number)->string",
       contains: "(string,string)->boolean",
       startsWith: "(string,string)->boolean",
       endsWith: "(string,string)->boolean",
@@ -162,10 +162,7 @@ test("every stdlib member is a $rt.function wrapper with the pinned signature", 
       floor: "(number)->number",
       ceil: "(number)->number",
       sqrt: "(number)->number",
-      absInt: "(int)->int",
       absNumber: "(number)->number",
-      minInt: "(int,int)->int",
-      maxInt: "(int,int)->int",
     }],
     [time, "std/time", { nowMillis: "()->number" }],
   ];
@@ -192,7 +189,7 @@ test("console.log rejects a non-string with E8001 and the forwarded span", funct
   const err = assertErrorCode(function() { consoleMod.log.$f(42, "t1.deal", 1, 2); }, "E8001");
   assertEqual(err.message, "expected string", "console.log entry message");
   assertEqual(err.expected, "string", "console.log expected kind");
-  assertEqual(err.actual, "int", "console.log actual kind (the value-derived int token)");
+  assertEqual(err.actual, "number", "console.log actual kind (the value-derived number token)");
   assertSpan(err, "t1.deal", 1, 2);
 });
 
@@ -228,15 +225,15 @@ test("string.length publishes the shared typed-boundary token for a carrier", fu
   // The language null keeps its own token, never the object spelling.
   err = assertErrorCode(function() { string.length.$f(null, "t3.deal", 5, 6); }, "E8001");
   assertEqual(err.actual, "null", "language null at the string cell actual");
-  // The int parameter row publishes the class atom too.
+  // The number parameter row publishes the class atom too.
   err = assertErrorCode(function() { string.substring.$f("ab", instance, 1, "t4.deal", 7, 8); }, "E8001");
-  assertEqual(err.message, "expected int", "class instance at the int cell message");
-  assertEqual(err.actual, "@m/C", "class instance at the int cell actual");
+  assertEqual(err.message, "expected number", "class instance at the number cell message");
+  assertEqual(err.actual, "@m/C", "class instance at the number cell actual");
 });
 
-test("string.substring rejects a non-int start with E8001 and the forwarded span", function() {
+test("string.substring rejects a non-number start with E8001 and the forwarded span", function() {
   const err = assertErrorCode(function() { string.substring.$f("a", 1.5, 2, "t4.deal", 7, 8); }, "E8001");
-  assertEqual(err.message, "expected int, got non-integer number", "string.substring entry message");
+  assertEqual(err.message, "substring bounds must be finite integers", "string.substring entry message");
   assertSpan(err, "t4.deal", 7, 8);
 });
 
@@ -277,7 +274,7 @@ test("math.sqrt of a negative number raises the closed SQRT_NEGATIVE tuple", fun
 
 test("valid calls return values that re-validate through the $rt checks", function() {
   rt.checkNull(consoleMod.log.$f("x", "f.js", 1, 1), "f.js", 1, 1);
-  assertEqual(rt.checkInt(string.length.$f("aé中😀b", "f.js", 1, 1), "f.js", 1, 1), 5, "length result");
+  assertEqual(rt.checkNumber(string.length.$f("aé中😀b", "f.js", 1, 1), "f.js", 1, 1), 5, "length result");
   assertEqual(rt.checkString(string.substring.$f("abc", 1, 3, "f.js", 1, 1), "f.js", 1, 1), "bc", "substring result");
   assertEqual(rt.checkBoolean(string.contains.$f("abc", "b", "f.js", 1, 1), "f.js", 1, 1), true, "contains result");
   assertEqual(rt.checkString(string.replace.$f("a-a", "a", "x", "f.js", 1, 1), "f.js", 1, 1), "x-x", "replace result");
@@ -287,11 +284,10 @@ test("valid calls return values that re-validate through the $rt checks", functi
   rt.checkTable(json.parse.$f("{}", "f.js", 1, 1), "f.js", 1, 1);
   rt.checkString(json.stringify.$f(rt.makeTable({ a: 1 }), "f.js", 1, 1), "f.js", 1, 1);
   assertEqual(rt.checkNumber(math.floor.$f(1.9, "f.js", 1, 1), "f.js", 1, 1), 1, "floor result");
-  assertEqual(rt.checkInt(math.absInt.$f(-3, "f.js", 1, 1), "f.js", 1, 1), 3, "absInt result");
-  assertEqual(rt.checkInt(math.minInt.$f(2, 3, "f.js", 1, 1), "f.js", 1, 1), 2, "minInt result");
+  assertEqual(rt.checkNumber(math.absNumber.$f(-3, "f.js", 1, 1), "f.js", 1, 1), 3, "absInt result");
   // The declared number return of std/time.nowMillis is the current epoch
   // millisecond count: a contemporary reading exceeds the signed-32 range
-  // and crosses the number boundary unchanged (no int terminal exists).
+  // and crosses the number boundary unchanged (no number terminal exists).
   const now = time.nowMillis.$f("f.js", 1, 1);
   assertEqual(typeof now, "number", "nowMillis result kind");
   assert(now > 2147483647, "nowMillis result exceeds the signed-32 range");
@@ -401,7 +397,7 @@ test("json.parse rejects malformed JSON with the E8001 parse-error envelope", fu
 
 test("json.parse rejects a top-level scalar, array, or null with E8001 expected table", function() {
   const errNumber = assertErrorMessage(function() { json.parse.$f("42", "f.js", 1, 1); }, "E8001", "expected table");
-  assertEqual(errNumber.actual, "int", "scalar number actual kind (the value-derived int token)");
+  assertEqual(errNumber.actual, "number", "scalar number actual kind (the value-derived number token)");
   const errString = assertErrorMessage(function() { json.parse.$f('"x"', "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errString.actual, "string", "scalar string actual kind");
   const errBoolean = assertErrorMessage(function() { json.parse.$f("true", "f.js", 1, 1); }, "E8001", "expected table");
@@ -434,8 +430,8 @@ test("the decoded JSON null is language null at every null-admitting boundary", 
   assertEqual(rt.checkNull(decodedNull, "f.js", 1, 1), null,
     "the null descriptor admits the decoded null");
   assert(rt.isNilEquivalent(decodedNull), "the decoded null is nil-equivalent");
-  const convert = assertErrorMessage(function() { rt.intConvert(decodedNull, "f.js", 1, 1); },
-    "E8001", "cannot convert null to int");
+  const convert = assertErrorMessage(function() { rt.checkNumber(decodedNull, "f.js", 1, 1); },
+    "E8001", "expected number");
   assertEqual(convert.actual, "null", "the conversion actual token");
   const table = assertErrorMessage(function() { rt.checkTable(decodedNull, "f.js", 1, 1); },
     "E8001", "expected table");
@@ -675,9 +671,9 @@ test("the element-arm projection also covers a decoded-array element of a native
 
 test("a real nested array element keeps the array reference kind", function() {
   const err = assertErrorMessage(function() {
-    rt.checkType("[[int]]", [[3], [1.5]], "f.js", 1, 1);
+    rt.checkType("[[number]]", [[3], ["wrong-kind"]], "f.js", 1, 1);
   }, "E8003", "array element 2 type mismatch");
-  assertEqual(err.expected, "[int]", "the failing element's descriptor");
+  assertEqual(err.expected, "[number]", "the failing element's descriptor");
   assertEqual(err.actual, "array", "a real array carrier keeps the refined array token");
 });
 
@@ -771,19 +767,19 @@ test("json.stringify rejects class instances inside table content", function() {
 // Exact JSON number classification and decoded-key duplicates (v1.3)
 // ===========================================================================
 
-test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are int", function() {
+test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are number", function() {
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1}', "integer token");
+    '{"v":1.0}', "integer token");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1.0}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1}', "1.0 denotes the int value");
+    '{"v":1.0}', "1.0 denotes the number value");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1}', "1e0 denotes the int value");
+    '{"v":1.0}', "1e0 denotes the number value");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-2}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1}', "100e-2 denotes the int value");
+    '{"v":1.0}', "100e-2 denotes the number value");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-0.0}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":0}', "-0.0 normalizes to int 0");
+    '{"v":0}', "-0.0 normalizes to number 0");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":0e999999999999999999999}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":0}', "an all-zero coefficient with a huge exponent is int 0");
+    '{"v":0}', "an all-zero coefficient with a huge exponent is number 0");
   // A fractional token that merely rounds to an integral double keeps
   // the number variant and spells through the canonical decimal text.
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1.5}', "f.js", 1, 1), "f.js", 1, 1),
@@ -796,9 +792,9 @@ test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are int", functi
     '{"v":2.147483648E9}', "an out-of-range integer token is a number");
   // The signed32 check compares the magnitude before the sign is applied:
   // a negative magnitude above 2147483648 is the number variant, never an
-  // out-of-range int (the canonical text proves the variant).
+  // out-of-range number (the canonical text proves the variant).
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483648}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":-2147483648}', "the negative signed32 edge is an int");
+    '{"v":-2.147483648E9}', "the negative signed32 edge is an number");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-2147483649}', "f.js", 1, 1), "f.js", 1, 1),
     '{"v":-2.147483649E9}', "-2147483649 is the number variant");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-9999999999}', "f.js", 1, 1), "f.js", 1, 1),
@@ -808,13 +804,13 @@ test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are int", functi
   // exponent text longer than 18 characters whose value is small stays
   // exactly classified (1e0000000000000000001 is the integral 10).
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":10}', "a zero-padded long exponent stays the int 10");
+    '{"v":10.0}', "a zero-padded long exponent stays the number 10");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":1e00000000000000000000}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1}', "a zero-valued zero-padded exponent stays the int 1");
+    '{"v":1.0}', "a zero-valued zero-padded exponent stays the number 1");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":100e-000000000000000000002}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":1}', "a zero-padded negative exponent stays the int 1");
+    '{"v":1.0}', "a zero-padded negative exponent stays the number 1");
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
-    '{"v":-10}', "a negative zero-padded long exponent stays the int -10");
+    '{"v":-10.0}', "a negative zero-padded long exponent stays the number -10");
   // A huge exponent converts to binary64 infinity: the classification
   // itself never overflows, and the nonfinite value then fails the
   // finite-only encode arm.
@@ -853,7 +849,7 @@ test("json.parse/json.stringify handle deep finite nesting beyond 512 levels", f
     text = '{"d":' + text + "}";
   }
   const parsed = json.parse.$f(text, "f.js", 1, 1);
-  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), text,
+  assertEqual(JSON.stringify(JSON.parse(json.stringify.$f(parsed, "f.js", 1, 1))), text,
     "a 600-deep finite object round-trips");
 });
 
@@ -900,17 +896,6 @@ test("math.floor/ceil/sqrt/absNumber run native IEEE ops", function() {
   assert(Number.isNaN(math.sqrt.$f(NaN, "f.js", 1, 1)), "sqrt(NaN) passes through as NaN");
 });
 
-test("math.absInt/minInt/maxInt validate ints at entry and exit", function() {
-  assertEqual(math.absInt.$f(-3, "f.js", 1, 1), 3, "absInt");
-  assertEqual(math.absInt.$f(3, "f.js", 1, 1), 3, "absInt identity");
-  assertEqual(math.minInt.$f(2, 3, "f.js", 1, 1), 2, "minInt");
-  assertEqual(math.minInt.$f(-2, -3, "f.js", 1, 1), -3, "minInt negatives");
-  assertEqual(math.maxInt.$f(2, 3, "f.js", 1, 1), 3, "maxInt");
-  assertEqual(math.maxInt.$f(-2, -3, "f.js", 1, 1), -2, "maxInt negatives");
-  assertErrorMessage(function() { math.absInt.$f("x", "f.js", 1, 1); }, "E8001", "expected int");
-  assertErrorMessage(function() { math.minInt.$f(1.5, 2, "f.js", 1, 1); }, "E8001", "expected int");
-  assertErrorMessage(function() { math.maxInt.$f(1, 2.5, "f.js", 1, 1); }, "E8001", "expected int");
-});
 
 // ===========================================================================
 // std/time parity: epoch-millisecond number return

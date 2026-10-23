@@ -4,6 +4,6 @@
 // @features: diagnostics, source-span, type-checking
 
 export function main(): null {
-  let value: int = 1.5;
+  let value: number = true;
   return null;
 }

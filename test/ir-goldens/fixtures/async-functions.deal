@@ -4,21 +4,21 @@
 // Verifies that the IrDumper produces "async function" as the node kind
 // and "async" prefix in function type descriptors.
 
-async function identity(x: int): int {
+async function identity(x: number): number {
     return x;
 }
 
-async function maybe(x: int): int | null {
+async function maybe(x: number): number | null {
     if (x === 0) {
         return null;
     }
     return x;
 }
 
-async function compute(a: int, b: int): int {
+async function compute(a: number, b: number): number {
     return a + b;
 }
 
-async function noAwait(): int {
+async function noAwait(): number {
     return 5;
 }

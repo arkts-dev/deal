@@ -6,8 +6,8 @@
 import * as json from "std/json";
 
 export function test_for_of_array_order(): null {
-  let digits: int = 0;
-  for (let value: int of [1, 2, 3]) { digits = digits * 10 + value; }
+  let digits: number = 0;
+  for (let value: number of [1, 2, 3]) { digits = digits * 10 + value; }
   if (digits !== 123) { throw { code: "TEST_FAIL", message: "for-of array order changed" }; }
   return null;
 }
@@ -15,7 +15,7 @@ export function test_for_of_array_order(): null {
 export function test_for_of_json_decoded_array_order(): null {
   let data: table = json.parse("{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}");
   let items: string[] = data.items;
-  let count: int = 0;
+  let count: number = 0;
   let first: string = "";
   let collected: string = "";
   for (let item: string of items) {

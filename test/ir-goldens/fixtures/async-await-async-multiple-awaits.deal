@@ -1,7 +1,7 @@
 // IR golden fixture: async-await-async-multiple-awaits
 // Migrated IR-containment pin for legacy case 'async-multiple-awaits' (ISSUE-0358).
 
-async function a(): int { return 1; }
-async function b(): int { return 2; }
-async function c(): int { return 3; }
-export async function f(): int { let x: int = await a(); let y: int = await b(); let z: int = await c(); return x + y + z; }
+async function a(): number { return 1; }
+async function b(): number { return 2; }
+async function c(): number { return 3; }
+export async function f(): number { let x: number = await a(); let y: number = await b(); let z: number = await c(); return x + y + z; }

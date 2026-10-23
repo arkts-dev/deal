@@ -26,7 +26,6 @@ import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.InternalResultType;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -93,18 +92,18 @@ public class DynamicProducerRuleTest {
      * registers the call arm's record.
      */
     private static final String PARAMETER_ALIAS_SOURCE = """
-        function apply(f: (x: int) => int): (x: int) => int {
-          let g: (x: int) => int = f;
+        function apply(f: (x: number) => number): (x: number) => number {
+          let g: (x: number) => number = f;
           return g;
         }
 
-        function double(x: int): int {
+        function double(x: number): number {
           return x * 2;
         }
 
         export function main(): null {
-          let h: (x: int) => int = apply(double);
-          let r: int = h(21);
+          let h: (x: number) => number = apply(double);
+          let r: number = h(21);
           return null;
         }
         """;
@@ -112,10 +111,10 @@ public class DynamicProducerRuleTest {
     /** The member-read arm: a function-typed table member read. */
     private static final String MEMBER_READ_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x; };
+          let id: (x: number) => number = function(x: number): number { return x; };
           let holder: table = { g: id };
-          let g: (x: int) => int = holder.g;
-          let r: int = g(1);
+          let g: (x: number) => number = holder.g;
+          let r: number = g(1);
           return null;
         }
         """;
@@ -123,10 +122,10 @@ public class DynamicProducerRuleTest {
     /** The index-read arm: a function-typed array element read. */
     private static final String INDEX_READ_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x; };
-          let fns: ((x: int) => int)[] = [id];
-          let g: (x: int) => int = fns[0];
-          let r: int = g(1);
+          let id: (x: number) => number = function(x: number): number { return x; };
+          let fns: ((x: number) => number)[] = [id];
+          let g: (x: number) => number = fns[0];
+          let r: number = g(1);
           return null;
         }
         """;
@@ -134,17 +133,17 @@ public class DynamicProducerRuleTest {
     /** The field-read arm: a function-typed class field read. */
     private static final String FIELD_READ_SOURCE = """
         class Holder {
-          f: (x: int) => int = compute;
+          f: (x: number) => number = compute;
         }
 
-        function compute(x: int): int {
+        function compute(x: number): number {
           return x;
         }
 
         export function main(): null {
           let h: Holder = { f: compute };
-          let g: (x: int) => int = h.f;
-          let r: int = g(1);
+          let g: (x: number) => number = h.f;
+          let r: number = g(1);
           return null;
         }
         """;
@@ -157,11 +156,11 @@ public class DynamicProducerRuleTest {
      */
     private static final String OPTIONAL_READ_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x; };
+          let id: (x: number) => number = function(x: number): number { return x; };
           let holder: table = { g: id };
-          let f: ((x: int) => int) | null = holder.g;
+          let f: ((x: number) => number) | null = holder.g;
           if (f !== null) {
-            let r: int = f(1);
+            let r: number = f(1);
           }
           return null;
         }
@@ -169,16 +168,16 @@ public class DynamicProducerRuleTest {
 
     /** The call-of-call arm: the callee value is a function-typed call result. */
     private static final String CALL_OF_CALL_SOURCE = """
-        function pick(f: (x: int) => int): (x: int) => int {
+        function pick(f: (x: number) => number): (x: number) => number {
           return f;
         }
 
-        function double(x: int): int {
+        function double(x: number): number {
           return x * 2;
         }
 
         export function main(): null {
-          let r: int = pick(double)(1);
+          let r: number = pick(double)(1);
           return null;
         }
         """;
@@ -189,17 +188,17 @@ public class DynamicProducerRuleTest {
      * callee publishes the same shape over a runtime-resolved callee.
      */
     private static final String AWAIT_SOURCE = """
-        async function makeAsync(): (x: int) => int {
-          return function(x: int): int { return x; };
+        async function makeAsync(): (x: number) => number {
+          return function(x: number): number { return x; };
         }
 
-        async function run(): int {
-          let g: (x: int) => int = await makeAsync();
+        async function run(): number {
+          let g: (x: number) => number = await makeAsync();
           return g(1);
         }
 
-        async function apply(f: async () => ((x: int) => int)): int {
-          let g: (x: int) => int = await f();
+        async function apply(f: async () => ((x: number) => number)): number {
+          let g: (x: number) => number = await f();
           return g(1);
         }
 
@@ -211,10 +210,10 @@ public class DynamicProducerRuleTest {
     /** The iteration-binding arm: a function-typed for-of binding load. */
     private static final String ITERATION_BINDING_SOURCE = """
         export function main(): null {
-          let id: (x: int) => int = function(x: int): int { return x; };
-          let fns: ((x: int) => int)[] = [id];
-          for (let f: (x: int) => int of fns) {
-            let r: int = f(1);
+          let id: (x: number) => number = function(x: number): number { return x; };
+          let fns: ((x: number) => number)[] = [id];
+          for (let f: (x: number) => number of fns) {
+            let r: number = f(1);
           }
           return null;
         }
@@ -222,14 +221,14 @@ public class DynamicProducerRuleTest {
 
     /** The tracked alias arm: a declared function's identity, republished twice. */
     private static final String TRACKED_ALIAS_SOURCE = """
-        function make(x: int): int {
+        function make(x: number): number {
           return x;
         }
 
         export function main(): null {
-          let g: (x: int) => int = make;
-          let h: (x: int) => int = g;
-          let r: int = h(1);
+          let g: (x: number) => number = make;
+          let h: (x: number) => number = g;
+          let r: number = h(1);
           return null;
         }
         """;
@@ -345,7 +344,7 @@ public class DynamicProducerRuleTest {
     private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture) {
         return SemanticLowerer.lowerProject(invocation(), fixture.input(), fixture.index(),
             fixture.manifests(), new HostDeclarationSurface(Map.of()), Map.of(), BuiltinErrorDeclaration.synthesized(fixture.module().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            Set.of());
     }
 
     /** The direct per-module project walk (the produced, pre-gate unit). */
@@ -362,8 +361,7 @@ public class DynamicProducerRuleTest {
             true, true, ownInterface, Map.of());
         lowerer.setModuleImports(fixture.module().imports());
         lowerer.setRegistrationSeeds(ClassRegistrationSeeds.builtinErrorOnly());
-        lowerer.setDeclaredConversionIntrinsics(
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT));
+
         lowerer.setE7Facts(fixture.module().exports(), Map.of(), Set.of());
         try {
             lowerer.lowerProjectModule(fixture.module().ast().statements());
@@ -861,27 +859,27 @@ public class DynamicProducerRuleTest {
     // =========================================================================
 
     private static final String LIB_SOURCE = """
-        export function double(x: int): int {
+        export function double(x: number): number {
           return x * 2;
         }
 
-        export function make(): (x: int) => int {
-          return function(x: int): int { return x; };
+        export function make(): (x: number) => number {
+          return function(x: number): number { return x; };
         }
         """;
 
     private static final String IMPORT_SOURCE = """
         import * as lib from "./lib";
 
-        function apply(f: (x: int) => int): int {
+        function apply(f: (x: number) => number): number {
           return f(1);
         }
 
         export function main(): null {
-          let f: (x: int) => int = lib.double;
-          let g: (x: int) => int = lib.make();
-          let r: int = g(1);
-          let s: int = apply(f);
+          let f: (x: number) => number = lib.double;
+          let g: (x: number) => number = lib.make();
+          let r: number = g(1);
+          let s: number = apply(f);
           return null;
         }
         """;
@@ -964,7 +962,7 @@ public class DynamicProducerRuleTest {
             invocation(), built.input(), built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface(),
             Map.<ModuleId, CanonicalModuleIdentity>of(), builtinError,
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            Set.of());
         deleteRecursively(root);
         return new ProjectFixture(lowered);
     }
@@ -1190,7 +1188,7 @@ public class DynamicProducerRuleTest {
         FunctionBindingRegistry registry = new FunctionBindingRegistry();
         ValueId identity = new ValueId(9_100);
         RuntimeDescriptor.Func descriptor = (RuntimeDescriptor.Func)
-            RuntimeDescriptor.parseCanonicalText("(int)->int");
+            RuntimeDescriptor.parseCanonicalText("(number)->number");
         registry.registerDynamicFunctionValue(new FunctionAllocationIdentity(identity.id()),
             new OpId(MODULE, 1), descriptor);
         boolean rejected = false;

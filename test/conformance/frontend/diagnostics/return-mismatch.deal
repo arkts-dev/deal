@@ -3,8 +3,8 @@
 // @expected: compile-error E5003
 // @features: diagnostics, return
 
-function wrongReturn(): int {
-  return 1.0;
+function wrongReturn(): number {
+  return true;
 }
 
 export function main(): null { return null; }

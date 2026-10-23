@@ -512,26 +512,26 @@ public class CheckerTest {
 
     static void testNameResolution_simple() {
         System.out.println("-- Name Resolution: simple --");
-        CheckerOutput out = checkProgram("let x: int = 42; let y: int = x;");
+        CheckerOutput out = checkProgram("let x: number = 42; let y: number = x;");
         assertNoErrors(out, "simple resolution");
     }
 
     static void testNameResolution_undeclared() {
         System.out.println("-- Name Resolution: undeclared --");
-        CheckerOutput out = checkProgram("let y: int = z;");
+        CheckerOutput out = checkProgram("let y: number = z;");
         assertError(out, "E2001", "undeclared identifier");
     }
 
     static void testNameResolution_redeclare() {
         System.out.println("-- Name Resolution: redeclare --");
-        CheckerOutput out = checkProgram("let x: int = 1; let x: int = 2;");
+        CheckerOutput out = checkProgram("let x: number = 1; let x: number = 2;");
         assertError(out, "E2002", "redeclare in same scope");
     }
 
     static void testNameResolution_shadow() {
         System.out.println("-- Name Resolution: shadow --");
         CheckerOutput out = checkProgram(
-            "let x: int = 1;\n" +
+            "let x: number = 1;\n" +
             "{\n" +
             "  let x: boolean = true;\n" +
             "  let y: boolean = x;\n" +
@@ -543,7 +543,7 @@ public class CheckerTest {
     static void testNameResolution_parameterShadow() {
         System.out.println("-- Name Resolution: parameter shadow --");
         CheckerOutput out = checkProgram(
-            "function f(x: int, x: int): int { return x; }"
+            "function f(x: number, x: number): number { return x; }"
         );
         assertError(out, "E2002", "parameter shadow parameter");
     }
@@ -552,7 +552,7 @@ public class CheckerTest {
         System.out.println("-- Name Resolution: import --");
         CheckerOutput out = checkProgram(
             "import * as Lib from \"./nonexistent\";\n" +
-            "let x: int = 1;"
+            "let x: number = 1;"
         );
         assertError(out, "E2003", "module not found");
     }
@@ -560,14 +560,14 @@ public class CheckerTest {
     static void testNameResolution_hoisting() {
         System.out.println("-- Name Resolution: hoisting --");
         CheckerOutput out = checkProgram(
-            "function foo(): int { return bar(); }\n" +
-            "function bar(): int { return 42; }"
+            "function foo(): number { return bar(); }\n" +
+            "function bar(): number { return 42; }"
         );
         assertNoErrors(out, "forward reference via hoisting");
 
         out = checkProgram(
             "function make(): Point { return { x: 1, y: 2 }; }\n" +
-            "class Point { x: int; y: int; }"
+            "class Point { x: number; y: number; }"
         );
         assertNoErrors(out, "forward class reference via hoisting");
     }
@@ -576,10 +576,10 @@ public class CheckerTest {
     static void testNameResolution_e2007_class() {
         System.out.println("-- Name Resolution: E2007 class shadows import --");
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("Foo", Type.Number.INSTANCE));
         CheckerOutput out = checkProgramWithModule(
             "import * as Foo from \"./lib\";\n" +
-            "class Foo { x: int; }",
+            "class Foo { x: number; }",
             resolver
         );
         assertError(out, "E2007", "class shadows import");
@@ -588,10 +588,10 @@ public class CheckerTest {
     static void testNameResolution_e2007_function() {
         System.out.println("-- Name Resolution: E2007 function shadows import --");
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("Foo", Type.Number.INSTANCE));
         CheckerOutput out = checkProgramWithModule(
             "import * as Foo from \"./lib\";\n" +
-            "function Foo(): int { return 42; }",
+            "function Foo(): number { return 42; }",
             resolver
         );
         assertError(out, "E2007", "function shadows import");
@@ -600,10 +600,10 @@ public class CheckerTest {
     static void testNameResolution_e2007_let() {
         System.out.println("-- Name Resolution: E2007 let shadows import --");
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("Foo", Type.Number.INSTANCE));
         CheckerOutput out = checkProgramWithModule(
             "import * as Foo from \"./lib\";\n" +
-            "let Foo: int = 1;",
+            "let Foo: number = 1;",
             resolver
         );
         assertError(out, "E2007", "let shadows import");
@@ -613,9 +613,9 @@ public class CheckerTest {
     static void testNameResolution_e2006_classBeforeImport() {
         System.out.println("-- Name Resolution: E2006 import after class --");
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("Foo", Type.Number.INSTANCE));
         CheckerOutput out = checkProgramWithModule(
-            "class Foo { x: int; }\n" +
+            "class Foo { x: number; }\n" +
             "import * as Foo from \"./lib\";",
             resolver
         );
@@ -625,9 +625,9 @@ public class CheckerTest {
     static void testNameResolution_e2006_functionBeforeImport() {
         System.out.println("-- Name Resolution: E2006 import after function --");
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("Foo", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("Foo", Type.Number.INSTANCE));
         CheckerOutput out = checkProgramWithModule(
-            "function Foo(): int { return 42; }\n" +
+            "function Foo(): number { return 42; }\n" +
             "import * as Foo from \"./lib\";",
             resolver
         );
@@ -638,10 +638,10 @@ public class CheckerTest {
     static void testNameResolution_e2004() {
         System.out.println("-- Name Resolution: E2004 export not found --");
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("existingExport", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("existingExport", Type.Number.INSTANCE));
         CheckerOutput out = checkProgramWithModule(
             "import * as Lib from \"./lib\";\n" +
-            "let x: int = Lib.nonExistent;",
+            "let x: number = Lib.nonExistent;",
             resolver
         );
         assertError(out, "E2004", "export not found in module");
@@ -659,8 +659,8 @@ public class CheckerTest {
         assertNoErrors(out, "true literal");
         out = checkProgram("let a: boolean = false;");
         assertNoErrors(out, "false literal");
-        out = checkProgram("let a: int = 42;");
-        assertNoErrors(out, "int literal");
+        out = checkProgram("let a: number = 42;");
+        assertNoErrors(out, "number literal");
         out = checkProgram("let a: number = 3.14;");
         assertNoErrors(out, "number literal");
         out = checkProgram("let a: string = \"hello\";");
@@ -670,8 +670,8 @@ public class CheckerTest {
     static void testIdentifierType() {
         System.out.println("-- Identifier Type --");
         CheckerOutput out = checkProgram(
-            "let x: int = 1;\n" +
-            "let y: int = x;"
+            "let x: number = 1;\n" +
+            "let y: number = x;"
         );
         assertNoErrors(out, "identifier type");
     }
@@ -683,15 +683,15 @@ public class CheckerTest {
     static void testArithmeticOperators() {
         System.out.println("-- Arithmetic Operators --");
         CheckerOutput out = checkProgram(
-            "let a: int = 1 + 2;\n" +
-            "let b: int = 1 - 2;\n" +
-            "let c: int = 1 * 2;\n" +
-            "let d: int = 1 / 2;\n" +
-            "let e: int = 1 * 2;\n" +
-            "let f: int = 2 * 3;"
+            "let a: number = 1 + 2;\n" +
+            "let b: number = 1 - 2;\n" +
+            "let c: number = 1 * 2;\n" +
+            "let d: number = 1 / 2;\n" +
+            "let e: number = 1 * 2;\n" +
+            "let f: number = 2 * 3;"
         );
-        assertNoErrors(out, "int arithmetic");
-        assertError(checkProgram("let f: int = 2 ** 3;"), "E1037", "removed power operator rejects");
+        assertNoErrors(out, "number arithmetic");
+        assertError(checkProgram("let f: number = 2 ** 3;"), "E1037", "removed power operator rejects");
 
         out = checkProgram(
             "let a: number = 1.0 + 2.0;\n" +
@@ -712,7 +712,7 @@ public class CheckerTest {
             "let c: boolean = 1 > 2;\n" +
             "let d: boolean = 1 >= 2;"
         );
-        assertNoErrors(out, "int comparison");
+        assertNoErrors(out, "number comparison");
 
         out = checkProgram("let a: boolean = 1.0 < 2.0;");
         assertNoErrors(out, "number comparison");
@@ -727,10 +727,10 @@ public class CheckerTest {
             "let a: boolean = 1 === 1;\n" +
             "let b: boolean = 1 !== 2;"
         );
-        assertNoErrors(out, "int equality");
+        assertNoErrors(out, "number equality");
 
         out = checkProgram(
-            "let x: int | null = null;\n" +
+            "let x: number | null = null;\n" +
             "let a: boolean = x === null;\n" +
             "let b: boolean = x !== null;"
         );
@@ -750,7 +750,7 @@ public class CheckerTest {
         System.out.println("-- Unary Operators --");
         CheckerOutput out = checkProgram(
             "let a: boolean = !true;\n" +
-            "let b: int = -5;"
+            "let b: number = -5;"
         );
         assertNoErrors(out, "unary operators");
     }
@@ -758,10 +758,10 @@ public class CheckerTest {
     static void testOperatorTypeErrors() {
         System.out.println("-- Operator Type Errors --");
         CheckerOutput out = checkProgram("let a: string = \"a\" + 1;");
-        assertError(out, "E3010", "string + int error");
+        assertError(out, "E3010", "string + number error");
 
         out = checkProgram("let a: boolean = 1 === true;");
-        assertError(out, "E3006", "int === bool error");
+        assertError(out, "E3006", "number === bool error");
     }
 
 
@@ -797,7 +797,7 @@ public class CheckerTest {
         assertNoErrors(out, "null ===/!== null unaffected");
 
         out = checkProgram(
-            "function f(n: int | null): null {\n"
+            "function f(n: number | null): null {\n"
             + "  let a: boolean = n === null;\n"
             + "  let b: boolean = null === n;\n"
             + "  let c: boolean = n !== null;\n"
@@ -807,7 +807,7 @@ public class CheckerTest {
         assertNoErrors(out, "nullable-vs-null unaffected");
 
         out = checkProgram(
-            "function f(n: int | null): null {\n"
+            "function f(n: number | null): null {\n"
             + "  let a: boolean = n === n;\n"
             + "  return null;\n"
             + "}"
@@ -816,7 +816,7 @@ public class CheckerTest {
 
         out = checkProgram(
             "function f(): null {\n"
-            + "  let xs: int[] = [1, 2];\n"
+            + "  let xs: number[] = [1, 2];\n"
             + "  let a: boolean = xs === xs;\n"
             + "  return null;\n"
             + "}"
@@ -849,7 +849,7 @@ public class CheckerTest {
     static void testAssignment_exact() {
         System.out.println("-- Assignment: exact match --");
         CheckerOutput out = checkProgram(
-            "let x: int = 42;\n" +
+            "let x: number = 42;\n" +
             "x = 100;"
         );
         assertNoErrors(out, "exact assignment");
@@ -857,18 +857,18 @@ public class CheckerTest {
 
     static void testAssignment_nullableWrapping() {
         System.out.println("-- Assignment: nullable wrapping --");
-        CheckerOutput out = checkProgram("let x: int | null = 1;");
+        CheckerOutput out = checkProgram("let x: number | null = 1;");
         assertNoErrors(out, "nullable wrapping OK");
 
-        out = checkProgram("let x: int | null = null;");
+        out = checkProgram("let x: number | null = null;");
         assertNoErrors(out, "null to nullable OK");
     }
 
     static void testAssignment_nullableError() {
         System.out.println("-- Assignment: nullable error --");
         CheckerOutput out = checkProgram(
-            "let n: int | null = null;\n" +
-            "let x: int = n;"
+            "let n: number | null = null;\n" +
+            "let x: number = n;"
         );
         assertError(out, "E3001", "nullable to non-nullable error");
     }
@@ -876,16 +876,16 @@ public class CheckerTest {
     static void testAssignment_invariance() {
         System.out.println("-- Assignment: invariance --");
         CheckerOutput out = checkProgram(
-            "let x: int = 1;\n" +
-            "let y: number = x;"
+            "let x: number = 1;\n" +
+            "let y: string = x;"
         );
-        assertError(out, "E3001", "int to number invariance error");
+        assertError(out, "E3001", "number to number invariance error");
 
         out = checkProgram(
-            "let x: number = 1.0;\n" +
-            "let y: int = x;"
+            "let x: string = \"x\";\n" +
+            "let y: number = x;"
         );
-        assertError(out, "E3001", "number to int invariance error");
+        assertError(out, "E3001", "number to number invariance error");
     }
 
     // F3: Assignment RHS contextual typing for table reads
@@ -938,7 +938,7 @@ public class CheckerTest {
             "let t: table = { data: 1 };\n" +
             "t[0] = 42;"
         );
-        assertError(lit, "E3018", "int literal table index write");
+        assertError(lit, "E3018", "number literal table index write");
         boolean litAtIndex = lit.result.diagnostics().stream()
             .filter(d -> d.code().equals("E3018"))
             .anyMatch(d -> d.line() == 2 && d.column() == 3);
@@ -947,14 +947,14 @@ public class CheckerTest {
         // int-typed variable key
         CheckerOutput var = checkProgram(
             "let t: table = { data: 1 };\n" +
-            "let k: int = 0;\n" +
+            "let k: number = 0;\n" +
             "t[k] = 42;"
         );
-        assertError(var, "E3018", "int-typed table index write key");
+        assertError(var, "E3018", "number-typed table index write key");
         boolean varAtIndex = var.result.diagnostics().stream()
             .filter(d -> d.code().equals("E3018"))
             .anyMatch(d -> d.line() == 3 && d.column() == 3);
-        check(varAtIndex, "E3018 (int var write) must be reported at the index span");
+        check(varAtIndex, "E3018 (number var write) must be reported at the index span");
     }
 
     static void testTableIndexDeleteStringKeyAccepted() {
@@ -973,7 +973,7 @@ public class CheckerTest {
             "let t: table = { x: 1 };\n" +
             "delete t[0];"
         );
-        assertError(out, "E3018", "int literal table index delete");
+        assertError(out, "E3018", "number literal table index delete");
         // E3018 at the index expression's span (line 2, column 10 — the
         // `0` inside `delete t[0]`), not the statement span.
         boolean atIndex = out.result.diagnostics().stream()
@@ -989,7 +989,7 @@ public class CheckerTest {
         System.out.println("-- Table Index Read Unaffected by E3018 --");
         CheckerOutput out = checkProgram(
             "let t: table = { data: 1 };\n" +
-            "let v: int = t[0];"
+            "let v: number = t[0];"
         );
         assertError(out, "E3007", "table index read keeps E3007");
         boolean e3018 = out.result.diagnostics().stream()
@@ -1002,15 +1002,15 @@ public class CheckerTest {
     static void testArrayIndexIntRequirementUnchanged() {
         System.out.println("-- Array Index Int Requirement Unchanged (E3007, no E3018) --");
         CheckerOutput read = checkProgram(
-            "let xs: int[] = [1, 2];\n" +
-            "let v: int = xs[\"k\"];"
+            "let xs: number[] = [1, 2];\n" +
+            "let v: number = xs[\"k\"];"
         );
-        assertError(read, "E3007", "array index read keeps the int requirement");
+        assertError(read, "E3007", "array index read keeps the number requirement");
         CheckerOutput write = checkProgram(
-            "let xs: int[] = [1, 2];\n" +
+            "let xs: number[] = [1, 2];\n" +
             "xs[\"k\"] = 1;"
         );
-        assertError(write, "E3007", "array index write keeps the int requirement");
+        assertError(write, "E3007", "array index write keeps the number requirement");
         boolean readE3018 = read.result.diagnostics().stream()
             .anyMatch(d -> d.code().equals("E3018"));
         boolean writeE3018 = write.result.diagnostics().stream()
@@ -1024,15 +1024,15 @@ public class CheckerTest {
 
     static void testArrayLiteral() {
         System.out.println("-- Array Literal --");
-        CheckerOutput out = checkProgram("let a: int[] = [1, 2, 3];");
-        assertNoErrors(out, "int array literal");
+        CheckerOutput out = checkProgram("let a: number[] = [1, 2, 3];");
+        assertNoErrors(out, "number array literal");
     }
 
     static void testMixedArray() {
         System.out.println("-- Mixed Array --");
         CheckerOutput out = checkProgram(
-            "let a: int[] = [1, 2];\n" +
-            "let b = [1, 1.0];"
+            "let a: number[] = [1, 2];\n" +
+            "let b = [1, true];"
         );
         assertError(out, "E3011", "mixed array types");
     }
@@ -1046,8 +1046,8 @@ public class CheckerTest {
     static void testArrayRead() {
         System.out.println("-- Array Read --");
         CheckerOutput out = checkProgram(
-            "let a: int[] = [1, 2, 3];\n" +
-            "let x: int = a[0];"
+            "let a: number[] = [1, 2, 3];\n" +
+            "let x: number = a[0];"
         );
         assertNoErrors(out, "array read");
     }
@@ -1055,8 +1055,8 @@ public class CheckerTest {
     static void testArrayLength() {
         System.out.println("-- Array Length --");
         CheckerOutput out = checkProgram(
-            "let a: int[] = [1, 2, 3];\n" +
-            "let len: int = a.length;"
+            "let a: number[] = [1, 2, 3];\n" +
+            "let len: number = a.length;"
         );
         assertNoErrors(out, "array length");
     }
@@ -1068,7 +1068,7 @@ public class CheckerTest {
         // continues after E3017 (typeMap stays populated): both E3017 and
         // E3001 are reported.
         CheckerOutput out = checkProgram(
-            "let xs: int[] = [1, 2, 3];\n" +
+            "let xs: number[] = [1, 2, 3];\n" +
             "xs.length = \"oops\";"
         );
         assertError(out, "E3017", "assignment to array .length");
@@ -1084,7 +1084,7 @@ public class CheckerTest {
     static void testArrayLengthDeleteRejected() {
         System.out.println("-- Array Length Delete Rejected (E3017) --");
         CheckerOutput out = checkProgram(
-            "let xs: int[] = [1, 2, 3];\n" +
+            "let xs: number[] = [1, 2, 3];\n" +
             "delete xs.length;"
         );
         assertError(out, "E3017", "delete of array .length");
@@ -1106,7 +1106,7 @@ public class CheckerTest {
     static void testArrayAppendIdiomCompiles() {
         System.out.println("-- Array Append Idiom xs[xs.length] = v Compiles --");
         CheckerOutput out = checkProgram(
-            "let xs: int[] = [1, 2, 3];\n" +
+            "let xs: number[] = [1, 2, 3];\n" +
             "xs[xs.length] = 4;"
         );
         assertNoErrors(out, "append idiom xs[xs.length] = v");
@@ -1125,7 +1125,7 @@ public class CheckerTest {
     static void testClassFieldLengthWriteUnaffected() {
         System.out.println("-- Class Field Named length Unaffected --");
         CheckerOutput out = checkProgram(
-            "class C { length: int; }\n" +
+            "class C { length: number; }\n" +
             "let c: C = { length: 1 };\n" +
             "c.length = 5;"
         );
@@ -1169,8 +1169,8 @@ public class CheckerTest {
     static void testFunctionCall() {
         System.out.println("-- Function Call --");
         CheckerOutput out = checkProgram(
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let x: int = add(1, 2);"
+            "function add(a: number, b: number): number { return a + b; }\n" +
+            "let x: number = add(1, 2);"
         );
         assertNoErrors(out, "function call");
     }
@@ -1178,8 +1178,8 @@ public class CheckerTest {
     static void testFunctionArgCountMismatch() {
         System.out.println("-- Function Arg Count Mismatch --");
         CheckerOutput out = checkProgram(
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let x: int = add(1);"
+            "function add(a: number, b: number): number { return a + b; }\n" +
+            "let x: number = add(1);"
         );
         assertError(out, "E3009", "arg count mismatch");
     }
@@ -1187,8 +1187,8 @@ public class CheckerTest {
     static void testFunctionArgTypeMismatch() {
         System.out.println("-- Function Arg Type Mismatch --");
         CheckerOutput out = checkProgram(
-            "function add(a: int, b: int): int { return a + b; }\n" +
-            "let x: int = add(\"a\", \"b\");"
+            "function add(a: number, b: number): number { return a + b; }\n" +
+            "let x: number = add(\"a\", \"b\");"
         );
         assertError(out, "E5001", "arg type mismatch");
     }
@@ -1196,7 +1196,7 @@ public class CheckerTest {
     static void testFunctionReturnType() {
         System.out.println("-- Function Return Type --");
         CheckerOutput out = checkProgram(
-            "function f(): int { return \"hello\"; }"
+            "function f(): number { return \"hello\"; }"
         );
         assertError(out, "E5003", "return type mismatch");
     }
@@ -1204,8 +1204,8 @@ public class CheckerTest {
     static void testArityExtension() {
         System.out.println("-- Arity Extension --");
         CheckerOutput out = checkProgram(
-            "function oneArg(a: int): int { return a; }\n" +
-            "let f: (x: int, y: int) => int = oneArg;"
+            "function oneArg(a: number): number { return a; }\n" +
+            "let f: (x: number, y: number) => number = oneArg;"
         );
         assertNoErrors(out, "arity extension: fewer params OK");
     }
@@ -1225,7 +1225,7 @@ public class CheckerTest {
     static void testFunctionExprDuplicateParams() {
         System.out.println("-- Function Expression Duplicate Params --");
         CheckerOutput out = checkProgram(
-            "let f = function(x: int, x: int): int { return x; };"
+            "let f = function(x: number, x: number): number { return x; };"
         );
         assertError(out, "E2002", "function expr duplicate parameters");
     }
@@ -1233,8 +1233,8 @@ public class CheckerTest {
     static void testFunctionExpr() {
         System.out.println("-- Function Expression --");
         CheckerOutput out = checkProgram(
-            "let f = function(x: int): int { return x; };\n" +
-            "let r: int = f(42);"
+            "let f = function(x: number): number { return x; };\n" +
+            "let r: number = f(42);"
         );
         assertNoErrors(out, "function expression");
     }
@@ -1246,7 +1246,7 @@ public class CheckerTest {
     static void testScopeChain_functionBody() {
         System.out.println("-- F1: Scope chain - function body variables --");
         CheckerOutput out = checkProgram(
-            "function f(): int { let y: int = 42; return y; }"
+            "function f(): number { let y: number = 42; return y; }"
         );
         assertNoErrors(out, "function body variable visible in same function");
     }
@@ -1254,7 +1254,7 @@ public class CheckerTest {
     static void testScopeChain_nestedBlock() {
         System.out.println("-- F1: Scope chain - nested block variables --");
         CheckerOutput out = checkProgram(
-            "function f(): int { let y: int = 42; { let z: int = y; } return y; }"
+            "function f(): number { let y: number = 42; { let z: number = y; } return y; }"
         );
         assertNoErrors(out, "variables visible in nested blocks");
     }
@@ -1267,7 +1267,7 @@ public class CheckerTest {
         System.out.println("-- F2: Nested function return type --");
         CheckerOutput out = checkProgram(
             "function outer(): null {\n" +
-            "  function inner(): int { return 42; }\n" +
+            "  function inner(): number { return 42; }\n" +
             "  return;\n" +
             "}"
         );
@@ -1282,7 +1282,7 @@ public class CheckerTest {
         System.out.println("-- F6: If condition contextual typing --");
         CheckerOutput out = checkProgram(
             "let t: table = { flag: true };\n" +
-            "if (t.flag) { let x: int = 1; }"
+            "if (t.flag) { let x: number = 1; }"
         );
         assertNoErrors(out, "if condition table read has boolean context");
     }
@@ -1310,12 +1310,12 @@ public class CheckerTest {
     static void testForConditionContextualTyping() {
         System.out.println("-- F6: For condition contextual typing --");
         CheckerOutput read = checkProgram(
-            "let t: table = { flag: true };\n{ let v14Loop0: int = 0; while (v14Loop0 < 10 && t.flag) { let i: int = v14Loop0; { break; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }"
+            "let t: table = { flag: true };\n{ let v14Loop0: number = 0; while (v14Loop0 < 10 && t.flag) { let i: number = v14Loop0; { break; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }"
         );
         assertError(read, "E3003",
             "for condition table read rejects E3003");
         CheckerOutput booleanRequirement = checkProgram(
-            "let t: table = { flag: true };\n{ let v14Loop1: int = 0; while (t) { let i: int = v14Loop1; { break; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }"
+            "let t: table = { flag: true };\n{ let v14Loop1: number = 0; while (t) { let i: number = v14Loop1; { break; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }"
         );
         assertError(booleanRequirement, "E3007",
             "for condition still requires boolean");
@@ -1357,10 +1357,10 @@ public class CheckerTest {
         // Subject 11: a definitely-returning try with a fallthrough catch
         // rejects at the catch block even though a later return follows.
         CheckerOutput catchFallthrough = checkProgram(
-            "export function f(): int {try {return 1;} catch(e) {} return 2;}\n");
+            "export function f(): number {try {return 1;} catch(e) {} return 2;}\n");
         assertError(catchFallthrough, "E5002",
             "the fallthrough catch rejects E5002");
-        checkExactRange(catchFallthrough, "E5002", 1, 52, 1, 54,
+        checkExactRange(catchFallthrough, "E5002", 1, 55, 1, 57,
             "the catch obligation carries the catch block's exact range");
 
         // The obligation is independent of the enclosing body's return:
@@ -1376,7 +1376,7 @@ public class CheckerTest {
 
         // Function expressions carry the same obligation.
         CheckerOutput expression = checkProgram(
-            "export function f(): null {let g: () => int = function(): int"
+            "export function f(): null {let g: () => number = function(): number"
                 + " {try {return 1;} catch(e) {} return 2;}; return null;}\n");
         assertError(expression, "E5002",
             "the function-expression catch rejects E5002");
@@ -1392,19 +1392,19 @@ public class CheckerTest {
         // Legal controls: catch return and catch throw after a
         // definitely-returning try stay accepted.
         assertNoErrors(checkProgram(
-            "export function f(): int {try {return 1;} catch(e) {return 2;}}\n"),
+            "export function f(): number {try {return 1;} catch(e) {return 2;}}\n"),
             "a returning catch stays legal");
         assertNoErrors(checkProgram(
-            "export function f(): int {try {return 1;} catch(e) {throw e;}}\n"),
+            "export function f(): number {try {return 1;} catch(e) {throw e;}}\n"),
             "a throwing catch stays legal");
 
         // Legal controls: all five admitted direct read positions.
         assertNoErrors(checkProgram(
-            "export function f(t: table): int {let x: int = t.n; x = t.n;"
+            "export function f(t: table): number {let x: number = t.n; x = t.n;"
                 + " if (t.flag) {return t.n;} return x;}\n"),
             "the direct let/assignment/if/return reads stay admitted");
         assertNoErrors(checkProgram(
-            "function g(n: int): null {return null;}"
+            "function g(n: number): null {return null;}"
                 + " export function f(t: table): null {g(t.n); return null;}\n"),
             "the direct argument read stays admitted");
     }
@@ -1606,7 +1606,7 @@ public class CheckerTest {
     static void testClassDefaultExpressionsTyped() {
         System.out.println("-- F9: Class default expressions type-checked --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int = 1 + 2; }\nlet p: Point = {};"
+            "class Point { x: number = 1 + 2; }\nlet p: Point = {};"
         );
         assertNoErrors(out, "arithmetic default type-checks clean");
         for (StatementNode stmt : out.program().statements()) {
@@ -1615,8 +1615,8 @@ public class CheckerTest {
                     if (cf.defaultExpr().isPresent()) {
                         Type t = out.result.typeMap()
                             .get(cf.defaultExpr().get());
-                        check(t instanceof Type.Int,
-                            "default subexpression recorded as int, got " + t);
+                        check(t instanceof Type.Number,
+                            "default subexpression recorded as number, got " + t);
                     }
                 }
             }
@@ -1663,7 +1663,7 @@ public class CheckerTest {
     static void testClassConstruction() {
         System.out.println("-- Class Construction --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
+            "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: 1, y: 2 };"
         );
         assertNoErrors(out, "class construction");
@@ -1672,7 +1672,7 @@ public class CheckerTest {
     static void testClassExtraFields() {
         System.out.println("-- Class Extra Fields --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
+            "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: 1, y: 2, z: 3 };"
         );
         assertError(out, "E4002", "extra field in class literal");
@@ -1681,7 +1681,7 @@ public class CheckerTest {
     static void testClassMissingRequiredField() {
         System.out.println("-- Class Missing Required Field --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
+            "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: 1 };"
         );
         assertError(out, "E4001", "missing required field");
@@ -1690,8 +1690,8 @@ public class CheckerTest {
     static void testClassNominalTyping() {
         System.out.println("-- Class Nominal Typing --");
         CheckerOutput out = checkProgram(
-            "class A { x: int; }\n" +
-            "class B { x: int; }\n" +
+            "class A { x: number; }\n" +
+            "class B { x: number; }\n" +
             "let a: A = { x: 1 };\n" +
             "let b: B = a;"
         );
@@ -1701,9 +1701,9 @@ public class CheckerTest {
     static void testClassFieldAccess() {
         System.out.println("-- Class Field Access --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
+            "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: 1, y: 2 };\n" +
-            "let x: int = p.x;"
+            "let x: number = p.x;"
         );
         assertNoErrors(out, "class field access");
     }
@@ -1711,9 +1711,9 @@ public class CheckerTest {
     static void testClassOptionalField() {
         System.out.println("-- Class Optional Field --");
         CheckerOutput out = checkProgram(
-            "class User { name: string; age?: int = 0; }\n" +
+            "class User { name: string; age?: number = 0; }\n" +
             "let u: User = { name: \"A\" };\n" +
-            "let a: int | null = u.age;"
+            "let a: number | null = u.age;"
         );
         assertNoErrors(out, "class optional field");
     }
@@ -1755,9 +1755,9 @@ public class CheckerTest {
             + "invalidates the binding's refinement --");
 
         CheckerOutput path = checkProgram(
-            "class Child { n: int = 0; }\n" +
+            "class Child { n: number = 0; }\n" +
             "class Parent { child: Child | null = null; }\n" +
-            "export function f(p: Parent): int {\n" +
+            "export function f(p: Parent): number {\n" +
             "  if (p.child !== null) {\n" +
             "    return p.child.n;\n" +
             "  }\n" +
@@ -1769,8 +1769,8 @@ public class CheckerTest {
                 + "narrowing)");
 
         CheckerOutput assigned = checkProgram(
-            "class C { n: int = 0; }\n" +
-            "export function f(): int {\n" +
+            "class C { n: number = 0; }\n" +
+            "export function f(): number {\n" +
             "  let x: C | null = {};\n" +
             "  if (x !== null) {\n" +
             "    x = null;\n" +
@@ -1796,10 +1796,10 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "export function f(): null {\n" +
             "  {\n" +
-            "    let x: int = 1;\n" +
+            "    let x: number = 1;\n" +
             "  }\n" +
-            "  let y: int = x;\n" +
-            "  let x: int = 2;\n" +
+            "  let y: number = x;\n" +
+            "  let x: number = 2;\n" +
             "  return null;\n" +
             "}"
         );
@@ -1846,7 +1846,7 @@ public class CheckerTest {
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    {\n" +
-            "      let x: int = 0;\n" +
+            "      let x: number = 0;\n" +
             "      await tick();\n" +
             "    }\n" +
             "    let s: string = x;\n" +
@@ -1863,7 +1863,7 @@ public class CheckerTest {
             export function restoredBlock(): null {
               let x: string | null = "ok";
               if (x !== null) {
-                { let x: int = 0; }
+                { let x: number = 0; }
                 let s: string = x;
               }
               return null;
@@ -1872,7 +1872,7 @@ public class CheckerTest {
               let x: string | null = "ok";
               if (x !== null) {
                 {
-                  let x: int = 0;
+                  let x: number = 0;
                   let f = async function(): null { await positiveTick(); return null; };
                 }
                 let s: string = x;
@@ -1883,8 +1883,8 @@ public class CheckerTest {
               let x: string | null = "ok";
               if (x !== null) {
                 {
-                  let x: int = 0;
-                  for (let n: int of [1]) { let z: int = n; }
+                  let x: number = 0;
+                  for (let n: number of [1]) { let z: number = n; }
                 }
                 let s: string = x;
               }
@@ -1894,8 +1894,8 @@ public class CheckerTest {
               let x: string | null = "ok";
               if (x !== null) {
                 {
-                  let x: int = 0;
-                  for (let n: int of [1]) {
+                  let x: number = 0;
+                  for (let n: number of [1]) {
                     let f = async function(): null { await positiveTick(); return null; };
                   }
                 }
@@ -1916,8 +1916,8 @@ public class CheckerTest {
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    {\n" +
-            "      let x: int = 0;\n" +
-            "      for (let n: int of [1]) { await tick(); }\n" +
+            "      let x: number = 0;\n" +
+            "      for (let n: number of [1]) { await tick(); }\n" +
             "    }\n" +
             "    let s: string = x;\n" +
             "  }\n" +
@@ -1934,7 +1934,7 @@ public class CheckerTest {
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    {\n" +
-            "      let x: int = 0;\n" +
+            "      let x: number = 0;\n" +
             "      while (false) { await tick(); }\n" +
             "    }\n" +
             "    let s: string = x;\n" +
@@ -1947,7 +1947,7 @@ public class CheckerTest {
                 + "refinements; the loop exit must not restore them");
 
         CheckerOutput forAwait = checkProgram(
-            "async function tick(): null { return null; }\nexport async function run(): null {\n  let x: string | null = \"ok\";\n  if (x !== null) {\n    {\n      let x: int = 0;\n      { let v14Loop2: int = 0; while (false) { let n: int = v14Loop2; { await tick(); } v14Loop2 = n; v14Loop2 = v14Loop2 + 1; } }\n    }\n    let s: string = x;\n  }\n  return null;\n}"
+            "async function tick(): null { return null; }\nexport async function run(): null {\n  let x: string | null = \"ok\";\n  if (x !== null) {\n    {\n      let x: number = 0;\n      { let v14Loop2: number = 0; while (false) { let n: number = v14Loop2; { await tick(); } v14Loop2 = n; v14Loop2 = v14Loop2 + 1; } }\n    }\n    let s: string = x;\n  }\n  return null;\n}"
         );
         assertError(forAwait, "E3001",
             "an await inside a C-style for body invalidates the enclosing "
@@ -1973,27 +1973,27 @@ public class CheckerTest {
             + "targets the enclosing binding --");
         CheckerOutput valid = checkProgram(
             "export function f(): null {\n" +
-            "  let x: int | null = 1;\n" +
+            "  let x: number | null = 1;\n" +
             "  if (x !== null) {\n" +
-            "    let x: number = number(x = 2);\n" +
+            "    let x: number = (x = 2);\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
         assertNoErrors(valid,
-            "int is assignable to the enclosing int | null");
+            "number is assignable to the enclosing number | null");
 
         CheckerOutput invalid = checkProgram(
             "export function f(): null {\n" +
-            "  let x: int | null = 1;\n" +
+            "  let x: number | null = 1;\n" +
             "  if (x !== null) {\n" +
-            "    let x: number = (x = 2.5);\n" +
+            "    let x: number = (x = true);\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
         assertError(invalid, "E3001",
-            "number is not assignable to the enclosing int | null");
+            "number is not assignable to the enclosing number | null");
     }
 
     /**
@@ -2010,7 +2010,7 @@ public class CheckerTest {
             "export function f(): null {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
-            "    while (false) { let x: int = 1; }\n" +
+            "    while (false) { let x: number = 1; }\n" +
             "    let s: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2109,7 +2109,7 @@ public class CheckerTest {
             "export function main(): null {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
-            "    if (true) { let z: int = 1; }\n" +
+            "    if (true) { let z: number = 1; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2132,7 +2132,7 @@ public class CheckerTest {
             "export function main(): null {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
-            "    { let x: int = 0; if (true) {} else {} }\n" +
+            "    { let x: number = 0; if (true) {} else {} }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2146,7 +2146,7 @@ public class CheckerTest {
             "export async function run(): null {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
-            "    { let x: int = 0; if (true) { await tick(); } else {} }\n" +
+            "    { let x: number = 0; if (true) { await tick(); } else {} }\n" +
             "    let s: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2160,7 +2160,7 @@ public class CheckerTest {
             "export async function run(): null {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
-            "    { let x: int = 0; if (false) {} else { await tick(); } }\n" +
+            "    { let x: number = 0; if (false) {} else { await tick(); } }\n" +
             "    let s: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2184,7 +2184,7 @@ public class CheckerTest {
             "export function main(): null {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
-            "    for (let n: int of [1]) { x = null; }\n" +
+            "    for (let n: number of [1]) { x = null; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2484,19 +2484,19 @@ public class CheckerTest {
         System.out.println("-- the C-style for loop-head let is not visible "
             + "to its own initializer --");
         CheckerOutput self = checkProgram(
-            "export function main(): null {\n  { let v14Loop3: int = x; while (false) { let x: int = v14Loop3; {} v14Loop3 = x;  } }\n  return null;\n}"
+            "export function main(): null {\n  { let v14Loop3: number = x; while (false) { let x: number = v14Loop3; {} v14Loop3 = x;  } }\n  return null;\n}"
         );
         assertError(self, "E2001",
             "a loop-head self reference has no enclosing declaration");
 
         CheckerOutput shadow = checkProgram(
-            "export function main(): null {\n  let x: int = 1;\n  { let v14Loop4: number = number(x); while (false) { let x: number = v14Loop4; {} v14Loop4 = x;  } }\n  return null;\n}"
+            "export function main(): null {\n  let x: number = 1;\n  { let v14Loop4: number = x; while (false) { let x: number = v14Loop4; {} v14Loop4 = x;  } }\n  return null;\n}"
         );
         assertNoErrors(shadow,
-            "the initializer reads the enclosing int binding");
+            "the initializer reads the enclosing number binding");
 
         CheckerOutput restored = checkProgram(
-            "export function main(): null {\n  let x: string | null = \"a\";\n  if (x !== null) {\n    { let v14Loop5: int = 0; while (false) { let x: int = v14Loop5; {} v14Loop5 = x;  } }\n    let y: string = x;\n  }\n  return null;\n}"
+            "export function main(): null {\n  let x: string | null = \"a\";\n  if (x !== null) {\n    { let v14Loop5: number = 0; while (false) { let x: number = v14Loop5; {} v14Loop5 = x;  } }\n    let y: string = x;\n  }\n  return null;\n}"
         );
         assertNoErrors(restored,
             "the loop-head shadow ends with the loop and restores the "
@@ -2530,10 +2530,10 @@ public class CheckerTest {
                 "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(crossing.resolve("src/a.deal"),
-                "export class Item { value: int = 1; }\n"
+                "export class Item { value: number = 1; }\n"
                     + "export function make(): Item { return {}; }\n");
             Files.writeString(crossing.resolve("src/b.deal"),
-                "export class Item { value: int = 2; }\n"
+                "export class Item { value: number = 2; }\n"
                     + "export function make(): Item { return {}; }\n");
             Path crossingEntry = crossing.resolve("src/main.deal");
             Files.writeString(crossingEntry,
@@ -2562,15 +2562,15 @@ public class CheckerTest {
                 "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(control.resolve("src/a.deal"),
-                "export class Item { value: int = 1; }\n"
+                "export class Item { value: number = 1; }\n"
                     + "export function make(): Item { return {}; }\n"
-                    + "export function read(item: Item): int {\n"
+                    + "export function read(item: Item): number {\n"
                     + "  return item.value;\n"
                     + "}\n");
             Files.writeString(control.resolve("src/b.deal"),
-                "export class Item { value: int = 2; }\n"
+                "export class Item { value: number = 2; }\n"
                     + "export function make(): Item { return {}; }\n"
-                    + "export function read(item: Item): int {\n"
+                    + "export function read(item: Item): number {\n"
                     + "  return item.value;\n"
                     + "}\n");
             Path controlEntry = control.resolve("src/main.deal");
@@ -2619,7 +2619,7 @@ public class CheckerTest {
         System.out.println("-- class provenance is checked at initialization "
             + "and nullable targets --");
         CheckerOutput init = checkProgram(
-            "class A { n: int = 0; }\n" +
+            "class A { n: number = 0; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2634,7 +2634,7 @@ public class CheckerTest {
                 + "is E3019");
 
         CheckerOutput nullable = checkProgram(
-            "class A { n: int = 0; }\n" +
+            "class A { n: number = 0; }\n" +
             "export function f(): null {\n" +
             "  let a: A | null = {};\n" +
             "  {\n" +
@@ -2650,7 +2650,7 @@ public class CheckerTest {
                 + "declarations is E3019");
 
         CheckerOutput control = checkProgram(
-            "class A { n: int = 0; }\n" +
+            "class A { n: number = 0; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let b: A = a;\n" +
@@ -2664,7 +2664,7 @@ public class CheckerTest {
                 + "stay legal");
 
         CheckerOutput inferredAlias = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let alias = a;\n" +
@@ -2680,7 +2680,7 @@ public class CheckerTest {
                 + "provenance across the initialization boundary");
 
         CheckerOutput inferredNullable = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A | null = {};\n" +
             "  let alias = a;\n" +
@@ -2696,7 +2696,7 @@ public class CheckerTest {
                 + "nullable initialization boundary");
 
         CheckerOutput inferredAssignment = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let alias = a;\n" +
@@ -2713,7 +2713,7 @@ public class CheckerTest {
                 + "expression boundary");
 
         CheckerOutput aliasControl = checkProgram(
-            "class A { n: int = 0; }\n" +
+            "class A { n: number = 0; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let alias = a;\n" +
@@ -2740,7 +2740,7 @@ public class CheckerTest {
         System.out.println("-- class provenance is preserved through "
             + "assignment expressions --");
         CheckerOutput init = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2755,7 +2755,7 @@ public class CheckerTest {
                 + "keeps its declaration provenance -> E3019");
 
         CheckerOutput nullable = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2770,7 +2770,7 @@ public class CheckerTest {
                 + "boundary keeps its declaration provenance -> E3019");
 
         CheckerOutput assignment = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2786,7 +2786,7 @@ public class CheckerTest {
                 + "its declaration provenance -> E3019");
 
         CheckerOutput nested = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let c: A = {};\n" +
@@ -2802,7 +2802,7 @@ public class CheckerTest {
                 + "-> E3019");
 
         CheckerOutput control = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let b: A = (a = a);\n" +
@@ -2833,7 +2833,7 @@ public class CheckerTest {
         System.out.println("-- class provenance is preserved through "
             + "contextually constructed literals --");
         CheckerOutput init = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2849,7 +2849,7 @@ public class CheckerTest {
                 + "provenance -> E3019");
 
         CheckerOutput nullable = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2864,7 +2864,7 @@ public class CheckerTest {
                 + "boundary keeps its declaration provenance -> E3019");
 
         CheckerOutput assignment = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2881,7 +2881,7 @@ public class CheckerTest {
                 + "-> E3019");
 
         CheckerOutput control = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  let b: A = (a = {});\n" +
@@ -2895,7 +2895,7 @@ public class CheckerTest {
                 + "declaration stay legal");
 
         CheckerOutput contextual = checkProgram(
-            "class A { n: int = 7; }\n" +
+            "class A { n: number = 7; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
@@ -2952,7 +2952,7 @@ public class CheckerTest {
                 "let b: foreign.A = {}; a = (b = {});"
             };
             StringBuilder crossingSource = new StringBuilder(
-                "import * as foreign from \"./foreign/types\";\nclass A { n: int = 7; }\n");
+                "import * as foreign from \"./foreign/types\";\nclass A { n: number = 7; }\n");
             for (int i = 0; i < importedCrossings.length; i++) {
                 crossingSource.append("function crossing").append(i)
                     .append("(): null { let a: A = {}; ").append(importedCrossings[i])
@@ -2962,7 +2962,7 @@ public class CheckerTest {
             Path crossingEntry = cliProject(root, "module_crossings", crossingSource.toString());
             Files.createDirectories(crossingEntry.resolveSibling("foreign"));
             Files.writeString(crossingEntry.resolveSibling("foreign").resolve("types.deal"),
-                "export class A { n: int = 7; }");
+                "export class A { n: number = 7; }");
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = root.resolve("module_crossings_out_" + backend);
                 CliResult result = cliCompile(crossingEntry, backend, out);
@@ -2975,7 +2975,7 @@ public class CheckerTest {
             String[] names = {"init", "nullable", "assignment"};
             for (int p = 0; p < negatives.length; p++) {
                 Path probeEntry = cliProject(root, "probe_" + names[p],
-                    "class A { n: int = 7; }\n"
+                    "class A { n: number = 7; }\n"
                         + "export function main(): null {\n"
                         + "  let a: A = {};\n"
                         + "  " + negatives[p] + "\n"
@@ -2989,7 +2989,7 @@ public class CheckerTest {
 
             Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: int = 7; }\n"
+                    + "class A { n: number = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
                     + "  let b: A = (a = {});\n"
@@ -3076,7 +3076,7 @@ public class CheckerTest {
             String[] probes = {
                 // explicit provided field, plain class target
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: int = 7; }\n"
+                    + "class A { n: number = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
                     + "  {\n"
@@ -3090,7 +3090,7 @@ public class CheckerTest {
                     + "}\n",
                 // nullable class target
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: int = 7; }\n"
+                    + "class A { n: number = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A | null = {};\n"
                     + "  {\n"
@@ -3111,8 +3111,8 @@ public class CheckerTest {
                 Path entry = cliProject(root, "probe_" + names[p], probes[p]);
                 Path out = root.resolve("out_" + names[p]);
                 cliReject(entry, out, "js", "original local-class construction " + names[p]);
-                String legal = probes[p].replace("class A { n: int = 7; }",
-                    "class A { n: int = 7; }\nclass B { n: string = \"ok\"; }")
+                String legal = probes[p].replace("class A { n: number = 7; }",
+                    "class A { n: number = 7; }\nclass B { n: string = \"ok\"; }")
                     .replace("    class A { n: string = \"ok\"; }", "    let other: B = {};");
                 Path legalEntry = cliProject(root, "legal_" + names[p], legal);
                 Path legalOut = root.resolve("legal_out_" + names[p]);
@@ -3138,7 +3138,7 @@ public class CheckerTest {
             // default stays int).
             Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: int = 7; }\nclass B { n: string = \"ok\"; }\n"
+                    + "class A { n: number = 7; }\nclass B { n: string = \"ok\"; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
                     + "  {\n"
@@ -3191,7 +3191,7 @@ public class CheckerTest {
         }
         try {
             Path probeEntry = cliProject(root, "probe",
-                "class A { n: int = 7; }\n"
+                "class A { n: number = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
                     + "  {\n"
@@ -3208,7 +3208,7 @@ public class CheckerTest {
 
             Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: int = 7; }\n"
+                    + "class A { n: number = 7; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {};\n"
                     + "  let b: A = (a = a);\n"
@@ -3258,10 +3258,10 @@ public class CheckerTest {
         System.out.println("-- Nested class shadowing: declaration legal, "
             + "cross-declaration assignment -> E3019 --");
         CheckerOutput shadow = checkProgram(
-            "class A { n: int = 0; }\n" +
+            "class A { n: number = 0; }\n" +
             "export function f(): null {\n" +
             "  {\n" +
-            "    class A { n: int = 0; }\n" +
+            "    class A { n: number = 0; }\n" +
             "    let b: A = {};\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3270,11 +3270,11 @@ public class CheckerTest {
         assertNoErrors(shadow,
             "a nested class shadowing an enclosing class declares cleanly");
         CheckerOutput out = checkProgram(
-            "class A { n: int = 0; }\n" +
+            "class A { n: number = 0; }\n" +
             "export function f(): null {\n" +
             "  let a: A = {};\n" +
             "  {\n" +
-            "    class A { n: int = 0; }\n" +
+            "    class A { n: number = 0; }\n" +
             "    let b: A = {};\n" +
             "    a = b;\n" +
             "  }\n" +
@@ -3290,7 +3290,7 @@ public class CheckerTest {
     static void testNestedClass() {
         System.out.println("-- Nested Class --");
         CheckerOutput out = checkProgram(
-            "function make(): null { class Inner { x: int; } let i: Inner = { x: 1 }; }"
+            "function make(): null { class Inner { x: number; } let i: Inner = { x: 1 }; }"
         );
         assertNoErrors(out, "nested class inside function");
     }
@@ -3313,11 +3313,11 @@ public class CheckerTest {
     }
 
     static void testThrowIntError() {
-        System.out.println("-- Throw: int → E3001 --");
+        System.out.println("-- Throw: number → E3001 --");
         CheckerOutput out = checkProgram(
             "function f(): null { throw 42; }"
         );
-        assertError(out, "E3001", "throw int must produce E3001");
+        assertError(out, "E3001", "throw number must produce E3001");
     }
 
     static void testThrowStringError() {
@@ -3362,7 +3362,7 @@ public class CheckerTest {
     static void testHasRequiredField() {
         System.out.println("-- has() on Required Field --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
+            "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: 1, y: 2 };\n" +
             "let b: boolean = has(p.x);"
         );
@@ -3372,7 +3372,7 @@ public class CheckerTest {
     static void testHasOptionalField() {
         System.out.println("-- has() on Optional Field --");
         CheckerOutput out = checkProgram(
-            "class User { name: string; age?: int = 0; }\n" +
+            "class User { name: string; age?: number = 0; }\n" +
             "let u: User = { name: \"A\" };\n" +
             "let b: boolean = has(u.age);"
         );
@@ -3382,7 +3382,7 @@ public class CheckerTest {
     static void testDeleteRequiredField() {
         System.out.println("-- Delete Required Field --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y?: int = 0; }\n" +
+            "class Point { x: number; y?: number = 0; }\n" +
             "let p: Point = { x: 1 };\n" +
             "delete p.x;"
         );
@@ -3392,7 +3392,7 @@ public class CheckerTest {
     static void testDeleteOptionalField() {
         System.out.println("-- Delete Optional Field --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y?: int = 0; }\n" +
+            "class Point { x: number; y?: number = 0; }\n" +
             "let p: Point = { x: 1 };\n" +
             "delete p.y;"
         );
@@ -3406,9 +3406,9 @@ public class CheckerTest {
     static void testNullNarrowing_neNull() {
         System.out.println("-- Null Narrowing: x !== null --");
         CheckerOutput out = checkProgram(
-            "let n: int | null = null;\n" +
+            "let n: number | null = null;\n" +
             "if (n !== null) {\n" +
-            "  let x: int = n;\n" +
+            "  let x: number = n;\n" +
             "}"
         );
         assertNoErrors(out, "null narrowing !== null");
@@ -3417,11 +3417,11 @@ public class CheckerTest {
     static void testNullNarrowing_eqNull() {
         System.out.println("-- Null Narrowing: x === null --");
         CheckerOutput out = checkProgram(
-            "let n: int | null = 5;\n" +
+            "let n: number | null = 5;\n" +
             "if (n === null) {\n" +
             "  return;\n" +
             "} else {\n" +
-            "  let x: int = n;\n" +
+            "  let x: number = n;\n" +
             "}"
         );
         assertNoErrors(out, "null narrowing === null else branch");
@@ -3430,10 +3430,10 @@ public class CheckerTest {
     static void testNullNarrowing_assignmentClears() {
         System.out.println("-- Null Narrowing: assignment clears --");
         CheckerOutput out = checkProgram(
-            "let n: int | null = 5;\n" +
+            "let n: number | null = 5;\n" +
             "if (n !== null) {\n" +
             "  n = null;\n" +
-            "  let x: int = n;\n" +
+            "  let x: number = n;\n" +
             "}"
         );
         assertError(out, "E3001", "assignment clears narrowing");
@@ -3442,9 +3442,9 @@ public class CheckerTest {
     static void testNullNarrowing_negated() {
         System.out.println("-- Null Narrowing: negated condition --");
         CheckerOutput out = checkProgram(
-            "let n: int | null = null;\n" +
+            "let n: number | null = null;\n" +
             "if (!(n === null)) {\n" +
-            "  let x: int = n;\n" +
+            "  let x: number = n;\n" +
             "}"
         );
         assertNoErrors(out, "null narrowing with !(x === null)");
@@ -3453,12 +3453,12 @@ public class CheckerTest {
     static void testNullNarrowing_nestedIf() {
         System.out.println("-- Null Narrowing: nested if --");
         CheckerOutput out = checkProgram(
-            "let a: int | null = 5;\n" +
-            "let b: int | null = 10;\n" +
+            "let a: number | null = 5;\n" +
+            "let b: number | null = 10;\n" +
             "if (a !== null) {\n" +
             "  if (b !== null) {\n" +
-            "    let x: int = a;\n" +
-            "    let y: int = b;\n" +
+            "    let x: number = a;\n" +
+            "    let y: number = b;\n" +
             "  }\n" +
             "}"
         );
@@ -3472,7 +3472,7 @@ public class CheckerTest {
     static void testDefiniteReturn_bothBranches() {
         System.out.println("-- Definite Return: both branches --");
         CheckerOutput out = checkProgram(
-            "function f(x: boolean): int {\n" +
+            "function f(x: boolean): number {\n" +
             "  if (x) { return 1; }\n" +
             "  else { return 2; }\n" +
             "}"
@@ -3483,7 +3483,7 @@ public class CheckerTest {
     static void testDefiniteReturn_missingReturn() {
         System.out.println("-- Definite Return: missing return --");
         CheckerOutput out = checkProgram(
-            "function f(x: boolean): int {\n" +
+            "function f(x: boolean): number {\n" +
             "  if (x) { return 1; }\n" +
             "}"
         );
@@ -3493,7 +3493,7 @@ public class CheckerTest {
     static void testDefiniteReturn_throwCounts() {
         System.out.println("-- Definite Return: throw counts --");
         CheckerOutput out = checkProgram(
-            "function f(): int {\n" +
+            "function f(): number {\n" +
             "  throw { message: \"error\" };\n" +
             "}"
         );
@@ -3507,7 +3507,7 @@ public class CheckerTest {
     static void testInference_literals() {
         System.out.println("-- Type Inference: literals --");
         CheckerOutput out = checkProgram("let x = 42;");
-        assertNoErrors(out, "infer int from literal");
+        assertNoErrors(out, "infer number from literal");
 
         out = checkProgram("let x = true;");
         assertNoErrors(out, "infer boolean from literal");
@@ -3541,7 +3541,7 @@ public class CheckerTest {
     static void testInference_indexExpr() {
         System.out.println("-- Type Inference: index expression --");
         CheckerOutput out = checkProgram(
-            "let arr: int[] = [1, 2, 3];\n" +
+            "let arr: number[] = [1, 2, 3];\n" +
             "let x = arr[0];"
         );
         assertNoErrors(out, "infer type from index expression");
@@ -3560,7 +3560,7 @@ public class CheckerTest {
     // F7: Invalid nullable type
     static void testInvalidNullable() {
         System.out.println("-- Invalid Nullable --");
-        CheckerOutput out = checkProgram("let x: int | null | null = 1;");
+        CheckerOutput out = checkProgram("let x: number | null | null = 1;");
         assertError(out, "E3005", "invalid nullable (doubly nullable)");
 
         // ISSUE-0879: the null array element type takes the same single
@@ -3588,8 +3588,8 @@ public class CheckerTest {
     static void testReverseArityE5004() {
         System.out.println("-- Reverse Arity E5004 --");
         CheckerOutput out = checkProgram(
-            "function twoArgs(a: int, b: int): int { return a + b; }\n" +
-            "let f: (x: int) => int = twoArgs;"
+            "function twoArgs(a: number, b: number): number { return a + b; }\n" +
+            "let f: (x: number) => number = twoArgs;"
         );
         assertError(out, "E5004", "reverse arity E5004");
         assertError(out, "E5004", "reverse arity error");
@@ -3602,10 +3602,10 @@ public class CheckerTest {
     static void testE3008_notCallable() {
         System.out.println("-- E3008: not callable --");
         CheckerOutput out = checkProgram(
-            "let x: int = 42;\n" +
-            "let y: int = x();"
+            "let x: number = 42;\n" +
+            "let y: number = x();"
         );
-        assertError(out, "E3008", "int is not callable");
+        assertError(out, "E3008", "number is not callable");
     }
 
     // =========================================================================
@@ -3615,7 +3615,7 @@ public class CheckerTest {
     static void testE4003_fieldTypeMismatch() {
         System.out.println("-- E4003: field type mismatch in class construction --");
         CheckerOutput out = checkProgram(
-            "class Point { x: int; y: int; }\n" +
+            "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: \"hello\", y: 2 };"
         );
         assertError(out, "E4003", "field type mismatch in class construction");
@@ -3628,8 +3628,8 @@ public class CheckerTest {
     static void testFunctionExprLetDecl() {
         System.out.println("-- F1: Function expression with let declaration --");
         CheckerOutput out = checkProgram(
-            "let f = function(): int { let x: int = 42; return x; };\n" +
-            "let r: int = f();"
+            "let f = function(): number { let x: number = 42; return x; };\n" +
+            "let r: number = f();"
         );
         assertNoErrors(out, "function expression with let declaration");
     }
@@ -3656,8 +3656,8 @@ public class CheckerTest {
                     throws ModuleNotFoundException {
                 boolean first = modulePath.equals("./a");
                 String source = first
-                    ? "import * as B from \"./b\";\nexport function fa(): int;\n"
-                    : "import * as A from \"./a\";\nexport function fb(): int;\n";
+                    ? "import * as B from \"./b\";\nexport function fa(): number;\n"
+                    : "import * as A from \"./a\";\nexport function fb(): number;\n";
                 String filename = first ? "a.deal" : "b.deal";
                 LexResult lex = new Lexer(source, filename).tokenize();
                 ParseResult parse = new Parser(lex.tokens(), filename,
@@ -3666,7 +3666,7 @@ public class CheckerTest {
                     modulesInProgress);
                 nested.resolve(parse.program());
                 nestedDiagnostics.addAll(nested.diagnostics());
-                return Map.of(first ? "fa" : "fb", Type.Int.INSTANCE);
+                return Map.of(first ? "fa" : "fb", Type.Number.INSTANCE);
             }
 
             @Override
@@ -3678,7 +3678,7 @@ public class CheckerTest {
 
         checkProgramWithModule(
             "import * as A from \"./a\";\n"
-            + "let x: int = 1;\n",
+            + "let x: number = 1;\n",
             "test.deal",
             recursive
         );
@@ -3697,7 +3697,7 @@ public class CheckerTest {
     static void testClassFieldDefaultNull() {
         System.out.println("-- F3: Null default for nullable field --");
         CheckerOutput out = checkProgram(
-            "class User { name: string | null = null; age?: int = 0; }"
+            "class User { name: string | null = null; age?: number = 0; }"
         );
         assertNoErrors(out, "null default for nullable field OK");
     }
@@ -3720,15 +3720,15 @@ public class CheckerTest {
     // =========================================================================
 
     static void testIntrinsicIntRejectsIntLiteral() {
-        System.out.println("-- int(3) rejects int literal at compile time --");
+        System.out.println("-- number(3) rejects number literal at compile time --");
         CheckerOutput out = checkProgram(
-            "export function test(): int { return int(3); }"
+            "export function test(): number { return number(3); }"
         );
         List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE5001 = diags.stream()
-            .anyMatch(d -> d.code().equals("E5001"));
+            .anyMatch(d -> d.code().equals("E2001"));
         check(hasE5001,
-            "int(3) should reject int literal with E5001, got: " + diags);
+            "number(3) should reject number literal with E2001, got: " + diags);
     }
 
     static void testIntrinsicNumberRejectsBoolean() {
@@ -3738,9 +3738,9 @@ public class CheckerTest {
         );
         List<CompilerDiagnostic> diags = out.result.diagnostics();
         boolean hasE5001 = diags.stream()
-            .anyMatch(d -> d.code().equals("E5001"));
+            .anyMatch(d -> d.code().equals("E2001"));
         check(hasE5001,
-            "number(true) should reject boolean with E5001, got: " + diags);
+            "number(true) should reject boolean with E2001, got: " + diags);
     }
 
     /**
@@ -3755,29 +3755,29 @@ public class CheckerTest {
         System.out.println("-- v1.2 string Unicode scalar-value type-facing checks --");
 
         CheckerOutput out = checkProgram(
-            "function f(s: string): null { let n: int = s.length; return null; }"
+            "function f(s: string): null { let n: number = s.length; return null; }"
         );
         assertError(out, "E3003", "string .length is not an intrinsic");
 
         out = checkProgram(
             "function f(s: string): null {\n" +
-            "  for (let c: int of s) { }\n" +
+            "  for (let c: number of s) { }\n" +
             "  return null;\n" +
             "}"
         );
         assertError(out, "E3015", "for-of over string requires string loop var");
 
         out = checkProgram(
-            "function f(s: string): int {\n" +
-            "  let n: int = 0;\n" +
+            "function f(s: string): number {\n" +
+            "  let n: number = 0;\n" +
             "  for (let c: string of s) { n = n + 1; }\n" +
             "  return n;\n" +
             "}"
         );
         assertNoErrors(out, "for-of over string with string loop var");
 
-        out = checkProgram("let n: int = 1; let s: string = `x${n}`;");
-        assertError(out, "E3016", "template interpolation of int is not string");
+        out = checkProgram("let n: number = 1; let s: string = `x${n}`;");
+        assertError(out, "E3016", "template interpolation of number is not string");
     }
 
     /** Ordinary user declarations named bytes follow lexical resolution. */
@@ -3791,54 +3791,54 @@ public class CheckerTest {
 
         // A module-level class supplies the ordinary named type.
         out = checkProgram(
-            "class bytes { x: int; }\n" +
+            "class bytes { x: number; }\n" +
             "let b: bytes = { x: 2 };\n" +
-            "let n: int = b.x;");
+            "let n: number = b.x;");
         assertNoErrors(out, "module-level user class named bytes resolves normally");
 
         // In expression position the class wins too: a class is not
         // callable, so bytes(3) is E3008 — never the intrinsic call.
         out = checkProgram(
-            "class bytes { x: int; }\n" +
-            "let y: int = bytes(3);");
+            "class bytes { x: number; }\n" +
+            "let y: number = bytes(3);");
         assertError(out, "E3008",
             "user class named bytes is not callable");
 
         // A module-level user FUNCTION named bytes is legal (no E2002)
         // and calls resolve to the user function.
         out = checkProgram(
-            "function bytes(x: int): int { return x + 1; }\n" +
-            "let y: int = bytes(3);");
+            "function bytes(x: number): number { return x + 1; }\n" +
+            "let y: number = bytes(3);");
         assertNoErrors(out, "module-level user function named bytes resolves normally");
 
         // A module-level let supplies the ordinary value binding.
         out = checkProgram(
-            "let bytes: int = 5;\n" +
-            "let y: int = bytes;");
+            "let bytes: number = 5;\n" +
+            "let y: number = bytes;");
         assertNoErrors(out, "module-level let named bytes resolves normally");
         out = checkProgram(
-            "let bytes: int = 5;\n" +
-            "let b: int = bytes(2);");
-        assertError(out, "E3008", "an ordinary int binding is not callable");
+            "let bytes: number = 5;\n" +
+            "let b: number = bytes(2);");
+        assertError(out, "E3008", "an ordinary number binding is not callable");
 
         out = checkProgram(
-            "class bytes { x: int; }\n" +
+            "class bytes { x: number; }\n" +
             "function f(): number {\n" +
             "  let b: bytes = { x: 2 };\n" +
-            "  let n: int = b.x;\n" +
+            "  let n: number = b.x;\n" +
             "  return 1.5;\n}\n");
         assertNoErrors(out, "module-level bytes class wins in nested function annotations");
 
         // Two module-level user declarations named bytes still redeclare.
         out = checkProgram(
-            "class bytes { x: int; }\n" +
-            "function bytes(x: int): int { return x; }");
+            "class bytes { x: number; }\n" +
+            "function bytes(x: number): number { return x; }");
         assertError(out, "E2002", "two user declarations named bytes still redeclare");
 
         out = checkProgram(
-            "function bytes(x: int): int { return x + 1; }\n" +
-            "let f: (x: int) => int = bytes;\n" +
-            "let b: int = f(2);");
+            "function bytes(x: number): number { return x + 1; }\n" +
+            "let f: (x: number) => number = bytes;\n" +
+            "let b: number = f(2);");
         assertNoErrors(out, "an ordinary function named bytes is a first-class value");
     }
 
@@ -3847,7 +3847,7 @@ public class CheckerTest {
 
         CheckerOutput out = checkProgram(
             "function f(): null {\n" +
-            "  let g: (a: int, ...rest: int[]) => null = null;\n" +
+            "  let g: (a: number, ...rest: number[]) => null = null;\n" +
             "  return null;\n" +
             "}"
         );
@@ -3866,14 +3866,14 @@ public class CheckerTest {
         // Test 2: import alongside other code — E2003 still fires.
         out = checkProgram(
             "import * as c from \"std/coroutine\";\n" +
-            "let x: int = 42;"
+            "let x: number = 42;"
         );
         assertError(out, "E2003", "coroutine import with other code still produces E2003");
 
         // Test 3: use of c.resumeInt after failed import — E2003 fires first.
         out = checkProgram(
             "import * as c from \"std/coroutine\";\n" +
-            "let x: int = c.resumeInt(null);"
+            "let x: number = c.resumeInt(null);"
         );
         assertError(out, "E2003", "coroutine import with c.resumeInt usage produces E2003");
     }
@@ -3881,15 +3881,15 @@ public class CheckerTest {
     static void testForOfScoping_loopVarInBody() {
         System.out.println("-- For-of Scoping: loop var in body --");
         CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
-            "  for (let x: int of xs) {\n" +
-            "    let y: int = x;\n" +
+            "function f(xs: number[]): null {\n" +
+            "  for (let x: number of xs) {\n" +
+            "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
         assertNoErrors(out, "loop variable visible in for-of body");
-        assertNoErrors(out, "for-of over int[] with int loop var");
+        assertNoErrors(out, "for-of over number[] with number loop var");
     }
 
     static void testForOfScoping_iterableCannotRefLoopVar() {
@@ -3897,8 +3897,8 @@ public class CheckerTest {
         // The iterable x should resolve to outer scope. If there is no outer x, E2001.
         CheckerOutput out = checkProgram(
             "function f(): null {\n" +
-            "  for (let x: int of x) {\n" +
-            "    let y: int = x;\n" +
+            "  for (let x: number of x) {\n" +
+            "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -3910,9 +3910,9 @@ public class CheckerTest {
         System.out.println("-- For-of Scoping: iterable refs outer var --");
         // The iterable x should resolve to the outer x (the parameter).
         CheckerOutput out = checkProgram(
-            "function f(x: int[]): null {\n" +
-            "  for (let x: int of x) {\n" +
-            "    let y: int = x;\n" +
+            "function f(x: number[]): null {\n" +
+            "  for (let x: number of x) {\n" +
+            "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -3923,8 +3923,8 @@ public class CheckerTest {
     static void testForOfScoping_breakInside() {
         System.out.println("-- For-of Scoping: break inside --");
         CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
-            "  for (let x: int of xs) {\n" +
+            "function f(xs: number[]): null {\n" +
+            "  for (let x: number of xs) {\n" +
             "    break;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3936,8 +3936,8 @@ public class CheckerTest {
     static void testForOfScoping_continueInside() {
         System.out.println("-- For-of Scoping: continue inside --");
         CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
-            "  for (let x: int of xs) {\n" +
+            "function f(xs: number[]): null {\n" +
+            "  for (let x: number of xs) {\n" +
             "    continue;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3963,8 +3963,8 @@ public class CheckerTest {
         System.out.println("-- For-of Type Check: non-iterable (boolean) -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(b: boolean): null {\n" +
-            "  for (let x: int of b) {\n" +
-            "    let y: int = x;\n" +
+            "  for (let x: number of b) {\n" +
+            "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -3976,8 +3976,8 @@ public class CheckerTest {
         System.out.println("-- For-of Type Check: non-iterable (table) -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(t: table): null {\n" +
-            "  for (let x: int of t) {\n" +
-            "    let y: int = x;\n" +
+            "  for (let x: number of t) {\n" +
+            "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -3988,27 +3988,27 @@ public class CheckerTest {
     static void testForOfTypeCheck_arrayWrongVarType() {
         System.out.println("-- For-of Type Check: array wrong var type -> E3015 --");
         CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
+            "function f(xs: number[]): null {\n" +
             "  for (let x: string of xs) {\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
-        assertError(out, "E3015", "for-of over int[] with string var -> E3015");
+        assertError(out, "E3015", "for-of over number[] with string var -> E3015");
     }
 
     static void testForOfTypeCheck_stringWrongVarType() {
         System.out.println("-- For-of Type Check: string wrong var type -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(s: string): null {\n" +
-            "  for (let c: int of s) {\n" +
-            "    let d: int = c;\n" +
+            "  for (let c: number of s) {\n" +
+            "    let d: number = c;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
-        assertError(out, "E3015", "for-of over string with int var -> E3015");
+        assertError(out, "E3015", "for-of over string with number var -> E3015");
     }
 
     static void testTemplateLiteral_stringParts() {
@@ -4024,11 +4024,11 @@ public class CheckerTest {
     static void testTemplateLiteral_nonStringInterpolation() {
         System.out.println("-- Template Literal: non-string interpolation -> E3016 --");
         CheckerOutput out = checkProgram(
-            "function f(n: int): string {\n" +
+            "function f(n: number): string {\n" +
             "  return `Value: ${n}`;\n" +
             "}"
         );
-        assertError(out, "E3016", "template literal with int interpolation -> E3016");
+        assertError(out, "E3016", "template literal with number interpolation -> E3016");
     }
 
     static void testTemplateLiteral_typeInference() {
@@ -4094,13 +4094,13 @@ public class CheckerTest {
 
         // Test 3: dollar in let variable name
         out = checkProgram(
-            "let my$var: int = 42;"
+            "let my$var: number = 42;"
         );
         assertError(out, "E2008", "dollar in let variable name produces E2008");
 
         // Test 4: dollar in parameter name
         out = checkProgram(
-            "function f(param$name: int): null { return null; }"
+            "function f(param$name: number): null { return null; }"
         );
         assertError(out, "E2008", "dollar in parameter name produces E2008");
 
@@ -4118,13 +4118,13 @@ public class CheckerTest {
 
         // Test 7: dollar in class field name (module-level class)
         out = checkProgram(
-            "class Foo { bar$baz: int }"
+            "class Foo { bar$baz: number }"
         );
         assertError(out, "E2008", "dollar in class field name produces E2008");
 
         // Test 8: dollar in class field name (nested class)
         out = checkProgram(
-            "function f() { class Foo { bar$baz: int } }"
+            "function f() { class Foo { bar$baz: number } }"
         );
         assertError(out, "E2008", "dollar in nested class field name produces E2008");
     }
@@ -4137,7 +4137,7 @@ public class CheckerTest {
         System.out.println("-- ISSUE-0041: dollar in rest parameter (E1047 in v1.2) --");
 
         CheckerOutput out = checkProgram(
-            "function f(a: int, ...rest$param: int[]): null { return null; }"
+            "function f(a: number, ...rest$param: number[]): null { return null; }"
         );
         assertError(out, "E1047", "rest parameter rejected with E1047 in v1.2");
     }
@@ -4147,7 +4147,7 @@ public class CheckerTest {
         System.out.println("-- ISSUE-0041: dollar in for-loop variable (E2008) --");
 
         CheckerOutput out = checkProgram(
-            "function f(): null {\n  { let v14Loop6: int = 0; while (v14Loop6 < 10) { let i$: int = v14Loop6; { } v14Loop6 = i$; v14Loop6 = v14Loop6 + 1; } }\n  return null;\n}"
+            "function f(): null {\n  { let v14Loop6: number = 0; while (v14Loop6 < 10) { let i$: number = v14Loop6; { } v14Loop6 = i$; v14Loop6 = v14Loop6 + 1; } }\n  return null;\n}"
         );
         assertError(out, "E2008", "dollar in for-loop variable name produces E2008");
     }
@@ -4157,8 +4157,8 @@ public class CheckerTest {
         System.out.println("-- ISSUE-0041: dollar in for-of loop variable (E2008) --");
 
         CheckerOutput out = checkProgram(
-            "function f(xs: int[]): null {\n" +
-            "  for (let x$: int of xs) { }\n" +
+            "function f(xs: number[]): null {\n" +
+            "  for (let x$: number of xs) { }\n" +
             "  return null;\n" +
             "}"
         );
@@ -4243,10 +4243,10 @@ public class CheckerTest {
         CheckerOutput tableData = checkProgram(
             "export function main(): null {\n"
             + "  let t: table = { bad$key: 1 };\n"
-            + "  let direct: int = t.bad$key;\n"
+            + "  let direct: number = t.bad$key;\n"
             + "  let key: string = \"bad$key\";\n"
             + "  t[key] = direct;\n"
-            + "  let indexed: int = t[key];\n"
+            + "  let indexed: number = t[key];\n"
             + "  let text: string = \"price$\";\n"
             + "  let tpl: string = `tag$${text}`;\n"
             + "  return null;\n"
@@ -4255,10 +4255,10 @@ public class CheckerTest {
             "table keys and string data may contain $");
 
         CheckerOutput classMember = checkProgram(
-            "class C { x: int = 0; }\n"
+            "class C { x: number = 0; }\n"
             + "export function main(): null {\n"
             + "  let c: C = { x: 1 };\n"
-            + "  let v: int = c.bad$key;\n"
+            + "  let v: number = c.bad$key;\n"
             + "  return null;\n"
             + "}\n");
         assertError(classMember, "E4002",
@@ -4371,7 +4371,7 @@ public class CheckerTest {
         System.out.println("-- ISSUE-0041: integration — null return type + $ param (E2008) --");
 
         CheckerOutput out = checkProgram(
-            "function f(param$name: int): null { return null; }"
+            "function f(param$name: number): null { return null; }"
         );
         assertError(out, "E2008", "dollar in param produces E2008 with null return type");
 
@@ -4390,7 +4390,7 @@ public class CheckerTest {
         System.out.println("-- ISSUE-0041: integration — valid module import + $ import alias (E2008) --");
 
         StubModuleResolver resolver = new StubModuleResolver();
-        resolver.register("./lib", Map.of("foo", Type.Int.INSTANCE));
+        resolver.register("./lib", Map.of("foo", Type.Number.INSTANCE));
 
         CheckerOutput out = checkProgramWithModule(
             "import * as mod$name from \"./lib\";",
@@ -4414,7 +4414,7 @@ public class CheckerTest {
             "export class Foo {\n" +
             "  a: null;\n" +
             "  b: boolean;\n" +
-            "  c: int;\n" +
+            "  c: number;\n" +
             "  d: number;\n" +
             "  e: string;\n" +
             "  f: table;\n" +
@@ -4428,7 +4428,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class Foo {\n" +
-            "  items: int[];\n" +
+            "  items: number[];\n" +
             "  strings: string[];\n" +
             "}"
         );
@@ -4441,7 +4441,7 @@ public class CheckerTest {
             "// @jsonable\n" +
             "export class Foo {\n" +
             "  name: string | null;\n" +
-            "  count: int | null;\n" +
+            "  count: number | null;\n" +
             "}"
         );
         assertNoErrors(out, "nullable jsonable type is jsonable");
@@ -4467,7 +4467,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "// @jsonable\n" +
             "export class Foo {\n" +
-            "  callback: (x: int) => null;\n" +
+            "  callback: (x: number) => null;\n" +
             "}"
         );
         assertError(out, "E4007", "function type is not jsonable");
@@ -4476,7 +4476,7 @@ public class CheckerTest {
     static void testJsonableNonJsonableType_nonJsonableClass() {
         System.out.println("-- @jsonable: non-@jsonable class field → E4007 --");
         CheckerOutput out = checkProgram(
-            "class Plain { x: int; }\n" +
+            "class Plain { x: number; }\n" +
             "// @jsonable\n" +
             "export class Foo {\n" +
             "  p: Plain;\n" +
@@ -4537,7 +4537,7 @@ public class CheckerTest {
             "export class A {\n" +
             "  b: B;\n" +
             "}\n" +
-            "class B { x: int; }"
+            "class B { x: number; }"
         );
         // Should get E4007 on A's field (B is not @jsonable), not E4008
         assertError(out, "E4007", "non-@jsonable class field → E4007, not E4008");
@@ -4649,7 +4649,7 @@ public class CheckerTest {
         deal.ast.Span span = new deal.ast.Span("test.deal", 1, 1, 1, 5);
         Symbol.ClassSymbol foreign = new Symbol.ClassSymbol("Point",
             List.of(new ClassField(span, "x", false, false,
-                    new deal.ast.NamedType(span, "int"), java.util.Optional.empty()),
+                    new deal.ast.NamedType(span, "number"), java.util.Optional.empty()),
                 new ClassField(span, "tag", true, false,
                     new deal.ast.NamedType(span, "string"), java.util.Optional.empty())),
             "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point"));
@@ -4667,7 +4667,7 @@ public class CheckerTest {
             "\n" +
             "export function main(): null {\n" +
             "  let a: Other.Point = { x: 1 };\n" +
-            "  let x: int = a.x;\n" +
+            "  let x: number = a.x;\n" +
             "  let tag: boolean = has(a.tag);\n" +
             "  let p: Point = { y: \"s\" };\n" +
             "  let y: string = p.y;\n" +
@@ -4705,7 +4705,7 @@ public class CheckerTest {
         requiredProvider.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
             "Point",
             List.of(new ClassField(span, "nick", false, false,
-                new deal.ast.NamedType(span, "int"), java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "number"), java.util.Optional.empty())),
             "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point")));
         Map<String, Type> requiredExports = new HashMap<>();
         requiredExports.put("Point",
@@ -4747,7 +4747,7 @@ public class CheckerTest {
             "import * as Other from \"./foreign\";\n"
             + "\n"
             + "class Point {\n"
-            + "  nick: int = 1;\n"
+            + "  nick: number = 1;\n"
             + "}\n"
             + "\n"
             + "export function main(): null {\n"
@@ -4789,7 +4789,7 @@ public class CheckerTest {
         resolver.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
             "Point",
             List.of(new ClassField(span, "nick", true, false,
-                new deal.ast.NamedType(span, "int"), java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "number"), java.util.Optional.empty())),
             "./foreign", sharedIdentity));
         Type foreignPoint = Types.classType("Point", sharedIdentity, "./foreign");
         Map<String, Type> exports = new HashMap<>();
@@ -4845,7 +4845,7 @@ public class CheckerTest {
             + "  take(y);\n"
             + "  return null;\n"
             + "}\n"
-            + "function take(p: Point): int { return 0; }\n", resolver);
+            + "function take(p: Point): number { return 0; }\n", resolver);
         assertError(argument, "E3019",
             "an imported value at a local class-typed argument position is "
                 + "E3019 (never a silent retag)");
@@ -4901,7 +4901,7 @@ public class CheckerTest {
             + "export function main(): null {\n"
             + "  let y: Other.Point = {};\n"
             + "  let y2: Other.Point = y;\n"
-            + "  let n: int | null = y2.nick;\n"
+            + "  let n: number | null = y2.nick;\n"
             + "  let p: Point = {};\n"
             + "  let p2: Point = p;\n"
             + "  return null;\n"
@@ -4930,7 +4930,7 @@ public class CheckerTest {
                         new deal.ast.NamedType(span, "string"),
                         java.util.Optional.empty()),
                     new ClassField(span, "a", false, false,
-                        new deal.ast.NamedType(span, "int"),
+                        new deal.ast.NamedType(span, "number"),
                         java.util.Optional.empty())),
                 "./ir", sharedIdentity);
             Map<String, Type> irExports = new HashMap<>();
@@ -4940,13 +4940,13 @@ public class CheckerTest {
                 Types.classType("Point", sharedIdentity, "./ir"), false));
             irExports.put("take", new Type.Func(List.of(
                 Types.classType("Point", sharedIdentity, "./ir")),
-                Type.Int.INSTANCE, false));
+                Type.Number.INSTANCE, false));
 
             // The required-field provider (the other direction of the
             // required/optional decision).
             Symbol.ClassSymbol strictPoint = new Symbol.ClassSymbol("Point",
                 List.of(new ClassField(span, "nick", false, false,
-                    new deal.ast.NamedType(span, "int"),
+                    new deal.ast.NamedType(span, "number"),
                     java.util.Optional.empty())),
                 "./strict", sharedIdentity);
             Map<String, Type> strictExports = new HashMap<>();
@@ -4972,15 +4972,15 @@ public class CheckerTest {
             // `nick` and no `a`: a name/identity-based fallback would own
             // the call-result receiver's field decisions.
             String local = "import * as Other from \"./ir\";\n"
-                + "class Point { nick: int = 1; }\n";
+                + "class Point { nick: number = 1; }\n";
             CheckerOutput resolved = checkProgramWithModule(local
                 + "export function main(): null {\n"
                 + "  if (has(Other.make().nick)) { return null; }\n"
-                + "  let v: int = Other.make().a;\n"
+                + "  let v: number = Other.make().a;\n"
                 + "  let y = Other.make();\n"
                 + "  delete y.nick;\n"
-                + "  let f: (x: Other.Point) => int = Other.take;\n"
-                + "  let n: int = f({ nick: \"s\", a: 1 });\n"
+                + "  let f: (x: Other.Point) => number = Other.take;\n"
+                + "  let n: number = f({ nick: \"s\", a: 1 });\n"
                 + "  return null;\n"
                 + "}\n", resolver);
             assertNoErrors(resolved,
@@ -5033,7 +5033,7 @@ public class CheckerTest {
             "import * as Other from \"./foreign\";\n" +
             "// @jsonable\n" +
             "export class B {\n" +
-            "  local: int = 0;\n" +
+            "  local: number = 0;\n" +
             "}\n" +
             "// @jsonable\n" +
             "export class A {\n" +
@@ -5123,7 +5123,7 @@ public class CheckerTest {
         System.out.println("-- Name Resolution: async function decl isAsync --");
 
         CheckerOutput out = checkProgram(
-            "async function f(): int { return 5; }");
+            "async function f(): number { return 5; }");
 
         assertNoErrors(out, "async function decl resolution");
 
@@ -5134,8 +5134,8 @@ public class CheckerTest {
         Symbol.FunctionSymbol fs = (Symbol.FunctionSymbol) sym;
         check(fs.funcType().isAsync(),
             "async function should have isAsync=true in resolved type");
-        check(fs.funcType().returnType() == Type.Int.INSTANCE,
-            "async function return type should be int");
+        check(fs.funcType().returnType() == Type.Number.INSTANCE,
+            "async function return type should be number");
     }
 
     /**
@@ -5146,7 +5146,7 @@ public class CheckerTest {
         System.out.println("-- Name Resolution: sync function decl isAsync=false --");
 
         CheckerOutput out = checkProgram(
-            "function f(): int { return 5; }");
+            "function f(): number { return 5; }");
 
         assertNoErrors(out, "sync function decl resolution");
 
@@ -5171,7 +5171,7 @@ public class CheckerTest {
         // resolves with isAsync=true.  We use a helper that only runs
         // name resolution (not full type checking) to avoid spurious
         // type errors from the initializer expression.
-        String source = "let f: async (p: int) => string = null;";
+        String source = "let f: async (p: number) => string = null;";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors");
@@ -5194,8 +5194,8 @@ public class CheckerTest {
             "return type should be string");
         check(ft.paramTypes().size() == 1,
             "should have 1 param");
-        check(ft.paramTypes().get(0) == Type.Int.INSTANCE,
-            "param type should be int");
+        check(ft.paramTypes().get(0) == Type.Number.INSTANCE,
+            "param type should be number");
     }
 
     /**
@@ -5220,10 +5220,10 @@ public class CheckerTest {
         //
         // Also declare g as a sync function so it can be referenced.
         CheckerOutput out = checkProgram(
-            "function g(cb: function(): int): int { return cb(); }\n"
-            + "async function f(): int {\n"
-            + "    return await g(async function(): int {\n"
-            + "        let n: int = 42;\n"
+            "function g(cb: function(): number): number { return cb(); }\n"
+            + "async function f(): number {\n"
+            + "    return await g(async function(): number {\n"
+            + "        let n: number = 42;\n"
             + "        return n;\n"
             + "    });\n"
             + "}");
@@ -5242,8 +5242,8 @@ public class CheckerTest {
         System.out.println("-- E3012: await outside async function --");
         // await inside a sync function body
         CheckerOutput out = checkProgram(
-            "async function g(): int { return 5; }" +
-            "function f(): int { return await g(); }"
+            "async function g(): number { return 5; }" +
+            "function f(): number { return await g(); }"
         );
         assertError(out, "E3012", "await outside async function → E3012");
     }
@@ -5252,8 +5252,8 @@ public class CheckerTest {
     static void testAwaitOnNonAsyncCall_E3013() {
         System.out.println("-- E3013: await on non-async call --");
         CheckerOutput out = checkProgram(
-            "function syncFunc(): int { return 42; }" +
-            "async function f(): int {" +
+            "function syncFunc(): number { return 42; }" +
+            "async function f(): number {" +
             "  return await syncFunc();" +
             "}"
         );
@@ -5264,9 +5264,9 @@ public class CheckerTest {
     static void testAsyncCallWithoutAwait_E3014() {
         System.out.println("-- E3014: async call without await --");
         CheckerOutput out = checkProgram(
-            "async function g(): int { return 5; }" +
+            "async function g(): number { return 5; }" +
             "function f(): null {" +
-            "  let x: int = g();" +
+            "  let x: number = g();" +
             "  return null;" +
             "}"
         );
@@ -5277,8 +5277,8 @@ public class CheckerTest {
     static void testAwaitAsyncCallNoE3014() {
         System.out.println("-- E3014 suppression: await asyncCall() no E3014 --");
         CheckerOutput out = checkProgram(
-            "async function g(): int { return 5; }" +
-            "async function f(): int {" +
+            "async function g(): number { return 5; }" +
+            "async function f(): number {" +
             "  return await g();" +
             "}"
         );
@@ -5289,9 +5289,9 @@ public class CheckerTest {
     static void testNestedAwaitSuppression() {
         System.out.println("-- E3014 suppression: nested await --");
         CheckerOutput out = checkProgram(
-            "async function inner(): int { return 42; }" +
-            "async function outer(x: int): int { return x; }" +
-            "async function f(): int {" +
+            "async function inner(): number { return 42; }" +
+            "async function outer(x: number): number { return x; }" +
+            "async function f(): number {" +
             "  return await outer(await inner());" +
             "}"
         );
@@ -5306,12 +5306,12 @@ public class CheckerTest {
         // After await, a variable narrowed via if (x !== null) reverts to its
         // nullable declared type. So using it as non-null after await → E3001.
         CheckerOutput out = checkProgram(
-            "async function g(): int { return 5; }" +
-            "async function f(n: int | null): int {" +
+            "async function g(): number { return 5; }" +
+            "async function f(n: number | null): number {" +
             "  if (n !== null) {" +
-            "    let x: int = n;" +  // narrowed — ok
-            "    let result: int = await g();" +  // await invalidates narrowing
-            "    let y: int = n;" +  // n is back to int|null → E3001
+            "    let x: number = n;" +  // narrowed — ok
+            "    let result: number = await g();" +  // await invalidates narrowing
+            "    let y: number = n;" +  // n is back to number|null → E3001
             "    return result;" +
             "  }" +
             "  return 0;" +
@@ -5661,8 +5661,8 @@ public class CheckerTest {
     static void testAsyncFuncNotAssignableToSync() {
         System.out.println("-- async function type not assignable to sync --");
         CheckerOutput out = checkProgram(
-            "async function g(): int { return 5; }" +
-            "let f: (x: int) => int = g;"
+            "async function g(): number { return 5; }" +
+            "let f: (x: number) => number = g;"
         );
         assertError(out, "E3001", "async func not assignable to sync → E3001");
     }
@@ -5671,8 +5671,8 @@ public class CheckerTest {
     static void testSyncFuncNotAssignableToAsync() {
         System.out.println("-- sync function type not assignable to async --");
         CheckerOutput out = checkProgram(
-            "function g(): int { return 5; }" +
-            "let f: async (x: int) => int = g;"
+            "function g(): number { return 5; }" +
+            "let f: async (x: number) => number = g;"
         );
         assertError(out, "E3001", "sync func not assignable to async → E3001");
     }
@@ -5681,9 +5681,9 @@ public class CheckerTest {
     static void testUnawaitedAsyncInArgument_E3014() {
         System.out.println("-- E3014: unawaited async in argument position --");
         CheckerOutput out = checkProgram(
-            "async function inner(): int { return 42; }" +
-            "function outer(x: int): int { return x; }" +
-            "async function f(): int {" +
+            "async function inner(): number { return 42; }" +
+            "function outer(x: number): number { return x; }" +
+            "async function f(): number {" +
             "  return await outer(inner());" +
             "}"
         );
@@ -5707,12 +5707,12 @@ public class CheckerTest {
             true,
             name -> {
                 if ("x".equals(name))
-                    return deal.types.Types.nullable(Type.Int.INSTANCE);
+                    return deal.types.Types.nullable(Type.Number.INSTANCE);
                 return Type.Error.INSTANCE;
             }
         );
-        check(nn.getNarrowedType("x") == Type.Int.INSTANCE,
-            "x should be narrowed to int (non-null)");
+        check(nn.getNarrowedType("x") == Type.Number.INSTANCE,
+            "x should be narrowed to number (non-null)");
         check(!nn.narrowedVariableNames().isEmpty(),
             "narrowedVariableNames should be non-empty before invalidate");
 
@@ -5736,8 +5736,8 @@ public class CheckerTest {
     static void testSymbolTableSymbolsInsertionOrder() {
         System.out.println("-- SymbolTable: symbols() insertion order and defensive copy --");
         SymbolTable table = new SymbolTable();
-        table.define("b", new Symbol.VariableSymbol("b", Type.Int.INSTANCE, false));
-        table.define("aa", new Symbol.VariableSymbol("aa", Type.Int.INSTANCE, false));
+        table.define("b", new Symbol.VariableSymbol("b", Type.Number.INSTANCE, false));
+        table.define("aa", new Symbol.VariableSymbol("aa", Type.Number.INSTANCE, false));
 
         List<String> names = new ArrayList<>();
         for (String key : table.symbols().keySet()) {
@@ -5755,7 +5755,7 @@ public class CheckerTest {
                 + entryOrder);
 
         Map<String, Symbol> copy = table.symbols();
-        copy.put("zz", new Symbol.VariableSymbol("zz", Type.Int.INSTANCE, false));
+        copy.put("zz", new Symbol.VariableSymbol("zz", Type.Number.INSTANCE, false));
         check(table.resolveLocal("zz") == null,
             "symbols() returns a defensive copy: a put on the returned map does not affect the table");
         copy.clear();
@@ -5983,11 +5983,11 @@ public class CheckerTest {
             // dependency-first, so the E5003 collection order is
             // [z, a] while the D1 file order is [a, z].
             Files.writeString(root.resolve("src/z.deal"),
-                "export function f(): int { return 1.0; }\n");
+                "export function f(): number { return true; }\n");
             Files.writeString(root.resolve("src/a.deal"),
                 "import * as z from \"./z\";\n"
                     + "export function main(): null { return null; }\n"
-                    + "function g(): int { return 1.0; }\n");
+                    + "function g(): number { return true; }\n");
             Path entry = root.resolve("src/a.deal").toAbsolutePath();
             Path jsonPath = root.resolve("diagnostics.json");
 

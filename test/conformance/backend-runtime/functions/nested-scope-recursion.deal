@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: functions, recursion, lexical-scope
 
-export function test_nested_scope_recursion(): int {
-  let calls: int = 0;
-  let result: int = 0;
+export function test_nested_scope_recursion(): number {
+  let calls: number = 0;
+  let result: number = 0;
   {
-    function localDown(n: int): int {
+    function localDown(n: number): number {
       calls = calls + 1;
       if (n === 0) { return 0; }
       return localDown(n - 1);

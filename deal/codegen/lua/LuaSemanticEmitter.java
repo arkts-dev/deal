@@ -30,7 +30,6 @@ import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -622,10 +621,7 @@ public final class LuaSemanticEmitter {
                 }
                 for (FunctionExecutionBinding binding
                         : moduleUnit.functionBindings().values()) {
-                    if (binding instanceof FunctionExecutionBinding
-                            .IntrinsicFunction intrinsic) {
-                        collectFunctionShapes(shapes, intrinsic.descriptor());
-                    }
+
                 }
             }
             StringBuilder literal = new StringBuilder("{");
@@ -942,7 +938,6 @@ public final class LuaSemanticEmitter {
             // chunk-global exactly like the surface and stdlib registries
             // (a second chunk of the same process resolves the same
             // carriers).
-            out.append("__intrinsicCarriers = __intrinsicCarriers or {}\n");
 
             // The one factory store (LuaJIT bounds one function at 200
             // locals): the function factories, the detached class-default
@@ -1293,12 +1288,7 @@ public final class LuaSemanticEmitter {
         }
 
 
-
-
-
-
-
-        /**
+/**
          * Whether the session's op walk carries at least one host-boundary cell
          * (the family the host prelude's parameter/return checks realize).
          */
@@ -1731,7 +1721,7 @@ public final class LuaSemanticEmitter {
                 case ASSIGN -> emitAssign(op);
                 case DELETE -> emitDelete(op);
                 case CALL -> emitCall(op);
-                case INTRINSIC_CALL -> emitIntrinsic(op);
+
                 case STDLIB_CALL -> emitStdlib(op);
                 case BRANCH -> emitBranch(op);
                 case LOOP -> emitLoop(op);
@@ -1949,7 +1939,7 @@ public final class LuaSemanticEmitter {
             String literal = switch (payload.value()) {
                 case ScalarValue.Null ignored -> "nil";
                 case ScalarValue.Boolean bool -> bool.value() ? "true" : "false";
-                case ScalarValue.Int intValue -> String.valueOf(intValue.value());
+
                 case ScalarValue.Number number -> luaNumber(number.value());
                 case ScalarValue.String string -> luaString(string.value());
             };
@@ -1983,8 +1973,7 @@ public final class LuaSemanticEmitter {
         private void emitBinary(SemanticOp op) {
             KindPayload.BinaryPayload payload = (KindPayload.BinaryPayload) op.payload();
             emitStart(op);
-            boolean arithmetic = payload.selector().name().startsWith("INT32_")
-                || payload.selector().name().startsWith("NUMBER_");
+            boolean arithmetic = payload.selector().name().startsWith("NUMBER_");
             boolean comparison = payload.selector().name().endsWith("_EQ")
                 || payload.selector().name().endsWith("_NE")
                 || payload.selector().name().endsWith("_LT")
@@ -2751,8 +2740,8 @@ public final class LuaSemanticEmitter {
                 (KindPayload.BindingInitPayload) op.payload();
             emitStart(op);
             BindingCellKind kind = cellKindOf(payload.binding(), payload.generation());
-            String valueExpr = intrinsicCarrierExpr(payload.value());
-            if (valueExpr == null) {
+            String valueExpr;
+            {
                 valueExpr = hasProducer(payload.value())
                     ? slot(payload.value()) : exportPlaceholderCarrier();
             }
@@ -2770,39 +2759,19 @@ public final class LuaSemanticEmitter {
             emitPlainSuccess(op);
         }
 
-        private String intrinsicCarrierExpr(ValueId valueId) {
-            IntrinsicKind kind = intrinsicKindOf(valueId);
-            return kind == null ? null : intrinsicAccessor(kind);
-        }
 
-        /**
+/**
          * The memoized intrinsic carrier expression of one identity whose
          * registration — the kind's only authority — resolves an intrinsic
          * kind (the residual export-read kind arm's rule), or {@code null}.
          */
-        private String registeredIntrinsicCarrierExpr(ValueId valueId) {
-            IntrinsicKind kind = registeredIntrinsicKindOf(valueId);
-            return kind == null ? null : intrinsicAccessor(kind);
-        }
+
 
         /** The registered intrinsic kind of one value identity, or null. */
-        private IntrinsicKind registeredIntrinsicKindOf(ValueId valueId) {
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                FunctionExecutionBinding found = moduleUnit.functionBindings().get(
-                    new FunctionAllocationIdentity(valueId.id()));
-                if (found instanceof FunctionExecutionBinding.IntrinsicFunction
-                        intrinsic) {
-                    return intrinsic.kind();
-                }
-                if (found != null) {
-                    return null;
-                }
-            }
-            return null;
-        }
+
 
         private static String exportPlaceholderCarrier() {
-            return "__intrinsicExport()";
+            throw new IllegalStateException("function value has no producing operation");
         }
 
         /**
@@ -2811,12 +2780,7 @@ public final class LuaSemanticEmitter {
          * spec text — the only descriptor source (never a call site's or
          * an adapter target's).
          */
-        private static String intrinsicAccessor(IntrinsicKind kind) {
-            RuntimeDescriptor.Func declared = kind.declaredSignature();
-            return "__intrinsicFn(" + luaString(kind.name()) + ", "
-                + luaString(descriptorText(declared)) + ", "
-                + luaString(declared.canonicalSpecText()) + ")";
-        }
+
 
         private void emitBindingLoad(SemanticOp op) {
             KindPayload.BindingLoadPayload payload =
@@ -2948,8 +2912,8 @@ public final class LuaSemanticEmitter {
         }
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {
-            String sourceExpr = intrinsicCarrierExpr(value.value());
-            if (sourceExpr == null) {
+            String sourceExpr;
+            {
                 sourceExpr = hasProducer(value.value())
                     ? slot(value.value()) : exportPlaceholderCarrier();
             }
@@ -3299,10 +3263,7 @@ public final class LuaSemanticEmitter {
                 return;
             }
 
-            if (binding instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
-                emitIntrinsicValueCall(op, payload, intrinsic);
-                return;
-            }
+
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp boundary = opsById.get(boundaryId);
                 KindPayload.BoundaryPayload boundaryPayload =
@@ -3396,10 +3357,6 @@ public final class LuaSemanticEmitter {
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
 
-                    if (adapterIntrinsicKind(adapter) != null) {
-                        emitAdapterOverIntrinsicRun(op, payload, adapter);
-                        break;
-                    }
                     String adapterSlot =
                         slot((ValueId) opsById.get(adapter.adaptOpId()).result());
                     StringBuilder args = new StringBuilder();
@@ -3844,46 +3801,9 @@ public final class LuaSemanticEmitter {
             return index - 1;
         }
 
-        private void emitIntrinsicValueCall(SemanticOp op, KindPayload.CallPayload payload,
-                FunctionExecutionBinding.IntrinsicFunction intrinsic) {
-            int argCount = emitHostParameterCells(op, payload);
-            if (argCount != intrinsic.descriptor().paramTypes().size()) {
-                throw rejectedOp(op, "the conversion intrinsic call "
-                    + op.opId() + " records " + argCount + " parameter cell(s) for the '"
-                    + intrinsic.kind() + "' intrinsic's "
-                    + intrinsic.descriptor().paramTypes().size() + " declared "
-                    + "parameter(s) (a producer defect)");
-            }
-            String helper = intrinsicHelper(intrinsic.kind());
-            out.append("__resT = ").append(helper).append("(__hbT[1], ")
-                .append(intrinsicInvocationArgs(op, intrinsic.kind())).append(")\n");
-            SemanticOp returnBoundary = payload.returnBoundaryOpId() == null
-                ? null : opsById.get(payload.returnBoundaryOpId());
-            // The produced value is a plain chunk value (a DEAL
-            // int/number, never a host carrier), admitted by the same
-            // general check the direct arm's and the cataloged callable's
-            // recorded cells run.
-            emitHostReturnCellRun(op, returnBoundary, "__atom");
-            String result = slot((ValueId) op.result());
-            out.append(result).append(" = __resT\n");
-            emitResultSuccess(op, result, (RuntimeDescriptor) op.resultType());
-        }
 
-        private IntrinsicKind adapterIntrinsicKind(
-                FunctionExecutionBinding.AdapterBinding adapter) {
-            if (!(adapter.sourceRef() instanceof AdaptSourceRef.Value value)) {
-                return null;
-            }
-            return intrinsicKindOf(value.value());
-        }
+/** The emitted helper of one intrinsic kind's invocation ladder. */
 
-        /** The emitted helper of one intrinsic kind's invocation ladder. */
-        private static String intrinsicHelper(IntrinsicKind kind) {
-            return switch (kind) {
-                case INT_CONVERT -> "__intConv";
-                case NUMBER_CONVERT -> "__numConv";
-            };
-        }
 
         /**
          * The trailing argument list of one intrinsic invocation: the
@@ -3893,71 +3813,9 @@ public final class LuaSemanticEmitter {
          * signature is the only descriptor source (never a call site's or
          * an adapter target's).
          */
-        private String intrinsicInvocationArgs(SemanticOp op, IntrinsicKind kind) {
-            StringBuilder args = new StringBuilder();
-            args.append(luaString(op.kind().name())).append(", ");
-            args.append(luaString(staticKind(
-                kind.declaredSignature().paramTypes().get(0)))).append(", ");
-            args.append(luaString(opKey(op.opId()))).append(", ")
-                .append(luaString(op.contract().canonicalDigest())).append(", ")
-                .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                .append(luaString(originOf(op)));
-            return args.toString();
-        }
 
-        private void emitIntrinsicLadder(SemanticOp op, IntrinsicKind kind, String input,
-                                         String indent) {
-            out.append(indent).append("__resT = ").append(intrinsicHelper(kind))
-                .append("(").append(input).append(", ")
-                .append(intrinsicInvocationArgs(op, kind)).append(")\n");
-        }
 
-        private void emitIntrinsicLadderPcall(SemanticOp op, IntrinsicKind kind,
-                                              String input, String indent) {
-            out.append(indent).append("__okA, __resA = pcall(")
-                .append(intrinsicHelper(kind)).append(", ").append(input).append(", ")
-                .append(intrinsicInvocationArgs(op, kind)).append(")\n");
-        }
-
-        private void emitAdapterOverIntrinsicRun(SemanticOp op,
-                KindPayload.CallPayload payload,
-                FunctionExecutionBinding.AdapterBinding adapter) {
-            IntrinsicKind kind = adapterIntrinsicKind(adapter);
-            if (kind == null) {
-                throw rejectedOp(op, "CALL " + op.opId()
-                    + " records an adapter whose source is not the seeded intrinsic "
-                    + "identity (producer defect)");
-            }
-            RuntimeDescriptor.Func declared = kind.declaredSignature();
-            String adapterSlot = slot((ValueId) opsById.get(adapter.adaptOpId()).result());
-            String origin = originOf(op);
-            out.append("__dynS = __adaptSource(").append(adapterSlot).append(")\n");
-            out.append("__okB, __chkB = pcall(__fncheck, __dynS, ")
-                .append(luaString(adapter.sourceSignature().canonicalSpecText()))
-                .append(", ").append(luaString(origin)).append(")\n");
-            out.append("if not __okB then\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__chkB)");
-            out.append("  error(__chkB, 0)\n");
-            out.append("end\n");
-            int m = adapter.sourceSignature().paramTypes().size();
-            if (m != declared.paramTypes().size()
-                    || m > payload.parameterBoundaryOpIds().size()) {
-                throw rejectedOp(op, "the adapter-over-intrinsic call "
-                    + op.opId() + " projects " + m + " leading source argument(s) "
-                    + "onto the '" + kind + "' intrinsic's "
-                    + declared.paramTypes().size() + " declared parameter(s) with "
-                    + payload.parameterBoundaryOpIds().size()
-                    + " recorded target cell(s) (producer defect)");
-            }
-            SemanticOp leading = opsById.get(payload.parameterBoundaryOpIds().get(0));
-            String input = slot(((KindPayload.BoundaryPayload) leading.payload()).input());
-            emitIntrinsicLadder(op, kind, input, "");
-            SemanticOp returnBoundary = payload.returnBoundaryOpId() == null
-                ? null : opsById.get(payload.returnBoundaryOpId());
-            emitHostReturnCellRun(op, returnBoundary, "__atom");
-        }
-
-        /**
+/**
          * The cataloged-callable sub-class of one host-shaped call: the read's
          * own registration resolved the closed catalog row, so the invocation is
          * the row's one invoker with the invoking call's own context — never the
@@ -4238,30 +4096,6 @@ public final class LuaSemanticEmitter {
                 emitRecordedCellRun(op, recordedDealCell, "__resT", "    ");
             }
 
-            out.append("  elseif __dynS[__dealCarrierKeys.it] ~= nil then\n");
-            if (payload.parameterBoundaryOpIds().isEmpty()) {
-                // The leading-M projection of the runtime intrinsic source has
-                // no argument to convert (the intrinsic declares one
-                // parameter): the carrier fails closed at the call origin.
-                out.append("    __dynC = __dynS\n");
-                emitDynamicCarrierFailure(op, origin);
-            } else {
-                SemanticOp dynamicLeading =
-                    opsById.get(payload.parameterBoundaryOpIds().get(0));
-                String dynamicInput =
-                    slot(((KindPayload.BoundaryPayload) dynamicLeading.payload()).input());
-                out.append("    if __dynS[__dealCarrierKeys.it] == \"INT_CONVERT\" then\n");
-                emitIntrinsicLadder(op, IntrinsicKind.INT_CONVERT, dynamicInput,
-                    "      ");
-                out.append("    elseif __dynS[__dealCarrierKeys.it] == \"NUMBER_CONVERT\" then\n");
-                emitIntrinsicLadder(op, IntrinsicKind.NUMBER_CONVERT, dynamicInput,
-                    "      ");
-                out.append("    else\n");
-                out.append("      __dynC = __dynS\n");
-                emitDynamicCarrierFailure(op, origin);
-                out.append("    end\n");
-                emitHostReturnCellRun(op, hostCell, "__atom");
-            }
             out.append("  elseif __dynS[__dealCarrierKeys.sid] ~= nil then\n");
             // An adapted cataloged stdlib callable (a statically typed
             // function value such as `json.parse`): the carrier's packed
@@ -4314,33 +4148,7 @@ public final class LuaSemanticEmitter {
         private void emitDynamicHostRow(SemanticOp op, KindPayload.CallPayload payload,
                                         SemanticOp returnBoundary) {
 
-            if (payload.parameterBoundaryOpIds().size() == 1) {
-                SemanticOp parameter = opsById.get(payload.parameterBoundaryOpIds().get(0));
-                KindPayload.BoundaryPayload parameterPayload =
-                    (KindPayload.BoundaryPayload) parameter.payload();
-                String input = slot(parameterPayload.input());
-                String declaredKind = luaString(staticKind(parameterPayload.descriptor()));
-                out.append("  if __dynC[__dealCarrierKeys.it] == \"INT_CONVERT\" then\n");
-                out.append("    __resT = __intConv(").append(input)
-                    .append(", ").append(luaString(op.kind().name())).append(", ")
-                    .append(declaredKind).append(", ")
-                    .append(luaString(opKey(op.opId()))).append(", ")
-                    .append(luaString(op.contract().canonicalDigest())).append(", ")
-                    .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(luaString(originOf(op))).append(")\n");
-                emitHostReturnCellRun(op, returnBoundary, "__atom");
-                out.append("  elseif __dynC[__dealCarrierKeys.it] == \"NUMBER_CONVERT\" then\n");
-                emitIntrinsicLadder(op, IntrinsicKind.NUMBER_CONVERT, input, "  ");
-                emitHostReturnCellRun(op, returnBoundary, "__atom");
-                out.append("  elseif __dynC[__dealCarrierKeys.sid] ~= nil then\n");
-            } else {
-                // No checker-valid program reaches an intrinsic carrier at a
-                // site without the intrinsic's single declared parameter cell;
-                // the tag still fails closed rather than guessing a conversion.
-                out.append("  if __dynC[__dealCarrierKeys.it] ~= nil then\n");
-                emitDynamicCarrierFailure(op, luaString(originOf(op)));
-                out.append("  elseif __dynC[__dealCarrierKeys.sid] ~= nil then\n");
-            }
+            out.append("  if __dynC[__dealCarrierKeys.sid] ~= nil then\n");
             out.append("    __resT = __dynC[__dealCarrierKeys.fn](")
                 .append(luaString(op.kind().name())).append(", ")
                 .append(luaString(opKey(op.opId()))).append(", ")
@@ -4495,30 +4303,7 @@ public final class LuaSemanticEmitter {
             out.append("    __dynS = __chkB\n");
             out.append("  end\n");
 
-            out.append("  if __dynS[__dealCarrierKeys.it] ~= nil then\n");
-            if (recordedArgCount(payload, op) == 0) {
-                // The leading-M projection of the runtime intrinsic source has
-                // no argument to convert (the intrinsic declares one
-                // parameter): the carrier fails closed at the start origin.
-                out.append("    __dynC = __dynS\n");
-                emitDynamicCarrierFailure(op, origin);
-            } else {
-            out.append("    __asyncStartTask(").append(token.tokenId())
-                .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
-            out.append("      local __okA, __resA\n");
-            out.append("      if __dynS[__dealCarrierKeys.it] == \"INT_CONVERT\" then\n");
-            emitIntrinsicLadderPcall(op, IntrinsicKind.INT_CONVERT,
-                carrierArgs + "[1]", "        ");
-            out.append("      else\n");
-            emitIntrinsicLadderPcall(op, IntrinsicKind.NUMBER_CONVERT,
-                carrierArgs + "[1]", "        ");
-            out.append("      end\n");
-            out.append("      if not __okA then error(__resA, 0) end\n");
-            out.append("      return __resA\n");
-            out.append("    end), ")
-                .append(carrierArgs).append(")\n");
-            }
-            out.append("  elseif __dynClass(__dynS) ~= \"DEAL_BODY\" then\n");
+            out.append("  if __dynClass(__dynS) ~= \"DEAL_BODY\" then\n");
             out.append("    __dynC = __dynS\n");
             emitDynamicCarrierFailure(op, origin);
             out.append("  else\n");
@@ -4673,35 +4458,8 @@ public final class LuaSemanticEmitter {
                 + span.startColumn();
         }
 
-        private void emitIntrinsic(SemanticOp op) {
-            KindPayload.IntrinsicCallPayload payload =
-                (KindPayload.IntrinsicCallPayload) op.payload();
-            emitStart(op);
-            String target = slot((ValueId) op.result());
-            String input = slot(payload.input());
-            String kind = staticKind(op.operandTypes().get(0));
-            String origin = originOf(op);
 
-            switch (payload.kind()) {
-                case INT_CONVERT -> out.append(target).append(" = __intConv(")
-                    .append(input).append(", ").append(luaString(op.kind().name()))
-                    .append(", ").append(luaString(kind)).append(", ")
-                    .append(luaString(opKey(op.opId()))).append(", ")
-                    .append(luaString(op.contract().canonicalDigest())).append(", ")
-                    .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(luaString(origin)).append(")\n");
-                case NUMBER_CONVERT -> out.append(target).append(" = __numConv(")
-                    .append(input).append(", ").append(luaString(op.kind().name()))
-                    .append(", ").append(luaString(kind)).append(", ")
-                    .append(luaString(opKey(op.opId()))).append(", ")
-                    .append(luaString(op.contract().canonicalDigest())).append(", ")
-                    .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(luaString(origin)).append(")\n");
-            }
-            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
-        }
-
-        private void emitStdlib(SemanticOp op) {
+private void emitStdlib(SemanticOp op) {
             KindPayload.StdlibCallPayload payload =
                 (KindPayload.StdlibCallPayload) op.payload();
             // The custom START: the operand atoms render the actual value
@@ -6537,17 +6295,7 @@ public final class LuaSemanticEmitter {
                 }
                 case FunctionExecutionBinding.ExternalFunction external ->
                     emitAsyncExternalStart(op, token, payload.externalAsyncLink());
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                    String carrier = "S.__sa" + op.opId().id() + "[1]";
-                    out.append("__asyncStartTask(").append(token.tokenId())
-                        .append(", \"DEAL_BODY_TASK\", coroutine.create(function()\n");
-                    out.append("  local __okA, __resA\n");
-                    emitIntrinsicLadderPcall(op, intrinsic.kind(), carrier, "  ");
-                    out.append("  if not __okA then error(__resA, 0) end\n");
-                    out.append("  return __resA\n");
-                    out.append("end), S.__sa").append(op.opId().id()).append(")\n");
-                }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw rejectedOp(op, "ASYNC_START " + op.opId()
                         + " resolves the dynamic function value produced by "
@@ -7481,10 +7229,7 @@ public final class LuaSemanticEmitter {
                         payload.name()))).append(")\n");
             } else {
 
-                String carrier = registeredIntrinsicCarrierExpr((ValueId) op.result());
-                out.append(slot((ValueId) op.result())).append(" = ")
-                    .append(carrier == null ? exportPlaceholderCarrier() : carrier)
-                    .append("\n");
+                throw rejectedOp(op, "EXPORT_READ has no resolved import");
             }
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType());
@@ -7665,14 +7410,7 @@ local function __jsonParse(s)
     local text = string.sub(s, start, pos - 1)
     local value = tonumber(text)
     if value == nil then return nil end
-    local exact = __jsonIntOrNil(text)
-    if exact ~= nil then
-      -- The exact decimal classification: the lexeme's mathematical
-      -- value is integral and inside signed32, so it is the int variant
-      -- (-0/-0.0 normalized to 0); every other lexeme is the number
-      -- variant.
-      return exact, false
-    end
+    if value == 0 and string.sub(text, 1, 1) == "-" then value = -0.0 end
     return value, true
   end
   -- One value at the cursor: a scalar returns directly, a container opens
@@ -7837,10 +7575,7 @@ end
 -- outside [1e-3, 1e7)).
 local function __jsonNumText(v)
   if v ~= v or v == math.huge or v == -math.huge then return nil end
-  if v == 0 then
-    if 1 / v < 0 then return "-0.0" end
-    return "0.0"
-  end
+  if v == 0 then return "0" end
   local sign = ""
   if v < 0 then sign = "-"; v = -v end
   local digits = nil
@@ -8025,17 +7760,6 @@ local function __jsonConforms(desc, v)
   local kind, inner = __jsonKindOf(desc)
   if kind == "null" then return v == nil end
   if kind == "boolean" then return type(v) == "boolean" end
-  if kind == "int" then
-    if type(v) == "table" and v[__dealCarrierKeys.jn] then
-      -- The int position admits the int variant only (the oracle's
-      -- Value.Int admission; a number-variant carrier fails exactly like
-      -- the oracle's Number-at-Int case).
-      if v.k ~= "int" then return false end
-      v = v.d
-    end
-    return type(v) == "number" and v == math.floor(v)
-      and v >= -2147483648 and v <= 2147483647
-  end
   if kind == "number" then
     if type(v) == "table" and v[__dealCarrierKeys.jn] then return true end
     return type(v) == "number"
@@ -8085,12 +7809,6 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     return false
   elseif kind == "boolean" then
     if type(v) == "boolean" then return true, v end
-    return false
-  elseif kind == "int" then
-    if type(v) == "number" and not numberVariant and v == math.floor(v)
-        and v >= -2147483648 and v <= 2147483647 then
-      return true, v, "int"
-    end
     return false
   elseif kind == "number" then
     if type(v) == "number" then return true, v, "number" end
@@ -8400,16 +8118,9 @@ local function __jsonToClassOp(planName, root)
         return true
       end
       if type(element) == "table" and element[__dealCarrierKeys.jn] then
-        -- The read-side variant carrier (__readVar) keeps its value's
-        -- own recorded variant: an int carrier spells its integer text,
-        -- a number carrier the closed decimal spelling.
-        if element.k == "int" then
-          out[#out + 1] = tostring(element.d)
-        else
-          local text = __jsonNumText(element.d)
-          if text == nil then return fail(elementPath, element.d) end
-          out[#out + 1] = text
-        end
+        local text = __jsonNumText(element.d)
+        if text == nil then return fail(elementPath, element.d) end
+        out[#out + 1] = text
         return true
       end
       if type(element) == "string" then
@@ -8580,7 +8291,7 @@ local function __jsonToClassOp(planName, root)
       local declared = element
       if type(element) == "number" then
         declared = {[__dealCarrierKeys.jn] = true,
-          k = (marks ~= nil and marks[i] == true) and "number" or "int",
+          k = "number",
           d = element}
       end
       local encoded = encodeField(edesc, declared, elementPath, visited)
@@ -8654,22 +8365,6 @@ local function __jsonToClassOp(planName, root)
     elseif kind == "boolean" then
       if type(v) == "boolean" then return tostring(v) end
       return fail(path, v)
-    elseif kind == "int" then
-      -- An int-position value is the int32 carrier: a finite integral
-      -- number, or its read-side variant carrier (__readVar's __jn
-      -- shape, an int-variant read materialized at a number position).
-      -- A fractional or nonfinite number, a number-variant carrier (and
-      -- every non-number) is the number/other carrier and fails here
-      -- exactly like the oracle's Value.Int admission.
-      if type(v) == "table" and v[__dealCarrierKeys.jn] then
-        if v.k ~= "int" then return fail(path, v) end
-        v = v.d
-      end
-      if type(v) == "number" and v == math.floor(v)
-          and v ~= math.huge and v ~= -math.huge then
-        return tostring(v)
-      end
-      return fail(path, v)
     elseif kind == "number" then
       -- A number-position value admits the raw number and the read-side
       -- variant carrier alike, each spelled by its own recorded variant
@@ -8678,7 +8373,6 @@ local function __jsonToClassOp(planName, root)
       -- the shared JVM runtime's Int/Double split, never the declared
       -- descriptor's text.
       if type(v) == "table" and v[__dealCarrierKeys.jn] then
-        if v.k == "int" then return tostring(v.d) end
         local text = __jsonNumText(v.d)
         if text == nil then return fail(path, v) end
         return text
@@ -9400,7 +9094,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
   -- remains the failure authority).
   local function scalarDesc(d)
     local base = baseOf(d)
-    return base == "string" or base == "int" or base == "number"
+    return base == "string" or base == "number"
       or base == "boolean" or base == "null"
   end
   if scalarDesc(desc) then return v end
@@ -9774,7 +9468,7 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     if d == nil then return false end
     local base = d
     if string.sub(base, 1, 1) == "?" then base = string.sub(base, 2) end
-    return base == "string" or base == "int" or base == "number"
+    return base == "string" or base == "number"
       or base == "boolean" or base == "null"
   end
   if scalarDesc(desc) then return v end
@@ -10266,44 +9960,6 @@ local function __allocId(v)
   end
   return id
 end
-local __intrinsicInvoke
--- __intrinsicInvoke pattern.
--- The intrinsics' memoized carriers (J2; published by the
--- seed's BINDING_INIT, the adapter's producer-less VALUE operand and a
--- residual export-read kind arm whose identity carries a seed
--- registration): one callable, class-tagged
--- carrier per intrinsic kind per program, carrying the intrinsic's
--- declared descriptor text and canonical spec text and no function id,
--- so the landed function row (__bcheck/__fncheck) admits it by its
--- carried signature, __unfn exposes its invoker, and every
--- materialization of one intrinsic is the identical value (functions
--- compare by reference identity). The kind tag __it and the declared
--- signature texts __sig/__csig come from the unit's own
--- IntrinsicFunction registration — never a spelling, never a call
--- site's or an adapter target's signature.
-local function __intrinsicFn(it, sig, csig)
-  local c = __intrinsicCarriers[it]
-  if c == nil then
-    c = {[__dealCarrierKeys.sig] = sig, [__dealCarrierKeys.csig] = csig, [__dealCarrierKeys.fid] = nil, [__dealCarrierKeys.it] = it}
-    c[__dealCarrierKeys.fn] = function(...) return __intrinsicInvoke(it, ...) end
-    __intrinsicCarriers[it] = c
-  end
-  return c
-end
--- The residual export-read kind arm's placeholder carrier (a session
--- whose unit records no import fact for the read's module — the
--- test-only class-core carrier sessions): a fresh, per-read value
--- carrying the landed opaque export view the oracle projects for that
--- arm (a ()->number function) and the real carrier's interface, so the
--- landed function row admits it exactly as the oracle's view does and
--- the read keeps its own identity (the landed arm's per-read
--- allocation). The memoized intrinsic carrier is published at this arm
--- only when the read's identity carries an IntrinsicFunction
--- registration (the only kind authority).
-local function __intrinsicExport()
-  return {[__dealCarrierKeys.fn] = function() return nil end, [__dealCarrierKeys.sig] = "function(;number)",
-    [__dealCarrierKeys.csig] = "()->number", [__dealCarrierKeys.fid] = nil}
-end
 -- The compiled export read (M2): the nil-safe accessor of the
 -- chunk-global program-scoped export-surface registry. A published
 -- entry exposes the compiler-owned __val field (the published value
@@ -10396,7 +10052,7 @@ local function __readVar(t, k, v, wantsNumber)
   if type(marks) == "table" and marks[k] == true then
     return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
   end
-  if wantsNumber then return {[__dealCarrierKeys.jn] = true, k = "int", d = v} end
+  if wantsNumber then return {[__dealCarrierKeys.jn] = true, k = "number", d = v} end
   return v
 end
 -- The canonical hex-float spelling (Double.toHexString parity; the
@@ -10446,13 +10102,11 @@ local function __atom(kind, v)
   if type(v) == "string" then return "str:"..__esc(v) end
   if type(v) == "boolean" then return "bool:"..tostring(v) end
   if type(v) == "table" and v[__dealCarrierKeys.jn] then
-    if v.k == "int" then return "int:"..tostring(v.d) end
     return __atom("number", v.d)
   end
   if kind == "null" then return "null" end
   if kind == "missing" then return "missing" end
   if kind == "bool" then return "bool:"..tostring(v) end
-  if kind == "int" then return "int:"..tostring(v) end
   if kind == "number" then
     if v ~= v then return "num:nan" end
     return "num:"..__numHex(v)
@@ -10541,14 +10195,12 @@ local function __rawAtom(kind, v)
   if v == __MISSING then return "missing" end
   if v == nil then return "null" end
   if type(v) == "table" and v[__dealCarrierKeys.jn] then
-    if v.k == "int" then return "int:"..tostring(v.d) end
     return __atom("number", v.d)
   end
   if type(v) == "boolean" then return "bool:"..tostring(v) end
   if type(v) == "number" then
     local inner = kind
     if string.sub(kind, 1, 9) == "nullable:" then inner = string.sub(kind, 10) end
-    if inner == "int" then return "int:"..tostring(v) end
     return __atom("number", v)
   end
   if type(v) == "string" then return "str:"..__esc(v) end
@@ -10737,18 +10389,18 @@ end
 -- The closed field shapes of the arm declaration (P2): a caller-supplied
 -- expected/actual token outside its arm's declared shape is a producer
 -- defect — the renderer never publishes a fabricated field.
-local __kindTokens = {["null"] = true, ["boolean"] = true, ["int"] = true,
+local __kindTokens = {["null"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true,
   ["array"] = true, ["function"] = true, ["class"] = true}
 -- The closed typed-boundary kind *texts* (P2 item 3): the {kind} parameter
 -- of a KIND_TOKEN arm is one of these (a class projects "class instance"
 -- while its token is "class"), so an invented kind text never derives a
 -- DEAL-visible token through the authority.
-local __kindTexts = {["null"] = true, ["boolean"] = true, ["int"] = true,
+local __kindTexts = {["null"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true,
   ["array"] = true, ["function"] = true, ["class instance"] = true}
 local __typedTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
-  ["int"] = true, ["number"] = true, ["string"] = true,
+  ["number"] = true, ["string"] = true,
   ["invalid-unicode"] = true, ["table"] = true, ["array"] = true,
   ["function"] = true, ["async-operation"] = true,
   ["nothing"] = true, ["NaN"] = true, ["infinity"] = true}
@@ -10763,7 +10415,7 @@ local __carrierTokens = {["nil"] = true, ["table"] = true, ["boolean"] = true,
 -- decoder consumes and the emitters' internal dialect — built once in a
 -- private scope so the chunk's own local-variable budget is untouched.
 local __isClassAtom, __isDescriptorText = (function()
-local __descriptorPrimitives = {"null", "boolean", "int", "number", "string",
+local __descriptorPrimitives = {"null", "boolean", "number", "string",
   "table"}
 -- One class-atom segment: '@' plus text up to ')' / ']' / ',' (the canonical
 -- decoder's own stop set; the dialect function's ';' separator also
@@ -11020,8 +10672,7 @@ __checkInnerReason = (function()
   -- The arms whose declared templates are fixed texts: the int
   -- refinements, the signed32 range, and the two host string-carrier
   -- texts.
-  local fixedTemplateArms = {"INT_CONVERSION_NAN", "INT_CONVERSION_INFINITY",
-    "INT_CONVERSION_FRACTIONAL", "INT32_RANGE", "HOST_STRING_INVALID_UTF8",
+  local fixedTemplateArms = {"HOST_STRING_INVALID_UTF8",
     "HOST_STRING_SURROGATE"}
   local function isClosedInnerReason(s)
     if type(s) ~= "string" then return false end
@@ -11340,19 +10991,6 @@ local function __typedBoundaryKind(staticKind, v)
   local t = type(v)
   if t == "boolean" then return "boolean" end
   if t == "number" then
-    -- The value-derived numeric classification: a numeric failing value
-    -- projects by its own variant — an integral finite value inside the
-    -- signed32 int range is the int carrier, every other numeric value
-    -- (fractional, nonfinite, or integral but outside signed32, which is
-    -- not the closed int carrier) the number carrier — never by the
-    -- declared descriptor text beside the position. The classification
-    -- agrees with the host crossing's own variant materialization
-    -- (__hostNumVar) and with the oracle's signed32 IntValue / NumValue
-    -- model, so an out-of-range raw host number projects the same
-    -- number token on every consumer.
-    if v % 1 == 0 and v >= -2147483648 and v <= 2147483647 then
-      return "int"
-    end
     return "number"
   end
   if t == "string" then
@@ -11562,50 +11200,6 @@ local function __bcheck(desc, staticKind, v, csig, completion)
   elseif desc == "boolean" then
     if type(v) == "boolean" then return v end
     return fail("boolean")
-  elseif desc == "int" then
-    -- The int cell keeps the admitted value's own variant: an int
-    -- carrier returns its carrier, a number carrier runs the pinned
-    -- int ladder (NaN → infinity → non-integer → E8004 range) with
-    -- the exact actual tokens and returns its carrier — the oracle's
-    -- and the shared JVM runtime's variant-preserving admission.
-    local function failRefinement(token)
-      if completion then
-        return error(__arm("ASYNC_COMPLETION_REFINEMENT",
-          {expected = "int", actual = token}, "-", "int", token), 0)
-      end
-      return error(__arm("TYPED_BOUNDARY_KIND", {kind = "int"}, "-", "int",
-        token), 0)
-    end
-    local function failRange()
-      return error(__arm("INT32_RANGE", nil, "-", nil, nil), 0)
-    end
-    if type(v) == "table" and v[__dealCarrierKeys.jn] then
-      -- The int cell's positive-zero normalization: a zero-valued carrier
-      -- is re-published with a positive zero while its recorded variant
-      -- is preserved; the input carrier is never mutated.
-      local function admitCarrier()
-        if v.d == 0 and 1 / v.d < 0 then
-          return {[__dealCarrierKeys.jn] = true, k = v.k, d = 0}
-        end
-        return v
-      end
-      if v.k == "int" then return admitCarrier() end
-      if v.d ~= v.d then return failRefinement("NaN") end
-      if v.d == math.huge or v.d == -math.huge then
-        return failRefinement("infinity")
-      end
-      if v.d % 1 ~= 0 then return failRefinement("number") end
-      if v.d < -2147483648 or v.d > 2147483647 then return failRange() end
-      return admitCarrier()
-    end
-    if type(v) == "number" then
-      if v ~= v then return failRefinement("NaN") end
-      if v == math.huge or v == -math.huge then return failRefinement("infinity") end
-      if v % 1 ~= 0 then return failRefinement("number") end
-      if v < -2147483648 or v > 2147483647 then return failRange() end
-      return v + 0
-    end
-    return fail("int")
   elseif desc == "number" then
     if type(v) == "number" then return v end
     if type(v) == "table" and v[__dealCarrierKeys.jn] then return v end
@@ -11753,16 +11347,10 @@ local function __cmp(selector, kindL, l, kindR, r, side)
     if string.sub(selector, -3) == "_NE" then return not both end
     return false
   end
-  if string.sub(selector, 1, 5) == "INT32" or string.sub(selector, 1, 6) == "NUMBER"
+  if string.sub(selector, 1, 6) == "NUMBER"
       or string.sub(selector, 1, 8) == "NULLABLE" then
     l = __num(l); r = __num(r)
   end
-  if selector == "INT32_EQ" then return l == r end
-  if selector == "INT32_NE" then return l ~= r end
-  if selector == "INT32_LT" then return l < r end
-  if selector == "INT32_LE" then return l <= r end
-  if selector == "INT32_GT" then return l > r end
-  if selector == "INT32_GE" then return l >= r end
   if selector == "NUMBER_EQ" then return l == r end
   if selector == "NUMBER_NE" then return l ~= r end
   if selector == "NUMBER_LT" then return l < r end
@@ -11788,133 +11376,21 @@ end
 local function __unary(selector, v, opKey, digest, parent, origin)
   if selector == "BOOL_NOT" then return not v end
   v = __num(v)
-  if selector == "INT32_NEG" then
-    -- The int domain normalizes every zero to positive zero
-    -- (docs/spec-v1.3.md §Numeric overflow: "-0 is normalized to 0 in
-    -- int checks and arithmetic"): negating 0 publishes +0, never -0.
-    local r = -v
-    if r < -2147483648 or r > 2147483647 then
-      local e = __arm("INT32_RANGE", nil, origin, nil, nil)
-      __ev(opKey, "FAILURE", "UNARY", digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    return r + 0
-  end
   return -v
 end
 local function __arith(selector, l, r, opKey, digest, parent, origin)
   l = __num(l); r = __num(r)
-  -- Every int arithmetic result leaves the range gate through the int
-  -- domain's positive-zero normalization; the number selectors below
-  -- return their own IEEE results untouched.
-  local function rng(v)
-    if v < -2147483648 or v > 2147483647 then
-      local e = __arm("INT32_RANGE", nil, origin, nil, nil)
-      __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    return v + 0
-  end
-  if selector == "INT32_ADD" then return rng(l + r) end
-  if selector == "INT32_SUB" then return rng(l - r) end
-  if selector == "INT32_MUL" then return rng(l * r) end
-  if selector == "INT32_DIV_TRUNC" then
-    if r == 0 then
-      local e = __arm("INT32_DIVISION_BY_ZERO", nil, origin, nil, nil)
-      __ev(opKey, "FAILURE", "BINARY", digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    local q = l / r
-    local t = math.floor(math.abs(q))
-    if q < 0 then t = -t end
-    return rng(t)
-  end
   if selector == "NUMBER_ADD" then return l + r end
   if selector == "NUMBER_SUB" then return l - r end
   if selector == "NUMBER_MUL" then return l * r end
   if selector == "NUMBER_DIV_IEEE" then return l / r end
   return 0
 end
-local function __intConv(v, evKind, kind, opKey, digest, parent, origin)
-  if v == nil then
-    local e = __arm("INT_CONVERSION_NULL", nil, origin, "int", "null")
-    __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-    error(e, 0)
-  end
-  v = __num(v)
-  if type(v) == "number" then
-    -- The int domain normalizes every zero to positive zero (spec
-    -- §Numeric overflow: int checks normalize -0); the NaN, infinity and
-    -- fractional tokens are unaffected by the normalization.
-    v = v + 0
-    if v ~= v then
-      local e = __arm("INT_CONVERSION_NAN", nil, origin, "int", "NaN")
-      __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    if v == math.huge or v == -math.huge then
-      local e = __arm("INT_CONVERSION_INFINITY", nil, origin, "int", "infinity")
-      __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    if v % 1 ~= 0 then
-      local e = __arm("INT_CONVERSION_FRACTIONAL", nil, origin, "int", "number")
-      __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    if v < -2147483648 or v > 2147483647 then
-      local e = __arm("INT32_RANGE", nil, origin, nil, nil)
-      __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-      error(e, 0)
-    end
-    return v
-  end
-  local token = __typedBoundaryKind(kind, v)
-  local e = __arm("TYPED_BOUNDARY_KIND", {kind = "int"}, origin, "int", token)
-  __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-  error(e, 0)
-end
-local function __numConv(v, evKind, kind, opKey, digest, parent, origin)
-  if v == nil then
-    local e = __arm("NUMBER_CONVERSION_NULL", nil, origin, "number", "null")
-    __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-    error(e, 0)
-  end
-  v = __num(v)
-  if type(v) == "number" then return v end
-  local token = __typedBoundaryKind(kind, v)
-  local e = __arm("TYPED_BOUNDARY_KIND", {kind = "number"}, origin, "number", token)
-  __ev(opKey, "FAILURE", evKind, digest, parent, {}, nil, __errtext(e))
-  error(e, 0)
-end
--- The intrinsic carrier's generic invoker (J2): the conversion ladder
--- of the carrier's kind over the caller's first argument, with the
--- invoking call's context when one is supplied (the DEAL convention
--- packs the invoking op's kind label, the static kind, the op key, the
--- digest, the parent key, and the origin after the value) and the
--- absent context otherwise — total and deterministic for any non-DEAL
--- caller (the host bridge and any generic unwrap). DEAL call sites run
--- the ladder directly with the invoking op's own context and kind
--- (ISSUE-0679 J4); the carrier's invoker never invents a call site's
--- origin, and its declared-parameter kind is the default static kind
--- (the intrinsic's declared signature is the only descriptor source).
-__intrinsicInvoke = function(it, v, evKind, kind, opKey, digest, parent, origin)
-  if evKind == nil then evKind = "INTRINSIC_CALL" end
-  if kind == nil then kind = (it == "INT_CONVERT") and "number" or "int" end
-  if opKey == nil then opKey = "-" end
-  if digest == nil then digest = "-" end
-  if parent == nil then parent = "-" end
-  if origin == nil then origin = "-" end
-  if it == "INT_CONVERT" then
-    return __intConv(v, evKind, kind, opKey, digest, parent, origin)
-  end
-  return __numConv(v, evKind, kind, opKey, digest, parent, origin)
-end
 local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, inner,
                            container, slotName, nullable, wantsNumber, origin)
   local index = slotName.i
   local elem = __MISSING
-  if index < 0 or index >= slotName.n then
+  if index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index) or index < 0 or index >= slotName.n then
     __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom("missing", __MISSING)},
       nil, nil)
     local e = __arm("ARRAY_READ_BOUNDS", nil, origin, nil, nil)
@@ -11951,7 +11427,7 @@ local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot
   local index = slotName.i
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__atom(staticKind, input)},
     nil, nil)
-  if index < 0 or index > lengthSlot then
+  if index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index) or index < 0 or index > lengthSlot then
     local e = __arm("ARRAY_WRITE_BOUNDS", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
@@ -11969,7 +11445,7 @@ local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot
 end
 local function __slotAtom(s)
   if s.slot == "a" then
-    return "slot:"..s.i.."/"..tostring(s.i < s.n).."/"..tostring(s.a and (s.i == s.n))
+    return "slot:"..__numHex(s.i).."/"..tostring(s.i < s.n).."/"..tostring(s.a and (s.i == s.n))
   end
   return "keyslot:"..__esc(s.k)
 end
@@ -11977,7 +11453,7 @@ local function __arrayBoundsSlot(bKey, bDigest, bParent, slotName, lengthSlot,
                                     isAssign, origin)
   local index = slotName.i
   __ev(bKey, "START", "BOUNDARY", bDigest, bParent, {__slotAtom(slotName)}, nil, nil)
-  if index < 0 or index > lengthSlot then
+  if index ~= index or index == math.huge or index == -math.huge or index ~= math.floor(index) or index < 0 or index > lengthSlot then
     local e = __arm("ARRAY_DELETE_BOUNDS", nil, origin, nil, nil)
     __ev(bKey, "FAILURE", "BOUNDARY", bDigest, bParent, {}, nil, __errtext(e))
     error(e, 0)
@@ -12002,7 +11478,7 @@ end
 local function __normalizeEvent(opKey, digest, parent, slotName)
   local atom
   if slotName.slot == "a" then
-    atom = "slot:"..slotName.i.."/"..tostring(slotName.i < slotName.n).."/"
+    atom = "slot:"..__numHex(slotName.i).."/"..tostring(slotName.i < slotName.n).."/"
       ..tostring(slotName.a and (slotName.i == slotName.n))
   else
     atom = "keyslot:"..__esc(slotName.k)
@@ -12069,7 +11545,6 @@ local function __hostAtom(v)
   local t = type(v)
   if t == "boolean" then return "bool:"..tostring(v) end
   if t == "number" then
-    if v % 1 == 0 then return "int:"..tostring(v) end
     return __atom("number", v)
   end
   if t == "string" then return "str:"..__esc(v) end
@@ -12098,13 +11573,7 @@ end
 -- module-init walk spends nearly the whole 200-local budget).
 __hostNumVar = function(v)
   if type(v) ~= "number" then return v end
-  if v ~= v or v == math.huge or v == -math.huge then
-    return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
-  end
-  if v % 1 ~= 0 or v < -2147483648 or v > 2147483647 then
-    return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
-  end
-  return {[__dealCarrierKeys.jn] = true, k = "int", d = v}
+  return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
 end
 -- The adapter's source-signature check (D15): the resolved source's
 -- carried canonical spec text must equal the recorded source signature;
@@ -12296,7 +11765,7 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
   end
   if v[__dealCarrierKeys.jn] then
     if __top then
-      __dealAsyncExportVariant = v.k == "number" and "number" or "int"
+      __dealAsyncExportVariant = "number"
     end
     return v.d, (v.k == "number")
   end
@@ -12657,15 +12126,12 @@ local function __rawArgAtom(kind, v)
   if t == "number" then
     local inner = kind
     if string.sub(kind, 1, 9) == "nullable:" then inner = string.sub(kind, 10) end
-    if inner == "int" then return "int:"..tostring(v) end
     if inner == "number" then return __atom("number", v) end
-    if v % 1 == 0 then return "int:"..tostring(v) end
     return __atom("number", v)
   end
   if t == "string" then return "str:"..__esc(v) end
   if t == "table" then
     if v[__dealCarrierKeys.jn] then
-      if v.k == "int" then return "int:"..tostring(v.d) end
       return __atom("number", v.d)
     end
     if v[__dealCarrierKeys.d] then return "err:"..v.code..":"..__esc(v.m or "") end
@@ -12781,7 +12247,7 @@ end
 local function __sfNumText(v)
   local neg = false
   if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
-  if v == 0 then return neg and "-0.0" or "0.0" end
+  if v == 0 then return "0" end
   local digits, expo = nil, nil
   for N = 2, 17 do
     digits, expo = __sfDigits(v, N)
@@ -12863,85 +12329,6 @@ end
 -- scale, and exponent combine with bounded magnitude comparisons (a very
 -- long exponent saturates), so no machine overflow and no input cap can
 -- change the decision, and '-0'/-0.0 normalize to the integer 0.
-local function __jsonIntOrNil(text)
-  local i = 1
-  local neg = false
-  if string.sub(text, 1, 1) == "-" then neg = true; i = 2 end
-  local intStart = i
-  while i <= #text do
-    local b = string.byte(text, i)
-    if b < 48 or b > 57 then break end
-    i = i + 1
-  end
-  local intEnd = i - 1
-  local fracStart, fracEnd = nil, nil
-  if i <= #text and string.sub(text, i, i) == "." then
-    i = i + 1
-    fracStart = i
-    while i <= #text do
-      local b = string.byte(text, i)
-      if b < 48 or b > 57 then break end
-      i = i + 1
-    end
-    fracEnd = i - 1
-  end
-  local expo = 0
-  local expNeg = false
-  if i <= #text then
-    local e = string.sub(text, i, i)
-    if e == "e" or e == "E" then
-      i = i + 1
-      local c = string.sub(text, i, i)
-      if c == "+" or c == "-" then
-        expNeg = (c == "-")
-        i = i + 1
-      end
-      -- The exponent magnitude accumulates its digits with bounded
-      -- saturation: leading zeroes contribute nothing, so an exponent
-      -- text longer than 18 characters whose value is small stays exact
-      -- (the shared JsonNumberClassifier rule), and the arithmetic can
-      -- never overflow.
-      local magnitude = 0
-      while i <= #text do
-        local d = string.byte(text, i) - 48
-        if magnitude > (1000000000000 - d) / 10 then
-          magnitude = 1000000000000
-        else
-          magnitude = magnitude * 10 + d
-        end
-        i = i + 1
-      end
-      expo = magnitude
-    end
-  end
-  local digits = string.sub(text, intStart, intEnd)
-  if fracStart ~= nil then
-    digits = digits .. string.sub(text, fracStart, fracEnd)
-  end
-  local stripped = string.gsub(digits, "^0+", "")
-  if stripped == "" then return 0 end
-  local trailing = 0
-  while string.sub(stripped, #stripped - trailing, #stripped - trailing) == "0" do
-    trailing = trailing + 1
-  end
-  local significant = string.sub(stripped, 1, #stripped - trailing)
-  local fracLen = 0
-  if fracStart ~= nil then fracLen = fracEnd - fracStart + 1 end
-  local effective = expo - fracLen + trailing
-  if expNeg then effective = -expo - fracLen + trailing end
-  if effective < 0 then return nil end
-  if #significant + effective > 10 then return nil end
-  local value = tonumber(significant .. string.rep("0", effective))
-  if value == nil then return nil end
-  -- The signed32 range check compares the unsigned magnitude before the
-  -- sign is applied: negating first would leave the negative branch dead
-  -- for every magnitude in [2147483649, ...] (the shared classifier
-  -- rule: at most 2147483648 may carry the minus sign).
-  local limit = neg and 2147483648 or 2147483647
-  if value > limit then return nil end
-  if neg then value = -value end
-  return value
-end
 -- The in-target realization of the closed stdlib table: the parameter
 -- boundaries already ran, so the carriers are boundary-admitted (valid
 -- scalar strings, integral numbers, tables). The invoking op's event
@@ -12965,12 +12352,6 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local e = __arm(armId, values, origin, expected, actual)
     __ev(opKey, "FAILURE", kind, digest, parent, {}, nil, __errtext(e))
     error(e, 0)
-  end
-  local function __int32Gate(value)
-    if value < -2147483648 or value > 2147483647 then
-      __sfail("INT32_RANGE", nil, nil, nil)
-    end
-    return value
   end
   -- The present string keys of one table value in its own order: the
   -- recorded insertion order of the shared table carrier (and of a table
@@ -13008,8 +12389,15 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     return list
   end
   if fn == "STRING_LENGTH" then
-    return __int32Gate(#__cps(__args[1]))
+    return #__cps(__args[1])
   elseif fn == "STRING_SUBSTRING" then
+    local start, finish = __args[2], __args[3]
+    if start ~= start or start == math.huge or start == -math.huge
+        or start ~= math.floor(start) or finish ~= finish
+        or finish == math.huge or finish == -math.huge
+        or finish ~= math.floor(finish) then
+      __sfail("SUBSTRING_BOUNDS", nil, nil, nil)
+    end
     local cps = __cps(__args[1])
     local lo = math.max(0, __args[2])
     local hi = math.min(math.max(0, __args[3]), #cps)
@@ -13235,11 +12623,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         while not atEnd() and peek() >= 48 and peek() <= 57 do advance() end
       end
       local text = string.sub(s, startPos, pos - 1)
-      local exact = __jsonIntOrNil(text)
-      if exact ~= nil then
-        return {[__dealCarrierKeys.jn] = true, k = "int", d = exact}
-      end
-      return {[__dealCarrierKeys.jn] = true, k = "number", d = tonumber(text)}
+      local value = tonumber(text)
+      if value == 0 and string.sub(text, 1, 1) == "-" then value = -0.0 end
+      return {[__dealCarrierKeys.jn] = true, k = "number", d = value}
     end
     -- One value at the cursor: a scalar returns directly, a container
     -- opens a frame on the stack and returns the __OPENED sentinel. The
@@ -13451,13 +12837,10 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       if t == "table" then
         if v[__dealCarrierKeys.jn] then
-          if v.k == "int" then out[#out + 1] = tostring(v.d)
-          else
-            if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
-              sfFail(v)
-            end
-            out[#out + 1] = __sfNumText(v.d)
+          if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
+            sfFail(v)
           end
+          out[#out + 1] = __sfNumText(v.d)
           return
         end
         if v[__dealCarrierKeys.a] then
@@ -13681,17 +13064,10 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       __sfail("SQRT_NEGATIVE", nil, nil, __numHex(__args[1]))
     end
     return math.sqrt(__args[1])
-  elseif fn == "MATH_ABS_INT" then
-    local v = __args[1]
-    return __int32Gate(v < 0 and -v or v)
   elseif fn == "MATH_ABS_NUMBER" then
     local v = __args[1]
     if v == 0 then return 0 end
     return math.abs(v)
-  elseif fn == "MATH_MIN_INT" then
-    return math.min(__args[1], __args[2])
-  elseif fn == "MATH_MAX_INT" then
-    return math.max(__args[1], __args[2])
   elseif fn == "TIME_NOW_MILLIS" then
     return os.time() * 1000
   end

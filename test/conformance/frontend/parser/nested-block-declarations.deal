@@ -3,13 +3,13 @@
 // @expected: compile-ok
 // @features: parser, blocks, declarations
 
-export function test_nested_block_grammar(): int {
-  let x: int = 1;
+export function test_nested_block_grammar(): number {
+  let x: number = 1;
   {
-    let y: int = 2;
+    let y: number = 2;
     x = x + y;
     {
-      let z: int = 3;
+      let z: number = 3;
       x = x + z;
     }
   }

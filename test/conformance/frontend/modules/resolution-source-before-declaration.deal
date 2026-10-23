@@ -5,7 +5,7 @@
 
 import * as Lib from "./resolution_priority";
 
-export function probe(): int {
+export function probe(): number {
   return Lib.value();
 }
 

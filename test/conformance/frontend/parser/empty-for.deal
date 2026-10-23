@@ -4,7 +4,7 @@
 // @features: parser, for-loop
 
 export function test_empty_for(): null {
-  let count: int = 0;
+  let count: number = 0;
   {  while (true) { {
     count = count + 1;
     if (count >= 3) {

@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: async-await
 
-async function helper(): int {
+async function helper(): number {
   return 42;
 }
 
-export async function test_async_decl(): int {
-  let x: int = await helper();
+export async function test_async_decl(): number {
+  let x: number = await helper();
   if (x !== 42) {
     throw { code: "TEST_FAIL", message: "async function declaration awaited value mismatch" };
   }

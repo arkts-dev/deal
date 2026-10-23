@@ -8,4 +8,4 @@
 // Lua function value fails the function-typed return check (E8010) —
 // function-typed return wrapping is excluded (assumption c).
 
-export function getCallback(mode: string): ((x: int) => int) | null;
+export function getCallback(mode: string): ((x: number) => number) | null;

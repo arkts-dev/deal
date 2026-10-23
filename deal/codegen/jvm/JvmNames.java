@@ -216,7 +216,7 @@ public final class JvmNames {
     private static Character fnShapeLetter(Type t) {
         return switch (t) {
             case Type.Boolean ignored -> 'B';
-            case Type.Int ignored -> 'I';
+
             case Type.Number ignored -> 'N';
             case Type.String ignored -> 'S';
             case Type.Null ignored -> 'V';

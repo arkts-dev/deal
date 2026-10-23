@@ -46,17 +46,6 @@ public record BoundaryValueView(
                         "a NUMBER view must carry its IEEE-754 value in numberValue");
                 }
             }
-            case INT -> {
-                if (numberValue != null) {
-                    if (!Double.isFinite(numberValue)
-                            || numberValue != Math.rint(numberValue)
-                            || numberValue < -2147483648d || numberValue > 2147483647d) {
-                        throw new IllegalArgumentException(
-                            "an INT view value must be a signed32 integral carrier, got "
-                                + numberValue);
-                    }
-                }
-            }
             case FUNCTION -> {
                 if (functionSignature == null) {
                     throw new IllegalArgumentException(
@@ -81,9 +70,9 @@ public record BoundaryValueView(
                 "only a CLASS view carries a class id (a non-class actual kind never "
                     + "carries a class name)");
         }
-        if (kind != ActualKind.NUMBER && kind != ActualKind.INT && numberValue != null) {
+        if (kind != ActualKind.NUMBER && numberValue != null) {
             throw new IllegalArgumentException(
-                "only a NUMBER or INT view carries a numeric value");
+                "only a NUMBER view carries a numeric value");
         }
         if (kind != ActualKind.FUNCTION && functionSignature != null) {
             throw new IllegalArgumentException(
@@ -182,7 +171,7 @@ public record BoundaryValueView(
     public static BoundaryValueView of(ActualKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case NULL, MISSING, BOOLEAN, INT, STRING, TABLE, ASYNC_OPERATION,
+            case NULL, MISSING, BOOLEAN, STRING, TABLE, ASYNC_OPERATION,
                  NOTHING, INVALID_UNICODE ->
                 new BoundaryValueView(kind, null, null, null, null, false);
             case CLASS, NUMBER, FUNCTION, ARRAY ->
@@ -240,16 +229,6 @@ public record BoundaryValueView(
         Objects.requireNonNull(elements, "elements must not be null");
         return new BoundaryValueView(ActualKind.ARRAY, null, null, null,
             List.copyOf(elements), true);
-    }
-
-    /** An {@code INT} view carrying its exact signed32 value. */
-    public static BoundaryValueView ofInt(long value) {
-        if (value < -2147483648L || value > 2147483647L) {
-            throw new IllegalArgumentException(
-                "an INT view value must be signed32, got " + value);
-        }
-        return new BoundaryValueView(ActualKind.INT, null, (double) value, null, null,
-            false);
     }
 
     /** A {@code NUMBER} view carrying its IEEE-754 value (NaN/infinity included). */

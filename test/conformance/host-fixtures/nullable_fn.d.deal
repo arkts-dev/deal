@@ -9,4 +9,4 @@
 // through unadapted) and matching-sig DEAL functions (adapted to plain Lua
 // functions), and raises E8010 for anything else.
 
-export function register(cb: ((x: int) => int) | null): int;
+export function register(cb: ((x: number) => number) | null): number;

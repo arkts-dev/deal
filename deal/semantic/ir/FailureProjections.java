@@ -66,7 +66,6 @@ public final class FailureProjections {
             case MISSING -> "nil";
             case NULL -> "null";
             case BOOLEAN -> "boolean";
-            case INT -> "int";
             case NUMBER -> "number";
             case STRING -> "string";
             case INVALID_UNICODE -> "invalid-unicode";
@@ -91,7 +90,7 @@ public final class FailureProjections {
      * every numeric carrier projecting the single {@code number} kind.
      */
     public static String completionToken(ActualKind kind, String classId) {
-        if (kind == ActualKind.INT || kind == ActualKind.NUMBER) {
+        if (kind == ActualKind.NUMBER) {
             return "number";
         }
         return typedBoundaryToken(kind, classId);
@@ -129,7 +128,7 @@ public final class FailureProjections {
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> "null";
             case RuntimeDescriptor.Boolean ignored -> "boolean";
-            case RuntimeDescriptor.Int ignored -> "int";
+
             case RuntimeDescriptor.Number ignored -> "number";
             case RuntimeDescriptor.String ignored -> "string";
             case RuntimeDescriptor.Table ignored -> "table";
@@ -160,25 +159,8 @@ public final class FailureProjections {
         return arm.template().replace("{kind}", kindText(descriptor));
     }
 
-    /**
-     * The int path's refinement reason ({@code expected int, got NaN} /
-     * {@code … infinity} / {@code … non-integer number}): the
-     * {@code INT_CONVERSION} row's refinement arms, instantiated with the
-     * final actual token.
-     */
-    public static String refinementReason(String expected, String actualToken) {
-        FailureArmId id = switch (actualToken) {
-            case "NaN" -> FailureArmId.INT_CONVERSION_NAN;
-            case "infinity" -> FailureArmId.INT_CONVERSION_INFINITY;
-            case "number" -> FailureArmId.INT_CONVERSION_FRACTIONAL;
-            default -> throw new BoundaryExecutor.Defect(
-                "the int refinement " + actualToken + " has no closed arm");
-        };
-        FailureArm arm = FailureContractRegistry.arm(id);
-        return arm.template();
-    }
 
-    /**
+/**
      * An inner-only host string-carrier reason: the two INNER_ONLY
      * {@code TYPE_DESCRIPTOR} arms' own texts.
      */

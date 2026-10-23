@@ -3,10 +3,10 @@
 // @expected: compile-error E3003
 // @features: tables, functions, diagnostics
 
-function plusOne(value: int): int { return value + 1; }
+function plusOne(value: number): number { return value + 1; }
 
 export function main(): null {
   let t: table = { fn: plusOne };
-  let value: int = t.fn(1);
+  let value: number = t.fn(1);
   return null;
 }

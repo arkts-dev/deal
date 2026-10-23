@@ -92,7 +92,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** The pinned value-7 project of the issue: a quiet main plus an int async export. */
     private static final String VALUE_SEVEN_SOURCE = """
-        export async function run(): int {
+        export async function run(): number {
           return 7;
         }
 
@@ -122,8 +122,8 @@ public class AsyncExportInvokerProductionTest {
      * metadata ({@code __a}/{@code __n}).
      */
     private static final String ARRAY_COMPLETION_SOURCE = """
-        export async function run(): int[] {
-          return [7, 8];
+        export async function run(): number[] {
+          return [7.0, 8];
         }
 
         export function main(): null {
@@ -153,7 +153,7 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String NESTED_COMPLETION_SOURCE = """
         export async function run(): table {
-          return { a: 7, xs: [7, 8], n: null };
+          return { a: 7, xs: [7.0, 8], n: null };
         }
 
         export function main(): null {
@@ -194,9 +194,9 @@ public class AsyncExportInvokerProductionTest {
 
     /** The int-variant read carrier unwraps to its integral number. */
     private static final String INT_READ_SOURCE = """
-        export async function run(): int {
+        export async function run(): number {
           let t: table = { v: 7 };
-          let v: int = t.v;
+          let v: number = t.v;
           return v;
         }
 
@@ -291,7 +291,7 @@ public class AsyncExportInvokerProductionTest {
      * (ISSUE-0749 review cycle 2, finding 2).
      */
     private static final String EMPTY_ARRAY_SOURCE = """
-        export async function run(): int[] {
+        export async function run(): number[] {
           return [];
         }
 
@@ -302,8 +302,8 @@ public class AsyncExportInvokerProductionTest {
 
     /** Nested empty arrays keep the JSON array shape at every depth. */
     private static final String NESTED_EMPTY_ARRAY_SOURCE = """
-        export async function run(): int[][] {
-          let xs: int[][] = [[], [7]];
+        export async function run(): number[][] {
+          let xs: number[][] = [[], [7]];
           return xs;
         }
 
@@ -315,7 +315,7 @@ public class AsyncExportInvokerProductionTest {
     /** An empty array inside an object field keeps the JSON array shape. */
     private static final String EMPTY_ARRAY_FIELD_SOURCE = """
         export async function run(): table {
-          let xs: int[] = [];
+          let xs: number[] = [];
           return { a: 7, xs: xs, n: null };
         }
 
@@ -367,7 +367,7 @@ public class AsyncExportInvokerProductionTest {
         import * as json from "std/json";
 
         export async function run(): table | null {
-          return json.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5.0],\\"n\\":7}");
+          return json.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5],\\"n\\":7.0}");
         }
 
         export function main(): null {
@@ -402,7 +402,7 @@ public class AsyncExportInvokerProductionTest {
         import * as json from "std/json";
 
         export async function run(): table | null {
-          return json.parse("{\\"xs\\":[1e17,1e-320,-0.0]}");
+          return json.parse("{\\"xs\\":[1e17,1e-320,0]}");
         }
 
         export function main(): null {
@@ -418,7 +418,7 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String DELETED_SLOT_SOURCE = """
         export async function run(): table {
-          let xs: int[] = [7, 8];
+          let xs: number[] = [7.0, 8];
           delete xs[0];
           return { xs: xs };
         }
@@ -435,7 +435,7 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String EXPLICIT_NULL_SLOT_SOURCE = """
         export async function run(): table {
-          let xs: (int | null)[] = [null, 8];
+          let xs: (number | null)[] = [null, 8];
           return { xs: xs };
         }
 
@@ -454,7 +454,7 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String CLASS_COMPLETION_SOURCE = """
         class C {
-          x: int = 7;
+          x: number = 7;
         }
 
         export async function run(): C {
@@ -470,7 +470,7 @@ public class AsyncExportInvokerProductionTest {
     /** The same class value nested in an array completion. */
     private static final String CLASS_ARRAY_COMPLETION_SOURCE = """
         class C {
-          x: int = 7;
+          x: number = 7;
         }
 
         export async function run(): C[] {
@@ -486,7 +486,7 @@ public class AsyncExportInvokerProductionTest {
     /** The same class value under a nullable completion descriptor. */
     private static final String NULLABLE_CLASS_COMPLETION_SOURCE = """
         class C {
-          x: int = 7;
+          x: number = 7;
         }
 
         export async function run(): C | null {
@@ -507,8 +507,8 @@ public class AsyncExportInvokerProductionTest {
      * as a DEAL function value on both targets.
      */
     private static final String FUNCTION_COMPLETION_SOURCE = """
-        export async function run(): () => int {
-          let f: () => int = function(): int { return 7; };
+        export async function run(): () => number {
+          let f: () => number = function(): number { return 7; };
           return f;
         }
 
@@ -519,8 +519,8 @@ public class AsyncExportInvokerProductionTest {
 
     /** The same function value nested in an array completion. */
     private static final String FUNCTION_ARRAY_COMPLETION_SOURCE = """
-        export async function run(): (() => int)[] {
-          let f: () => int = function(): int { return 7; };
+        export async function run(): (() => number)[] {
+          let f: () => number = function(): number { return 7; };
           return [f];
         }
 
@@ -568,7 +568,7 @@ public class AsyncExportInvokerProductionTest {
      * entry (ISSUE-0749 review cycle 2, finding 4).
      */
     private static final String PARAMETERIZED_SOURCE = """
-        export async function run(x: int): int {
+        export async function run(x: number): number {
           return x;
         }
 
@@ -585,14 +585,14 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export async function run(): int {
-          let v: int = await probe.fetchDelayed();
+        export async function run(): number {
+          let v: number = await probe.fetchDelayed();
           return v;
         }
         """;
 
     private static final String DELAYED_DECLARATION = """
-        export async function fetchDelayed(): int;
+        export async function fetchDelayed(): number;
         """;
 
     private static final String DELAYED_LUA_HOST = """
@@ -644,7 +644,7 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export async function run(): int {
+        export async function run(): number {
           let v: string = await probe.fetchMismatch();
           return 7;
         }
@@ -675,10 +675,10 @@ public class AsyncExportInvokerProductionTest {
 
     /** The operation-raised DEAL error: an int division by zero inside the async export. */
     private static final String OPERATION_ERROR_SOURCE = """
-        export async function run(): int {
-          let z: int = 1;
-          let w: int = 0;
-          let q: int = z / w;
+        export async function run(): number {
+          let z: number[] = [1];
+          let w: number = 0;
+          let q: number = z[w + 1];
           return q;
         }
 
@@ -689,14 +689,14 @@ public class AsyncExportInvokerProductionTest {
 
     /** The main-raised DEAL error: the same division by zero inside main(). */
     private static final String MAIN_ERROR_SOURCE = """
-        export async function run(): int {
+        export async function run(): number {
           return 7;
         }
 
         export function main(): null {
-          let z: int = 1;
-          let w: int = 0;
-          let q: int = z / w;
+          let z: number[] = [1];
+          let w: number = 0;
+          let q: number = z[w + 1];
           return null;
         }
         """;
@@ -707,7 +707,7 @@ public class AsyncExportInvokerProductionTest {
      * of its own, and the error's origin is the throw at 2:3.
      */
     private static final String USER_ERROR_SOURCE = """
-        export async function run(): int {
+        export async function run(): number {
           throw { code: "E_USER", message: "unchanged\\nmessage" };
         }
 
@@ -730,14 +730,14 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export async function run(): int {
+        export async function run(): number {
           return probe.snapshot();
         }
         """;
 
     private static final String COUNTS_DECLARATION = """
         export function touchMain(): null;
-        export function snapshot(): int;
+        export function snapshot(): number;
         """;
 
     private static final String COUNTS_LUA_HOST = """
@@ -810,10 +810,10 @@ public class AsyncExportInvokerProductionTest {
 
         export async function run(): null {
           let trace: string = "";
-          async function value(s: string, x: int): int { trace = trace + s; return x; }
-          async function small(x: int): int { trace = trace + "F"; return x; }
-          let f: async (x: int, y: int) => int = small;
-          let r: int = await f(await value("A", 7), await value("B", 8));
+          async function value(s: string, x: number): number { trace = trace + s; return x; }
+          async function small(x: number): number { trace = trace + "F"; return x; }
+          let f: async (x: number, y: number) => number = small;
+          let r: number = await f(await value("A", 7), await value("B", 8));
           if (r !== 7 || trace !== "ABF") {
             throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
           }
@@ -885,8 +885,8 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), VALUE_SEVEN_SOURCE, null,
                 null);
             try {
-                Object result = invoke(project, "run", "int");
-                checkEq(valueResult(backend, "int", "7"), result,
+                Object result = invoke(project, "run", "number");
+                checkEq(valueResult(backend, "number", "7.0"), result,
                     backend + ": the async export completes the pinned 7: " + result);
                 if ("jvm".equals(backend)) {
                     check(Files.isRegularFile(project.classes()
@@ -936,13 +936,13 @@ public class AsyncExportInvokerProductionTest {
             } finally {
                 deleteRecursively(nested.root());
             }
-            Project intRead = compile("int-read-" + backend, backend,
+            Project intRead = compile("number-read-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), INT_READ_SOURCE, null,
                 null);
             try {
-                Object result = invoke(intRead, "run", "int");
-                checkEq(valueResult(backend, "int", "7"), result,
-                    backend + ": an int read completes its integral number: "
+                Object result = invoke(intRead, "run", "number");
+                checkEq(valueResult(backend, "number", "7.0"), result,
+                    backend + ": an number read completes its integral number: "
                         + result);
             } finally {
                 deleteRecursively(intRead.root());
@@ -953,8 +953,8 @@ public class AsyncExportInvokerProductionTest {
                 NUMBER_PRECISION_SOURCE, "number", "0.30000000000000004");
             checkNumberCompletion(backend, "number-magnitude",
                 NUMBER_MAGNITUDE_SOURCE, "number", "1.0E17");
-            checkNumberCompletion(backend, "number-int-variant",
-                NUMBER_INT_VARIANT_SOURCE, "number", "7");
+            checkNumberCompletion(backend, "number-number-variant",
+                NUMBER_INT_VARIANT_SOURCE, "number", "7.0");
         }
     }
 
@@ -994,9 +994,9 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), EMPTY_ARRAY_SOURCE, null,
                 null);
             try {
-                Object result = invoke(empty, "run", "[int]");
-                checkEq(valueResult(backend, "[int]", "[]"), result,
-                    backend + ": an empty int[] completion stays a JSON array: "
+                Object result = invoke(empty, "run", "[number]");
+                checkEq(valueResult(backend, "[number]", "[]"), result,
+                    backend + ": an empty number[] completion stays a JSON array: "
                         + result);
             } finally {
                 deleteRecursively(empty.root());
@@ -1005,8 +1005,8 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), NESTED_EMPTY_ARRAY_SOURCE,
                 null, null);
             try {
-                Object result = invoke(nested, "run", "[[int]]");
-                checkEq(valueResult(backend, "[[int]]", "[[],[7]]"), result,
+                Object result = invoke(nested, "run", "[[number]]");
+                checkEq(valueResult(backend, "[[number]]", "[[],[7.0]]"), result,
                     backend + ": a nested empty array keeps its shape at every"
                         + " depth: " + result);
             } finally {
@@ -1046,7 +1046,7 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(shared, "run", "table");
                 checkEq(valueResult(backend, "table",
-                        "{\"a\":{\"v\":7},\"b\":{\"v\":7}}"), result,
+                        "{\"a\":{\"v\":7.0},\"b\":{\"v\":7.0}}"), result,
                     backend + ": a shared reference encodes at every position: "
                         + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1095,7 +1095,7 @@ public class AsyncExportInvokerProductionTest {
             try {
                 Object result = invoke(numbers, "run", "?table");
                 checkEq(valueResult(backend, "?table",
-                        "{\"x\":0.30000000000000004,\"xs\":[5],\"n\":7}"),
+                        "{\"x\":0.30000000000000004,\"xs\":[5.0],\"n\":7.0}"),
                     result,
                     backend + ": every parsed numeric leaf keeps its variant"
                         + " text: " + result);
@@ -1125,7 +1125,7 @@ public class AsyncExportInvokerProductionTest {
                         "{\"xs\":[1.0E17,1.0E-320,0]}"), result,
                     backend + ": parsed exponent and signed-zero leaves keep"
                         + " their canonical text (5.0 form and -0.0 classify as"
-                        + " int by the v1.3 exact rule): " + result);
+                        + " number by the v1.3 exact rule): " + result);
                 assertNoInternalKeys(backend, valueJson(result));
             } finally {
                 deleteRecursively(exponents.root());
@@ -1153,7 +1153,7 @@ public class AsyncExportInvokerProductionTest {
                 EXPLICIT_NULL_SLOT_SOURCE, null, null);
             try {
                 Object result = invoke(project, "run", "table");
-                checkEq(valueResult(backend, "table", "{\"xs\":[null,8]}"),
+                checkEq(valueResult(backend, "table", "{\"xs\":[null,8.0]}"),
                     result,
                     backend + ": a present null slot keeps its JSON null: "
                         + result);
@@ -1189,10 +1189,10 @@ public class AsyncExportInvokerProductionTest {
                 NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/main.deal/C",
                 "unsupported type for JSON encoding: table");
             assertRepresentationFailure(backend, "function-completion",
-                FUNCTION_COMPLETION_SOURCE, "()->int",
+                FUNCTION_COMPLETION_SOURCE, "()->number",
                 "unsupported type for JSON encoding: function");
             assertRepresentationFailure(backend, "function-array-completion",
-                FUNCTION_ARRAY_COMPLETION_SOURCE, "[()->int]",
+                FUNCTION_ARRAY_COMPLETION_SOURCE, "[()->number]",
                 "unsupported type for JSON encoding: function");
             assertRepresentationFailure(backend, "stdlib-function-completion",
                 STDLIB_FUNCTION_COMPLETION_SOURCE, "(table)->string",
@@ -1230,7 +1230,7 @@ public class AsyncExportInvokerProductionTest {
                   "the published parameterized export produces an operation: "
                     .. tostring(handle))
                 rt.async_step(handle)
-                local checked = rt.check_canonical_type("int", handle.__result)
+                local checked = rt.check_canonical_type("number", handle.__result)
                 assert(checked == 7, "the forwarded argument completes 7, got "
                     .. tostring(checked))
                 local ok, err = pcall(exports.run.f)
@@ -1277,9 +1277,9 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), ARRAY_COMPLETION_SOURCE,
                 null, null);
             try {
-                Object result = invoke(array, "run", "[int]");
-                checkEq(valueResult(backend, "[int]", "[7,8]"), result,
-                    backend + ": an int[] completion encodes as the checked JSON"
+                Object result = invoke(array, "run", "[number]");
+                checkEq(valueResult(backend, "[number]", "[7.0,8.0]"), result,
+                    backend + ": an number[] completion encodes as the checked JSON"
                         + " array: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
             } finally {
@@ -1291,7 +1291,7 @@ public class AsyncExportInvokerProductionTest {
                 null, null);
             try {
                 Object result = invoke(table, "run", "table");
-                checkEq(valueResult(backend, "table", "{\"a\":7}"), result,
+                checkEq(valueResult(backend, "table", "{\"a\":7.0}"), result,
                     backend + ": a plain-object completion encodes as the checked"
                         + " JSON object: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1309,7 +1309,7 @@ public class AsyncExportInvokerProductionTest {
                 check(result instanceof LuaJitAsyncExportInvoker.Result.Value
                         || result instanceof JvmAsyncExportInvoker.Result.Value,
                     backend + ": the nested completion is a value: " + result);
-                check(json != null && json.contains("\"xs\":[7,8]"),
+                check(json != null && json.contains("\"xs\":[7.0,8.0]"),
                     backend + ": a nested array field keeps its JSON array shape: "
                         + json);
                 check(json != null && json.contains("\"n\":null"),
@@ -1410,7 +1410,7 @@ public class AsyncExportInvokerProductionTest {
             backend + ": the decoded object carries exactly the declared field");
         LuaJitAsyncExportInvoker.EnvelopeJson.Value field = object.fields().get("a");
         check(field instanceof LuaJitAsyncExportInvoker.EnvelopeJson.NumberValue number
-                && "7".equals(number.token()),
+                && Double.parseDouble(number.token()) == 7.0,
             backend + ": the decoded field a is the number 7: " + field);
     }
 
@@ -1422,8 +1422,8 @@ public class AsyncExportInvokerProductionTest {
                 DELAYED_DECLARATION,
                 "luajit".equals(backend) ? DELAYED_LUA_HOST : DELAYED_JVM_HOST);
             try {
-                Object result = invoke(project, "run", "int");
-                checkEq(valueResult(backend, "int", "7"), result,
+                Object result = invoke(project, "run", "number");
+                checkEq(valueResult(backend, "number", "7.0"), result,
                     backend + ": the delayed host completion reaches the"
                         + " completion as 7: " + result);
             } finally {
@@ -1440,7 +1440,7 @@ public class AsyncExportInvokerProductionTest {
                 MISMATCH_DECLARATION,
                 "luajit".equals(backend) ? MISMATCH_LUA_HOST : MISMATCH_JVM_HOST);
             try {
-                Object result = invoke(project, "run", "int");
+                Object result = invoke(project, "run", "number");
                 check(result instanceof LuaJitAsyncExportInvoker.Result.DealError
                         || result instanceof JvmAsyncExportInvoker.Result.DealError,
                     backend + ": a mismatched completion is a DEAL error, never a"
@@ -1464,47 +1464,47 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), OPERATION_ERROR_SOURCE,
                 null, null);
             try {
-                Object result = invoke(operation, "run", "int");
-                checkEq("E8005", errorCode(result),
+                Object result = invoke(operation, "run", "number");
+                checkEq("E8002", errorCode(result),
                     backend + ": the operation error keeps its code: " + result);
-                checkEq("integer division by zero", errorMessage(result),
+                checkEq("array index out of bounds", errorMessage(result),
                     backend + ": the operation error keeps its message: " + result);
                 assertLocation(backend, result, operation.root()
-                    .resolve("src/main.deal"), 4, 16);
+                    .resolve("src/main.deal"), 4, 19);
             } finally {
                 deleteRecursively(operation.root());
             }
             Project main = compile("main-error-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), MAIN_ERROR_SOURCE, null, null);
             try {
-                Object result = invoke(main, "run", "int");
-                checkEq("E8005", errorCode(result),
+                Object result = invoke(main, "run", "number");
+                checkEq("E8002", errorCode(result),
                     backend + ": the main() error keeps its code: " + result);
-                checkEq("integer division by zero", errorMessage(result),
+                checkEq("array index out of bounds", errorMessage(result),
                     backend + ": the main() error keeps its message: " + result);
                 assertLocation(backend, result, main.root()
-                    .resolve("src/main.deal"), 8, 16);
+                    .resolve("src/main.deal"), 8, 19);
             } finally {
                 deleteRecursively(main.root());
             }
             Project caused = compile("caused-error-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), """
                     export function main(): null {return null;}
-                    export async function run(): int {
-                      try {let t: table = {value: "bad"}; let x: int = t.value; return x;}
+                    export async function run(): number {
+                      try {let t: table = {value: "bad"}; let x: number = t.value; return x;}
                       catch(e) {throw {code: "OUTER", message: "outer"};}
                     }
                     """, null, null);
             try {
-                Object result = invoke(caused, "run", "int");
+                Object result = invoke(caused, "run", "number");
                 checkEq("OUTER", errorCode(result), backend + ": outer failure survives");
                 AsyncExportEnvelope.ErrorDetail detail = errorDetail(result);
                 AsyncExportEnvelope.ErrorDetail cause = detail == null ? null : detail.cause();
                 check(cause != null, backend + ": actual public invocation retains cause");
                 if (cause != null) {
                     checkEq("E8001", cause.code(), backend + ": cause code");
-                    checkEq("expected int", cause.message(), backend + ": cause message");
-                    checkEq("int", cause.expected(), backend + ": cause expected");
+                    checkEq("expected number", cause.message(), backend + ": cause message");
+                    checkEq("number", cause.expected(), backend + ": cause expected");
                     checkEq("string", cause.actual(), backend + ": cause actual");
                     checkEq(Integer.valueOf(3), cause.line(), backend + ": cause origin");
                     check(cause.frames() != null && cause.frames().contains("run@F"),
@@ -1534,7 +1534,7 @@ public class AsyncExportInvokerProductionTest {
                 Project project = compileAt(root, "newline-path-" + backend, backend,
                     String.format(PLAIN_MANIFEST, backend), USER_ERROR_SOURCE,
                     null, null);
-                Object result = invoke(project, "run", "int");
+                Object result = invoke(project, "run", "number");
                 checkEq("E_USER", errorCode(result),
                     backend + ": the user error keeps its code: " + result);
                 checkEq("unchanged\nmessage", errorMessage(result),
@@ -1600,24 +1600,24 @@ public class AsyncExportInvokerProductionTest {
         checkEq(Integer.valueOf(16), decoded.column,
             "the shared codec reads the projected column");
         checkEq(prefix + "{\"status\":\"deal-error\",\"code\":\"E8001\","
-                + "\"message\":\"expected int\"}",
-            JvmRuntime.asyncExportDealErrorEnvelope("E8001", "expected int", "-"),
+                + "\"message\":\"expected number\"}",
+            JvmRuntime.asyncExportDealErrorEnvelope("E8001", "expected number", "-"),
             "the emitter's absent-origin marker omits every location field");
         checkEq(prefix + "{\"status\":\"deal-error\",\"code\":\"E8001\","
-                + "\"message\":\"expected int\"}",
-            JvmRuntime.asyncExportDealErrorEnvelope("E8001", "expected int", null),
+                + "\"message\":\"expected number\"}",
+            JvmRuntime.asyncExportDealErrorEnvelope("E8001", "expected number", null),
             "an absent origin omits every location field");
 
         // The complete ErrorDetail projection: the expected/actual pair and
         // the ordered frame text travel as their own optional fields, and
         // the shared codec reads them back.
         String complete = JvmRuntime.asyncExportDealErrorEnvelope("E8001",
-            "expected int", "/abs/src/helper.deal:3:16", "int", "string",
+            "expected number", "/abs/src/helper.deal:3:16", "number", "string",
             "helper#fail@F20,main#run@F107");
         checkEq(prefix + "{\"status\":\"deal-error\",\"code\":\"E8001\","
-                + "\"message\":\"expected int\","
+                + "\"message\":\"expected number\","
                 + "\"file\":\"/abs/src/helper.deal\",\"line\":3,"
-                + "\"column\":16,\"expected\":\"int\","
+                + "\"column\":16,\"expected\":\"number\","
                 + "\"actual\":\"string\","
                 + "\"frames\":\"helper#fail@F20,main#run@F107\"}",
             complete,
@@ -1625,26 +1625,26 @@ public class AsyncExportInvokerProductionTest {
                 + " expected/actual/frames");
         AsyncExportEnvelope.Envelope detail = AsyncExportEnvelope.decodeEnvelope(
             complete.substring(prefix.length()));
-        checkEq("int", detail.expected,
+        checkEq("number", detail.expected,
             "the shared codec reads the projected expected");
         checkEq("string", detail.actual,
             "the shared codec reads the projected actual");
         checkEq("helper#fail@F20,main#run@F107", detail.frames,
             "the shared codec reads the projected frames");
         JvmRuntime.DealError leaf = new JvmRuntime.DealError("E8001", "leaf",
-            "src/helper.deal:3:16", "int", "string", "fail@F20", null);
+            "src/helper.deal:3:16", "number", "string", "fail@F20", null);
         JvmRuntime.DealError outer = new JvmRuntime.DealError("E8003", "outer",
             "src/main.deal:4:1", null, null, "run@F107", leaf);
         AsyncExportEnvelope.Envelope caused = AsyncExportEnvelope.decodeEnvelope(
             JvmRuntime.asyncExportDealErrorEnvelope(outer).substring(prefix.length()));
         checkEq(new AsyncExportEnvelope.ErrorDetail("E8001", "leaf",
-            "src/helper.deal", 3, 16, "int", "string", "fail@F20", null),
+            "src/helper.deal", 3, 16, "number", "string", "fail@F20", null),
             caused.cause, "recursive cause survives the producer and closed codec");
         check(detail.cause == null, "direct errors do not invent a cause");
         // An absent optional field is genuinely absent on the wire and null
         // in the projection (the compatibility five-argument shape).
         AsyncExportEnvelope.Envelope absent = AsyncExportEnvelope.decodeEnvelope(
-            JvmRuntime.asyncExportDealErrorEnvelope("E8001", "expected int",
+            JvmRuntime.asyncExportDealErrorEnvelope("E8001", "expected number",
                 "-").substring(prefix.length()));
         check(absent.expected == null && absent.actual == null
                 && absent.frames == null,
@@ -1657,7 +1657,7 @@ public class AsyncExportInvokerProductionTest {
                 "\"expected\":7",
                 "\"cause\":{}",
                 "\"cause\":null",
-                "\"cause\":{\"code\":\"E8001\",\"message\":\"m\",\"unknown\":1}")) {
+                "\"cause\":{\"code\":\"E8001\",\"message\":\"m\",\"unknown\":1.0}")) {
             checkRefusedEnvelope("{\"status\":\"deal-error\",\"code\":\"E8001\","
                 + "\"message\":\"m\"," + field + "}", field);
         }
@@ -1667,9 +1667,9 @@ public class AsyncExportInvokerProductionTest {
         // invokers'), with the absent optional metadata null.
         for (Object compat : List.of(
                 new LuaJitAsyncExportInvoker.Result.DealError(
-                    "E8001", "expected int", "/abs/src/helper.deal", 3, 16),
+                    "E8001", "expected number", "/abs/src/helper.deal", 3, 16),
                 new JvmAsyncExportInvoker.Result.DealError(
-                    "E8001", "expected int", "/abs/src/helper.deal", 3, 16))) {
+                    "E8001", "expected number", "/abs/src/helper.deal", 3, 16))) {
             checkEq("E8001", errorCode(compat),
                 compat.getClass() + ": the five-argument DealError constructor stays public");
             AsyncExportEnvelope.ErrorDetail metadata = errorDetail(compat);
@@ -1834,12 +1834,12 @@ public class AsyncExportInvokerProductionTest {
                 COUNTS_DECLARATION,
                 "luajit".equals(backend) ? COUNTS_LUA_HOST : COUNTS_JVM_HOST);
             try {
-                Object first = invoke(project, "run", "int");
-                Object second = invoke(project, "run", "int");
-                checkEq(valueResult(backend, "int", "110"), first,
+                Object first = invoke(project, "run", "number");
+                Object second = invoke(project, "run", "number");
+                checkEq(valueResult(backend, "number", "110.0"), first,
                     backend + ": one host-module load and one main touch before"
                         + " the export: " + first);
-                checkEq(valueResult(backend, "int", "110"), second,
+                checkEq(valueResult(backend, "number", "110.0"), second,
                     backend + ": the second invocation starts a fresh runtime"
                         + " instance (no shared host state): " + second);
             } finally {
@@ -1944,9 +1944,9 @@ public class AsyncExportInvokerProductionTest {
      * (column 16 — never the later annotation check at column 10).
      */
     private static final String CORNER_HELPER = """
-        export %sfunction fail(): int {
+        export %sfunction fail(): number {
           let t: table = {value: "bad"};
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
         """;
@@ -1955,7 +1955,7 @@ public class AsyncExportInvokerProductionTest {
         import * as c from "std/console";
         import * as helper from "./helper";
         export function main(): null {return null;}
-        export %sfunction run(): int {%s}
+        export %sfunction run(): number {%s}
         """;
 
     private static Project compileCorner(String name, String backend,
@@ -1990,7 +1990,7 @@ public class AsyncExportInvokerProductionTest {
                     + "-" + backend;
                 Project project = compileCorner(name, backend, true, rethrow);
                 try {
-                    Object result = invoke(project, "run", "int");
+                    Object result = invoke(project, "run", "number");
                     Path companion = project.root().resolve("src/helper.deal");
                     checkCornerError(name, errorDetail(result), companion);
                     AsyncExportEnvelope.Envelope envelope =
@@ -2152,8 +2152,8 @@ public class AsyncExportInvokerProductionTest {
         if (detail == null) {
             return;
         }
-        checkEq(new AsyncExportEnvelope.ErrorDetail("E8001", "expected int",
-            companionSource.toAbsolutePath().toString(), 3, 16, "int", "string",
+        checkEq(new AsyncExportEnvelope.ErrorDetail("E8001", "expected number",
+            companionSource.toAbsolutePath().toString(), 3, 19, "number", "string",
             detail.frames(), null), detail, name + ": the complete corner error metadata");
         checkCornerFrames(name, detail.frames());
     }
@@ -2174,13 +2174,13 @@ public class AsyncExportInvokerProductionTest {
     private static void checkCornerObservation(String name,
             java.util.Map<String, String> observed, String backend) {
         checkEq("E8001", observed.get("code"), name + ": the observed code");
-        checkEq("expected int", observed.get("message"), name
+        checkEq("expected number", observed.get("message"), name
             + ": the observed typed-kind message");
         String origin = observed.getOrDefault("origin", "").replace('\\', '/');
-        check(origin.endsWith("/src/helper.deal:3:16"),
+        check(origin.endsWith("/src/helper.deal:3:19"),
             name + ": the observed origin is the companion line 3 contextual read anchor: "
                 + origin);
-        checkEq("int", observed.get("expected"), name
+        checkEq("number", observed.get("expected"), name
             + ": the observed expected type");
         checkEq("string", observed.get("actual"), name
             + ": the observed actual type");
@@ -2201,21 +2201,21 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String AWAIT_ARRAY_WRITE_SUBJECT = """
         export function main(): null {return null;}
-        export async function run(): int {
-          let xs: int[] = [7];
-          let alias: int[] = xs;
+        export async function run(): number {
+          let xs: number[] = [7];
+          let alias: number[] = xs;
           let trace: string = "";
-          async function value(): int {trace = trace + "V"; return 9;}
-          function index(): int {trace = trace + "I"; return 2;}
-          function receiver(): int[] {trace = trace + "R"; return xs;}
+          async function value(): number {trace = trace + "V"; return 9;}
+          function index(): number {trace = trace + "I"; return 2;}
+          function receiver(): number[] {trace = trace + "R"; return xs;}
           try {receiver()[index()] = await value(); trace = trace + "X";}
           catch (e) {if (e.code !== "E8002") {return 0;} trace = trace + "C";}
           if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {return 0;}
           alias[alias.length] = 8;
           if (xs.length !== 2 || xs[1] !== 8) {return 0;}
           let zero: table = {value: -0.0};
-          function admitted(x: int): int {
-            if (1.0 / number(x) > 0.0) {return 1;}
+          function admitted(x: number): number {
+            if (1.0 / x < 0.0) {return 1;}
             return 0;
           }
           return admitted(zero.value);
@@ -2232,8 +2232,8 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend),
                 AWAIT_ARRAY_WRITE_SUBJECT, null, null);
             try {
-                Object result = invoke(project, "run", "int");
-                checkEq(valueResult(backend, "int", "1"), result,
+                Object result = invoke(project, "run", "number");
+                checkEq(valueResult(backend, "number", "1.0"), result,
                     name + ": the public completion is 1 (the RIV/bounds/"
                         + "no-write/append oracle passed)");
 
@@ -2241,8 +2241,8 @@ public class AsyncExportInvokerProductionTest {
                 if (envelope != null) {
                     checkEq(AsyncExportEnvelope.STATUS_VALUE, envelope.status,
                         name + ": the wire status is value");
-                    checkEq("int", envelope.descriptor, name + ": the wire descriptor is int");
-                    checkEq("1", envelope.value, name + ": the wire value is 1");
+                    checkEq("number", envelope.descriptor, name + ": the wire descriptor is number");
+                    checkEq("1.0", envelope.value, name + ": the wire value is 1");
                 }
             } finally {
                 deleteRecursively(project.root());
@@ -2252,7 +2252,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static AsyncExportEnvelope.Envelope quietHostEnvelope(String name,
             Project project) throws Exception {
-        ProcessOutcome transcript = productionHostTranscript(project, "run", "int");
+        ProcessOutcome transcript = productionHostTranscript(project, "run", "number");
         checkEq(0, transcript.exitCode(), name + ": the production host exits 0: "
             + transcript.output());
         checkEq("", transcript.stderr(), name + ": the program stderr stays empty: "

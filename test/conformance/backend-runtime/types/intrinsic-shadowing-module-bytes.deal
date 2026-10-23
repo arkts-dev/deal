@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: variables, name-resolution, shadowing, intrinsics
 
-function bytes(n: int): int { return n + 100; }
+function bytes(n: number): number { return n + 100; }
 
 export function main(): null {
   if (bytes(2) !== 102) {

@@ -65,26 +65,12 @@ $math.sqrt = $rt.function("(number)->number", function(x, $file, $line, $column)
 // non-negative values and exact negation for negatives across the whole
 // safe range (the most negative safe int -9007199254740991 negates to
 // +9007199254740991, both within ±(2^53-1)).
-$math.absInt = $rt.function("(int)->int", function(x, $file, $line, $column) {
-  $rt.checkInt(x, $file, $line, $column);
-  return $rt.checkInt($Math.abs(x), $file, $line, $column);
-});
 
 $math.absNumber = $rt.function("(number)->number", function(x, $file, $line, $column) {
   $rt.checkNumber(x, $file, $line, $column);
   return $rt.checkNumber($Math.abs(x), $file, $line, $column);
 });
 
-$math.minInt = $rt.function("(int,int)->int", function(a, b, $file, $line, $column) {
-  $rt.checkInt(a, $file, $line, $column);
-  $rt.checkInt(b, $file, $line, $column);
-  return $rt.checkInt($Math.min(a, b), $file, $line, $column);
-});
 
-$math.maxInt = $rt.function("(int,int)->int", function(a, b, $file, $line, $column) {
-  $rt.checkInt(a, $file, $line, $column);
-  $rt.checkInt(b, $file, $line, $column);
-  return $rt.checkInt($Math.max(a, b), $file, $line, $column);
-});
 
 module.exports = $math;

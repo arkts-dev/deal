@@ -2,4 +2,4 @@
 // isolated-dereference fixture. Companions must keep compiling standalone.
 // @expected: companion
 
-export class Box { n: int = 0; }
+export class Box { n: number = 0; }

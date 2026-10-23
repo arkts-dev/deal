@@ -82,7 +82,7 @@ public class BoundaryExecutorTest {
     // =========================================================================
 
     private static final RuntimeDescriptor STRING = DescriptorService.describe(Type.String.INSTANCE);
-    private static final RuntimeDescriptor INT = DescriptorService.describe(Type.Int.INSTANCE);
+    private static final RuntimeDescriptor INT = DescriptorService.describe(Type.Number.INSTANCE);
     private static final RuntimeDescriptor NUMBER = DescriptorService.describe(Type.Number.INSTANCE);
     private static final RuntimeDescriptor BOOLEAN = DescriptorService.describe(Type.Boolean.INSTANCE);
     private static final RuntimeDescriptor NULL_DESCRIPTOR = DescriptorService.describe(Type.Null.INSTANCE);
@@ -94,26 +94,26 @@ public class BoundaryExecutorTest {
     private static final RuntimeDescriptor NUMBER_ARRAY =
         DescriptorService.describe(new Type.Array(Type.Number.INSTANCE));
     private static final RuntimeDescriptor INT_ARRAY =
-        DescriptorService.describe(new Type.Array(Type.Int.INSTANCE));
+        DescriptorService.describe(new Type.Array(Type.Number.INSTANCE));
     private static final RuntimeDescriptor NULL_ARRAY =
         DescriptorService.describe(new Type.Array(Type.Null.INSTANCE));
     private static final RuntimeDescriptor NULLABLE_INT_ARRAY =
-        DescriptorService.describe(new Type.Array(new Type.Nullable(Type.Int.INSTANCE)));
+        DescriptorService.describe(new Type.Array(new Type.Nullable(Type.Number.INSTANCE)));
     private static final RuntimeDescriptor NESTED_INT_ARRAY =
-        DescriptorService.describe(new Type.Array(new Type.Array(Type.Int.INSTANCE)));
+        DescriptorService.describe(new Type.Array(new Type.Array(Type.Number.INSTANCE)));
     private static final RuntimeDescriptor NULLABLE_STRING =
         DescriptorService.describe(new Type.Nullable(Type.String.INSTANCE));
     private static final RuntimeDescriptor NULLABLE_INT =
-        DescriptorService.describe(new Type.Nullable(Type.Int.INSTANCE));
+        DescriptorService.describe(new Type.Nullable(Type.Number.INSTANCE));
     private static final RuntimeDescriptor.Func SYNC_INT_TO_STRING = (RuntimeDescriptor.Func)
-        DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE));
+        DescriptorService.describe(new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE));
     private static final RuntimeDescriptor.Func SYNC_INT_TO_INT = (RuntimeDescriptor.Func)
-        DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE));
+        DescriptorService.describe(new Type.Func(List.of(Type.Number.INSTANCE), Type.Number.INSTANCE));
     private static final RuntimeDescriptor NULLABLE_SYNC_INT_TO_INT =
         DescriptorService.describe(new Type.Nullable(
-            new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)));
+            new Type.Func(List.of(Type.Number.INSTANCE), Type.Number.INSTANCE)));
     private static final RuntimeDescriptor.Func ASYNC_INT_TO_STRING = (RuntimeDescriptor.Func)
-        DescriptorService.describe(new Type.Func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE, true));
+        DescriptorService.describe(new Type.Func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE, true));
 
     // =========================================================================
     // Outcome assertion helpers
@@ -214,8 +214,6 @@ public class BoundaryExecutorTest {
 
     private static final FailurePolicyRow TD_ROW =
         FailureContractRegistry.row(FailurePolicyId.TYPE_DESCRIPTOR);
-    private static final FailurePolicyRow RANGE_ROW =
-        FailureContractRegistry.row(FailurePolicyId.INT32_RESULT);
     private static final FailurePolicyRow AC_ROW =
         FailureContractRegistry.row(FailurePolicyId.ASYNC_COMPLETION);
 
@@ -226,17 +224,17 @@ public class BoundaryExecutorTest {
     static void testT1DescriptorWiring() {
         System.out.println("-- DescriptorService wiring (T1 combined behavior) --");
         check("string".equals(STRING.canonicalSpecText()), "describe(Type.String) is string");
-        check("int".equals(INT.canonicalSpecText()), "describe(Type.Int) is int");
+        check("number".equals(INT.canonicalSpecText()), "describe(Type.Number) is number");
         check("[number]".equals(NUMBER_ARRAY.canonicalSpecText()),
             "describe(Type.Array(Type.Number)) is [number]");
-        check("[[int]]".equals(NESTED_INT_ARRAY.canonicalSpecText()),
-            "describe(Array(Array(Int))) is [[int]]");
-        check("(int)->string".equals(SYNC_INT_TO_STRING.canonicalSpecText()),
-            "describe(Func([Int], String)) is (int)->string");
-        check("(int)->int".equals(SYNC_INT_TO_INT.canonicalSpecText()),
-            "describe(Func([Int], Int)) is (int)->int");
-        check("async(int)->string".equals(ASYNC_INT_TO_STRING.canonicalSpecText()),
-            "describe(async Func) is async(int)->string");
+        check("[[number]]".equals(NESTED_INT_ARRAY.canonicalSpecText()),
+            "describe(Array(Array(Int))) is [[number]]");
+        check("(number)->string".equals(SYNC_INT_TO_STRING.canonicalSpecText()),
+            "describe(Func([Int], String)) is (number)->string");
+        check("(number)->number".equals(SYNC_INT_TO_INT.canonicalSpecText()),
+            "describe(Func([Int], Int)) is (number)->number");
+        check("async(number)->string".equals(ASYNC_INT_TO_STRING.canonicalSpecText()),
+            "describe(async Func) is async(number)->string");
         check("@src/app/User".equals(USER.canonicalSpecText()),
             "describe(Type.Class(User, src/app)) is @src/app/User");
         check("Error".equals(BUILTIN_ERROR.canonicalSpecText()),
@@ -255,7 +253,7 @@ public class BoundaryExecutorTest {
             new Case(BoundaryValueView.nullView(), "null"),
             new Case(BoundaryValueView.of(ActualKind.MISSING), "nil"),
             new Case(BoundaryValueView.of(ActualKind.BOOLEAN), "boolean"),
-            new Case(BoundaryValueView.ofInt(7), "int"),
+            new Case(BoundaryValueView.ofNumber(7), "number"),
             new Case(BoundaryValueView.ofNumber(1.5), "number"),
             new Case(BoundaryValueView.of(ActualKind.TABLE), "table"),
             new Case(BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1)), "array"),
@@ -321,96 +319,21 @@ public class BoundaryExecutorTest {
     // =========================================================================
 
     static void testIntPathNormativeOrder() {
-        System.out.println("-- int path: kind -> NaN -> infinity -> non-integer -> E8004 range --");
-
-        // Non-numeric kind first.
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
+        System.out.println("-- sole binary64 number admission and kind-first rejection --");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
                 BoundaryValueView.of(ActualKind.STRING)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "string", new LinkedHashMap<>(), null,
-            "int descriptor vs string view");
-
-        // NaN.
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(Double.NaN)),
-            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "NaN", new LinkedHashMap<>(), null,
-            "int descriptor vs NaN number");
-
-        // Both infinities.
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(Double.POSITIVE_INFINITY)),
-            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "infinity", new LinkedHashMap<>(), null,
-            "int descriptor vs +infinity");
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(Double.NEGATIVE_INFINITY)),
-            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "infinity", new LinkedHashMap<>(), null,
-            "int descriptor vs -infinity");
-
-        // Non-integral.
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(3.5)),
-            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "number",
-            new LinkedHashMap<>(), null, "int descriptor vs 3.5");
-
-        // E8004 at both signed32 ends; the pinned message is the INT32_RESULT
-        // row's template.
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(2147483648.0)),
-            FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            null, null, new LinkedHashMap<>(), null,
-            "int descriptor vs 2147483648.0");
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(-2147483649.0)),
-            FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            null, null, new LinkedHashMap<>(), null,
-            "int descriptor vs -2147483649.0");
-
-        // The nearest valid values on each side pass and keep the same value.
-        BoundaryValueView maxInt = BoundaryValueView.ofNumber(2147483647.0);
-        BoundaryOutcome maxOutcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT, maxInt);
-        expectPass(maxOutcome, "int descriptor vs 2147483647.0");
-        check(((BoundaryOutcome.Pass) maxOutcome).value() == maxInt,
-            "an in-range integral number carrier passes and stays the same value");
-
-        BoundaryValueView minInt = BoundaryValueView.ofNumber(-2147483648.0);
-        BoundaryOutcome minOutcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT, minInt);
-        expectPass(minOutcome, "int descriptor vs -2147483648.0");
-        check(((BoundaryOutcome.Pass) minOutcome).value() == minInt,
-            "-2147483648.0 stays the same value");
-
-        // The fraction just outside each end is non-integral (before the range).
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(2147483647.5)),
-            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "number",
-            new LinkedHashMap<>(), null, "int descriptor vs 2147483647.5");
-
-        // Zero forms and plain integral carriers pass.
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-            BoundaryValueView.ofNumber(3.0)), "int descriptor vs 3.0");
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-            BoundaryValueView.ofNumber(0.0)), "int descriptor vs 0.0");
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-            BoundaryValueView.ofNumber(-0.0)), "int descriptor vs -0.0");
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-            BoundaryValueView.ofInt(-2147483648)), "int descriptor vs INT(-2147483648)");
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-            BoundaryValueView.ofInt(2147483647)), "int descriptor vs INT(2147483647)");
-
-        // number accepts an int carrier.
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
-            BoundaryValueView.ofInt(5)), "number descriptor vs INT(5)");
-        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
-            BoundaryValueView.ofNumber(5.5)), "number descriptor vs 5.5");
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
-                BoundaryValueView.of(ActualKind.BOOLEAN)),
-            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected number", "number", "boolean", new LinkedHashMap<>(), null,
-            "number descriptor vs boolean view");
+            "expected number", "number", "string", new LinkedHashMap<>(), null,
+            "number descriptor rejects a string");
+        for (double value : new double[] {Double.NaN, Double.POSITIVE_INFINITY,
+                Double.NEGATIVE_INFINITY, 3.5, 2147483648.0, -2147483649.0,
+                2147483647.5, 0.0, -0.0, Double.MIN_VALUE, Double.MAX_VALUE}) {
+            BoundaryValueView view = BoundaryValueView.ofNumber(value);
+            BoundaryOutcome outcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER, view);
+            expectPass(outcome, "number descriptor admits " + value);
+            check(outcome instanceof BoundaryOutcome.Pass pass && pass.value() == view,
+                "successful admission preserves the original numeric view");
+        }
     }
 
     // =========================================================================
@@ -488,14 +411,14 @@ public class BoundaryExecutorTest {
         // Nested arrays: the outer index is the failing element's position;
         // the cause is the leaf descriptor error.
         BoundaryValueView nested = BoundaryValueView.ofArray(
-            BoundaryValueView.ofArray(BoundaryValueView.ofInt(3)),
-            BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1.5)));
-        BoundaryFailure leafNonIntegral = expectedKindMismatch("int", "number");
+            BoundaryValueView.ofArray(BoundaryValueView.ofNumber(3)),
+            BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.STRING)));
+        BoundaryFailure leafNonIntegral = expectedKindMismatch("number", "string");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NESTED_INT_ARRAY, nested),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 2 type mismatch", "[int]", "array",
+            "array element 2 type mismatch", "[number]", "array",
             Map.of("oneBasedIndex", "2"), leafNonIntegral,
-            "[[int]] vs [[3], [1.5]]");
+            "[[number]] vs [[3], [string]]");
 
         // The decoded-array mark (B3): an element carrying the std/json
         // decode mark renders its reference value-model kind `table`, while
@@ -503,23 +426,23 @@ public class BoundaryExecutorTest {
         // The descriptor, the one-based index, the leaf cause, the code,
         // and the span are unchanged.
         BoundaryValueView markedNested = BoundaryValueView.ofArray(
-            BoundaryValueView.ofArray(BoundaryValueView.ofInt(3)),
-            BoundaryValueView.ofDecodedArray(BoundaryValueView.ofNumber(1.5)));
+            BoundaryValueView.ofArray(BoundaryValueView.ofNumber(3)),
+            BoundaryValueView.ofDecodedArray(BoundaryValueView.of(ActualKind.STRING)));
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NESTED_INT_ARRAY,
                 markedNested),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 2 type mismatch", "[int]", "table",
+            "array element 2 type mismatch", "[number]", "table",
             Map.of("oneBasedIndex", "2"), leafNonIntegral,
-            "[[int]] vs [[3], decoded [1.5]]");
+            "[[number]] vs [[3], decoded [string]]");
 
         // The mark is inert on every other value: a decoded array is still
         // admissible at an array descriptor and still rejected at a table
         // descriptor with the landed actual token.
         BoundaryValueView decodedOk = BoundaryValueView.ofDecodedArray(
-            BoundaryValueView.ofInt(3));
+            BoundaryValueView.ofNumber(3));
         BoundaryOutcome decodedOkOutcome = checkCell(FailurePolicyId.TYPE_DESCRIPTOR,
             INT_ARRAY, decodedOk);
-        expectPass(decodedOkOutcome, "[int] vs decoded [3]");
+        expectPass(decodedOkOutcome, "[number] vs decoded [3]");
         check(((BoundaryOutcome.Pass) decodedOkOutcome).value() == decodedOk,
             "the decoded array passes its array descriptor unchanged");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, TABLE,
@@ -528,16 +451,9 @@ public class BoundaryExecutorTest {
             "expected table", "table", "array", new LinkedHashMap<>(), null,
             "table descriptor vs a decoded array (admission unchanged)");
 
-        // A leaf E8004 travels inside the cause with its code and template.
-        BoundaryValueView rangeLeaf = BoundaryValueView.ofArray(
-            BoundaryValueView.ofNumber(3000000000.0));
-        BoundaryFailure leafRange = FailureContractRegistry.render(
-            FailureArmId.INT32_RANGE, java.util.Map.of(), null, null, null);
-        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, rangeLeaf),
-            FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "int", "number",
-            Map.of("oneBasedIndex", "1"), leafRange,
-            "[int] vs [3000000000.0]");
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY,
+                BoundaryValueView.ofArray(BoundaryValueView.ofNumber(3000000000.0))),
+            "number arrays admit values beyond signed32");
 
         // Non-array kind against an array descriptor is a plain E8001.
         // The expected token is the fixed `array` spelling the unchanged
@@ -582,16 +498,16 @@ public class BoundaryExecutorTest {
         // The present language null: E8003 with the null token.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, presentNull),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "int", "null",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("int", "null"),
-            "[int] vs [null]");
+            "array element 1 type mismatch", "number", "null",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "null"),
+            "[number] vs [null]");
 
         // The absent/deleted slot: E8003 with the nil token.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, deletedSlot),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "int", "nil",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("int", "nil"),
-            "[int] vs a deleted slot");
+            "array element 1 type mismatch", "number", "nil",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "nil"),
+            "[number] vs a deleted slot");
 
         // The array(null) admission control: the present null passes
         // unchanged.
@@ -604,7 +520,7 @@ public class BoundaryExecutorTest {
         // The nullable element admits the present null too (the landed
         // missing->null mapping is not weakened by the null distinction).
         expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_INT_ARRAY,
-            presentNull), "[?int] vs present null");
+            presentNull), "[?number] vs present null");
 
         // A deleted slot at the array(null) descriptor stays the absent
         // marker's nil token (the present null distinction is exact).
@@ -632,16 +548,16 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.ofFunction(SYNC_INT_TO_INT)),
             FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
-            "function signature mismatch: expected (int)->string, got (int)->int",
-            "(int)->string", "(int)->int", new LinkedHashMap<>(), null,
+            "function signature mismatch: expected (number)->string, got (number)->number",
+            "(number)->string", "(number)->number", new LinkedHashMap<>(), null,
             "differing carried signature");
 
         // The async marker is part of the signature.
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.ofFunction(ASYNC_INT_TO_STRING)),
             FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
-            "function signature mismatch: expected (int)->string, got async(int)->string",
-            "(int)->string", "async(int)->string", new LinkedHashMap<>(), null,
+            "function signature mismatch: expected (number)->string, got async(number)->string",
+            "(number)->string", "async(number)->string", new LinkedHashMap<>(), null,
             "async marker mismatch");
 
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
@@ -672,17 +588,17 @@ public class BoundaryExecutorTest {
         System.out.println("-- HOST_PARAMETER: the single pinned E8010 template --");
 
         expectFail(checkCell(FailurePolicyId.HOST_PARAMETER, INT,
-                BoundaryValueView.ofNumber(3.5), BoundaryContext.parameter(2)),
+                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.parameter(2)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
-            "parameter 2 type mismatch: expected int, got non-integer number",
-            "int", "number", Map.of("index", "2"), null,
+            "parameter 2 type mismatch: expected number",
+            "number", "string", Map.of("index", "2"), null,
             "host parameter 2 vs 3.5");
 
         expectFail(checkCell(FailurePolicyId.HOST_PARAMETER, INT,
-                BoundaryValueView.ofNumber(Double.NaN), BoundaryContext.parameter(1)),
+                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
-            "parameter 1 type mismatch: expected int, got NaN",
-            "int", "number", Map.of("index", "1"), null,
+            "parameter 1 type mismatch: expected number",
+            "number", "string", Map.of("index", "1"), null,
             "host parameter 1 vs NaN");
 
         // Function-typed parameters project the carried signature as actual.
@@ -690,8 +606,8 @@ public class BoundaryExecutorTest {
                 BoundaryValueView.ofFunction(SYNC_INT_TO_INT), BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
             "parameter 1 type mismatch: function signature mismatch: expected "
-                + "(int)->string, got (int)->int",
-            "(int)->string", "table", Map.of("index", "1"), null,
+                + "(number)->string, got (number)->number",
+            "(number)->string", "table", Map.of("index", "1"), null,
             "host function parameter signature mismatch");
 
         // The signature inner reason is the signature arm's own template
@@ -701,15 +617,15 @@ public class BoundaryExecutorTest {
         // whose name spells {actual}), never rescanned by a second
         // substitution pass.
         expectFail(checkCell(FailurePolicyId.HOST_PARAMETER,
-                RuntimeDescriptor.parseCanonicalText("(@m/{actual})->int"),
+                RuntimeDescriptor.parseCanonicalText("(@m/{actual})->number"),
                 BoundaryValueView.ofFunction(
                     (RuntimeDescriptor.Func) RuntimeDescriptor.parseCanonicalText(
-                        "(int)->int")),
+                        "(number)->number")),
                 BoundaryContext.parameter(1)),
             FailurePolicyId.HOST_PARAMETER, DiagnosticCode.E8010,
             "parameter 1 type mismatch: function signature mismatch: expected "
-                + "(@m/{actual})->int, got (int)->int",
-            "(@m/{actual})->int", "table", Map.of("index", "1"), null,
+                + "(@m/{actual})->number, got (number)->number",
+            "(@m/{actual})->number", "table", Map.of("index", "1"), null,
             "host signature inner reason with a placeholder spelling in the "
                 + "declared text");
 
@@ -724,7 +640,7 @@ public class BoundaryExecutorTest {
             "host array parameter with a failing element");
 
         // Success passes the same value.
-        BoundaryValueView ok = BoundaryValueView.ofInt(3);
+        BoundaryValueView ok = BoundaryValueView.ofNumber(3);
         BoundaryOutcome okOutcome = checkCell(FailurePolicyId.HOST_PARAMETER, INT, ok,
             BoundaryContext.parameter(1));
         expectPass(okOutcome, "host parameter 1 vs INT(3)");
@@ -732,10 +648,10 @@ public class BoundaryExecutorTest {
 
         // Context defects: missing or non-one-based parameterIndex fails closed.
         expectDefect(() -> checkCell(FailurePolicyId.HOST_PARAMETER, INT,
-                BoundaryValueView.ofInt(1), BoundaryContext.none()),
+                BoundaryValueView.ofNumber(1), BoundaryContext.none()),
             "HOST_PARAMETER without parameterIndex");
         expectDefect(() -> checkCell(FailurePolicyId.HOST_PARAMETER, INT,
-                BoundaryValueView.ofInt(1),
+                BoundaryValueView.ofNumber(1),
                 new BoundaryContext(0, null, null, null, null)),
             "HOST_PARAMETER with a zero parameterIndex");
     }
@@ -795,22 +711,16 @@ public class BoundaryExecutorTest {
         // shared int carrier mismatching a non-numeric descriptor projects
         // the pinned corpus actual kind, never "int".
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, STRING,
-                BoundaryValueView.ofInt(1)),
+                BoundaryValueView.ofNumber(1)),
             FailurePolicyId.ASYNC_COMPLETION, DiagnosticCode.E8001,
             "expected string", "string", "number", new LinkedHashMap<>(), null,
-            "async completion vs int carrier");
+            "async completion vs number carrier");
 
-        expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, INT,
-                BoundaryValueView.ofNumber(Double.NaN)),
-            FailurePolicyId.ASYNC_COMPLETION, DiagnosticCode.E8001,
-            "expected int, got NaN", "int", "NaN", new LinkedHashMap<>(), null,
-            "async int completion vs NaN");
-
-        expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, INT,
+        expectPass(checkCell(FailurePolicyId.ASYNC_COMPLETION, NUMBER,
+                BoundaryValueView.ofNumber(Double.NaN)), "async number completion admits NaN");
+        expectPass(checkCell(FailurePolicyId.ASYNC_COMPLETION, NUMBER,
                 BoundaryValueView.ofNumber(2147483648.0)),
-            FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            null, null, new LinkedHashMap<>(), null,
-            "async int completion out of range");
+            "async number completion admits values beyond signed32");
 
         // Array completions project the shared E8003 with the leaf cause;
         // the leaf's projection is the executing policy's row (ASYNC_COMPLETION).
@@ -840,15 +750,15 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, SYNC_INT_TO_INT,
                 BoundaryValueView.ofFunction(SYNC_INT_TO_STRING)),
             FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
-            "function signature mismatch: expected (int)->int, got (int)->string",
-            "(int)->int", "(int)->string", new LinkedHashMap<>(), null,
+            "function signature mismatch: expected (number)->number, got (number)->string",
+            "(number)->number", "(number)->string", new LinkedHashMap<>(), null,
             "async direct function completion vs differing signature");
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION,
                 NULLABLE_SYNC_INT_TO_INT,
                 BoundaryValueView.ofFunction(SYNC_INT_TO_STRING)),
             FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
-            "function signature mismatch: expected (int)->int, got (int)->string",
-            "(int)->int", "(int)->string", new LinkedHashMap<>(), null,
+            "function signature mismatch: expected (number)->number, got (number)->string",
+            "(number)->number", "(number)->string", new LinkedHashMap<>(), null,
             "async nullable function completion vs differing signature");
 
         // The matching-signature controls: the same descriptors admit the
@@ -881,38 +791,38 @@ public class BoundaryExecutorTest {
         System.out.println("-- ARRAY_ELEMENT_DESCRIPTOR: E8003 with the context elementIndex --");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(1.5), BoundaryContext.element(3)),
+                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.element(3)),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 3 type mismatch", "int", "number",
+            "array element 3 type mismatch", "number", "string",
             Map.of("oneBasedIndex", "3"),
-            expectedKindMismatch("int", "number"),
+            expectedKindMismatch("number", "string"),
             "array element 3 vs 1.5");
 
         // A nested array element: the wrap uses the boundary's descriptor, the
         // whole value's kind, and the leaf cause.
         expectFail(checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, NESTED_INT_ARRAY,
-                BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1.5)),
+                BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.STRING)),
                 BoundaryContext.element(1)),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "[[int]]", "array",
+            "array element 1 type mismatch", "[[number]]", "array",
             Map.of("oneBasedIndex", "1"),
-            expectedKindMismatch("[int]", "number"),
-            "nested array element vs [1.5]");
+            expectedKindMismatch("[number]", "string"),
+            "nested array element vs [string]");
 
         // The decoded-array mark (B3) at this cell too: the reported
         // element's reference kind is `table`; the descriptor, the context
         // element index, the leaf cause, the code, and the span are
         // unchanged.
         expectFail(checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, NESTED_INT_ARRAY,
-                BoundaryValueView.ofDecodedArray(BoundaryValueView.ofNumber(1.5)),
+                BoundaryValueView.ofDecodedArray(BoundaryValueView.of(ActualKind.STRING)),
                 BoundaryContext.element(1)),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "[[int]]", "table",
+            "array element 1 type mismatch", "[[number]]", "table",
             Map.of("oneBasedIndex", "1"),
-            expectedKindMismatch("[int]", "number"),
-            "decoded nested array element vs [1.5]");
+            expectedKindMismatch("[number]", "string"),
+            "decoded nested array element vs [string]");
 
-        BoundaryValueView ok = BoundaryValueView.ofInt(2);
+        BoundaryValueView ok = BoundaryValueView.ofNumber(2);
         BoundaryOutcome okOutcome = checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT, ok,
             BoundaryContext.element(3));
         expectPass(okOutcome, "array element 3 vs INT(2)");
@@ -920,10 +830,10 @@ public class BoundaryExecutorTest {
             "array element pass unchanged");
 
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(2), BoundaryContext.none()),
+                BoundaryValueView.ofNumber(2), BoundaryContext.none()),
             "ARRAY_ELEMENT_DESCRIPTOR without elementIndex");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(2),
+                BoundaryValueView.ofNumber(2),
                 new BoundaryContext(null, null, null, 0, null)),
             "ARRAY_ELEMENT_DESCRIPTOR with a zero elementIndex");
     }
@@ -937,7 +847,7 @@ public class BoundaryExecutorTest {
         // fails before any element/result validation even when the view
         // holds an otherwise-admissible value.
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.arrayRead(-1, 3)),
+                BoundaryValueView.ofNumber(3), BoundaryContext.arrayRead(-1, 3)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
             "array index out of bounds", null, null, new LinkedHashMap<>(), null,
             "read index -1, length 3");
@@ -964,7 +874,7 @@ public class BoundaryExecutorTest {
         // out-of-range read is E8002, never a language null.
         expectFail(checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
                 NULLABLE_INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.arrayRead(2, 1)),
+                BoundaryValueView.ofNumber(3), BoundaryContext.arrayRead(2, 1)),
             FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, DiagnosticCode.E8002,
             "array index out of bounds", null, null, new LinkedHashMap<>(), null,
             "nullable read index 2, length 1");
@@ -972,7 +882,7 @@ public class BoundaryExecutorTest {
         // In-range reads pass through: the read's value/missing decision
         // (including a legitimate null vs an in-range deleted slot) is the
         // contextual boundary's, not this cell's.
-        BoundaryValueView ok = BoundaryValueView.ofInt(3);
+        BoundaryValueView ok = BoundaryValueView.ofNumber(3);
         for (int index : new int[] {0, 2}) {
             BoundaryOutcome outcome = checkCell(
                 FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT, ok,
@@ -989,15 +899,15 @@ public class BoundaryExecutorTest {
             BoundaryContext.arrayRead(0, 1)), "nullable deleted in-range slot passes");
 
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.none()),
+                BoundaryValueView.ofNumber(3), BoundaryContext.none()),
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR without index/length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(3),
-                new BoundaryContext(null, 0, null, null, null)),
+                BoundaryValueView.ofNumber(3),
+                new BoundaryContext(null, 0d, null, null, null)),
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR without length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(3),
-                new BoundaryContext(null, 0, -1, null, null)),
+                BoundaryValueView.ofNumber(3),
+                new BoundaryContext(null, 0d, -1, null, null)),
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR with a negative length");
     }
 
@@ -1005,40 +915,40 @@ public class BoundaryExecutorTest {
         System.out.println("-- ARRAY_WRITE_BOUNDS_THEN_ELEMENT: bounds first, then the element --");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.writeBounds(-1, 5)),
+                BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(-1, 5)),
             FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, DiagnosticCode.E8002,
             "array index out of bounds", null, null, new LinkedHashMap<>(), null,
             "write index -1, length 5");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.writeBounds(6, 5)),
+                BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(6, 5)),
             FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, DiagnosticCode.E8002,
             "array index out of bounds", null, null, new LinkedHashMap<>(), null,
             "gap write index 6, length 5");
 
         // index == length is the append slot: the element check runs.
         expectFail(checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofNumber(1.5), BoundaryContext.writeBounds(5, 5)),
+                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.writeBounds(5, 5)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected int", "int", "number",
+            "expected number", "number", "string",
             new LinkedHashMap<>(), null, "append-slot write vs 1.5 (leaf projection)");
 
-        BoundaryValueView ok = BoundaryValueView.ofInt(3);
+        BoundaryValueView ok = BoundaryValueView.ofNumber(3);
         BoundaryOutcome okOutcome = checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
             INT, ok, BoundaryContext.writeBounds(0, 0));
         expectPass(okOutcome, "write index 0 into an empty array");
         check(((BoundaryOutcome.Pass) okOutcome).value() == ok, "write pass unchanged");
 
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.none()),
+                BoundaryValueView.ofNumber(3), BoundaryContext.none()),
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT without index/length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofInt(3),
-                new BoundaryContext(null, 0, null, null, null)),
+                BoundaryValueView.ofNumber(3),
+                new BoundaryContext(null, 0d, null, null, null)),
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT without length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofInt(3),
-                new BoundaryContext(null, 0, -1, null, null)),
+                BoundaryValueView.ofNumber(3),
+                new BoundaryContext(null, 0d, -1, null, null)),
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT with a negative length");
     }
 
@@ -1046,30 +956,30 @@ public class BoundaryExecutorTest {
         System.out.println("-- ARRAY_DELETE_BOUNDS: index < 0 or > length --");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.writeBounds(-1, 5)),
+                BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(-1, 5)),
             FailurePolicyId.ARRAY_DELETE_BOUNDS, DiagnosticCode.E8002,
             "array index out of bounds", null, null, new LinkedHashMap<>(), null,
             "delete index -1, length 5");
 
         expectFail(checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.writeBounds(6, 5)),
+                BoundaryValueView.ofNumber(3), BoundaryContext.writeBounds(6, 5)),
             FailurePolicyId.ARRAY_DELETE_BOUNDS, DiagnosticCode.E8002,
             "array index out of bounds", null, null, new LinkedHashMap<>(), null,
             "delete index 6, length 5");
 
         // index == length passes: the commit's nil write runs after the boundary.
-        BoundaryValueView ok = BoundaryValueView.ofInt(3);
+        BoundaryValueView ok = BoundaryValueView.ofNumber(3);
         BoundaryOutcome okOutcome = checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT, ok,
             BoundaryContext.writeBounds(5, 5));
         expectPass(okOutcome, "delete index 5, length 5");
         check(((BoundaryOutcome.Pass) okOutcome).value() == ok, "delete pass unchanged");
 
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
-                BoundaryValueView.ofInt(3), BoundaryContext.none()),
+                BoundaryValueView.ofNumber(3), BoundaryContext.none()),
             "ARRAY_DELETE_BOUNDS without index/length");
         expectDefect(() -> checkCell(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
-                BoundaryValueView.ofInt(3),
-                new BoundaryContext(null, 0, null, null, null)),
+                BoundaryValueView.ofNumber(3),
+                new BoundaryContext(null, 0d, null, null, null)),
             "ARRAY_DELETE_BOUNDS without length");
     }
 
@@ -1160,11 +1070,11 @@ public class BoundaryExecutorTest {
 
         // An int field rejects non-integral and out-of-range carriers as numbers.
         expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, INT,
-                BoundaryValueView.ofNumber(3.5), BoundaryContext.jsonField("i")),
+                BoundaryValueView.of(ActualKind.STRING), BoundaryContext.jsonField("i")),
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at i is not JSON serializable: number",
-            null, "number", Map.of("fieldPath", "i"), null,
-            "int field vs 3.5");
+            "value at i is not JSON serializable: string",
+            null, "string", Map.of("fieldPath", "i"), null,
+            "number field vs 3.5");
 
         // Valid values pass unchanged.
         BoundaryValueView okNumber = BoundaryValueView.ofNumber(1.5);
@@ -1249,9 +1159,9 @@ public class BoundaryExecutorTest {
             new PassCase(FailurePolicyId.TYPE_DESCRIPTOR, STRING,
                 BoundaryValueView.of(ActualKind.STRING), "string pass"),
             new PassCase(FailurePolicyId.TYPE_DESCRIPTOR, NUMBER,
-                BoundaryValueView.ofInt(5), "int carrier for number"),
+                BoundaryValueView.ofNumber(5), "number carrier for number"),
             new PassCase(FailurePolicyId.TYPE_DESCRIPTOR, INT,
-                BoundaryValueView.ofNumber(3.0), "integral number for int"),
+                BoundaryValueView.ofNumber(3.0), "integral number for number"),
             new PassCase(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_STRING,
                 BoundaryValueView.nullView(), "language null for nullable"),
             new PassCase(FailurePolicyId.TYPE_DESCRIPTOR, USER,
@@ -1261,17 +1171,17 @@ public class BoundaryExecutorTest {
             new PassCase(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.ofFunction(SYNC_INT_TO_STRING), "function signature"),
             new PassCase(FailurePolicyId.HOST_PARAMETER, INT,
-                BoundaryValueView.ofInt(1), "host parameter"),
+                BoundaryValueView.ofNumber(1), "host parameter"),
             new PassCase(FailurePolicyId.HOST_SYNC_RETURN, STRING,
                 BoundaryValueView.of(ActualKind.STRING), "host sync return"),
             new PassCase(FailurePolicyId.ASYNC_COMPLETION, STRING,
                 BoundaryValueView.of(ActualKind.STRING), "async completion"),
             new PassCase(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, INT,
-                BoundaryValueView.ofInt(1), "array element"),
+                BoundaryValueView.ofNumber(1), "array element"),
             new PassCase(FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, INT,
-                BoundaryValueView.ofInt(1), "array write"),
+                BoundaryValueView.ofNumber(1), "array write"),
             new PassCase(FailurePolicyId.ARRAY_DELETE_BOUNDS, INT,
-                BoundaryValueView.ofInt(1), "array delete"),
+                BoundaryValueView.ofNumber(1), "array delete"),
             new PassCase(FailurePolicyId.JSON_TO_ERROR, NUMBER,
                 BoundaryValueView.ofNumber(1), "json to error"));
 
@@ -1349,8 +1259,8 @@ public class BoundaryExecutorTest {
             "RuntimeValidation dispatches to check");
 
         // A policy outside the closed 11 fails closed on both paths.
-        expectDefect(() -> BoundaryExecutor.execute(FailurePolicyId.INT32_RESULT,
-                INT, BoundaryValueView.ofInt(1), BoundaryContext.none(),
+        expectDefect(() -> BoundaryExecutor.execute(FailurePolicyId.NO_DEAL_FAILURE,
+                INT, BoundaryValueView.ofNumber(1), BoundaryContext.none(),
                 new BoundaryRealization.RepresentationProof("sig")),
             "execute with a proved boundary and an out-of-subset policy");
     }
@@ -1360,10 +1270,7 @@ public class BoundaryExecutorTest {
 
         List<FailurePolicyId> outside = List.of(
             FailurePolicyId.NO_DEAL_FAILURE,
-            FailurePolicyId.INT32_RESULT,
-            FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
-            FailurePolicyId.INT_CONVERSION,
-            FailurePolicyId.NUMBER_CONVERSION,
+            FailurePolicyId.JSON_TO_ERROR,
             FailurePolicyId.ASYNC_OPERATION_HANDLE,
             FailurePolicyId.HOST_LOAD,
             FailurePolicyId.CLASS_CONSTRUCTION,
@@ -1372,7 +1279,7 @@ public class BoundaryExecutorTest {
             FailurePolicyId.THROW_TRANSFER,
             FailurePolicyId.INFRASTRUCTURE_ONLY);
         for (FailurePolicyId policy : outside) {
-            expectDefect(() -> checkCell(policy, INT, BoundaryValueView.ofInt(1)),
+            expectDefect(() -> checkCell(policy, INT, BoundaryValueView.ofNumber(1)),
                 "policy " + policy.name() + " outside the closed 11");
         }
 
@@ -1417,14 +1324,6 @@ public class BoundaryExecutorTest {
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.STRING, "@x/Y", null,
                 null, null, false),
             "a non-class kind carrying a class id");
-        expectIllegalArgument(() -> BoundaryValueView.ofInt(2147483648L),
-            "an INT view outside signed32");
-        expectIllegalArgument(() -> new BoundaryValueView(ActualKind.INT, null, 3.5, null,
-                null, false),
-            "an INT view with a non-integral value");
-        expectIllegalArgument(() -> new BoundaryValueView(ActualKind.INT, null,
-                Double.POSITIVE_INFINITY, null, null, false),
-            "an INT view with an infinite value");
         expectIllegalArgument(() -> new BoundaryValueView(ActualKind.TABLE, null, null,
                 null, null, true),
             "a decoded-array mark on a non-ARRAY view");
@@ -1448,16 +1347,13 @@ public class BoundaryExecutorTest {
 
         // The decoded-array mark is ARRAY-only and legal there: a decoded
         // array view carries it, an unmarked array view does not.
-        check(BoundaryValueView.ofDecodedArray(BoundaryValueView.ofInt(1))
+        check(BoundaryValueView.ofDecodedArray(BoundaryValueView.ofNumber(1))
                 .decodedArrayMark(),
             "a decoded array view carries the mark");
-        check(!BoundaryValueView.ofArray(BoundaryValueView.ofInt(1))
+        check(!BoundaryValueView.ofArray(BoundaryValueView.ofNumber(1))
                 .decodedArrayMark(),
             "an unmarked array view carries no mark");
 
-        check(BoundaryValueView.of(ActualKind.INT).kind() == ActualKind.INT
-                && BoundaryValueView.of(ActualKind.INT).numberValue() == null,
-            "an INT view may be classification-only");
         check(BoundaryValueView.ofNumber(Double.NaN).numberValue().isNaN(),
             "a NUMBER view carries NaN");
     }

@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: async, await, state
 
-async function inc(x: int): int { return x + 1; }
+async function inc(x: number): number { return x + 1; }
 
 export async function test_multiple_await_state(): null {
-  let v: int = 0;
+  let v: number = 0;
   v = await inc(v);
   v = await inc(v);
   v = await inc(v);

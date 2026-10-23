@@ -12,7 +12,6 @@ import deal.semantic.CompilerInvocation;
 import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.RequirementManifestResult;
-import deal.semantic.ir.IntrinsicKind;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -76,8 +75,6 @@ public final class ProductionArmJsProbe {
                     built.input(), built.index(), manifests.manifests(),
                     fixture.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                         built.input().modules().get(0).ast().span()),
-                    List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT),
                     java.util.Set.of(), Backend.JS, false,
                     DistributionHome.forManifestDirectory(projectRoot.toString()),
                     stager);

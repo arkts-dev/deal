@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: for-of, string
 
-export function test_count(): int {
+export function test_count(): number {
   let s: string = "hello";
-  let n: int = 0;
+  let n: number = 0;
   for (let c: string of s) {
     n = n + 1;
   }

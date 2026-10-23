@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: parser, precedence, call, additive, v1.2
 
-function add(left: int, right: int): int { return left + right; }
+function add(left: number, right: number): number { return left + right; }
 
 export function test_call_before_addition(): null {
-  let value: int = add(1, 2) + 4;
+  let value: number = add(1, 2) + 4;
   if (value !== 7) {
     throw { code: "TEST_FAIL", message: "call did not bind before addition" };
   }

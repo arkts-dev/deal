@@ -7,6 +7,6 @@
 // class default calling them observes every invocation (the load-time
 // zero-invocation probe and the per-attempt re-execution probe).
 
-export function nextValue(): int;
+export function nextValue(): number;
 
-export function valueCount(): int;
+export function valueCount(): number;

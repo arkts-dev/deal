@@ -32,8 +32,6 @@ public enum ActualKind {
     MISSING("missing"),
     /** Boolean. */
     BOOLEAN("boolean"),
-    /** Signed-32-bit int. */
-    INT("int"),
     /** IEEE-754 number. */
     NUMBER("number"),
     /** Unicode scalar string. */

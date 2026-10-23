@@ -4,9 +4,9 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-function supplied(s: string, n: int): int {c.log(s); return n;}
-function fallback(s: string): int {c.log(s); return 0;}
-class C {a: int = fallback("default-a"); b: int = fallback("default-b"); d: int = fallback("default-d");}
+function supplied(s: string, n: number): number {c.log(s); return n;}
+function fallback(s: string): number {c.log(s); return 0;}
+class C {a: number = fallback("default-a"); b: number = fallback("default-b"); d: number = fallback("default-d");}
 export function main(): null {
  let x: C = {b:supplied("B",2), a:supplied("A",1)};
  if(x.a !== 1 || x.b !== 2 || x.d !== 0) {throw {message:"field values"};}

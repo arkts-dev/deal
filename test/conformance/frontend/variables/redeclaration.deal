@@ -4,8 +4,8 @@
 // @features: variables, redeclaration
 
 export function main(): null {
-let x: int = 1;
-let x: int = 2;
+let x: number = 1;
+let x: number = 2;
 
 return null;
 }

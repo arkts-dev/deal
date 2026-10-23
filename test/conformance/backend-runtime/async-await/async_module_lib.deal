@@ -3,10 +3,10 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-export async function plusOne(x: int): int {
+export async function plusOne(x: number): number {
   return x + 1;
 }
 
-export async function fail(): int {
+export async function fail(): number {
   throw { code: "ASYNC_FAIL", message: "async failure" };
 }

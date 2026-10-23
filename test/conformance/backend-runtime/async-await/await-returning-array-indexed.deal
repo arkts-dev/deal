@@ -5,9 +5,9 @@
 
 import * as Lib from "./async_batch2_lib";
 
-export async function test_await_returning_array_indexed(): int {
-  let xs: int[] = await Lib.makeArray();
-  let result: int = xs[1];
+export async function test_await_returning_array_indexed(): number {
+  let xs: number[] = await Lib.makeArray();
+  let result: number = xs[1];
   if (result !== 9) { throw { code: "TEST_FAIL", message: "await array index failed" }; }
   return result;
 }

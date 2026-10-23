@@ -11,8 +11,8 @@
 
 export class Widget {
   label: string;
-  weight: int;
-  action: (x: int) => int;
+  weight: number;
+  action: (x: number) => number;
 }
 
 export class Board {
@@ -21,7 +21,7 @@ export class Board {
   meta: table;
 }
 
-export async function describeAsync(w: Widget, g: (x: int) => int): string;
+export async function describeAsync(w: Widget, g: (x: number) => number): string;
 export function makeTable(): table;
 export function tableIntact(): boolean;
 export function describeTable(t: table): string;

@@ -31,7 +31,6 @@ import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -148,14 +147,14 @@ public class CompositeTerminatorAnalysisTest {
           if (c) {
             return null;
             "nullTrueTailMarker";
-            let x: int = 9715;
+            let x: number = 9715;
           } else {
             return null;
             "nullFalseTailMarker";
-            let y: int = 9716;
+            let y: number = 9716;
           }
           "nullBodyTailMarker";
-          let tailMarker: int = 715;
+          let tailMarker: number = 715;
           if (tailMarker === 715) {
             throw { code: "TAIL_EXECUTED", message: "TAIL715" };
           }
@@ -317,7 +316,6 @@ public class CompositeTerminatorAnalysisTest {
                 built.index(), manifests.manifests(),
                 new deal.semantic.HostDeclarationSurface(Map.of()),
                 Map.of(), BuiltinErrorDeclaration.synthesized(parse.program().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 Set.of());
         if (result.hasErrors() || result.project() == null) {
             fail(name + ": the one project lowering reports zero diagnostics: "
@@ -363,7 +361,7 @@ public class CompositeTerminatorAnalysisTest {
             manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            Set.of());
         check(!result.hasErrors() && result.project() != null,
             "the one project lowering reports zero diagnostics: "
                 + result.diagnostics());
@@ -571,7 +569,7 @@ public class CompositeTerminatorAnalysisTest {
                       }
                     }
                     """)),
-            new Negative("non-literal-true loop condition", probeProgram("export function probe(limit: int): null {\n  { let v14Loop2: int = 0; while (v14Loop2 < limit) { let i: int = v14Loop2; { return null; } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n}\n")),
+            new Negative("non-literal-true loop condition", probeProgram("export function probe(limit: number): null {\n  { let v14Loop2: number = 0; while (v14Loop2 < limit) { let i: number = v14Loop2; { return null; } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n}\n")),
             new Negative("while (false)", probeProgram("""
                 export function probe(): null {
                   while (false) { return null; }
@@ -868,10 +866,10 @@ public class CompositeTerminatorAnalysisTest {
             + "implicit null returns on the public build --");
         String group = """
             export function main(): null {
-              function f(n: int): null {
+              function f(n: number): null {
                 if (n > 0) { g(n - 1); }
               }
-              function g(n: int): null {
+              function g(n: number): null {
                 if (n > 1) { f(n - 1); }
               }
               f(4);
@@ -900,10 +898,10 @@ public class CompositeTerminatorAnalysisTest {
         checkPublicFallOff("the standalone nested declaration", standalone);
 
         String moduleLevel = """
-            function f(n: int): null {
+            function f(n: number): null {
               if (n > 0) { g(n - 1); }
             }
-            function g(n: int): null {
+            function g(n: number): null {
               if (n > 1) { f(n - 1); }
             }
             export function main(): null { return null; }
@@ -927,12 +925,12 @@ public class CompositeTerminatorAnalysisTest {
         }
         List<FailClosed> cases = List.of(
             new FailClosed("if without else", """
-                export function probe(c: boolean): int {
+                export function probe(c: boolean): number {
                   if (c) { return 1; }
                 }
                 """),
             new FailClosed("literal-true loop with a break path", """
-                export function probe(c: boolean): int {
+                export function probe(c: boolean): number {
                   while (true) {
                     if (c) { break; } else { return 1; }
                   }
@@ -964,12 +962,12 @@ public class CompositeTerminatorAnalysisTest {
         }
         List<NonNullLoop> cases = List.of(
             new NonNullLoop("while (true)", """
-                export function probe(): int {
+                export function probe(): number {
                   while (true) { return 1; }
                 }
                 """),
-            new NonNullLoop("test-less for-let", "export function probe(): int {\n  while (true) { { return 1; } }\n}\n"),
-            new NonNullLoop("for (;;)", "export function probe(): int {\n  {  while (true) { { return 1; }  } }\n}\n"));
+            new NonNullLoop("test-less for-let", "export function probe(): number {\n  while (true) { { return 1; } }\n}\n"),
+            new NonNullLoop("for (;;)", "export function probe(): number {\n  {  while (true) { { return 1; }  } }\n}\n"));
         for (NonNullLoop nonNull : cases) {
             Session session = lowerSession(nonNull.name(), nonNull.source());
             if (session == null) {
@@ -1382,7 +1380,11 @@ public class CompositeTerminatorAnalysisTest {
               public static void main(String[] args) {
                 %s.main(new String[0]);
                 %s
-                if (!String.valueOf(value).equals(%s)) {
+                String expected = %s;
+                boolean matches = value instanceof Number n
+                    ? Double.compare(n.doubleValue(), Double.parseDouble(expected)) == 0
+                    : String.valueOf(value).equals(expected);
+                if (!matches) {
                   throw new IllegalStateException("the probe result " + value);
                 }
               }
@@ -1427,7 +1429,7 @@ public class CompositeTerminatorAnalysisTest {
         for (String variant : List.of("", "Continue", "Throw")) {
             for (int i = 0; i < headers.length; i++) {
                 String name = "probe" + variant + names[i];
-                String setup = variant.equals("Continue") ? "let i: int = 0;\n" : "";
+                String setup = variant.equals("Continue") ? "let i: number = 0;\n" : "";
                 String body = switch (variant) {
                     case "Continue" -> "if (i < 1) { "
                         + "i = i + 1; "
@@ -1703,7 +1705,7 @@ public class CompositeTerminatorAnalysisTest {
             SemanticDifferentialHarness.Verdict verdict = fixture.async()
                 ? SemanticDifferentialHarness.runAsyncEntry(lowered.project(), lowered.tables(),
                     fixture.probe(), List.of(), SemanticDifferentialHarness.Expectation.success(
-                        fixture.relativePath(), List.of(), "int:" + fixture.pinnedValue()),
+                        fixture.relativePath(), List.of(), "num:" + Double.toHexString(Double.parseDouble(fixture.pinnedValue()))),
                     workspace, null)
                 : SemanticDifferentialHarness.runProject(lowered.project(), lowered.tables(),
                     lowered.registries(), SemanticDifferentialHarness.Expectation.success(
@@ -1719,7 +1721,7 @@ public class CompositeTerminatorAnalysisTest {
                 + ": event parity (only recursive pairing notices allowed): " + verdict.failures());
             for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
                 check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success success
-                        && (fixture.async() ? "int:" + fixture.pinnedValue() : "null")
+                        && (fixture.async() ? "num:" + Double.toHexString(Double.parseDouble(fixture.pinnedValue())) : "null")
                             .equals(success.resultAtom()),
                     fixture.relativePath() + ": " + run.consumer() + ": " + run.terminal());
             }

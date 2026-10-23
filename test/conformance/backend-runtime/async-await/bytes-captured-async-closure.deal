@@ -1,11 +1,11 @@
 // @spec: Bytes — Recursive array/nullable closure
-// @description: An async closure captures a int[] buffer, writes through it, and completes with the observed byte (v1.2 defect snippet 69)
+// @description: An async closure captures a number[] buffer, writes through it, and completes with the observed byte (v1.2 defect snippet 69)
 // @expected: runtime-ok
-// @features: int[], async, closures, capture, v1.2
+// @features: number[], async, closures, capture, v1.2
 
-export async function check(): int {
-  let b: int[] = [0];
-  let set: async (n: int) => null = async function(n: int): null {
+export async function check(): number {
+  let b: number[] = [0];
+  let set: async (n: number) => null = async function(n: number): null {
     b[0] = n;
     return null;
   };

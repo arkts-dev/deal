@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: classes, nested-classes, contextual-typing
 
-class Address { zip: int = 90210; }
+class Address { zip: number = 90210; }
 class User { home: Address = {}; }
 
 export function main(): null {

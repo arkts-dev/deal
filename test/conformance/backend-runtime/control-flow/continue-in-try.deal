@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: error-handling, try, continue
 
-export function test_continue_in_try(): int {
-  let sum: int = 0;
+export function test_continue_in_try(): number {
+  let sum: number = 0;
   let catchRan: boolean = false;
-  { let v14Loop0: int = 0; while (v14Loop0 < 5) { let i: int = v14Loop0; {
+  { let v14Loop0: number = 0; while (v14Loop0 < 5) { let i: number = v14Loop0; {
     try {
       if (i === 2) { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } }
     } catch (e) {

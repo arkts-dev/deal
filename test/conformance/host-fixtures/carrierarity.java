@@ -10,6 +10,14 @@ import java.util.concurrent.CompletableFuture;
 // method.
 
 final class HostCarrierarity {
+  // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
+  static String numericText(Object value) {
+    if (value instanceof Number n) {
+      return java.math.BigDecimal.valueOf(n.doubleValue()).stripTrailingZeros().toPlainString();
+    }
+    return String.valueOf(value);
+  }
+
   public static final java.util.Map<String, Object> Target_defaults =
       java.util.Map.of("name", "");
 
@@ -26,18 +34,18 @@ final class HostCarrierarity {
     try {
       return HostCarrierarity.class.getDeclaredMethod("describeAsync",
           $DealRt.$Host$host$scarrierarity$Target.class,
-          $DealRt.Fn1_I_R_I.class).getParameterCount();
+          $DealRt.Fn1_N_R_N.class).getParameterCount();
     } catch (java.lang.NoSuchMethodException missing) {
       return -1;
     }
   }
 
   public static Object describeAsync(
-      $DealRt.$Host$host$scarrierarity$Target t, $DealRt.Fn1_I_R_I g) {
+      $DealRt.$Host$host$scarrierarity$Target t, $DealRt.Fn1_N_R_N g) {
     String gText = "none";
     if (g != null) {
       try {
-        gText = "true:" + g.invoke(41);
+        gText = "true:" + numericText(g.invoke(41));
       } catch (RuntimeException failure) {
         gText = "false:" + failure.getMessage();
       }

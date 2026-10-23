@@ -1,9 +1,9 @@
 module @test/ir-goldens/fixtures/literals.deal:4:1-12:1
   function main: null @test/ir-goldens/fixtures/literals.deal:4:1-12:1
     body
-      let a: int @test/ir-goldens/fixtures/literals.deal:5:5-6:7
+      let a: number @test/ir-goldens/fixtures/literals.deal:5:5-6:7
         [boundary: var-annotation]
-        literal 42 : int @test/ir-goldens/fixtures/literals.deal:5:18-5:19
+        literal 42.0 : number @test/ir-goldens/fixtures/literals.deal:5:21-5:22
       let b: number @test/ir-goldens/fixtures/literals.deal:6:5-7:7
         [boundary: var-annotation]
         literal 3.14 : number @test/ir-goldens/fixtures/literals.deal:6:21-6:24

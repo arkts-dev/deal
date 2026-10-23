@@ -7,11 +7,11 @@ import * as console from "std/console";
 import * as json from "std/json";
 import * as Values from "./reassignment_value_lib";
 
-export function test_imported_function_binding(): int {
-  let f: (x: int) => int = Values.inc;
-  let call: () => int = function(): int { return f(1); };
+export function test_imported_function_binding(): number {
+  let f: (x: number) => number = Values.inc;
+  let call: () => number = function(): number { return f(1); };
   f = Values.dec;
-  let result: int = call();
+  let result: number = call();
   if (result !== 0) {
     throw { code: "TEST_FAIL", message: "the imported read observes the current binding" };
   }
@@ -19,7 +19,7 @@ export function test_imported_function_binding(): int {
 }
 
 export function main(): null {
-  let imported: int = test_imported_function_binding();
+  let imported: number = test_imported_function_binding();
   console.log(json.stringify({ imported: imported }));
   return null;
 }

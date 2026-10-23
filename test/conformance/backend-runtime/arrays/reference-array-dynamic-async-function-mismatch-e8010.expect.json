@@ -8,18 +8,18 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected async([int])->[int], got (int)->int\",\"sourceFile\":\"backend-runtime/arrays/reference-array-dynamic-async-function-mismatch-e8010.deal\",\"line\":12,\"column\":16,\"expected\":\"async([int])->[int]\",\"actual\":\"(int)->int\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected async([number])->[number], got (number)->number\",\"sourceFile\":\"backend-runtime/arrays/reference-array-dynamic-async-function-mismatch-e8010.deal\",\"line\":12,\"column\":16,\"expected\":\"async([number])->[number]\",\"actual\":\"(number)->number\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8010",
-      "message": "function signature mismatch: expected async([int])->[int], got (int)->int",
+      "message": "function signature mismatch: expected async([number])->[number], got (number)->number",
       "sourceFile": "backend-runtime/arrays/reference-array-dynamic-async-function-mismatch-e8010.deal",
       "line": 12,
       "column": 16,
-      "expected": "async([int])->[int]",
-      "actual": "(int)->int"
+      "expected": "async([number])->[number]",
+      "actual": "(number)->number"
     }
   }
 }

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async, await, error-handling, runtime
 
-async function inner(): int {
+async function inner(): number {
   throw { code: "E_INNER", message: "inner error" };
   return 0;
 }
@@ -17,7 +17,7 @@ export async function outer(): string {
 
   try {
     try {
-      let _: int = await inner();
+      let _: number = await inner();
       normalRan = true;
     } catch (e) {
       intendedCatchRan = true;

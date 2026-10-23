@@ -99,7 +99,7 @@ public class DynamicResolutionIrTest {
     private static final String LCH =
         LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
 
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STR = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor.Func SIG = new RuntimeDescriptor.Func(List.of(INT), INT);
 
@@ -733,7 +733,7 @@ public class DynamicResolutionIrTest {
             ops.add(boundaryWith(externalOk, BoundaryKind.EXTERNAL_RETURN, INT,
                 FailurePolicyId.TYPE_DESCRIPTOR, callOp));
             ops.add(opWith(nonBoundary, SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             ops.add(opWith(callOp, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
@@ -1008,7 +1008,7 @@ public class DynamicResolutionIrTest {
             ops.add(boundaryWith(taskCell, BoundaryKind.VARIABLE_DECLARATION, INT,
                 FailurePolicyId.TYPE_DESCRIPTOR, declParent));
             ops.add(opWith(declParent, SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             ops.add(opWith(startOp, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
@@ -1120,7 +1120,7 @@ public class DynamicResolutionIrTest {
             ops.add(boundaryWith(otherBoundary, BoundaryKind.VARIABLE_DECLARATION, INT,
                 FailurePolicyId.TYPE_DESCRIPTOR, otherParent));
             ops.add(opWith(otherParent, SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null));
             LoweredModuleUnit unit = unit(Map.of(
                     new FunctionAllocationIdentity(55),
@@ -1390,7 +1390,7 @@ public class DynamicResolutionIrTest {
             ValueId callResult, BlockId bodyBlock) {
         List<SemanticOp> ops = new ArrayList<>();
         ops.add(opWith(constOp, SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(7)), argValue, INT,
             FailurePolicyId.NO_DEAL_FAILURE, null));
         ops.add(boundaryWithInput(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
             FailurePolicyId.TYPE_DESCRIPTOR, callOp, argValue));
@@ -1498,7 +1498,7 @@ public class DynamicResolutionIrTest {
             ValueId awaitResult, BlockId bodyBlock) {
         List<SemanticOp> ops = new ArrayList<>();
         ops.add(opWith(constOp, SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(7)), argValue, INT,
             FailurePolicyId.NO_DEAL_FAILURE, null));
         ops.add(boundaryWithInput(paramBoundary, BoundaryKind.FUNCTION_PARAMETER, INT,
             FailurePolicyId.TYPE_DESCRIPTOR, startOp, argValue));
@@ -1646,7 +1646,7 @@ public class DynamicResolutionIrTest {
                 new AdaptSourceRef.Value(closureResult), sourceSignature, targetSignature);
         List<SemanticOp> ops = new ArrayList<>();
         ops.add(opWith(constOp, SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(7)), argValue, INT,
             FailurePolicyId.NO_DEAL_FAILURE, null));
         ops.add(opWith(closureOp, SemanticOpKind.CLOSURE_NEW,
             new KindPayload.ClosureNewPayload(new FunctionId(2), sourceSignature, List.of(),
@@ -1727,7 +1727,7 @@ public class DynamicResolutionIrTest {
                 new AdaptSourceRef.Value(closureResult), sourceSignature, targetSignature);
         List<SemanticOp> ops = new ArrayList<>();
         ops.add(opWith(constOp, SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(7)), argValue, INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(7)), argValue, INT,
             FailurePolicyId.NO_DEAL_FAILURE, null));
         ops.add(opWith(closureOp, SemanticOpKind.CLOSURE_NEW,
             new KindPayload.ClosureNewPayload(new FunctionId(2), sourceSignature, List.of(),
@@ -1814,9 +1814,9 @@ public class DynamicResolutionIrTest {
         SemanticRuntimeModel.ConsumerRun dealRun = SemanticOracle.execute(dealUnit, dealTable);
         check(dealRun.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
             "the DEAL-body dynamic CALL run succeeds");
-        check(oracleSucceeded(dealRun, dealCell, "int:7"),
-            "the DEAL-body resolution executes the recorded FUNCTION_RETURN cell (int:7)");
-        check(oracleSucceeded(dealRun, callOp, "int:7"),
+        check(oracleSucceeded(dealRun, dealCell, "num:0x1.cp2"),
+            "the DEAL-body resolution executes the recorded FUNCTION_RETURN cell (num:0x1.cp2)");
+        check(oracleSucceeded(dealRun, callOp, "num:0x1.cp2"),
             "the DEAL-body CALL terminal records the checked value");
         check(!oracleTouched(dealRun, hostCell) && !oracleTouched(dealRun, externalCell),
             "the DEAL-body resolution executes exactly the selected cell");
@@ -1827,9 +1827,9 @@ public class DynamicResolutionIrTest {
             public SyncOutcome call(ModuleId module, String export,
                     RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
                 check("f".equals(export) && args.size() == 1
-                        && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                        && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7,
                     "the host call receives the checked argument");
-                return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
             }
         };
         LoweredModuleUnit hostUnit = dynamicOracleCaller(
@@ -1842,16 +1842,16 @@ public class DynamicResolutionIrTest {
             responder);
         check(hostRun.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
             "the HOST dynamic CALL run succeeds");
-        check(oracleSucceeded(hostRun, hostCell, "int:9"),
-            "the HOST resolution executes the recorded HOST_TO_DEAL cell (int:9)");
-        check(oracleSucceeded(hostRun, callOp, "int:9"),
+        check(oracleSucceeded(hostRun, hostCell, "num:0x1.2p3"),
+            "the HOST resolution executes the recorded HOST_TO_DEAL cell (num:0x1.2p3)");
+        check(oracleSucceeded(hostRun, callOp, "num:0x1.2p3"),
             "the HOST CALL terminal records the checked value");
         check(!oracleTouched(hostRun, dealCell) && !oracleTouched(hostRun, externalCell),
             "the HOST resolution executes exactly the selected cell");
         check(hostRun.effects().contains(new SemanticRuntimeModel.EffectEvent(
                 SemanticRuntimeModel.EffectEvent.Kind.HOST_CALL, "mod.a.f"))
                 && hostRun.effects().contains(new SemanticRuntimeModel.EffectEvent(
-                    SemanticRuntimeModel.EffectEvent.Kind.HOST_RETURN, "mod.a.f=int:9")),
+                    SemanticRuntimeModel.EffectEvent.Kind.HOST_RETURN, "mod.a.f=num:0x1.2p3")),
             "the HOST resolution records the ordered host effects");
 
         // EXTERNAL (retained-ABI): the call op executes the recorded EXTERNAL_RETURN cell.
@@ -1866,9 +1866,9 @@ public class DynamicResolutionIrTest {
             externalTable, responder);
         check(externalRun.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
             "the retained-ABI EXTERNAL dynamic CALL run succeeds");
-        check(oracleSucceeded(externalRun, externalCell, "int:9"),
-            "the EXTERNAL resolution executes the recorded EXTERNAL_RETURN cell (int:9)");
-        check(oracleSucceeded(externalRun, callOp, "int:9"),
+        check(oracleSucceeded(externalRun, externalCell, "num:0x1.2p3"),
+            "the EXTERNAL resolution executes the recorded EXTERNAL_RETURN cell (num:0x1.2p3)");
+        check(oracleSucceeded(externalRun, callOp, "num:0x1.2p3"),
             "the EXTERNAL CALL terminal records the checked value");
         check(!oracleTouched(externalRun, dealCell) && !oracleTouched(externalRun, hostCell),
             "the EXTERNAL resolution executes exactly the selected cell");
@@ -1935,10 +1935,10 @@ public class DynamicResolutionIrTest {
             null);
         check(sharedRun.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
             "the SHARED_BODY dynamic CALL run succeeds");
-        check(oracleSucceeded(sharedRun, calleeCell, "int:7"),
+        check(oracleSucceeded(sharedRun, calleeCell, "num:0x1.cp2"),
             "the SHARED_BODY resolution runs the callee RETURN's EXTERNAL_RETURN cell "
-                + "(int:7)");
-        check(oracleSucceeded(sharedRun, callOp, "int:7"),
+                + "(num:0x1.cp2)");
+        check(oracleSucceeded(sharedRun, callOp, "num:0x1.cp2"),
             "the SHARED_BODY CALL terminal records the value without re-checking");
         check(!oracleTouched(sharedRun, dealCell) && !oracleTouched(sharedRun, hostCell)
                 && !oracleTouched(sharedRun, externalCell),
@@ -1976,17 +1976,17 @@ public class DynamicResolutionIrTest {
                 "the DEAL-body dynamic ASYNC_START run succeeds");
             check(oracleSucceeded(run, startOp, "tok:901:DEAL_BODY_TASK"),
                 "the DEAL-body ASYNC_START publishes its canonical token");
-            check(oracleSucceeded(run, paramBoundary, "int:7"),
+            check(oracleSucceeded(run, paramBoundary, "num:0x1.cp2"),
                 "the DEAL-body resolution checks the argument through the parameter boundary");
-            check(oracleSucceeded(run, taskCell, "int:7"),
+            check(oracleSucceeded(run, taskCell, "num:0x1.cp2"),
                 "the DEAL-body resolution executes the recorded FUNCTION_RETURN task cell "
-                    + "(int:7)");
+                    + "(num:0x1.cp2)");
             check(oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 1,
                 "the DEAL-body resolution executes exactly the recorded task cell");
             check(oracleBoundarySuccesses(run, unit, BoundaryKind.ASYNC_COMPLETION) == 1,
                 "the AWAIT runs exactly one ASYNC_COMPLETION boundary");
-            check(oracleSucceeded(run, awaitOp, "int:7"),
-                "the DEAL-body AWAIT completes through the recorded task cell (int:7)");
+            check(oracleSucceeded(run, awaitOp, "num:0x1.cp2"),
+                "the DEAL-body AWAIT completes through the recorded task cell (num:0x1.cp2)");
         }
 
         // HOST: startAsync/completeAsync with the derived operation label; zero
@@ -2013,7 +2013,7 @@ public class DynamicResolutionIrTest {
                         String operationLabel) {
                     check(MOD.equals(module) && "f".equals(export) && SIG.equals(descriptor)
                             && args.size() == 1
-                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7
+                            && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7
                             && "mod.a.f".equals(operationLabel),
                         "the HOST resolution derives the operation label mod.a.f and "
                             + "starts with the checked argument");
@@ -2024,7 +2024,7 @@ public class DynamicResolutionIrTest {
                 public SyncOutcome completeAsync(String operationLabel) {
                     check("mod.a.f".equals(operationLabel),
                         "the AWAIT completes the derived operation label");
-                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
                 }
             };
             LoweredModuleUnit unit = dynamicOracleAsyncCaller(
@@ -2039,8 +2039,8 @@ public class DynamicResolutionIrTest {
                 "the HOST dynamic ASYNC_START run succeeds");
             check(oracleSucceeded(run, startOp, "tok:902:HOST_OPERATION"),
                 "the HOST ASYNC_START publishes its canonical token");
-            check(oracleSucceeded(run, awaitOp, "int:9"),
-                "the HOST AWAIT completes the host operation (int:9)");
+            check(oracleSucceeded(run, awaitOp, "num:0x1.2p3"),
+                "the HOST AWAIT completes the host operation (num:0x1.2p3)");
             check(!oracleTouched(run, taskCell)
                     && oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 0,
                 "the HOST resolution executes zero caller-side return cells");
@@ -2048,7 +2048,7 @@ public class DynamicResolutionIrTest {
                     "mod.a.f")
                     && oracleEffect(run,
                         SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN,
-                        "mod.a.f=int:9"),
+                        "mod.a.f=num:0x1.2p3"),
                 "the HOST resolution records the ordered async host effects");
         }
 
@@ -2099,8 +2099,8 @@ public class DynamicResolutionIrTest {
                 "the " + label + " ASYNC_START publishes its caller token");
             check(oracleSucceeded(run, calleeEntry, "tok:11:DEAL_BODY_TASK"),
                 "the " + label + " callee async entry publishes its canonical token");
-            check(oracleSucceeded(run, calleeCell, "int:7"),
-                "the " + label + " callee task runs the callee-unit FUNCTION_RETURN (int:7)");
+            check(oracleSucceeded(run, calleeCell, "num:0x1.cp2"),
+                "the " + label + " callee task runs the callee-unit FUNCTION_RETURN (num:0x1.cp2)");
             check(!oracleTouched(run, taskCell)
                     && oracleBoundarySuccesses(run, caller, BoundaryKind.FUNCTION_RETURN) == 0,
                 "the " + label + " resolution executes zero caller-side return cells");
@@ -2109,8 +2109,8 @@ public class DynamicResolutionIrTest {
                         BoundaryKind.ASYNC_COMPLETION) == 1,
                 "the " + label + " run executes one callee FUNCTION_RETURN and one caller "
                     + "ASYNC_COMPLETION");
-            check(oracleSucceeded(run, awaitOp, "int:7"),
-                "the " + label + " AWAIT completes through the canonical referent (int:7)");
+            check(oracleSucceeded(run, awaitOp, "num:0x1.cp2"),
+                "the " + label + " AWAIT completes through the canonical referent (num:0x1.cp2)");
         }
     }
 
@@ -2150,10 +2150,10 @@ public class DynamicResolutionIrTest {
                 "the adapter CALL with a LoweredBody source run succeeds");
             check(oracleTouched(run, closureOp) && oracleTouched(run, adaptOp),
                 "the D15 setup runs CLOSURE_NEW then FUNCTION_ADAPT before the call");
-            check(oracleSucceeded(run, dealCell, "int:7"),
+            check(oracleSucceeded(run, dealCell, "num:0x1.cp2"),
                 "the adapter DEAL-body resolution executes the recorded FUNCTION_RETURN "
-                    + "cell (int:7)");
-            check(oracleSucceeded(run, callOp, "int:7"),
+                    + "cell (num:0x1.cp2)");
+            check(oracleSucceeded(run, callOp, "num:0x1.cp2"),
                 "the adapter DEAL-body CALL terminal records the checked value");
             check(!oracleTouched(run, hostCell) && !oracleTouched(run, externalCell),
                 "the adapter DEAL-body resolution executes exactly the selected cell");
@@ -2183,10 +2183,10 @@ public class DynamicResolutionIrTest {
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
                     check(MOD.equals(module) && "f".equals(export)
                             && SIG.equals(descriptor) && args.size() == 1
-                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                            && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7,
                         "the adapter HOST resolution forwards the host call with the "
                             + "leading source argument");
-                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
                 }
             };
             LoweredModuleUnit unit = dynamicOracleAdapterCaller(
@@ -2200,17 +2200,17 @@ public class DynamicResolutionIrTest {
                 responder);
             check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                 "the adapter CALL with a HostFunction source run succeeds");
-            check(oracleSucceeded(run, hostCell, "int:9"),
+            check(oracleSucceeded(run, hostCell, "num:0x1.2p3"),
                 "the adapter HOST resolution executes the recorded HOST_TO_DEAL cell "
-                    + "(int:9)");
-            check(oracleSucceeded(run, callOp, "int:9"),
+                    + "(num:0x1.2p3)");
+            check(oracleSucceeded(run, callOp, "num:0x1.2p3"),
                 "the adapter HOST CALL terminal records the checked value");
             check(!oracleTouched(run, dealCell) && !oracleTouched(run, externalCell),
                 "the adapter HOST resolution executes exactly the selected cell");
             check(oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.HOST_CALL,
                     "mod.a.f")
                     && oracleEffect(run, SemanticRuntimeModel.EffectEvent.Kind.HOST_RETURN,
-                        "mod.a.f=int:9"),
+                        "mod.a.f=num:0x1.2p3"),
                 "the adapter HOST resolution records the ordered host effects");
         }
         {
@@ -2239,10 +2239,10 @@ public class DynamicResolutionIrTest {
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
                     check(MOD.equals(module) && "@value#700".equals(export)
                             && SIG.equals(descriptor) && args.size() == 1
-                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                            && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7,
                         "the adapter HostFunctionValue resolution forwards the host call "
                             + "under the materializing-boundary correlation export");
-                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
                 }
             };
             LoweredModuleUnit unit = dynamicOracleAdapterCaller(
@@ -2256,10 +2256,10 @@ public class DynamicResolutionIrTest {
                 responder);
             check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                 "the adapter CALL with a HostFunctionValue source run succeeds");
-            check(oracleSucceeded(run, hostCell, "int:9"),
+            check(oracleSucceeded(run, hostCell, "num:0x1.2p3"),
                 "the adapter HostFunctionValue resolution executes the recorded "
-                    + "HOST_TO_DEAL cell (int:9)");
-            check(oracleSucceeded(run, callOp, "int:9"),
+                    + "HOST_TO_DEAL cell (num:0x1.2p3)");
+            check(oracleSucceeded(run, callOp, "num:0x1.2p3"),
                 "the adapter HostFunctionValue CALL terminal records the checked value");
             check(!oracleTouched(run, dealCell) && !oracleTouched(run, externalCell),
                 "the adapter HostFunctionValue resolution executes exactly the selected "
@@ -2294,10 +2294,10 @@ public class DynamicResolutionIrTest {
                         RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
                     check(MOD_B.equals(module) && "f".equals(export)
                             && SIG.equals(descriptor) && args.size() == 1
-                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7,
+                            && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7,
                         "the adapter EXTERNAL resolution forwards the retained-ABI host "
                             + "call with the leading source argument");
-                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
                 }
             };
             LoweredModuleUnit unit = dynamicOracleAdapterCaller(
@@ -2312,10 +2312,10 @@ public class DynamicResolutionIrTest {
                 responder);
             check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                 "the adapter CALL with a retained-ABI ExternalFunction source run succeeds");
-            check(oracleSucceeded(run, externalCell, "int:9"),
+            check(oracleSucceeded(run, externalCell, "num:0x1.2p3"),
                 "the adapter EXTERNAL resolution executes the recorded EXTERNAL_RETURN "
-                    + "cell (int:9)");
-            check(oracleSucceeded(run, callOp, "int:9"),
+                    + "cell (num:0x1.2p3)");
+            check(oracleSucceeded(run, callOp, "num:0x1.2p3"),
                 "the adapter EXTERNAL CALL terminal records the checked value");
             check(!oracleTouched(run, dealCell) && !oracleTouched(run, hostCell),
                 "the adapter EXTERNAL resolution executes exactly the selected cell");
@@ -2366,10 +2366,10 @@ public class DynamicResolutionIrTest {
                 null);
             check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                 "the adapter CALL with a SHARED_BODY ExternalFunction source run succeeds");
-            check(oracleSucceeded(run, calleeCell, "int:7"),
+            check(oracleSucceeded(run, calleeCell, "num:0x1.cp2"),
                 "the adapter SHARED_BODY resolution runs the callee EXTERNAL_RETURN "
-                    + "(int:7)");
-            check(oracleSucceeded(run, callOp, "int:7"),
+                    + "(num:0x1.cp2)");
+            check(oracleSucceeded(run, callOp, "num:0x1.cp2"),
                 "the adapter SHARED_BODY CALL terminal records the value without "
                     + "re-checking");
             check(!oracleTouched(run, dealCell) && !oracleTouched(run, hostCell)
@@ -2414,17 +2414,17 @@ public class DynamicResolutionIrTest {
                 "the adapter ASYNC_START with a LoweredBody source run succeeds");
             check(oracleSucceeded(run, startOp, "tok:911:DEAL_BODY_TASK"),
                 "the adapter DEAL-body ASYNC_START publishes its canonical token");
-            check(oracleSucceeded(run, taskCell, "int:7"),
+            check(oracleSucceeded(run, taskCell, "num:0x1.cp2"),
                 "the adapter DEAL-body resolution executes the recorded FUNCTION_RETURN "
-                    + "task cell (int:7)");
+                    + "task cell (num:0x1.cp2)");
             check(oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 1
                     && oracleBoundarySuccesses(run, unit,
                         BoundaryKind.ASYNC_COMPLETION) == 1,
                 "the adapter DEAL-body resolution executes exactly the recorded task cell "
                     + "plus one ASYNC_COMPLETION");
-            check(oracleSucceeded(run, awaitOp, "int:7"),
+            check(oracleSucceeded(run, awaitOp, "num:0x1.cp2"),
                 "the adapter DEAL-body AWAIT completes through the recorded task cell "
-                    + "(int:7)");
+                    + "(num:0x1.cp2)");
         }
         {
             // HostFunction source → HOST: startAsync/completeAsync with the derived
@@ -2454,7 +2454,7 @@ public class DynamicResolutionIrTest {
                         String operationLabel) {
                     check(MOD.equals(module) && "f".equals(export) && SIG.equals(descriptor)
                             && args.size() == 1
-                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7
+                            && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7
                             && "mod.a.f".equals(operationLabel),
                         "the adapter HOST resolution derives the operation label mod.a.f "
                             + "and starts with the leading source argument");
@@ -2465,7 +2465,7 @@ public class DynamicResolutionIrTest {
                 public SyncOutcome completeAsync(String operationLabel) {
                     check("mod.a.f".equals(operationLabel),
                         "the adapter HOST AWAIT completes the derived operation label");
-                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
                 }
             };
             LoweredModuleUnit unit = dynamicOracleAdapterAsyncCaller(
@@ -2481,8 +2481,8 @@ public class DynamicResolutionIrTest {
                 "the adapter ASYNC_START with a HostFunction source run succeeds");
             check(oracleSucceeded(run, startOp, "tok:912:HOST_OPERATION"),
                 "the adapter HOST ASYNC_START publishes its canonical token");
-            check(oracleSucceeded(run, awaitOp, "int:9"),
-                "the adapter HOST AWAIT completes the host operation (int:9)");
+            check(oracleSucceeded(run, awaitOp, "num:0x1.2p3"),
+                "the adapter HOST AWAIT completes the host operation (num:0x1.2p3)");
             check(!oracleTouched(run, taskCell)
                     && oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 0,
                 "the adapter HOST resolution executes zero caller-side return cells");
@@ -2490,7 +2490,7 @@ public class DynamicResolutionIrTest {
                     "mod.a.f")
                     && oracleEffect(run,
                         SemanticRuntimeModel.EffectEvent.Kind.ASYNC_COMPLETE_RETURN,
-                        "mod.a.f=int:9"),
+                        "mod.a.f=num:0x1.2p3"),
                 "the adapter HOST resolution records the ordered async host effects");
         }
         {
@@ -2522,7 +2522,7 @@ public class DynamicResolutionIrTest {
                         String operationLabel) {
                     check(MOD.equals(module) && "@value#701".equals(export)
                             && SIG.equals(descriptor) && args.size() == 1
-                            && ((SemanticOracle.Value.IntValue) args.get(0)).value() == 7
+                            && ((SemanticOracle.Value.NumValue) args.get(0)).value() == 7
                             && "mod.a.@value".equals(operationLabel),
                         "the adapter HostFunctionValue resolution derives the operation "
                             + "label mod.a.@value and starts under the correlation export");
@@ -2534,7 +2534,7 @@ public class DynamicResolutionIrTest {
                     check("mod.a.@value".equals(operationLabel),
                         "the adapter HostFunctionValue AWAIT completes the derived "
                             + "operation label");
-                    return new SyncOutcome.Returned(new SemanticOracle.Value.IntValue(9));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.NumValue(9));
                 }
             };
             LoweredModuleUnit unit = dynamicOracleAdapterAsyncCaller(
@@ -2550,8 +2550,8 @@ public class DynamicResolutionIrTest {
                 "the adapter ASYNC_START with a HostFunctionValue source run succeeds");
             check(oracleSucceeded(run, startOp, "tok:913:HOST_OPERATION"),
                 "the adapter HostFunctionValue ASYNC_START publishes its canonical token");
-            check(oracleSucceeded(run, awaitOp, "int:9"),
-                "the adapter HostFunctionValue AWAIT completes the host operation (int:9)");
+            check(oracleSucceeded(run, awaitOp, "num:0x1.2p3"),
+                "the adapter HostFunctionValue AWAIT completes the host operation (num:0x1.2p3)");
             check(!oracleTouched(run, taskCell)
                     && oracleBoundarySuccesses(run, unit, BoundaryKind.FUNCTION_RETURN) == 0,
                 "the adapter HostFunctionValue resolution executes zero caller-side "
@@ -2615,16 +2615,16 @@ public class DynamicResolutionIrTest {
             check(oracleSucceeded(run, calleeEntry, "tok:11:DEAL_BODY_TASK"),
                 "the adapter " + label + " callee async entry publishes its canonical "
                     + "token");
-            check(oracleSucceeded(run, calleeCell, "int:7"),
+            check(oracleSucceeded(run, calleeCell, "num:0x1.cp2"),
                 "the adapter " + label + " callee task runs the callee-unit "
-                    + "FUNCTION_RETURN (int:7)");
+                    + "FUNCTION_RETURN (num:0x1.cp2)");
             check(!oracleTouched(run, taskCell)
                     && oracleBoundarySuccesses(run, caller, BoundaryKind.FUNCTION_RETURN) == 0,
                 "the adapter " + label + " resolution executes zero caller-side return "
                     + "cells");
-            check(oracleSucceeded(run, awaitOp, "int:7"),
+            check(oracleSucceeded(run, awaitOp, "num:0x1.cp2"),
                 "the adapter " + label + " AWAIT completes through the canonical referent "
-                    + "(int:7)");
+                    + "(num:0x1.cp2)");
         }
     }
 

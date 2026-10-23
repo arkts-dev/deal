@@ -1,10 +1,11 @@
+import * as math from "std/math";
 // @spec: Diagnostics
-// @description: Integer division by zero reports E8005 at the original DEAL expression
-// @expected: runtime-error E8005
+// @description: A surviving sqrt failure preserves the exact expression origin through its enclosing control flow
+// @expected: runtime-error E8001
 // @features: diagnostics, runtime-location, arithmetic
 
 export function main(): null {
-  let zero: int = 0;
-  let value: int = 7 / zero;
+  let zero: number = 0;
+  let value: number = math.sqrt(-1);
   return null;
 }

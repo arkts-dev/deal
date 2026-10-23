@@ -23,9 +23,9 @@ end
 
 -- ==================== json_from_json: basic field types ====================
 
-test("json_from_json with int field", function()
+test("json_from_json with number field", function()
   local fields = {
-    { name = "count", jtype = "int", optional = false, nullable = false }
+    { name = "count", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { count = 0 }
   local parsed = { count = 42 }
@@ -95,7 +95,7 @@ end)
 
 test("json_from_json applies defaults for missing keys", function()
   local fields = {
-    { name = "a", jtype = "int", optional = false, nullable = false },
+    { name = "a", jtype = "number", optional = false, nullable = false },
     { name = "b", jtype = "string", optional = false, nullable = false }
   }
   local defaults = { a = 10, b = "default" }
@@ -108,7 +108,7 @@ end)
 
 test("json_from_json with empty object document applies all defaults", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false },
+    { name = "x", jtype = "number", optional = false, nullable = false },
     { name = "y", jtype = "string", optional = false, nullable = false }
   }
   local defaults = { x = 5, y = "hi" }
@@ -121,7 +121,7 @@ end)
 
 test("json_from_json rejects a decoded empty array carrier (no []/{} collapse)", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 5 }
   -- The std/json decode marks an array carrier even when it is empty, so
@@ -134,7 +134,7 @@ end)
 test("json_from_json deep-copies defaults (instances independent)", function()
   local fields = {
     { name = "items", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { items = {1, 2, 3} }
   local parsed = {}
@@ -170,7 +170,7 @@ end)
 
 test("json_from_json rejects unknown key with valid known key", function()
   local fields = {
-    { name = "a", jtype = "int", optional = false, nullable = false }
+    { name = "a", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { a = 0 }
   local parsed = { a = 1, b = 2 }
@@ -180,7 +180,7 @@ end)
 
 test("json_from_json accepts only known keys (no extras)", function()
   local fields = {
-    { name = "id", jtype = "int", optional = false, nullable = false },
+    { name = "id", jtype = "number", optional = false, nullable = false },
     { name = "name", jtype = "string", optional = false, nullable = false }
   }
   local defaults = { id = 0, name = "" }
@@ -315,7 +315,7 @@ end)
 
 test("json_from_json nested class field", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local parent_fields = {
@@ -334,7 +334,7 @@ end)
 
 test("json_from_json nested class with extra keys fails", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local parent_fields = {
@@ -349,7 +349,7 @@ end)
 
 test("json_from_json nested class: non-table value fails", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local parent_fields = {
@@ -366,7 +366,7 @@ end)
 
 test("json_from_json nullable nested class with null", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local parent_fields = {
@@ -385,7 +385,7 @@ end)
 test("json_from_json array of ints", function()
   local fields = {
     { name = "tags", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { tags = {} }
   local parsed = { tags = {1, 2, 3} }
@@ -414,7 +414,7 @@ end)
 test("json_from_json empty array", function()
   local fields = {
     { name = "items", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { items = {} }
   local parsed = { items = {} }
@@ -426,7 +426,7 @@ end)
 test("json_from_json array: non-table fails", function()
   local fields = {
     { name = "tags", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { tags = {} }
   local parsed = { tags = 42 }
@@ -438,7 +438,7 @@ end)
 
 test("json_from_json array of nested classes", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { val = 0 }
   local parent_fields = {
@@ -458,7 +458,7 @@ end)
 
 test("json_from_json array of nested classes: element failure fails parent", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { val = 0 }
   local parent_fields = {
@@ -478,7 +478,7 @@ test("json_from_json removes __MISSING from instance", function()
   local fields = {
     { name = "required", jtype = "string", optional = false, nullable = false },
     { name = "optional1", jtype = "string", optional = true, nullable = false },
-    { name = "optional2", jtype = "int", optional = true, nullable = false }
+    { name = "optional2", jtype = "number", optional = true, nullable = false }
   }
   local defaults = { required = "", optional1 = __rt.__MISSING, optional2 = __rt.__MISSING }
   local parsed = { required = "x" }
@@ -506,7 +506,7 @@ end)
 
 test("json_to_json includes multiple fields", function()
   local fields = {
-    { name = "id", jtype = "int", optional = false, nullable = false },
+    { name = "id", jtype = "number", optional = false, nullable = false },
     { name = "name", jtype = "string", optional = false, nullable = false }
   }
   local instance = { id = 1, name = "Test", [__K.classname] = "C", [__K.kind] = "class" }
@@ -602,7 +602,7 @@ end)
 
 test("json_to_json nested class field", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_instance = { x = 42, [__K.classname] = "Child", [__K.kind] = "class" }
   local parent_fields = {
@@ -621,7 +621,7 @@ end)
 test("json_to_json array of primitives", function()
   local fields = {
     { name = "tags", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local instance = { tags = {1, 2, 3}, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
@@ -634,7 +634,7 @@ end)
 
 test("json_to_json array of nested classes", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local parent_fields = {
     { name = "children", jtype = "array", optional = false, nullable = false,
@@ -653,7 +653,7 @@ end)
 test("json_to_json empty array", function()
   local fields = {
     { name = "items", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local instance = { items = {}, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
@@ -760,7 +760,7 @@ end)
 
 test("nested class roundtrip", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false },
+    { name = "x", jtype = "number", optional = false, nullable = false },
     { name = "y", jtype = "string", optional = true, nullable = false }
   }
   local child_defaults = { x = 0, y = __rt.__MISSING }
@@ -794,7 +794,7 @@ end)
 
 test("three-level nested class roundtrip", function()
   local grandchild_fields = {
-    { name = "v", jtype = "int", optional = false, nullable = false }
+    { name = "v", jtype = "number", optional = false, nullable = false }
   }
   local grandchild_defaults = { v = 0 }
   local child_fields = {
@@ -828,7 +828,7 @@ end)
 test("array of primitives roundtrip", function()
   local fields = {
     { name = "nums", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { nums = {} }
   local instance = { nums = {10, 20, 30}, [__K.classname] = "C", [__K.kind] = "class" }
@@ -847,7 +847,7 @@ end)
 
 test("array of nested classes roundtrip", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { val = 0 }
   local parent_fields = {
@@ -876,7 +876,7 @@ end)
 -- ==================== Instance tagging ====================
 
 test("json_from_json tags instance with __kind = class", function()
-  local fields = { { name = "x", jtype = "int", optional = false, nullable = false } }
+  local fields = { { name = "x", jtype = "number", optional = false, nullable = false } }
   local defaults = { x = 0 }
   local parsed = { x = 1 }
   local instance = __rt.json_from_json("MyClass", parsed, defaults, fields)
@@ -884,7 +884,7 @@ test("json_from_json tags instance with __kind = class", function()
 end)
 
 test("json_from_json tags instance with correct __classname", function()
-  local fields = { { name = "x", jtype = "int", optional = false, nullable = false } }
+  local fields = { { name = "x", jtype = "number", optional = false, nullable = false } }
   local defaults = { x = 0 }
   local parsed = { x = 1 }
   local instance = __rt.json_from_json("MyClass", parsed, defaults, fields)
@@ -897,7 +897,7 @@ test("json_from_json with all primitive field types", function()
   local fields = {
     { name = "f_null",    jtype = "null",    optional = false, nullable = true },
     { name = "f_bool",    jtype = "boolean", optional = false, nullable = false },
-    { name = "f_int",     jtype = "int",     optional = false, nullable = false },
+    { name = "f_int",     jtype = "number",     optional = false, nullable = false },
     { name = "f_number",  jtype = "number",  optional = false, nullable = false },
     { name = "f_string",  jtype = "string",  optional = false, nullable = false },
     { name = "f_table",   jtype = "table",   optional = false, nullable = false },
@@ -949,7 +949,7 @@ end)
 
 test("json_to_json returns a table, not a JSON string", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local instance = { x = 42, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
@@ -961,7 +961,7 @@ end)
 
 test("json_from_json returns nil on failure (does not throw)", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
   local parsed = { x = 1, extra = true }
@@ -1014,33 +1014,13 @@ test("_json_is_array: dense arrays accepted, edge cases rejected", function()
   assert(__rt._json_is_array({1, nil, 3}) == false)              -- nil hole
 end)
 
--- ==================== Direct helpers: _json_is_int / _json_is_number ====================
+-- ==================== Finite JSON number admission ====================
 
-test("_json_is_int: int32 boundaries accepted, beyond rejected (D5 narrowing)", function()
-  assert(__rt._json_is_int(0) == true)
-  assert(__rt._json_is_int(-0) == true)
-  assert(__rt._json_is_int(42) == true)
-  assert(__rt._json_is_int(-42) == true)
-  assert(__rt._json_is_int(2147483647) == true)
-  assert(__rt._json_is_int(-2147483648) == true)
-  assert(__rt._json_is_int(2147483648) == false)
-  assert(__rt._json_is_int(-2147483649) == false)
-  -- The former ±(2^53-1) safe-range boundary is outside int32: rejected.
-  assert(__rt._json_is_int(9007199254740991) == false)
-  assert(__rt._json_is_int(-9007199254740991) == false)
-  assert(__rt._json_is_int(1e300) == false)
-  assert(__rt._json_is_int(-1e300) == false)
-end)
-
-test("_json_is_int: NaN/Infinity/non-integer/non-number rejected", function()
-  assert(__rt._json_is_int(0/0) == false)    -- NaN
-  assert(__rt._json_is_int(1/0) == false)    -- +Infinity
-  assert(__rt._json_is_int(-1/0) == false)   -- -Infinity
-  assert(__rt._json_is_int(3.5) == false)    -- non-integer
-  assert(__rt._json_is_int("42") == false)
-  assert(__rt._json_is_int(true) == false)
-  assert(__rt._json_is_int(nil) == false)
-  assert(__rt._json_is_int(function() end) == false)
+test("_json_is_number: wide values retain binary64 admission", function()
+  for _, value in ipairs({0, -0.0, 42, -42, 2147483647, -2147483648,
+      2147483648, -2147483649, 9007199254740991, -9007199254740991, 1e300, -1e300}) do
+    assert(__rt._json_is_number(value) == true)
+  end
 end)
 
 test("_json_is_number: finite numbers accepted, NaN/Infinity/non-numbers rejected", function()
@@ -1180,29 +1160,29 @@ test("_json_validate_entry: non-table entries are false, no throw", function()
 end)
 
 test("_json_validate_entry: field entries require boolean optional/nullable", function()
-  local ok = { name = "x", jtype = "int", optional = false, nullable = false }
+  local ok = { name = "x", jtype = "number", optional = false, nullable = false }
   assert(__rt._json_validate_entry(ok, true) == true)
   assert(__rt._json_validate_entry(ok, false) == true)
   -- missing optional
-  local m1 = { name = "x", jtype = "int", nullable = false }
+  local m1 = { name = "x", jtype = "number", nullable = false }
   assert(__rt._json_validate_entry(m1, true) == false)
   assert(__rt._json_validate_entry(m1, false) == false)
   -- missing nullable
-  local m2 = { name = "x", jtype = "int", optional = false }
+  local m2 = { name = "x", jtype = "number", optional = false }
   assert(__rt._json_validate_entry(m2, true) == false)
   assert(__rt._json_validate_entry(m2, false) == false)
   -- non-boolean optional (truthy)
-  local n1 = { name = "x", jtype = "int", optional = 1, nullable = false }
+  local n1 = { name = "x", jtype = "number", optional = 1, nullable = false }
   assert(__rt._json_validate_entry(n1, true) == false)
   assert(__rt._json_validate_entry(n1, false) == false)
   -- non-boolean nullable (truthy string)
-  local n2 = { name = "x", jtype = "int", optional = false, nullable = "yes" }
+  local n2 = { name = "x", jtype = "number", optional = false, nullable = "yes" }
   assert(__rt._json_validate_entry(n2, true) == false)
   assert(__rt._json_validate_entry(n2, false) == false)
 end)
 
 test("_json_validate_entry: field-entry name must be a string", function()
-  local bad = { name = 42, jtype = "int", optional = false, nullable = false }
+  local bad = { name = 42, jtype = "number", optional = false, nullable = false }
   assert(__rt._json_validate_entry(bad, true) == false)
   assert(__rt._json_validate_entry(bad, false) == false)
 end)
@@ -1215,18 +1195,18 @@ test("_json_validate_entry: unknown or missing jtype is false", function()
 end)
 
 test("_json_validate_entry: element descriptors may omit optional/nullable", function()
-  local elem = { jtype = "int" }
+  local elem = { jtype = "number" }
   assert(__rt._json_validate_entry(elem, true) == true)
   assert(__rt._json_validate_entry(elem, false) == true)
   -- present boolean element flags stay valid
-  local with_flags = { jtype = "int", optional = false, nullable = true }
+  local with_flags = { jtype = "number", optional = false, nullable = true }
   assert(__rt._json_validate_entry(with_flags, true) == true)
   assert(__rt._json_validate_entry(with_flags, false) == true)
   -- present non-boolean element flag is malformed
-  assert(__rt._json_validate_entry({ jtype = "int", optional = 1 }, true) == false)
-  assert(__rt._json_validate_entry({ jtype = "int", optional = 1 }, false) == false)
-  assert(__rt._json_validate_entry({ jtype = "int", nullable = "yes" }, true) == false)
-  assert(__rt._json_validate_entry({ jtype = "int", nullable = "yes" }, false) == false)
+  assert(__rt._json_validate_entry({ jtype = "number", optional = 1 }, true) == false)
+  assert(__rt._json_validate_entry({ jtype = "number", optional = 1 }, false) == false)
+  assert(__rt._json_validate_entry({ jtype = "number", nullable = "yes" }, true) == false)
+  assert(__rt._json_validate_entry({ jtype = "number", nullable = "yes" }, false) == false)
 end)
 
 test("_json_validate_entry: class entries need className and fields; defaults decode-only", function()
@@ -1276,14 +1256,14 @@ end)
 
 test("_json_validate_entry: array entries require a table element", function()
   local ok_field = { name = "a", jtype = "array", optional = false, nullable = false,
-                     element = { jtype = "int" } }
+                     element = { jtype = "number" } }
   assert(__rt._json_validate_entry(ok_field, true) == true)
   assert(__rt._json_validate_entry(ok_field, false) == true)
   local no_element = { name = "a", jtype = "array", optional = false, nullable = false }
   assert(__rt._json_validate_entry(no_element, true) == false)
   assert(__rt._json_validate_entry(no_element, false) == false)
   local non_table_element = { name = "a", jtype = "array", optional = false, nullable = false,
-                              element = "int" }
+                              element = "number" }
   assert(__rt._json_validate_entry(non_table_element, true) == false)
 end)
 
@@ -1306,19 +1286,19 @@ end)
 
 test("_json_validate_fields: any invalid entry fails the whole array", function()
   local fields = {
-    { name = "a", jtype = "int", optional = false, nullable = false },
+    { name = "a", jtype = "number", optional = false, nullable = false },
     { name = "b", jtype = "string", optional = true, nullable = false },
   }
   assert(__rt._json_validate_fields(fields, true) == true)
   assert(__rt._json_validate_fields(fields, false) == true)
   assert(__rt._json_validate_fields({}, true) == true)
   local non_table_entry = {
-    { name = "a", jtype = "int", optional = false, nullable = false },
+    { name = "a", jtype = "number", optional = false, nullable = false },
     42,
   }
   assert(__rt._json_validate_fields(non_table_entry, true) == false)
   local bad_flag = {
-    { name = "a", jtype = "int", optional = false, nullable = false },
+    { name = "a", jtype = "number", optional = false, nullable = false },
     { name = "b", jtype = "string", optional = true, nullable = "yes" },
   }
   assert(__rt._json_validate_fields(bad_flag, true) == false)
@@ -1330,19 +1310,19 @@ test("_json_validate_fields: members must carry a string name", function()
   -- _json_validate_entry and crash the walkers with a raw Lua error
   -- (encode: "attempt to concatenate field 'name' (a nil value)";
   -- decode: "table index is nil" at valid_keys[f.name])
-  assert(__rt._json_validate_fields({ { jtype = "int" } }, true) == false)
-  assert(__rt._json_validate_fields({ { jtype = "int" } }, false) == false)
+  assert(__rt._json_validate_fields({ { jtype = "number" } }, true) == false)
+  assert(__rt._json_validate_fields({ { jtype = "number" } }, false) == false)
   assert(__rt._json_validate_fields(
-      { { jtype = "int", optional = true, nullable = false } }, true) == false)
+      { { jtype = "number", optional = true, nullable = false } }, true) == false)
   assert(__rt._json_validate_fields(
-      { { jtype = "int", optional = true, nullable = false } }, false) == false)
+      { { jtype = "number", optional = true, nullable = false } }, false) == false)
 end)
 
 test("_json_validate_fields: existing hand-built descriptors stay valid", function()
   -- class element descriptor omitting optional/nullable (absent = false/false),
   -- as in the suite's array-of-nested-classes tests
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local parent_fields = {
     { name = "children", jtype = "array", optional = false, nullable = false,
@@ -1438,16 +1418,16 @@ end)
 test("decode matrix: positive jtype x nullable x optional combinations", function()
   local fields = {
     { name = "b",  jtype = "boolean", optional = false, nullable = false },
-    { name = "i",  jtype = "int",     optional = false, nullable = false },
+    { name = "i",  jtype = "number",     optional = false, nullable = false },
     { name = "n",  jtype = "number",  optional = false, nullable = false },
     { name = "s",  jtype = "string",  optional = false, nullable = false },
     { name = "t",  jtype = "table",   optional = false, nullable = false },
     { name = "a",  jtype = "array",   optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } },
+      element = { jtype = "number", optional = false, nullable = false } },
     { name = "nb", jtype = "boolean", optional = false, nullable = true },
     { name = "nn", jtype = "number",  optional = false, nullable = true },
-    { name = "ob", jtype = "int",     optional = true,  nullable = false },
-    { name = "on", jtype = "int",     optional = true,  nullable = true },
+    { name = "ob", jtype = "number",     optional = true,  nullable = false },
+    { name = "on", jtype = "number",     optional = true,  nullable = true },
   }
   local defaults = {
     b = false, i = 0, n = 0.0, s = "", t = {}, a = {},
@@ -1476,14 +1456,14 @@ end)
 
 test("decode matrix: nullable class/array/table fields accept explicit null", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local fields = {
     { name = "c", jtype = "class", optional = false, nullable = true,
       className = "Child", defaults = child_defaults, fields = child_fields },
     { name = "a", jtype = "array", optional = false, nullable = true,
-      element = { jtype = "int", optional = false, nullable = false } },
+      element = { jtype = "number", optional = false, nullable = false } },
     { name = "t", jtype = "table", optional = false, nullable = true },
   }
   local defaults = { c = __rt.__NULL, a = __rt.__NULL, t = __rt.__NULL }
@@ -1497,7 +1477,7 @@ end)
 
 test("decode matrix: nested class with value decodes a tagged instance", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local parent_fields = {
@@ -1513,11 +1493,11 @@ test("decode matrix: nested class with value decodes a tagged instance", functio
   assert(instance.child[__K.kind] == "class")
 end)
 
-test("decode matrix: int[][] nested arrays decode level by level", function()
+test("decode matrix: number[][] nested arrays decode level by level", function()
   local fields = {
     { name = "grid", jtype = "array", optional = false, nullable = false,
       element = { jtype = "array", optional = false, nullable = false,
-        element = { jtype = "int", optional = false, nullable = false } } }
+        element = { jtype = "number", optional = false, nullable = false } } }
   }
   local defaults = { grid = {} }
   local parsed = { grid = { { 1, 2 }, { 3, 4 } } }
@@ -1532,7 +1512,7 @@ end)
 
 test("decode matrix: nullable class array elements accept explicit null", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { val = 0 }
   local fields = {
@@ -1554,7 +1534,7 @@ test("decode matrix: element descriptors omitting both flags decode (absent = fa
   -- The existing hand-built class element descriptors keep working
   -- unchanged: no optional/nullable keys, element null rejected.
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { val = 0 }
   local fields = {
@@ -1575,7 +1555,7 @@ end)
 
 test("decode matrix: wrong primitive type per jtype returns nil", function()
   local fields = {
-    { name = "i", jtype = "int",     optional = false, nullable = false },
+    { name = "i", jtype = "number",     optional = false, nullable = false },
     { name = "b", jtype = "boolean", optional = false, nullable = false },
     { name = "s", jtype = "string",  optional = false, nullable = false },
     { name = "n", jtype = "number",  optional = false, nullable = false },
@@ -1602,7 +1582,7 @@ end)
 test("decode matrix: explicit null on non-nullable element returns nil", function()
   local fields = {
     { name = "nums", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { nums = {} }
   assert(__rt.json_from_json("C", { nums = { 1, __rt.__NULL, 3 } }, defaults, fields) == nil)
@@ -1610,14 +1590,14 @@ end)
 
 test("decode matrix: non-table raw for class/array/table fields returns nil", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local fields = {
     { name = "c", jtype = "class", optional = false, nullable = false,
       className = "Child", defaults = child_defaults, fields = child_fields },
     { name = "a", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } },
+      element = { jtype = "number", optional = false, nullable = false } },
     { name = "t", jtype = "table", optional = false, nullable = false },
   }
   local defaults = { c = __rt.__MISSING, a = {}, t = {} }
@@ -1629,14 +1609,14 @@ end)
 
 test("decode matrix: object/array shape cross-wiring returns nil", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 0 }
   local fields = {
     { name = "c", jtype = "class", optional = false, nullable = false,
       className = "Child", defaults = child_defaults, fields = child_fields },
     { name = "a", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } },
+      element = { jtype = "number", optional = false, nullable = false } },
     { name = "t", jtype = "table", optional = false, nullable = false },
   }
   local defaults = { c = __rt.__MISSING, a = {}, t = {} }
@@ -1674,7 +1654,7 @@ end)
 
 test("decode matrix: non-table parsed (scalar/function/nil) returns nil", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
   assert(__rt.json_from_json("C", 42, defaults, fields) == nil)
@@ -1686,7 +1666,7 @@ end)
 
 test("decode matrix: parsed __NULL sentinel returns nil", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
   assert(__rt.json_from_json("C", __rt.__NULL, defaults, fields) == nil)
@@ -1694,7 +1674,7 @@ end)
 
 test("decode matrix: non-table defaults and fields return nil", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
   assert(__rt.json_from_json("C", {}, 42, fields) == nil)
@@ -1708,7 +1688,7 @@ end)
 
 test("decode matrix: sentinel/identity-preserved defaults rejected, sentinels unmutated", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   assert(__rt.json_from_json("C", {}, __rt.__NULL, fields) == nil)
   assert(__rt.json_from_json("C", {}, __rt.__MISSING, fields) == nil)
@@ -1743,7 +1723,7 @@ test("decode matrix: malformed descriptor entries return nil", function()
   assert(__rt.json_from_json("C", {}, defaults, { 42 }) == nil)
   -- non-string name
   assert(__rt.json_from_json("C", {}, defaults,
-      { { name = 42, jtype = "int", optional = false, nullable = false } }) == nil)
+      { { name = 42, jtype = "number", optional = false, nullable = false } }) == nil)
   -- unknown jtype
   assert(__rt.json_from_json("C", {}, defaults,
       { { name = "x", jtype = "bytes", optional = false, nullable = false } }) == nil)
@@ -1754,7 +1734,7 @@ test("decode matrix: malformed descriptor entries return nil", function()
       { { name = "a", jtype = "array", optional = false, nullable = false } }) == nil)
   -- non-table element
   assert(__rt.json_from_json("C", {}, defaults,
-      { { name = "a", jtype = "array", optional = false, nullable = false, element = "int" } }) == nil)
+      { { name = "a", jtype = "array", optional = false, nullable = false, element = "number" } }) == nil)
   -- class entry missing className / defaults / fields on the decode path
   assert(__rt.json_from_json("C", {}, defaults,
       { { name = "c", jtype = "class", optional = false, nullable = false, defaults = {}, fields = {} } }) == nil)
@@ -1771,15 +1751,15 @@ test("decode matrix: nameless field entry returns nil (no raw Lua error)", funct
   local defaults = {}
   -- a nameless member would otherwise pass the element rules and crash
   -- the key gate with a raw "table index is nil" at valid_keys[f.name]
-  assert(__rt.json_from_json("C", {}, defaults, { { jtype = "int" } }) == nil)
+  assert(__rt.json_from_json("C", {}, defaults, { { jtype = "number" } }) == nil)
   assert(__rt.json_from_json("C", {}, defaults,
-      { { jtype = "int", optional = true, nullable = false } }) == nil)
+      { { jtype = "number", optional = true, nullable = false } }) == nil)
 end)
 
 test("decode matrix: nameless entry inside nested class fields returns nil", function()
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
-      className = "Child", defaults = {}, fields = { { jtype = "int" } } }
+      className = "Child", defaults = {}, fields = { { jtype = "number" } } }
   }
   local defaults = { child = __rt.__MISSING }
   assert(__rt.json_from_json("Parent", { child = {} }, defaults, parent_fields) == nil)
@@ -1787,7 +1767,7 @@ end)
 
 test("decode matrix: class element missing className/defaults/fields returns nil", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { children = {} }
   -- class element missing className (defaults/fields present)
@@ -1820,21 +1800,21 @@ test("decode matrix: field-entry boolean flag violations return nil", function()
   local defaults = { x = 0 }
   -- nullable = "yes" (truthy non-boolean would silently flip semantics)
   assert(__rt.json_from_json("C", {}, defaults,
-      { { name = "x", jtype = "int", optional = false, nullable = "yes" } }) == nil)
+      { { name = "x", jtype = "number", optional = false, nullable = "yes" } }) == nil)
   -- optional = 1
   assert(__rt.json_from_json("C", {}, defaults,
-      { { name = "x", jtype = "int", optional = 1, nullable = false } }) == nil)
+      { { name = "x", jtype = "number", optional = 1, nullable = false } }) == nil)
   -- omitted optional key
   assert(__rt.json_from_json("C", {}, defaults,
-      { { name = "x", jtype = "int", nullable = false } }) == nil)
+      { { name = "x", jtype = "number", nullable = false } }) == nil)
   -- omitted nullable key
   assert(__rt.json_from_json("C", {}, defaults,
-      { { name = "x", jtype = "int", optional = false } }) == nil)
+      { { name = "x", jtype = "number", optional = false } }) == nil)
 end)
 
 test("decode matrix: malformed field entry inside nested fields array returns nil", function()
   local child_fields = {
-    { name = "y", jtype = "int", optional = false, nullable = "yes" }
+    { name = "y", jtype = "number", optional = false, nullable = "yes" }
   }
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
@@ -1848,20 +1828,20 @@ end)
 test("decode matrix: present non-boolean element flag returns nil", function()
   local fields = {
     { name = "nums", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", nullable = "yes" } }
+      element = { jtype = "number", nullable = "yes" } }
   }
   local defaults = { nums = {} }
   local parsed = { nums = { 1, 2 } }
   assert(__rt.json_from_json("C", parsed, defaults, fields) == nil)
   local fields2 = {
     { name = "nums", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = 1, nullable = false } }
+      element = { jtype = "number", optional = 1, nullable = false } }
   }
   assert(__rt.json_from_json("C", parsed, defaults, fields2) == nil)
 end)
 
 test("decode matrix: truncated nested-array element at depth returns nil (no raw error)", function()
-  -- int[][]: the element descriptor is array-typed but lacks its own
+  -- number[][]: the element descriptor is array-typed but lacks its own
   -- element key — the pre-hardening decoder dereferenced
   -- f.element.element.jtype and threw a raw attempt-to-index error.
   local fields = {
@@ -1876,7 +1856,7 @@ end)
 test("decode matrix: sparse and mixed-key arrays return nil", function()
   local fields = {
     { name = "nums", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } }
+      element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { nums = {} }
   assert(__rt.json_from_json("C", { nums = { 1, nil, 3 } }, defaults, fields) == nil)      -- hole
@@ -1886,16 +1866,16 @@ test("decode matrix: sparse and mixed-key arrays return nil", function()
   assert(__rt.json_from_json("C", { nums = { [0] = 1 } }, defaults, fields) == nil)          -- 0-key
 end)
 
-test("decode matrix: NaN/Infinity int and number values return nil", function()
+test("decode matrix: NaN/Infinity number and number values return nil", function()
   local fields = {
-    { name = "i", jtype = "int",    optional = false, nullable = false },
+    { name = "i", jtype = "number",    optional = false, nullable = false },
     { name = "n", jtype = "number", optional = false, nullable = false },
   }
   local defaults = { i = 0, n = 0.0 }
-  assert(__rt.json_from_json("C", { i = 0/0,  n = 1.5 }, defaults, fields) == nil)  -- NaN on int
-  assert(__rt.json_from_json("C", { i = 1/0,  n = 1.5 }, defaults, fields) == nil)  -- +Inf on int
-  assert(__rt.json_from_json("C", { i = -1/0, n = 1.5 }, defaults, fields) == nil)  -- -Inf on int
-  assert(__rt.json_from_json("C", { i = 1.5,  n = 1.5 }, defaults, fields) == nil)  -- non-integer int
+  assert(__rt.json_from_json("C", { i = 0/0,  n = 1.5 }, defaults, fields) == nil)  -- NaN on number
+  assert(__rt.json_from_json("C", { i = 1/0,  n = 1.5 }, defaults, fields) == nil)  -- +Inf on number
+  assert(__rt.json_from_json("C", { i = -1/0, n = 1.5 }, defaults, fields) == nil)  -- -Inf on number
+  assert(__rt.json_from_json("C", { i = 1.5,  n = 1.5 }, defaults, fields).i == 1.5)  -- non-integer number
   assert(__rt.json_from_json("C", { i = 1,    n = 0/0 }, defaults, fields) == nil)  -- NaN on number
   assert(__rt.json_from_json("C", { i = 1,    n = 1/0 }, defaults, fields) == nil)  -- +Inf on number
   assert(__rt.json_from_json("C", { i = 1,    n = -1/0 }, defaults, fields) == nil) -- -Inf on number
@@ -1928,7 +1908,7 @@ test("decode matrix: cyclic parsed data returns nil (array and table values)", f
   local arr_fields = {
     { name = "grid", jtype = "array", optional = false, nullable = false,
       element = { jtype = "array", optional = false, nullable = false,
-        element = { jtype = "int", optional = false, nullable = false } } }
+        element = { jtype = "number", optional = false, nullable = false } } }
   }
   local grid = {}
   grid[1] = grid
@@ -1979,8 +1959,8 @@ end)
 
 test("decode matrix: a deep nested array has no fixed cap", function()
   local function build(n)
-    -- n nested array levels ending in an int element
-    local elem = { jtype = "int", optional = false, nullable = false }
+    -- n nested array levels ending in an number element
+    local elem = { jtype = "number", optional = false, nullable = false }
     for i = 1, n do
       elem = { jtype = "array", optional = false, nullable = false, element = elem }
     end
@@ -2038,7 +2018,7 @@ end)
 
 test("decode matrix: empty object document decodes as the defaulted instance", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 5 }
   local from_obj = __rt.json_from_json("C", {}, defaults, fields)
@@ -2054,14 +2034,14 @@ end)
 
 test("decode matrix: an empty nested object applies the nested defaults", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child_defaults = { x = 7 }
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
       className = "Child", defaults = child_defaults, fields = child_fields },
     { name = "items", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", optional = false, nullable = false } },
+      element = { jtype = "number", optional = false, nullable = false } },
     { name = "meta", jtype = "table", optional = false, nullable = false },
   }
   local parent_defaults = { child = __rt.__MISSING, items = {}, meta = {} }
@@ -2102,7 +2082,7 @@ end
 
 test("json_to_json top-level identity: non-table and untagged values raise E8001", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   assert_error(function() __rt.json_to_json("C", 42, fields) end,
     "E8001", "expected class instance")
@@ -2118,7 +2098,7 @@ end)
 
 test("json_to_json top-level identity: __classname mismatch raises E8001", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   assert_error(function()
     __rt.json_to_json("C", { x = 1, [__K.classname] = "Other", [__K.kind] = "class" }, fields)
@@ -2154,27 +2134,16 @@ test("json_to_json encode matrix: boolean field", function()
   end, "E8001", "expected boolean")
 end)
 
-test("json_to_json encode matrix: int field", function()
-  local fields = {
-    { name = "n", jtype = "int", optional = false, nullable = false }
-  }
-  assert(__rt.json_to_json("C", { n = 42, [__K.classname] = "C", [__K.kind] = "class" }, fields).n == 42)
-  assert(__rt.json_to_json("C", { n = -0, [__K.classname] = "C", [__K.kind] = "class" }, fields).n == 0)
+test("json_to_json finite binary64 field admission", function()
+  local fields = {{ name = "n", jtype = "number", optional = false, nullable = false }}
+  for _, value in ipairs({42, 3.5, 9007199254740992, -0.0}) do
+    local out = __rt.json_to_json("C", { n = value, [__K.classname] = "C", [__K.kind] = "class" }, fields)
+    assert(out.n == value)
+    if value == 0 then assert(1 / out.n == -math.huge) end
+  end
   assert_error(function()
     __rt.json_to_json("C", { n = "x", [__K.classname] = "C", [__K.kind] = "class" }, fields)
-  end, "E8001", "expected int")
-  assert_error(function()
-    __rt.json_to_json("C", { n = 3.5, [__K.classname] = "C", [__K.kind] = "class" }, fields)
-  end, "E8001", "expected int, got non-integer number")
-  assert_error(function()
-    __rt.json_to_json("C", { n = 0/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
-  end, "E8001", "expected int, got NaN")
-  assert_error(function()
-    __rt.json_to_json("C", { n = 1/0, [__K.classname] = "C", [__K.kind] = "class" }, fields)
-  end, "E8001", "expected int, got infinity")
-  assert_error(function()
-    __rt.json_to_json("C", { n = 9007199254740992, [__K.classname] = "C", [__K.kind] = "class" }, fields)
-  end, "E8004", "int out of safe range")
+  end, "E8001", "expected number")
 end)
 
 test("json_to_json encode matrix: number field", function()
@@ -2226,7 +2195,7 @@ end)
 
 test("json_to_json encode matrix: nested class field", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
@@ -2247,11 +2216,11 @@ test("json_to_json encode matrix: nested class field", function()
   end, "E8001", "expected instance of Child, got Other")
 end)
 
-test("json_to_json encode matrix: array field incl. int[][]", function()
+test("json_to_json encode matrix: array field incl. number[][]", function()
   local fields = {
     { name = "m", jtype = "array", optional = false, nullable = false,
       element = { jtype = "array", optional = false, nullable = false,
-        element = { jtype = "int", optional = false, nullable = false } } }
+        element = { jtype = "number", optional = false, nullable = false } } }
   }
   local instance = { m = {{1, 2}, {3, 4}}, [__K.classname] = "C", [__K.kind] = "class" }
   local result = __rt.json_to_json("C", instance, fields)
@@ -2271,15 +2240,15 @@ test("json_to_json encode matrix: nullable __NULL emission for every jtype", fun
   local fields = {
     { name = "f_null",   jtype = "null",    optional = false, nullable = true },
     { name = "f_bool",   jtype = "boolean", optional = false, nullable = true },
-    { name = "f_int",    jtype = "int",     optional = false, nullable = true },
+    { name = "f_int",    jtype = "number",     optional = false, nullable = true },
     { name = "f_number", jtype = "number",  optional = false, nullable = true },
     { name = "f_string", jtype = "string",  optional = false, nullable = true },
     { name = "f_table",  jtype = "table",   optional = false, nullable = true },
     { name = "f_class",  jtype = "class",   optional = false, nullable = true,
       className = "Child",
-      fields = { { name = "x", jtype = "int", optional = false, nullable = false } } },
+      fields = { { name = "x", jtype = "number", optional = false, nullable = false } } },
     { name = "f_array",  jtype = "array",   optional = false, nullable = true,
-      element = { jtype = "int" } },
+      element = { jtype = "number" } },
   }
   local instance = {
     f_null = __rt.__NULL, f_bool = __rt.__NULL, f_int = __rt.__NULL,
@@ -2308,7 +2277,7 @@ test("json_to_json encode matrix: explicit null gating", function()
   -- element null gating: absent element flag means nullable = false
   local arr_fields = {
     { name = "m", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int" } }
+      element = { jtype = "number" } }
   }
   assert_error(function()
     __rt.json_to_json("C", { m = {1, __rt.__NULL}, [__K.classname] = "C", [__K.kind] = "class" }, arr_fields)
@@ -2316,7 +2285,7 @@ test("json_to_json encode matrix: explicit null gating", function()
   -- hand-built nullable element accepts __NULL
   local null_arr_fields = {
     { name = "m", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int", nullable = true } }
+      element = { jtype = "number", nullable = true } }
   }
   local res = __rt.json_to_json("C",
     { m = {1, __rt.__NULL}, [__K.classname] = "C", [__K.kind] = "class" }, null_arr_fields)
@@ -2325,7 +2294,7 @@ end)
 
 test("json_to_json encode matrix: missing required field raises E8001", function()
   local fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   assert_error(function()
     __rt.json_to_json("C", { [__K.classname] = "C", [__K.kind] = "class" }, fields)
@@ -2335,7 +2304,7 @@ end)
 test("json_to_json encode matrix: dense-array shape violations raise E8001", function()
   local fields = {
     { name = "m", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int" } }
+      element = { jtype = "number" } }
   }
   local holes = { [1] = 1, [3] = 3 }
   assert_error(function()
@@ -2424,7 +2393,7 @@ end)
 
 test("json_to_json encode matrix: shared non-cyclic child serializes twice", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local child = { x = 7, [__K.classname] = "Child", [__K.kind] = "class" }
   local fields = {
@@ -2467,8 +2436,8 @@ test("json_to_json encode matrix: a deep class chain has no fixed cap", function
 end)
 
 test("json_to_json encode matrix: a deep array chain has no fixed cap", function()
-  local function build_desc(n)  -- n nested array levels around an int element
-    local desc = { jtype = "int" }
+  local function build_desc(n)  -- n nested array levels around an number element
+    local desc = { jtype = "number" }
     for _ = 1, n - 1 do
       desc = { jtype = "array", element = desc }
     end
@@ -2503,7 +2472,7 @@ test("json_to_json encode matrix: non-table fields and non-table entries raise E
   assert_error(function() __rt.json_to_json("C", instance, { 42 }) end,
     "E8001", "malformed field descriptors")
   assert_error(function() __rt.json_to_json("C", instance,
-    { { name = 42, jtype = "int", optional = false, nullable = false } }) end,
+    { { name = 42, jtype = "number", optional = false, nullable = false } }) end,
     "E8001", "malformed field descriptors")
   assert_error(function() __rt.json_to_json("C", instance,
     { { name = "x", jtype = "function", optional = false, nullable = false } }) end,
@@ -2515,18 +2484,18 @@ test("json_to_json encode matrix: nameless field entry raises E8001, never a raw
   -- a nameless member would otherwise be classified under the element
   -- rules and crash the walker with "attempt to concatenate field
   -- 'name' (a nil value)" (missing required) or "table index is nil"
-  assert_error(function() __rt.json_to_json("C", instance, { { jtype = "int" } }) end,
+  assert_error(function() __rt.json_to_json("C", instance, { { jtype = "number" } }) end,
     "E8001", "malformed field descriptors")
   -- nameless + optional=true must not be silently accepted either
   assert_error(function() __rt.json_to_json("C", instance,
-    { { jtype = "int", optional = true, nullable = false } }) end,
+    { { jtype = "number", optional = true, nullable = false } }) end,
     "E8001", "malformed field descriptors")
 end)
 
 test("json_to_json encode matrix: nameless entry inside nested class fields raises E8001", function()
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
-      className = "Child", fields = { { jtype = "int" } } }
+      className = "Child", fields = { { jtype = "number" } } }
   }
   local child = { x = 1, [__K.classname] = "Child", [__K.kind] = "class" }
   local parent = { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
@@ -2537,23 +2506,23 @@ end)
 test("json_to_json encode matrix: field entries require boolean optional/nullable", function()
   local instance = { x = 1, [__K.classname] = "C", [__K.kind] = "class" }
   assert_error(function() __rt.json_to_json("C", instance,
-    { { name = "x", jtype = "int", nullable = false } }) end,
+    { { name = "x", jtype = "number", nullable = false } }) end,
     "E8001", "malformed field descriptors")  -- missing optional
   assert_error(function() __rt.json_to_json("C", instance,
-    { { name = "x", jtype = "int", optional = false } }) end,
+    { { name = "x", jtype = "number", optional = false } }) end,
     "E8001", "malformed field descriptors")  -- missing nullable
   assert_error(function() __rt.json_to_json("C", instance,
-    { { name = "x", jtype = "int", optional = 1, nullable = false } }) end,
+    { { name = "x", jtype = "number", optional = 1, nullable = false } }) end,
     "E8001", "malformed field descriptors")  -- truthy non-boolean optional
   assert_error(function() __rt.json_to_json("C", instance,
-    { { name = "x", jtype = "int", optional = false, nullable = "yes" } }) end,
+    { { name = "x", jtype = "number", optional = false, nullable = "yes" } }) end,
     "E8001", "malformed field descriptors")  -- truthy non-boolean nullable
 end)
 
 test("json_to_json encode matrix: element flags — present non-boolean rejected, omitted accepted", function()
   local fields = {
     { name = "m", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int" } }
+      element = { jtype = "number" } }
   }
   local instance = { m = {1, 2}, [__K.classname] = "C", [__K.kind] = "class" }
   -- absent element flags mean false/false: valid, encodes
@@ -2562,11 +2531,11 @@ test("json_to_json encode matrix: element flags — present non-boolean rejected
   -- present non-boolean element flag is malformed
   assert_error(function() __rt.json_to_json("C", instance,
     { { name = "m", jtype = "array", optional = false, nullable = false,
-        element = { jtype = "int", nullable = "yes" } } }) end,
+        element = { jtype = "number", nullable = "yes" } } }) end,
     "E8001", "malformed field descriptors")
   assert_error(function() __rt.json_to_json("C", instance,
     { { name = "m", jtype = "array", optional = false, nullable = false,
-        element = { jtype = "int", optional = 1 } } }) end,
+        element = { jtype = "number", optional = 1 } } }) end,
     "E8001", "malformed field descriptors")
 end)
 
@@ -2582,7 +2551,7 @@ end)
 
 test("json_to_json encode matrix: malformed entry inside nested class fields raises E8001", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = "yes" }
+    { name = "x", jtype = "number", optional = false, nullable = "yes" }
   }
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
@@ -2596,7 +2565,7 @@ end)
 
 test("json_to_json encode matrix: malformed flags at depth inside nested class fields", function()
   local child_fields = {
-    { name = "x", jtype = "int", nullable = false }  -- missing optional at depth
+    { name = "x", jtype = "number", nullable = false }  -- missing optional at depth
   }
   local parent_fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
@@ -2612,7 +2581,7 @@ end)
 
 test("json_to_json asymmetry: class entry with className/fields but no defaults encodes", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false }
+    { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local fields = {
     { name = "child", jtype = "class", optional = false, nullable = false,
@@ -2638,7 +2607,7 @@ end)
 
 test("json_to_json asymmetry: class element with className/fields but no defaults encodes", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false }
+    { name = "val", jtype = "number", optional = false, nullable = false }
   }
   local fields = {
     { name = "children", jtype = "array", optional = false, nullable = false,
@@ -2666,7 +2635,7 @@ end)
 
 test("json_to_json asymmetry at depth: nested class fields entry without defaults encodes", function()
   local grand_fields = {
-    { name = "v", jtype = "int", optional = false, nullable = false }
+    { name = "v", jtype = "number", optional = false, nullable = false }
   }
   local child_fields = {
     { name = "grand", jtype = "class", optional = false, nullable = false,
@@ -2690,7 +2659,7 @@ test("json_to_json does not mutate the instance or nested tables", function()
   local fields = {
     { name = "data", jtype = "table", optional = false, nullable = false },
     { name = "tags", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "int" } },
+      element = { jtype = "number" } },
   }
   local datum = { a = 1, b = { c = 2 } }
   local tags = { 1, 2 }
@@ -2786,7 +2755,7 @@ end)
 
 test("ISSUE-0188 roundtrip invariant: nested class", function()
   local child_fields = {
-    { name = "x", jtype = "int", optional = false, nullable = false },
+    { name = "x", jtype = "number", optional = false, nullable = false },
     { name = "y", jtype = "string", optional = true, nullable = false },
   }
   local child_defaults = { x = 0, y = __rt.__MISSING }
@@ -2818,12 +2787,12 @@ test("ISSUE-0188 roundtrip invariant: nested class", function()
   assert(_jsonable_deep_equal(encoded, __rt.json_to_json("Parent", redecoded, parent_fields)))
 end)
 
-test("ISSUE-0188 roundtrip invariant: int[][]", function()
+test("ISSUE-0188 roundtrip invariant: number[][]", function()
   -- Hand-built element descriptors omit optional/nullable: the absent
   -- flags mean false/false in both directions (Contract 3 element rule).
   local fields = {
     { name = "matrix", jtype = "array", optional = false, nullable = false,
-      element = { jtype = "array", element = { jtype = "int" } } },
+      element = { jtype = "array", element = { jtype = "number" } } },
   }
   local defaults = { matrix = {} }
   -- The empty inner row pins the documented []/{} collapse one level
@@ -2853,7 +2822,7 @@ end)
 
 test("ISSUE-0188 roundtrip invariant: class arrays", function()
   local child_fields = {
-    { name = "val", jtype = "int", optional = false, nullable = false },
+    { name = "val", jtype = "number", optional = false, nullable = false },
   }
   local child_defaults = { val = 0 }
   -- The class element is nullable: a __NULL element must survive the

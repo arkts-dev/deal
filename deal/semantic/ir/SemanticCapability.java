@@ -5,9 +5,6 @@ public enum SemanticCapability {
     /** Core value kinds and their operations (CONST, UNARY, BINARY, STRING_CONCAT). */
     FOUNDATION_VALUES,
 
-    /** Signed-32-bit integer semantics and conversion/boundary operations. */
-    SIGNED_INT32,
-
     /** Array/table/string containers, members, indexes, optionals, has, for-of. */
     CONTAINERS_AND_STRINGS,
 

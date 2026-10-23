@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, runtime-errors, equality
 
 export function main(): null {
-  let x: int | null = 1;
+  let x: number | null = 1;
   let clear: () => null = function(): null {
     x = null;
     return null;

@@ -1431,7 +1431,7 @@ public final class SemanticIrValidator {
             case "hostFunction" -> "HostFunction";
             case "hostFunctionValue" -> "HostFunctionValue";
             case "externalFunction" -> "ExternalFunction";
-            case "intrinsicFunction" -> "IntrinsicFunction";
+
             default -> shape;
         };
     }
@@ -1692,7 +1692,7 @@ public final class SemanticIrValidator {
     private static Optional<CompilerDiagnostic> checkBindingEnum(RawUnit unit, ComparisonFacts facts,
                                                                  RawBinding binding) {
         Set<String> shapes = Set.of("loweredBody", "adapter", "hostFunction",
-            "hostFunctionValue", "externalFunction", "intrinsicFunction",
+            "hostFunctionValue", "externalFunction",
             "dynamicFunctionValue");
         if (!shapes.contains(binding.shape())) {
             return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
@@ -1710,19 +1710,7 @@ public final class SemanticIrValidator {
                 origin(R_ENUM, "open value \"" + unknown.type()
                     + "\" in a closed AdaptSourceRef position"));
         }
-        if (binding.intrinsicKind() != null
-                && enumByName(IntrinsicKind.class, binding.intrinsicKind()) == null) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
-                origin(R_ENUM, "open value \"" + binding.intrinsicKind()
-                    + "\" in a closed IntrinsicKind position"));
-        }
-        if ("intrinsicFunction".equals(binding.shape())
-                && (binding.intrinsicKind() == null || binding.descriptor() == null)) {
-            return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
-                origin(R_ENUM, "the intrinsicFunction binding " + binding.allocationId()
-                    + " carries no intrinsic kind and descriptor text (the closed shape "
-                    + "position is its kind plus its declared signature)"));
-        }
+
         if ("dynamicFunctionValue".equals(binding.shape())
                 && (binding.materializingBoundaryOpId() == null
                     || binding.descriptor() == null)) {
@@ -1996,13 +1984,7 @@ public final class SemanticIrValidator {
                     return failure;
                 }
             }
-            case "INTRINSIC_CALL" -> {
-                failure = checkSlotEnum(op, unit, facts, "kind", optionalString(payload, "kind"),
-                    IntrinsicKind.class);
-                if (failure.isPresent()) {
-                    return failure;
-                }
-            }
+
             case "STDLIB_CALL" -> {
                 String function = optionalString(payload, "function");
                 if (function != null && enumByName(StdlibFunctionId.class, function) == null
@@ -2125,47 +2107,12 @@ public final class SemanticIrValidator {
         String shape = optionalString(binding, "type");
         if (!"loweredBody".equals(shape) && !"adapter".equals(shape)
                 && !"hostFunction".equals(shape) && !"hostFunctionValue".equals(shape)
-                && !"externalFunction".equals(shape)
-                && !"intrinsicFunction".equals(shape)) {
+                && !"externalFunction".equals(shape)) {
             return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                 origin(R_ENUM, "open value \"" + shape
                     + "\" in a closed FunctionExecutionBinding shape position"));
         }
-        if ("intrinsicFunction".equals(shape)) {
 
-            String nestedKind = optionalString(binding, "intrinsicKind");
-            String nestedDescriptor = optionalString(binding, "descriptor");
-            Optional<CompilerDiagnostic> kindFailure = checkSlotEnum(op, unit, facts,
-                "IntrinsicKind", nestedKind, IntrinsicKind.class);
-            if (kindFailure.isPresent()) {
-                return kindFailure;
-            }
-            if (nestedKind == null || nestedDescriptor == null) {
-                return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
-                    origin(R_ENUM, "the intrinsicFunction shape at a nested binding "
-                        + "position carries no intrinsic kind and descriptor text (the "
-                        + "closed shape position is its kind plus its declared "
-                        + "signature)"));
-            }
-            Optional<CompilerDiagnostic> descriptorFailure = checkSlotDescriptor(op, unit, facts,
-                "descriptor", nestedDescriptor);
-            if (descriptorFailure.isPresent()) {
-                return descriptorFailure;
-            }
-        }
-        String captureMode = optionalString(binding, "captureMode");
-        if (captureMode != null && enumByName(CaptureMode.class, captureMode) == null) {
-            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
-                origin(R_ENUM, "open value \"" + captureMode
-                    + "\" in a closed CaptureMode position"));
-        }
-        String executionOwner = optionalString(binding, "executionOwner");
-        if (executionOwner != null
-                && enumByName(ExternalExecutionOwner.class, executionOwner) == null) {
-            return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
-                origin(R_ENUM, "open value \"" + executionOwner
-                    + "\" in a closed ExternalExecutionOwner position"));
-        }
         return Optional.empty();
     }
 
@@ -2286,15 +2233,7 @@ public final class SemanticIrValidator {
                 yield requirePolicy(unit, facts, op, policy, stdlibPolicy(function),
                     function.name());
             }
-            case INTRINSIC_CALL -> {
-                IntrinsicKind intrinsic = enumByName(IntrinsicKind.class,
-                    optionalString(op.payload(), "kind"));
-                if (intrinsic == null) {
-                    yield Optional.empty();
-                }
-                yield requirePolicy(unit, facts, op, policy, intrinsicPolicy(intrinsic),
-                    intrinsic.name());
-            }
+
             case THROW ->
                 requirePolicy(unit, facts, op, policy, FailurePolicyId.THROW_TRANSFER, "THROW");
             case CLASS_FACTORY ->
@@ -2361,8 +2300,7 @@ public final class SemanticIrValidator {
      * every unary selector.
      */
     public static FailurePolicyId unaryPolicy(UnarySelector selector) {
-        return selector == UnarySelector.INT32_NEG
-            ? FailurePolicyId.INT32_RESULT : FailurePolicyId.NO_DEAL_FAILURE;
+        return FailurePolicyId.NO_DEAL_FAILURE;
     }
 
     /**
@@ -2379,54 +2317,32 @@ public final class SemanticIrValidator {
      */
     public static FailurePolicyId binaryPolicy(BinarySelector selector) {
         return switch (selector) {
-            case INT32_ADD, INT32_SUB, INT32_MUL -> FailurePolicyId.INT32_RESULT;
-            case INT32_DIV_TRUNC -> FailurePolicyId.INT32_DIVISOR_THEN_RESULT;
-            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE,
-                 INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
-                 NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
-                 STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
-                 BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
-                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
+
+
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE, STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE, BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE, NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
                 FailurePolicyId.NO_DEAL_FAILURE;
         };
     }
 
-    /**
-     * The closed intrinsic→policy rule for {@code INTRINSIC_CALL} (parent
-     * operation table; K6 item 1): {@code INT_CONVERT} →
-     * {@code INT_CONVERSION}; {@code NUMBER_CONVERT} →
-     * {@code NUMBER_CONVERSION}.
-     * This method is the single source of the assignment: the lowerer's
-     * policy stamping reads it (never a copy).
-     */
-    public static FailurePolicyId intrinsicPolicy(IntrinsicKind intrinsic) {
-        Objects.requireNonNull(intrinsic, "intrinsic must not be null");
-        return switch (intrinsic) {
-            case INT_CONVERT -> FailurePolicyId.INT_CONVERSION;
-            case NUMBER_CONVERT -> FailurePolicyId.NUMBER_CONVERSION;
-        };
-    }
-
+    /** The algorithm policy of each closed standard-library operation. */
     public static FailurePolicyId stdlibPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
-            case STRING_LENGTH -> FailurePolicyId.INT32_RESULT;
-            case STRING_SUBSTRING, STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH,
-                 STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL,
-                 MATH_ABS_NUMBER, MATH_MIN_INT, MATH_MAX_INT, TIME_NOW_MILLIS ->
+            case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
+            case STRING_SUBSTRING -> FailurePolicyId.SUBSTRING_BOUNDS;
+            case STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH, STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS, MATH_FLOOR, MATH_CEIL, MATH_ABS_NUMBER, TIME_NOW_MILLIS ->
                 FailurePolicyId.NO_DEAL_FAILURE;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.SQRT_NEGATIVE;
-            case MATH_ABS_INT -> FailurePolicyId.INT32_RESULT;
+
         };
     }
 
     /** The closed per-kind allowed failure-policy sets (parent operation rows). */
     private static Set<FailurePolicyId> allowedPolicies(SemanticOpKind kind) {
         return switch (kind) {
-            case ARRAY_LENGTH -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
-                FailurePolicyId.INT32_RESULT);
+            case ARRAY_LENGTH -> Set.of(FailurePolicyId.NO_DEAL_FAILURE);
             case OPTIONAL_READ -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
                 FailurePolicyId.TYPE_DESCRIPTOR);
             case ASYNC_START -> Set.of(FailurePolicyId.NO_DEAL_FAILURE,
@@ -2694,7 +2610,7 @@ public final class SemanticIrValidator {
             case CLASS_NEW -> classNewCell(unit, invocation, boundary);
             case CLOSURE_NEW, RECURSIVE_GROUP_INIT ->
                 bodyLocalReturnCell(unit, invocation, boundary, closure);
-            case CLASS_FACTORY, INTRINSIC_CALL ->
+            case CLASS_FACTORY ->
                 Optional.of("a boundary parented to " + invocationKind.name()
                     + " is outside the closed table (zero boundary children)");
             default -> Optional.of("a boundary parented to " + invocationKind.name()
@@ -2904,8 +2820,7 @@ public final class SemanticIrValidator {
                     case "hostFunction", "hostFunctionValue" -> hostCallCell(call, boundary,
                         signature, index, isReturn, policy, descriptor);
 
-                    case "intrinsicFunction" -> hostCallCell(call, boundary, signature,
-                        index, isReturn, policy, descriptor);
+
                     case "externalFunction" -> externalCallCell(call, boundary, signature, index,
                         isReturn, policy, descriptor, binding.executionOwner());
                     default -> Optional.empty();

@@ -1,4 +1,4 @@
-// IR golden fixture: type-descriptors-array-int-spec-format
-// Migrated IR-containment pin for legacy case 'array-int-spec-format' (ISSUE-0358).
+// IR golden fixture: type-descriptors-array-number-spec-format
+// Migrated IR-containment pin for legacy case 'array-number-spec-format' (ISSUE-0358).
 
-function f(a: int[]): null { return; }
+function f(a: number[]): null { return; }

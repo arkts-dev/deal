@@ -13,7 +13,7 @@ final class HostExtra_export {
   }
 
   public static Object extra() {
-    return Long.valueOf(42L);
+    return Double.valueOf(42L);
   }
 
   public static Object helper() {

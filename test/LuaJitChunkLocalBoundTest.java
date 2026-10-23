@@ -151,10 +151,10 @@ public class LuaJitChunkLocalBoundTest {
         source.append("import * as console from \"std/console\";\n\n");
         for (int i = 0; i < GROWING_FUNCTIONS; i++) {
             source.append("export function m").append(i)
-                .append("(): int {\n  return 1;\n}\n\n");
+                .append("(): number {\n  return 1;\n}\n\n");
         }
         for (int i = 0; i < GROUP_COUNT; i++) {
-            source.append("export function g").append(i).append("(): int {\n  return ");
+            source.append("export function g").append(i).append("(): number {\n  return ");
             for (int j = 0; j < GROUP_MEMBERS; j++) {
                 if (j > 0) {
                     source.append(" + ");
@@ -163,15 +163,15 @@ public class LuaJitChunkLocalBoundTest {
             }
             source.append(";\n}\n\n");
         }
-        source.append("export function makeDefault(): int {\n  return 3;\n}\n\n");
+        source.append("export function makeDefault(): number {\n  return 3;\n}\n\n");
         source.append("export class Wide {\n");
         for (int i = 0; i < DEFAULTED_FIELDS; i++) {
-            source.append("  a").append(i).append(": int = makeDefault();\n");
+            source.append("  a").append(i).append(": number = makeDefault();\n");
         }
         source.append("}\n\n");
         int expected = GROUP_COUNT * GROUP_MEMBERS + DEFAULTED_FIELDS * 3;
         source.append("export function main(): null {\n");
-        source.append("  let total: int = ");
+        source.append("  let total: number = ");
         for (int i = 0; i < GROUP_COUNT; i++) {
             if (i > 0) {
                 source.append(" + ");

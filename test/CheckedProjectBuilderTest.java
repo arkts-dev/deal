@@ -263,7 +263,7 @@ public class CheckedProjectBuilderTest {
                 "the importing module's ResolvedImport records alias/raw specifier/"
                     + "and kind = HOST; got " + hostImport);
             check(entryModule.exports().equals(List.of(
-                    new ExportInterface("test_decl_type", "() => int"),
+                    new ExportInterface("test_decl_type", "() => number"),
                     new ExportInterface("main", "() => null"))),
                 "the implementation entry's exports render the Phase-3-corrected export "
                     + "map in declaration order; got " + entryModule.exports());
@@ -287,8 +287,8 @@ public class CheckedProjectBuilderTest {
                 "the declaration module is a HOST index entry only (never an"
                     + " input entry)");
             check(host.exports().equals(List.of(
-                    new ExportInterface("declaredAdd", "(int, int) => int"))),
-                "the HOST entry carries exports = [declaredAdd: (int, int) => int] in "
+                    new ExportInterface("declaredAdd", "(number, number) => number"))),
+                "the HOST entry carries exports = [declaredAdd: (number, number) => number] in "
                     + "declaration order; got " + host.exports());
             check(host.classes().isEmpty() && host.imports().isEmpty(),
                 "the HOST entry carries classes = [] and imports = []");
@@ -424,8 +424,8 @@ public class CheckedProjectBuilderTest {
             "NamedType null renders as null");
         check("boolean".equals(CanonicalTypeText.render(nt("boolean"), context)),
             "NamedType boolean renders as boolean");
-        check("int".equals(CanonicalTypeText.render(nt("int"), context)),
-            "NamedType int renders as int");
+        check("number".equals(CanonicalTypeText.render(nt("number"), context)),
+            "NamedType number renders as number");
         check("number".equals(CanonicalTypeText.render(nt("number"), context)),
             "NamedType number renders as number");
         check("string".equals(CanonicalTypeText.render(nt("string"), context)),
@@ -443,41 +443,41 @@ public class CheckedProjectBuilderTest {
             "a class declared in the module renders as @<moduleId>/<n>");
 
         // Arrays: nested and parenthesized.
-        check("int[]".equals(CanonicalTypeText.render(arr(nt("int")), context)),
-            "ArrayType(int) renders as int[]");
-        check("int[][]".equals(CanonicalTypeText.render(arr(arr(nt("int"))), context)),
-            "nested arrays render as int[][]");
-        check("(int | null)[]".equals(
-                CanonicalTypeText.render(arr(nul(nt("int"))), context)),
-            "a nullable element is parenthesized: (int | null)[]");
+        check("number[]".equals(CanonicalTypeText.render(arr(nt("number")), context)),
+            "ArrayType(number) renders as number[]");
+        check("number[][]".equals(CanonicalTypeText.render(arr(arr(nt("number"))), context)),
+            "nested arrays render as number[][]");
+        check("(number | null)[]".equals(
+                CanonicalTypeText.render(arr(nul(nt("number"))), context)),
+            "a nullable element is parenthesized: (number | null)[]");
         check("(() => null)[]".equals(
                 CanonicalTypeText.render(arr(fn(List.of(), nt("null"), false)), context)),
             "a function element is parenthesized: (() => null)[]");
 
         // Nullables.
-        check("int[] | null".equals(
-                CanonicalTypeText.render(nul(arr(nt("int"))), context)),
-            "NullableType(int[]) renders as int[] | null (unwrapped array)");
-        check("((int) => int) | null".equals(
-                CanonicalTypeText.render(nul(fn(List.of(nt("int")), nt("int"), false)),
+        check("number[] | null".equals(
+                CanonicalTypeText.render(nul(arr(nt("number"))), context)),
+            "NullableType(number[]) renders as number[] | null (unwrapped array)");
+        check("((number) => number) | null".equals(
+                CanonicalTypeText.render(nul(fn(List.of(nt("number")), nt("number"), false)),
                     context)),
-            "a function inner is parenthesized: ((int) => int) | null");
+            "a function inner is parenthesized: ((number) => number) | null");
 
         // Function forms: sync/async, recursive positions.
-        check("(int, string) => boolean".equals(
-                CanonicalTypeText.render(fn(List.of(nt("int"), nt("string")),
+        check("(number, string) => boolean".equals(
+                CanonicalTypeText.render(fn(List.of(nt("number"), nt("string")),
                     nt("boolean"), false), context)),
             "the sync function form renders (T1, …, TN) => R");
         check("async () => null".equals(
                 CanonicalTypeText.render(fn(List.of(), nt("null"), true), context)),
             "the async function form renders async (T1, …, TN) => R");
-        check("((int) => int) => null".equals(
+        check("((number) => number) => null".equals(
                 CanonicalTypeText.render(fn(List.of(
-                    fn(List.of(nt("int")), nt("int"), false)), nt("null"), false), context)),
+                    fn(List.of(nt("number")), nt("number"), false)), nt("null"), false), context)),
             "a function-typed parameter renders unwrapped in parameter position");
-        check("(((int) => int) | null)[]".equals(
+        check("(((number) => number) | null)[]".equals(
                 CanonicalTypeText.render(arr(nul(
-                    fn(List.of(nt("int")), nt("int"), false))), context)),
+                    fn(List.of(nt("number")), nt("number"), false))), context)),
             "the shared parenthesization rule applies at every wrapping position");
 
         // Qualified types joined through the module's import records.
@@ -489,19 +489,19 @@ public class CheckedProjectBuilderTest {
         Map<TypeNode, String> typeNodeForms = new LinkedHashMap<>();
         typeNodeForms.put(nt("null"), "null");
         typeNodeForms.put(nt("boolean"), "boolean");
-        typeNodeForms.put(nt("int"), "int");
+        typeNodeForms.put(nt("number"), "number");
         typeNodeForms.put(nt("number"), "number");
         typeNodeForms.put(nt("string"), "string");
         typeNodeForms.put(nt("table"), "table");
-        typeNodeForms.put(arr(nt("int")), "int[]");
-        typeNodeForms.put(arr(arr(nt("int"))), "int[][]");
-        typeNodeForms.put(arr(nul(nt("int"))), "(int | null)[]");
+        typeNodeForms.put(arr(nt("number")), "number[]");
+        typeNodeForms.put(arr(arr(nt("number"))), "number[][]");
+        typeNodeForms.put(arr(nul(nt("number"))), "(number | null)[]");
         typeNodeForms.put(arr(fn(List.of(), nt("null"), false)), "(() => null)[]");
-        typeNodeForms.put(nul(arr(nt("int"))), "int[] | null");
-        typeNodeForms.put(nul(fn(List.of(nt("int")), nt("int"), false)),
-            "((int) => int) | null");
-        typeNodeForms.put(fn(List.of(nt("int"), nt("string")), nt("boolean"), false),
-            "(int, string) => boolean");
+        typeNodeForms.put(nul(arr(nt("number"))), "number[] | null");
+        typeNodeForms.put(nul(fn(List.of(nt("number")), nt("number"), false)),
+            "((number) => number) | null");
+        typeNodeForms.put(fn(List.of(nt("number"), nt("string")), nt("boolean"), false),
+            "(number, string) => boolean");
         typeNodeForms.put(fn(List.of(), nt("null"), true), "async () => null");
         for (Map.Entry<TypeNode, String> entry : typeNodeForms.entrySet()) {
             check(entry.getValue().equals(
@@ -512,18 +512,18 @@ public class CheckedProjectBuilderTest {
             "the checked builtin Error class renders as the bare atom Error");
         check("@m/C".equals(CanonicalTypeText.render(IdentityTestFixtures.classType("C", "m"))),
             "the checked class type renders as @modulePath/Name");
-        check("int[][]".equals(CanonicalTypeText.render(
-                Types.array(Types.array(Type.Int.INSTANCE)))),
-            "checked nested arrays render as int[][]");
-        check("(int | null)[]".equals(CanonicalTypeText.render(
-                Types.array(Types.nullable(Type.Int.INSTANCE)))),
-            "checked (int | null)[] parity");
+        check("number[][]".equals(CanonicalTypeText.render(
+                Types.array(Types.array(Type.Number.INSTANCE)))),
+            "checked nested arrays render as number[][]");
+        check("(number | null)[]".equals(CanonicalTypeText.render(
+                Types.array(Types.nullable(Type.Number.INSTANCE)))),
+            "checked (number | null)[] parity");
         check("(() => null)[]".equals(CanonicalTypeText.render(
                 Types.array(new Type.Func(List.of(), Type.Null.INSTANCE)))),
             "checked (() => null)[] parity");
-        check("int[] | null".equals(CanonicalTypeText.render(
-                Types.nullable(Types.array(Type.Int.INSTANCE)))),
-            "checked int[] | null parity");
+        check("number[] | null".equals(CanonicalTypeText.render(
+                Types.nullable(Types.array(Type.Number.INSTANCE)))),
+            "checked number[] | null parity");
         check("table[]".equals(CanonicalTypeText.render(
                 Types.array(Type.Table.INSTANCE))),
             "checked table[] renders unwrapped (primitive element)");
@@ -540,11 +540,11 @@ public class CheckedProjectBuilderTest {
         check("(table) => null".equals(CanonicalTypeText.render(
                 new Type.Func(List.of(Type.Table.INSTANCE), Type.Null.INSTANCE))),
             "table at function-parameter depth renders recursively");
-        check("((int) => int) | null".equals(CanonicalTypeText.render(
-                Types.nullable(new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))),
-            "checked ((int) => int) | null parity");
-        check("(int, string) => boolean".equals(CanonicalTypeText.render(
-                Types.func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
+        check("((number) => number) | null".equals(CanonicalTypeText.render(
+                Types.nullable(new Type.Func(List.of(Type.Number.INSTANCE), Type.Number.INSTANCE)))),
+            "checked ((number) => number) | null parity");
+        check("(number, string) => boolean".equals(CanonicalTypeText.render(
+                Types.func(List.of(Type.Number.INSTANCE, Type.String.INSTANCE),
                     Type.Boolean.INSTANCE))),
             "checked sync function form parity");
         check("async () => null".equals(CanonicalTypeText.render(
@@ -566,7 +566,7 @@ public class CheckedProjectBuilderTest {
             "Type.Error has no rendering (defect)");
         expectDefect(() -> CanonicalTypeText.render(qual("Unknown", "Vec"), context),
             "an unresolvable qualified alias is a defect");
-        expectDefect(() -> CanonicalTypeText.render(nul(nul(nt("int"))), context),
+        expectDefect(() -> CanonicalTypeText.render(nul(nul(nt("number"))), context),
             "a chained T | null | null annotation is a defect");
         expectDefect(() -> CanonicalTypeText.render(nt("Missing"), context),
             "a NamedType that is neither a primitive nor a module class is a defect");
@@ -633,7 +633,7 @@ public class CheckedProjectBuilderTest {
 
         // (c) A chained T | null | null annotation in a declaration entry.
         ProgramNode chainedProgram = programOf(new ExportDeclaration(span(),
-            functionDecl("g", List.of(new Parameter(span(), "x", nul(nul(nt("int"))))),
+            functionDecl("g", List.of(new Parameter(span(), "x", nul(nul(nt("number"))))),
                 nt("null"), false)));
         ModuleFact chainedFact = declFact("lib", chainedProgram, Map.of());
         assertE6005(chainedFact, new ModuleId("lib"), "chained nullable annotation");
@@ -716,7 +716,7 @@ public class CheckedProjectBuilderTest {
         ProgramNode entryProgram = entryParsed.program();
         StubModuleResolver resolver = new StubModuleResolver();
         resolver.register("./declaration_only_lib", Map.of("declaredAdd",
-            Types.func(List.of(Type.Int.INSTANCE, Type.Int.INSTANCE), Type.Int.INSTANCE)));
+            Types.func(List.of(Type.Number.INSTANCE, Type.Number.INSTANCE), Type.Number.INSTANCE)));
         NameResolver nameResolver = new NameResolver("declaration-only-import-compile",
             resolver);
         SymbolTable symbolTable = nameResolver.resolve(entryProgram);
@@ -792,12 +792,12 @@ public class CheckedProjectBuilderTest {
             Files.createDirectories(src);
 
             Files.writeString(src.resolve("lib.d.deal"),
-                "export class A { x: int; }\n"
-                    + "export class B { y: string; opt?: int; note: string | null; "
-                    + "count: int = 1; }\n");
+                "export class A { x: number; }\n"
+                    + "export class B { y: string; opt?: number; note: string | null; "
+                    + "count: number = 1; }\n");
             Files.writeString(src.resolve("main.deal"),
                 "import * as lib from \"host/lib\";\n"
-                    + "export class C { v: int = 0; }\n"
+                    + "export class C { v: number = 0; }\n"
                     + "export class D { w: boolean = false; }\n"
                     + "export function main(): null { return null; }\n");
             Files.writeString(tmp.resolve("deal.json"),
@@ -869,17 +869,17 @@ public class CheckedProjectBuilderTest {
             // entry via the pinned TypeNode grammar; implementation entry via
             // the checked ClassSymbol records).
             check(a.fields().equals(List.of(
-                    new FieldInterface("x", "int", false, false, false))),
-                "lib.A fields = [x: int, optional=false, nullable=false, hasDefault=false]");
+                    new FieldInterface("x", "number", false, false, false))),
+                "lib.A fields = [x: number, optional=false, nullable=false, hasDefault=false]");
             check(b.fields().equals(List.of(
                     new FieldInterface("y", "string", false, false, false),
-                    new FieldInterface("opt", "int", true, false, false),
+                    new FieldInterface("opt", "number", true, false, false),
                     new FieldInterface("note", "string | null", false, true, false),
-                    new FieldInterface("count", "int", false, false, true))),
+                    new FieldInterface("count", "number", false, false, true))),
                 "lib.B fields carry optional/nullable/hasDefault from the record; got "
                     + b.fields());
             check(c.fields().equals(List.of(
-                    new FieldInterface("v", "int", false, false, true))),
+                    new FieldInterface("v", "number", false, false, true))),
                 "main.C fields derive from the checked ClassSymbol records; got " + c.fields());
 
             // The index never records a route: no route-shaped component exists
@@ -898,17 +898,17 @@ public class CheckedProjectBuilderTest {
 
     /** The pinned canonical JSON of the combined fixture index (golden). */
     private static final String PINNED_INDEX_JSON =
-        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(int, int) => int\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => number\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
+        "{\"formatVersion\":\"deal.semantic-interface/1\",\"modules\":[{\"classes\":[],\"exports\":[{\"declaredType\":\"(number, number) => number\",\"name\":\"declaredAdd\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"HOST\",\"moduleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => number\",\"name\":\"nowMillis\"}],\"imports\":[],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"STDLIB\",\"moduleId\":{\"path\":\"std.time\",\"type\":\"module\"}},{\"classes\":[],\"exports\":[{\"declaredType\":\"() => null\",\"name\":\"main\"}],\"imports\":[{\"alias\":\"lib\",\"kind\":\"HOST\",\"modulePath\":\"host/lib\",\"resolvedModuleId\":{\"path\":\"host.lib\",\"type\":\"module\"}},{\"alias\":\"time\",\"kind\":\"STDLIB\",\"modulePath\":\"std/time\",\"resolvedModuleId\":{\"path\":\"std.time\",\"type\":\"module\"}}],\"initialization\":\"ONCE_AFTER_DEPENDENCIES\",\"kind\":\"IMPLEMENTATION\",\"moduleId\":{\"path\":\"main\",\"type\":\"module\"}}]}";
 
     /** The pinned interface index digest of the combined fixture (golden). */
     private static final String PINNED_INDEX_DIGEST =
-        "800c1586da1295c3229f7eb335d0baa348a00380eb58ec26926c35d2f117f06f";
+        "1c0f6cfeef78b02958b7fdc2c3975bec64bde977a3676a9481043cc75df4c403";
 
     private static Path writeCombinedFixture(Path dir) throws Exception {
         Path src = dir.resolve("src");
         Files.createDirectories(src);
         Files.writeString(src.resolve("lib.d.deal"),
-            "export function declaredAdd(a: int, b: int): int;\n");
+            "export function declaredAdd(a: number, b: number): number;\n");
         Files.writeString(src.resolve("main.deal"),
             "import * as lib from \"host/lib\";\n"
                 + "import * as time from \"std/time\";\n"
@@ -1101,7 +1101,7 @@ public class CheckedProjectBuilderTest {
                 "import * as D from \"./d\";\n"
                     + "export class Beta { d: D.Delta | null = null; }\n");
             writeSource(src, "d.deal",
-                "export class Delta { n: int = 0; }\n");
+                "export class Delta { n: number = 0; }\n");
             Path output = diamond.resolve("out");
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 src.resolve("main.deal").toAbsolutePath(), output, false,
@@ -1175,11 +1175,11 @@ public class CheckedProjectBuilderTest {
             Path support = root.resolve("support");
             Path declA = writeSource(support, "decl_two_a.d.deal",
                 "import * as B from \"./decl_two_b\";\n"
-                    + "export class A { value: int = 1; }\n"
+                    + "export class A { value: number = 1; }\n"
                     + "export function accept(x: B.B): B.B;\n");
             Path declB = writeSource(support, "decl_two_b.d.deal",
                 "import * as A from \"./decl_two_a\";\n"
-                    + "export class B { value: int = 2; }\n"
+                    + "export class B { value: number = 2; }\n"
                     + "export function accept(x: A.A): A.A;\n");
             Map<String, String> externals = new LinkedHashMap<>();
             externals.put("decl_two_a", "support/decl_two_a.d.deal");

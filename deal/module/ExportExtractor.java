@@ -280,7 +280,6 @@ public final class ExportExtractor {
         return switch (name) {
             case "null" -> Type.Null.INSTANCE;
             case "boolean" -> Type.Boolean.INSTANCE;
-            case "int" -> Type.Int.INSTANCE;
             case "number" -> Type.Number.INSTANCE;
             case "string" -> Type.String.INSTANCE;
             case "table" -> Type.Table.INSTANCE;

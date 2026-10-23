@@ -1,9 +1,9 @@
 // @spec: Lexical elements — Numeric overflow, NaN, and Infinity
-// @description: Binary subtraction does not activate the unary-minus literal exception
-// @expected: compile-error E1036
+// @description: Binary64 numeric literals admit magnitudes outside signed32, including ordinary unary negation and binary contexts
+// @expected: compile-ok
 // @features: lexer, int, literals, subtraction, diagnostics, v1.2
 
-export function value(): int {
+export function value(): number {
   return 0 - 2147483648;
 }
 

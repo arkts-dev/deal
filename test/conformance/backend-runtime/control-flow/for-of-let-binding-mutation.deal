@@ -3,20 +3,20 @@
 // @expected: runtime-ok
 // @features: for-of, closure, binding, break, continue
 
-function freshArray(counter: int[]): int[] {
+function freshArray(counter: number[]): number[] {
   counter[0] = counter[0] + 1;
   return [1, 2];
 }
 
-function freshText(counter: int[]): string {
+function freshText(counter: number[]): string {
   counter[0] = counter[0] + 1;
   return "ab";
 }
 
 function testArrayDirectMutation(): null {
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of [1, 2, 3]) {
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of [1, 2, 3]) {
     n = n + 10;
     total = total + n;
     visits = visits + 1;
@@ -31,19 +31,19 @@ function testArrayDirectMutation(): null {
 }
 
 function testArrayClosureReadsMutation(): null {
-  let readers: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-  let visits: int = 0;
-  for (let n: int of [1, 2, 3]) {
+  let readers: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
+  let visits: number = 0;
+  for (let n: number of [1, 2, 3]) {
     n = n + 10;
-    readers[visits] = function(): int { return n; };
+    readers[visits] = function(): number { return n; };
     visits = visits + 1;
   }
   if (visits !== 3) {
     throw { code: "TEST_FAIL", message: "for-of closure body skipped or repeated" };
   }
-  let r0: int = readers[0]();
-  let r1: int = readers[1]();
-  let r2: int = readers[2]();
+  let r0: number = readers[0]();
+  let r1: number = readers[1]();
+  let r2: number = readers[2]();
   if (r0 !== 11) {
     throw { code: "TEST_FAIL", message: "for-of first closure reader mismatch" };
   }
@@ -57,12 +57,12 @@ function testArrayClosureReadsMutation(): null {
 }
 
 function testArrayClosureWritesMutation(): null {
-  let bump: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }];
-  let read: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }];
-  let visits: int = 0;
-  for (let n: int of [1, 2]) {
-    bump[visits] = function(): int { n = n + 10; return n; };
-    read[visits] = function(): int { return n; };
+  let bump: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }];
+  let read: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }];
+  let visits: number = 0;
+  for (let n: number of [1, 2]) {
+    bump[visits] = function(): number { n = n + 10; return n; };
+    read[visits] = function(): number { return n; };
     visits = visits + 1;
   }
   if (visits !== 2) {
@@ -84,7 +84,7 @@ function testArrayClosureWritesMutation(): null {
 }
 
 function testStringDirectMutation(): null {
-  let visits: int = 0;
+  let visits: number = 0;
   let joined: string = "";
   for (let c: string of "abc") {
     c = c + "!";
@@ -102,7 +102,7 @@ function testStringDirectMutation(): null {
 
 function testStringClosureReadsMutation(): null {
   let readers: (() => string)[] = [function(): string { return "-1"; }, function(): string { return "-1"; }, function(): string { return "-1"; }];
-  let visits: int = 0;
+  let visits: number = 0;
   for (let c: string of "xyz") {
     c = c + "?";
     readers[visits] = function(): string { return c; };
@@ -124,9 +124,9 @@ function testStringClosureReadsMutation(): null {
 }
 
 function testBreakAndContinueAfterMutation(): null {
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of [1, 2, 3, 4]) {
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of [1, 2, 3, 4]) {
     n = n * 10;
     visits = visits + 1;
     if (n === 20) { continue; }
@@ -143,10 +143,10 @@ function testBreakAndContinueAfterMutation(): null {
 }
 
 function testIterableReassignmentDoesNotRedirect(): null {
-  let xs: int[] = [1, 2, 3];
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of xs) {
+  let xs: number[] = [1, 2, 3];
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of xs) {
     xs = [100];
     total = total + n;
     visits = visits + 1;
@@ -161,10 +161,10 @@ function testIterableReassignmentDoesNotRedirect(): null {
 }
 
 function testArrayIterableEvaluatedOnce(): null {
-  let counter: int[] = [0];
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of freshArray(counter)) {
+  let counter: number[] = [0];
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of freshArray(counter)) {
     visits = visits + 1;
     total = total + n;
   }
@@ -181,8 +181,8 @@ function testArrayIterableEvaluatedOnce(): null {
 }
 
 function testStringIterableEvaluatedOnce(): null {
-  let counter: int[] = [0];
-  let visits: int = 0;
+  let counter: number[] = [0];
+  let visits: number = 0;
   let joined: string = "";
   for (let c: string of freshText(counter)) {
     c = c + "!";
@@ -202,10 +202,10 @@ function testStringIterableEvaluatedOnce(): null {
 }
 
 function testUnvisitedReplacementIsObserved(): null {
-  let xs: int[] = [1, 2, 3];
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of xs) {
+  let xs: number[] = [1, 2, 3];
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of xs) {
     visits = visits + 1;
     total = total + n;
     if (visits === 1) {
@@ -225,10 +225,10 @@ function testUnvisitedReplacementIsObserved(): null {
 }
 
 function testAppendIsObserved(): null {
-  let xs: int[] = [1, 2];
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of xs) {
+  let xs: number[] = [1, 2];
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of xs) {
     visits = visits + 1;
     total = total + n;
     if (visits === 1) {

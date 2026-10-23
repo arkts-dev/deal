@@ -8,7 +8,7 @@ import java.util.List;
 import deal.diagnostics.DiagnosticCode;
 
 /**
- * Built-in intrinsic resolvers for {@code int()}, {@code number()}, and {@code has()}.
+ * Intrinsic resolver for {@code has()}.
  *
  * <p>Note: {@code has(obj.field)} is parsed as a {@link HasExpr} by the parser
  * and checked directly by {@link TypeChecker#checkHas(HasExpr)}.  The
@@ -18,56 +18,6 @@ import deal.diagnostics.DiagnosticCode;
 final class IntrinsicResolvers {
 
     private IntrinsicResolvers() {}
-
-    /**
-     * {@code int(v)} — conversion to int.
-     *
-     * <p>Overloads:
-     * <ul>
-     *   <li>{@code (number) => int}</li>
-     *   <li>{@code (int | null) => int}</li>
-     * </ul>
-     */
-    static final IntrinsicResolver INT = (call, argTypes, ctx) -> {
-        if (argTypes.size() != 1) {
-            ctx.error(DiagnosticCode.E5001, "int() expects exactly 1 argument, got " + argTypes.size(),
-                call.span());
-            return Type.Error.INSTANCE;
-        }
-        Type arg = argTypes.get(0);
-        if (isNumber(arg) || isNullableInt(arg)) {
-            return Type.Int.INSTANCE;
-        }
-        ctx.error(DiagnosticCode.E5001,
-            "int() argument must be number or int|null, got " + TypeChecker.typeName(arg),
-            call.span());
-        return Type.Error.INSTANCE;
-    };
-
-    /**
-     * {@code number(v)} — conversion to number.
-     *
-     * <p>Overloads:
-     * <ul>
-     *   <li>{@code (int) => number}</li>
-     *   <li>{@code (number | null) => number}</li>
-     * </ul>
-     */
-    static final IntrinsicResolver NUMBER = (call, argTypes, ctx) -> {
-        if (argTypes.size() != 1) {
-            ctx.error(DiagnosticCode.E5001, "number() expects exactly 1 argument, got " + argTypes.size(),
-                call.span());
-            return Type.Error.INSTANCE;
-        }
-        Type arg = argTypes.get(0);
-        if (isInt(arg) || isNullableNumber(arg)) {
-            return Type.Number.INSTANCE;
-        }
-        ctx.error(DiagnosticCode.E5001,
-            "number() argument must be int or number|null, got " + TypeChecker.typeName(arg),
-            call.span());
-        return Type.Error.INSTANCE;
-    };
 
     /**
      * {@code has(obj.field)} — field presence test.
@@ -135,17 +85,6 @@ final class IntrinsicResolvers {
     };
 
     // -- helpers --
-
-    private static boolean isInt(Type t) { return t == Type.Int.INSTANCE; }
-    private static boolean isNumber(Type t) { return t == Type.Number.INSTANCE; }
-
-    private static boolean isNullableInt(Type t) {
-        return t instanceof Type.Nullable n && n.inner() == Type.Int.INSTANCE;
-    }
-
-    private static boolean isNullableNumber(Type t) {
-        return t instanceof Type.Nullable n && n.inner() == Type.Number.INSTANCE;
-    }
 
     static ClassField findField(List<ClassField> fields, String name) {
         for (ClassField f : fields) {

@@ -4,10 +4,10 @@
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
 export class Box {
-  value: int = 0;
+  value: number = 0;
 }
 
-export function box(v: int): Box {
+export function box(v: number): Box {
   return { value: v };
 }
 

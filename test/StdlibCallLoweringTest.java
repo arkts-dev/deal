@@ -316,7 +316,8 @@ public class StdlibCallLoweringTest {
     private static FailurePolicyId expectedPolicy(StdlibFunctionId function) {
         return switch (function) {
             case CONSOLE_LOG, CONSOLE_ERROR -> FailurePolicyId.INFRASTRUCTURE_ONLY;
-            case STRING_LENGTH, MATH_ABS_INT -> FailurePolicyId.INT32_RESULT;
+            case STRING_LENGTH -> FailurePolicyId.NO_DEAL_FAILURE;
+            case STRING_SUBSTRING -> FailurePolicyId.SUBSTRING_BOUNDS;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
             case MATH_SQRT -> FailurePolicyId.SQRT_NEGATIVE;
@@ -327,7 +328,7 @@ public class StdlibCallLoweringTest {
     static void testPolicyTableSingleSource() {
         System.out.println("-- Single source: SemanticIrValidator.stdlibPolicy --");
 
-        check(StdlibFunctionId.values().length == 21,
+        check(StdlibFunctionId.values().length == 18,
             "the closed StdlibFunctionId enum is exactly 21 values (TIME_NOW_MILLIS is the "
                 + "21st member)");
         for (StdlibFunctionId function : StdlibFunctionId.values()) {
@@ -344,7 +345,7 @@ public class StdlibCallLoweringTest {
         check(SemanticIrValidator.stdlibPolicy(StdlibFunctionId.TIME_NOW_MILLIS)
                 == FailurePolicyId.NO_DEAL_FAILURE,
             "stdlibPolicy(TIME_NOW_MILLIS) = NO_DEAL_FAILURE — the declared number "
-                + "boundary admits every reading and no int terminal exists (v1.3)");
+                + "boundary admits every reading and no number terminal exists (v1.3)");
         check(StdlibFunctionCatalog.lookup("std.time", "nowMillis")
                 .map(entry -> entry.function() == StdlibFunctionId.TIME_NOW_MILLIS
                     && entry.parameterDescriptors().isEmpty())
@@ -386,7 +387,7 @@ public class StdlibCallLoweringTest {
                     function run(): null {
                       console.log("log");
                       console.error("error");
-                      let n1: int = str.length("abc");
+                      let n1: number = str.length("abc");
                       let s2: string = str.substring("abc", 1, 2);
                       let b3: boolean = str.contains("abc", "b");
                       let b4: boolean = str.startsWith("abc", "a");
@@ -401,10 +402,7 @@ public class StdlibCallLoweringTest {
                       let f12: number = math.floor(1.5);
                       let f13: number = math.ceil(1.5);
                       let f14: number = math.sqrt(4.0);
-                      let i15: int = math.absInt(-3);
                       let f16: number = math.absNumber(-1.5);
-                      let i17: int = math.minInt(2, 3);
-                      let i18: int = math.maxInt(2, 3);
                       let now: number = time.nowMillis();
                       return null;
                     }
@@ -428,8 +426,8 @@ public class StdlibCallLoweringTest {
             LoweredModuleUnit unit = lowering.unit();
 
             List<SemanticOp> stdlibOps = stdlibOps(unit);
-            check(stdlibOps.size() == 21,
-                "exactly one STDLIB_CALL per cataloged call: 21 ops; got "
+            check(stdlibOps.size() == 18,
+                "exactly one STDLIB_CALL per cataloged call: 18 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -618,8 +616,8 @@ public class StdlibCallLoweringTest {
                     import * as str from "std/string";
 
                     function markS(v: string): string { console.log("s"); return v; }
-                    function markB(v: int): int { console.log("b"); return v; }
-                    function markC(v: int): int { console.log("c"); return v; }
+                    function markB(v: number): number { console.log("b"); return v; }
+                    function markC(v: number): number { console.log("c"); return v; }
 
                     function run(): null {
                       let s: string = str.substring(markS("ab"), markB(0), markC(1));
@@ -744,7 +742,7 @@ public class StdlibCallLoweringTest {
                     }
                     """,
                 "util.deal", """
-                    export function length(s: string): int {
+                    export function length(s: string): number {
                       return 0;
                     }
                     """,
@@ -1008,7 +1006,7 @@ public class StdlibCallLoweringTest {
                     import * as str from "std/string";
 
                     function run(): null {
-                      let n: int = str.length("abc");
+                      let n: number = str.length("abc");
                       return null;
                     }
 
@@ -1031,7 +1029,7 @@ public class StdlibCallLoweringTest {
             LoweredModuleUnit unit = lowering.unit();
             SemanticOp call = stdlibOpBy(unit, StdlibFunctionId.STRING_LENGTH);
             check(call != null
-                    && call.failurePolicy() == FailurePolicyId.INT32_RESULT,
+                    && call.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
                 "the produced STRING_LENGTH stamps INT32_RESULT from the single table");
             if (call == null) {
                 return;
@@ -1056,7 +1054,7 @@ public class StdlibCallLoweringTest {
                         && "STRING_LENGTH".equals(
                             ContractSnapshotCanonicalizer.optionalString(op.payload(),
                                 "function"))) {
-                    modified.add(withStampedPolicy(op, "NO_DEAL_FAILURE"));
+                    modified.add(withStampedPolicy(op, "SQRT_NEGATIVE"));
                 } else {
                     modified.add(op);
                 }
@@ -1088,7 +1086,7 @@ public class StdlibCallLoweringTest {
                         && "STRING_LENGTH".equals(
                             ContractSnapshotCanonicalizer.optionalString(op.payload(),
                                 "function"))) {
-                    opOnlyModified.add(new RawOp(op.opId(), op.kind(), "NO_DEAL_FAILURE",
+                    opOnlyModified.add(new RawOp(op.opId(), op.kind(), "SQRT_NEGATIVE",
                         op.parentOpId(), op.resultValue(), op.resultToken(),
                         op.resultType(), op.operands(), op.operandTypes(), op.payload(),
                         op.selector(), op.canonicalDigest(), op.snapshot(), op.origin()));
@@ -1160,7 +1158,7 @@ public class StdlibCallLoweringTest {
                       let t: table = json.parse("{\\"k\\": 1}");
                       let s: string = json.stringify(t);
                       let f: number = math.floor(1.5);
-                      let i: int = math.absInt(-3);
+                      let i: number = math.absNumber(-3);
                       return null;
                     }
 
@@ -1216,7 +1214,7 @@ public class StdlibCallLoweringTest {
                 "the dump serializes the payload args field");
             for (StdlibFunctionId function : List.of(StdlibFunctionId.CONSOLE_LOG,
                     StdlibFunctionId.JSON_PARSE, StdlibFunctionId.JSON_STRINGIFY,
-                    StdlibFunctionId.MATH_FLOOR, StdlibFunctionId.MATH_ABS_INT)) {
+                    StdlibFunctionId.MATH_FLOOR, StdlibFunctionId.MATH_ABS_NUMBER)) {
                 check(text.contains("\"function\":\"" + function.name() + "\""),
                     "the dump carries the payload function " + function);
             }

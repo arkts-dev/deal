@@ -12,168 +12,34 @@ import deal.semantic.ir.SemanticOpKind;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.function.Predicate;
 
+/** Backend-neutral capture classification for function arity adaptation. */
 public final class AdapterShapeMap {
-
-    /**
-     * The closed source-shape classification of the map (B7): the
-     * checker-fact shape that decides the arm before any payload is
-     * built.
-     */
     public enum SourceShape {
-
-        /** A {@code FunctionExpr} — the {@code CLOSURE_NEW} result (materialized operand). */
         FUNCTION_EXPRESSION,
-
-        /**
-         * A first-class {@code int}/{@code number}
-         * intrinsic function value.
-         */
-        INTRINSIC_FUNCTION_VALUE,
-
-        /** An identifier-resolved function-typed binding reference. */
         BINDING_REFERENCE,
-
-        /**
-         * An {@code await} of a direct async call ({@code AwaitExpression})
-         * whose declared return type is the adapted function value: the
-         * suspension delivers the value once, so it is a
-         * declaration-site operand.
-         */
         AWAITED_RESULT,
-
-        /**
-         * Every other (non-identifier) expression — call results,
-         * member/field/index reads, conditionals, conversions, host/
-         * external import reads, and any composite source.
-         */
         NON_IDENTIFIER_EXPRESSION
     }
 
-    private AdapterShapeMap() {
-        // Static closed map; no instances.
-    }
+    private AdapterShapeMap() {}
 
-    // =========================================================================
-    // The closed source-shape classification (checker facts only)
-    // =========================================================================
-
-    /**
-     * The source-shape classification of one adapted source expression
-     * (B7): a {@code FunctionExpr} → {@link SourceShape#FUNCTION_EXPRESSION};
-     * an identifier resolving to the root {@code int}/{@code number}
-     * intrinsic binding → {@link SourceShape#INTRINSIC_FUNCTION_VALUE}
-     * (the checker removes the root intrinsic binding before a user
-     * shadow, so the symbol fact decides — a shadowed name is a user
-     * binding, never an intrinsic); any other identifier →
-     * {@link SourceShape#BINDING_REFERENCE}; an {@code await} of a direct
-     * async call → {@link SourceShape#AWAITED_RESULT} (the suspension's
-     * delivered value: the enclosing async function observes it exactly
-     * once, and no re-executor of a non-identifier expression can await);
-     * every other expression →
-     * {@link SourceShape#NON_IDENTIFIER_EXPRESSION} (the closed
-     * non-identifier arm owns member reads, so a host/external import
-     * read classifies here — no VALUE carve-out exists).
-     *
-     */
     public static SourceShape sourceShapeOf(ExpressionNode source,
                                             Function<String, Symbol> resolve) {
-        Objects.requireNonNull(source, "source must not be null");
         Objects.requireNonNull(resolve, "resolve must not be null");
-        return sourceShapeAtPosition(source,
-            name -> isConversionIntrinsic(resolve.apply(name)));
+        return sourceShapeAtPosition(source);
     }
 
-    /**
-     * The source-shape classification of one adapted source expression
-     * under a per-position intrinsic predicate: the caller's own
-     * per-occurrence resolution decides whether an identifier denotes a
-     * {@code int}/{@code number} intrinsic at its position
-     * (docs/spec-v1.3.md §Name resolution — a lexically shadowing local,
-     * parameter, enclosing-block or module-level binding precedes the
-     * compiler intrinsics), so a shadowed name classifies as the
-     * {@link SourceShape#BINDING_REFERENCE} it is, never as the intrinsic.
-     * Every non-identifier arm keeps the closed classification of
-     * {@link #sourceShapeOf(ExpressionNode, Function)}.
-     */
-    public static SourceShape sourceShapeAtPosition(ExpressionNode source,
-                                                    Predicate<String> positionIsIntrinsic) {
+    /** Classification depends on expression shape, never identifier spelling. */
+    public static SourceShape sourceShapeAtPosition(ExpressionNode source) {
         Objects.requireNonNull(source, "source must not be null");
-        Objects.requireNonNull(positionIsIntrinsic,
-            "positionIsIntrinsic must not be null");
-        if (source instanceof AwaitExpression) {
-            return SourceShape.AWAITED_RESULT;
-        }
-        if (source instanceof FunctionExpr) {
-            return SourceShape.FUNCTION_EXPRESSION;
-        }
-        if (source instanceof IdentifierExpr identifier) {
-            return positionIsIntrinsic.test(identifier.name())
-                ? SourceShape.INTRINSIC_FUNCTION_VALUE
-                : SourceShape.BINDING_REFERENCE;
-        }
+        if (source instanceof AwaitExpression) return SourceShape.AWAITED_RESULT;
+        if (source instanceof FunctionExpr) return SourceShape.FUNCTION_EXPRESSION;
+        if (source instanceof IdentifierExpr) return SourceShape.BINDING_REFERENCE;
         return SourceShape.NON_IDENTIFIER_EXPRESSION;
     }
 
-    /**
-     * True iff the resolved symbol is one of the conversion
-     * intrinsics ({@code int}, {@code number}).
-     */
-    private static boolean isConversionIntrinsic(Symbol symbol) {
-        return symbol instanceof Symbol.IntrinsicSymbol intrinsic
-            && ("int".equals(intrinsic.name())
-                || "number".equals(intrinsic.name()));
-    }
-
-    // =========================================================================
-    // The closed mode map
-    // =========================================================================
-
-    /**
-     * The closed map (B7/D15): exactly one mode per source shape, from
-     * checker facts only.
-     *
-     * <ul>
-     *   <li>{@link SourceShape#FUNCTION_EXPRESSION} → VALUE (the
-     *       {@code CLOSURE_NEW} result is a materialized function-value
-     *       operand);</li>
-     *   <li>{@link SourceShape#INTRINSIC_FUNCTION_VALUE} → VALUE (a
-     *       first-class intrinsic function value is a materialized
-     *       operand; the intrinsic binding's proof fact — builtin,
-     *       unassignable, always recorded — is not consulted for the
-     *       mode and is not carried in the payload: the payload's
-     *       {@code proof} is present iff VALUE's operand is a binding
-     *       load, and the intrinsic operand is the intrinsic function
-     *       value identity, not a load — B8);</li>
-     *   <li>{@link SourceShape#BINDING_REFERENCE} → VALUE with the
-     *       recorded {@link BindingImmutabilityProof}, SHARED_CELL
-     *       without it (VALUE is admissible for a binding only with the
-     *       proof — the map's fallback arm for bindings);</li>
-     *   <li>{@link SourceShape#AWAITED_RESULT} → VALUE (the awaited
-     *       value is observed once at the declaration site — the only
-     *       realization an adapter over a suspension admits: a thunk
-     *       re-executor of the source would have to await, so a
-     *       synchronous target could not re-evaluate it, and the
-     *       materialized value is the same function value every
-     *       invocation);</li>
-     *   <li>{@link SourceShape#NON_IDENTIFIER_EXPRESSION} →
-     *       REEVALUATE_THUNK (call results, member/field/index reads,
-     *       conditionals, conversions, host/external import reads — no
-     *       VALUE carve-out for import reads).</li>
-     * </ul>
-     *
-     * <p>A proof is admissible exactly for an identifier source: for a
-     * binding reference the proof selects the arm (VALUE with, SHARED_CELL
-     * without); for an intrinsic function value the recorded proof is a
-     * checker fact that never changes the arm and never enters the
-     * payload (the operand is the intrinsic identity, not a binding
-     * load). A proof supplied for a non-identifier shape is a producer
-     * defect and fails closed — never silently ignored and never
-     * reclassified (the payload's {@code proof} is present iff VALUE's
-     * operand is a binding load, B8).</p>
-     *
-     */
+    /** Only a binding reference may carry an immutability proof. */
     public static CaptureMode selectMode(SourceShape shape,
                                          Optional<BindingImmutabilityProof> proof) {
         Objects.requireNonNull(shape, "shape must not be null");
@@ -187,7 +53,6 @@ public final class AdapterShapeMap {
                 requireNoProof(proof, shape);
                 yield CaptureMode.VALUE;
             }
-            case INTRINSIC_FUNCTION_VALUE -> CaptureMode.VALUE;
             case BINDING_REFERENCE -> proof.isPresent()
                 ? CaptureMode.VALUE : CaptureMode.SHARED_CELL;
             case NON_IDENTIFIER_EXPRESSION -> {
@@ -208,6 +73,8 @@ public final class AdapterShapeMap {
                 + shape + " (producer defect — the payload's proof is present iff "
                 + "VALUE's operand is a binding load)");
         }
+        return shape == SourceShape.NON_IDENTIFIER_EXPRESSION
+            ? CaptureMode.REEVALUATE_THUNK : CaptureMode.VALUE;
     }
 
     /**
@@ -248,22 +115,7 @@ public final class AdapterShapeMap {
         return proof.isPresent() ? CaptureMode.VALUE : CaptureMode.SHARED_CELL;
     }
 
-    /**
-     * The map's produced-source arm at the IR level (the registry
-     * child's T4 materialization seam feeds the import-read arm
-     * through this surface): a {@code CLOSURE_NEW} result → VALUE (a
-     * materialized function-expression operand); every composite
-     * function-value producer — {@code MEMBER_READ}/{@code EXPORT_READ}
-     * (member/import reads), {@code INDEX_READ}/{@code FIELD_READ}
-     * (index/field reads), {@code CALL} (call results), and
-     * {@code BRANCH} (conditionals) — → REEVALUATE_THUNK, regardless
-     * of any recorded producer facts: a host/external import read is
-     * the closed non-identifier member-read arm and there is no VALUE
-     * carve-out for import reads. The producer facts name the
-     * materialization site; they never reclassify the arm and never
-     * select the mode.
-     *
-     */
+    /** Composite sources re-execute; closure values materialize at declaration. */
     public static CaptureMode selectModeOverProducedSource(
             SemanticOpKind producingKind,
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts) {

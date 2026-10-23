@@ -3,22 +3,22 @@
 // @expected: runtime-ok
 // @features: async-await
 
-async function double(x: int): int {
+async function double(x: number): number {
   return x * 2;
 }
 
-async function triple(x: int): int {
+async function triple(x: number): number {
   return x * 3;
 }
 
-export async function test_multiple_await(): int {
-  let stage: int = 0;
-  let a: int = await double(10);
+export async function test_multiple_await(): number {
+  let stage: number = 0;
+  let a: number = await double(10);
   if (a !== 20) {
     throw { code: "TEST_FAIL", message: "first awaited completion mismatch" };
   }
   stage = stage + 1;
-  let b: int = await triple(a);
+  let b: number = await triple(a);
   if (b !== 60) {
     throw { code: "TEST_FAIL", message: "second awaited completion mismatch" };
   }

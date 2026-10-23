@@ -5,7 +5,7 @@
 // explicit classification, and companions must keep compiling standalone.
 // @jsonable
 export class Child {
-  value: int = 0;
+  value: number = 0;
 }
 
 // @jsonable
@@ -23,11 +23,11 @@ export class TableWrap {
   data: table = {};
 }
 
-export function child(v: int): Child {
+export function child(v: number): Child {
   return { value: v };
 }
 
-export function makeParent(a: int, b: int): Parent {
+export function makeParent(a: number, b: number): Parent {
   return { children: [child(a), child(b)] };
 }
 

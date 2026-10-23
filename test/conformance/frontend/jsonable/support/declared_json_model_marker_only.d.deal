@@ -3,4 +3,4 @@
 // @expected: companion
 
 // @jsonable
-export class Model { n: int = 0; }
+export class Model { n: number = 0; }

@@ -4,7 +4,7 @@
 // @features: parser, semicolon, line-break, operator, v1.2
 
 export function main(): null {
-  let value: int = 1 +
+  let value: number = 1 +
     2;
   return null;
 }

@@ -7,7 +7,6 @@ import java.util.List;
 public sealed interface Type
     permits Type.Null,
            Type.Boolean,
-           Type.Int,
            Type.Number,
            Type.String,
            Type.Table,
@@ -23,7 +22,6 @@ public sealed interface Type
     enum Null implements Type { INSTANCE }
 
     enum Boolean implements Type { INSTANCE }
-    enum Int implements Type { INSTANCE }
     enum Number implements Type { INSTANCE }
     enum String implements Type { INSTANCE }
 

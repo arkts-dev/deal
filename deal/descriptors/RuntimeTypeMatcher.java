@@ -26,13 +26,6 @@ import java.util.Objects;
  *       units}</td></tr>
  *   <tr><td>{@code number}</td><td>backend number scalar predicate</td>
  *       <td>E8001 {@code expected number, got {actual}}</td></tr>
- *   <tr><td>{@code int}</td><td>number carrier that is finite and
- *       integral, {@code -0} normalized to {@code 0}, then the
- *       signed-32 domain gate
- *       {@code [-2147483648, 2147483647]}</td>
- *       <td>E8001 {@code expected int, got {actual}} (non-number, NaN,
- *       infinity, non-integer); E8004 {@code int out of safe
- *       range}</td></tr>
  *   <tr><td>{@code table}</td><td>backend table representation</td>
  *       <td>E8001 {@code expected table, got {actual}}</td></tr>
  *   <tr><td>{@code @...} and the builtin {@code Error} atom</td>
@@ -63,10 +56,7 @@ import java.util.Objects;
  * and never mutates the descriptor, the value, or the location: it
  * returns the unchanged checked value or a {@link RuntimeCheckFailure}
  * carrying the pinned code, the byte-exact pinned message, and the
- * location exactly as supplied.  The {@code int} row is the one admitted
- * carrier that cannot be returned unchanged: a negative-zero number
- * payload is republished as the normalized int {@code 0}, because
- * negative zero does not exist in the {@code int} domain.  Values are
+ * location exactly as supplied. Values are
  * inspected only through the
  * {@link RuntimeValueModel} seam passed to the constructor — the matcher
  * performs no {@code instanceof}, cast, reflection, or any other direct
@@ -78,23 +68,6 @@ import java.util.Objects;
  * number of checks against its model.</p>
  */
 public final class RuntimeTypeMatcher {
-
-    /**
-     * The {@code int} domain minimum {@code -2147483648} (DEAL v1.3
-     * signed-32 {@code int}, the one active semantic profile): a finite
-     * integral number inside {@code [INT32_MIN, INT32_MAX]} passes the
-     * {@code int} row and anything outside raises E8004
-     * {@code int out of safe range} — byte-identical to
-     * {@code deal/runtime.lua}'s {@code check_int}, the JVM emitted
-     * {@code checkInt} and {@code deal/runtime.js}'s {@code checkInt}.
-     */
-    public static final double INT32_MIN = -2147483648.0d;
-
-    /**
-     * The {@code int} domain maximum {@code 2147483647} (the upper end of
-     * the signed-32 domain; see {@link #INT32_MIN}).
-     */
-    public static final double INT32_MAX = 2147483647.0d;
 
     /** The single value-model seam — the matcher's only value inspection point. */
     private final RuntimeValueModel model;
@@ -156,7 +129,7 @@ public final class RuntimeTypeMatcher {
     // =========================================================================
 
     /** The primitive rows: {@code null}, {@code boolean}, {@code string},
-     * {@code number}, {@code int}, {@code table}. */
+     * {@code number}, {@code table}. */
     private Object checkPrimitive(String name, Object value, RuntimeSourceLocation range) {
         switch (name) {
             case "null" -> {
@@ -190,9 +163,6 @@ public final class RuntimeTypeMatcher {
                 }
                 return failure("E8001", "expected number, got " + actualKind(value, range), range);
             }
-            case "int" -> {
-                return checkInt(value, range);
-            }
             case "table" -> {
                 if (model.isTable(value)) {
                     return value;
@@ -207,55 +177,7 @@ public final class RuntimeTypeMatcher {
         }
     }
 
-    /**
-     * The int row: number carrier that is finite and integral, {@code -0}
-     * normalized to {@code 0}, then the signed-32 domain gate.
-     *
-     * <p>Pinned E8001 sub-cases byte-identical to {@code deal/runtime.lua}'s
-     * {@code check_int}: non-number carrier → {@code expected int, got
-     * {actual}}; NaN → {@code expected int, got NaN}; infinity →
-     * {@code expected int, got infinity}; non-integer →
-     * {@code expected int, got non-integer number}.  A finite integral
-     * number outside {@code [-2147483648, 2147483647]} raises E8004
-     * {@code int out of safe range}.  An admitted carrier is returned
-     * unchanged, except that a negative-zero payload is republished as the
-     * normalized int {@code 0} (the {@code v + 0} step every v1.3 runtime
-     * realization applies; the seam exposes no negative-zero int).</p>
-     */
-    private Object checkInt(Object value, RuntimeSourceLocation range) {
-        if (!model.isNumber(value)) {
-            return failure("E8001", "expected int, got " + actualKind(value, range), range);
-        }
-        double payload = model.numberPayload(value);
-        if (payload != payload) {
-            return failure("E8001", "expected int, got NaN", range);
-        }
-        // Negative zero is not an int value: the normalization step below
-        // turns the payload into +0.0, so the carrier cannot be returned as
-        // supplied.
-        boolean normalizedZero = payload == 0.0d
-            && Double.doubleToRawLongBits(payload) == Double.doubleToRawLongBits(-0.0d);
-        payload = payload + 0.0d; // normalize -0 to 0 (LuaJIT check_int contract)
-        if (Double.isInfinite(payload)) {
-            return failure("E8001", "expected int, got infinity", range);
-        }
-        if (payload % 1.0d != 0.0d) {
-            return failure("E8001", "expected int, got non-integer number", range);
-        }
-        if (payload > INT32_MAX || payload < INT32_MIN) {
-            return failure("E8004", "int out of safe range", range);
-        }
-        if (normalizedZero) {
-            // The normalized int 0 in the seam's number carrier: every
-            // backend number carrier that can hold negative zero is a
-            // binary64 carrier, so the +0.0 payload is the admitted value.
-            return payload;
-        }
-        return value;
-    }
 
-    /** The class row: tagged class identity byte-equal to the atom's full text
-     * (the builtin {@code Error} atom's text is exactly {@code Error}). */
     private Object checkClass(String atomText, Object value, RuntimeSourceLocation range) {
         String tag = model.classIdentityText(value);
         if (tag == null) {

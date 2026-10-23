@@ -1,14 +1,14 @@
-// @spec: Functions — int[]-bearing sync function values
-// @description: sync int[]-bearing function declarations, expressions, returns, callbacks, array/nullable parameter shapes, container storage/read/invocation, and reference preservation (v1.2)
+// @spec: Functions — number[]-bearing sync function values
+// @description: sync number[]-bearing function declarations, expressions, returns, callbacks, array/nullable parameter shapes, container storage/read/invocation, and reference preservation (v1.2)
 // @expected: runtime-ok
-// @features: int[], functions, arrays
+// @features: number[], functions, arrays
 
-function id(b: int[]): int[] { return b; }
+function id(b: number[]): number[] { return b; }
 
-function firstOf(xs: int[][]): int { return xs[0][0]; }
+function firstOf(xs: number[][]): number { return xs[0][0]; }
 
-function firstMaybe(xs: (int[] | null)[], v: int): int {
-  let head: int[] | null = xs[0];
+function firstMaybe(xs: (number[] | null)[], v: number): number {
+  let head: number[] | null = xs[0];
   if (head !== null) {
     head[0] = v;
     return head[0];
@@ -16,21 +16,21 @@ function firstMaybe(xs: (int[] | null)[], v: int): int {
   return -1;
 }
 
-function maybeLen(b: int[] | null): int {
+function maybeLen(b: number[] | null): number {
   if (b !== null) { return b.length; }
   return -1;
 }
 
-function apply(cb: (b: int[]) => int[], b: int[]): int[] { return cb(b); }
+function apply(cb: (b: number[]) => number[], b: number[]): number[] { return cb(b); }
 
-export function test_array_sync_fn_shapes(): int {
-  let f: (b: int[]) => int[] = id;
-  let g: (b: int[]) => int[] = function(b: int[]): int[] { return b; };
-  let via: int[] = apply(id, [0, 0]);
+export function test_array_sync_fn_shapes(): number {
+  let f: (b: number[]) => number[] = id;
+  let g: (b: number[]) => number[] = function(b: number[]): number[] { return b; };
+  let via: number[] = apply(id, [0, 0]);
   if (via[0] !== 0) {
     throw { code: "TEST_FAIL", message: "callback invoke failed" };
   }
-  let viaExpr: int[] = apply(g, [0, 0, 0]);
+  let viaExpr: number[] = apply(g, [0, 0, 0]);
   if (viaExpr.length !== 3) {
     throw { code: "TEST_FAIL", message: "expression callback failed" };
   }
@@ -40,12 +40,12 @@ export function test_array_sync_fn_shapes(): int {
   if (f === g) {
     throw { code: "TEST_FAIL", message: "distinct fn identity failed" };
   }
-  let one: int[][] = [[0]];
+  let one: number[][] = [[0]];
   one[0][0] = 9;
   if (firstOf(one) !== 9) {
     throw { code: "TEST_FAIL", message: "array param failed" };
   }
-  let mn: (int[] | null)[] = [];
+  let mn: (number[] | null)[] = [];
   mn[mn.length] = [0];
   mn[mn.length] = null;
   if (firstMaybe(mn, 7) !== 7) {
@@ -57,16 +57,16 @@ export function test_array_sync_fn_shapes(): int {
   if (maybeLen([0, 0, 0, 0, 0]) !== 5) {
     throw { code: "TEST_FAIL", message: "nullable param value failed" };
   }
-  let fs: ((b: int[]) => int[])[] = [id, g];
+  let fs: ((b: number[]) => number[])[] = [id, g];
   fs[fs.length] = id;
   if (fs[2]([0, 0])[0] !== 0) {
     throw { code: "TEST_FAIL", message: "fn array failed" };
   }
-  let ns: (((b: int[]) => int[]) | null)[] = [];
+  let ns: (((b: number[]) => number[]) | null)[] = [];
   ns[ns.length] = id;
   ns[ns.length] = null;
   ns[ns.length] = g;
-  let pick: ((b: int[]) => int[]) | null = ns[2];
+  let pick: ((b: number[]) => number[]) | null = ns[2];
   if (pick !== null) {
     if (pick([0, 0, 0, 0]).length !== 4) {
       throw { code: "TEST_FAIL", message: "nullable fn array failed" };

@@ -96,7 +96,7 @@ public class JsonClassExecutorTest {
     private static final ClassId INNER = new ClassId(MOD.path(), "Inner");
     private static final ClassId NESTED = new ClassId(OWNER.path(), "Nested");
     private static final ClassId OTHER = new ClassId(MOD.path(), "Other");
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor NUMBER = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STRING = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor BOOL = RuntimeDescriptor.Boolean.INSTANCE;
@@ -317,14 +317,17 @@ public class JsonClassExecutorTest {
             "100e-000000000000000000002", "-1e0000000000000000001"};
         double[] expected = {2147483647, -2147483648, 0, 2147483648.0, 1.5, 1, 1, 1,
             2147483647.0, -2147483649.0, -9999999999.0, 10, 1, -10};
-        boolean[] isInt = {true, true, true, false, false, true, true, true, false,
-            false, false, true, true, true};
         for (int i = 0; i < numbers.length; i++) {
             JsonParse parsed = parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate(numbers[i]));
             Value value = ((JsonParse.Success) parsed).value();
-            check(isInt[i] ? value instanceof Value.Int n && n.value() == expected[i]
-                    : value instanceof Value.Number number && number.value() == expected[i],
-                "numeric lexical variant and value: " + numbers[i]);
+            check(value instanceof Value.Number number && number.value() == expected[i],
+                "binary64 numeric value: " + numbers[i]);
+            if (numbers[i].equals("-0")) {
+                check(value instanceof Value.Number number
+                        && Double.doubleToRawLongBits(number.value())
+                            == Double.doubleToRawLongBits(-0.0),
+                    "JSON parsing preserves negative zero");
+            }
         }
         check(parser.parse((UnicodeScalars.Valid) UnicodeScalars.validate("{x"))
             instanceof JsonParse.SyntaxFailure, "invalid JSON syntax is rejected");
@@ -342,16 +345,16 @@ public class JsonClassExecutorTest {
                 && a.array().size() == 0, "empty array parse retains its variant");
         SemanticTable<Value> escaped = new SemanticTable<>();
         escaped.put("q", Value.string("a\"b\n"));
-        escaped.put("z", new Value.Int(2));
+        escaped.put("z", new Value.Number(2));
         check(JsonClassAlgorithmAdapter.stringifier().stringify(new Value.Table(escaped), "")
                 instanceof JsonStringify.Success s
-                && s.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2}"),
+                && s.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2.0}"),
             "escaping and first-insertion order are literal-exact");
         assertStringifyFailure(new Value.Number(Double.NaN), "f", "f", "number", false);
         Value function = new Value.Function(new RuntimeDescriptor.Func(List.of(),
             RuntimeDescriptor.Null.INSTANCE, false));
         List<Value> unsupported = List.of(function,
-            instanceOf(layoutOf(POINT, field("x", INT, true)), Map.of("x", new Value.Int(1))),
+            instanceOf(layoutOf(POINT, field("x", INT, true)), Map.of("x", new Value.Number(1))),
             Value.string("\uD800"), Value.Missing.INSTANCE);
         List<String> tokens = List.of("function", "@corpus.json/Point", "invalid-unicode", "nil");
         for (int i = 0; i < unsupported.size(); i++) {
@@ -359,11 +362,11 @@ public class JsonClassExecutorTest {
                 "data", "data.k", tokens.get(i), false);
         }
         SemanticTable<Value> dotted = new SemanticTable<>();
-        dotted.put("a", new Value.Array(SemanticArray.of(new Value.Int(1))));
+        dotted.put("a", new Value.Array(SemanticArray.of(new Value.Number(1))));
         dotted.put("a.0", function);
         assertStringifyFailure(new Value.Table(dotted), "data", "data.a.0", "function", false);
         dotted.put("a", new Value.Array(SemanticArray.of(function)));
-        dotted.put("a.0", new Value.Int(1));
+        dotted.put("a.0", new Value.Number(1));
         assertStringifyFailure(new Value.Table(dotted), "data", "data.a[0]", "function", false);
         assertStringifyFailure(rawTable(Map.of("a.0", new Value.Array(SemanticArray.of(function)))),
             "data", "data.a.0[0]", "function", false);
@@ -439,7 +442,7 @@ public class JsonClassExecutorTest {
         SemanticOp xDefault = defaultOp(POINT, "x", nextValue(), INT);
         SemanticOp tagDefault = defaultOp(POINT, "tag", nextValue(), STRING);
         Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(xDefault.opId(), new Value.Int(40));
+        produced.put(xDefault.opId(), new Value.Number(40));
         produced.put(tagDefault.opId(), Value.string("pt"));
         Map<OpId, SemanticOp> defaultedOps = Map.of(xDefault.opId(), xDefault,
             tagDefault.opId(), tagDefault);
@@ -451,7 +454,7 @@ public class JsonClassExecutorTest {
                 tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
             JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), defaultsRunner);
         check(defaultedObject instanceof Value.Class instance
-                && fieldValue(instance, defaulted, "x") instanceof Value.Int intValue
+                && fieldValue(instance, defaulted, "x") instanceof Value.Number intValue
                 && intValue.value() == 40,
             "{} decodes as the defaulted instance (default x = 40)");
         // The [] document is not an object: an array of any length — the
@@ -493,7 +496,7 @@ public class JsonClassExecutorTest {
         SemanticOp xDefault = defaultOp(POINT, "x", nextValue(), INT);
         SemanticOp tagDefault = defaultOp(POINT, "tag", nextValue(), STRING);
         Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(xDefault.opId(), new Value.Int(40));
+        produced.put(xDefault.opId(), new Value.Number(40));
         produced.put(tagDefault.opId(), Value.string("pt"));
         Map<OpId, SemanticOp> defaultOps = Map.of(xDefault.opId(), xDefault,
             tagDefault.opId(), tagDefault);
@@ -520,14 +523,14 @@ public class JsonClassExecutorTest {
         check(extraKey instanceof Value.Null, "an unknown key returns null");
         check(keyRunner.calls() == 0, "no default runs after the extra-key gate");
 
-        // A descriptor failure: an int field with a Number carrier fails.
+        // A wrong-kind provided field fails without running defaults.
         List<String> logInt = new ArrayList<>();
         ScriptedBodyRunner intRunner = new ScriptedBodyRunner(logInt, produced, null);
         Value intFailure = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"x\":1.5,\"tag\":\"t\"}")), childIds,
+            Map.of(jsonId, Value.string("{\"x\":\"bad\",\"tag\":\"t\"}")), childIds,
             defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), intRunner);
         check(intFailure instanceof Value.Null,
-            "an int field with a fractional Number carrier returns null");
+            "a number field with a string carrier returns null");
         check(intRunner.calls() == 0,
             "a provided-field decode failure runs no defaults (parent D5)");
 
@@ -655,7 +658,7 @@ public class JsonClassExecutorTest {
         final SemanticOp rebuiltFactory = nestedFactory;
         Map<OpId, Value> ownerProduced = new LinkedHashMap<>();
         ownerProduced.put(cityDefault.opId(), Value.string("berlin"));
-        ownerProduced.put(zipDefault.opId(), new Value.Int(10115));
+        ownerProduced.put(zipDefault.opId(), new Value.Number(10115));
 
         // The caller module's @jsonable class with a nested class field.
         ClassLayout person = layoutOf(POINT,
@@ -695,7 +698,7 @@ public class JsonClassExecutorTest {
                 && carrier(city).equals("berlin"),
             "the nested defaults evaluated in the declaring module's scope (city = "
                 + "berlin)");
-        check(fieldValue(homeInstance, nested, "zip") instanceof Value.Int zip
+        check(fieldValue(homeInstance, nested, "zip") instanceof Value.Number zip
                 && zip.value() == 10115,
             "the nested defaults evaluated in the declaring module's scope (zip = 10115)");
         check(fieldValue(instance, person, "name") instanceof Value.String name
@@ -882,7 +885,7 @@ public class JsonClassExecutorTest {
         // omitted optionals stay missing (skipped).
         Value.Class instance = instanceOf(point, Map.of(
             "name", Value.string("a\"b"),
-            "age", new Value.Int(42),
+            "age", new Value.Number(42),
             "note", Value.Null.INSTANCE));
         Outcome<Value> outcome = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, instance), layouts, JsonClassAlgorithmAdapter.stringifier(),
@@ -890,7 +893,7 @@ public class JsonClassExecutorTest {
         check(outcome instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
                 && carrier(text).equals(
-                    "{\"name\":\"a\\\"b\",\"age\":42,\"note\":null}"),
+                    "{\"name\":\"a\\\"b\",\"age\":42.0,\"note\":null}"),
             "the deterministic text carries declared fields in declaration order with "
                 + "RFC-8259 escaping");
         check(!(outcome instanceof Outcome.Failure<?>), "no failure terminal");
@@ -898,13 +901,13 @@ public class JsonClassExecutorTest {
         // An omitted optional field is skipped from the text.
         Value.Class missingNote = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1)));
+            "age", new Value.Number(1)));
         Outcome<Value> skipped = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, missingNote), layouts, JsonClassAlgorithmAdapter.stringifier(),
             nextOrigin(null));
         check(skipped instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
-                && carrier(text).equals("{\"name\":\"n\",\"age\":1}"),
+                && carrier(text).equals("{\"name\":\"n\",\"age\":1.0}"),
             "an omitted optional field is skipped");
 
         // Determinism: repeated executions produce identical bytes.
@@ -952,10 +955,10 @@ public class JsonClassExecutorTest {
         // carried canonical atom as the actual field.
         Value.Class wrongNested = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(layoutOf(OTHER, field("city", STRING, true)),
                 Map.of("city", Value.string("x"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> nestedFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, wrongNested), layouts,
@@ -978,9 +981,9 @@ public class JsonClassExecutorTest {
         // An array element failure: path "tags[1]", actual "string".
         Value.Class badArray = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0), Value.string("x"))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0), Value.string("x"))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> arrayFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, badArray), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
@@ -995,9 +998,9 @@ public class JsonClassExecutorTest {
             RuntimeDescriptor.Null.INSTANCE, false)));
         Value.Class badTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(badData)));
         Outcome<Value> productionTableFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, badTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
@@ -1016,12 +1019,12 @@ public class JsonClassExecutorTest {
 
         SemanticTable<Value> badClassData = new SemanticTable<>();
         badClassData.put("k", instanceOf(layoutOf(OTHER, field("x", INT, true)),
-            Map.of("x", new Value.Int(1))));
+            Map.of("x", new Value.Number(1))));
         Value.Class classInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(badClassData)));
         Outcome<Value> productionClassFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, classInTable), layouts,
@@ -1044,9 +1047,9 @@ public class JsonClassExecutorTest {
         badInvalidData.put("k", Value.string("\uD800"));
         Value.Class invalidInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(badInvalidData)));
         Outcome<Value> productionInvalidFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, invalidInTable), layouts,
@@ -1067,9 +1070,9 @@ public class JsonClassExecutorTest {
         badMissingData.put("k", Value.Missing.INSTANCE);
         Value.Class missingInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(badMissingData)));
         Outcome<Value> productionMissingFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, missingInTable), layouts,
@@ -1093,14 +1096,14 @@ public class JsonClassExecutorTest {
         // structure — the generated C$toJson production walk pins
         // data.a.0 (a table key always appends .key) at the call origin.
         SemanticTable<Value> dottedData = new SemanticTable<>();
-        dottedData.put("a", new Value.Array(SemanticArray.of(new Value.Int(1))));
+        dottedData.put("a", new Value.Array(SemanticArray.of(new Value.Number(1))));
         dottedData.put("a.0", new Value.Function(new RuntimeDescriptor.Func(List.of(),
             RuntimeDescriptor.Null.INSTANCE, false)));
         Value.Class dottedInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(dottedData)));
         Outcome<Value> dottedFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, dottedInTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
@@ -1120,12 +1123,12 @@ public class JsonClassExecutorTest {
         dottedArrayWalkData.put("a", new Value.Array(SemanticArray.of(
             new Value.Function(new RuntimeDescriptor.Func(List.of(),
                 RuntimeDescriptor.Null.INSTANCE, false)))));
-        dottedArrayWalkData.put("a.0", new Value.Int(1));
+        dottedArrayWalkData.put("a.0", new Value.Number(1));
         Value.Class dottedArrayInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(dottedArrayWalkData)));
         Outcome<Value> dottedArrayFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, dottedArrayInTable), layouts,
@@ -1150,9 +1153,9 @@ public class JsonClassExecutorTest {
                 RuntimeDescriptor.Null.INSTANCE, false)));
             Value.Class braceInTable = instanceOf(point, Map.of(
                 "name", Value.string("n"),
-                "age", new Value.Int(1),
+                "age", new Value.Number(1),
                 "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-                "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+                "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
                 "data", new Value.Table(braceData)));
             Outcome<Value> braceFailure = ClassOpsExecutor.executeJsonToClass(op,
                 Map.of(classId, braceInTable), layouts,
@@ -1174,16 +1177,16 @@ public class JsonClassExecutorTest {
         // A nested-class-field failure under a path: path "home.city".
         Value.Class badNestedField = instanceOf(point, Map.of(
             "name", Value.string("n"),
-            "age", new Value.Int(1),
-            "home", instanceOf(nested, Map.of("city", new Value.Int(9))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "age", new Value.Number(1),
+            "home", instanceOf(nested, Map.of("city", new Value.Number(9))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> deepPath = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, badNestedField), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
         check(deepPath instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at home.city is not JSON serializable: int"),
+                    "value at home.city is not JSON serializable: number"),
             "a nested class field failure pins the f.g path");
 
         // The first failure wins in declaration order (age before home).
@@ -1192,7 +1195,7 @@ public class JsonClassExecutorTest {
             "age", Value.string("bad"),
             "home", instanceOf(layoutOf(OTHER, field("city", STRING, true)),
                 Map.of("city", Value.string("x"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> firstWins = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, twoFailures), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
@@ -1203,7 +1206,7 @@ public class JsonClassExecutorTest {
 
         // The root identity check: path "", actual class:<other>.
         Value.Class foreignRoot = instanceOf(layoutOf(OTHER, field("x", INT, true)),
-            Map.of("x", new Value.Int(1)));
+            Map.of("x", new Value.Number(1)));
         Outcome<Value> rootFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, foreignRoot), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(rootFailure instanceof Outcome.Failure<Value> failure
@@ -1240,9 +1243,9 @@ public class JsonClassExecutorTest {
 
         // A missing required field: path "name", actual "missing".
         Value.Class missingRequired = instanceOf(point, Map.of(
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> missingFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, missingRequired), layouts, JsonClassAlgorithmAdapter.stringifier(),
@@ -1255,9 +1258,9 @@ public class JsonClassExecutorTest {
         // A null on a non-nullable field: actual null.
         Value.Class nullRequired = instanceOf(point, Map.of(
             "name", Value.Null.INSTANCE,
-            "age", new Value.Int(1),
+            "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
-            "tags", new Value.Array(SemanticArray.of(new Value.Int(0))),
+            "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(new SemanticTable<>())));
         Outcome<Value> nullFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, nullRequired), layouts, JsonClassAlgorithmAdapter.stringifier(), callOrigin);
@@ -1885,9 +1888,9 @@ public class JsonClassExecutorTest {
             new RuntimeDescriptor.Array(INT));
         Map<OpId, Value> produced = new LinkedHashMap<>();
         produced.put(nameDefault.opId(), Value.string("anon"));
-        produced.put(ageDefault.opId(), new Value.Int(0));
+        produced.put(ageDefault.opId(), new Value.Number(0));
         produced.put(tagsDefault.opId(),
-            new Value.Array(SemanticArray.of(new Value.Int(1), new Value.Int(2))));
+            new Value.Array(SemanticArray.of(new Value.Number(1), new Value.Number(2))));
         Map<OpId, SemanticOp> defaultOps = Map.of(nameDefault.opId(), nameDefault,
             ageDefault.opId(), ageDefault, tagsDefault.opId(), tagsDefault);
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, point);
@@ -1907,7 +1910,7 @@ public class JsonClassExecutorTest {
         check(roundtrip instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.String text
                 && carrier(text).equals(
-                    "{\"name\":\"anon\",\"age\":42,\"tags\":[1,2]}"),
+                    "{\"name\":\"anon\",\"age\":42.0,\"tags\":[1.0,2.0]}"),
             "the roundtrip emits the deterministic text (defaulted name, decoded age, "
                 + "defaulted tags, omitted optional skipped)");
 
@@ -1941,7 +1944,7 @@ public class JsonClassExecutorTest {
             "an unresolvable jsonString operand");
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
                 Map.of(fromStrict.payload() instanceof KindPayload.JsonFromClassPayload p
-                    ? p.jsonString() : nextValue(), new Value.Int(3)),
+                    ? p.jsonString() : nextValue(), new Value.Number(3)),
                 List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
                 new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
             "a wrong-kind jsonString operand");
@@ -1983,7 +1986,7 @@ public class JsonClassExecutorTest {
             "an unresolvable classValue operand");
         expectDefect(() -> ClassOpsExecutor.executeJsonToClass(
                 jsonToOp(strict, toStrictValue),
-                Map.of(toStrictValue, new Value.Int(3)),
+                Map.of(toStrictValue, new Value.Number(3)),
                 Map.of(), JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null)),
             "an unresolvable toJson layout resolution (empty context)");
         expectDefect(() -> ClassOpsExecutor.executeJsonToClass(

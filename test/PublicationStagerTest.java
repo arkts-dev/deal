@@ -301,9 +301,9 @@ public class PublicationStagerTest {
             writeText(src.resolve("main.deal"),
                 "import * as lib from \"./lib\";\n"
                     + "export function main(): null { return null; }\n"
-                    + "export function run(): int { return lib.one(); }\n");
+                    + "export function run(): number { return lib.one(); }\n");
             writeText(src.resolve("lib.deal"),
-                "export function one(): int { return 1; }\n");
+                "export function one(): number { return 1; }\n");
 
             boolean first = compileProject(src, out, Backend.JS,
                 false, false, null);
@@ -317,10 +317,10 @@ public class PublicationStagerTest {
             // clean — the whole-set failure contract must leave the
             // prior live set byte-identical.
             writeText(src.resolve("ffi.d.deal"),
-                "// @extern-c\nexport function cFn(x: int): int;\n");
+                "// @extern-c\nexport function cFn(x: number): number;\n");
             writeText(src.resolve("lib.deal"),
                 "import * as ffi from \"./ffi\";\n"
-                    + "export function one(): int { return ffi.cFn(1); }\n");
+                    + "export function one(): number { return ffi.cFn(1); }\n");
             boolean second = compileProject(src, out, Backend.JS,
                 false, false, null);
             check(!second, "the @extern-c rejection fails the recompile");
@@ -352,7 +352,7 @@ public class PublicationStagerTest {
                 "import * as lib from \"./lib\";\n"
                     + "export function main(): null { return null; }\n");
             writeText(src.resolve("lib.deal"),
-                "export function value(): int { return 7; }\n");
+                "export function value(): number { return 7; }\n");
 
             boolean first = compileProject(src, out, Backend.LUAJIT,
                 false, false, null);
@@ -637,7 +637,7 @@ public class PublicationStagerTest {
                 "import * as lib from \"./lib\";\n"
                     + "export function main(): null { return null; }\n");
             writeText(src.resolve("lib.deal"),
-                "export function value(): int { return 7; }\n");
+                "export function value(): number { return 7; }\n");
 
             // Successful publish: the dumps appear atomically with the
             // set.
@@ -654,7 +654,7 @@ public class PublicationStagerTest {
             // never reach the live root (byte-identical prior set).
             Map<String, byte[]> before = treeBytes(out);
             writeText(src.resolve("lib.deal"),
-                "export function value(): int { return \"broken\"; }\n");
+                "export function value(): number { return \"broken\"; }\n");
             boolean failedCompile = compileProject(src, out,
                 Backend.LUAJIT, true, false, null);
             check(!failedCompile, "the type-broken recompile fails");

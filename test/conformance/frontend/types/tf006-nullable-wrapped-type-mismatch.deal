@@ -4,7 +4,7 @@
 // @features: type-system, nullable, invariance, diagnostics, v1.2
 
 export function main(): null {
-  let source: int | null = 1;
-  let target: number | null = source;
+  let source: number | null = 1;
+  let target: string | null = source;
   return null;
 }

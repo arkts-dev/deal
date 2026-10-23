@@ -5,8 +5,8 @@
 
 import * as lib from "./async_lib.deal";
 
-export async function test_cross_module(): int {
-  let x: int = await lib.getAnswer();
+export async function test_cross_module(): number {
+  let x: number = await lib.getAnswer();
   if (x !== 42) {
     throw { code: "TEST_FAIL", message: "cross-module getAnswer value mismatch" };
   }

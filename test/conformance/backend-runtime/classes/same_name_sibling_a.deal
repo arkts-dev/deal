@@ -6,7 +6,7 @@
 // never passes the other sibling's typed boundary.
 // @jsonable
 export class Item {
-  value: int = 1;
+  value: number = 1;
 }
 
 // @jsonable
@@ -23,7 +23,7 @@ export function makePayload(): Payload {
   return { label: "a", item: { value: 1 } };
 }
 
-export function read(item: Item): int {
+export function read(item: Item): number {
   return item.value;
 }
 
@@ -44,7 +44,7 @@ export function payloadJson(): string {
   return Payload$toJson(p);
 }
 
-export function payloadRoundTrip(): int {
+export function payloadRoundTrip(): number {
   let p: Payload | null = Payload$fromJson(payloadJson());
   if (p !== null) {
     return read(p.item);
@@ -56,7 +56,7 @@ export function itemJson(item: Item): string {
   return Item$toJson(item);
 }
 
-export function itemRoundTrip(value: int): int {
+export function itemRoundTrip(value: number): number {
   let restored: Item | null = Item$fromJson(itemJson({ value: value }));
   if (restored !== null) {
     return read(restored);

@@ -43,7 +43,7 @@ export function test_forged_carrier_identities(): null {
   }
   let arrayCode: string = "";
   try {
-    let xs: int[] = holder.arrayLike;
+    let xs: number[] = holder.arrayLike;
     if (xs.length >= 0) {
       arrayCode = "admitted";
     }
@@ -65,7 +65,7 @@ export function test_forged_carrier_identities(): null {
   if (real.label !== "real") {
     throw { code: "TEST_FAIL", message: "the real class instance lost its field" };
   }
-  let realXs: int[] = [1, 2];
+  let realXs: number[] = [1, 2];
   if (realXs.length !== 2) {
     throw { code: "TEST_FAIL", message: "the real array lost its elements" };
   }

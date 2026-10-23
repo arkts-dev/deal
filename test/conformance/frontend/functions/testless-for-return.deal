@@ -3,11 +3,11 @@
 // @expected: compile-ok
 // @features: functions, return, loops, v1.2
 
-function value(): int {
+function value(): number {
   {  while (true) { { return 7; }  } }
 }
 
 export function main(): null {
-  let n: int = value();
+  let n: number = value();
   return null;
 }

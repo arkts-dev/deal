@@ -4,7 +4,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected array\",\"sourceFile\":\"backend-runtime/host-abi/host-array-return-mismatch-e8010.deal\",\"line\":9,\"column\":10,\"expected\":\"[int]\",\"actual\":\"string\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"return value 1 type mismatch: expected array\",\"sourceFile\":\"backend-runtime/host-abi/host-array-return-mismatch-e8010.deal\",\"line\":9,\"column\":10,\"expected\":\"[number]\",\"actual\":\"string\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -14,7 +14,7 @@
       "sourceFile": "backend-runtime/host-abi/host-array-return-mismatch-e8010.deal",
       "line": 9,
       "column": 10,
-      "expected": "[int]",
+      "expected": "[number]",
       "actual": "string"
     }
   }

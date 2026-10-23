@@ -3,17 +3,17 @@
 // @description: Companion for cross-module class, function, and table integration
 
 export class Counter {
-  value: int = 0;
+  value: number = 0;
 }
 
-export function makeCounter(start: int): Counter {
+export function makeCounter(start: number): Counter {
   return { value: start };
 }
 
-export function makeStep(counter: Counter, audit: table): () => int {
-  return function(): int {
+export function makeStep(counter: Counter, audit: table): () => number {
+  return function(): number {
     counter.value = counter.value + 1;
-    let calls: int = audit.calls;
+    let calls: number = audit.calls;
     audit.calls = calls + 1;
     return counter.value;
   };

@@ -3,4 +3,4 @@
 // @expected: companion
 // @features: companion, modules, resolution
 
-export function value(): int { return 7; }
+export function value(): number { return 7; }

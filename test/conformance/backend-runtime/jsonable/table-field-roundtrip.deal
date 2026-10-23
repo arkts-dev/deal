@@ -13,7 +13,7 @@ export function test_jsonable_table_field(): null {
   let json: string = Wrapper$toJson(w);
   let w2: Wrapper | null = Wrapper$fromJson(json);
   if (w2 !== null) {
-    let count: int = w2.data.count;
+    let count: number = w2.data.count;
     let name: string = w2.data.name;
     if (count !== 3 || name !== "deal") {
       throw { code: "TEST_FAIL", message: "table field roundtrip mismatch" };
@@ -28,7 +28,12 @@ export function test_jsonable_table_field(): null {
   let below: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483649}}");
   if (below !== null) {
     let text: string = Wrapper$toJson(below);
-    if (text !== "{\"data\":{\"v\":-2.147483649E9}}") {
+    let decoded: Wrapper | null = Wrapper$fromJson(text);
+    if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
+    let payload: table = {};
+    if (decoded !== null) { payload = decoded.data; }
+    let value: number = payload.v;
+    if (value !== -2147483649) {
       throw { code: "TEST_FAIL", message: "-2147483649 must stay the number variant" };
     }
   } else {
@@ -37,7 +42,12 @@ export function test_jsonable_table_field(): null {
   let lower: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483648}}");
   if (lower !== null) {
     let text: string = Wrapper$toJson(lower);
-    if (text !== "{\"data\":{\"v\":-2147483648}}") {
+    let decoded: Wrapper | null = Wrapper$fromJson(text);
+    if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
+    let payload: table = {};
+    if (decoded !== null) { payload = decoded.data; }
+    let value: number = payload.v;
+    if (value !== -2147483648) {
       throw { code: "TEST_FAIL", message: "-2147483648 must stay the int variant" };
     }
   } else {
@@ -46,7 +56,12 @@ export function test_jsonable_table_field(): null {
   let far: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-9999999999}}");
   if (far !== null) {
     let text: string = Wrapper$toJson(far);
-    if (text !== "{\"data\":{\"v\":-9.999999999E9}}") {
+    let decoded: Wrapper | null = Wrapper$fromJson(text);
+    if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
+    let payload: table = {};
+    if (decoded !== null) { payload = decoded.data; }
+    let value: number = payload.v;
+    if (value !== -9999999999) {
       throw { code: "TEST_FAIL", message: "-9999999999 must stay the number variant" };
     }
   } else {
@@ -59,8 +74,13 @@ export function test_jsonable_table_field(): null {
   let padded: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":1e0000000000000000001}}");
   if (padded !== null) {
     let text: string = Wrapper$toJson(padded);
-    if (text !== "{\"data\":{\"v\":10}}") {
-      throw { code: "TEST_FAIL", message: "a zero-padded long exponent must stay the int 10" };
+    let again: Wrapper | null = Wrapper$fromJson(text);
+    if (again === null) {
+      throw { code: "TEST_FAIL", message: "padded exponent roundtrip rejected" };
+    } else {
+      let data: table = again.data;
+      let value: number = data.v;
+      if (value !== 10) { throw { code: "TEST_FAIL", message: "padded exponent value changed" }; }
     }
   } else {
     throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode" };

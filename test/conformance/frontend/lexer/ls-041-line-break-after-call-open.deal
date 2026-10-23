@@ -3,12 +3,12 @@
 // @expected: compile-ok
 // @features: parser, semicolon, line-break, call, v1.2
 
-function identity(value: int): int {
+function identity(value: number): number {
   return value;
 }
 
 export function main(): null {
-  let value: int = identity(
+  let value: number = identity(
     1);
   return null;
 }

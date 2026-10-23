@@ -3,12 +3,12 @@
 // @expected: compile-ok
 // @features: parser, semicolon, line-break, comma, v1.2
 
-function add(left: int, right: int): int {
+function add(left: number, right: number): number {
   return left + right;
 }
 
 export function main(): null {
-  let value: int = add(1,
+  let value: number = add(1,
     2);
   return null;
 }

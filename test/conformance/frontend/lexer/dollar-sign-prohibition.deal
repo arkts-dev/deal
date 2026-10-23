@@ -6,8 +6,8 @@
 // Case 1: $ in import alias
 import * as foo$bar from "./nonexistent_lib";
 function f$(): null { return null; }
-function g(p$: int): null { return null; }
-class MyClass { f$: int = 0; }
+function g(p$: number): null { return null; }
+class MyClass { f$: number = 0; }
 export function main(): null { return null; }
 export function main(): null {
 
@@ -16,7 +16,7 @@ export function main(): null {
 // Case 3: $ in parameter name
 
 // Case 4: $ in variable name
-let x$: int = 1;
+let x$: number = 1;
 
 // Case 5: $ in field name
 

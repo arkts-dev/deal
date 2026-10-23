@@ -216,7 +216,7 @@ public class ClassNewLoweringTest {
             + "return boundaries) --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int; tag: string; }
+            class Point { x: number; tag: string; }
             let p: Point = {tag: "t", x: 3};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -269,7 +269,7 @@ public class ClassNewLoweringTest {
                 "the tag provided value op is the 't' CONST producing op");
             check(xConst != null
                     && xConst.payload() instanceof KindPayload.ConstPayload xPayload
-                    && xPayload.value() instanceof ScalarValue.Int xValue
+                    && xPayload.value() instanceof ScalarValue.Number xValue
                     && xValue.value() == 3,
                 "the x provided value op is the 3 CONST producing op");
         }
@@ -300,14 +300,14 @@ public class ClassNewLoweringTest {
                 check(boundary.kind() == entry.kind(),
                     "the child's boundary kind matches the payload entry");
                 RuntimeDescriptor expected = entry.field().equals("x")
-                    ? RuntimeDescriptor.Int.INSTANCE : RuntimeDescriptor.String.INSTANCE;
+                    ? RuntimeDescriptor.Number.INSTANCE : RuntimeDescriptor.String.INSTANCE;
                 check(boundary.descriptor().equals(expected),
                     "the child carries the field's declared descriptor; got "
                         + boundary.descriptor().canonicalSpecText());
                 check(boundary.input().equals(providedIdOf(payload, entry.field())),
                     "the CLASS_LITERAL_FIELD input is the field's provided value op id");
                 check(child.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
-                    "the descriptor-kind policy (TYPE_DESCRIPTOR for int/string fields); "
+                    "the descriptor-kind policy (TYPE_DESCRIPTOR for number/string fields); "
                         + "got " + child.failurePolicy());
                 check(boundary.realization()
                         instanceof BoundaryRealization.RuntimeValidation,
@@ -360,7 +360,7 @@ public class ClassNewLoweringTest {
             + "defaulted fields only; CLASS_DEFAULT_FIELD wiring --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int = 1; y: int = 2; tag?: string; }
+            class Point { x: number = 1; y: number = 2; tag?: string; }
             let p: Point = {y: 20};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -444,7 +444,7 @@ public class ClassNewLoweringTest {
             + "default op id in declaration order --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class P { a: int = 5; b: string = "b"; }
+            class P { a: number = 5; b: string = "b"; }
             let p: P = {};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -510,7 +510,7 @@ public class ClassNewLoweringTest {
             + "unit's op list --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            export class Point { x: int = 40 + 2; tag?: string; }
+            export class Point { x: number = 40 + 2; tag?: string; }
             let p: Point = {};
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -613,7 +613,7 @@ public class ClassNewLoweringTest {
             ClassOpsExecutor.BodyRunner bodyRunner = defaultOp -> {
                 check(defaultOp.opId().equals(producedDefault.opId()),
                     "the executor drives exactly the produced unit's CLASS_DEFAULT op");
-                return new ClassOpsExecutor.Value.Int(42);
+                return new ClassOpsExecutor.Value.Number(42);
             };
             ClassOpsExecutor.BoundaryCheckRunner pass = (boundary, input) ->
                 new ClassOpsExecutor.BoundaryResult.Pass(input);
@@ -628,7 +628,7 @@ public class ClassNewLoweringTest {
                     && instance.fields().size() == 2
                     && instance.fields().get(0)
                         instanceof ClassOpsExecutor.FieldState.Present present
-                    && present.value().equals(new ClassOpsExecutor.Value.Int(42))
+                    && present.value().equals(new ClassOpsExecutor.Value.Number(42))
                     && instance.fields().get(1)
                         == ClassOpsExecutor.FieldState.Missing.INSTANCE,
                 "the executor publishes the tagged instance with the default-filled x and "
@@ -644,8 +644,8 @@ public class ClassNewLoweringTest {
         System.out.println("-- determinism: two repetitions are byte-identical --");
 
         String source = """
-            export class Line { a: int = 1; b?: string; }
-            class Point { x: int = 2; }
+            export class Line { a: number = 1; b?: string; }
+            class Point { x: number = 2; }
             let p: Point = {};
             let q: Point = {x: 9};
             let l: Line = {b: "t"};

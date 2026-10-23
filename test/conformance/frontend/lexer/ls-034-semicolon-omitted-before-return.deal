@@ -4,6 +4,6 @@
 // @features: parser, semicolon, variable-declaration, return
 
 export function main(): null {
-  let value: int = 1
+  let value: number = 1
   return null;
 }

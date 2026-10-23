@@ -5,7 +5,7 @@
 
 import * as c from "std/console";
 export function main(): null {
- let xs: int[] = [7]; let alias: int[] = xs; let t: table = {bad:"not-int"}; let count: int = 0;
+ let xs: number[] = [7]; let alias: number[] = xs; let t: table = {bad:"not-int"}; let count: number = 0;
  try {xs[0] = t.bad;} catch(e) {count = count + 1;}
  try {xs[xs.length] = t.bad;} catch(e) {count = count + 1;}
  if(count !== 2 || alias.length !== 1 || alias[0] !== 7) {throw {message:"failed element checks mutated storage"};}

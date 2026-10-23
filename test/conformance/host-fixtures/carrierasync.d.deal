@@ -15,7 +15,7 @@ export class Endpoint {
 }
 
 export class ServerConfig {
-  port: int;
+  port: number;
   endpoint: Endpoint;
   parts: string[];
   tags?: string[];
@@ -28,7 +28,7 @@ export class Farm {
   primary: Endpoint;
 }
 
-export async function describeAsync(s: ServerConfig, g: (x: int) => int): string;
+export async function describeAsync(s: ServerConfig, g: (x: number) => number): string;
 export async function make(): ServerConfig;
 export function makeAll(): ServerConfig[];
 export function makeFarm(): Farm;

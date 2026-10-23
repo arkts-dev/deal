@@ -11,7 +11,7 @@ export function test_jsonable_minimal_table_nested_array_access(): null {
   if (w !== null) {
     let values: table = w.data.values;
     let row: table = values[1];
-    let v: int = row[0];
+    let v: number = row[0];
     if (v !== 3) { throw { code: "TEST_FAIL", message: "minimal table nested arrays failed" }; }
     return null;
   }

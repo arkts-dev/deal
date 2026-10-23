@@ -3,17 +3,17 @@
 // @expected: runtime-ok
 // @features: closures, loops
 
-export function test_nested_loop_closure_capture(): int {
-  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-  let k: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {
-    { let v14Loop1: int = 0; while (v14Loop1 < 2) { let j: int = v14Loop1; {
-      let value: int = i * 10 + j;
-      fs[k] = function(): int { return value; };
+export function test_nested_loop_closure_capture(): number {
+  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
+  let k: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {
+    { let v14Loop1: number = 0; while (v14Loop1 < 2) { let j: number = v14Loop1; {
+      let value: number = i * 10 + j;
+      fs[k] = function(): number { return value; };
       k = k + 1;
     } v14Loop1 = j; v14Loop1 = v14Loop1 + 1; } }
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
-  let result: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();
+  let result: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();
   if (result !== 22) { throw { code: "TEST_FAIL", message: "nested loop closure capture failed" }; }
   return result;
 }

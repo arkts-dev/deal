@@ -15,7 +15,7 @@ public class ComparisonExecutorTest {
     private static int failed;
     private static final ComparisonOperandView NULL = ComparisonOperandView.Null.INSTANCE;
     private static final ComparisonOperandView MISSING = ComparisonOperandView.Missing.INSTANCE;
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor NUMBER = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STRING = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor BOOLEAN = RuntimeDescriptor.Boolean.INSTANCE;
@@ -29,7 +29,7 @@ public class ComparisonExecutorTest {
         else { failed++; System.err.println("FAIL: " + message); }
     }
 
-    private static ComparisonOperandView i(int value) { return new ComparisonOperandView.Int(value); }
+    private static ComparisonOperandView i(int value) { return new ComparisonOperandView.Number(value); }
     private static ComparisonOperandView n(double value) { return new ComparisonOperandView.Number(value); }
     private static ComparisonOperandView s(String value) { return new ComparisonOperandView.String(new UnicodeScalars.Valid(value)); }
     private static ComparisonOperandView b(boolean value) { return new ComparisonOperandView.Boolean(value); }
@@ -59,17 +59,17 @@ public class ComparisonExecutorTest {
         record Ordered(String family, ComparisonOperandView left, ComparisonOperandView right,
                        boolean equal, boolean less, boolean greater) {}
         List<Ordered> rows = List.of(
-            new Ordered("INT32", i(1), i(1), true, false, false),
-            new Ordered("INT32", i(1), i(2), false, true, false),
-            new Ordered("INT32", i(-5), i(3), false, true, false),
-            new Ordered("INT32", i(-1), i(1), false, true, false),
-            new Ordered("INT32", i(3), i(-5), false, false, true),
-            new Ordered("INT32", i(-5), i(-5), true, false, false),
-            new Ordered("INT32", i(3), i(3), true, false, false),
-            new Ordered("INT32", i(Integer.MIN_VALUE), i(-1), false, true, false),
-            new Ordered("INT32", i(Integer.MAX_VALUE), i(Integer.MIN_VALUE), false, false, true),
-            new Ordered("INT32", i(Integer.MIN_VALUE), i(Integer.MIN_VALUE), true, false, false),
-            new Ordered("INT32", i(Integer.MAX_VALUE), i(Integer.MAX_VALUE), true, false, false),
+            new Ordered("NUMBER", i(1), i(1), true, false, false),
+            new Ordered("NUMBER", i(1), i(2), false, true, false),
+            new Ordered("NUMBER", i(-5), i(3), false, true, false),
+            new Ordered("NUMBER", i(-1), i(1), false, true, false),
+            new Ordered("NUMBER", i(3), i(-5), false, false, true),
+            new Ordered("NUMBER", i(-5), i(-5), true, false, false),
+            new Ordered("NUMBER", i(3), i(3), true, false, false),
+            new Ordered("NUMBER", i(Integer.MIN_VALUE), i(-1), false, true, false),
+            new Ordered("NUMBER", i(Integer.MAX_VALUE), i(Integer.MIN_VALUE), false, false, true),
+            new Ordered("NUMBER", i(Integer.MIN_VALUE), i(Integer.MIN_VALUE), true, false, false),
+            new Ordered("NUMBER", i(Integer.MAX_VALUE), i(Integer.MAX_VALUE), true, false, false),
             new Ordered("NUMBER", n(-0.0), n(0.0), true, false, false),
             new Ordered("NUMBER", n(1.5), n(1.5), true, false, false),
             new Ordered("NUMBER", n(1.5), n(2.5), false, true, false),
@@ -144,13 +144,11 @@ public class ComparisonExecutorTest {
 
     private static boolean isComparisonSelector(BinarySelector selector) {
         return switch (selector) {
-            case INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
-                 NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
+            case NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
                  BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
                  NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE -> true;
-            case INT32_ADD, INT32_SUB, INT32_MUL, INT32_DIV_TRUNC,
-                 NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE -> false;
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE -> false;
         };
     }
 
@@ -159,9 +157,9 @@ public class ComparisonExecutorTest {
             if (!isComparisonSelector(selector)) { continue; }
             String name = selector.name();
             boolean nullable = name.startsWith("NULLABLE"), namedSide = name.startsWith("NULLABLE_NULL");
-            List<RuntimeDescriptor> descriptors = nullable ? List.of(INT, NUMBER, STRING, BOOLEAN, ARRAY, TABLE, CLASS, FUNC)
+            List<RuntimeDescriptor> descriptors = nullable ? List.of(NUMBER, STRING, BOOLEAN, ARRAY, TABLE, CLASS, FUNC)
                 : name.startsWith("REFERENCE") ? List.of(ARRAY, TABLE, CLASS, FUNC)
-                : List.of(name.startsWith("INT32") ? INT : name.startsWith("NUMBER") ? NUMBER
+                : List.of(name.startsWith("NUMBER") ? NUMBER
                     : name.startsWith("STRING") ? STRING : name.startsWith("BOOLEAN") ? BOOLEAN
                     : RuntimeDescriptor.Null.INSTANCE);
             for (RuntimeDescriptor descriptor : descriptors) {
@@ -243,9 +241,7 @@ public class ComparisonExecutorTest {
             }
         }
         List<ComparisonRow> rows = List.of(
-            new ComparisonRow(BinarySelector.INT32_EQ, n(1), n(2), null, null, false),
-            new ComparisonRow(BinarySelector.INT32_EQ, s("a"), s("b"), null, null, false),
-            new ComparisonRow(BinarySelector.NUMBER_LT, i(1), i(2), null, null, false),
+            new ComparisonRow(BinarySelector.NUMBER_EQ, s("a"), s("b"), null, null, false),
             new ComparisonRow(BinarySelector.STRING_EQ, n(1), n(1), null, null, false),
             new ComparisonRow(BinarySelector.STRING_GT, i(1), i(2), null, null, false),
             new ComparisonRow(BinarySelector.BOOLEAN_EQ, i(1), i(1), null, null, false),
@@ -255,7 +251,6 @@ public class ComparisonExecutorTest {
             new ComparisonRow(BinarySelector.NULLABLE_EQ, i(1), i(1), INT, null, false),
             new ComparisonRow(BinarySelector.NULLABLE_EQ, NULL, NULL, RuntimeDescriptor.Null.INSTANCE, NullableSide.BOTH, false),
             new ComparisonRow(BinarySelector.NULLABLE_EQ, i(1), i(1), new RuntimeDescriptor.Nullable(INT), NullableSide.BOTH, false),
-            new ComparisonRow(BinarySelector.NULLABLE_EQ, n(1), n(2), INT, NullableSide.BOTH, false),
             new ComparisonRow(BinarySelector.NULLABLE_EQ, i(1), i(2), STRING, NullableSide.BOTH, false),
             new ComparisonRow(BinarySelector.NULLABLE_EQ, ref(new Object()), i(2), ARRAY, NullableSide.BOTH, false),
             new ComparisonRow(BinarySelector.NULLABLE_NULL_EQ, NULL, NULL, INT, NullableSide.BOTH, false),
@@ -270,8 +265,8 @@ public class ComparisonExecutorTest {
         rows.forEach(row -> expectException(ComparisonExecutor.Defect.class,
             () -> ComparisonExecutor.compare(row.selector(), row.left(), row.right(), row.inner(), row.side())));
         expectException(NullPointerException.class, () -> ComparisonExecutor.compare(null, i(1), i(1), null, null));
-        expectException(NullPointerException.class, () -> ComparisonExecutor.compare(BinarySelector.INT32_EQ, null, i(1), null, null));
-        expectException(NullPointerException.class, () -> ComparisonExecutor.compare(BinarySelector.INT32_EQ, i(1), null, null, null));
+        expectException(NullPointerException.class, () -> ComparisonExecutor.compare(BinarySelector.NUMBER_EQ, null, i(1), null, null));
+        expectException(NullPointerException.class, () -> ComparisonExecutor.compare(BinarySelector.NUMBER_EQ, i(1), null, null, null));
     }
 
     public static void main(String[] args) {

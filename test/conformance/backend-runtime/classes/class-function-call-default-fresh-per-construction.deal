@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: classes, defaults, function-calls
 
-function freshValues(): int[] {
+function freshValues(): number[] {
   return [];
 }
 
 class Counter {
-  values: int[] = freshValues();
+  values: number[] = freshValues();
 }
 
 export function main(): null {

@@ -6,7 +6,7 @@
 import * as host from "host/nullable_fn_return";
 
 export function test_host_nullable_function_return_ok(): null {
-  let cb: ((x: int) => int) | null = host.getCallback("good");
+  let cb: ((x: number) => number) | null = host.getCallback("good");
   if (cb !== null) {
     throw { code: "TEST_FAIL", message: "nullable-function null return was not the sentinel" };
   }

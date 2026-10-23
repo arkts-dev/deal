@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: for-of, break, continue
 
-export function test_break(): int {
-  let xs: int[] = [1, 2, 3, 4, 5];
-  let total: int = 0;
-  for (let x: int of xs) {
+export function test_break(): number {
+  let xs: number[] = [1, 2, 3, 4, 5];
+  let total: number = 0;
+  for (let x: number of xs) {
     if (x === 3) { break; }
     total = total + x;
   }
@@ -16,10 +16,10 @@ export function test_break(): int {
   return total;
 }
 
-export function test_continue(): int {
-  let xs: int[] = [1, 2, 3, 4, 5];
-  let total: int = 0;
-  for (let x: int of xs) {
+export function test_continue(): number {
+  let xs: number[] = [1, 2, 3, 4, 5];
+  let total: number = 0;
+  for (let x: number of xs) {
     if (x === 3) { continue; }
     total = total + x;
   }

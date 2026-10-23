@@ -3,7 +3,7 @@
 // @expected: compile-error E2008
 // @features: diagnostics, lua-abi
 
-function badParam(bad$param: int): int {
+function badParam(bad$param: number): number {
   return 1;
 }
 

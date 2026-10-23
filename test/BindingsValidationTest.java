@@ -213,13 +213,13 @@ public class BindingsValidationTest {
     private static final String LCH =
         LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
 
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor.Func SIG0 =
         new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Null.INSTANCE);
     private static final RuntimeDescriptor.Func SIG1 = new RuntimeDescriptor.Func(
-        List.of(RuntimeDescriptor.Int.INSTANCE), RuntimeDescriptor.Null.INSTANCE);
+        List.of(RuntimeDescriptor.Number.INSTANCE), RuntimeDescriptor.Null.INSTANCE);
     private static final RuntimeDescriptor.Func SIG2 = new RuntimeDescriptor.Func(
-        List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+        List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
         RuntimeDescriptor.Null.INSTANCE);
 
     private static final BlockId INIT_BLOCK = new BlockId(0);
@@ -623,7 +623,7 @@ public class BindingsValidationTest {
     }
 
     private static SemanticOp constInt() {
-        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+        return op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
@@ -853,10 +853,10 @@ public class BindingsValidationTest {
         // E2001. The validator's store exemption (the rule covers loads
         // only) keeps its IR-level coverage through the stale-store
         // negative below.
-        checkerRejects("let x: int = (x = 1);", "E2001",
+        checkerRejects("let x: number = (x = 1);", "E2001",
             "(a) the store-to-pre-init shape");
 
-        SemanticLowerer.ValidationCoreResult result = validatedResult("function selfReference(): null { let g: () => null = selfReference; }\nfunction forwardReference(): null { let h: () => null = laterFn; }\nfunction laterFn(): null {}\nfunction even(): null { let oddRef: () => null = odd; }\nfunction odd(): null { let evenRef: () => null = even; }\nfunction parameterCapture(p: int): null {\n  let g: () => null = function(): null { let read: int = p; };\n}\nfunction catchCapture(): null {\n  try { let t = 1; }\n  catch (e) { let g: () => null = function(): null { let copy = e; }; }\n}\nfunction iterationCapture(): null {\n  for (let c: string of \"ab\") {\n    let g: () => null = function(): null { let read: string = c; };\n  }\n}\nfunction nestedSelfReference(): null {\n  function g(): null { let copy: () => null = g; }\n}\nfunction nestedCaptureChain(): null {\n  let x: int = 1;\n  function make(): null {\n    let inner: () => null = function(): null { let read: int = x; };\n  }\n}\nfunction ancestorLoads(): null {\n  let x = 1;\n  try { let t = x; } catch (e) { let y = x; }\n}\nfunction thunkCapture(): null {\n  let x = 1;\n  let s: () => null = function(): null { let read: int = x; };\n  let k: (a: int, b: int) => null = (s = function(): null { let read2: int = x; });\n}\nfunction provedLoad(): null {\n  let f: (x: int) => null = inner;\n  let g: (a: int, b: int) => null = f;\n}\nfunction inner(x: int): null {}\n", "the surviving source-level positive shapes");
+        SemanticLowerer.ValidationCoreResult result = validatedResult("function selfReference(): null { let g: () => null = selfReference; }\nfunction forwardReference(): null { let h: () => null = laterFn; }\nfunction laterFn(): null {}\nfunction even(): null { let oddRef: () => null = odd; }\nfunction odd(): null { let evenRef: () => null = even; }\nfunction parameterCapture(p: number): null {\n  let g: () => null = function(): null { let read: number = p; };\n}\nfunction catchCapture(): null {\n  try { let t = 1; }\n  catch (e) { let g: () => null = function(): null { let copy = e; }; }\n}\nfunction iterationCapture(): null {\n  for (let c: string of \"ab\") {\n    let g: () => null = function(): null { let read: string = c; };\n  }\n}\nfunction nestedSelfReference(): null {\n  function g(): null { let copy: () => null = g; }\n}\nfunction nestedCaptureChain(): null {\n  let x: number = 1;\n  function make(): null {\n    let inner: () => null = function(): null { let read: number = x; };\n  }\n}\nfunction ancestorLoads(): null {\n  let x = 1;\n  try { let t = x; } catch (e) { let y = x; }\n}\nfunction thunkCapture(): null {\n  let x = 1;\n  let s: () => null = function(): null { let read: number = x; };\n  let k: (a: number, b: number) => null = (s = function(): null { let read2: number = x; });\n}\nfunction provedLoad(): null {\n  let f: (x: number) => null = inner;\n  let g: (a: number, b: number) => null = f;\n}\nfunction inner(x: number): null {}\n", "the surviving source-level positive shapes");
         testCellKindInvariant(result);
     }
 
@@ -876,8 +876,8 @@ public class BindingsValidationTest {
         // through the production entry. The IR-level
         // {@link #testInitDominatesLoadNegative()} keeps the validator
         // arm's direct coverage.
-        checkerRejects("let x: int = x;", "E2001",
-            "the self-read let x: int = x;");
+        checkerRejects("let x: number = x;", "E2001",
+            "the self-read let x: number = x;");
     }
 
     /** One source the real checker must reject with the exact code. */
@@ -937,7 +937,7 @@ public class BindingsValidationTest {
         SemanticOp captureClosure = closureNewOp(closureFunction, SIG0, pins(xBinding),
             closureBody, closureIdentity);
         SemanticOp filler = op(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             constValue, INT, FailurePolicyId.NO_DEAL_FAILURE, null);
         SemanticOp initX = initOp(xBinding, 0, constValue);
         SemanticOp loadX = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,

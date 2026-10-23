@@ -375,12 +375,12 @@ public class ClassConstructionValidatorTest {
         String source = """
             // @jsonable
             export class Point {
-              x: int = 40 + 2;
+              x: number = 40 + 2;
               tag: string = "p";
               note?: string;
             }
             // @jsonable
-            export class Inner { n: int = 7; }
+            export class Inner { n: number = 7; }
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
             let p: Point = {x: 1};
@@ -691,11 +691,11 @@ public class ClassConstructionValidatorTest {
 
         String source = """
             class Point {
-              x: int;
-              y?: int = 0;
+              x: number;
+              y?: number = 0;
             }
             let p: Point = {x: 1};
-            let v: int | null = p.y;
+            let v: number | null = p.y;
             p.x = 9;
             delete p.y;
             """;
@@ -856,11 +856,11 @@ public class ClassConstructionValidatorTest {
 
         String source = """
             class Point {
-              x: int;
-              y?: int = 0;
+              x: number;
+              y?: number = 0;
             }
             let p: Point = {x: 1};
-            let v: int | null = p.y;
+            let v: number | null = p.y;
             p.x = 9;
             delete p.y;
             """;
@@ -888,9 +888,9 @@ public class ClassConstructionValidatorTest {
         // a record-less operation of the identity resolves no exact
         // declaration and fails closed rather than selecting a first alias.
         List<FieldInterface> foreignFields = List.of(
-            new FieldInterface("a", "int", false, false, false));
+            new FieldInterface("a", "number", false, false, false));
         ClassLayout foreignLayout = new ClassLayout(foreign, List.of(
-            new ClassLayout.FieldLayout("a", RuntimeDescriptor.Int.INSTANCE, true,
+            new ClassLayout.FieldLayout("a", RuntimeDescriptor.Number.INSTANCE, true,
                 DefaultOwner.LOCAL)));
         Map<ClassFactoryId, SharedFactoryFacts> providers = new LinkedHashMap<>();
         providers.put(foreignEntry, new SharedFactoryFacts(foreign,
@@ -1076,16 +1076,16 @@ public class ClassConstructionValidatorTest {
             new KindPayload.BindingLoadPayload(foreignBinding, 0);
         String loadDigest = ContractSnapshotCanonicalizer.digest(new
             OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.BINDING_LOAD, RuntimeDescriptor.Int.INSTANCE, List.of(),
+                SemanticOpKind.BINDING_LOAD, RuntimeDescriptor.Number.INSTANCE, List.of(),
                 null, loadPayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
                 "placeholder"));
         ops.add(new SemanticOp(new OpId(MODULE, 97_774), SemanticOpKind.BINDING_LOAD,
             new SourceOrigin(SOURCE_ID, SourceSpan.synthetic(SOURCE_ID),
                 SourceOriginKind.SYNTHETIC, new AnchorId(3), defaultOp.opId()),
-            new ValueId(97_775), RuntimeDescriptor.Int.INSTANCE, List.of(), List.of(),
+            new ValueId(97_775), RuntimeDescriptor.Number.INSTANCE, List.of(), List.of(),
             loadPayload, FailurePolicyId.NO_DEAL_FAILURE,
             new OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.BINDING_LOAD, RuntimeDescriptor.Int.INSTANCE, List.of(),
+                SemanticOpKind.BINDING_LOAD, RuntimeDescriptor.Number.INSTANCE, List.of(),
                 null, loadPayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
                 loadDigest)));
         // The tampered load becomes a member of the default block; the
@@ -1112,7 +1112,7 @@ public class ClassConstructionValidatorTest {
         // captured binding stays allocated in the foreign block.
         BlockId closureBody = new BlockId(97_770);
         RuntimeDescriptor.Func closureSignature =
-            new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Int.INSTANCE, false);
+            new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Number.INSTANCE, false);
         KindPayload.ClosureNewPayload closurePayload = new KindPayload.ClosureNewPayload(
             new deal.semantic.ir.FunctionId(97_771), closureSignature,
             List.of(new BindingGeneration(foreignBinding, 0)),
@@ -1192,10 +1192,10 @@ public class ClassConstructionValidatorTest {
             + "own range survives, not the enclosing CLASS_DEFAULT's --");
 
         final String source = """
-            let base: int = 5;
+            let base: number = 5;
             let f: () => null = function(): null { };
             export class Point {
-              x: int = base + 1;
+              x: number = base + 1;
             }
             """;
         LoweredSlice lowered = lowerModule(source);
@@ -1223,10 +1223,10 @@ public class ClassConstructionValidatorTest {
         DiagnosticRange defaultRange = defaultOp.origin().span().range();
         check(defaultRange.origin() == RangeOrigin.SOURCE
                 && SOURCE_ID.equals(defaultRange.file())
-                && defaultRange.startLine() == 4 && defaultRange.startColumn() == 12
-                && defaultRange.endLine() == 4 && defaultRange.endColumn() == 20
-                && defaultRange.startScalarOffset() == 93
-                && defaultRange.endScalarOffset() == 101,
+                && defaultRange.startLine() == 4 && defaultRange.startColumn() == 15
+                && defaultRange.endLine() == 4 && defaultRange.endColumn() == 23
+                && defaultRange.startScalarOffset() == 99
+                && defaultRange.endScalarOffset() == 107,
             "the enclosing CLASS_DEFAULT's own range is the default expression "
                 + "4:12-4:20 [93,101); got " + defaultRange);
 
@@ -1265,7 +1265,7 @@ public class ClassConstructionValidatorTest {
             unitWithOp(unit, loadOp.opId(), tamperedLoad), table, result.registry(),
             result.jsonDefaults(), own, Map.of());
         expectE6005Range(loadFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 4, 12, 4, 16, 93, 97);
+            SOURCE_ID, 4, 15, 4, 19, 99, 103);
         if (loadFailure.isPresent()) {
             check(loadFailure.get().range().equals(loadRange),
                 "the BINDING_LOAD failure carries the referencing op's own converted "
@@ -1302,7 +1302,7 @@ public class ClassConstructionValidatorTest {
                     result.registry(), result.jsonDefaults(), own, Map.of());
             expectE6005Range(closureFailure,
                 ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-                SOURCE_ID, 2, 21, 2, 42, 39, 60);
+                SOURCE_ID, 2, 21, 2, 42, 42, 63);
             if (closureFailure.isPresent()) {
                 check(closureFailure.get().range()
                         .equals(closureOp.origin().span().range()),
@@ -1319,7 +1319,7 @@ public class ClassConstructionValidatorTest {
         BlockId thunkBlock = new BlockId(97_780);
         BindingId adaptForeign = new BindingId(97_781);
         RuntimeDescriptor.Func adaptSignature = new RuntimeDescriptor.Func(
-            List.of(), RuntimeDescriptor.Int.INSTANCE, false);
+            List.of(), RuntimeDescriptor.Number.INSTANCE, false);
         KindPayload.FunctionAdaptPayload adaptPayload =
             new KindPayload.FunctionAdaptPayload(adaptSignature, adaptSignature,
                 CaptureMode.REEVALUATE_THUNK,
@@ -1374,7 +1374,7 @@ public class ClassConstructionValidatorTest {
                 result.registry(), result.jsonDefaults(), own, Map.of());
         expectE6005Range(originlessFailure,
             ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 4, 12, 4, 16, 93, 97);
+            SOURCE_ID, 4, 15, 4, 19, 99, 103);
         if (originlessFailure.isPresent()) {
             check(!originlessFailure.get().range().isCanonicalSynthetic(),
                 "the originless-default failure does not fall back to the canonical "
@@ -1469,11 +1469,11 @@ public class ClassConstructionValidatorTest {
         String source = """
             // @jsonable
             export class Point {
-              x: int = 40 + 2;
+              x: number = 40 + 2;
               tag: string = "p";
             }
             // @jsonable
-            export class Inner { n: int = 7; }
+            export class Inner { n: number = 7; }
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
             """;
@@ -1604,7 +1604,7 @@ public class ClassConstructionValidatorTest {
         String source = """
             // @jsonable
             export class Point {
-              x: int = 40 + 2;
+              x: number = 40 + 2;
               tag: string = "p";
               note?: string;
             }
@@ -1711,7 +1711,7 @@ public class ClassConstructionValidatorTest {
 
         String source = """
             export class Point {
-              x: int = 40 + 2;
+              x: number = 40 + 2;
             }
             """;
         LoweredSlice lowered = lowerModule(source);
@@ -1747,7 +1747,7 @@ public class ClassConstructionValidatorTest {
             result.lowering().table(), result.registry(), result.jsonDefaults(),
             lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE,
-            SOURCE_ID, 2, 12, 2, 18, 32, 38);
+            SOURCE_ID, 2, 15, 2, 21, 35, 41);
 
         // (b) A second converted branch: a CLASS_NEW-carried failure keeps
         // the CLASS_NEW op's own range (its origin), not the synthetic
@@ -1844,10 +1844,10 @@ public class ClassConstructionValidatorTest {
             List.of(
                 new ClassInterface(FACADE_ENDPOINT_DECLARED,
                     List.of(new FieldInterface("path", "string", false, false, false),
-                        new FieldInterface("port", "int", true, false, false),
+                        new FieldInterface("port", "number", true, false, false),
                         new FieldInterface("note", "string | null", true, true, false),
                         new FieldInterface("tags", "string[]", true, false, false),
-                        new FieldInterface("cb", "((int) => string) | null", true, true,
+                        new FieldInterface("cb", "((number) => string) | null", true, true,
                             false),
                         new FieldInterface("peer", "@host.facade/Other", false, false,
                             false),
@@ -1856,13 +1856,13 @@ public class ClassConstructionValidatorTest {
                         new FieldInterface("failure", "Error", false, false, false)),
                     new ClassFactoryId(3)),
                 new ClassInterface(FACADE_OTHER_DECLARED,
-                    List.of(new FieldInterface("count", "int", false, false, true)),
+                    List.of(new FieldInterface("count", "number", false, false, true)),
                     new ClassFactoryId(4))),
             InitializationMode.ONCE_AFTER_DEPENDENCIES));
         modules.put(MODULE, new ExternalModuleInterface(MODULE,
             ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
             List.of(new ClassInterface(new ClassId("src", "Point"),
-                List.of(new FieldInterface("x", "int", false, false, true)),
+                List.of(new FieldInterface("x", "number", false, false, true)),
                 new ClassFactoryId(6))),
             InitializationMode.ONCE_AFTER_DEPENDENCIES));
         return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
@@ -1888,13 +1888,13 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(FACADE_ENDPOINT, List.of(
                     seedField("path", RuntimeDescriptor.String.INSTANCE, true),
-                    seedField("port", RuntimeDescriptor.Int.INSTANCE, false),
+                    seedField("port", RuntimeDescriptor.Number.INSTANCE, false),
                     seedField("note", new RuntimeDescriptor.Nullable(
                         RuntimeDescriptor.String.INSTANCE), false),
                     seedField("tags", new RuntimeDescriptor.Array(
                         RuntimeDescriptor.String.INSTANCE), false),
                     seedField("cb", new RuntimeDescriptor.Nullable(
-                        new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
+                        new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE),
                             RuntimeDescriptor.String.INSTANCE)), false),
                     seedField("peer", new RuntimeDescriptor.Class(FACADE_OTHER), true),
                     seedField("others", new RuntimeDescriptor.Array(
@@ -1905,7 +1905,7 @@ public class ClassConstructionValidatorTest {
         registrations.put(FACADE_OTHER,
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(FACADE_OTHER,
-                    List.of(seedField("count", RuntimeDescriptor.Int.INSTANCE, true))),
+                    List.of(seedField("count", RuntimeDescriptor.Number.INSTANCE, true))),
                 DefaultOwner.HOST_DEFAULTS));
         return new ClassRegistrationSeeds(registrations);
     }
@@ -1964,7 +1964,7 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER,
                     "Hidden"),
-                    List.of(seedField("hidden", RuntimeDescriptor.Int.INSTANCE, true))),
+                    List.of(seedField("hidden", RuntimeDescriptor.Number.INSTANCE, true))),
                 DefaultOwner.HOST_DEFAULTS));
         check(ClassConstructionValidator.checkProjectSeedCoherence(index,
                 new ClassRegistrationSeeds(withHidden)).isEmpty(),
@@ -1976,7 +1976,7 @@ public class ClassConstructionValidatorTest {
         withEmptyModulePath.put(emptyModulePath,
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(emptyModulePath,
-                    List.of(seedField("stray", RuntimeDescriptor.Int.INSTANCE, true))),
+                    List.of(seedField("stray", RuntimeDescriptor.Number.INSTANCE, true))),
                 DefaultOwner.HOST_DEFAULTS));
         check(ClassConstructionValidator.checkProjectSeedCoherence(index,
                 new ClassRegistrationSeeds(withEmptyModulePath)).isEmpty(),
@@ -1986,17 +1986,17 @@ public class ClassConstructionValidatorTest {
         // Every declared-type form: a mutated descriptor contradicts the
         // interface's declared type.
         check(seedCoherenceFailure(index, withEndpointField("path",
-                RuntimeDescriptor.Int.INSTANCE, true)).contains("path"),
+                RuntimeDescriptor.Number.INSTANCE, true)).contains("path"),
             "a scalar seed field descriptor of another type rejects");
         check(seedCoherenceFailure(index, withEndpointField("note",
                 RuntimeDescriptor.String.INSTANCE, false)).contains("note"),
             "a nullable seed field descriptor without its nullable form rejects");
         check(seedCoherenceFailure(index, withEndpointField("tags",
-                new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), false))
+                new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE), false))
                 .contains("tags"),
             "an array seed field descriptor of another element type rejects");
         check(seedCoherenceFailure(index, withEndpointField("cb",
-                new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
+                new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE),
                     RuntimeDescriptor.String.INSTANCE), false)).contains("cb"),
             "a function seed field descriptor without its nullable form rejects");
         check(seedCoherenceFailure(index, withEndpointField("peer",
@@ -2173,7 +2173,7 @@ public class ClassConstructionValidatorTest {
         implementationSeed.put(new ClassId("src", "Point"),
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(new ClassId("src", "Point"), List.of(
-                    seedField("x", RuntimeDescriptor.Int.INSTANCE, true))),
+                    seedField("x", RuntimeDescriptor.Number.INSTANCE, true))),
                 DefaultOwner.HOST_DEFAULTS));
         check(seedCoherenceFailure(index, new ClassRegistrationSeeds(implementationSeed))
                 .contains("IMPLEMENTATION"),
@@ -2276,7 +2276,7 @@ public class ClassConstructionValidatorTest {
             "a CLASS_NEW of an unregistered declaration class rejects: " + missing);
 
         ClassLayout foreign = new ClassLayout(FACADE_ENDPOINT,
-            List.of(seedField("path", RuntimeDescriptor.Int.INSTANCE, true)));
+            List.of(seedField("path", RuntimeDescriptor.Number.INSTANCE, true)));
         Optional<ClassConstructionValidator.SeedModuleViolation> layout =
             ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
                 List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
@@ -2436,26 +2436,26 @@ public class ClassConstructionValidatorTest {
         System.out.println("-- seed declared-type rendering against the producers "
             + "(ISSUE-0818) --");
         List<Type> forms = List.of(
-            Type.Int.INSTANCE,
+            Type.Number.INSTANCE,
             Type.Boolean.INSTANCE,
             Type.Number.INSTANCE,
             Type.String.INSTANCE,
             Type.Table.INSTANCE,
             Type.Null.INSTANCE,
             Types.nullable(Type.String.INSTANCE),
-            Types.array(Type.Int.INSTANCE),
-            Types.array(Types.nullable(Type.Int.INSTANCE)),
+            Types.array(Type.Number.INSTANCE),
+            Types.array(Types.nullable(Type.Number.INSTANCE)),
             Types.nullable(Types.array(Type.String.INSTANCE)),
-            Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE),
-            Types.func(List.of(Types.func(List.of(Type.Int.INSTANCE),
-                Type.String.INSTANCE), Type.Int.INSTANCE), Type.String.INSTANCE),
-            Types.func(List.of(Types.nullable(Type.Int.INSTANCE)),
+            Types.func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE),
+            Types.func(List.of(Types.func(List.of(Type.Number.INSTANCE),
+                Type.String.INSTANCE), Type.Number.INSTANCE), Type.String.INSTANCE),
+            Types.func(List.of(Types.nullable(Type.Number.INSTANCE)),
                 Type.String.INSTANCE),
-            Types.func(List.of(Type.Int.INSTANCE), Types.array(Type.Table.INSTANCE),
+            Types.func(List.of(Type.Number.INSTANCE), Types.array(Type.Table.INSTANCE),
                 true),
-            Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE)),
-            Types.nullable(Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE)),
-            Types.array(Types.array(Type.Int.INSTANCE)));
+            Types.array(Types.func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE)),
+            Types.nullable(Types.func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE)),
+            Types.array(Types.array(Type.Number.INSTANCE)));
         ModuleId formsModule = new ModuleId("forms.host");
         ClassId formsClass = new ClassId(EXTERNAL_PREFIX + "forms/host", "Forms");
         List<FieldInterface> declaredFields = new ArrayList<>();
@@ -2515,9 +2515,9 @@ public class ClassConstructionValidatorTest {
         System.out.println("=== Class Construction Validator Tests (ISSUE-0516 K-D11) ===");
         testPositiveCorpus();
         LoweredSlice shared = lowerModule("""
-            let base: int = 40;
+            let base: number = 40;
             export class Point {
-              x: int = base + 2;
+              x: number = base + 2;
               tag: string = "p";
               note?: string;
             }

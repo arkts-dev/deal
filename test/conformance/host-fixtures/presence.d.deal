@@ -16,7 +16,7 @@
 // wrappers.
 
 export class Config {
-  port: int;
+  port: number;
   fallback?: Config | null;
   peers?: Config[];
 }

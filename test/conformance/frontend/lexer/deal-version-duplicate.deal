@@ -5,4 +5,4 @@
 
 // @deal-version 1.3
 // @deal-version 1.3
-class A { x: int = 0; }
+class A { x: number = 0; }

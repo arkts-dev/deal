@@ -1,10 +1,10 @@
 
 
 final class HostNullable_fn {
-  public static Object register($DealRt.Fn1_I_R_I cb) {
+  public static Object register($DealRt.Fn1_N_R_N cb) {
     if (cb == null) {
-      return Integer.valueOf(0);
+      return Double.valueOf(0);
     }
-    return Integer.valueOf(cb.invoke(41));
+    return Double.valueOf(cb.invoke(41));
   }
 }

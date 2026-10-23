@@ -96,8 +96,8 @@ public class FunctionBindingRegistryTest {
 
     /** A fixed (int) => int function descriptor for the adapter seam test. */
     private static final RuntimeDescriptor.Func INT_FUNC =
-        new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
-            RuntimeDescriptor.Int.INSTANCE);
+        new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE),
+            RuntimeDescriptor.Number.INSTANCE);
 
     private record CheckedSlice(ProgramNode program, CheckResult checks) {
     }
@@ -237,27 +237,12 @@ public class FunctionBindingRegistryTest {
         List<SemanticOp> closureNews = ofKind(unit.ops(), SemanticOpKind.CLOSURE_NEW);
         check(closureNews.size() == 4, "four CLOSURE_NEW ops (f, g, h, k's expression); got "
             + closureNews.size());
-        check(unit.functionBindings().size() == closureNews.size() + 2,
-            "one functionBinding per closure (registry one-to-one) plus the two "
-                + "producer-less intrinsic seed registrations (ISSUE-0632): "
-                + unit.functionBindings().size() + " bindings for " + closureNews.size()
-                + " closures");
-        // The key set is exactly the CLOSURE_NEW result identities plus the
-        // two intrinsic seed keys (the producer-less seeded intrinsics).
+        check(unit.functionBindings().size() == closureNews.size(),
+            "one functionBinding per closure: " + unit.functionBindings().size()
+                + " bindings for " + closureNews.size() + " closures");
         List<FunctionAllocationIdentity> keys = new ArrayList<>(
             unit.functionBindings().keySet());
-        List<FunctionAllocationIdentity> seedKeys = new ArrayList<>();
-        List<FunctionAllocationIdentity> closureKeys = new ArrayList<>();
-        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
-                : unit.functionBindings().entrySet()) {
-            if (entry.getValue() instanceof FunctionExecutionBinding.IntrinsicFunction) {
-                seedKeys.add(entry.getKey());
-            } else {
-                closureKeys.add(entry.getKey());
-            }
-        }
-        check(seedKeys.size() == 2, "the registry carries the int and number intrinsic seed keys; "
-            + "got " + seedKeys);
+        List<FunctionAllocationIdentity> closureKeys = keys;
         List<FunctionAllocationIdentity> resultIdentities = new ArrayList<>();
         for (SemanticOp closureNew : closureNews) {
             resultIdentities.add(
@@ -266,7 +251,7 @@ public class FunctionBindingRegistryTest {
         check(closureKeys.size() == resultIdentities.size()
                 && new java.util.LinkedHashSet<>(closureKeys).equals(
                     new java.util.LinkedHashSet<>(resultIdentities)),
-            "the map's non-seed keys are exactly the CLOSURE_NEW result identities "
+            "the map keys are exactly the CLOSURE_NEW result identities "
                 + "(registry one-to-one); got " + closureKeys + " for " + resultIdentities);
         for (SemanticOp closureNew : closureNews) {
             KindPayload.ClosureNewPayload payload =
@@ -303,9 +288,7 @@ public class FunctionBindingRegistryTest {
                     + "[f, g, h, k] (a declared body pre-registers before its own body "
                     + "walk, so a declared body precedes the closures its body declares "
                     + "or creates); got " + keys);
-            check(keys.size() == 6 && keys.subList(0, 2).equals(seedKeys),
-                "the two intrinsic seeds are registered first (they are seeded before "
-                    + "the hoisted names, ISSUE-0632); got " + keys);
+            check(keys.size() == 4, "no producer-less registrations; got " + keys);
         }
         // Non-production boundary: no BOUNDARY/MEMBER_READ/EXPORT_READ op.
         check(noOpsOfKind(unit, SemanticOpKind.BOUNDARY, SemanticOpKind.MEMBER_READ,
@@ -355,9 +338,8 @@ public class FunctionBindingRegistryTest {
         List<SemanticOp> closureNews = ofKind(unit.ops(), SemanticOpKind.CLOSURE_NEW);
         check(closureNews.size() == 1, "exactly one CLOSURE_NEW (the size-1 sibling h); got "
             + closureNews.size());
-        check(unit.functionBindings().size() == 5,
-            "three bindings: one LoweredBody per member plus h's closure plus the two "
-                + "intrinsic seeds (ISSUE-0632); got "
+        check(unit.functionBindings().size() == 3,
+            "three bindings: one LoweredBody per member plus h's closure; got "
                 + unit.functionBindings().size());
         // One LoweredBody per member keyed by the pre-assigned identity.
         FunctionAllocationIdentity fKey = new FunctionAllocationIdentity(f.identity().id());
@@ -388,10 +370,9 @@ public class FunctionBindingRegistryTest {
 
         List<FunctionAllocationIdentity> keys = new ArrayList<>(
             unit.functionBindings().keySet());
-        check(keys.size() == 5 && keys.get(2).equals(fKey) && keys.get(3).equals(gKey)
-                && hKey != null && keys.get(4).equals(hKey),
-            "the map iterates in declaration order [f, g, h] after the two intrinsic "
-                + "seed keys; got " + keys);
+        check(keys.size() == 3 && keys.get(0).equals(fKey) && keys.get(1).equals(gKey)
+                && hKey != null && keys.get(2).equals(hKey),
+            "the map iterates in declaration order [f, g, h]; got " + keys);
         check(noOpsOfKind(unit, SemanticOpKind.BOUNDARY, SemanticOpKind.MEMBER_READ,
                 SemanticOpKind.EXPORT_READ),
             "the group unit carries no BOUNDARY/MEMBER_READ/EXPORT_READ op (this child "
@@ -567,8 +548,8 @@ public class FunctionBindingRegistryTest {
         CaptureMode mode = CaptureMode.SHARED_CELL;
         AdaptSourceRef sourceRef = new AdaptSourceRef.SharedCell(new BindingId(1), 0);
         RuntimeDescriptor.Func targetSignature = new RuntimeDescriptor.Func(
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            RuntimeDescriptor.Int.INSTANCE);
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            RuntimeDescriptor.Number.INSTANCE);
         registry.registerAdapter(identity, adaptOpId, mode, sourceRef, INT_FUNC,
             targetSignature);
 
@@ -656,7 +637,7 @@ public class FunctionBindingRegistryTest {
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
                     new FunctionAllocationIdentity(70), member,
                     new FunctionBindingRegistry.FunctionValueImportFacts(host, null, "g",
-                        RuntimeDescriptor.Int.INSTANCE)),
+                        RuntimeDescriptor.Number.INSTANCE)),
                 "a non-function fact descriptor fails explicitly"),
             "a non-function fact descriptor fails explicitly");
         check(throwsWhen(() -> registry.registerHostOrExternalImport(
@@ -706,7 +687,7 @@ public class FunctionBindingRegistryTest {
         check(throwsWhen(() -> registry.registerHostFunctionValue(
                     new FunctionAllocationIdentity(70),
                     new KindPayload.BoundaryPayload(BoundaryKind.HOST_TO_DEAL,
-                        RuntimeDescriptor.Int.INSTANCE, new ValueId(70),
+                        RuntimeDescriptor.Number.INSTANCE, new ValueId(70),
                         new BoundaryRealization.RuntimeValidation("c")),
                     new OpId(host, 99), host),
                 "a non-function boundary descriptor fails explicitly"),

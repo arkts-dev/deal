@@ -1,23 +1,23 @@
 module @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:1-6:1
-  async function add: int @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:1-5:6
-    param a: int @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:20-4:26
+  async function add: number @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:1-5:6
+    param a: number @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:20-4:29
       [boundary: param-entry]
-    param b: int @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:28-4:34
+    param b: number @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:31-4:40
       [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:43-4:57
+      return @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:52-4:66
         [boundary: async-completion]
-        binary + : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:50-4:54
-          ident a : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:50-4:50
-          ident b : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:54-4:54
+        binary + : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:59-4:63
+          ident a : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:59-4:59
+          ident b : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:4:63-4:63
   export @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:1-6:1
     [boundary: export]
-    async function compute: int @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:8-6:1
+    async function compute: number @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:8-6:1
       body
-        return @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:40-5:64
+        return @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:43-5:67
           [boundary: async-completion]
-          await : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:47-5:61
-            call : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:53-5:61
-              ident add : async(int,int)->int @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:53-5:55
-              literal 1 : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:57-5:57
-              literal 2 : int @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:60-5:60
+          await : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:50-5:64
+            call : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:56-5:64
+              ident add : async(number,number)->number @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:56-5:58
+              literal 1.0 : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:60-5:60
+              literal 2.0 : number @test/ir-goldens/fixtures/async-await-async-with-params.deal:5:63-5:63

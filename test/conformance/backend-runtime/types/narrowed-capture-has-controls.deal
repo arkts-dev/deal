@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, classes, has, tables, runtime-errors
 
 class Box {
-  n?: int;
+  n?: number;
   flag?: boolean;
   nick?: string | null;
 }
@@ -13,7 +13,7 @@ class Pair {
   inner: Box = {};
 }
 
-function expectEqual(what: string, actual: int, expected: int): null {
+function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
     throw { code: "CONTROL_FAIL", message: what + " changed the value" };
   }
@@ -80,7 +80,7 @@ export function main(): null {
     swap();
     expectTrue("the captured reassignment is observed", has(current.n));
     expectTrue("the new object's present null field", has(current.nick));
-    let observed: int | null = current.n;
+    let observed: number | null = current.n;
     expectTrue("the ordinary read observes the new object", observed !== null);
   }
 
@@ -123,7 +123,7 @@ export function main(): null {
   };
   if (cleared !== null) {
     clear();
-    let caughtPresence: int = 0;
+    let caughtPresence: number = 0;
     try {
       let present: boolean = has(cleared.n);
       fail("presence read");
@@ -145,9 +145,9 @@ export function main(): null {
   };
   if (target !== null) {
     wipe();
-    let caughtFields: int = 0;
+    let caughtFields: number = 0;
     try {
-      let value: int | null = target.n;
+      let value: number | null = target.n;
       fail("ordinary field read");
     } catch (e) {
       expectCaught("ordinary field read", e, "expected class instance");
@@ -168,7 +168,7 @@ export function main(): null {
   // The receiver expression of a presence read completes exactly once, and
   // its presence result follows the live instance (the non-refined
   // receiver keeps its recorded projection).
-  let evaluations: int = 0;
+  let evaluations: number = 0;
   let source: Box = { n: 2 };
   let make: () => Box = function(): Box {
     evaluations = evaluations + 1;
@@ -193,11 +193,11 @@ export function main(): null {
   };
   if (slots !== null) {
     noop();
-    let presentNull: int | null = slots.present;
-    let absent: int | null = slots.missing;
+    let presentNull: number | null = slots.present;
+    let absent: number | null = slots.missing;
     expectTrue("table present null member", presentNull === null);
     expectTrue("table absent member", absent === null);
-    let presentMember: int = slots.value;
+    let presentMember: number = slots.value;
     expectEqual("table present member", presentMember, 7);
   }
   let editable: table = { value: 7 };
@@ -210,14 +210,14 @@ export function main(): null {
     relinquish();
     let caughtTable: boolean = false;
     try {
-      let value: int = held.value;
+      let value: number = held.value;
       fail("table member read");
     } catch (e) {
       expectCaught("table member read", e, "expected table");
       caughtTable = true;
     }
     expectTrue("the table member read raised its own typed-boundary error", caughtTable);
-    let kept: int = editable.value;
+    let kept: number = editable.value;
     expectEqual("the failed table read mutates nothing", kept, 7);
   }
   return null;

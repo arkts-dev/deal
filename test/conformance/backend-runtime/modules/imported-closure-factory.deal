@@ -5,9 +5,9 @@
 
 import * as Lib from "./module_extra_lib";
 
-export function test_imported_closure_factory(): int {
-  let f: (x: int) => int = Lib.makeAdder(10);
-  let result: int = f(5);
+export function test_imported_closure_factory(): number {
+  let f: (x: number) => number = Lib.makeAdder(10);
+  let result: number = f(5);
   if (result !== 15) { throw { code: "TEST_FAIL", message: "imported closure factory failed" }; }
   return result;
 }

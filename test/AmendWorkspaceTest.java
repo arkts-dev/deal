@@ -65,7 +65,7 @@ public final class AmendWorkspaceTest {
     }
 
     private static void syntaxDiagnosticsCarryCandidateEvidence() {
-        String source = "// unicode \uD83D\uDE00\r\nexport function broken(): int { if (true false) { return 1; } return 0; }\r\n";
+        String source = "// unicode \uD83D\uDE00\r\nexport function broken(): number { if (true false) { return 1; } return 0; }\r\n";
         var diagnostic = AmendWorkspace.inspect(source, "app.deal").diagnostics().stream()
                 .filter(value -> value.code().equals("E1015")).findFirst().orElseThrow();
         check(diagnostic.range().startLine() == 2, "CRLF lines must remain aligned");
@@ -73,7 +73,7 @@ public final class AmendWorkspaceTest {
     }
 
     private static void numericStringDiagnosticPublishesRepairContract() {
-        String source = "export class AppState { label: string = \"\"; count: int = 0; }\n"
+        String source = "export class AppState { label: string = \"\"; count: number = 0; }\n"
                 + "export function initialState(): AppState { "
                 + "return {label: \"Count: \" + 1, count: 1}; }\n";
         var diagnostic = AmendWorkspace.inspect(source, "app.deal").diagnostics().stream()
@@ -115,7 +115,7 @@ public final class AmendWorkspaceTest {
     }
 
     private static void duplicateClassDoesNotRejectCapabilities() {
-        String source = "export class Value { count: int = 0; }\n";
+        String source = "export class Value { count: number = 0; }\n";
         var inspection = AmendWorkspace.inspect(source, "app.deal");
         var change = AmendWorkspace.inspectChange(source, "app.deal", inspection.sourceDigest(),
                 List.of(inspection.moduleId()),
@@ -124,7 +124,7 @@ public final class AmendWorkspaceTest {
                 Map.of(inspection.moduleId().value(), inspection.sourceDigest()));
         var staged = AmendWorkspace.stageChange(source, "app.deal", precondition, change,
                 List.of(new AmendWorkspace.AddDeclaration(inspection.moduleId(),
-                                "export class Value { count: int = 1; }"),
+                                "export class Value { count: number = 1; }"),
                         new AmendWorkspace.SetCapabilities(inspection.moduleId(), List.of("clock.frame"))));
         var rejected = staged.workspace().slots().stream()
                 .filter(slot -> slot.status() == CompilerProtocol.RepairSlotStatus.REJECTED).toList();
@@ -139,10 +139,10 @@ public final class AmendWorkspaceTest {
                 List.of(base.moduleId()), List.of(AmendWorkspace.ADD_DECLARATION));
         for (boolean reverse : List.of(false, true)) {
             for (boolean syntaxFailure : List.of(false, true)) {
-                String action = "export class Input { delta: int = 0; }";
-                String valid = "export function read(state: State, action: Input): int { if (!state.paused) { return 1; } return 0; }";
+                String action = "export class Input { delta: number = 0; }";
+                String valid = "export function read(state: State, action: Input): number { if (!state.paused) { return 1; } return 0; }";
                 String bad = syntaxFailure ? valid.replace("!state.paused", "state.paused == false")
-                        : valid + "\nexport class Extra { value: int = 0; }";
+                        : valid + "\nexport class Extra { value: number = 0; }";
                 var precondition = new CompilerProtocol.ChangeSetPrecondition(base.sourceDigest(),
                         Map.of(base.moduleId().value(), base.sourceDigest()));
                 var goodOp = new AmendWorkspace.AddDeclaration(base.moduleId(), action);
@@ -205,7 +205,7 @@ public final class AmendWorkspaceTest {
                 new AmendWorkspace.AddDeclaration(
                         inspection.moduleId(), "export function placeholder(state: AppState): void { return state; }"),
                 new AmendWorkspace.AddDeclaration(
-                        inspection.moduleId(), "export class Marker { id: int = 0; }"));
+                        inspection.moduleId(), "export class Marker { id: number = 0; }"));
         var changeInspection = AmendWorkspace.inspectChange(
                 source, "app.deal", inspection.sourceDigest(), List.of(inspection.moduleId()),
                 List.of(AmendWorkspace.ADD_DECLARATION));
@@ -223,7 +223,7 @@ public final class AmendWorkspaceTest {
     }
 
     private static void repairWorkspaceRejectsCanonicalNoOpPatch() {
-        String seed = "export class AppState { count: int = 0; }\n"
+        String seed = "export class AppState { count: number = 0; }\n"
                 + "export class IncrementAction {}\n"
                 + "export function initialState(): AppState { return {count: 0}; }\n"
                 + "export function update(state: AppState, action: IncrementAction): AppState { return state; }\n";
@@ -296,9 +296,9 @@ public final class AmendWorkspaceTest {
                         initialBody.id().value(), initialOperation.targetFingerprint()));
         var operations = List.<AmendWorkspace.Operation>of(
                 new AmendWorkspace.AddDeclaration(
-                        inspection.moduleId(), "export class ChartBar { id: int = 0; value: int = 0; }"),
+                        inspection.moduleId(), "export class ChartBar { id: number = 0; value: number = 0; }"),
                 new AmendWorkspace.ReplaceDeclaration(
-                        appState.id(), "export class ChartBar { id: int = 0; value: int = 0; }"),
+                        appState.id(), "export class ChartBar { id: number = 0; value: number = 0; }"),
                 new AmendWorkspace.ReplaceFunctionBody(initialBody.id(), "return {items: []};"));
         var changeInspection = AmendWorkspace.inspectChange(
                 source, "app.deal", inspection.sourceDigest(),
@@ -400,7 +400,7 @@ public final class AmendWorkspaceTest {
         var precondition = new CompilerProtocol.ChangeSetPrecondition(
                 inspection.sourceDigest(), Map.of(
                         inspection.moduleId().value(), descriptor.targetFingerprint()));
-        String action = "export class DoneAction { setId: int = 0; }";
+        String action = "export class DoneAction { setId: number = 0; }";
         String handler = "export function done(state: AppState, action: DoneAction): AppState { return state; }";
         var operations = List.<AmendWorkspace.Operation>of(
                 new AmendWorkspace.AddDeclaration(inspection.moduleId(), action),
@@ -518,7 +518,7 @@ public final class AmendWorkspaceTest {
                 new CompilerProtocol.ChangeSetPrecondition(
                         inspection.sourceDigest(), Map.of(state.id().value(), descriptor.targetFingerprint())),
                 List.of(new AmendWorkspace.ReplaceDeclaration(
-                        state.id(), "export class AppState { count: int = 0; }")));
+                        state.id(), "export class AppState { count: number = 0; }")));
         check(!result.accepted(), "incompatible neighboring function must reject the full transaction");
         check(result.source().equals(source), "rejected declaration replacement must roll back exactly");
 
@@ -528,7 +528,7 @@ public final class AmendWorkspaceTest {
                 inspection.sourceDigest(),
                 List.of(
                         new AmendWorkspace.ReplaceDeclaration(
-                                state.id(), "export class AppState { count: int = 0; }"),
+                                state.id(), "export class AppState { count: number = 0; }"),
                         new AmendWorkspace.ReplaceFunctionBody(
                                 inspection.nodes().get(0).id(), "return {count: 0};")));
         check(paired.accepted(), "compatible declaration and body replacement must commit: " + paired.diagnostics());
@@ -638,7 +638,7 @@ public final class AmendWorkspaceTest {
 
     private static void schemaChangeRequiresStateReset(CompilerProtocol.Inspection baseline) {
         String before = source();
-        String after = before.replace("count: int = 0;", "count: int = 0;\n  label: string = \"\";");
+        String after = before.replace("count: number = 0;", "count: number = 0;\n  label: string = \"\";");
         var beforeInspection = baseline;
         var afterInspection = AmendWorkspace.inspect(after, "app.deal");
         check(!beforeInspection.appInterface().fingerprint()
@@ -684,7 +684,7 @@ public final class AmendWorkspaceTest {
                 inspection.sourceDigest(),
                 List.of(new AmendWorkspace.AddDeclaration(
                         inspection.moduleId(),
-                        "function scoreBonus(value: int): int { return value + 10; }")));
+                        "function scoreBonus(value: number): number { return value + 10; }")));
         check(added.accepted(), "valid declaration must be added: " + added.diagnostics());
         var bonus = added.inspection().symbols().stream()
                 .filter(value -> value.name().equals("scoreBonus")).findFirst().orElseThrow();
@@ -695,7 +695,7 @@ public final class AmendWorkspaceTest {
                 inspection.sourceDigest(),
                 List.of(new AmendWorkspace.AddDeclaration(
                         inspection.moduleId(),
-                        "function broken(value: int): int { return missing; }")));
+                        "function broken(value: number): number { return missing; }")));
         check(!invalid.accepted() && invalid.source().equals(source), "invalid declaration must roll back");
 
         var removed = AmendWorkspace.apply(
@@ -808,10 +808,10 @@ public final class AmendWorkspaceTest {
     private static String source() {
         return """
                 export class AppState {
-                  count: int = 0;
+                  count: number = 0;
                 }
                 export class IncrementAction {
-                  amount: int = 1;
+                  amount: number = 1;
                 }
                 export function initialState(): AppState {
                   return {count: 0};

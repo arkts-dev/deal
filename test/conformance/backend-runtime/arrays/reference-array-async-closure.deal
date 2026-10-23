@@ -1,42 +1,42 @@
-// @spec: Async/Await — int[]-bearing async function values
-// @description: First-class async(int[])->int[] values assign to typed locals, containerize in nullable arrays (null and real elements), complete exactly once through await with the canonical async(int[])->int[] descriptor, flow through int[][] signatures and callbacks, discard-await exactly once, propagate errors, and hold in class fields with the DEAL null preserved (v1.2)
+// @spec: Async/Await — number[]-bearing async function values
+// @description: First-class async(number[])->number[] values assign to typed locals, containerize in nullable arrays (null and real elements), complete exactly once through await with the canonical async(number[])->number[] descriptor, flow through number[][] signatures and callbacks, discard-await exactly once, propagate errors, and hold in class fields with the DEAL null preserved (v1.2)
 // @expected: runtime-ok
-// @features: int[], async, functions
+// @features: number[], async, functions
 
-async function echo(b: int[]): int[] {
+async function echo(b: number[]): number[] {
   return b;
 }
 
-async function countArr(a: int[][]): int {
+async function countArr(a: number[][]): number {
   return a.length;
 }
 
-async function applyBytes(f: async (b: int[]) => int[], b: int[]): int[] {
+async function applyBytes(f: async (b: number[]) => number[], b: number[]): number[] {
   return await f(b);
 }
 
-async function failEcho(b: int[]): int[] {
+async function failEcho(b: number[]): number[] {
   throw { code: "E_TEST", message: "boom" };
 }
 
 export class Holder {
-  cb: async (b: int[]) => int[] = echo;
-  maybe: (async (b: int[]) => int[]) | null = null;
-  n: int = 7;
+  cb: async (b: number[]) => number[] = echo;
+  maybe: (async (b: number[]) => number[]) | null = null;
+  n: number = 7;
 }
 
-export async function test_array_async_closure(): int {
-  let f: async (b: int[]) => int[] = echo;
-  let out: int[] = await f([0, 0]);
+export async function test_array_async_closure(): number {
+  let f: async (b: number[]) => number[] = echo;
+  let out: number[] = await f([0, 0]);
   if (out.length !== 2) {
-    throw { code: "TEST_FAIL", message: "async int[] value failed" };
+    throw { code: "TEST_FAIL", message: "async number[] value failed" };
   }
-  let fs: ((async (b: int[]) => int[]) | null)[] = [];
+  let fs: ((async (b: number[]) => number[]) | null)[] = [];
   fs[fs.length] = echo;
   fs[fs.length] = null;
-  let g: (async (b: int[]) => int[]) | null = fs[0];
+  let g: (async (b: number[]) => number[]) | null = fs[0];
   if (g !== null) {
-    let again: int[] = await g([0, 0, 0]);
+    let again: number[] = await g([0, 0, 0]);
     if (again[0] !== 0) {
       throw { code: "TEST_FAIL", message: "containerized async invoke failed" };
     }
@@ -44,29 +44,29 @@ export async function test_array_async_closure(): int {
     throw { code: "TEST_FAIL", message: "containerized async value lost" };
   }
   // async function expression: awaited value roundtrip
-  let f2: async (b: int[]) => int[] = async function(b: int[]): int[] {
-    let echoed: int[] = []; while (echoed.length < b.length) { echoed[echoed.length] = 0; }
+  let f2: async (b: number[]) => number[] = async function(b: number[]): number[] {
+    let echoed: number[] = []; while (echoed.length < b.length) { echoed[echoed.length] = 0; }
     echoed[0] = b[0];
     return echoed;
   };
-  let r2: int[] = await f2([0]);
+  let r2: number[] = await f2([0]);
   if (r2.length !== 1 || r2[0] !== 0) {
     throw { code: "TEST_FAIL", message: "async fn expr await failed" };
   }
-  // int[][] signature through await
-  let arr: int[][] = [[0, 0], [0, 0, 0]];
-  let n: int = await countArr(arr);
+  // number[][] signature through await
+  let arr: number[][] = [[0, 0], [0, 0, 0]];
+  let n: number = await countArr(arr);
   if (n !== 2) {
-    throw { code: "TEST_FAIL", message: "int[][] async signature failed" };
+    throw { code: "TEST_FAIL", message: "number[][] async signature failed" };
   }
-  // callback position: an async int[] fn passed as a parameter
-  let via: int[] = await applyBytes(echo, [0, 0, 0, 0]);
+  // callback position: an async number[] fn passed as a parameter
+  let via: number[] = await applyBytes(echo, [0, 0, 0, 0]);
   if (via.length !== 4) {
-    throw { code: "TEST_FAIL", message: "async int[] callback failed" };
+    throw { code: "TEST_FAIL", message: "async number[] callback failed" };
   }
   // discard await evaluates exactly once with the completion check
-  let hits: int = 0;
-  async function counter(b: int[]): int[] {
+  let hits: number = 0;
+  async function counter(b: number[]): number[] {
     hits = hits + 1;
     return b;
   }
@@ -84,21 +84,21 @@ export async function test_array_async_closure(): int {
   if (!caught) {
     throw { code: "TEST_FAIL", message: "async error propagation failed" };
   }
-  // class fields hold async int[] fn references (wrapper identity,
+  // class fields hold async number[] fn references (wrapper identity,
   // the DEAL null for the nullable field)
   let h: Holder = { cb: echo, maybe: null, n: 9 };
-  let viaField: int[] = await h.cb([0, 0, 0, 0, 0]);
+  let viaField: number[] = await h.cb([0, 0, 0, 0, 0]);
   if (viaField.length !== 5 || h.n !== 9) {
     throw { code: "TEST_FAIL", message: "class field async invoke failed" };
   }
-  let m: (async (b: int[]) => int[]) | null = h.maybe;
+  let m: (async (b: number[]) => number[]) | null = h.maybe;
   if (m !== null) {
     throw { code: "TEST_FAIL", message: "nullable field default failed" };
   }
   h.maybe = echo;
-  let m2: (async (b: int[]) => int[]) | null = h.maybe;
+  let m2: (async (b: number[]) => number[]) | null = h.maybe;
   if (m2 !== null) {
-    let viaMaybe: int[] = await m2([0, 0, 0, 0, 0, 0]);
+    let viaMaybe: number[] = await m2([0, 0, 0, 0, 0, 0]);
     if (viaMaybe.length !== 6) {
       throw { code: "TEST_FAIL", message: "nullable field invoke failed" };
     }

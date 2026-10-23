@@ -42,7 +42,6 @@ import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.InternalResultType;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.ClassBindingFacts;
@@ -114,12 +113,12 @@ public class DynamicFunctionValueGateTest {
             new ExternalModuleInterface(MODULE, ExternalModuleKind.IMPLEMENTATION,
                 List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)))
         .interfaceIndexDigest();
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor.Func SIG0 =
-        new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Int.INSTANCE);
+        new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Number.INSTANCE);
     private static final RuntimeDescriptor.Func SIG1 =
         new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE),
-            RuntimeDescriptor.Int.INSTANCE);
+            RuntimeDescriptor.Number.INSTANCE);
 
     private record CheckedSlice(ProgramNode program, SymbolTable symbols, CheckResult checks) {
     }
@@ -241,8 +240,7 @@ public class DynamicFunctionValueGateTest {
             true, true, ownInterface, Map.of());
         lowerer.setModuleImports(fixture.module().imports());
         lowerer.setRegistrationSeeds(ClassRegistrationSeeds.builtinErrorOnly());
-        lowerer.setDeclaredConversionIntrinsics(
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT));
+
         lowerer.setE7Facts(fixture.module().exports(), Map.of(), Set.of());
         try {
             lowerer.lowerProjectModule(fixture.module().ast().statements());
@@ -272,20 +270,20 @@ public class DynamicFunctionValueGateTest {
      * {@code DynamicFunctionValue}.
      */
     private static final String DYNAMIC_CALLEE_SOURCE = """
-        function apply(f: (x: int) => int, x: int): int {
+        function apply(f: (x: number) => number, x: number): number {
           return f(x);
         }
 
-        async function applyAsync(f: async () => int): int {
+        async function applyAsync(f: async () => number): number {
           return await f();
         }
 
-        function double(x: int): int {
+        function double(x: number): number {
           return x * 2;
         }
 
         export function main(): null {
-          let r: int = apply(double, 21);
+          let r: number = apply(double, 21);
           return null;
         }
         """;
@@ -298,13 +296,11 @@ public class DynamicFunctionValueGateTest {
      * load.
      */
     private static final String ARITY_EXTENSION_SOURCE = """
-        let f: (x: number, y: number) => int = int;
-        let x: int = 1;
-        let r: int = x;
-
-        export function main(): null {
-          return null;
-        }
+        function int(x: number): number { return x; }
+        let f: (x: number, y: number) => number = int;
+        let x: number = 1;
+        let r: number = x;
+        export function main(): null { return null; }
         """;
 
     // =========================================================================
@@ -732,7 +728,7 @@ public class DynamicFunctionValueGateTest {
                 BindingCellKind.DIRECT, 0),
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
         SemanticOp sourceValue = opWith(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(7)),
+            new KindPayload.ConstPayload(new ScalarValue.Number(7)),
             operand, INT, FailurePolicyId.NO_DEAL_FAILURE, null);
         SemanticOp sourceInit = opWith(SemanticOpKind.BINDING_INIT,
             new KindPayload.BindingInitPayload(sourceBinding, 0, operand), null, null,
@@ -824,7 +820,7 @@ public class DynamicFunctionValueGateTest {
         // (a) An adapter production of the same key.
         RuntimeDescriptor.Func adaptTarget = new RuntimeDescriptor.Func(
             List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
-            RuntimeDescriptor.Int.INSTANCE);
+            RuntimeDescriptor.Number.INSTANCE);
         SemanticOp adapt = opWithOperands(SemanticOpKind.FUNCTION_ADAPT,
             new KindPayload.FunctionAdaptPayload(SIG1, adaptTarget, CaptureMode.VALUE,
                 new AdaptSourceRef.Value(operand), null),
@@ -924,7 +920,7 @@ public class DynamicFunctionValueGateTest {
         // graph of this synthetic slice is consistent.
         ValueId initial = new ValueId(603);
         ops.add(opWith(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)), initial, INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)), initial, INT,
             FailurePolicyId.NO_DEAL_FAILURE, null));
         ops.add(opWith(SemanticOpKind.BINDING_ALLOC,
             new KindPayload.BindingAllocPayload(new BindingId(9), new BlockId(0), false,
@@ -1130,178 +1126,41 @@ public class DynamicFunctionValueGateTest {
     // =========================================================================
 
     private static void testAdapterValueOverIntrinsicExemption() {
-        System.out.println("-- J1: the identity-preserving intrinsic load and the "
-            + "VALUE-over-intrinsic exemption --");
-
-        Fixture fixture = fixture(ARITY_EXTENSION_SOURCE, "arity extension");
-        if (fixture == null) {
-            return;
-        }
-        RawLowering raw = rawLower(fixture, "arity extension");
-        if (raw == null) {
-            return;
-        }
+        Fixture fixture = fixture(ARITY_EXTENSION_SOURCE, "ordinary number arity extension");
+        if (fixture == null) return;
+        RawLowering raw = rawLower(fixture, "ordinary number arity extension");
+        if (raw == null) return;
         LoweredModuleUnit unit = raw.unit();
-
-        // The seeded intrinsic identity and its seed BINDING_INIT.
-        long seedKey = -1;
-        BindingId seedBinding = null;
-        long seedGeneration = -1;
-        FunctionExecutionBinding.IntrinsicFunction intrinsic = null;
-        for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding> entry
-                : unit.functionBindings().entrySet()) {
-            if (entry.getValue() instanceof FunctionExecutionBinding.IntrinsicFunction value
-                    && value.kind() == IntrinsicKind.INT_CONVERT) {
-                seedKey = entry.getKey().id();
-                intrinsic = value;
-            }
-        }
-        check(seedKey > 0 && intrinsic != null,
-            "the unit carries the INT_CONVERT seed registration");
-        if (seedKey < 0) {
-            return;
-        }
-        BlockId seedBlock = null;
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.BINDING_INIT
-                    && op.payload() instanceof KindPayload.BindingInitPayload init
-                    && init.value().id() == seedKey) {
-                seedBinding = init.binding();
-                seedGeneration = init.generation();
-                seedBlock = raw.table().opBlocks().get(op.opId());
-            }
-        }
-        check(seedBinding != null && seedBlock != null,
-            "the seed BINDING_INIT names the seeded binding/generation");
-        if (seedBinding == null || seedBlock == null) {
-            return;
-        }
-
-        // The adapter's recorded source is the seeded identity itself: the
-        // creation shape is unchanged (VALUE over the intrinsic identity, no
-        // proof in the payload).
-        SemanticOp adaptOp = null;
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.FUNCTION_ADAPT) {
-                adaptOp = op;
-            }
-        }
-        check(adaptOp != null, "the arity-extension unit carries the FUNCTION_ADAPT");
-        if (adaptOp == null) {
-            return;
-        }
-        KindPayload.FunctionAdaptPayload adaptPayload =
-            (KindPayload.FunctionAdaptPayload) adaptOp.payload();
-        check(adaptPayload.mode() == CaptureMode.VALUE
-                && adaptPayload.source() instanceof AdaptSourceRef.Value value
-                && value.value().id() == seedKey
-                && adaptPayload.proof() == null,
-            "the adapter's recorded source is the seeded intrinsic identity with no proof "
-                + "(the creation shape is unchanged)");
-
-        // The identity-preserving load of the seeded binding: the producer
-        // rule's load-shaped materialization.
-        SemanticOp preserved = opWith(SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(seedBinding, seedGeneration),
-            new ValueId(seedKey), intrinsic.descriptor(), FailurePolicyId.NO_DEAL_FAILURE,
-            null);
-        StructuredBodyTable loadedTable = withTableOp(unit.bodyTable(), preserved, seedBlock);
-        LoweredModuleUnit loaded = copy(unit, unit.functionBindings(),
-            appendOp(unit.ops(), preserved), loadedTable);
-
-        assertBindingsPass(BindingsProductionValidator.validate(loaded, loadedTable,
-            raw.pinnedWriteFacts()),
-            "the unit carrying the function-typed load of the seeded intrinsic binding "
-                + "(REGISTRY_ONE_TO_ONE and the ADAPTER_SOURCE_SHAPE VALUE-over-intrinsic "
-                + "exemption)");
-        assertSchemaPass(SemanticIrValidator.validate(loaded, facts(loaded)),
-            "the load-carrying unit on the typed schema surface");
+        List<SemanticOp> adapters = ofKind(unit, SemanticOpKind.FUNCTION_ADAPT);
+        check(adapters.size() == 1, "ordinary number callable has one arity adapter");
+        if (adapters.size() != 1) return;
+        SemanticOp op = adapters.get(0);
+        KindPayload.FunctionAdaptPayload payload = (KindPayload.FunctionAdaptPayload) op.payload();
+        assertBindingsPass(BindingsProductionValidator.validate(unit, raw.table(),
+            raw.pinnedWriteFacts()), "ordinary callable uses the normal adapter rules");
+        assertSchemaPass(SemanticIrValidator.validate(unit, facts(unit)),
+            "ordinary callable adapter passes typed admission");
         assertSchemaPass(SemanticIrValidator.validateText(
-                SemanticIrValidator.toUnitText(loaded), facts(loaded)),
-            "the load-carrying unit on the canonical text surface");
-
-        BindingId otherBinding = null;
-        long otherGeneration = -1;
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.BINDING_INIT
-                    && op.payload() instanceof KindPayload.BindingInitPayload init
-                    && init.value().id() != seedKey) {
-                otherBinding = init.binding();
-                otherGeneration = init.generation();
-            }
-        }
-        check(otherBinding != null, "the unit carries a second binding initialization "
-            + "(the non-qualifying load's target)");
-        if (otherBinding == null) {
-            return;
-        }
-        SemanticOp foreignLoad = opWith(SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(otherBinding, otherGeneration),
-            new ValueId(seedKey), intrinsic.descriptor(), FailurePolicyId.NO_DEAL_FAILURE,
-            null);
-        LoweredModuleUnit foreignUnit = withOp(unit, foreignLoad);
-        assertBindingsRule(BindingsProductionValidator.validate(foreignUnit,
-            withTableOp(raw.table(), foreignLoad, seedBlock),
-            raw.pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
-            "a load naming another binding over the seeded identity",
-            "carries a binding-load operand", "without its proof");
-
-        // A proof recorded for the seeded operand must name the seeded
-        // binding/generation.
-        BindingId otherSeedBinding = null;
-        for (SemanticOp op : unit.ops()) {
-            if (op.kind() == SemanticOpKind.BINDING_INIT
-                    && op.payload() instanceof KindPayload.BindingInitPayload init
-                    && init.value().id() != seedKey
-                    && unit.functionBindings().get(new FunctionAllocationIdentity(
-                        init.value().id()))
-                        instanceof FunctionExecutionBinding.IntrinsicFunction) {
-                otherSeedBinding = init.binding();
-            }
-        }
-        check(otherSeedBinding != null, "the unit carries the other intrinsic seed binding");
-        if (otherSeedBinding != null) {
-            LoweredModuleUnit foreignProof = replaceOp(unit, adaptOp,
-                new KindPayload.FunctionAdaptPayload(adaptPayload.sourceSignature(),
-                    adaptPayload.targetSignature(), adaptPayload.mode(),
-                    adaptPayload.source(),
-                    new BindingImmutabilityProof(otherSeedBinding, seedGeneration)),
-                adaptOp.resultType());
-            assertBindingsRule(BindingsProductionValidator.validate(foreignProof, raw.table(),
-                raw.pinnedWriteFacts()), "ADAPTER_SOURCE_SHAPE",
-                "a proof over the seeded intrinsic identity naming another binding",
-                "naming no seeded binding/generation");
-            // The common admission composes the bindings owner, so the
-            // mis-proved adapter rejects there too, identically on both
-            // surfaces.
-            assertSchemaRule(SemanticIrValidator.validate(foreignProof,
-                    facts(foreignProof)), "ADAPTER_SOURCE_SHAPE",
-                "the mis-proved adapter unit on the typed common admission",
-                "naming no seeded binding/generation");
+            SemanticIrValidator.toUnitText(unit), facts(unit)),
+            "ordinary callable adapter passes text admission");
+        check(payload.sourceSignature().paramTypes().size() == 1
+                && payload.targetSignature().paramTypes().size() == 2,
+            "adapter preserves one source parameter and two target parameters");
+        if (payload.proof() != null) {
+            LoweredModuleUnit foreignProof = replaceOp(unit, op,
+                new KindPayload.FunctionAdaptPayload(payload.sourceSignature(),
+                    payload.targetSignature(), payload.mode(), payload.source(),
+                    new BindingImmutabilityProof(new BindingId(999999), 1)),
+                op.resultType());
+            assertSchemaRule(SemanticIrValidator.validate(foreignProof, facts(foreignProof)),
+                "ADAPTER_SOURCE_SHAPE", "ordinary name cannot bypass proof correlation",
+                "proof");
             assertSchemaRule(SemanticIrValidator.validateText(
-                    SemanticIrValidator.toUnitText(foreignProof), facts(foreignProof)),
-                "ADAPTER_SOURCE_SHAPE",
-                "the mis-proved adapter unit on the text common admission",
-                "naming no seeded binding/generation");
+                SemanticIrValidator.toUnitText(foreignProof), facts(foreignProof)),
+                "ADAPTER_SOURCE_SHAPE", "text admission cannot bypass proof correlation",
+                "proof");
         }
-
-        // The seeded proof and the proof-less seeded operand: admissible with
-        // or without the proof.
-        LoweredModuleUnit seededProof = replaceOp(unit, adaptOp,
-            new KindPayload.FunctionAdaptPayload(adaptPayload.sourceSignature(),
-                adaptPayload.targetSignature(), adaptPayload.mode(), adaptPayload.source(),
-                new BindingImmutabilityProof(seedBinding, seedGeneration)),
-            adaptOp.resultType());
-        assertBindingsPass(BindingsProductionValidator.validate(seededProof, raw.table(),
-            raw.pinnedWriteFacts()),
-            "a proof naming the seeded binding/generation over the intrinsic operand");
-        assertSchemaPass(SemanticIrValidator.validate(seededProof, facts(seededProof)),
-            "the seeded-proof adapter unit on the schema surface");
     }
-
-    // =========================================================================
-    // Runner
-    // =========================================================================
 
     public static void main(String[] args) {
         System.out.println("=== Dynamic Function Value Gate / Identity-Preserving "

@@ -1,11 +1,12 @@
 // @spec: Runtime execution model — Runtime library
-// @description: number(null) raises E8001 at runtime
+// @description: A dynamic null fails the number boundary without a conversion intrinsic
 // @expected: runtime-error E8001
 // @features: runtime, number, conversion, error
 
 export function test_number_null(): number {
-  let x: number | null = null;
-  return number(x);
+  let input: table = { value: null };
+  let result: number = input.value;
+  return result;
 }
 
 export function main(): null {

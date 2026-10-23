@@ -8,17 +8,17 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/tables/table-dynamic-read-runtime-error.deal\",\"line\":8,\"column\":21,\"expected\":\"int\",\"actual\":\"string\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/tables/table-dynamic-read-runtime-error.deal\",\"line\":8,\"column\":24,\"expected\":\"number\",\"actual\":\"string\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "expected int",
+      "message": "expected number",
       "sourceFile": "backend-runtime/tables/table-dynamic-read-runtime-error.deal",
       "line": 8,
-      "column": 21,
-      "expected": "int",
+      "column": 24,
+      "expected": "number",
       "actual": "string"
     }
   }

@@ -32,7 +32,6 @@ import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.InternalResultType;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IndexMode;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
@@ -112,7 +111,7 @@ public class CanonicalJsonTest {
 
     /** Stored golden: SHA-256 of the canonical JSON of {@link #pinnedSnapshot()}. */
     private static final String PINNED_SNAPSHOT_DIGEST_GOLDEN =
-        "810fcc608b7e27fa3dd23ec391e0d38aee56bf5e4ad0f7ef2f32fb91538545fb";
+        "872e60b2a134aba880de0c8f2076fb92cde0bedda9d8c32d1e9a34d64ebc6deb";
 
     /** Stored golden: {@code LoweringContextHash.of(DEAL_V1_3_INT32, REGISTRY_HASH)}. */
     private static final String PINNED_LOWERING_CONTEXT_GOLDEN =
@@ -160,8 +159,8 @@ public class CanonicalJsonTest {
     /** The pinned snapshot whose digest is a stored golden. */
     static OperationContractSnapshot pinnedSnapshot() {
         RuntimeDescriptor.Func intInt = new RuntimeDescriptor.Func(
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            RuntimeDescriptor.Int.INSTANCE);
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            RuntimeDescriptor.Number.INSTANCE);
         KindPayload.CallPayload call = new KindPayload.CallPayload(
             CallMode.EXTERNAL,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.ExternalFunction(
@@ -173,8 +172,8 @@ public class CanonicalJsonTest {
             null,
             new OpId(LIB, 3));
         return new OperationContractSnapshot(1, SemanticOpKind.CALL,
-            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE),
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE),
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
             null, call, FailurePolicyId.NO_DEAL_FAILURE,
             List.of(APP, LIB, new FunctionId(0), new BlockId(0), new OpId(LIB, 3)),
             PLACEHOLDER_DIGEST);
@@ -195,7 +194,7 @@ public class CanonicalJsonTest {
             RuntimeDescriptor.Null.INSTANCE, new OpId(APP, 4), null,
             new ExternalAsyncLink(LIB, "asyncExport", canonical));
         ClassLayout layout = new ClassLayout(CLS, List.of(
-            new ClassLayout.FieldLayout("f", RuntimeDescriptor.Int.INSTANCE, false, DefaultOwner.LOCAL)));
+            new ClassLayout.FieldLayout("f", RuntimeDescriptor.Number.INSTANCE, false, DefaultOwner.LOCAL)));
         KindPayload.ClassNewPayload classNew = new KindPayload.ClassNewPayload(
             CLS, layout,
             List.of(new KindPayload.ProvidedField("g", new ValueId(7))),
@@ -384,7 +383,7 @@ public class CanonicalJsonTest {
         testRoundTripBytes(CanonicalJson.serializeBytes(CanonicalJson.obj(
                 CanonicalJson.e("v", CanonicalJson.intValue(Integer.MIN_VALUE)),
                 CanonicalJson.e("w", CanonicalJson.intValue(Integer.MAX_VALUE)))),
-            "the decimal int extrema round-trip byte-exactly");
+            "the decimal number extrema round-trip byte-exactly");
         testRoundTripBytes(CanonicalJson.serializeBytes(CanonicalJson.obj(
                 CanonicalJson.e("null", CanonicalJson.nullValue()))),
             "explicit nulls round-trip byte-exactly");
@@ -400,7 +399,7 @@ public class CanonicalJsonTest {
         for (SemanticOpKind kind : SemanticOpKind.values()) {
             KindPayload payload = minimalPayload(kind);
             OperationContractSnapshot snapshot = snapshotFor(payload, kind,
-                RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+                RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST);
             testRoundTripSnapshot(snapshot, kind + " payload round-trips byte-exactly");
         }
@@ -408,19 +407,19 @@ public class CanonicalJsonTest {
         // RuntimeDescriptor canonical spellings round-trip through snapshots.
         List<RuntimeDescriptor> spellings = List.of(
             RuntimeDescriptor.Null.INSTANCE, RuntimeDescriptor.Boolean.INSTANCE,
-            RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Number.INSTANCE,
+            RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE,
             RuntimeDescriptor.String.INSTANCE, RuntimeDescriptor.Table.INSTANCE,
             new RuntimeDescriptor.Class(new ClassId("src/app", "User")),
-            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE),
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE),
             new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE),
-            new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE,
+            new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE,
                 RuntimeDescriptor.String.INSTANCE), RuntimeDescriptor.Boolean.INSTANCE, false),
-            new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
+            new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE),
                 RuntimeDescriptor.String.INSTANCE, true));
         for (RuntimeDescriptor descriptor : spellings) {
             OperationContractSnapshot snapshot = new OperationContractSnapshot(1,
                 SemanticOpKind.CONST, descriptor, List.of(descriptor), null,
-                new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                 FailurePolicyId.NO_DEAL_FAILURE, List.of(), PLACEHOLDER_DIGEST);
             testRoundTripSnapshot(snapshot,
                 "the \"" + descriptor.canonicalSpecText() + "\" descriptor spelling round-trips");
@@ -437,8 +436,8 @@ public class CanonicalJsonTest {
 
     static OperationContractSnapshot binaryMatrixSnapshot(BinarySelector selector) {
         return new OperationContractSnapshot(1, SemanticOpKind.BINARY,
-            RuntimeDescriptor.Int.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
+            RuntimeDescriptor.Number.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
             selector, new KindPayload.BinaryPayload(selector, null, null),
             FailurePolicyId.NO_DEAL_FAILURE, List.of(new FunctionId(0)), PLACEHOLDER_DIGEST);
     }
@@ -533,11 +532,11 @@ public class CanonicalJsonTest {
             "wrong opKind value type");
         expectDecode(() -> ContractSnapshotCanonicalizer.parseSnapshot(
                 new String(valid, StandardCharsets.UTF_8)
-                    .replace("\"operandTypes\":[\"int\",\"int\"]", "\"operandTypes\":\"ints\"")),
+                    .replace("\"operandTypes\":[\"number\",\"number\"]", "\"operandTypes\":\"ints\"")),
             "string-typed operandTypes field");
         expectDecode(() -> ContractSnapshotCanonicalizer.parseSnapshot(
                 new String(valid, StandardCharsets.UTF_8)
-                    .replace("\"operandTypes\":[\"int\",\"int\"]", "\"operandTypes\":[\"int\",1]")),
+                    .replace("\"operandTypes\":[\"number\",\"number\"]", "\"operandTypes\":[\"number\",1]")),
             "non-string operandTypes element");
         expectDecode(() -> ContractSnapshotCanonicalizer.parseSnapshot(
                 new String(valid, StandardCharsets.UTF_8).replace("\"payload\":{", "\"payload\":[")),
@@ -607,53 +606,53 @@ public class CanonicalJsonTest {
             "a snapshot carrying the recomputed digest matches");
 
         // Mutation matrix: every behavior field flips the digest.
-        String baseDigest = digest(binaryMatrixSnapshot(BinarySelector.INT32_ADD));
-        check(!baseDigest.equals(digest(binaryMatrixSnapshot(BinarySelector.NUMBER_ADD))),
+        String baseDigest = digest(binaryMatrixSnapshot(BinarySelector.NUMBER_ADD));
+        check(!baseDigest.equals(digest(binaryMatrixSnapshot(BinarySelector.NUMBER_SUB))),
             "flipping the selector changes the digest");
         OperationContractSnapshot resultTypeFlip = new OperationContractSnapshot(1,
-            SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            BinarySelector.INT32_ADD, new KindPayload.BinaryPayload(BinarySelector.INT32_ADD,
+            SemanticOpKind.BINARY, RuntimeDescriptor.Boolean.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
                 null, null), FailurePolicyId.NO_DEAL_FAILURE, List.of(new FunctionId(0)),
             PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(resultTypeFlip)),
             "flipping the result type changes the digest");
         OperationContractSnapshot operandFlip = new OperationContractSnapshot(1,
-            SemanticOpKind.BINARY, RuntimeDescriptor.Int.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE),
-            BinarySelector.INT32_ADD, new KindPayload.BinaryPayload(BinarySelector.INT32_ADD,
+            SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE),
+            BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
                 null, null), FailurePolicyId.NO_DEAL_FAILURE, List.of(new FunctionId(0)),
             PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(operandFlip)),
             "changing the operand types changes the digest");
         OperationContractSnapshot payloadFieldFlip = new OperationContractSnapshot(1,
-            SemanticOpKind.BINARY, RuntimeDescriptor.Int.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            BinarySelector.INT32_ADD, new KindPayload.BinaryPayload(BinarySelector.INT32_ADD,
+            SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
                 null, NullableSide.LEFT), FailurePolicyId.NO_DEAL_FAILURE,
             List.of(new FunctionId(0)), PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(payloadFieldFlip)),
             "changing a payload field (side) changes the digest");
         OperationContractSnapshot payloadDescriptorFlip = new OperationContractSnapshot(1,
-            SemanticOpKind.BINARY, RuntimeDescriptor.Int.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            BinarySelector.INT32_ADD, new KindPayload.BinaryPayload(BinarySelector.INT32_ADD,
+            SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
                 RuntimeDescriptor.Number.INSTANCE, null), FailurePolicyId.NO_DEAL_FAILURE,
             List.of(new FunctionId(0)), PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(payloadDescriptorFlip)),
             "changing a payload field (innerDescriptor) changes the digest");
         OperationContractSnapshot policyFlip = new OperationContractSnapshot(1,
-            SemanticOpKind.BINARY, RuntimeDescriptor.Int.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            BinarySelector.INT32_ADD, new KindPayload.BinaryPayload(BinarySelector.INT32_ADD,
-                null, null), FailurePolicyId.INT32_RESULT, List.of(new FunctionId(0)),
+            SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
+                null, null), FailurePolicyId.SQRT_NEGATIVE, List.of(new FunctionId(0)),
             PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(policyFlip)),
             "flipping the failure policy changes the digest");
         OperationContractSnapshot refFlip = new OperationContractSnapshot(1,
-            SemanticOpKind.BINARY, RuntimeDescriptor.Int.INSTANCE,
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            BinarySelector.INT32_ADD, new KindPayload.BinaryPayload(BinarySelector.INT32_ADD,
+            SemanticOpKind.BINARY, RuntimeDescriptor.Number.INSTANCE,
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            BinarySelector.NUMBER_ADD, new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD,
                 null, null), FailurePolicyId.NO_DEAL_FAILURE, List.of(new FunctionId(1)),
             PLACEHOLDER_DIGEST);
         check(!baseDigest.equals(digest(refFlip)),
@@ -661,49 +660,49 @@ public class CanonicalJsonTest {
 
         // Boundary descriptor and policy.
         KindPayload.BoundaryPayload intBoundary = new KindPayload.BoundaryPayload(
-            BoundaryKind.MODULE_EXPORT, RuntimeDescriptor.Int.INSTANCE, new ValueId(0),
-            new BoundaryRealization.RuntimeValidation("c"));
-        String boundaryDigest = digest(snapshotFor(intBoundary, SemanticOpKind.BOUNDARY,
-            RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
-            PLACEHOLDER_DIGEST));
-        KindPayload.BoundaryPayload numberBoundary = new KindPayload.BoundaryPayload(
             BoundaryKind.MODULE_EXPORT, RuntimeDescriptor.Number.INSTANCE, new ValueId(0),
             new BoundaryRealization.RuntimeValidation("c"));
+        String boundaryDigest = digest(snapshotFor(intBoundary, SemanticOpKind.BOUNDARY,
+            RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            PLACEHOLDER_DIGEST));
+        KindPayload.BoundaryPayload numberBoundary = new KindPayload.BoundaryPayload(
+            BoundaryKind.MODULE_EXPORT, RuntimeDescriptor.String.INSTANCE, new ValueId(0),
+            new BoundaryRealization.RuntimeValidation("c"));
         check(!boundaryDigest.equals(digest(snapshotFor(numberBoundary,
-                SemanticOpKind.BOUNDARY, RuntimeDescriptor.Int.INSTANCE, List.of(),
+                SemanticOpKind.BOUNDARY, RuntimeDescriptor.Number.INSTANCE, List.of(),
                 FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST))),
             "changing the boundary descriptor changes the digest");
         check(!boundaryDigest.equals(digest(snapshotFor(intBoundary,
-                SemanticOpKind.BOUNDARY, RuntimeDescriptor.Int.INSTANCE, List.of(),
+                SemanticOpKind.BOUNDARY, RuntimeDescriptor.Number.INSTANCE, List.of(),
                 FailurePolicyId.TYPE_DESCRIPTOR, PLACEHOLDER_DIGEST))),
             "changing the boundary policy changes the digest");
         check(!boundaryDigest.equals(digest(snapshotFor(
                 new KindPayload.BoundaryPayload(BoundaryKind.MODULE_EXPORT,
-                    RuntimeDescriptor.Int.INSTANCE, new ValueId(0),
+                    RuntimeDescriptor.Number.INSTANCE, new ValueId(0),
                     new BoundaryRealization.RepresentationProof("p")),
-                SemanticOpKind.BOUNDARY, RuntimeDescriptor.Int.INSTANCE, List.of(),
+                SemanticOpKind.BOUNDARY, RuntimeDescriptor.Number.INSTANCE, List.of(),
                 FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST))),
             "changing the boundary realization changes the digest");
 
         // Call mode and signature.
         RuntimeDescriptor.Func sig1 = new RuntimeDescriptor.Func(
-            List.of(RuntimeDescriptor.Int.INSTANCE), RuntimeDescriptor.Int.INSTANCE);
+            List.of(RuntimeDescriptor.Number.INSTANCE), RuntimeDescriptor.Number.INSTANCE);
         RuntimeDescriptor.Func sig2 = new RuntimeDescriptor.Func(
-            List.of(RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Int.INSTANCE),
-            RuntimeDescriptor.Int.INSTANCE);
+            List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
+            RuntimeDescriptor.Number.INSTANCE);
         KindPayload.CallPayload direct = new KindPayload.CallPayload(CallMode.DIRECT,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
             sig1, List.of(), null, null, new BlockId(0), null);
         String callDigest = digest(snapshotFor(direct, SemanticOpKind.CALL,
-            RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
             PLACEHOLDER_DIGEST));
         KindPayload.CallPayload external = new KindPayload.CallPayload(CallMode.EXTERNAL,
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.LoweredBody(
                 new FunctionId(0), new BlockId(0))),
             sig1, List.of(), null, null, new BlockId(0), null);
         check(!callDigest.equals(digest(snapshotFor(external, SemanticOpKind.CALL,
-                RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+                RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST))),
             "changing the call mode changes the digest");
         KindPayload.CallPayload wider = new KindPayload.CallPayload(CallMode.DIRECT,
@@ -711,28 +710,28 @@ public class CanonicalJsonTest {
                 new FunctionId(0), new BlockId(0))),
             sig2, List.of(), null, null, new BlockId(0), null);
         check(!callDigest.equals(digest(snapshotFor(wider, SemanticOpKind.CALL,
-                RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+                RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
                 PLACEHOLDER_DIGEST))),
             "changing the call signature changes the digest");
 
         // opId/origin live outside the snapshot: identical snapshot fields,
         // different op ids/origins — identical digest.
-        KindPayload payloadA = new KindPayload.ConstPayload(new ScalarValue.Int(1));
-        KindPayload payloadB = new KindPayload.ConstPayload(new ScalarValue.Int(1));
+        KindPayload payloadA = new KindPayload.ConstPayload(new ScalarValue.Number(1));
+        KindPayload payloadB = new KindPayload.ConstPayload(new ScalarValue.Number(1));
         OperationContractSnapshot first = snapshotFor(
             payloadA, SemanticOpKind.CONST,
-            RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
             PLACEHOLDER_DIGEST);
         OperationContractSnapshot second = snapshotFor(
             payloadB, SemanticOpKind.CONST,
-            RuntimeDescriptor.Int.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
+            RuntimeDescriptor.Number.INSTANCE, List.of(), FailurePolicyId.NO_DEAL_FAILURE,
             PLACEHOLDER_DIGEST);
         SemanticOp opA = new SemanticOp(new OpId(APP, 1), SemanticOpKind.CONST,
-            origin(0, "a.deal"), new ValueId(5), RuntimeDescriptor.Int.INSTANCE, List.of(),
+            origin(0, "a.deal"), new ValueId(5), RuntimeDescriptor.Number.INSTANCE, List.of(),
             List.of(), payloadA,
             FailurePolicyId.NO_DEAL_FAILURE, first);
         SemanticOp opB = new SemanticOp(new OpId(APP, 2), SemanticOpKind.CONST,
-            origin(1, "b.deal"), new ValueId(6), RuntimeDescriptor.Int.INSTANCE, List.of(),
+            origin(1, "b.deal"), new ValueId(6), RuntimeDescriptor.Number.INSTANCE, List.of(),
             List.of(), payloadB,
             FailurePolicyId.NO_DEAL_FAILURE, second);
         check(digest(opA.contract()).equals(digest(opB.contract())),
@@ -783,19 +782,19 @@ public class CanonicalJsonTest {
 
     static void testResultTypeDistinctions() {
         check(ContractSnapshotCanonicalizer.serializeText(
-                snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     SemanticOpKind.CONST, InternalResultType.INTERNAL_MISSING, List.of(),
                     FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST))
                 .contains("\"resultType\":\"INTERNAL_MISSING\""),
             "INTERNAL_MISSING renders as its sentinel name");
         check(ContractSnapshotCanonicalizer.serializeText(
-                snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     SemanticOpKind.CONST, null, List.of(),
                     FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST))
                 .contains("\"resultType\":null"),
             "the none result slot renders as an explicit null");
         check(ContractSnapshotCanonicalizer.serializeText(
-                snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                snapshotFor(new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     SemanticOpKind.CONST, RuntimeDescriptor.Null.INSTANCE, List.of(),
                     FailurePolicyId.NO_DEAL_FAILURE, PLACEHOLDER_DIGEST))
                 .contains("\"resultType\":\"null\""),
@@ -807,7 +806,7 @@ public class CanonicalJsonTest {
     // =========================================================================
 
     private static final ClassLayout LAYOUT = new ClassLayout(CLS, List.of(
-        new ClassLayout.FieldLayout("f", RuntimeDescriptor.Int.INSTANCE, false, DefaultOwner.LOCAL)));
+        new ClassLayout.FieldLayout("f", RuntimeDescriptor.Number.INSTANCE, false, DefaultOwner.LOCAL)));
 
     static KindPayload minimalPayload(SemanticOpKind kind) {
         ValueId v0 = new ValueId(0);
@@ -816,11 +815,11 @@ public class CanonicalJsonTest {
         OpId o0 = new OpId(APP, 0);
         OpId o1 = new OpId(APP, 1);
         return switch (kind) {
-            case CONST -> new KindPayload.ConstPayload(new ScalarValue.Int(1));
+            case CONST -> new KindPayload.ConstPayload(new ScalarValue.Number(1));
             case UNARY -> new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT);
-            case BINARY -> new KindPayload.BinaryPayload(BinarySelector.INT32_ADD, null, null);
+            case BINARY -> new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null);
             case STRING_CONCAT -> new KindPayload.StringConcatPayload(List.of(v0, v1));
-            case ARRAY_NEW -> new KindPayload.ArrayNewPayload(RuntimeDescriptor.Int.INSTANCE,
+            case ARRAY_NEW -> new KindPayload.ArrayNewPayload(RuntimeDescriptor.Number.INSTANCE,
                 List.of(v0), List.of(o0));
             case TABLE_NEW -> new KindPayload.TableNewPayload(
                 List.of(new KindPayload.TableEntry("k", v0)));
@@ -834,10 +833,10 @@ public class CanonicalJsonTest {
             case INDEX_WRITE -> new KindPayload.IndexWritePayload(v0, v1, new ValueId(2));
             case INDEX_DELETE -> new KindPayload.IndexDeletePayload(v0, v1);
             case OPTIONAL_READ -> new KindPayload.OptionalReadPayload(
-                v0, true, RuntimeDescriptor.Int.INSTANCE);
+                v0, true, RuntimeDescriptor.Number.INSTANCE);
             case HAS_FIELD -> new KindPayload.HasFieldPayload(v0, "k");
             case BOUNDARY -> new KindPayload.BoundaryPayload(BoundaryKind.MODULE_EXPORT,
-                RuntimeDescriptor.Int.INSTANCE, v0, new BoundaryRealization.RuntimeValidation("c"));
+                RuntimeDescriptor.Number.INSTANCE, v0, new BoundaryRealization.RuntimeValidation("c"));
             case BINDING_ALLOC -> new KindPayload.BindingAllocPayload(
                 new BindingId(0), b0, false, BindingCellKind.DIRECT, 0);
             case BINDING_INIT -> new KindPayload.BindingInitPayload(new BindingId(0), 0, v0);
@@ -861,8 +860,6 @@ public class CanonicalJsonTest {
                 "export", new FunctionId(0), SIG, false, o0, null);
             case CALLBACK_INVOKE -> new KindPayload.CallbackInvokePayload(
                 v0, SIG, List.of(), o0);
-            case INTRINSIC_CALL -> new KindPayload.IntrinsicCallPayload(
-                IntrinsicKind.INT_CONVERT, v0);
             case STDLIB_CALL -> new KindPayload.StdlibCallPayload(
                 StdlibFunctionId.MATH_FLOOR, List.of(v0), SemanticCapability.STDLIB_SEMANTICS);
             case ASYNC_START -> new KindPayload.AsyncStartPayload(
@@ -896,9 +893,9 @@ public class CanonicalJsonTest {
             case MODULE_IMPORT -> new KindPayload.ModuleImportPayload(
                 "a", new ModuleId("a"), ModuleImportKind.COMPILED);
             case EXPORT_READ -> new KindPayload.ExportReadPayload(
-                new ModuleId("a"), "x", RuntimeDescriptor.Int.INSTANCE, v0);
+                new ModuleId("a"), "x", RuntimeDescriptor.Number.INSTANCE, v0);
             case EXPORT_PUBLISH -> new KindPayload.ExportPublishPayload(
-                APP, "x", RuntimeDescriptor.Int.INSTANCE, v0);
+                APP, "x", RuntimeDescriptor.Number.INSTANCE, v0);
             case ENTRY_INVOKE -> new KindPayload.EntryInvokePayload(APP, new FunctionId(0));
         };
     }

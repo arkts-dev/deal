@@ -5,7 +5,7 @@
 
 export function test_dynamic_null_to_nullable(): null {
   let t: table = { value: null };
-  let x: int | null = t.value;
+  let x: number | null = t.value;
   if (x !== null) { throw { code: "TEST_FAIL", message: "dynamic null nullable mismatch" }; }
   return null;
 }

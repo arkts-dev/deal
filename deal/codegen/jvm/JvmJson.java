@@ -515,11 +515,6 @@ public final class JvmJson {
             }
             String text = s.substring(start, pos);
             try {
-                Integer exact =
-                    deal.semantic.ir.JsonNumberClassifier.exactInt32OrNull(text);
-                if (exact != null) {
-                    return Long.valueOf(exact.longValue());
-                }
                 return Double.valueOf(
                     deal.semantic.ir.JsonNumberClassifier.toDouble(text));
             } catch (NumberFormatException failure) {
@@ -534,7 +529,7 @@ public final class JvmJson {
 
     /** The E8 canonical number text (shortest round-trippable, Double.toString). */
     public static String numberText(double value) {
-        return Double.toString(value);
+        return value == 0 ? "0" : Double.toString(value);
     }
 
     /** The RFC-8259 string body of a scalar-valid string (invalid → null). */
@@ -740,9 +735,6 @@ public final class JvmJson {
             case "boolean" -> {
                 return raw instanceof Boolean ? raw : FAIL;
             }
-            case "int" -> {
-                return raw instanceof Long ? raw : FAIL;
-            }
             case "number" -> {
                 // A number descriptor admits both lexical forms; an
                 // integer lexical carrier converts exactly to the number
@@ -901,8 +893,7 @@ public final class JvmJson {
         return switch (descriptor) {
             case "null" -> value == null;
             case "boolean" -> value instanceof Boolean;
-            case "int" -> value instanceof Long;
-            case "number" -> value instanceof Double || value instanceof Long;
+            case "number" -> value instanceof Number;
             case "string" -> value instanceof String string && validScalars(string);
             case "table" -> value instanceof JvmRuntime.Table;
             default -> true;
@@ -1012,23 +1003,15 @@ public final class JvmJson {
                 }
                 yield bool ? "true" : "false";
             }
-            case "int" -> {
-                if (!(value instanceof Long longValue)) {
-                    throw new Projection(path, actualToken(value));
-                }
-                yield Long.toString(longValue);
-            }
             case "number" -> {
-                if (value instanceof Long longValue) {
-                    yield Long.toString(longValue);
-                }
-                if (!(value instanceof Double number)) {
+                if (!(value instanceof Number numeric)) {
                     throw new Projection(path, actualToken(value));
                 }
+                double number = numeric.doubleValue();
                 if (!Double.isFinite(number)) {
-                    throw new Projection(path, actualToken(number));
+                    throw new Projection(path, actualToken(value));
                 }
-                yield Double.toString(number);
+                yield number == 0 ? "0" : Double.toString(number);
             }
             case "string" -> {
                 if (!(value instanceof String string)) {
@@ -1149,15 +1132,12 @@ public final class JvmJson {
             out.append(bool ? "true" : "false");
             return;
         }
-        if (value instanceof Long longValue) {
-            out.append(Long.toString(longValue));
-            return;
-        }
-        if (value instanceof Double number) {
+        if (value instanceof Number numeric) {
+            double number = numeric.doubleValue();
             if (!Double.isFinite(number)) {
                 throw new Projection(path, actualToken(number));
             }
-            out.append(Double.toString(number));
+            out.append(number == 0 ? "0" : Double.toString(number));
             return;
         }
         if (value instanceof String string) {

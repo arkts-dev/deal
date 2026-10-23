@@ -111,73 +111,6 @@ test("check_boolean on nil errors with E8001", function()
   assert_error(function() __rt.check_boolean(nil) end, "E8001")
 end)
 
--- ==================== check_int tests ====================
-
-test("check_int(0) returns 0", function()
-  local r = __rt.check_int(0)
-  assert(r == 0)
-end)
-
-test("check_int(42) returns 42", function()
-  local r = __rt.check_int(42)
-  assert(r == 42)
-end)
-
-test("check_int(-1) returns -1", function()
-  local r = __rt.check_int(-1)
-  assert(r == -1)
-end)
-
-test("check_int(2147483647) returns itself", function()
-  local r = __rt.check_int(2147483647)
-  assert(r == 2147483647)
-end)
-
-test("check_int(-2147483648) returns itself", function()
-  local r = __rt.check_int(-2147483648)
-  assert(r == -2147483648)
-end)
-
-test("check_int(-0) returns 0 (normalization)", function()
-  local r = __rt.check_int(-0)
-  -- Verify it's 0, not -0
-  assert(r == 0)
-  -- Verify 1/r is Infinity, not -Infinity (proves it's +0 not -0)
-  assert(1 / r == math.huge)
-end)
-
-test("check_int on nil errors with E8001", function()
-  assert_error(function() __rt.check_int(nil) end, "E8001")
-end)
-
-test("check_int on string errors with E8001", function()
-  assert_error(function() __rt.check_int("hi") end, "E8001")
-end)
-
-test("check_int on NaN errors with E8001", function()
-  assert_error(function() __rt.check_int(0/0) end, "E8001")
-end)
-
-test("check_int on Infinity errors with E8001", function()
-  assert_error(function() __rt.check_int(1/0) end, "E8001")
-end)
-
-test("check_int on -Infinity errors with E8001", function()
-  assert_error(function() __rt.check_int(-1/0) end, "E8001")
-end)
-
-test("check_int on non-integer errors with E8001", function()
-  assert_error(function() __rt.check_int(1.5) end, "E8001")
-end)
-
-test("check_int on out-of-range errors with E8004", function()
-  assert_error(function() __rt.check_int(2147483648) end, "E8004")
-end)
-
-test("check_int on out-of-range negative errors with E8004", function()
-  assert_error(function() __rt.check_int(-2147483649) end, "E8004")
-end)
-
 -- ==================== check_number tests ====================
 
 test("check_number(3.14) returns 3.14", function()
@@ -331,37 +264,37 @@ test("non-arrays are rejected at an array descriptor (v1.3)", function()
   -- A plain object, a class instance, a function wrapper, the language null
   -- and the absent marker are not arrays; the language null is never the
   -- empty array.
-  assert_boundary_error(function() __rt.check_type("[int]", { a = 1 }) end,
+  assert_boundary_error(function() __rt.check_type("[number]", { a = 1 }) end,
     "E8001", "expected array", "array", "table")
   assert_boundary_error(function()
-    __rt.check_type("[int]", __rt.class_("@m/C", {}, {}))
+    __rt.check_type("[number]", __rt.class_("@m/C", {}, {}))
   end, "E8001", "expected array", "array", "@m/C")
   assert_boundary_error(function()
-    __rt.check_type("[int]", __rt.function_("()->null", function() return nil end))
+    __rt.check_type("[number]", __rt.function_("()->null", function() return nil end))
   end, "E8001", "expected array", "array", "function")
-  assert_boundary_error(function() __rt.check_type("[int]", __rt.__NULL) end,
+  assert_boundary_error(function() __rt.check_type("[number]", __rt.__NULL) end,
     "E8001", "expected array", "array", "null")
-  assert_boundary_error(function() __rt.check_type("[int]", __rt.__MISSING) end,
+  assert_boundary_error(function() __rt.check_type("[number]", __rt.__MISSING) end,
     "E8001", "expected array", "array", "nil")
   -- A carrier-key table is not an array either.
   assert_boundary_error(function()
-    __rt.check_type("[int]", carrier_key_table())
+    __rt.check_type("[number]", carrier_key_table())
   end, "E8001", "expected array", "array", "table")
   -- The array values are admitted: the emitted chunk's array carrier (its
   -- private marks) and the reference runtime's dense array form.
   local carrier = { [__K.a] = true, [__K.n] = 2, 1, 2 }
-  assert(__rt.check_type("[int]", carrier) == carrier,
+  assert(__rt.check_type("[number]", carrier) == carrier,
     "the array carrier is admitted")
   local dense = { 1, 2 }
-  assert(__rt.check_type("[int]", dense) == dense, "the dense array is admitted")
-  assert(__rt.check_type("[int]", {}) ~= nil, "the empty dense array is admitted")
+  assert(__rt.check_type("[number]", dense) == dense, "the dense array is admitted")
+  assert(__rt.check_type("[number]", {}) ~= nil, "the empty dense array is admitted")
 end)
 
 test("array element failures keep the E8003 wrap over a carrier (v1.3)", function()
   local carrier = { [__K.a] = true, [__K.n] = 2, 1, "bad" }
-  local err = assert_error(function() __rt.check_type("[int]", carrier) end, "E8003")
+  local err = assert_error(function() __rt.check_type("[number]", carrier) end, "E8003")
   assert(err.message == "array element 2 type mismatch", err.message)
-  assert(err.expected == "int", tostring(err.expected))
+  assert(err.expected == "number", tostring(err.expected))
   assert(err.actual == "string", tostring(err.actual))
 end)
 
@@ -385,8 +318,8 @@ test("carriers are rejected at a table descriptor (v1.3)", function()
   -- never passes a table descriptor.
   local chunkFn = {
     [__K.fn] = function() return 1 end,
-    [__K.sig] = "function(;int)",
-    [__K.csig] = "()->int",
+    [__K.sig] = "function(;number)",
+    [__K.csig] = "()->number",
     [__K.fid] = "m#f",
   }
   assert(__rt.typed_kind(chunkFn) == "function",
@@ -436,8 +369,8 @@ test("a class instance publishes its carried class atom at every boundary (v1.3)
   -- The primitive rows.
   assert_boundary_error(function() __rt.check_string(instance) end,
     "E8001", "expected string", "string", "@m/C")
-  assert_boundary_error(function() __rt.check_int(instance) end,
-    "E8001", "expected int", "int", "@m/C")
+  assert_boundary_error(function() __rt.check_number(instance) end,
+    "E8001", "expected number", "number", "@m/C")
   assert_boundary_error(function() __rt.check_number(instance) end,
     "E8001", "expected number", "number", "@m/C")
   assert_boundary_error(function() __rt.check_boolean(instance) end,
@@ -458,8 +391,8 @@ test("the builtin Error publishes the canonical Error atom at every boundary (v1
     "the Error value's closed token is the canonical builtin atom")
   assert_boundary_error(function() __rt.check_string(err_value) end,
     "E8001", "expected string", "string", "Error")
-  assert_boundary_error(function() __rt.check_int(err_value) end,
-    "E8001", "expected int", "int", "Error")
+  assert_boundary_error(function() __rt.check_number(err_value) end,
+    "E8001", "expected number", "number", "Error")
   assert_boundary_error(function() __rt.check_number(err_value) end,
     "E8001", "expected number", "number", "Error")
   assert_boundary_error(function() __rt.check_boolean(err_value) end,
@@ -496,7 +429,7 @@ test("every other carrier keeps its own closed token at a boundary (v1.3)", func
     local token, value = carrier[1], carrier[2]
     assert(__rt.typed_kind(value) == token, "the carrier's closed token is " .. token)
     rejects(value, token, "string", "expected string", "string")
-    rejects(value, token, "int", "expected int", "int")
+    rejects(value, token, "number", "expected number", "number")
     rejects(value, token, "boolean", "expected boolean", "boolean")
     rejects(value, token, "@m/C", "expected class instance", "class")
     if token ~= "function" then
@@ -507,9 +440,9 @@ test("every other carrier keeps its own closed token at a boundary (v1.3)", func
       -- The signature arm (E8010), never the kind arm, rejects a mismatched
       -- wrapper, and its two fields stay the canonical texts.
       local mismatch = assert_error(function()
-        __rt.check_type("(int)->null", value)
+        __rt.check_type("(number)->null", value)
       end, "E8010")
-      assert(mismatch.expected == "(int)->null"
+      assert(mismatch.expected == "(number)->null"
         and mismatch.actual == "()->null",
         "the signature arm keeps the two canonical texts")
     end
@@ -519,112 +452,32 @@ test("every other carrier keeps its own closed token at a boundary (v1.3)", func
     "E8001", "expected table", "table", "array")
   assert_boundary_error(function() __rt.check_table(handle) end,
     "E8001", "expected table", "table", "async-operation")
-  -- The fixed int-conversion tokens are unchanged (the refinement ladder is
-  -- not a typed-boundary kind arm).
-  local nan = assert_error(function() __rt.check_int(0/0) end, "E8001")
-  assert(nan.expected == "int" and nan.actual == "NaN", "NaN keeps its token")
-  local infinity = assert_error(function() __rt.check_int(1/0) end, "E8001")
-  assert(infinity.actual == "infinity", "infinity keeps its token")
-  local fractional = assert_error(function() __rt.check_int(1.5) end, "E8001")
-  assert(fractional.actual == "number", "a fractional number keeps its token")
+
 end)
 
--- ==================== numeric-variant carrier admission (ISSUE-0836) ====================
--- The std/json decode graph carries every numeric leaf as the private
--- carrier {[__K.jn] = true, k = "int"|"number", d = <number>}: the value
--- model's recorded int/number variant. The deployed matcher, the emitted
--- prelude's own int/number cells, the JVM runtime's boxed Long/Double
--- admission and the JS checkInt/checkNumber admit the same value, so a
--- carrier crosses every numeric boundary as the value it stands for, and
--- the boundary's actual projection is the carrier's own recorded token.
-
+-- ==================== binary64 carrier admission ====================
 local function number_carrier(kind, value)
   return { [__K.jn] = true, k = kind, d = value }
 end
 
-test("an int-variant carrier is the admitted int (v1.3)", function()
-  local int_carrier = number_carrier("int", 2147483647)
-  assert(__rt.check_int(int_carrier) == int_carrier,
-    "the int-variant carrier is admitted unchanged")
-  assert(__rt.check_type("int", int_carrier) == int_carrier,
-    "the int descriptor admits the int-variant carrier")
-  assert(__rt.typed_kind(int_carrier) == "int",
-    "the int-variant carrier projects its own token")
-end)
-
-test("a number-variant carrier passes an int boundary when its value does (v1.3)", function()
-  -- A number-variant carrier is the value it stands for: an integral,
-  -- in-range value is admitted at the int boundary and keeps its own
-  -- recorded variant (the emitted prelude's int cell returns the carrier,
-  -- never a re-typed one).
-  local carrier = number_carrier("number", 5)
-  local admitted = __rt.check_type("int", carrier)
-  assert(admitted == carrier, "the admitted value is the carrier")
-  assert(admitted.k == "number", "the recorded variant is preserved")
-  assert(admitted.d == 5, "the value is preserved")
-  assert(__rt.check_type("int", number_carrier("number", -2147483648)).d == -2147483648,
-    "the signed32 minimum is admitted")
-  assert(__rt.check_type("int", number_carrier("number", 2147483647)).d == 2147483647,
-    "the signed32 maximum is admitted")
-end)
-
-test("a number-variant carrier runs the int ladder with its exact arms (v1.3)", function()
-  local nan = assert_error(function()
-    __rt.check_type("int", number_carrier("number", 0/0))
-  end, "E8001")
-  assert(nan.message == "expected int, got NaN", nan.message)
-  assert(nan.expected == "int" and nan.actual == "NaN", "the NaN tuple")
-
-  local infinity = assert_error(function()
-    __rt.check_type("int", number_carrier("number", math.huge))
-  end, "E8001")
-  assert(infinity.message == "expected int, got infinity", infinity.message)
-  assert(infinity.expected == "int" and infinity.actual == "infinity",
-    "the infinity tuple")
-
-  local negative_infinity = assert_error(function()
-    __rt.check_type("int", number_carrier("number", -math.huge))
-  end, "E8001")
-  assert(negative_infinity.actual == "infinity", negative_infinity.actual)
-
-  local fractional = assert_error(function()
-    __rt.check_type("int", number_carrier("number", 1.5))
-  end, "E8001")
-  assert(fractional.message == "expected int, got non-integer number",
-    fractional.message)
-  assert(fractional.expected == "int" and fractional.actual == "number",
-    "the fractional tuple")
-
-  local range = assert_error(function()
-    __rt.check_type("int", number_carrier("number", 2147483648))
-  end, "E8004")
-  assert(range.message == "int out of safe range", range.message)
-  assert(range.expected == nil and range.actual == nil,
-    "the range arm publishes no expected/actual")
-end)
-
-test("the int cell normalizes a carrier's -0 without mutating it (v1.3)", function()
-  local negative_zero = number_carrier("number", -0.0)
-  local admitted = __rt.check_type("int", negative_zero)
-  assert(admitted ~= negative_zero, "the normalization republishes a fresh carrier")
-  assert(admitted.d == 0 and 1 / admitted.d > 0, "the admitted zero is positive")
-  assert(admitted.k == "number", "the recorded variant is preserved")
-  assert(1 / negative_zero.d < 0, "the input carrier is never mutated")
-
-  local int_zero = number_carrier("int", -0.0)
-  local int_admitted = __rt.check_int(int_zero)
-  assert(int_admitted ~= int_zero and int_admitted.d == 0
-      and 1 / int_admitted.d > 0, "the int-variant zero normalizes too")
-  assert(int_admitted.k == "int", "the int variant is preserved")
+test("number carriers preserve binary64 payload and identity", function()
+  for _, value in ipairs({2147483648, -2147483649, 1.5, math.huge, -math.huge, 0/0, -0.0}) do
+    local carrier = number_carrier("number", value)
+    assert(__rt.check_type("number", carrier) == carrier)
+    assert(__rt.typed_kind(carrier) == "number")
+    if value ~= value then assert(carrier.d ~= carrier.d)
+    elseif value == 0 then assert(1 / carrier.d == 1 / value)
+    else assert(carrier.d == value) end
+  end
 end)
 
 test("the number row admits both variants and keeps the carrier (v1.3)", function()
   local number_variant = number_carrier("number", 1e17)
   assert(__rt.check_number(number_variant) == number_variant,
     "the number-variant carrier is admitted")
-  local int_variant = number_carrier("int", 3)
+  local int_variant = number_carrier("number", 3)
   assert(__rt.check_type("number", int_variant) == int_variant,
-    "the int-variant carrier is admitted at a number boundary")
+    "the number-variant carrier is admitted at a number boundary")
   assert(__rt.typed_kind(number_variant) == "number",
     "the number-variant carrier projects its own token")
 end)
@@ -634,8 +487,8 @@ test("a numeric carrier keeps its own token at a non-numeric boundary (v1.3)", f
     __rt.check_type("string", number_carrier("number", 1))
   end, "E8001", "expected string", "string", "number")
   assert_boundary_error(function()
-    __rt.check_type("boolean", number_carrier("int", 1))
-  end, "E8001", "expected boolean", "boolean", "int")
+    __rt.check_type("boolean", number_carrier("number", 1))
+  end, "E8001", "expected boolean", "boolean", "number")
   assert_boundary_error(function()
     __rt.check_type("table", number_carrier("number", 1))
   end, "E8001", "expected table", "table", "number")
@@ -643,19 +496,19 @@ end)
 
 test("an array of numeric carriers crosses the array descriptor (v1.3)", function()
   local values = { [__K.a] = true, [__K.n] = 3,
-    [1] = number_carrier("int", 1), [2] = number_carrier("number", 2.5),
+    [1] = number_carrier("number", 1), [2] = number_carrier("number", 2.5),
     [3] = __rt.__NULL }
   assert(__rt.check_type("[?number]", values) == values,
     "the array carrier with numeric carriers and a null is admitted")
-  assert(__rt.check_type("[int]", { [__K.a] = true, [__K.n] = 2,
-    [1] = number_carrier("int", 1), [2] = number_carrier("number", 2) }) ~= nil,
-    "number-variant integral carriers are admitted at an int[] boundary")
+  assert(__rt.check_type("[number]", { [__K.a] = true, [__K.n] = 2,
+    [1] = number_carrier("number", 1), [2] = number_carrier("number", 2) }) ~= nil,
+    "number-variant integral carriers are admitted at an number[] boundary")
   local element = assert_error(function()
-    __rt.check_type("[int]", { [__K.a] = true, [__K.n] = 2,
-      [1] = number_carrier("int", 1), [2] = number_carrier("number", 1.5) })
+    __rt.check_type("[number]", { [__K.a] = true, [__K.n] = 2,
+      [1] = number_carrier("number", 1), [2] = "wrong-kind" })
   end, "E8003")
   assert(element.message == "array element 2 type mismatch", element.message)
-  assert(element.expected == "int" and element.actual == "number",
+  assert(element.expected == "number" and element.actual == "string",
     "the E8003 wrap keeps the element's own variant token")
 end)
 
@@ -684,30 +537,30 @@ end)
 
 -- ==================== check_array tests ====================
 
-test("check_array on homogeneous int array passes", function()
+test("check_array on homogeneous number array passes", function()
   local arr = {1, 2, 3}
-  local r = __rt.check_array("[int]", arr)
+  local r = __rt.check_array("[number]", arr)
   assert(r == arr)
 end)
 
 test("check_array on empty array passes", function()
   local arr = {}
-  local r = __rt.check_array("[int]", arr)
+  local r = __rt.check_array("[number]", arr)
   assert(r == arr)
 end)
 
 test("check_array on single element passes", function()
   local arr = {42}
-  local r = __rt.check_array("[int]", arr)
+  local r = __rt.check_array("[number]", arr)
   assert(r == arr)
 end)
 
 test("check_array on non-table errors with E8001", function()
-  assert_error(function() __rt.check_array("[int]", "notatable") end, "E8001")
+  assert_error(function() __rt.check_array("[number]", "notatable") end, "E8001")
 end)
 
 test("check_array on heterogeneous elements errors with E8003", function()
-  assert_error(function() __rt.check_array("[int]", {1, "x"}) end, "E8003")
+  assert_error(function() __rt.check_array("[number]", {1, "x"}) end, "E8003")
 end)
 
 test("check_array on string array passes", function()
@@ -722,15 +575,15 @@ test("check_array on boolean array passes", function()
   assert(r == arr)
 end)
 
-test("check_array on nested int[][] passes", function()
+test("check_array on nested number[][] passes", function()
   local arr = {{1, 2}, {3, 4}}
-  local r = __rt.check_array("[[int]]", arr)
+  local r = __rt.check_array("[[number]]", arr)
   assert(r == arr)
 end)
 
-test("check_array with [int] formal format passes", function()
+test("check_array with [number] formal format passes", function()
   local arr = {1, 2, 3}
-  local r = __rt.check_array("[int]", arr)
+  local r = __rt.check_array("[number]", arr)
   assert(r == arr)
 end)
 
@@ -750,8 +603,8 @@ end)
 -- The legacy element-descriptor helper is retired with the legacy parser:
 -- the canonical boundary rejects every legacy dialect spelling.
 
-test("check_array rejects the legacy 'int[]' spelling", function()
-  local err = assert_error(function() __rt.check_array("int[]", {1}) end, "E8001")
+test("check_array rejects the legacy 'number[]' spelling", function()
+  local err = assert_error(function() __rt.check_array("number[]", {1}) end, "E8001")
   assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
 end)
 
@@ -759,8 +612,8 @@ test("check_array rejects the legacy 'string[]' spelling", function()
   assert_error(function() __rt.check_array("string[]", {"a"}) end, "E8001")
 end)
 
-test("check_array rejects the legacy 'int[][]' spelling", function()
-  assert_error(function() __rt.check_array("int[][]", {{1}}) end, "E8001")
+test("check_array rejects the legacy 'number[][]' spelling", function()
+  assert_error(function() __rt.check_array("number[][]", {{1}}) end, "E8001")
 end)
 
 test("check_array rejects the legacy 'string|null[]' spelling", function()
@@ -769,12 +622,12 @@ end)
 
 -- ==================== check_type tests ====================
 
-test("check_type('int', 42) passes", function()
-  assert(__rt.check_type("int", 42) == 42)
+test("check_type('number', 42) passes", function()
+  assert(__rt.check_type("number", 42) == 42)
 end)
 
-test("check_type('int', 'x') errors", function()
-  assert_error(function() __rt.check_type("int", "x") end, "E8001")
+test("check_type('number', 'x') errors", function()
+  assert_error(function() __rt.check_type("number", "x") end, "E8001")
 end)
 
 test("check_type('number', 3.14) passes", function()
@@ -798,9 +651,9 @@ test("check_type('table', {}) passes", function()
   assert(__rt.check_type("table", t) == t)
 end)
 
-test("check_type('[int]', {1,2}) passes", function()
+test("check_type('[number]', {1,2}) passes", function()
   local arr = {1, 2}
-  assert(__rt.check_type("[int]", arr) == arr)
+  assert(__rt.check_type("[number]", arr) == arr)
 end)
 
 test("check_type('?string', nil) returns __NULL", function()
@@ -814,168 +667,29 @@ test("check_type('?string', nil) returns __NULL", function()
   assert(r == __rt.__NULL)
 end)
 
-test("check_type('?int', __NULL) returns __NULL", function()
-  local r = __rt.check_type("?int", __rt.__NULL)
+test("check_type('?number', __NULL) returns __NULL", function()
+  local r = __rt.check_type("?number", __rt.__NULL)
   assert(r == __rt.__NULL)
 end)
 
-test("check_type('?int', 42) returns 42", function()
-  local r = __rt.check_type("?int", 42)
+test("check_type('?number', 42) returns 42", function()
+  local r = __rt.check_type("?number", 42)
   assert(r == 42)
-end)
-
--- ==================== Integer arithmetic tests ====================
-
-test("int_add(1, 2) returns 3", function()
-  assert(__rt.int_add(1, 2) == 3)
-end)
-
-test("int_sub(5, 3) returns 2", function()
-  assert(__rt.int_sub(5, 3) == 2)
-end)
-
-test("int_mul(3, 4) returns 12", function()
-  assert(__rt.int_mul(3, 4) == 12)
-end)
-
-test("int_div(5, 2) returns 2 (truncated toward zero)", function()
-  assert(__rt.int_div(5, 2) == 2)
-end)
-
-test("int_div(-5, 2) returns -2 (truncated toward zero)", function()
-  assert(__rt.int_div(-5, 2) == -2)
-end)
-
-test("int_div(1, 0) errors with E8005", function()
-  assert_error(function() __rt.int_div(1, 0) end, "E8005")
-end)
-
-
-
-
-test("int arithmetic overflow errors with E8004", function()
-  assert_error(function() __rt.int_add(2147483647, 1) end, "E8004")
-end)
-
-test("int_add(2147483647, 0) returns 2147483647 (max stays)", function()
-  assert(__rt.int_add(2147483647, 0) == 2147483647)
-end)
-
-test("int_add(-2147483648, 0) returns -2147483648 (min stays)", function()
-  assert(__rt.int_add(-2147483648, 0) == -2147483648)
-end)
-
-test("int_add(2147483647, 1) errors with E8004 (int32 overflow)", function()
-  assert_error(function() __rt.int_add(2147483647, 1) end, "E8004")
-end)
-
-test("int_sub(-2147483648, 1) errors with E8004 (int32 overflow)", function()
-  assert_error(function() __rt.int_sub(-2147483648, 1) end, "E8004")
-end)
-
-test("int_mul(65536, 65536) errors with E8004 (int32 overflow)", function()
-  assert_error(function() __rt.int_mul(65536, 65536) end, "E8004")
-end)
-
-test("int_div(-2147483648, -1) errors with E8004 (MIN / -1)", function()
-  assert_error(function() __rt.int_div(-2147483648, -1) end, "E8004")
-end)
-
-
-test("int_div(5, 0) errors with E8005", function()
-  assert_error(function() __rt.int_div(5, 0) end, "E8005")
-end)
-
-test("int_div(-5, -0) errors with E8005 (negative zero divisor)", function()
-  assert_error(function() __rt.int_div(-5, -0) end, "E8005")
-end)
-
-
-test("int_neg(5) returns -5", function()
-  assert(__rt.int_neg(5) == -5)
-end)
-
-test("int_neg(-5) returns 5", function()
-  assert(__rt.int_neg(-5) == 5)
-end)
-
-test("int_neg(-0) returns 0 (normalization)", function()
-  local r = __rt.int_neg(-0)
-  assert(r == 0)
-  assert(1 / r == math.huge)
-end)
-
-test("int_neg(-2147483648) errors with E8004 (MIN negation)", function()
-  assert_error(function() __rt.int_neg(-2147483648) end, "E8004")
-end)
-
-test("int_div(5, -2) returns -2 (truncation toward zero)", function()
-  assert(__rt.int_div(5, -2) == -2)
-end)
-
-test("int_div(-5, -2) returns 2 (truncation toward zero)", function()
-  assert(__rt.int_div(-5, -2) == 2)
-end)
-
-
-
-test("int_convert(2147483647.0) returns 2147483647", function()
-  assert(__rt.int_convert(2147483647.0) == 2147483647)
-end)
-
-test("int_convert(-2147483648.0) returns -2147483648", function()
-  assert(__rt.int_convert(-2147483648.0) == -2147483648)
-end)
-
-test("int_convert(2147483648.0) errors with E8004 (int32 range)", function()
-  assert_error(function() __rt.int_convert(2147483648.0) end, "E8004")
-end)
-
-test("int_convert(-2147483649.0) errors with E8004 (int32 range)", function()
-  assert_error(function() __rt.int_convert(-2147483649.0) end, "E8004")
-end)
-
-test("int_convert(NaN) errors with E8001", function()
-  assert_error(function() __rt.int_convert(0/0) end, "E8001")
-end)
-
-test("int_convert(Infinity) errors with E8001", function()
-  assert_error(function() __rt.int_convert(1/0) end, "E8001")
-end)
-
-test("int_convert(-Infinity) errors with E8001", function()
-  assert_error(function() __rt.int_convert(-1/0) end, "E8001")
-end)
-
-test("int_convert(0.5) errors with E8001 (non-integer)", function()
-  assert_error(function() __rt.int_convert(0.5) end, "E8001")
-end)
-
-test("int_convert(-0.0) returns 0 (normalization)", function()
-  local r = __rt.int_convert(-0.0)
-  assert(r == 0)
-  assert(1 / r == math.huge)
-end)
-
-test("int_add(-0, 0) returns 0 (normalization)", function()
-  local r = __rt.int_add(-0, 0)
-  assert(r == 0)
-  assert(1 / r == math.huge)
 end)
 
 -- ==================== function_ tests ====================
 
 test("function_ creates wrapper with correct shape", function()
   local f = function(x) return x end
-  local w = __rt.function_("(int)->int", f)
+  local w = __rt.function_("(number)->number", f)
   assert(type(w) == "table")
   assert(w[__K.kind] == "function")
-  assert(w.sig == "(int)->int")
+  assert(w.sig == "(number)->number")
   assert(w.f == f)
 end)
 
 test("function_ wrapper .f() calls inner function", function()
-  local w = __rt.function_("(int)->int", function(x) return x * 2 end)
+  local w = __rt.function_("(number)->number", function(x) return x * 2 end)
   assert(w.f(21) == 42)
 end)
 
@@ -983,7 +697,7 @@ end)
 
 test("as_lua_function extracts inner function", function()
   local inner = function(x) return x end
-  local w = __rt.function_("(int)->int", inner)
+  local w = __rt.function_("(number)->number", inner)
   assert(__rt.as_lua_function(w) == inner)
 end)
 
@@ -1021,9 +735,9 @@ end
 
 test("from_lua_function wraps with type checks", function()
   local raw = function(a, b) return a + b end
-  local w = __rt.from_lua_function("(int,int)->int", raw)
+  local w = __rt.from_lua_function("(number,number)->number", raw)
   assert(w[__K.kind] == "function")
-  assert(w.sig == "(int,int)->int")
+  assert(w.sig == "(number,number)->number")
   -- Call with valid args
   local r = w.f(1, 2)
   assert(r == 3)
@@ -1031,7 +745,7 @@ end)
 
 test("from_lua_function delegates a wrong param type to the closed arm renderer", function()
   local raw = function(a, b) return a + b end
-  local w = __rt.from_lua_function("(int,int)->int", raw)
+  local w = __rt.from_lua_function("(number,number)->number", raw)
   local before = #host_arm_calls
   local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("x", 2, "t.deal", 3, 4) end, "E8010")
@@ -1041,7 +755,7 @@ test("from_lua_function delegates a wrong param type to the closed arm renderer"
   assert(call.id == "HOST_PARAMETER_CELL")
   assert(call.values.index == 1)
   assert(call.values.inner == "inner:TYPED_BOUNDARY_KIND")
-  assert(call.expected == "int")
+  assert(call.expected == "number")
   assert(call.subject == "x")
   assert(call.file == "t.deal" and call.line == 3 and call.column == 4)
   -- The mapped inner reason crosses as the matcher's closed arm selection,
@@ -1049,7 +763,7 @@ test("from_lua_function delegates a wrong param type to the closed arm renderer"
   assert(#host_inner_calls == before_inner + 1)
   local inner = host_inner_calls[#host_inner_calls]
   assert(inner.id == "TYPED_BOUNDARY_KIND")
-  assert(inner.values.kind == "int")
+  assert(inner.values.kind == "number")
 end)
 
 test("the host parameter cell rejects a forged carrier (ISSUE-0830)", function()
@@ -1067,7 +781,7 @@ test("the host parameter cell rejects a forged carrier (ISSUE-0830)", function()
   assert(err.message == "arm:HOST_PARAMETER_CELL", tostring(err.message))
   assert(host_arm_calls[#host_arm_calls].values.index == 1)
   assert(#host_arm_calls == before + 1)
-  local arrayWrapped = __rt.from_lua_function("([int])->null", raw)
+  local arrayWrapped = __rt.from_lua_function("([number])->null", raw)
   local errArray = assert_error(function()
     arrayWrapped.f({ __a = true, __n = 0 })
   end, "E8010")
@@ -1075,7 +789,7 @@ test("the host parameter cell rejects a forged carrier (ISSUE-0830)", function()
   -- The real carriers pass the same cells.
   assert(__rt.from_lua_function("(@m/C)->null", raw).f(
     __rt.class_("@m/C", {}, {})) == __rt.__NULL)
-  assert(__rt.from_lua_function("([int])->null", raw).f(
+  assert(__rt.from_lua_function("([number])->null", raw).f(
     { [__K.a] = true, [__K.n] = 0 }) == __rt.__NULL)
 end)
 
@@ -1091,8 +805,8 @@ test("the host parameter cell rejects a chunk function carrier at a table parame
   local err = assert_error(function()
     wrapped.f({
       [__K.fn] = function() return 1 end,
-      [__K.sig] = "function(;int)",
-      [__K.csig] = "()->int",
+      [__K.sig] = "function(;number)",
+      [__K.csig] = "()->number",
       [__K.fid] = "m#f",
     })
   end, "E8010")
@@ -1111,18 +825,18 @@ end)
 
 test("from_lua_function rejects wrong arg count (too few)", function()
   local raw = function(a, b) return a + b end
-  local w = __rt.from_lua_function("(int,int)->int", raw)
+  local w = __rt.from_lua_function("(number,number)->number", raw)
   assert_error(function() w.f(1) end, "E8010")
 end)
 
 test("from_lua_function rejects wrong arg count (too many)", function()
   local raw = function(a, b) return a + b end
-  local w = __rt.from_lua_function("(int,int)->int", raw)
+  local w = __rt.from_lua_function("(number,number)->number", raw)
   assert_error(function() w.f(1, 2, 3) end, "E8010")
 end)
 
 test("from_lua_function on non-function errors", function()
-  assert_error(function() __rt.from_lua_function("(int)->int", "notafunc") end, "E8001")
+  assert_error(function() __rt.from_lua_function("(number)->number", "notafunc") end, "E8001")
 end)
 
 -- ==================== class_ tests ====================
@@ -1229,7 +943,7 @@ end)
 
 local function int_plan()
   return {
-    { name = "id", descriptor = "int", optional = false, evaluator = function() return 0 end },
+    { name = "id", descriptor = "number", optional = false, evaluator = function() return 0 end },
     { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
     { name = "nick", descriptor = "string", optional = true },
   }
@@ -1238,7 +952,7 @@ end
 test("json_from_plan decodes provided fields, evaluates omitted defaults, and tags", function()
   local calls = 0
   local plan = {
-    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+    { name = "id", descriptor = "number", optional = false, evaluator = function() calls = calls + 1 return 7 end },
     { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
     { name = "nick", descriptor = "string", optional = true },
   }
@@ -1255,7 +969,7 @@ end)
 test("json_from_plan provided-value failure returns nil and runs no defaults", function()
   local calls = 0
   local plan = {
-    { name = "id", descriptor = "int", optional = false, evaluator = function() calls = calls + 1 return 7 end },
+    { name = "id", descriptor = "number", optional = false, evaluator = function() calls = calls + 1 return 7 end },
     { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
   }
   local u = __rt.json_from_plan("C", plan, { id = "bad" }, "f.deal", 1, 1)
@@ -1302,7 +1016,7 @@ end)
 
 test("json_from_plan evaluator failure returns nil", function()
   local plan = {
-    { name = "id", descriptor = "int", optional = false,
+    { name = "id", descriptor = "number", optional = false,
       evaluator = function() error(__rt._err("E8004", "boom", "inner.deal", 2, 2, nil, nil)) end },
   }
   local u = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
@@ -1311,7 +1025,7 @@ end)
 
 test("json_from_plan evaluator result failing final validation returns nil", function()
   local plan = {
-    { name = "id", descriptor = "int", optional = false, evaluator = function() return "bad" end },
+    { name = "id", descriptor = "number", optional = false, evaluator = function() return "bad" end },
   }
   local u = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
   assert(u == nil)
@@ -1333,31 +1047,31 @@ test("json_from_plan provided __NULL on non-nullable field returns nil", functio
   assert(__rt.json_from_plan("C", plan, { v = __rt.__NULL }, "f.deal", 1, 1) == nil)
 end)
 
-test("json_from_plan int range validation returns nil (E8004 inside the matcher)", function()
+test("json_from_plan admits binary64 values beyond signed32", function()
   local plan = {
-    { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end },
+    { name = "x", descriptor = "number", optional = false, evaluator = function() return 0 end },
   }
-  assert(__rt.json_from_plan("C", plan, { x = 2147483648 }, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", plan, { x = 2147483648 }, "f.deal", 1, 1).x == 2147483648)
 end)
 
-test("json_from_plan int fields normalize -0 to 0", function()
+test("json_from_plan number fields preserve negative zero", function()
   local plan = {
-    { name = "x", descriptor = "int", optional = false, evaluator = function() return 0 end },
+    { name = "x", descriptor = "number", optional = false, evaluator = function() return 0 end },
   }
   local u = __rt.json_from_plan("C", plan, { x = -0.0 }, "f.deal", 1, 1)
-  assert(u ~= nil and u.x == 0 and 1 / u.x == math.huge)
+  assert(u ~= nil and u.x == 0 and 1 / u.x == -math.huge)
 end)
 
 test("json_from_plan rejects legacy dialect descriptors through the canonical matcher", function()
   local plan = {
-    { name = "xs", descriptor = "int[]", optional = false, evaluator = function() return { 1 } end },
+    { name = "xs", descriptor = "number[]", optional = false, evaluator = function() return { 1 } end },
   }
   assert(__rt.json_from_plan("C", plan, {}, "f.deal", 1, 1) == nil)
 end)
 
 test("json_from_plan array fields validate element-wise", function()
   local plan = {
-    { name = "xs", descriptor = "[int]", optional = false, evaluator = function() return { 1, 2 } end },
+    { name = "xs", descriptor = "[number]", optional = false, evaluator = function() return { 1, 2 } end },
   }
   local u = __rt.json_from_plan("C", plan, { xs = { 1, 2 } }, "f.deal", 1, 1)
   assert(u ~= nil and u.xs[1] == 1 and u.xs[2] == 2)
@@ -1366,7 +1080,7 @@ end)
 
 test("json_from_plan evaluator results are retained by reference and fresh per attempt", function()
   local plan = {
-    { name = "items", descriptor = "[int]", optional = false, evaluator = function() return { 1 } end },
+    { name = "items", descriptor = "[number]", optional = false, evaluator = function() return { 1 } end },
   }
   local a = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
   local b = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
@@ -1378,10 +1092,10 @@ end)
 test("json_from_plan malformed plan returns nil and never throws", function()
   assert(__rt.json_from_plan("C", "not-a-table", {}, "f.deal", 1, 1) == nil)
   assert(__rt.json_from_plan("C", { "x" }, {}, "f.deal", 1, 1) == nil)
-  assert(__rt.json_from_plan("C", { { name = 1, descriptor = "int", optional = false } }, {}, "f.deal", 1, 1) == nil)
+  assert(__rt.json_from_plan("C", { { name = 1, descriptor = "number", optional = false } }, {}, "f.deal", 1, 1) == nil)
   assert(__rt.json_from_plan("C", {
-    { name = "x", descriptor = "int", optional = false },
-    { name = "x", descriptor = "int", optional = false },
+    { name = "x", descriptor = "number", optional = false },
+    { name = "x", descriptor = "number", optional = false },
   }, {}, "f.deal", 1, 1) == nil)
 end)
 
@@ -1440,35 +1154,28 @@ test("_err creates table with code and message", function()
 end)
 
 test("_err with all fields", function()
-  local e = __rt._err("E8001", "test", "file.deal", 10, 5, "int", "string")
+  local e = __rt._err("E8001", "test", "file.deal", 10, 5, "number", "string")
   assert(e.code == "E8001")
   assert(e.message == "test")
   assert(e.file == "file.deal")
   assert(e.line == 10)
   assert(e.column == 5)
-  assert(e.expected == "int")
+  assert(e.expected == "number")
   assert(e.actual == "string")
 end)
 
 test("error() from check_int produces table with code and message", function()
-  local ok, err = pcall(function() __rt.check_int("x") end)
+  local ok, err = pcall(function() __rt.check_number("x") end)
   assert(ok == false)
   assert(type(err) == "table")
   assert(err.code == "E8001")
   assert(type(err.message) == "string")
-  assert(string.find(err.message, "int") ~= nil)
+  assert(string.find(err.message, "number") ~= nil)
 end)
 
-test("error() from check_int on overflow produces E8004", function()
-  local ok, err = pcall(function() __rt.check_int(2147483648) end)
-  assert(ok == false)
-  assert(err.code == "E8004")
-end)
-
-test("error() from int_div by zero produces E8005", function()
-  local ok, err = pcall(function() __rt.int_div(1, 0) end)
-  assert(ok == false)
-  assert(err.code == "E8005")
+test("number admission is nontrapping beyond signed32", function()
+  assert(__rt.check_number(2147483648) == 2147483648)
+  assert(__rt.check_number(1/0) == math.huge)
 end)
 
 test("error() from class_ extra field produces E8007", function()
@@ -1492,18 +1199,18 @@ end)
 -- ==================== check_type with function descriptor tests ====================
 
 test("check_type function wrapper passes", function()
-  local w = __rt.function_("(int)->int", function(x) return x end)
-  local r = __rt.check_type("(int)->int", w)
+  local w = __rt.function_("(number)->number", function(x) return x end)
+  local r = __rt.check_type("(number)->number", w)
   assert(r == w)
 end)
 
 test("check_type function wrapper sig mismatch errors with E8010", function()
-  local w = __rt.function_("(int)->int", function(x) return x end)
+  local w = __rt.function_("(number)->number", function(x) return x end)
   assert_error(function() __rt.check_type("(string)->string", w) end, "E8010")
 end)
 
 test("check_type on non-function for function descriptor errors", function()
-  assert_error(function() __rt.check_type("(int)->int", 42) end, "E8001")
+  assert_error(function() __rt.check_type("(number)->number", 42) end, "E8001")
 end)
 
 -- ==================== check_type with class descriptor tests ====================
@@ -1606,7 +1313,7 @@ end)
 -- ==================== _deep_copy edge cases ====================
 
 test("deep copy preserves function wrappers by identity", function()
-  local w = __rt.function_("(int)->int", function(x) return x end)
+  local w = __rt.function_("(number)->number", function(x) return x end)
   local defaults = { fn = w }
   local a = __rt.class_("C", defaults, {})
   assert(a.fn == w)
@@ -1626,16 +1333,16 @@ test("check_array on table with holes (sparse) still checks till #v", function()
   -- A sparse table may have unexpected # behavior, but that's Lua's semantics
   -- Just test that what IS in the contiguous portion passes
   -- We'll use a normal contiguous array
-  local r = __rt.check_array("[int]", {1, 2, 3})
+  local r = __rt.check_array("[number]", {1, 2, 3})
   assert(r ~= nil)
 end)
 
 test("check_int on boolean errors with E8001", function()
-  assert_error(function() __rt.check_int(true) end, "E8001")
+  assert_error(function() __rt.check_number(true) end, "E8001")
 end)
 
 test("check_int on table errors with E8001", function()
-  assert_error(function() __rt.check_int({}) end, "E8001")
+  assert_error(function() __rt.check_number({}) end, "E8001")
 end)
 
 -- ==================== from_lua_function legacy rest descriptor tests ====================
@@ -1655,7 +1362,7 @@ end)
 test("from_lua_function legacy rest-of-function descriptor is rejected at wrap time", function()
   local raw = function(sep, ...) return sep end
   assert_error(function()
-    __rt.from_lua_function("(string,...[(int)->int])->string", raw)
+    __rt.from_lua_function("(string,...[(number)->number])->string", raw)
   end, "E8010")
 end)
 
@@ -1663,36 +1370,36 @@ end)
 
 test("from_lua_function checks return type", function()
   local raw = function(a, b) return a + b end
-  local w = __rt.from_lua_function("(int,int)->int", raw)
+  local w = __rt.from_lua_function("(number,number)->number", raw)
   local r = w.f(1, 2)
   assert(r == 3)
 end)
 
 test("from_lua_function wrong return type delegates the closed arm", function()
   local raw = function() return "not_an_int" end
-  local w = __rt.from_lua_function("()->int", raw)
+  local w = __rt.from_lua_function("()->number", raw)
   local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("t.deal", 3, 4) end, "E8010")
   assert(err.message == "arm:HOST_SYNC_RETURN_CELL")
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "HOST_SYNC_RETURN_CELL")
   assert(call.values.inner == "inner:TYPED_BOUNDARY_KIND")
-  assert(call.expected == "int")
+  assert(call.expected == "number")
   assert(call.subject == "not_an_int")
   assert(call.file == "t.deal" and call.line == 3 and call.column == 4)
   assert(#host_inner_calls == before_inner + 1)
-  assert(host_inner_calls[#host_inner_calls].values.kind == "int")
+  assert(host_inner_calls[#host_inner_calls].values.kind == "number")
 end)
 
 test("from_lua_function zero results delegates the nothing arm", function()
-  local w = __rt.from_lua_function("()->int", function() end)
+  local w = __rt.from_lua_function("()->number", function() end)
   local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("t.deal", 5, 6) end, "E8010")
   assert(err.message == "arm:HOST_SYNC_RETURN_NOTHING")
   local call = host_arm_calls[#host_arm_calls]
   assert(call.id == "HOST_SYNC_RETURN_NOTHING")
-  assert(call.values.expected == "int")
-  assert(call.expected == "int")
+  assert(call.values.expected == "number")
+  assert(call.expected == "number")
   -- The no-value cell has no inner reason and no subject value: the
   -- artifact's render projects the arm's fixed nothing token.
   assert(call.subject == nil)
@@ -1700,7 +1407,7 @@ test("from_lua_function zero results delegates the nothing arm", function()
 end)
 
 test("from_lua_function async shape delegates the nothing arm", function()
-  local w = __rt.from_lua_function("async()->int", function() end)
+  local w = __rt.from_lua_function("async()->number", function() end)
   local before_inner = #host_inner_calls
   local err = assert_error(function() w.f("t.deal", 7, 8) end, "E8010")
   assert(err.message == "arm:ASYNC_SHAPE")
@@ -1716,7 +1423,7 @@ test("from_lua_function async shape delegates the nothing arm", function()
 end)
 
 test("from_lua_function async shape delegates the carrier-kind arm", function()
-  local w = __rt.from_lua_function("async()->int", function()
+  local w = __rt.from_lua_function("async()->number", function()
     return "not an async op"
   end)
   local err = assert_error(function() w.f("t.deal", 9, 10) end, "E8010")
@@ -1732,7 +1439,7 @@ end)
 test("from_lua_function fails closed without the artifact renderer", function()
   local saved = __rt.__hostArm
   __rt.__hostArm = nil
-  local w = __rt.from_lua_function("()->int", function() return "junk" end)
+  local w = __rt.from_lua_function("()->number", function() return "junk" end)
   local ok, err = pcall(function() w.f("t.deal", 1, 2) end)
   __rt.__hostArm = saved
   assert(not ok, "the wrapper must not publish a composed failure")
@@ -1745,7 +1452,7 @@ end)
 test("from_lua_function fails closed without the inner renderer", function()
   local saved = __rt.__hostInnerArm
   __rt.__hostInnerArm = nil
-  local w = __rt.from_lua_function("()->int", function() return "junk" end)
+  local w = __rt.from_lua_function("()->number", function() return "junk" end)
   local ok, err = pcall(function() w.f("t.deal", 1, 2) end)
   __rt.__hostInnerArm = saved
   assert(not ok, "the wrapper must not publish a composed reason")
@@ -1759,7 +1466,7 @@ end)
 test("the canonical matcher selects its closed arm on every mapped cell", function()
   -- The mapped host cells render their inner reason from the matcher's own
   -- closed arm selection (the raised table's `arm` field): the kind row,
-  -- the int refinement and range rows, the two string-carrier rows, the
+  -- the number refinement and range rows, the two string-carrier rows, the
   -- signature row, the identity row, and the array-element row each carry
   -- their arm id and closed named parameters beside the local delivery.
   local function selection(fn, code)
@@ -1767,34 +1474,32 @@ test("the canonical matcher selects its closed arm on every mapped cell", functi
     assert(type(err.arm) == "table", "the matcher selects a closed arm")
     return err.arm
   end
-  local kind = selection(function() __rt.check_type("int", "x") end, "E8001")
-  assert(kind.id == "TYPED_BOUNDARY_KIND" and kind.values.kind == "int")
+  local kind = selection(function() __rt.check_type("number", "x") end, "E8001")
+  assert(kind.id == "TYPED_BOUNDARY_KIND" and kind.values.kind == "number")
   local klass = selection(function()
     __rt.check_type("Error", {[__K.kind] = "class", [__K.classname] = "@src/A"})
   end, "E8001")
   assert(klass.id == "CLASS_IDENTITY")
   assert(klass.values.expected == "Error")
   assert(klass.values.actual == "@src/A")
-  local element = selection(function() __rt.check_type("[int]", {"x"}) end, "E8003")
+  local element = selection(function() __rt.check_type("[number]", {"x"}) end, "E8003")
   assert(element.id == "ARRAY_ELEMENT_KIND" and element.values.oneBasedIndex == 1)
-  local refinement = selection(function() __rt.check_type("int", 0/0) end, "E8001")
-  assert(refinement.id == "INT_CONVERSION_NAN")
   local signature = selection(function()
-    __rt.check_type("(int)->int", __rt.function_("(string)->int", function() end))
+    __rt.check_type("(number)->number", __rt.function_("(string)->number", function() end))
   end, "E8010")
   assert(signature.id == "FUNCTION_SIGNATURE_MISMATCH")
-  assert(signature.values.expected == "(int)->int")
-  assert(signature.values.actual == "(string)->int")
+  assert(signature.values.expected == "(number)->number")
+  assert(signature.values.actual == "(string)->number")
   -- A malformed function carrier has no signature operand: the closed kind
   -- arm renders (the JVM host check's own function row).
   local carrier = selection(function()
-    __rt.check_type("()->int", {[__K.kind] = "function"})
+    __rt.check_type("()->number", {[__K.kind] = "function"})
   end, "E8001")
   assert(carrier.id == "TYPED_BOUNDARY_KIND" and carrier.values.kind == "function")
   -- A producer defect carries no selection, so it can never become a host
   -- inner reason.
   local defect = assert_error(function()
-    __rt.check_type("int[]", {1, 2})
+    __rt.check_type("number[]", {1, 2})
   end, "E8001")
   assert(defect.arm == nil)
 end)
@@ -1809,15 +1514,15 @@ test("check_type with nested nullable array works", function()
 end)
 
 test("check_type with function descriptor validates wrapper", function()
-  local w = __rt.function_("(int,int)->int", function(x,y) return x+y end)
-  local r = __rt.check_type("(int,int)->int", w)
+  local w = __rt.function_("(number,number)->number", function(x,y) return x+y end)
+  local r = __rt.check_type("(number,number)->number", w)
   assert(r == w)
 end)
 
 test("check_type with complex nullable descriptor works", function()
-  -- [?int] is the canonical spelling of Array(Nullable(int)).
+  -- [?number] is the canonical spelling of Array(Nullable(number)).
   local arr = {1, __rt.__NULL, 3}
-  local r = __rt.check_type("[?int]", arr)
+  local r = __rt.check_type("[?number]", arr)
   assert(r == arr)
 end)
 
@@ -1874,126 +1579,14 @@ test("class_ with default table deep-copied independently", function()
   assert(b.data.x == 1)
 end)
 
--- ==================== int_convert tests ====================
-
-test("int_convert(3.0) returns 3", function()
-  local r = __rt.int_convert(3.0)
-  assert(r == 3)
-end)
-
-test("int_convert(0.0) returns 0", function()
-  local r = __rt.int_convert(0.0)
-  assert(r == 0)
-end)
-
-test("int_convert(-5.0) returns -5", function()
-  local r = __rt.int_convert(-5.0)
-  assert(r == -5)
-end)
-
-test("int_convert(3.7) errors (non-integer)", function()
-  assert_error(function() __rt.int_convert(3.7) end, "E8001")
-end)
-
-test("int_convert(nil) errors with E8001 (null not convertible)", function()
-  local err = assert_error(function() __rt.int_convert(nil) end, "E8001")
-  assert(string.find(err.message, "cannot convert null to int") ~= nil)
-end)
-
-test("int_convert(__NULL) errors with E8001 (null not convertible)", function()
-  local err = assert_error(function() __rt.int_convert(__rt.__NULL) end, "E8001")
-  assert(string.find(err.message, "cannot convert null to int") ~= nil)
-end)
-
-test("int_convert(NaN) errors with E8001", function()
-  assert_error(function() __rt.int_convert(0/0) end, "E8001")
-end)
-
-test("int_convert(Infinity) errors with E8001", function()
-  assert_error(function() __rt.int_convert(1/0) end, "E8001")
-end)
-
-test("int_convert(-Infinity) errors with E8001", function()
-  assert_error(function() __rt.int_convert(-1/0) end, "E8001")
-end)
-
-test("int_convert(1e308) errors with E8004 (out of range)", function()
-  assert_error(function() __rt.int_convert(1e308) end, "E8004")
-end)
-
-test("int_convert('hello') errors with E8001 (expected int)", function()
-  assert_error(function() __rt.int_convert("hello") end, "E8001")
-end)
-
-test("int_convert(true) errors with E8001 (not a number)", function()
-  assert_error(function() __rt.int_convert(true) end, "E8001")
-end)
-
-test("int_convert(int value) works (unwrapping nullable int)", function()
-  -- When called with an int that is not null, returns the int
-  local r = __rt.int_convert(42)
-  assert(r == 42)
-end)
-
--- ==================== number_convert tests ====================
-
-test("number_convert(3) returns 3.0", function()
-  local r = __rt.number_convert(3)
-  assert(r == 3.0)
-end)
-
-test("number_convert(0) returns 0.0", function()
-  local r = __rt.number_convert(0)
-  assert(r == 0.0)
-end)
-
-test("number_convert(-5) returns -5.0", function()
-  local r = __rt.number_convert(-5)
-  assert(r == -5.0)
-end)
-
-test("number_convert(3.14) returns 3.14 (already number)", function()
-  local r = __rt.number_convert(3.14)
-  assert(r == 3.14)
-end)
-
-test("number_convert(nil) errors with E8001 (null not convertible)", function()
-  local err = assert_error(function() __rt.number_convert(nil) end, "E8001")
-  assert(string.find(err.message, "cannot convert null to number") ~= nil)
-end)
-
-test("number_convert(__NULL) errors with E8001 (null not convertible)", function()
-  local err = assert_error(function() __rt.number_convert(__rt.__NULL) end, "E8001")
-  assert(string.find(err.message, "cannot convert null to number") ~= nil)
-end)
-
-test("number_convert(true) errors with E8001 (not a number)", function()
-  assert_error(function() __rt.number_convert(true) end, "E8001")
-end)
-
-test("number_convert('hello') errors with E8001 (not a number)", function()
-  assert_error(function() __rt.number_convert("hello") end, "E8001")
-end)
-
-test("number_convert(NaN) passes (NaN is a valid number)", function()
-  local r = __rt.number_convert(0/0)
-  assert(r ~= r)  -- NaN check
-end)
-
-test("number_convert(Infinity) passes", function()
-  local r = __rt.number_convert(1/0)
-  assert(r == math.huge)
-end)
-
-
 -- ==================== parse_descriptor async tests ====================
 -- parse_descriptor is local; tested indirectly through from_lua_function and check_type.
 
-test("parse_descriptor async direct: async(int)->string wraps and preserves sig", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+test("parse_descriptor async direct: async(number)->string wraps and preserves sig", function()
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return tostring(x) end)
   end)
-  assert(wrapper.sig == "async(int)->string")
+  assert(wrapper.sig == "async(number)->string")
   local h = wrapper.f(42)
   assert(type(h) == "table" and h[__K.kind] == "async")
   assert(h.__result == "42")
@@ -2002,75 +1595,75 @@ end)
 test("parse_descriptor async direct: non-operation result raises E8010", function()
   -- The outer wrapper requires the host function to return an async operation;
   -- a raw value fails the async-shape check.
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return x
   end)
   assert_error(function() wrapper.f(42) end, "E8010")
 end)
 
 test("parse_descriptor async direct: descriptor signature comparison works", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return tostring(x) end)
   end)
   -- check_type with matching descriptor should pass
   assert_no_error(function()
-    __rt.check_type("async(int)->string", wrapper)
+    __rt.check_type("async(number)->string", wrapper)
   end)
 end)
 
 test("parse_descriptor async direct: signature mismatch detected", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return tostring(x) end)
   end)
   -- check_type with non-matching descriptor should fail
   assert_error(function()
-    __rt.check_type("async(int)->int", wrapper)
+    __rt.check_type("async(number)->number", wrapper)
   end, "E8010")
 end)
 
 test("parse_descriptor async direct: sync function descriptor works unchanged", function()
-  local wrapper = __rt.from_lua_function("(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("(number)->string", function(x)
     return tostring(x)
   end)
   assert_no_error(function()
-    __rt.check_type("(int)->string", wrapper)
+    __rt.check_type("(number)->string", wrapper)
   end)
 end)
 
 test("parse_descriptor async nullable: from_lua_function wraps nullable async descriptor", function()
-  -- "async(int)->?@src/User" is an async function whose declared nullable
+  -- "async(number)->?@src/User" is an async function whose declared nullable
   -- return is enforced at the await site.
-  local wrapper = __rt.from_lua_function("async(int)->?@src/User", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->?@src/User", function(x)
     return __rt.async_start(function() return { [__K.kind] = "class", [__K.classname] = "User" } end)
   end)
-  assert(wrapper.sig == "async(int)->?@src/User")
+  assert(wrapper.sig == "async(number)->?@src/User")
   local h = wrapper.f(1)
   assert(type(h) == "table" and h[__K.kind] == "async")
   -- a non-operation return still fails the async-shape check
-  local wrapper2 = __rt.from_lua_function("async(int)->?@src/User", function(x)
+  local wrapper2 = __rt.from_lua_function("async(number)->?@src/User", function(x)
     return { [__K.kind] = "class", [__K.classname] = "User" }
   end)
   assert_error(function() wrapper2.f(1) end, "E8010")
 end)
 
 test("parse_descriptor async: wrapper sig preserves async prefix", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return tostring(x) end)
   end)
-  assert(wrapper.sig == "async(int)->string", "sig should include async prefix: " .. tostring(wrapper.sig))
+  assert(wrapper.sig == "async(number)->string", "sig should include async prefix: " .. tostring(wrapper.sig))
 end)
 
 test("parse_descriptor sync nullable: from_lua_function wraps nullable-return descriptor", function()
-  -- "(int)->?string" parses as a function returning a nullable string.
-  local wrapper = __rt.from_lua_function("(int)->?string", function(x)
+  -- "(number)->?string" parses as a function returning a nullable string.
+  local wrapper = __rt.from_lua_function("(number)->?string", function(x)
     if x == 0 then return __rt.__NULL end
     return tostring(x)
   end)
-  assert(wrapper.sig == "(int)->?string")
+  assert(wrapper.sig == "(number)->?string")
   assert(wrapper.f(0) == __rt.__NULL)
   assert(wrapper.f(1) == "1")
   -- wrong return type raises E8010
-  local wrapper2 = __rt.from_lua_function("(int)->?string", function(x)
+  local wrapper2 = __rt.from_lua_function("(number)->?string", function(x)
     return x
   end)
   assert_error(function() wrapper2.f(1) end, "E8010")
@@ -2081,29 +1674,29 @@ end)
 test("from_lua_function async: non-operation return raises E8010", function()
   -- The outer wrapper requires the host async function to return an
   -- async operation; the declared return type is enforced at the await site.
-  local wrapper = __rt.from_lua_function("async()->int", function()
+  local wrapper = __rt.from_lua_function("async()->number", function()
     return "not an async op"
   end)
   assert_error(function() wrapper.f() end, "E8010")
 end)
 
 test("from_lua_function async: zero results raise E8010", function()
-  local wrapper = __rt.from_lua_function("async()->int", function() end)
+  local wrapper = __rt.from_lua_function("async()->number", function() end)
   assert_error(function() wrapper.f() end, "E8010")
 end)
 
 test("from_lua_function async: param checking still works", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return tostring(x) end)
   end)
   -- Wrong param type should produce error
   assert_error(function()
-    wrapper.f("not an int")
+    wrapper.f("not an number")
   end, "E8010")
 end)
 
 test("from_lua_function async: correct params pass through", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return "value: " .. tostring(x) end)
   end)
   local h = wrapper.f(42)
@@ -2112,10 +1705,10 @@ test("from_lua_function async: correct params pass through", function()
 end)
 
 test("from_lua_function async: outer wrapper sig contains async prefix", function()
-  local wrapper = __rt.from_lua_function("async(int)->string", function(x)
+  local wrapper = __rt.from_lua_function("async(number)->string", function(x)
     return __rt.async_start(function() return tostring(x) end)
   end)
-  assert(wrapper.sig == "async(int)->string", "sig should include async prefix")
+  assert(wrapper.sig == "async(number)->string", "sig should include async prefix")
 end)
 
 -- ==================== async_create / async_start tests ====================
@@ -2380,8 +1973,8 @@ end)
 
 test("async outer wrapper: sync function still validates return type", function()
   -- For sync functions, the return type IS validated
-  local wrapper = __rt.from_lua_function("()->int", function()
-    return "not an int"
+  local wrapper = __rt.from_lua_function("()->number", function()
+    return "not an number"
   end)
   assert_error(function()
     wrapper.f()
@@ -2432,48 +2025,48 @@ end)
 
 -- ==================== parse order P tests ====================
 
-test("canonical: ?(int)->int reads nullable function, distinct from (int)->?int", function()
-  local w = __rt.function_("(int)->int", function(x) return x + 1 end)
-  -- ?(int)->int: nullable of function — __NULL and a matching-sig wrapper pass
-  assert(__rt.check_type("?(int)->int", __rt.__NULL) == __rt.__NULL)
-  assert(__rt.check_type("?(int)->int", w) == w)
-  -- (int)->?int: function returning nullable — the same wrapper's sig does not match
-  assert_error(function() __rt.check_type("(int)->?int", w) end, "E8010")
-  -- the legacy "(int)->int|null" spelling fails the canonical parser
-  assert_error(function() __rt.check_type("(int)->int|null", w) end, "E8001")
+test("canonical: ?(number)->number reads nullable function, distinct from (number)->?number", function()
+  local w = __rt.function_("(number)->number", function(x) return x + 1 end)
+  -- ?(number)->number: nullable of function — __NULL and a matching-sig wrapper pass
+  assert(__rt.check_type("?(number)->number", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_type("?(number)->number", w) == w)
+  -- (number)->?number: function returning nullable — the same wrapper's sig does not match
+  assert_error(function() __rt.check_type("(number)->?number", w) end, "E8010")
+  -- the legacy "(number)->number|null" spelling fails the canonical parser
+  assert_error(function() __rt.check_type("(number)->number|null", w) end, "E8001")
   -- non-wrapper fails the inner function check
-  assert_error(function() __rt.check_type("?(int)->int", 42) end, "E8001")
+  assert_error(function() __rt.check_type("?(number)->number", 42) end, "E8001")
 end)
 
 test("parse order P: wrong-sig wrapper on nullable function raises E8010", function()
   local w = __rt.function_("(string)->string", function(x) return x end)
-  assert_error(function() __rt.check_type("?(int)->int", w) end, "E8010")
+  assert_error(function() __rt.check_type("?(number)->number", w) end, "E8010")
 end)
 
-test("canonical: [(int)->int] reads array of functions, distinct from (int)->[int]", function()
-  local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
-  local w2 = __rt.function_("(int)->int", function(x) return x + 2 end)
+test("canonical: [(number)->number] reads array of functions, distinct from (number)->[number]", function()
+  local w1 = __rt.function_("(number)->number", function(x) return x + 1 end)
+  local w2 = __rt.function_("(number)->number", function(x) return x + 2 end)
   local arr = { w1, w2 }
-  assert(__rt.check_type("[(int)->int]", arr) == arr)
-  -- the legacy "(int)->int[]" spelling fails the canonical parser
-  assert_error(function() __rt.check_type("(int)->int[]", w1) end, "E8001")
+  assert(__rt.check_type("[(number)->number]", arr) == arr)
+  -- the legacy "(number)->number[]" spelling fails the canonical parser
+  assert_error(function() __rt.check_type("(number)->number[]", w1) end, "E8001")
   -- the matching function-returning-array wrapper passes
-  local w3 = __rt.function_("(int)->[int]", function(x) return { x } end)
-  assert(__rt.check_type("(int)->[int]", w3) == w3)
+  local w3 = __rt.function_("(number)->[number]", function(x) return { x } end)
+  assert(__rt.check_type("(number)->[number]", w3) == w3)
 end)
 
-test("parse order P: [?(int)->int] reads array of nullable functions", function()
-  local w1 = __rt.function_("(int)->int", function(x) return x + 1 end)
+test("parse order P: [?(number)->number] reads array of nullable functions", function()
+  local w1 = __rt.function_("(number)->number", function(x) return x + 1 end)
   local arr = { w1, __rt.__NULL }
-  assert(__rt.check_type("[?(int)->int]", arr) == arr)
+  assert(__rt.check_type("[?(number)->number]", arr) == arr)
   -- wrong element (non-wrapper) fails with E8003
   assert_error(function()
-    __rt.check_array("[?(int)->int]", { 42 })
+    __rt.check_array("[?(number)->number]", { 42 })
   end, "E8003")
   -- wrong-sig wrapper element fails with E8003
   local wbad = __rt.function_("(string)->string", function(x) return x end)
   assert_error(function()
-    __rt.check_array("[?(int)->int]", { wbad })
+    __rt.check_array("[?(number)->number]", { wbad })
   end, "E8003")
 end)
 
@@ -2522,7 +2115,7 @@ test("from_lua_function sync null: zero results raise E8010", function()
 end)
 
 test("from_lua_function non-null return: zero results raise E8010", function()
-  local wrapper = __rt.from_lua_function("()->int", function() end)
+  local wrapper = __rt.from_lua_function("()->number", function() end)
   assert_error(function() wrapper.f() end, "E8010")
 end)
 
@@ -2542,40 +2135,40 @@ test("from_lua_function nullable return: __NULL passes", function()
 end)
 
 test("from_lua_function nullable return: wrong type raises E8010", function()
-  local wrapper = __rt.from_lua_function("(int)->?string", function(x) return x end)
+  local wrapper = __rt.from_lua_function("(number)->?string", function(x) return x end)
   assert_error(function() wrapper.f(1) end, "E8010")
 end)
 
 test("from_lua_function array return: wrong type raises E8010", function()
-  local wrapper = __rt.from_lua_function("(int)->[string]", function(x) return x end)
+  local wrapper = __rt.from_lua_function("(number)->[string]", function(x) return x end)
   assert_error(function() wrapper.f(1) end, "E8010")
 end)
 
 test("from_lua_function function return: raw Lua function fails the check with E8010", function()
   -- Function-typed returns must arrive as DEAL wrapper tables (assumption c).
-  local wrapper = __rt.from_lua_function("()->(int)->int", function()
+  local wrapper = __rt.from_lua_function("()->(number)->number", function()
     return function(x) return x end
   end)
   assert_error(function() wrapper.f() end, "E8010")
 end)
 
 test("from_lua_function nullable-function return: __NULL passes", function()
-  local wrapper = __rt.from_lua_function("()->?(int)->int", function()
+  local wrapper = __rt.from_lua_function("()->?(number)->number", function()
     return __rt.__NULL
   end)
   assert(wrapper.f() == __rt.__NULL)
 end)
 
 test("from_lua_function nullable-function return: raw Lua function fails with E8010", function()
-  local wrapper = __rt.from_lua_function("()->?(int)->int", function()
+  local wrapper = __rt.from_lua_function("()->?(number)->number", function()
     return function(x) return x end
   end)
   assert_error(function() wrapper.f() end, "E8010")
 end)
 
 test("from_lua_function nullable-function return: matching wrapper passes", function()
-  local inner = __rt.function_("(int)->int", function(x) return x + 1 end)
-  local wrapper = __rt.from_lua_function("()->?(int)->int", function()
+  local inner = __rt.function_("(number)->number", function(x) return x + 1 end)
+  local wrapper = __rt.from_lua_function("()->?(number)->number", function()
     return inner
   end)
   assert(wrapper.f() == inner)
@@ -2586,11 +2179,11 @@ end)
 test("from_lua_function adapts function-typed params to plain Lua functions", function()
   local received = nil
   local inner = function(x) return x + 1 end
-  local wrapper = __rt.from_lua_function("((int)->int)->int", function(cb)
+  local wrapper = __rt.from_lua_function("((number)->number)->number", function(cb)
     received = cb
     return cb(41)
   end)
-  local r = wrapper.f(__rt.function_("(int)->int", inner))
+  local r = wrapper.f(__rt.function_("(number)->number", inner))
   assert(r == 42)
   assert(type(received) == "function")
   assert(received == inner)
@@ -2598,7 +2191,7 @@ end)
 
 test("from_lua_function nullable-function param accepts __NULL unadapted", function()
   local received = nil
-  local wrapper = __rt.from_lua_function("(?(int)->int)->null", function(cb)
+  local wrapper = __rt.from_lua_function("(?(number)->number)->null", function(cb)
     received = cb
     return __rt.__NULL
   end)
@@ -2609,17 +2202,17 @@ end)
 test("from_lua_function nullable-function param adapts matching-sig wrapper", function()
   local received = nil
   local inner = function(x) return x * 2 end
-  local wrapper = __rt.from_lua_function("(?(int)->int)->null", function(cb)
+  local wrapper = __rt.from_lua_function("(?(number)->number)->null", function(cb)
     received = cb
     return __rt.__NULL
   end)
-  wrapper.f(__rt.function_("(int)->int", inner))
+  wrapper.f(__rt.function_("(number)->number", inner))
   assert(type(received) == "function")
   assert(received == inner)
 end)
 
 test("from_lua_function nullable-function param rejects raw function with E8010", function()
-  local wrapper = __rt.from_lua_function("(?(int)->int)->null", function(cb)
+  local wrapper = __rt.from_lua_function("(?(number)->number)->null", function(cb)
     return __rt.__NULL
   end)
   assert_error(function() wrapper.f(function(x) return x end) end, "E8010")
@@ -2628,7 +2221,7 @@ end)
 test("from_lua_function legacy rest-of-function descriptor is rejected at wrap time", function()
   local received = nil
   local err = assert_error(function()
-    __rt.from_lua_function("(string,...[(int)->int])->string", function(sep, ...)
+    __rt.from_lua_function("(string,...[(number)->number])->string", function(sep, ...)
       received = { ... }
       return sep
     end)
@@ -2663,11 +2256,11 @@ __rt.__hostLoadArm = stub_host_load_arm
 
 test("load_host loads fixture and wraps raw functions", function()
   local host = __rt.load_host(HOST_FIXTURE, {
-    answer = "()->int",
-    add = "(int,int)->int",
+    answer = "()->number",
+    add = "(number,number)->number",
   })
   assert(type(host.answer) == "table" and host.answer[__K.kind] == "function")
-  assert(host.answer.sig == "()->int")
+  assert(host.answer.sig == "()->number")
   assert(host.answer.f() == 42)
   assert(host.add.f(2, 3) == 5)
   -- param checks are enforced on the wrapped exports
@@ -2675,36 +2268,36 @@ test("load_host loads fixture and wraps raw functions", function()
 end)
 
 test("load_host drops extra host exports", function()
-  local host = __rt.load_host(HOST_FIXTURE, { answer = "()->int" })
+  local host = __rt.load_host(HOST_FIXTURE, { answer = "()->number" })
   assert(host.extra_export == nil)
 end)
 
 test("load_host missing declared export raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { missing = "()->int" })
+    __rt.load_host(HOST_FIXTURE, { missing = "()->number" })
   end, "E8011")
 end)
 
 test("load_host require failure raises E8011", function()
   assert_error(function()
-    __rt.load_host("no/such/deal-runtime-host-module", { x = "()->int" })
+    __rt.load_host("no/such/deal-runtime-host-module", { x = "()->number" })
   end, "E8011")
 end)
 
 test("load_host non-table module result raises E8011", function()
   package.loaded["deal-runtime-test-nontable"] = 42
   assert_error(function()
-    __rt.load_host("deal-runtime-test-nontable", { x = "()->int" })
+    __rt.load_host("deal-runtime-test-nontable", { x = "()->number" })
   end, "E8011")
   package.loaded["deal-runtime-test-nontable"] = nil
 end)
 
 test("load_host pre-wrapped export with matching sig is re-wrapped and enforced", function()
-  local host = __rt.load_host(HOST_FIXTURE, { prewrapped_good = "()->int" })
+  local host = __rt.load_host(HOST_FIXTURE, { prewrapped_good = "()->number" })
   assert(host.prewrapped_good[__K.kind] == "function")
   assert(host.prewrapped_good.f() == 7)
   -- junk return from the pre-wrapped .f is caught by the re-wrap
-  local host2 = __rt.load_host(HOST_FIXTURE, { prewrapped_bad = "()->int" })
+  local host2 = __rt.load_host(HOST_FIXTURE, { prewrapped_bad = "()->number" })
   assert_error(function() host2.prewrapped_bad.f() end, "E8010")
 end)
 
@@ -2723,13 +2316,13 @@ end)
 
 test("load_host pre-wrapped missing sig raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { prewrapped_nosig = "()->int" })
+    __rt.load_host(HOST_FIXTURE, { prewrapped_nosig = "()->number" })
   end, "E8011")
 end)
 
 test("load_host pre-wrapped non-function .f raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { prewrapped_badf = "()->int" })
+    __rt.load_host(HOST_FIXTURE, { prewrapped_badf = "()->number" })
   end, "E8011")
 end)
 
@@ -2741,7 +2334,7 @@ end)
 
 test("load_host non-function export for function descriptor raises E8011", function()
   assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { not_a_function = "()->int" })
+    __rt.load_host(HOST_FIXTURE, { not_a_function = "()->number" })
   end, "E8011")
 end)
 
@@ -2778,10 +2371,10 @@ test("load_host async export: real handle passes, junk raises E8010", function()
 end)
 
 test("load_host nullable-function param export accepts null and matching-sig function", function()
-  local host = __rt.load_host(HOST_FIXTURE, { register = "(?(int)->int)->null" })
+  local host = __rt.load_host(HOST_FIXTURE, { register = "(?(number)->number)->null" })
   assert(host.register.f(__rt.__NULL) == __rt.__NULL)
   local inner = function(x) return x + 1 end
-  assert(host.register.f(__rt.function_("(int)->int", inner)) == __rt.__NULL)
+  assert(host.register.f(__rt.function_("(number)->number", inner)) == __rt.__NULL)
   -- a raw Lua function is rejected by the param check
   assert_error(function() host.register.f(inner) end, "E8010")
 end)
@@ -2837,7 +2430,7 @@ test("load_host mapped load failures delegate to the registered arm renderer", f
   -- HOST_LOAD_MISSING_EXPORT: the declared name is absent from the raw
   -- module.
   local missing = assert_error(function()
-    __rt.load_host(HOST_FIXTURE, { missing = "()->int" }, "probe.deal", 6, 1)
+    __rt.load_host(HOST_FIXTURE, { missing = "()->number" }, "probe.deal", 6, 1)
   end, "E8011")
   assert(missing.message == "arm:HOST_LOAD_MISSING_EXPORT")
   assert(#host_load_arm_calls == 1)
@@ -2849,7 +2442,7 @@ test("load_host mapped load failures delegate to the registered arm renderer", f
   -- HOST_LOAD_FAILED: the raw module's require fails.
   host_load_arm_calls = {}
   local failed = assert_error(function()
-    __rt.load_host("no/such/deal-runtime-host-module", { x = "()->int" },
+    __rt.load_host("no/such/deal-runtime-host-module", { x = "()->number" },
       "probe.deal", 7, 2)
   end, "E8011")
   assert(failed.message == "arm:HOST_LOAD_FAILED")
@@ -2863,7 +2456,7 @@ test("load_host mapped load failures delegate to the registered arm renderer", f
   host_load_arm_calls = {}
   package.loaded["deal-runtime-test-nontable"] = 42
   local nonModule = assert_error(function()
-    __rt.load_host("deal-runtime-test-nontable", { x = "()->int" })
+    __rt.load_host("deal-runtime-test-nontable", { x = "()->number" })
   end, "E8011")
   package.loaded["deal-runtime-test-nontable"] = nil
   assert(nonModule.message == "arm:HOST_LOAD_NOT_A_MODULE")
@@ -2941,10 +2534,10 @@ test("load_host mapped failures without the registered renderer fail closed", fu
   __rt.__hostLoadArm = nil
   local probes = {
     function()
-      __rt.load_host(HOST_FIXTURE, { missing = "()->int" }, "probe.deal", 6, 1)
+      __rt.load_host(HOST_FIXTURE, { missing = "()->number" }, "probe.deal", 6, 1)
     end,
     function()
-      __rt.load_host("no/such/deal-runtime-host-module", { x = "()->int" })
+      __rt.load_host("no/such/deal-runtime-host-module", { x = "()->number" })
     end,
     function()
       __rt.load_host(HOST_FIXTURE,
@@ -3002,7 +2595,7 @@ local function assert_parse_rejected(text)
 end
 
 test("canonical parser accepts every primitive keyword", function()
-  local keywords = { "null", "boolean", "int", "number", "string", "table" }
+  local keywords = { "null", "boolean", "number", "number", "string", "table" }
   for _, kw in ipairs(keywords) do
     local ast = assert_parse_ok(kw)
     assert(ast.kind == "primitive", kw .. " parsed with kind " .. tostring(ast.kind))
@@ -3012,9 +2605,9 @@ end)
 
 test("canonical parser accepts composite shapes with byte-exact text", function()
   local shapes = {
-    "[int]", "[[table]]", "?int", "?[?table]", "()->null", "(int)->int",
-    "(int,string)->boolean", "async()->int", "async(int)->?string",
-    "?(int)->int", "[?(table)->table]", "async()->async()->int",
+    "[number]", "[[table]]", "?number", "?[?table]", "()->null", "(number)->number",
+    "(number,string)->boolean", "async()->number", "async(number)->?string",
+    "?(number)->number", "[?(table)->table]", "async()->async()->number",
     "(table)->table", "?table", "[table]",
   }
   for _, t in ipairs(shapes) do
@@ -3031,9 +2624,9 @@ test("canonical parser builds nested atom structure", function()
   assert(#ast.element.inner.params == 1)
   assert(ast.element.inner.params[1].name == "table")
   assert(ast.element.inner.ret.name == "table")
-  local fn = assert_parse_ok("async()->int")
+  local fn = assert_parse_ok("async()->number")
   assert(fn.kind == "function" and fn.isAsync == true)
-  assert(#fn.params == 0 and fn.ret.name == "int")
+  assert(#fn.params == 0 and fn.ret.name == "number")
 end)
 
 test("canonical parser accepts class atoms byte-for-byte", function()
@@ -3057,7 +2650,7 @@ end)
 
 test("canonical parser rejects every legacy dialect spelling", function()
   local legacy = {
-    "int[]", "bytes[]", "string[]", "int|null", "?int|null", "string|null",
+    "number[]", "bytes[]", "string[]", "number|null", "?number|null", "string|null",
     "T[]", "T|null", "...T[]", "User", "ServerConfig", "Foo",
   }
   for _, t in ipairs(legacy) do
@@ -3067,8 +2660,8 @@ end)
 
 test("canonical parser rejects malformed canonical shapes", function()
   local malformed = {
-    "[]", "??int", "?null", "(int)", "(int)->", "->int", "(int,)->int",
-    "()", "async", "async[int]", "async ", "Async(int)->int", "asyncFoo",
+    "[]", "??number", "?null", "(number)", "(number)->", "->number", "(number,)->number",
+    "()", "async", "async[number]", "async ", "Async(number)->number", "asyncFoo",
   }
   for _, t in ipairs(malformed) do
     assert_parse_rejected(t)
@@ -3119,8 +2712,8 @@ end)
 
 test("canonical parser requires complete consumption", function()
   local trailing = {
-    "int ", " int", "intFoo", "inte", "nulls", "(int)->int|null", "1",
-    "@a/b] ", "[int", "int]", "[[int]", "@a/b c", "int,x",
+    "number ", " number", "intFoo", "inte", "nulls", "(number)->number|null", "1",
+    "@a/b] ", "[number", "number]", "[[number]", "@a/b c", "number,x",
   }
   for _, t in ipairs(trailing) do
     assert_parse_rejected(t)
@@ -3132,7 +2725,7 @@ end)
 test("check_canonical_type accepts every primitive row", function()
   assert(__rt.check_canonical_type("null", __rt.__NULL) == __rt.__NULL)
   assert(__rt.check_canonical_type("boolean", true) == true)
-  assert(__rt.check_canonical_type("int", 42) == 42)
+  assert(__rt.check_canonical_type("number", 42) == 42)
   assert(__rt.check_canonical_type("number", 1.5) == 1.5)
   assert(__rt.check_canonical_type("string", "s") == "s")
   assert(__rt.check_canonical_type("table", {}) ~= nil)
@@ -3142,61 +2735,61 @@ end)
 
 
 
-test("check_canonical_type int row shares the int32 gate", function()
-  assert_error(function() __rt.check_canonical_type("int", "x") end, "E8001")
-  assert_error(function() __rt.check_canonical_type("int", 2147483648) end, "E8004")
-  assert_error(function() __rt.check_canonical_type("int", -2147483649) end, "E8004")
-  assert_error(function() __rt.check_canonical_type("int", 1.5) end, "E8001")
-  assert_error(function() __rt.check_canonical_type("int", 0 / 0) end, "E8001")
+test("check_canonical_type number row shares the int32 gate", function()
+  assert_error(function() __rt.check_canonical_type("number", "x") end, "E8001")
+  assert(__rt.check_canonical_type("number", 2147483648) == 2147483648)
+  assert(__rt.check_canonical_type("number", -2147483649) == -2147483649)
+  assert(__rt.check_canonical_type("number", 1.5) == 1.5)
+  local nan = __rt.check_canonical_type("number", 0 / 0); assert(nan ~= nan)
 end)
 
 test("check_canonical_type array row checks elements in order", function()
-  assert(__rt.check_canonical_type("[int]", { 1, 2, 3 }) ~= nil)
-  assert(__rt.check_canonical_type("[[int]]", { { 1 }, { 2 } }) ~= nil)
+  assert(__rt.check_canonical_type("[number]", { 1, 2, 3 }) ~= nil)
+  assert(__rt.check_canonical_type("[[number]]", { { 1 }, { 2 } }) ~= nil)
 end)
 
 test("check_canonical_type array row wraps the first failing index in E8003", function()
   local err = assert_error(function()
-    __rt.check_canonical_type("[int]", { 1, "x", 3 })
+    __rt.check_canonical_type("[number]", { 1, "x", 3 })
   end, "E8003")
   assert(err.message == "array element 2 type mismatch", tostring(err.message))
-  assert(err.expected == "int")
+  assert(err.expected == "number")
   assert(err.actual == "string")
   assert_error(function()
-    __rt.check_canonical_type("[[int]]", { { 1 }, { 2, "x" } })
+    __rt.check_canonical_type("[[number]]", { { 1 }, { 2, "x" } })
   end, "E8003")
 end)
 
 test("check_canonical_type array row rejects non-arrays with E8001", function()
-  assert_error(function() __rt.check_canonical_type("[int]", 42) end, "E8001")
-  assert_error(function() __rt.check_canonical_type("[int]", "x") end, "E8001")
+  assert_error(function() __rt.check_canonical_type("[number]", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("[number]", "x") end, "E8001")
 end)
 
 test("check_canonical_type nullable row", function()
-  assert(__rt.check_canonical_type("?int", __rt.__NULL) == __rt.__NULL)
-  assert(__rt.check_canonical_type("?int", nil) == __rt.__NULL)
-  assert(__rt.check_canonical_type("?int", 42) == 42)
-  assert_error(function() __rt.check_canonical_type("?int", "x") end, "E8001")
+  assert(__rt.check_canonical_type("?number", __rt.__NULL) == __rt.__NULL)
+  assert(__rt.check_canonical_type("?number", nil) == __rt.__NULL)
+  assert(__rt.check_canonical_type("?number", 42) == 42)
+  assert_error(function() __rt.check_canonical_type("?number", "x") end, "E8001")
 end)
 
 test("check_canonical_type function row compares sigs byte-for-byte", function()
-  local w = __rt.function_("(int)->int", function(x) return x end)
-  assert(__rt.check_canonical_type("(int)->int", w) == w)
+  local w = __rt.function_("(number)->number", function(x) return x end)
+  assert(__rt.check_canonical_type("(number)->number", w) == w)
   local err = assert_error(function()
-    __rt.check_canonical_type("(string)->int", w)
+    __rt.check_canonical_type("(string)->number", w)
   end, "E8010")
-  assert(err.message == "function signature mismatch: expected (string)->int, got (int)->int",
+  assert(err.message == "function signature mismatch: expected (string)->number, got (number)->number",
       tostring(err.message))
-  assert_error(function() __rt.check_canonical_type("(int)->int", 42) end, "E8001")
-  assert_error(function() __rt.check_canonical_type("(int)->int", {}) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("(number)->number", 42) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("(number)->number", {}) end, "E8001")
 end)
 
 test("check_canonical_type function row keeps the exact async marker", function()
-  local w = __rt.function_("async()->int", function() return 1 end)
-  assert(__rt.check_canonical_type("async()->int", w) == w)
+  local w = __rt.function_("async()->number", function() return 1 end)
+  assert(__rt.check_canonical_type("async()->number", w) == w)
   -- The sync descriptor is a different byte-for-byte signature.
-  assert_error(function() __rt.check_canonical_type("()->int", w) end, "E8010")
-  local wrong = __rt.function_("async()->int", function() return 1 end)
+  assert_error(function() __rt.check_canonical_type("()->number", w) end, "E8010")
+  local wrong = __rt.function_("async()->number", function() return 1 end)
   assert_error(function() __rt.check_canonical_type("async()->string", wrong) end, "E8010")
 end)
 
@@ -3222,9 +2815,9 @@ test("check_canonical_type class row matches atoms byte-for-byte", function()
 end)
 
 test("check_canonical_type rejects legacy and malformed descriptors", function()
-  local err = assert_error(function() __rt.check_canonical_type("int[]", { 1, 2 }) end, "E8001")
+  local err = assert_error(function() __rt.check_canonical_type("number[]", { 1, 2 }) end, "E8001")
   assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
-  assert_error(function() __rt.check_canonical_type("int|null", 1) end, "E8001")
+  assert_error(function() __rt.check_canonical_type("number|null", 1) end, "E8001")
   assert_error(function() __rt.check_canonical_type("Error", {}) end, "E8001")
   assert_error(function() __rt.check_canonical_type(nil, 1) end, "E8001")
   assert_error(function() __rt.check_canonical_type(42, 1) end, "E8001")
@@ -3232,43 +2825,43 @@ end)
 
 test("check_canonical_type forwards span args on every failure path", function()
   local err = assert_error(function()
-    __rt.check_canonical_type("int", "x", "canonical.deal", 10, 20)
+    __rt.check_canonical_type("number", "x", "canonical.deal", 10, 20)
   end, "E8001")
   assert(err.file == "canonical.deal" and err.line == 10 and err.column == 20)
   err = assert_error(function()
-    __rt.check_canonical_type("[int]", { 1, "x" }, "canonical.deal", 11, 21)
+    __rt.check_canonical_type("[number]", { 1, "x" }, "canonical.deal", 11, 21)
   end, "E8003")
   assert(err.file == "canonical.deal" and err.line == 11 and err.column == 21)
   err = assert_error(function()
-    __rt.check_canonical_type("(int)->int", __rt.function_("(string)->int", function() end),
+    __rt.check_canonical_type("(number)->number", __rt.function_("(string)->number", function() end),
         "canonical.deal", 12, 22)
   end, "E8010")
   assert(err.file == "canonical.deal" and err.line == 12 and err.column == 22)
   err = assert_error(function()
-    __rt.check_canonical_type("int", 2147483648, "canonical.deal", 13, 23)
-  end, "E8004")
+    __rt.check_canonical_type("number", true, "canonical.deal", 13, 23)
+  end, "E8001")
   assert(err.file == "canonical.deal" and err.line == 13 and err.column == 23)
   err = assert_error(function()
-    __rt.check_canonical_type("int[]", 1, "canonical.deal", 14, 24)
+    __rt.check_canonical_type("number[]", 1, "canonical.deal", 14, 24)
   end, "E8001")
   assert(err.file == "canonical.deal" and err.line == 14 and err.column == 24)
 end)
 
 test("boundary flip: check_type IS the canonical matcher", function()
   -- The boundary path now rejects every legacy dialect spelling.
-  assert_error(function() __rt.check_type("int[]", { 1, 2 }) end, "E8001")
+  assert_error(function() __rt.check_type("number[]", { 1, 2 }) end, "E8001")
   assert_error(function() __rt.check_type("string|null", __rt.__NULL) end, "E8001")
   assert_error(function() __rt.check_type("@/Error", __rt.error_value("E8001", "boom")) end, "E8001")
   assert_error(function() __rt.check_type("@$builtin/Error", __rt.error_value("E8001", "boom")) end, "E8001")
   -- Canonical spellings pass through the same entry.
-  assert(__rt.check_type("[int]", { 1, 2 }) ~= nil)
+  assert(__rt.check_type("[number]", { 1, 2 }) ~= nil)
   assert(__rt.check_type("?string", __rt.__NULL) == __rt.__NULL)
   local ev = __rt.error_value("E8001", "boom")
   assert(ev[__K.classname] == "Error")
   assert(__rt.check_type("Error", ev) == ev)
   -- The canonical alias entries are the same matcher.
-  assert(__rt.check_canonical_type("[int]", { 1 }) ~= nil)
-  assert_parse_rejected("int[]")
+  assert(__rt.check_canonical_type("[number]", { 1 }) ~= nil)
+  assert_parse_rejected("number[]")
   assert_parse_rejected("string|null")
   -- The superseded builtin aliases are rejected (no fallback identity).
   assert_parse_rejected("@/Error")
@@ -3302,14 +2895,14 @@ end
 test("invoke_async_export success returns the matcher-validated completion value", function()
   local invocations = 0
   local exports = {
-    oracle = __rt.function_("async()->int", function()
+    oracle = __rt.function_("async()->number", function()
       invocations = invocations + 1
       return __rt.async_start(function()
         return 42
       end)
     end),
   }
-  local result = __rt.invoke_async_export(exports, "oracle", "int")
+  local result = __rt.invoke_async_export(exports, "oracle", "number")
   assert(result == 42)
   assert(invocations == 1, "exactly one operation is invoked per call")
 end)
@@ -3318,32 +2911,32 @@ test("invoke_async_export drives nested awaits to completion through the preserv
   -- Mirrors generated await sites: coroutine.yield(...) plus the
   -- await-site completion check on the resumed value.
   local exports = {
-    oracle = __rt.function_("async()->int", function()
+    oracle = __rt.function_("async()->number", function()
       return __rt.async_start(function()
-        local a = __rt.check_int(coroutine.yield(__rt.async_start(function()
+        local a = __rt.check_number(coroutine.yield(__rt.async_start(function()
           return 21
         end)), "generated.deal", 3, 9)
-        local b = __rt.check_int(coroutine.yield(__rt.async_start(function()
+        local b = __rt.check_number(coroutine.yield(__rt.async_start(function()
           return a + 21
         end)), "generated.deal", 4, 9)
         return b
       end)
     end),
   }
-  assert(__rt.invoke_async_export(exports, "oracle", "int") == 42)
+  assert(__rt.invoke_async_export(exports, "oracle", "number") == 42)
 end)
 
 test("invoke_async_export propagates operation DEAL errors unchanged", function()
   local raised = __rt._err("E8005", "integer division by zero",
       "oracle.deal", 7, 19)
   local exports = {
-    oracle = __rt.function_("async()->int", function()
+    oracle = __rt.function_("async()->number", function()
       return __rt.async_start(function()
         error(raised)
       end)
     end),
   }
-  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "int")
+  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "number")
   assert(not ok)
   assert(type(err) == "table" and err.code == "E8005")
   assert(err == raised, "the exact DEAL Error table propagates unchanged")
@@ -3352,9 +2945,9 @@ test("invoke_async_export propagates operation DEAL errors unchanged", function(
 end)
 
 test("invoke_async_export propagates awaited DEAL errors unchanged", function()
-  local raised = __rt._err("E8004", "int out of range", "deep.deal", 11, 33)
+  local raised = __rt._err("E8004", "number out of range", "deep.deal", 11, 33)
   local exports = {
-    oracle = __rt.function_("async()->int", function()
+    oracle = __rt.function_("async()->number", function()
       return __rt.async_start(function()
         return coroutine.yield(__rt.async_start(function()
           error(raised)
@@ -3362,7 +2955,7 @@ test("invoke_async_export propagates awaited DEAL errors unchanged", function()
       end)
     end),
   }
-  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "int")
+  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "number")
   assert(not ok)
   assert(type(err) == "table" and err.code == "E8004")
   assert(err == raised, "the awaited DEAL Error table propagates unchanged")
@@ -3370,19 +2963,19 @@ end)
 
 test("invoke_async_export completion validation uses the canonical matcher", function()
   local exportsArr = {
-    oracle = __rt.function_("async()->[int]", function()
+    oracle = __rt.function_("async()->[number]", function()
       return __rt.async_start(function() return { 1, 2, 3 } end)
     end),
   }
-  local arr = __rt.invoke_async_export(exportsArr, "oracle", "[int]")
+  local arr = __rt.invoke_async_export(exportsArr, "oracle", "[number]")
   assert(arr[1] == 1 and arr[2] == 2 and arr[3] == 3)
 
   local exportsNull = {
-    oracle = __rt.function_("async()->?int", function()
+    oracle = __rt.function_("async()->?number", function()
       return __rt.async_start(function() return __rt.__NULL end)
     end),
   }
-  assert(__rt.invoke_async_export(exportsNull, "oracle", "?int")
+  assert(__rt.invoke_async_export(exportsNull, "oracle", "?number")
       == __rt.__NULL)
 
   local inst = { [__K.kind] = "class", [__K.classname] = "@mod/Thing" }
@@ -3397,58 +2990,58 @@ end)
 
 test("invoke_async_export completion mismatch is a DEAL error, never a host failure", function()
   local exports = {
-    oracle = __rt.function_("async()->int", function()
-      return __rt.async_start(function() return "not an int" end)
+    oracle = __rt.function_("async()->number", function()
+      return __rt.async_start(function() return "not an number" end)
     end),
   }
-  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "int")
+  local ok, err = pcall(__rt.invoke_async_export, exports, "oracle", "number")
   assert(not ok)
   assert(type(err) == "table" and err.code == "E8001")
   assert(err.__hostInvocationFailure == nil,
       "completion mismatch must be a DEAL error, not the host signal")
   local badArr = {
-    oracle = __rt.function_("async()->[int]", function()
+    oracle = __rt.function_("async()->[number]", function()
       return __rt.async_start(function() return { 1, "x" } end)
     end),
   }
-  ok, err = pcall(__rt.invoke_async_export, badArr, "oracle", "[int]")
+  ok, err = pcall(__rt.invoke_async_export, badArr, "oracle", "[number]")
   assert(not ok and type(err) == "table" and err.code == "E8003")
   assert(err.__hostInvocationFailure == nil)
 end)
 
 test("invoke_async_export missing export raises the host-invocation failure signal", function()
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export({}, "oracle", "int")
+    __rt.invoke_async_export({}, "oracle", "number")
   end, "missing export 'oracle'")
 end)
 
 test("invoke_async_export sync export raises the host-invocation failure signal", function()
   local exports = {
-    oracle = __rt.function_("()->int", function() return 1 end),
+    oracle = __rt.function_("()->number", function() return 1 end),
   }
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(exports, "oracle", "int")
-  end, "is sync: expected 'async()->int', got '()->int'")
+    __rt.invoke_async_export(exports, "oracle", "number")
+  end, "is sync: expected 'async()->number', got '()->number'")
 end)
 
 test("invoke_async_export parameterized export raises the host-invocation failure signal", function()
   local exports = {
-    oracle = __rt.function_("async(int)->int", function(x)
+    oracle = __rt.function_("async(number)->number", function(x)
       return __rt.async_start(function() return x end)
     end),
   }
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(exports, "oracle", "int")
-  end, "is parameterized: expected 'async()->int', got 'async(int)->int'")
+    __rt.invoke_async_export(exports, "oracle", "number")
+  end, "is parameterized: expected 'async()->number', got 'async(number)->number'")
 end)
 
 test("invoke_async_export duplicate export raises the host-invocation failure signal", function()
-  local w = __rt.function_("async()->int", function()
+  local w = __rt.function_("async()->number", function()
     return __rt.async_start(function() return 1 end)
   end)
   local exports = { oracle = w, alias = w }
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(exports, "oracle", "int")
+    __rt.invoke_async_export(exports, "oracle", "number")
   end, "duplicate export 'oracle'")
 end)
 
@@ -3459,8 +3052,8 @@ test("invoke_async_export descriptor-mismatched export raises the host-invocatio
     end),
   }
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(exports, "oracle", "int")
-  end, "signature mismatch: expected 'async()->int', got 'async()->string'")
+    __rt.invoke_async_export(exports, "oracle", "number")
+  end, "signature mismatch: expected 'async()->number', got 'async()->string'")
   -- A legacy-dialect carried sig is a non-canonical signature: the
   -- exact-name + exact-signature selection rejects it.
   local legacy = {
@@ -3475,10 +3068,10 @@ end)
 
 test("invoke_async_export non-wrapper export raises the host-invocation failure signal", function()
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export({ oracle = 42 }, "oracle", "int")
+    __rt.invoke_async_export({ oracle = 42 }, "oracle", "number")
   end, "not a function wrapper")
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export({ oracle = function() end }, "oracle", "int")
+    __rt.invoke_async_export({ oracle = function() end }, "oracle", "number")
   end, "not a function wrapper")
 end)
 
@@ -3486,22 +3079,22 @@ test("invoke_async_export non-operation result raises the host-invocation failur
   -- The carried sig promises the exact async()->R; a wrapper whose .f
   -- returns a raw value is a non-production export.
   local exports = {
-    oracle = __rt.function_("async()->int", function() return 42 end),
+    oracle = __rt.function_("async()->number", function() return 42 end),
   }
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(exports, "oracle", "int")
+    __rt.invoke_async_export(exports, "oracle", "number")
   end, "did not produce an async operation")
 end)
 
 test("invoke_async_export malformed protocol inputs raise the host-invocation failure signal", function()
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(nil, "oracle", "int")
+    __rt.invoke_async_export(nil, "oracle", "number")
   end, "exports must be a table")
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export({}, 42, "int")
+    __rt.invoke_async_export({}, 42, "number")
   end, "exportName must be a string")
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export({}, "oracle", "int[]")
+    __rt.invoke_async_export({}, "oracle", "number[]")
   end, "not a canonical descriptor")
   assert_host_invocation_failure(function()
     __rt.invoke_async_export({}, "oracle", "@$builtin/Error")
@@ -3514,25 +3107,25 @@ end)
 test("invoke_async_export invokes exactly one operation per call and never invokes a rejected export", function()
   local invocations = 0
   local exports = {
-    oracle = __rt.function_("async()->int", function()
+    oracle = __rt.function_("async()->number", function()
       invocations = invocations + 1
       return __rt.async_start(function() return invocations end)
     end),
   }
-  assert(__rt.invoke_async_export(exports, "oracle", "int") == 1)
+  assert(__rt.invoke_async_export(exports, "oracle", "number") == 1)
   assert(invocations == 1)
-  assert(__rt.invoke_async_export(exports, "oracle", "int") == 2)
+  assert(__rt.invoke_async_export(exports, "oracle", "number") == 2)
   assert(invocations == 2)
 
   local rejectedCalls = 0
   local rejected = {
-    oracle = __rt.function_("()->int", function()
+    oracle = __rt.function_("()->number", function()
       rejectedCalls = rejectedCalls + 1
       return 1
     end),
   }
   assert_host_invocation_failure(function()
-    __rt.invoke_async_export(rejected, "oracle", "int")
+    __rt.invoke_async_export(rejected, "oracle", "number")
   end, "is sync")
   assert(rejectedCalls == 0, "a rejected export must never be invoked")
 end)

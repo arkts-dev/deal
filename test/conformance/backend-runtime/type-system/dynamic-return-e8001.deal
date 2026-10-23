@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, functions, runtime-errors
 
-export function test_dynamic_return_runtime_error(): int {
+export function test_dynamic_return_runtime_error(): number {
   let t: table = { value: "bad" };
   return t.value;
 }

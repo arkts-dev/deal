@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E5003",
     "line": 7,
-    "column": 56,
-    "message": "Return type mismatch: expected int, got int | null"
+    "column": 59,
+    "message": "Return type mismatch: expected number, got number | null"
   }
 }

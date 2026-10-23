@@ -4,6 +4,6 @@
 // @features: type-system, unions, diagnostics, v1.2
 
 export function main(): null {
-  let value: int | number = 1;
+  let value: number | number = 1;
   return null;
 }

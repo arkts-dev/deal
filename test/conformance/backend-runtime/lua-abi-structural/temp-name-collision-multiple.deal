@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: lua-abi, naming, arrays, structural
 
-export function test_abi_multiple_temp_name_near_collision(): int {
-  let __idx: int = 100;
-  let __idx2: int = 200;
-  let xs: int[] = [4, 5, 6];
-  let result: int = xs[0] + xs[2] + __idx + __idx2;
+export function test_abi_multiple_temp_name_near_collision(): number {
+  let __idx: number = 100;
+  let __idx2: number = 200;
+  let xs: number[] = [4, 5, 6];
+  let result: number = xs[0] + xs[2] + __idx + __idx2;
   if (result !== 310) { throw { code: "TEST_FAIL", message: "temp collision failed" }; }
   return result;
 }

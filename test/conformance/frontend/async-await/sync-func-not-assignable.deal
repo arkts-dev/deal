@@ -1,13 +1,13 @@
 // @spec: Async/Await — sync function type not assignable to async
-// @description: (int)=>int not assignable to async (int)=>int due to async marker mismatch
+// @description: (int)=>number not assignable to async (int)=>number due to async marker mismatch
 // @expected: compile-error E3001
 // @features: async, types
 
-function g(x: int): int { return x; }
+function g(x: number): number { return x; }
 export function main(): null { return null; }
 export function main(): null {
 
-let f: async (x: int) => int = g;
+let f: async (x: number) => number = g;
 
 
 return null;

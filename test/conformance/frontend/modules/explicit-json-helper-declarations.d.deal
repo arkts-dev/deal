@@ -3,6 +3,6 @@
 // @expected: compile-ok
 // @features: declarations, jsonable, v1.2
 
-export class Model { n: int = 0; }
+export class Model { n: number = 0; }
 export function Model$fromJson(s: string): Model | null;
 export function Model$toJson(v: Model): string;

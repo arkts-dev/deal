@@ -4,7 +4,7 @@ import java.util.Objects;
 
 public record BoundaryContext(
     Integer parameterIndex,
-    Integer index,
+    Double index,
     Integer length,
     Integer elementIndex,
     String fieldPath
@@ -30,7 +30,7 @@ public record BoundaryContext(
      * checked ({@code index < 0} or {@code index >= length} is the pinned
      * E8002 before any storage access or element/result validation).
      */
-    public static BoundaryContext arrayRead(int index, int length) {
+    public static BoundaryContext arrayRead(double index, int length) {
         if (length < 0) {
             throw new IllegalArgumentException("length must be >= 0, got " + length);
         }
@@ -39,7 +39,7 @@ public record BoundaryContext(
 
     /** The {@code ARRAY_WRITE_BOUNDS_THEN_ELEMENT}/{@code ARRAY_DELETE_BOUNDS}
      *  context: the index and the array length at check time. */
-    public static BoundaryContext writeBounds(int index, int length) {
+    public static BoundaryContext writeBounds(double index, int length) {
         if (length < 0) {
             throw new IllegalArgumentException("length must be >= 0, got " + length);
         }

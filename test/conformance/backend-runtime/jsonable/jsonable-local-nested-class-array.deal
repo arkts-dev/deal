@@ -4,12 +4,12 @@
 // @features: jsonable, arrays, nested
 
 // @jsonable
-export class Child { value: int = 0; }
+export class Child { value: number = 0; }
 
 // @jsonable
 export class Parent { children: Child[] = []; }
 
-function child(v: int): Child { return { value: v }; }
+function child(v: number): Child { return { value: v }; }
 
 export function test_jsonable_local_nested_class_array(): null {
   let p: Parent = { children: [child(3), child(4)] };

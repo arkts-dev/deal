@@ -5,7 +5,7 @@
 
 // @jsonable
 export class Depth {
-  value: int = 0;
+  value: number = 0;
 }
 
 export function test_fromjson_duplicate_key(): null {
@@ -42,12 +42,16 @@ export function test_fromjson_duplicate_key(): null {
   // a negative token whose magnitude exceeds 2147483648 is the number
   // variant, which an int field rejects — never the out-of-range int.
   let below: Depth | null = Depth$fromJson("{\"value\":-2147483649}");
-  if (below !== null) {
-    throw { code: "TEST_FAIL", message: "-2147483649 must be the number variant" };
+  if (below === null) {
+    throw { code: "TEST_FAIL", message: "binary64 field was rejected" };
+  } else {
+    if (below.value !== -2147483649) { throw { code: "TEST_FAIL", message: "binary64 field value mismatch" }; }
   }
   let far: Depth | null = Depth$fromJson("{\"value\":-9999999999}");
-  if (far !== null) {
-    throw { code: "TEST_FAIL", message: "-9999999999 must be the number variant" };
+  if (far === null) {
+    throw { code: "TEST_FAIL", message: "binary64 field was rejected" };
+  } else {
+    if (far.value !== -9999999999) { throw { code: "TEST_FAIL", message: "binary64 field value mismatch" }; }
   }
   let lower: Depth | null = Depth$fromJson("{\"value\":-2147483648}");
   if (lower !== null) {
@@ -58,8 +62,10 @@ export function test_fromjson_duplicate_key(): null {
     throw { code: "TEST_FAIL", message: "-2147483648 must decode at an int field" };
   }
   let rounded: Depth | null = Depth$fromJson("{\"value\":2147483647.00000001}");
-  if (rounded !== null) {
-    throw { code: "TEST_FAIL", message: "the rounded fractional token must fail an int field" };
+  if (rounded === null) {
+    throw { code: "TEST_FAIL", message: "binary64 field was rejected" };
+  } else {
+    if (rounded.value !== 2147483647) { throw { code: "TEST_FAIL", message: "binary64 field value mismatch" }; }
   }
   return null;
 }

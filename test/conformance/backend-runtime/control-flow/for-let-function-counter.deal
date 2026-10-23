@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: control-flow, for, functions, closures, arity, recursion
 
-function one(): int { return 1; }
-function two(): int { return 2; }
-function makeSeven(): () => int { return function(): int { return 7; }; }
+function one(): number { return 1; }
+function two(): number { return 2; }
+function makeSeven(): () => number { return function(): number { return 7; }; }
 
 // The declaration initializer and the update's reassignment: the first test
 // observes one(), the update stores two, and the re-test observes the
@@ -13,8 +13,8 @@ function makeSeven(): () => int { return function(): int { return 7; }; }
 // stale-call regression that keeps testing one() fails the exact count
 // instead of running away.
 function testDeclarationInitializerAndReassignment(): null {
-  let visits: int = 0;
-  { let v14Loop0: () => int = one; while (v14Loop0() === 1) { let f: () => int = v14Loop0; {
+  let visits: number = 0;
+  { let v14Loop0: () => number = one; while (v14Loop0() === 1) { let f: () => number = v14Loop0; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop0 = f; v14Loop0 = two; } }
@@ -27,8 +27,8 @@ function testDeclarationInitializerAndReassignment(): null {
 // The function-expression initializer: the closure value is the counter's
 // first value and the update replaces it.
 function testExpressionInitializer(): null {
-  let visits: int = 0;
-  { let v14Loop1: () => int = function(): int { return 7; }; while (v14Loop1() === 7) { let f: () => int = v14Loop1; {
+  let visits: number = 0;
+  { let v14Loop1: () => number = function(): number { return 7; }; while (v14Loop1() === 7) { let f: () => number = v14Loop1; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop1 = f; v14Loop1 = one; } }
@@ -41,8 +41,8 @@ function testExpressionInitializer(): null {
 // The omitted update: a body assignment replaces the counter, so the re-test
 // reads the current binding (one body visit) instead of the initializer.
 function testOmittedUpdateWithBodyAssignment(): null {
-  let visits: int = 0;
-  { let v14Loop2: () => int = one; while (v14Loop2() === 1) { let f: () => int = v14Loop2; {
+  let visits: number = 0;
+  { let v14Loop2: () => number = one; while (v14Loop2() === 1) { let f: () => number = v14Loop2; {
     visits = visits + 1;
     f = two;
     if (visits > 4) { break; }
@@ -57,8 +57,8 @@ function testOmittedUpdateWithBodyAssignment(): null {
 // re-tests the same function value every time (captured per-iteration
 // incarnations included).
 function testNeverAssignedCounter(): null {
-  let visits: int = 0;
-  { let v14Loop3: () => int = two; while (v14Loop3() === 2) { let f: () => int = v14Loop3; {
+  let visits: number = 0;
+  { let v14Loop3: () => number = two; while (v14Loop3() === 2) { let f: () => number = v14Loop3; {
     visits = visits + 1;
     if (visits === 3) { break; }
   } v14Loop3 = f;  } }
@@ -71,14 +71,14 @@ function testNeverAssignedCounter(): null {
 // A closure created in an iteration captures that iteration's counter
 // incarnation: the stored functions observe one, then two.
 function testCapturedPerIterationValues(): null {
-  let fs: (() => int)[] = [
-    function(): int { return -1; },
-    function(): int { return -1; }
+  let fs: (() => number)[] = [
+    function(): number { return -1; },
+    function(): number { return -1; }
   ];
-  let k: int = 0;
-  let visits: int = 0;
-  { let v14Loop4: () => int = one; while (visits < 2) { let f: () => int = v14Loop4; {
-    fs[k] = function(): int { return f(); };
+  let k: number = 0;
+  let visits: number = 0;
+  { let v14Loop4: () => number = one; while (visits < 2) { let f: () => number = v14Loop4; {
+    fs[k] = function(): number { return f(); };
     k = k + 1;
     visits = visits + 1;
   } v14Loop4 = f; v14Loop4 = two; } }
@@ -91,9 +91,9 @@ function testCapturedPerIterationValues(): null {
 // The alias initializer reads another function-typed binding, and the loop's
 // counter is a distinct binding (the alias keeps its own value).
 function testAliasInitializer(): null {
-  let alias: () => int = two;
-  let visits: int = 0;
-  { let v14Loop5: () => int = alias; while (v14Loop5() === 2) { let f: () => int = v14Loop5; {
+  let alias: () => number = two;
+  let visits: number = 0;
+  { let v14Loop5: () => number = alias; while (v14Loop5() === 2) { let f: () => number = v14Loop5; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop5 = f; v14Loop5 = one; } }
@@ -106,8 +106,8 @@ function testAliasInitializer(): null {
 // A returned closure as the initializer: the counter holds a call-result
 // function value and the update replaces it with a declaration value.
 function testCallResultInitializer(): null {
-  let visits: int = 0;
-  { let v14Loop6: () => int = makeSeven(); while (v14Loop6() === 7) { let f: () => int = v14Loop6; {
+  let visits: number = 0;
+  { let v14Loop6: () => number = makeSeven(); while (v14Loop6() === 7) { let f: () => number = v14Loop6; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop6 = f; v14Loop6 = one; } }
@@ -121,8 +121,8 @@ function testCallResultInitializer(): null {
 // the loop head, and every later assignment adapts again, so a dropped
 // trailing argument never reaches the source body.
 function testArityAdapterCounter(): null {
-  let visits: int = 0;
-  { let v14Loop7: (x: int) => int = one; while (v14Loop7(0) === 1) { let f: (x: int) => int = v14Loop7; {
+  let visits: number = 0;
+  { let v14Loop7: (x: number) => number = one; while (v14Loop7(0) === 1) { let f: (x: number) => number = v14Loop7; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop7 = f; v14Loop7 = two; } }
@@ -136,8 +136,8 @@ function testArityAdapterCounter(): null {
 // the first visit still transfers the iteration's counter value, so the
 // second test observes the reassigned two and the loop ends after one visit.
 function testContinueRunsUpdate(): null {
-  let visits: int = 0;
-  { let v14Loop8: () => int = one; while (v14Loop8() === 1) { let f: () => int = v14Loop8; {
+  let visits: number = 0;
+  { let v14Loop8: () => number = one; while (v14Loop8() === 1) { let f: () => number = v14Loop8; {
     visits = visits + 1;
     if (visits > 4) { break; }
     { v14Loop8 = f; v14Loop8 = two; continue; }
@@ -151,8 +151,8 @@ function testContinueRunsUpdate(): null {
 // A break skips the update: the counter is never reassigned, so the loop
 // exits on the source break after exactly one visit.
 function testBreakSkipsUpdate(): null {
-  let visits: int = 0;
-  { let v14Loop9: () => int = one; while (v14Loop9() === 1) { let f: () => int = v14Loop9; {
+  let visits: number = 0;
+  { let v14Loop9: () => number = one; while (v14Loop9() === 1) { let f: () => number = v14Loop9; {
     visits = visits + 1;
     break;
   } v14Loop9 = f; v14Loop9 = two; } }
@@ -165,24 +165,24 @@ function testBreakSkipsUpdate(): null {
 // Recursive function values keep their own bodies: a direct-recursive value
 // and a mutually recursive pair stay callable through the counter, and the
 // counter's reassignment selects the current one.
-function fib(n: int): int {
+function fib(n: number): number {
   if (n < 2) { return n; }
   return fib(n - 1) + fib(n - 2);
 }
 
-function isEven(n: int): boolean {
+function isEven(n: number): boolean {
   if (n === 0) { return true; }
   return isOdd(n - 1);
 }
 
-function isOdd(n: int): boolean {
+function isOdd(n: number): boolean {
   if (n === 0) { return false; }
   return isEven(n - 1);
 }
 
 function testRecursiveCounterValues(): null {
-  let visits: int = 0;
-  { let v14Loop10: (n: int) => int = fib; while (v14Loop10(5) === 5) { let f: (n: int) => int = v14Loop10; {
+  let visits: number = 0;
+  { let v14Loop10: (n: number) => number = fib; while (v14Loop10(5) === 5) { let f: (n: number) => number = v14Loop10; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop10 = f; v14Loop10 = one; } }
@@ -193,8 +193,8 @@ function testRecursiveCounterValues(): null {
 }
 
 function testMutuallyRecursiveCounterValues(): null {
-  let visits: int = 0;
-  { let v14Loop11: (n: int) => boolean = isEven; while (v14Loop11(10)) { let f: (n: int) => boolean = v14Loop11; {
+  let visits: number = 0;
+  { let v14Loop11: (n: number) => boolean = isEven; while (v14Loop11(10)) { let f: (n: number) => boolean = v14Loop11; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop11 = f; v14Loop11 = isOdd; } }
@@ -208,9 +208,9 @@ function testMutuallyRecursiveCounterValues(): null {
 // f resolves the enclosing binding, and the loop leaves that binding
 // untouched.
 function testLexicalScopeOfTheCounter(): null {
-  let f: () => int = two;
-  let visits: int = 0;
-  { let v14Loop12: () => int = one; while (v14Loop12() === 1) { let f: () => int = v14Loop12; {
+  let f: () => number = two;
+  let visits: number = 0;
+  { let v14Loop12: () => number = one; while (v14Loop12() === 1) { let f: () => number = v14Loop12; {
     visits = visits + 1;
     if (visits === 2) { break; }
   } v14Loop12 = f;  } }
@@ -221,9 +221,9 @@ function testLexicalScopeOfTheCounter(): null {
 }
 
 function testShadowedInitializerReadsTheEnclosingBinding(): null {
-  let f: () => int = one;
-  let visits: int = 0;
-  { let v14Loop13: () => int = f; while (v14Loop13() === 1) { let f: () => int = v14Loop13; {
+  let f: () => number = one;
+  let visits: number = 0;
+  { let v14Loop13: () => number = f; while (v14Loop13() === 1) { let f: () => number = v14Loop13; {
     visits = visits + 1;
     if (visits === 2) { break; }
   } v14Loop13 = f;  } }
@@ -237,8 +237,8 @@ function testShadowedInitializerReadsTheEnclosingBinding(): null {
 // crosses the loop-head declaration and every read republishes it under the
 // intrinsic's own declared signature.
 function testIntrinsicCounter(): null {
-  let visits: int = 0;
-  { let v14Loop14: (x: number) => int = int; while (v14Loop14(1.0) === 1) { let f: (x: number) => int = v14Loop14; {
+  let visits: number = 0;
+  { let v14Loop14: (x: number) => number = int; while (v14Loop14(1.0) === 1) { let f: (x: number) => number = v14Loop14; {
     visits = visits + 1;
     break;
   } v14Loop14 = f;  } }
@@ -252,8 +252,8 @@ function testIntrinsicCounter(): null {
 // function and the update stores the null value, so the re-test ends the
 // loop without ever calling a possibly-null value.
 function testNullableFunctionCounter(): null {
-  let visits: int = 0;
-  { let v14Loop15: (() => int) | null = one; while (v14Loop15 !== null) { let f: (() => int) | null = v14Loop15; {
+  let visits: number = 0;
+  { let v14Loop15: (() => number) | null = one; while (v14Loop15 !== null) { let f: (() => number) | null = v14Loop15; {
     visits = visits + 1;
     if (visits > 4) { break; }
   } v14Loop15 = f; v14Loop15 = null; } }
@@ -282,3 +282,5 @@ export function main(): null {
   testNullableFunctionCounter();
   return null;
 }
+
+function int(value: number): number { return value; }

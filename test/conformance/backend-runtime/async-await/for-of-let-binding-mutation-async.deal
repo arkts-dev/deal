@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async-await, await, for-of, closure, binding
 
-async function identityInt(x: int): int {
+async function identityInt(x: number): number {
   return x;
 }
 
@@ -11,17 +11,17 @@ async function identityText(x: string): string {
   return x;
 }
 
-export async function testAsyncArrayMutation(): int {
-  let readers: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of [1, 2, 3]) {
+export async function testAsyncArrayMutation(): number {
+  let readers: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of [1, 2, 3]) {
     n = n + 10;
-    let echoed: int = await identityInt(n);
+    let echoed: number = await identityInt(n);
     if (echoed !== n) {
       throw { code: "TEST_FAIL", message: "the awaited resumption lost the mutated binding" };
     }
-    readers[visits] = function(): int { return n; };
+    readers[visits] = function(): number { return n; };
     total = total + n;
     visits = visits + 1;
   }
@@ -44,7 +44,7 @@ export async function testAsyncArrayMutation(): int {
 }
 
 export async function testAsyncStringMutation(): string {
-  let visits: int = 0;
+  let visits: number = 0;
   let seen: string = "";
   for (let c: string of "ab") {
     c = c + "+";
@@ -64,14 +64,14 @@ export async function testAsyncStringMutation(): string {
   return seen;
 }
 
-export async function testAsyncClosureMutation(): int {
-  let bump: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }];
-  let visits: int = 0;
-  let total: int = 0;
-  for (let n: int of [1, 2]) {
+export async function testAsyncClosureMutation(): number {
+  let bump: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }];
+  let visits: number = 0;
+  let total: number = 0;
+  for (let n: number of [1, 2]) {
     n = n + 10;
     await identityInt(n);
-    bump[visits] = function(): int { n = n + 100; return n; };
+    bump[visits] = function(): number { n = n + 100; return n; };
     total = total + n;
     visits = visits + 1;
   }

@@ -5,12 +5,12 @@
 
 import * as host from "host/boundary_apply";
 
-function add100(x: int): int {
+function add100(x: number): number {
   return x + 100;
 }
 
-export function test_host_boundary_apply_function(): int {
-  let result: int = host.apply(add100, 41);
+export function test_host_boundary_apply_function(): number {
+  let result: number = host.apply(add100, 41);
   if (result !== 241) {
     throw { code: "TEST_FAIL", message: "function-param adaptation failed" };
   }

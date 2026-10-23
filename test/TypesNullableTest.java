@@ -85,8 +85,8 @@ public class TypesNullableTest {
 
         check(Types.nullableOrSelf(Type.Null.INSTANCE) == Type.Null.INSTANCE,
             "nullableOrSelf(null) is the null atom (null | null is null)");
-        Type once = Types.nullableOrSelf(Type.Int.INSTANCE);
-        check(once instanceof Type.Nullable nullable && nullable.inner() == Type.Int.INSTANCE,
+        Type once = Types.nullableOrSelf(Type.Number.INSTANCE);
+        check(once instanceof Type.Nullable nullable && nullable.inner() == Type.Number.INSTANCE,
             "nullableOrSelf(int) is the one ?int wrap");
         check(Types.nullableOrSelf(once) == once,
             "nullableOrSelf(?int) is that same wrap (idempotent)");

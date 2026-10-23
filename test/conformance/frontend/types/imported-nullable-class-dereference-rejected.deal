@@ -7,6 +7,6 @@ import * as models from "./support/nullable_class_lib";
 
 export function main(): null {
   let b: models.Box | null = null;
-  let n: int = b.n;
+  let n: number = b.n;
   return null;
 }

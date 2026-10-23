@@ -133,19 +133,19 @@ public final class ComparisonSelectorLowering {
             }
             case LT -> {
                 return relationalPayload(leftType, rightType, BinarySelector.STRING_LT,
-                    BinarySelector.NUMBER_LT, BinarySelector.INT32_LT);
+                    BinarySelector.NUMBER_LT);
             }
             case LTE -> {
                 return relationalPayload(leftType, rightType, BinarySelector.STRING_LE,
-                    BinarySelector.NUMBER_LE, BinarySelector.INT32_LE);
+                    BinarySelector.NUMBER_LE);
             }
             case GT -> {
                 return relationalPayload(leftType, rightType, BinarySelector.STRING_GT,
-                    BinarySelector.NUMBER_GT, BinarySelector.INT32_GT);
+                    BinarySelector.NUMBER_GT);
             }
             case GTE -> {
                 return relationalPayload(leftType, rightType, BinarySelector.STRING_GE,
-                    BinarySelector.NUMBER_GE, BinarySelector.INT32_GE);
+                    BinarySelector.NUMBER_GE);
             }
             case AND, OR -> throw new Defect(
                 "the logical operator " + op + " reached the comparison producer: '&&'/'||' "
@@ -167,8 +167,7 @@ public final class ComparisonSelectorLowering {
                                                              boolean negated) {
         if (Types.equals(leftType, rightType)) {
             BinarySelector selector = switch (leftType) {
-                case Type.Int ignored -> negated ? BinarySelector.INT32_NE
-                    : BinarySelector.INT32_EQ;
+
                 case Type.Number ignored -> negated ? BinarySelector.NUMBER_NE
                     : BinarySelector.NUMBER_EQ;
                 case Type.String ignored -> negated ? BinarySelector.STRING_NE
@@ -216,15 +215,14 @@ public final class ComparisonSelectorLowering {
      */
     private static KindPayload.BinaryPayload relationalPayload(Type leftType, Type rightType,
                                                                BinarySelector stringSelector,
-                                                               BinarySelector numberSelector,
-                                                               BinarySelector intSelector) {
+                                                               BinarySelector numberSelector) {
         if (!Types.equals(leftType, rightType)) {
             throw new Defect("mixed relational pair with no closed comparison row (the checker "
                 + "rejects it with E3007 before lowering): " + typeText(leftType) + " vs "
                 + typeText(rightType) + " (COMPARISON_SELECTOR)");
         }
         BinarySelector selector = switch (leftType) {
-            case Type.Int ignored -> intSelector;
+
             case Type.Number ignored -> numberSelector;
             case Type.String ignored -> stringSelector;
             default -> throw new Defect(

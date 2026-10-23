@@ -3,7 +3,7 @@
 // @expected: compile-error E3007
 // @features: operators, diagnostics
 
-function test_unary_minus_boolean(): int {
+function test_unary_minus_boolean(): number {
   return -true;
 }
 

@@ -4,6 +4,6 @@
 // @features: type-system, assignment, nullable, diagnostics, v1.2
 
 export function main(): null {
-  let value: int = null;
+  let value: number = null;
   return null;
 }

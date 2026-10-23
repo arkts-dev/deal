@@ -8,7 +8,7 @@
 // Host<Name>.java (test/JvmConformanceTest.java HOST_JAVA pattern).
 final class HostNullable_return {
   public static Object find(String s) {
-    if ("__BAD__".equals(s)) return Long.valueOf(42L);
+    if ("__BAD__".equals(s)) return Double.valueOf(42L);
     if ("__NULL__".equals(s)) return null;
     return s;
   }

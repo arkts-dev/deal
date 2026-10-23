@@ -7,4 +7,4 @@
 // must adapt the DEAL function wrapper to a plain Lua function before the
 // raw call (host-module-abi D3 case 4).
 
-export function apply(f: (x: int) => int, v: int): int;
+export function apply(f: (x: number) => number, v: number): number;

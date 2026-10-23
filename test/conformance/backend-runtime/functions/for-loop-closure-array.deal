@@ -3,17 +3,17 @@
 // @expected: runtime-ok
 // @features: functions, closures, for-loop, arrays
 
-export function test_for_closure_array(): int {
-  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
-    fs[i] = function(): int { return i; };
+export function test_for_closure_array(): number {
+  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
+  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
+    fs[i] = function(): number { return i; };
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (fs.length !== 3) {
     throw { code: "TEST_FAIL", message: "for-loop closure array length mismatch" };
   }
-  let v0: int = fs[0](); // each captured closure invoked once
-  let v1: int = fs[1]();
-  let v2: int = fs[2]();
+  let v0: number = fs[0](); // each captured closure invoked once
+  let v1: number = fs[1]();
+  let v2: number = fs[2]();
   if (v0 !== 0) {
     throw { code: "TEST_FAIL", message: "for-loop closure array fs[0] captured value mismatch" };
   }

@@ -97,7 +97,7 @@ public class ContainerOpsExecutorTest {
     // =========================================================================
 
     private static final ModuleId MOD = new ModuleId("corpus.container");
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STRING = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor TABLE = RuntimeDescriptor.Table.INSTANCE;
     private static final RuntimeDescriptor NULLABLE_INT = new RuntimeDescriptor.Nullable(INT);
@@ -292,7 +292,6 @@ public class ContainerOpsExecutorTest {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-            case Value.Int intValue -> BoundaryValueView.ofInt(intValue.value());
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
             case Value.Table ignored -> BoundaryValueView.of(ActualKind.TABLE);
@@ -322,7 +321,7 @@ public class ContainerOpsExecutorTest {
             "Null renders NULL");
         check(new Value.Bool(true).actualKind() == ActualKind.BOOLEAN,
             "Bool renders BOOLEAN");
-        check(new Value.Int(-2147483648).actualKind() == ActualKind.INT,
+        check(new Value.Number(-2147483648).actualKind() == ActualKind.NUMBER,
             "Int renders INT");
         check(new Value.Number(Double.NaN).actualKind() == ActualKind.NUMBER,
             "Number renders NUMBER");
@@ -406,12 +405,12 @@ public class ContainerOpsExecutorTest {
 
         // Fail-closed defects.
         expectDefect(() -> ContainerOpsExecutor.executeTableNew(
-                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                op(SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null),
                 Map.of()),
             "executing a CONST op as TABLE_NEW (wrong kind)");
         expectDefect(() -> ContainerOpsExecutor.executeTableNew(
-                tableNewOp(List.of(), FailurePolicyId.INT32_RESULT), Map.of()),
+                tableNewOp(List.of(), FailurePolicyId.SQRT_NEGATIVE), Map.of()),
             "a TABLE_NEW carrying a non-pinned policy");
         expectDefect(() -> ContainerOpsExecutor.executeTableNew(
                 tableNewOp(List.of(new KindPayload.TableEntry("k", new ValueId(9000))),
@@ -427,7 +426,7 @@ public class ContainerOpsExecutorTest {
     /** Puts the three pinned element values (int, string, null) into the lookup. */
     private static List<ValueId> putTestElements(Map<ValueId, Value> values) {
         List<ValueId> ids = new ArrayList<>();
-        for (Value element : List.of(new Value.Int(40), Value.string("mid"), Value.Null.INSTANCE)) {
+        for (Value element : List.of(new Value.Number(40), Value.string("mid"), Value.Null.INSTANCE)) {
             ValueId id = nextValue();
             values.put(id, element);
             ids.add(id);
@@ -454,10 +453,10 @@ public class ContainerOpsExecutorTest {
     /** The pinned E8003 projection a failing element fixture uses. */
     private static BoundaryFailure e8003ElementFailure() {
         BoundaryFailure leaf = deal.semantic.ir.FailureProjections
-            .kindFailure("int", "string");
+            .kindFailure("number", "string");
         return BoundaryFailure.fromRow(
             FailureContractRegistry.row(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR), 0,
-            "int", "string", metadataOf("oneBasedIndex", "2"), leaf);
+            "number", "string", metadataOf("oneBasedIndex", "2"), leaf);
     }
 
     static void testArrayNewOrchestration() {
@@ -478,7 +477,7 @@ public class ContainerOpsExecutorTest {
             ContainerOpsExecutor.executeArrayNew(arrayOp, recording, boundaryOps, allPass);
         if (allPassOutcome instanceof Outcome.Success<SemanticArray<Value>> success) {
             check(success.value().size() == 3, "the fresh array holds three elements");
-            check(success.value().elementAt(0).equals(new Value.Int(40))
+            check(success.value().elementAt(0).equals(new Value.Number(40))
                     && success.value().elementAt(1).equals(Value.string("mid"))
                     && success.value().elementAt(2) == Value.Null.INSTANCE,
                 "the array elements keep source order with the delegate-published values");
@@ -492,7 +491,7 @@ public class ContainerOpsExecutorTest {
         for (int i = 0; i < 3; i++) {
             expectedLog.add("child[" + i + "] ARRAY_LITERAL_ELEMENT <- "
                 + switch (i) {
-                    case 0 -> "int";
+                    case 0 -> "number";
                     case 1 -> "string";
                     default -> "null";
                 });
@@ -506,7 +505,7 @@ public class ContainerOpsExecutorTest {
         List<Value> published = new ArrayList<>();
         BoundaryCheckRunner republish = (boundary, input) -> {
             Value republished = switch (input) {
-                case Value.Int intValue -> new Value.Int(intValue.value());
+                case Value.Number number -> new Value.Number(number.value());
                 case Value.String stringValue -> Value.string(stringValue.scalar());
                 default -> input;
             };
@@ -541,7 +540,7 @@ public class ContainerOpsExecutorTest {
         } else {
             fail("the failing second child did not fail the op");
         }
-        check(failLog.contains("child[0] ARRAY_LITERAL_ELEMENT <- int"),
+        check(failLog.contains("child[0] ARRAY_LITERAL_ELEMENT <- number"),
             "the first child's pass stays observable in the delegate call order");
         check(failLog.contains("child[1] ARRAY_LITERAL_ELEMENT <- string"),
             "the failing child ran second (payload order)");
@@ -602,7 +601,7 @@ public class ContainerOpsExecutorTest {
         // Count mismatch (two values, one boundary child).
         ValueId solo = nextValue();
         Map<ValueId, Value> soloValues = new LinkedHashMap<>();
-        soloValues.put(solo, new Value.Int(1));
+        soloValues.put(solo, new Value.Number(1));
         OpId soloId = nextOpId();
         SemanticOp soloChild = boundaryChild(soloId, BoundaryKind.ARRAY_LITERAL_ELEMENT, INT,
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR);
@@ -636,7 +635,7 @@ public class ContainerOpsExecutorTest {
         // A named child that is not a BOUNDARY op.
         OpId arrayId2 = nextOpId();
         SemanticOp foreignChild = op(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)), nextValue(), INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)), nextValue(), INT,
             FailurePolicyId.NO_DEAL_FAILURE, arrayId2);
         SemanticOp foreign = opWithId(arrayId2, SemanticOpKind.ARRAY_NEW,
             new KindPayload.ArrayNewPayload(INT, List.of(solo),
@@ -678,7 +677,7 @@ public class ContainerOpsExecutorTest {
         expectDefect(() -> ContainerOpsExecutor.executeArrayNew(
                 opWithId(nextOpId(), SemanticOpKind.ARRAY_NEW,
                     new KindPayload.ArrayNewPayload(INT, List.of(), List.of()), nextValue(),
-                    new RuntimeDescriptor.Array(INT), FailurePolicyId.INT32_RESULT, null),
+                    new RuntimeDescriptor.Array(INT), FailurePolicyId.SQRT_NEGATIVE, null),
                 Map.of(), Map.of(), pass),
             "an ARRAY_NEW carrying a non-pinned policy");
 
@@ -699,7 +698,7 @@ public class ContainerOpsExecutorTest {
 
         // Present read: the child checks the present value and publishes it.
         SemanticTable<Value> table = new SemanticTable<>();
-        table.put("k", new Value.Int(7));
+        table.put("k", new Value.Number(7));
         ValueId receiver = nextValue();
         Map<ValueId, Value> values = new LinkedHashMap<>();
         values.put(receiver, new Value.Table(table));
@@ -713,12 +712,12 @@ public class ContainerOpsExecutorTest {
         Outcome<Value> presentOutcome = ContainerOpsExecutor.executeMemberRead(readOp,
             new RecordingValues(values, log), child, realProjectionDelegate(log));
         if (presentOutcome instanceof Outcome.Success<Value> success) {
-            check(success.value().equals(new Value.Int(7)),
+            check(success.value().equals(new Value.Number(7)),
                 "a present value passes the check and is published unchanged");
         } else {
             fail("present MEMBER_READ failed unexpectedly");
         }
-        check(log.equals(List.of("resolve " + receiver, "child CONTEXTUAL_TABLE_READ <- int")),
+        check(log.equals(List.of("resolve " + receiver, "child CONTEXTUAL_TABLE_READ <- number")),
             "the receiver resolves exactly once before the child runs with the read outcome; "
                 + "got " + log);
 
@@ -738,8 +737,8 @@ public class ContainerOpsExecutorTest {
             mismatchValues, mismatchChild, realProjectionDelegate(null));
         if (mismatch instanceof Outcome.Failure<Value> failure) {
             check(failure.failure().failure().code() == DiagnosticCode.E8001
-                    && "expected int".equals(failure.failure().failure().message())
-                    && "int".equals(failure.failure().failure().expected())
+                    && "expected number".equals(failure.failure().failure().message())
+                    && "number".equals(failure.failure().failure().expected())
                     && "string".equals(failure.failure().failure().actual()),
                 "a present wrong-kind value fails through the delegate's projection");
         } else {
@@ -778,12 +777,12 @@ public class ContainerOpsExecutorTest {
             emptyValues, nonNullableChild, realProjectionDelegate(null));
         if (missing instanceof Outcome.Failure<Value> failure) {
             check(failure.failure().failure().code() == DiagnosticCode.E8001
-                    && "expected int".equals(failure.failure().failure().message())
-                    && "int".equals(failure.failure().failure().expected())
+                    && "expected number".equals(failure.failure().failure().message())
+                    && "number".equals(failure.failure().failure().expected())
                     && "nil".equals(failure.failure().failure().actual())
                     && failure.failure().failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR,
                 "missing against a non-nullable descriptor fails with the pinned "
-                    + "expected int projection (the absent marker's nil actual)");
+                    + "expected number projection (the absent marker's nil actual)");
         } else {
             fail("missing + non-nullable did not fail with the absent-marker projection");
         }
@@ -815,7 +814,7 @@ public class ContainerOpsExecutorTest {
         Outcome<Value> presentNullInt = ContainerOpsExecutor.executeMemberRead(nullNonNullableOp,
             nullValues, nullNonNullableChild, realProjectionDelegate(null));
         check(presentNullInt instanceof Outcome.Failure<Value> failure
-                && "expected int".equals(failure.failure().failure().message()),
+                && "expected number".equals(failure.failure().failure().message()),
             "a present null against a non-nullable descriptor projects the kind arm with "
                 + "the null actual, distinct from the absent marker");
     }
@@ -836,14 +835,14 @@ public class ContainerOpsExecutorTest {
 
         // Non-table receiver.
         Map<ValueId, Value> intReceiver = new LinkedHashMap<>();
-        intReceiver.put(receiver, new Value.Int(3));
+        intReceiver.put(receiver, new Value.Number(3));
         expectDefect(() -> ContainerOpsExecutor.executeMemberRead(readOp, intReceiver,
                 child, pass),
             "a receiver that resolves to a non-table value");
 
         // A child that is not a BOUNDARY op.
         SemanticOp foreignChild = op(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)), nextValue(), INT,
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)), nextValue(), INT,
             FailurePolicyId.NO_DEAL_FAILURE, readId);
         expectDefect(() -> ContainerOpsExecutor.executeMemberRead(readOp, values,
                 foreignChild, pass),
@@ -865,7 +864,7 @@ public class ContainerOpsExecutorTest {
 
         // Wrong op kind and wrong pinned policy.
         expectDefect(() -> ContainerOpsExecutor.executeMemberRead(
-                arrayLengthOp(nextValue(), FailurePolicyId.INT32_RESULT),
+                arrayLengthOp(nextValue(), FailurePolicyId.NO_DEAL_FAILURE),
                 Map.of(), child, pass),
             "executing an ARRAY_LENGTH op as MEMBER_READ (wrong kind)");
         OpId wrongPolicyId = nextOpId();
@@ -873,7 +872,7 @@ public class ContainerOpsExecutorTest {
             BoundaryKind.CONTEXTUAL_TABLE_READ, INT, FailurePolicyId.TYPE_DESCRIPTOR);
         SemanticOp wrongPolicy = opWithId(wrongPolicyId, SemanticOpKind.MEMBER_READ,
             new KindPayload.MemberReadPayload(receiver, "k"), nextValue(), INT,
-            FailurePolicyId.INT32_RESULT, null);
+            FailurePolicyId.SQRT_NEGATIVE, null);
         expectDefect(() -> ContainerOpsExecutor.executeMemberRead(wrongPolicy, values,
                 wrongPolicyChild, pass),
             "a MEMBER_READ carrying a non-pinned policy");
@@ -884,58 +883,58 @@ public class ContainerOpsExecutorTest {
     // =========================================================================
 
     static void testArrayLength() {
-        System.out.println("-- ARRAY_LENGTH: the signed32 count with a single receiver "
+        System.out.println("-- ARRAY_LENGTH: the number count with a single receiver "
             + "resolution --");
 
         List<Value> elements = new ArrayList<>();
         for (int i = 0; i < 1000; i++) {
-            elements.add(new Value.Int(i));
+            elements.add(new Value.Number(i));
         }
         ValueId receiver = nextValue();
         Map<ValueId, Value> values = new LinkedHashMap<>();
         values.put(receiver, new Value.Array(SemanticArray.of(elements)));
         List<String> log = new ArrayList<>();
-        Outcome<Integer> length = ContainerOpsExecutor.executeArrayLength(
-            arrayLengthOp(receiver, FailurePolicyId.INT32_RESULT),
+        Outcome<Double> length = ContainerOpsExecutor.executeArrayLength(
+            arrayLengthOp(receiver, FailurePolicyId.NO_DEAL_FAILURE),
             new RecordingValues(values, log));
-        check(length instanceof Outcome.Success<Integer> success && success.value() == 1000,
-            "the signed32 count of 1000 elements is 1000");
+        check(length instanceof Outcome.Success<Double> success && success.value() == 1000,
+            "the number count of 1000 elements is 1000");
         check(log.equals(List.of("resolve " + receiver)),
             "the receiver resolves exactly once; got " + log);
 
         ValueId emptyReceiver = nextValue();
         Map<ValueId, Value> emptyValues = new LinkedHashMap<>();
         emptyValues.put(emptyReceiver, new Value.Array(SemanticArray.of()));
-        Outcome<Integer> empty = ContainerOpsExecutor.executeArrayLength(
-            arrayLengthOp(emptyReceiver, FailurePolicyId.INT32_RESULT), emptyValues);
-        check(empty instanceof Outcome.Success<Integer> success && success.value() == 0,
+        Outcome<Double> empty = ContainerOpsExecutor.executeArrayLength(
+            arrayLengthOp(emptyReceiver, FailurePolicyId.NO_DEAL_FAILURE), emptyValues);
+        check(empty instanceof Outcome.Success<Double> success && success.value() == 0,
             "an empty array reports count 0");
 
         ValueId threeReceiver = nextValue();
         Map<ValueId, Value> threeValues = new LinkedHashMap<>();
         threeValues.put(threeReceiver, new Value.Array(
-            SemanticArray.of(new Value.Int(1), new Value.Int(2), new Value.Int(3))));
-        Outcome<Integer> three = ContainerOpsExecutor.executeArrayLength(
-            arrayLengthOp(threeReceiver, FailurePolicyId.INT32_RESULT), threeValues);
-        check(three instanceof Outcome.Success<Integer> success && success.value() == 3,
+            SemanticArray.of(new Value.Number(1), new Value.Number(2), new Value.Number(3))));
+        Outcome<Double> three = ContainerOpsExecutor.executeArrayLength(
+            arrayLengthOp(threeReceiver, FailurePolicyId.NO_DEAL_FAILURE), threeValues);
+        check(three instanceof Outcome.Success<Double> success && success.value() == 3,
             "a three-element array reports count 3");
 
         // Fail-closed defects.
         Map<ValueId, Value> tableReceiver = new LinkedHashMap<>();
         tableReceiver.put(receiver, new Value.Table(new SemanticTable<>()));
         expectDefect(() -> ContainerOpsExecutor.executeArrayLength(
-                arrayLengthOp(receiver, FailurePolicyId.INT32_RESULT), tableReceiver),
+                arrayLengthOp(receiver, FailurePolicyId.NO_DEAL_FAILURE), tableReceiver),
             "a receiver that resolves to a non-array value");
         expectDefect(() -> ContainerOpsExecutor.executeArrayLength(
-                arrayLengthOp(receiver, FailurePolicyId.NO_DEAL_FAILURE), values),
+                arrayLengthOp(receiver, FailurePolicyId.TYPE_DESCRIPTOR), values),
             "an ARRAY_LENGTH carrying a non-pinned policy");
         expectDefect(() -> ContainerOpsExecutor.executeArrayLength(
                 concatOp(List.of(), FailurePolicyId.NO_DEAL_FAILURE), Map.of()),
             "executing a STRING_CONCAT op as ARRAY_LENGTH (wrong kind)");
 
         // Determinism.
-        Outcome<Integer> again = ContainerOpsExecutor.executeArrayLength(
-            arrayLengthOp(receiver, FailurePolicyId.INT32_RESULT), values);
+        Outcome<Double> again = ContainerOpsExecutor.executeArrayLength(
+            arrayLengthOp(receiver, FailurePolicyId.NO_DEAL_FAILURE), values);
         check(length.equals(again), "repeated executions produce the equal count outcome");
     }
 
@@ -975,7 +974,7 @@ public class ContainerOpsExecutorTest {
 
         // Fail-closed defects.
         Map<ValueId, Value> intFragment = new LinkedHashMap<>();
-        intFragment.put(f1, new Value.Int(1));
+        intFragment.put(f1, new Value.Number(1));
         expectDefect(() -> ContainerOpsExecutor.executeStringConcat(
                 concatOp(List.of(f1), FailurePolicyId.NO_DEAL_FAILURE), intFragment),
             "a fragment that resolves to a non-string value");
@@ -1162,7 +1161,7 @@ public class ContainerOpsExecutorTest {
             "FOR_EACH(ARRAY_VALUES) is E5's and never executable here");
 
         Map<ValueId, Value> intIterable = new LinkedHashMap<>();
-        intIterable.put(iterable, new Value.Int(3));
+        intIterable.put(iterable, new Value.Number(3));
         expectDefect(() -> ContainerOpsExecutor.executeForEach(
                 forOfOp(iterable, binding, 1, IterationMode.STRING_SCALARS,
                     FailurePolicyId.TYPE_DESCRIPTOR),
@@ -1254,7 +1253,7 @@ public class ContainerOpsExecutorTest {
         System.out.println("-- null arguments are producer defects (NPE), never projections --");
 
         Map<ValueId, Value> values = new LinkedHashMap<>();
-        values.put(nextValue(), new Value.Int(1));
+        values.put(nextValue(), new Value.Number(1));
         BodyRunner noop = (index, bindingGeneration, yielded, loopLoad) -> { };
 
         // One-entry TABLE_NEW so the null lookup is actually reached.
@@ -1304,7 +1303,7 @@ public class ContainerOpsExecutorTest {
         expectNpe(() -> ContainerOpsExecutor.executeArrayLength(null, values),
             "executeArrayLength with a null op");
         expectNpe(() -> ContainerOpsExecutor.executeArrayLength(
-                arrayLengthOp(entryValue, FailurePolicyId.INT32_RESULT), null),
+                arrayLengthOp(entryValue, FailurePolicyId.NO_DEAL_FAILURE), null),
             "executeArrayLength with a null value lookup");
         expectNpe(() -> ContainerOpsExecutor.executeStringConcat(null, values),
             "executeStringConcat with a null op");

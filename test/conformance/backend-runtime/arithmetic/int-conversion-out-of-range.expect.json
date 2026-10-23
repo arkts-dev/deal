@@ -1,19 +1,16 @@
 {
   "version": 1,
-  "backends": ["luajit", "jvm", "js"],
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
   "expected": {
-    "mode": "runtime-error",
+    "mode": "runtime-ok",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8004\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8004\",\"message\":\"int out of safe range\",\"sourceFile\":\"backend-runtime/arithmetic/int-conversion-out-of-range.deal\",\"line\":7,\"column\":10}\n",
+      "stdout": "",
       "stderr": ""
     },
-    "exitCode": 1,
-    "error": {
-      "code": "E8004",
-      "message": "int out of safe range",
-      "sourceFile": "backend-runtime/arithmetic/int-conversion-out-of-range.deal",
-      "line": 7,
-      "column": 10
-    }
+    "exitCode": 0
   }
 }

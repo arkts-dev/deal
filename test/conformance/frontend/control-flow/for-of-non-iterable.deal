@@ -4,7 +4,7 @@
 // @features: for-of, type-checking
 
 export function main(): null {
-for (let x: int of 42) { }
+for (let x: number of 42) { }
 
 return null;
 }

@@ -1,15 +1,15 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: A function wrapper whose carried descriptor differs byte-for-byte from the expected canonical (int[])->int[] text raises E8010 at the dynamic function row (ISSUE-0550).
+// @description: A function wrapper whose carried descriptor differs byte-for-byte from the expected canonical (number[])->number[] text raises E8010 at the dynamic function row (ISSUE-0550).
 // @expected: runtime-error E8010
-// @features: descriptors, int[], dynamic-boundaries
+// @features: descriptors, number[], dynamic-boundaries
 
-function asInt(x: int): int {
+function asInt(x: number): number {
   return x;
 }
 
-export function test_array_dynamic_function_mismatch(): int {
+export function test_array_dynamic_function_mismatch(): number {
   let holder: table = { f: asInt };
-  let f: (b: int[]) => int[] = holder.f;
+  let f: (b: number[]) => number[] = holder.f;
   return f([0]).length;
 }
 

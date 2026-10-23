@@ -1,11 +1,12 @@
+import * as math from "std/math";
 // @spec: Runtime execution model — Source locations for integer arithmetic errors
-// @description: Unary int negation reports E8004 at the negating expression's own source location (v1.2)
-// @expected: runtime-error E8004
+// @description: A surviving sqrt failure preserves the exact expression origin through its enclosing control flow
+// @expected: runtime-error E8001
 // @features: source-location, runtime, int, overflow, v1.2
 
-export function test_source_location_int_neg(): int {
-  let min: int = -2147483648;
-  let flipped: int = -min;
+export function test_source_location_int_neg(): number {
+  let min: number = -2147483648;
+  let flipped: number = math.sqrt(-1);
   return flipped;
 }
 

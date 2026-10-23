@@ -3,8 +3,8 @@
 // @expected: compile-error E1049
 // @features: parser, modules, v1.2
 
-let state: int = 1;
+let state: number = 1;
 
-export function probe(): int {
+export function probe(): number {
   return state;
 }

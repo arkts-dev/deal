@@ -40,7 +40,6 @@ public sealed interface FunctionExecutionBinding
             FunctionExecutionBinding.HostFunction,
             FunctionExecutionBinding.HostFunctionValue,
             FunctionExecutionBinding.ExternalFunction,
-            FunctionExecutionBinding.IntrinsicFunction,
             FunctionExecutionBinding.DynamicFunctionValue {
 
     /** A DEAL function body. */
@@ -127,26 +126,8 @@ public sealed interface FunctionExecutionBinding
         }
     }
 
-    /**
-     * A producer-less seeded intrinsic ({@code int}/{@code number}) materialized as a first-class function value: the
-     * closed intrinsic kind and the intrinsic's declared signature. The
-     * registration is keyed by the seeded function-value identity (no
-     * closed op produces
-     * it); the seeded identity's single {@code BINDING_INIT} is the
-     * key's producing position, and the closed gate admits the pair
-     * exactly when the descriptor is the kind's pinned declared
-     * signature ({@link IntrinsicKind#declaredSignature()}).
-     */
-    record IntrinsicFunction(IntrinsicKind kind, RuntimeDescriptor.Func descriptor)
-        implements FunctionExecutionBinding {
 
-        public IntrinsicFunction {
-            Objects.requireNonNull(kind, "kind must not be null");
-            Objects.requireNonNull(descriptor, "descriptor must not be null");
-        }
-    }
-
-    /**
+/**
      * A function-typed materialization whose execution class is resolved
      * from the materialized carrier at execution: the op that produces
      * the value identity and the value's checked function descriptor.

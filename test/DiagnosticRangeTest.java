@@ -675,7 +675,7 @@ public class DiagnosticRangeTest {
         Token let = new Token(TokenType.LET, "let", 1, 1, 3, 0, 3);
         Token name = new Token(TokenType.IDENTIFIER, "x", 1, 5, 1, 4, 1);
         Token eq = new Token(TokenType.EQ_SIGN, "=", 1, 7, 1, 6, 1);
-        Token num = new Token(TokenType.INT_LITERAL, "42", 1, 9, 2, 8, 2);
+        Token num = new Token(TokenType.NUMBER_LITERAL, "42", 1, 9, 2, 8, 2);
         Token semi = new Token(TokenType.SEMICOLON, ";", 1, 11, 1, 10, 1);
         Token eof = new Token(TokenType.EOF, "", 1, 12, 0, 11, 0);
 
@@ -711,7 +711,7 @@ public class DiagnosticRangeTest {
         Token ulet = new Token(TokenType.LET, "let", 1, 1, 3);
         Token uname = new Token(TokenType.IDENTIFIER, "x", 1, 5, 1);
         Token ueq = new Token(TokenType.EQ_SIGN, "=", 1, 7, 1);
-        Token unum = new Token(TokenType.INT_LITERAL, "42", 1, 9, 2);
+        Token unum = new Token(TokenType.NUMBER_LITERAL, "42", 1, 9, 2);
         Token usemi = new Token(TokenType.SEMICOLON, ";", 1, 11, 1);
         Token ueof = new Token(TokenType.EOF, "", 1, 12, 0);
         ParseResult ur = new Parser(List.of(ulet, uname, ueq, unum, usemi, ueof),
@@ -1798,8 +1798,8 @@ public class DiagnosticRangeTest {
 
         List<CompilerDiagnostic> errors = frontendErrors(
             source, corpusPath, rejectingModuleResolver());
-        check(errors.size() == 1 && "E1036".equals(errors.get(0).code()),
-            "the mutated subject emits the v1.3 out-of-range literal"
+        check(errors.size() == 2 && "E3004".equals(errors.get(0).code()),
+            "the mutated subject emits the v1.4 removed-type"
                 + " diagnostic, got " + diagnosticCodes(errors));
 
         // The fixture's stored pin (E3007) is legacy-satisfiable only: the
@@ -1831,8 +1831,8 @@ public class DiagnosticRangeTest {
                 String mismatch = mismatches.get(0);
                 check(mismatch.contains(corpusPath),
                     "the mismatch names the pinned subject: " + mismatch);
-                check(mismatch.contains("E1036"),
-                    "the mismatch carries the v1.3 E1036 diagnostic: "
+                check(mismatch.contains("E3007"),
+                    "the mismatch carries the v1.4 independent unary diagnostic diagnostic: "
                         + mismatch);
             }
         } finally {
@@ -1990,8 +1990,8 @@ public class DiagnosticRangeTest {
                 + "// @expected: compile-ok\n"
                 + "// @features: probe\n\n"
                 + "export function f(): null {\n"
-                + "  let y: int = 1;\n"
-                + "  y = 2.0;\n"
+                + "  let y: number = 1;\n"
+                + "  y = true;\n"
                 + "  return null;\n"
                 + "}\n");
             writeScratchFixture(scratch, "probe/reject-mutated.deal",

@@ -4,7 +4,7 @@
 // @features: v1.2, lexer, raw-source
 
 // ordinary
-export function f(): int {
+export function f(): number {
 // ignored
 return 3;
 }

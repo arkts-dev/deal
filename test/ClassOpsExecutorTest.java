@@ -98,7 +98,7 @@ public class ClassOpsExecutorTest {
 
     private static final ModuleId MOD = new ModuleId("corpus.classops");
     private static final ClassId CLS = new ClassId(MOD.path(), "Point");
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STRING = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor TABLE = RuntimeDescriptor.Table.INSTANCE;
     private static final RuntimeDescriptor.Func FUNC_NULL = new RuntimeDescriptor.Func(
@@ -323,7 +323,6 @@ public class ClassOpsExecutorTest {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-            case Value.Int intValue -> BoundaryValueView.ofInt(intValue.value());
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
             case Value.Table ignored -> BoundaryValueView.of(ActualKind.TABLE);
@@ -429,7 +428,7 @@ public class ClassOpsExecutorTest {
             "Null renders NULL");
         check(new Value.Bool(true).actualKind() == ActualKind.BOOLEAN,
             "Bool renders BOOLEAN");
-        check(new Value.Int(-2147483648).actualKind() == ActualKind.INT,
+        check(new Value.Number(-2147483648).actualKind() == ActualKind.NUMBER,
             "Int renders INT");
         check(new Value.Number(Double.NaN).actualKind() == ActualKind.NUMBER,
             "Number renders NUMBER");
@@ -456,7 +455,7 @@ public class ClassOpsExecutorTest {
         // The class variant preserves the three presence states exactly.
         Value.Class instance = new Value.Class(CLS, List.of(
             new FieldState.Present(Value.Null.INSTANCE),
-            new FieldState.Present(new Value.Int(7)),
+            new FieldState.Present(new Value.Number(7)),
             FieldState.Missing.INSTANCE));
         check(instance.classId().equals(CLS), "the class value carries the canonical classId tag");
         check(instance.fields().size() == 3, "the class value carries its fields in order");
@@ -464,7 +463,7 @@ public class ClassOpsExecutorTest {
                 && present.value() == Value.Null.INSTANCE,
             "a present null field is Present (never conflated with Missing)");
         check(instance.fields().get(1) instanceof FieldState.Present present
-                && present.value().equals(new Value.Int(7)),
+                && present.value().equals(new Value.Number(7)),
             "a present value field is Present with its value");
         check(instance.fields().get(2) == FieldState.Missing.INSTANCE,
             "an absent field is the Missing state (distinct from present null)");
@@ -501,7 +500,7 @@ public class ClassOpsExecutorTest {
         // commit, an absent key stays Missing, and the read-only surface
         // rejects put/remove.
         Map<String, Value> backingTable = new LinkedHashMap<>();
-        backingTable.put("a", new Value.Int(1));
+        backingTable.put("a", new Value.Number(1));
         SemanticTable<Value> liveTable = SemanticTable.live(
             () -> List.copyOf(backingTable.keySet()),
             key -> backingTable.containsKey(key)
@@ -510,14 +509,14 @@ public class ClassOpsExecutorTest {
         check(liveTable.size() == 1 && liveTable.keys().equals(List.of("a")),
             "a live table reads its backing keys and size");
         check(liveTable.get("a") instanceof SemanticTable.Lookup.Present<Value> present
-                && present.value().equals(new Value.Int(1)),
+                && present.value().equals(new Value.Number(1)),
             "a live table reads the backing value of a present key");
         check(liveTable.get("absent") instanceof SemanticTable.Lookup.Missing<Value>,
             "a live table reports an absent backing key as Missing");
-        backingTable.put("b", new Value.Int(2));
+        backingTable.put("b", new Value.Number(2));
         check(liveTable.size() == 2 && liveTable.keys().equals(List.of("a", "b")),
             "a live table observes a commit to its backing state");
-        expectIllegalState(() -> liveTable.put("c", new Value.Int(3)),
+        expectIllegalState(() -> liveTable.put("c", new Value.Number(3)),
             "a put through a live read-only table view");
         expectIllegalState(() -> liveTable.remove("a"),
             "a remove through a live read-only table view");
@@ -525,19 +524,19 @@ public class ClassOpsExecutorTest {
         // The live array: element reads follow the backing list in place
         // (including a size change), the bounds contract stays the closed
         // Defect, and elements() is an immutable snapshot.
-        List<Value> backingArray = new ArrayList<>(List.of(new Value.Int(7)));
+        List<Value> backingArray = new ArrayList<>(List.of(new Value.Number(7)));
         SemanticArray<Value> liveArray = SemanticArray.live(
             backingArray::size, backingArray::get);
         check(liveArray.size() == 1
-                && liveArray.elementAt(0).equals(new Value.Int(7)),
+                && liveArray.elementAt(0).equals(new Value.Number(7)),
             "a live array reads its backing elements");
-        backingArray.set(0, new Value.Int(8));
-        backingArray.add(new Value.Int(9));
+        backingArray.set(0, new Value.Number(8));
+        backingArray.add(new Value.Number(9));
         check(liveArray.size() == 2
-                && liveArray.elementAt(0).equals(new Value.Int(8))
-                && liveArray.elementAt(1).equals(new Value.Int(9)),
+                && liveArray.elementAt(0).equals(new Value.Number(8))
+                && liveArray.elementAt(1).equals(new Value.Number(9)),
             "a live array observes an in-place commit and a backing size change");
-        check(liveArray.elements().equals(List.of(new Value.Int(8), new Value.Int(9))),
+        check(liveArray.elements().equals(List.of(new Value.Number(8), new Value.Number(9))),
             "a live array materializes its elements as an immutable snapshot");
         try {
             liveArray.elementAt(2);
@@ -550,19 +549,19 @@ public class ClassOpsExecutorTest {
         // backing field states after a commit; the closed field-state
         // invariant stays enforced by the present-state construction.
         List<FieldState> backingFields = new ArrayList<>(List.of(
-            new FieldState.Present(new Value.Int(1)), FieldState.Missing.INSTANCE));
+            new FieldState.Present(new Value.Number(1)), FieldState.Missing.INSTANCE));
         Value.Class liveClass = ClassOpsExecutor.liveClassView(CLS, backingFields.size(),
             backingFields::get);
         check(liveClass.classId().equals(CLS) && liveClass.actualKind() == ActualKind.CLASS,
             "a live class view carries the canonical classId tag");
         check(liveClass.fields().get(0) instanceof FieldState.Present present
-                && present.value().equals(new Value.Int(1))
+                && present.value().equals(new Value.Number(1))
                 && liveClass.fields().get(1) == FieldState.Missing.INSTANCE,
             "a live class view reads its backing field states in declaration order");
-        backingFields.set(0, new FieldState.Present(new Value.Int(2)));
+        backingFields.set(0, new FieldState.Present(new Value.Number(2)));
         backingFields.set(1, new FieldState.Present(Value.Null.INSTANCE));
         check(liveClass.fields().get(0) instanceof FieldState.Present present
-                && present.value().equals(new Value.Int(2))
+                && present.value().equals(new Value.Number(2))
                 && liveClass.fields().get(1) instanceof FieldState.Present nullPresent
                 && nullPresent.value() == Value.Null.INSTANCE,
             "a live class view observes a field commit to its backing state");
@@ -622,11 +621,11 @@ public class ClassOpsExecutorTest {
         SemanticOp defaultOp = defaultOp("a", result, INT, FailurePolicyId.NO_DEAL_FAILURE);
         List<String> log = new ArrayList<>();
         RecordingBodyRunner body = new RecordingBodyRunner(log,
-            Map.of(defaultOp.opId(), new Value.Int(41)));
+            Map.of(defaultOp.opId(), new Value.Number(41)));
 
         Outcome<Value> outcome = ClassOpsExecutor.executeClassDefault(defaultOp, body);
         check(outcome instanceof Outcome.Success<Value> success
-                && success.value().equals(new Value.Int(41)),
+                && success.value().equals(new Value.Number(41)),
             "the op publishes the block's produced default value");
         check(body.calls() == 1 && log.equals(List.of("default " + defaultOp.opId())),
             "the default block runs exactly once through the BodyRunner seam; got " + log);
@@ -641,7 +640,7 @@ public class ClassOpsExecutorTest {
         // Fail-closed defects.
         expectDefect(() -> ClassOpsExecutor.executeClassDefault(
                 op(SemanticOpKind.CONST,
-                    new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                    new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null),
                 body),
             "executing a CONST op as CLASS_DEFAULT (wrong kind)");
@@ -668,7 +667,7 @@ public class ClassOpsExecutorTest {
         ValueId vX = nextValue();
         Map<ValueId, Value> values = new LinkedHashMap<>();
         values.put(vTag, Value.string("pt"));
-        values.put(vX, new Value.Int(3));
+        values.put(vX, new Value.Number(3));
 
         // Provided in literal order (tag before x — the reorder source);
         // boundaries in declaration order (x before tag).
@@ -705,13 +704,13 @@ public class ClassOpsExecutorTest {
         if (outcome instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.Class instance) {
             check(instance.fields().size() == 3
-                    && fieldValue(instance, layout, "x").equals(new Value.Int(3))
+                    && fieldValue(instance, layout, "x").equals(new Value.Number(3))
                     && fieldValue(instance, layout, "tag").equals(Value.string("pt"))
                     && fieldState(instance, layout, "y") == FieldState.Missing.INSTANCE,
                 "the instance holds the overlaid provided values in declaration order "
                     + "and the omitted optional stays missing");
         }
-        check(log.get(2).equals("child[0] CLASS_LITERAL_FIELD <- int")
+        check(log.get(2).equals("child[0] CLASS_LITERAL_FIELD <- number")
                 && log.get(3).equals("child[1] CLASS_LITERAL_FIELD <- string"),
             "field validation runs in declaration order (x then tag — the provided "
                 + "overlay reorder) with the pinned inputs; got " + log);
@@ -744,13 +743,13 @@ public class ClassOpsExecutorTest {
         ClassLayout layout = layout(field("a", INT, true), field("b", INT, true),
             field("c", INT, false));
         ValueId vB = nextValue();
-        Map<ValueId, Value> values = Map.of(vB, new Value.Int(20));
+        Map<ValueId, Value> values = Map.of(vB, new Value.Number(20));
 
         SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
         SemanticOp defB = defaultOp("b", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
         Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(defA.opId(), new Value.Int(10));
-        produced.put(defB.opId(), new Value.Int(99));
+        produced.put(defA.opId(), new Value.Number(10));
+        produced.put(defB.opId(), new Value.Number(99));
 
         List<ProvidedEntry> provided = List.of(new ProvidedEntry("b", vB));
         List<BoundaryEntry> entries = new ArrayList<>();
@@ -774,8 +773,8 @@ public class ClassOpsExecutorTest {
 
         check(outcome instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.Class instance
-                && fieldValue(instance, layout, "a").equals(new Value.Int(10))
-                && fieldValue(instance, layout, "b").equals(new Value.Int(20))
+                && fieldValue(instance, layout, "a").equals(new Value.Number(10))
+                && fieldValue(instance, layout, "b").equals(new Value.Number(20))
                 && fieldState(instance, layout, "c") == FieldState.Missing.INSTANCE,
             "the default-filled omitted field a, the provided field b, and the "
                 + "omitted optional c (missing) are preserved");
@@ -793,8 +792,8 @@ public class ClassOpsExecutorTest {
         check(log.indexOf("default " + defA.opId()) >= 0 && firstChildLine >= 0
                 && log.indexOf("default " + defA.opId()) < firstChildLine,
             "default application completes before the first boundary run; got " + log);
-        check(log.contains("child[0] CLASS_DEFAULT_FIELD <- int")
-                && log.contains("child[1] CLASS_LITERAL_FIELD <- int"),
+        check(log.contains("child[0] CLASS_DEFAULT_FIELD <- number")
+                && log.contains("child[1] CLASS_LITERAL_FIELD <- number"),
             "the boundaries run in declaration order with the default-produced and "
                 + "provided inputs; got " + log);
     }
@@ -807,11 +806,11 @@ public class ClassOpsExecutorTest {
         ValueId vX = nextValue();
         ValueId vZz = nextValue();
         Map<ValueId, Value> values = new LinkedHashMap<>();
-        values.put(vX, new Value.Int(1));
-        values.put(vZz, new Value.Int(2));
+        values.put(vX, new Value.Number(1));
+        values.put(vZz, new Value.Number(2));
 
         SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
-        Map<OpId, Value> produced = Map.of(defA.opId(), new Value.Int(10));
+        Map<OpId, Value> produced = Map.of(defA.opId(), new Value.Number(10));
 
         // Two extra keys in provided-source order: the scan must name the
         // first one (x), never the second (zz).
@@ -855,9 +854,9 @@ public class ClassOpsExecutorTest {
         ValueId vB = nextValue();
         ValueId vC = nextValue();
         Map<ValueId, Value> values = new LinkedHashMap<>();
-        values.put(vA, new Value.Int(1));
-        values.put(vB, new Value.Int(2));
-        values.put(vC, new Value.Int(3));
+        values.put(vA, new Value.Number(1));
+        values.put(vB, new Value.Number(2));
+        values.put(vC, new Value.Number(3));
 
         // Provided in scrambled literal order (c, a, b): resolution stays
         // literal, validation stays declaration order (a, b, c).
@@ -875,7 +874,7 @@ public class ClassOpsExecutorTest {
                 FailurePolicyId.TYPE_DESCRIPTOR)));
 
         BoundaryFailure scripted = deal.semantic.ir.FailureProjections
-            .kindFailure("int", "string");
+            .kindFailure("number", "string");
         List<String> log = new ArrayList<>();
         ScriptedDelegate delegate = new ScriptedDelegate(log, 1, scripted);
         ClassNewFixture fixture = classNewFixture(layout, provided, List.of(), entries);
@@ -887,15 +886,15 @@ public class ClassOpsExecutorTest {
 
         check(outcome instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message()
-                    .equals("expected int")
+                    .equals("expected number")
                 && failure.failure().origin().equals(fixture.op().origin()),
             "the first failing boundary (b, the second field in declaration order) "
                 + "fails the op with that child's failure at the op origin");
         check(delegate.calls() == 2,
             "validation stopped at the first failing field — the third child never "
                 + "ran; got " + delegate.calls() + " calls");
-        check(log.get(log.size() - 2).equals("child[0] CLASS_LITERAL_FIELD <- int")
-                && log.get(log.size() - 1).equals("child[1] CLASS_LITERAL_FIELD <- int"),
+        check(log.get(log.size() - 2).equals("child[0] CLASS_LITERAL_FIELD <- number")
+                && log.get(log.size() - 1).equals("child[1] CLASS_LITERAL_FIELD <- number"),
             "the boundary order is declaration order (a then b) despite the literal "
                 + "order (c, a, b); got " + log);
         check(!(outcome instanceof Outcome.Success<Value>),
@@ -925,12 +924,12 @@ public class ClassOpsExecutorTest {
         check(mismatch instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR
-                && failure.failure().failure().expected().equals("int")
+                && failure.failure().failure().expected().equals("number")
                 && failure.failure().failure().actual().equals("string")
-                && failure.failure().failure().message().equals("expected int")
+                && failure.failure().failure().message().equals("expected number")
                 && failure.failure().origin().equals(fixture.op().origin()),
             "the real delegate projects the int-field kind mismatch as E8001 "
-                + "expected int at the op origin");
+                + "expected number at the op origin");
 
         // A function-typed field: a differing carried signature fails E8010.
         ClassLayout fnLayout = layout(field("f", FUNC_NULL, true));
@@ -1052,10 +1051,10 @@ public class ClassOpsExecutorTest {
 
         ClassLayout layout = layout(field("a", INT, true));
         ValueId vA = nextValue();
-        Map<ValueId, Value> values = Map.of(vA, new Value.Int(1));
+        Map<ValueId, Value> values = Map.of(vA, new Value.Number(1));
         SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
         List<String> log = new ArrayList<>();
-        BodyRunner body = new RecordingBodyRunner(log, Map.of(defA.opId(), new Value.Int(10)));
+        BodyRunner body = new RecordingBodyRunner(log, Map.of(defA.opId(), new Value.Number(10)));
         BoundaryCheckRunner pass = new ScriptedDelegate(new ArrayList<>(), -1, null);
 
         List<ProvidedEntry> provided = List.of(new ProvidedEntry("a", vA));
@@ -1070,7 +1069,7 @@ public class ClassOpsExecutorTest {
         // Wrong op kind and non-pinned policy.
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 op(SemanticOpKind.CONST,
-                    new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+                    new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     nextValue(), INT, FailurePolicyId.CLASS_CONSTRUCTION, null),
                 Map.of(), Map.of(), Map.of(), Map.of(), pass, body),
             "executing a CONST op as CLASS_NEW (wrong kind)");
@@ -1141,7 +1140,7 @@ public class ClassOpsExecutorTest {
             "an unresolvable CLASS_DEFAULT child id");
         // Wrong default child kind: a CONST op id listed in classDefaultOpIds.
         SemanticOp constDefault = op(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
@@ -1221,7 +1220,7 @@ public class ClassOpsExecutorTest {
                 Map.of(tokenDefault.opId(), tokenDefault),
                 Map.of(tokenBoundary.opId(), tokenBoundary), layouts, pass,
                 new RecordingBodyRunner(new ArrayList<>(),
-                    Map.of(tokenDefault.opId(), new Value.Int(9)))),
+                    Map.of(tokenDefault.opId(), new Value.Number(9)))),
             "a CLASS_DEFAULT child publishing a non-ValueId result");
 
         // Boundary-child defects (each child parented to the op that names
@@ -1255,7 +1254,7 @@ public class ClassOpsExecutorTest {
             "an unparented boundary child (parentOpId mismatch)");
         OpId constOpId = nextOpId();
         SemanticOp constChild = opWithId(nextOpId(), SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+            new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, constOpId);
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(constOpId, SemanticOpKind.CLASS_NEW,
@@ -1270,7 +1269,7 @@ public class ClassOpsExecutorTest {
             "a field-boundary entry naming a non-BOUNDARY op");
         OpId policyOpId = nextOpId();
         SemanticOp badPolicy = boundaryChild(policyOpId, BoundaryKind.CLASS_LITERAL_FIELD,
-            INT, vA, FailurePolicyId.INT32_RESULT);
+            INT, vA, FailurePolicyId.JSON_TO_ERROR);
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(policyOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
@@ -1372,7 +1371,7 @@ public class ClassOpsExecutorTest {
 
         ClassLayout layout = layout(field("a", INT, true), field("b", INT, false));
         ValueId vA = nextValue();
-        Map<ValueId, Value> values = Map.of(vA, new Value.Int(5));
+        Map<ValueId, Value> values = Map.of(vA, new Value.Number(5));
         List<ProvidedEntry> provided = List.of(new ProvidedEntry("a", vA));
         List<BoundaryEntry> entries = List.of(new BoundaryEntry("a",
             BoundaryKind.CLASS_LITERAL_FIELD,
@@ -1404,10 +1403,10 @@ public class ClassOpsExecutorTest {
 
         ClassLayout layout = layout(field("a", INT, true));
         ValueId vA = nextValue();
-        Map<ValueId, Value> values = Map.of(vA, new Value.Int(1));
+        Map<ValueId, Value> values = Map.of(vA, new Value.Number(1));
         SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
         BodyRunner body = new RecordingBodyRunner(new ArrayList<>(),
-            Map.of(defA.opId(), new Value.Int(10)));
+            Map.of(defA.opId(), new Value.Number(10)));
         BoundaryCheckRunner pass = new ScriptedDelegate(new ArrayList<>(), -1, null);
         List<ProvidedEntry> provided = List.of(new ProvidedEntry("a", vA));
         List<BoundaryEntry> entries = List.of(new BoundaryEntry("a",
@@ -1478,7 +1477,7 @@ public class ClassOpsExecutorTest {
             SemanticOp def = sharedOp(FACTORY_OWNER, SemanticOpKind.CLASS_DEFAULT,
                 new KindPayload.ClassDefaultPayload(SHARED_CLASS, name, new BlockId(1)),
                 nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-            defaults.add(def); produced.put(def.opId(), new Value.Int(name.equals("a") ? 10 : 99));
+            defaults.add(def); produced.put(def.opId(), new Value.Number(name.equals("a") ? 10 : 99));
         }
         SemanticOp factory = sharedOp(FACTORY_OWNER, SemanticOpKind.CLASS_FACTORY,
             new KindPayload.ClassFactoryPayload(SHARED_CLASS, defaults.stream().map(SemanticOp::opId).toList(),
@@ -1487,7 +1486,7 @@ public class ClassOpsExecutorTest {
         List<KindPayload.ProvidedField> provided = new ArrayList<>();
         Map<ValueId, Value> values = new LinkedHashMap<>();
         for (String name : providedNames) {
-            ValueId id = nextValue(); provided.add(new KindPayload.ProvidedField(name, id)); values.put(id, new Value.Int(20));
+            ValueId id = nextValue(); provided.add(new KindPayload.ProvidedField(name, id)); values.put(id, new Value.Number(20));
         }
         OpId callerId = new OpId(FACTORY_CALLER, nextOpId++);
         List<KindPayload.FieldBoundary> fields = new ArrayList<>();
@@ -1538,7 +1537,7 @@ public class ClassOpsExecutorTest {
             f.layouts(), Set.of("b"), body);
         check(transfer instanceof Outcome.Success<Value> s && s.value() instanceof Value.Class instance
                 && instance.classId().equals(SHARED_CLASS) && instance.fields().size() == 3
-                && new Value.Int(10).equals(fieldValue(instance, f.layout(), "a"))
+                && new Value.Number(10).equals(fieldValue(instance, f.layout(), "a"))
                 && fieldValue(instance, f.layout(), "b") == null && fieldValue(instance, f.layout(), "c") == null,
             "direct factory API transfers omitted defaults and leaves provided/optional fields missing");
         check(invoked.size() == 1 && invoked.getFirst() == f.ownerOps().get(invoked.getFirst().opId())
@@ -1559,12 +1558,12 @@ public class ClassOpsExecutorTest {
                 f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), delegate, body);
             check(outcome instanceof Outcome.Success<Value> s && s.value() instanceof Value.Class instance
                     && instance.classId().equals(SHARED_CLASS) && instance.fields().size() == 3
-                    && new Value.Int(10).equals(fieldValue(instance, f.layout(), "a"))
-                    && new Value.Int(20).equals(fieldValue(instance, f.layout(), "b"))
+                    && new Value.Number(10).equals(fieldValue(instance, f.layout(), "a"))
+                    && new Value.Number(20).equals(fieldValue(instance, f.layout(), "b"))
                     && fieldValue(instance, f.layout(), "c") == null,
                 "shared full API overlays provided fields after transfer and publishes tag last");
             check(log.equals(List.of("resolve " + f.provided().keySet().iterator().next(),
-                    "default " + invoked.getFirst().opId(), "child[0] CLASS_DEFAULT_FIELD <- int", "child[1] CLASS_LITERAL_FIELD <- int"))
+                    "default " + invoked.getFirst().opId(), "child[0] CLASS_DEFAULT_FIELD <- number", "child[1] CLASS_LITERAL_FIELD <- number"))
                     && invoked.size() == 1 && delegate.calls() == 2,
                 "shared source resolution precedes skip-provided defaults and declaration-order boundaries, zero return cells");
             check(invoked.stream().allMatch(op -> op == f.ownerOps().get(op.opId())
@@ -1584,8 +1583,8 @@ public class ClassOpsExecutorTest {
         }
         check(repeated.get(0).equals(repeated.get(1)) && repeated.get(0) instanceof Outcome.Success<Value> s
                 && s.value() instanceof Value.Class instance
-                && new Value.Int(10).equals(fieldValue(instance, omitted.layout(), "a"))
-                && new Value.Int(99).equals(fieldValue(instance, omitted.layout(), "b")),
+                && new Value.Number(10).equals(fieldValue(instance, omitted.layout(), "a"))
+                && new Value.Number(99).equals(fieldValue(instance, omitted.layout(), "b")),
             "all-default shared constructions repeat with equal transferred contents");
         check(instances.size() == 2 && instances.get(0) != instances.get(1) && instances.get(0).equals(instances.get(1)),
             "fresh identity with deterministic equal contents on isolated drives");
@@ -1614,7 +1613,7 @@ public class ClassOpsExecutorTest {
                     && effects.size() == 2 && stopped.calls() == 0,
                 "default failure preserves prior effect, propagates unchanged, and stops boundaries/publication");
         }
-        BoundaryFailure selected = deal.semantic.ir.FailureProjections.kindFailure("int", "string");
+        BoundaryFailure selected = deal.semantic.ir.FailureProjections.kindFailure("number", "string");
         ScriptedDelegate firstFailure = new ScriptedDelegate(new ArrayList<>(), 0, selected);
         Outcome<Value> boundaryFailure = executeShared(f, firstFailure, body);
         check(boundaryFailure instanceof Outcome.Failure<Value> failed
@@ -1641,7 +1640,7 @@ public class ClassOpsExecutorTest {
             new deal.semantic.ir.ClassFactoryRegistry(Map.of()), f.ownerOps(), f.boundaries(), f.layouts(), pass, body), "missing registry binding");
         expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(),
             Map.of(), f.boundaries(), f.layouts(), pass, body), "factory absent from owner lookup");
-        SemanticOp notFactory = sharedOp(FACTORY_OWNER, SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Int(1)),
+        SemanticOp notFactory = sharedOp(FACTORY_OWNER, SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
         SemanticOp wrongClass = sharedCopy(f.factory(), new KindPayload.ClassFactoryPayload(new ClassId("owner.mod", "Other"),
             ((KindPayload.ClassFactoryPayload) f.factory().payload()).classDefaultOpIds(), f.caller().opId()),

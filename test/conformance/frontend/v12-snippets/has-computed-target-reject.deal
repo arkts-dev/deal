@@ -3,5 +3,5 @@
 // @expected: compile-error E1040
 // @features: v1.2, frontend, reject
 
-class C {x?: int;}
+class C {x?: number;}
 export function f(c:C): boolean {return has(c["x"]);}

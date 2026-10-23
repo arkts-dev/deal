@@ -3,8 +3,8 @@
 // @expected: runtime-error E8002
 // @features: arrays, indexing, runtime
 
-export function test_array_write_gap(): int {
-  let xs: int[] = [1, 2, 3];
+export function test_array_write_gap(): number {
+  let xs: number[] = [1, 2, 3];
   xs[4] = 99;
   return xs[4];
 }

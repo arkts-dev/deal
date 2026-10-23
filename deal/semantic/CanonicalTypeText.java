@@ -70,7 +70,7 @@ public final class CanonicalTypeText {
         return switch (type) {
             case Type.Null ignored -> "null";
             case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
+
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
@@ -198,7 +198,7 @@ public final class CanonicalTypeText {
 
     private static String renderNamed(String name, Context context) {
         return switch (name) {
-            case "null", "boolean", "int", "number", "string", "table" -> name;
+            case "null", "boolean", "number", "string", "table" -> name;
             case "Error" -> "Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {

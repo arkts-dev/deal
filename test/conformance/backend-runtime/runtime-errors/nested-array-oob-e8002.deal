@@ -3,8 +3,8 @@
 // @expected: runtime-error E8002
 // @features: arrays, bounds, runtime-errors
 
-export function test_nested_array_oob(): int {
-  let rows: int[][] = [[1], [2]];
+export function test_nested_array_oob(): number {
+  let rows: number[][] = [[1], [2]];
   return rows[1][5];
 }
 

@@ -9,7 +9,7 @@ public enum ConstructKind {
 
     /** Required common form: {@code BINDING_LOAD}, intrinsic binding, or explicit import/export reference. */
     IDENTIFIER("BINDING_LOAD, intrinsic binding, or explicit import/export reference",
-        List.of(SemanticOpKind.BINDING_LOAD, SemanticOpKind.INTRINSIC_CALL, SemanticOpKind.EXPORT_READ)),
+        List.of(SemanticOpKind.BINDING_LOAD, SemanticOpKind.EXPORT_READ)),
 
     /** Required common form: {@code UNARY}/{@code BINARY}; logical operators use selector-bearing {@code BRANCH}. */
     UNARY_ARITHMETIC_COMPARISON("UNARY/BINARY; logical operators use selector-bearing BRANCH",
@@ -20,12 +20,11 @@ public enum ConstructKind {
         List.of(SemanticOpKind.STRING_CONCAT)),
 
     /** Required common form: {@code CALL} (DIRECT/INDIRECT with execution-binding resolution),
-     * {@code CALLBACK_INVOKE}, {@code INTRINSIC_CALL}, {@code STDLIB_CALL}, or
+     * {@code CALLBACK_INVOKE}, {@code STDLIB_CALL}, or
      * {@code ASYNC_START}+{@code AWAIT}. */
     CALL("CALL (DIRECT/INDIRECT with execution-binding resolution), CALLBACK_INVOKE, "
-        + "INTRINSIC_CALL, STDLIB_CALL, or ASYNC_START+AWAIT",
-        List.of(SemanticOpKind.CALL, SemanticOpKind.CALLBACK_INVOKE, SemanticOpKind.INTRINSIC_CALL,
-            SemanticOpKind.STDLIB_CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.AWAIT)),
+        + "STDLIB_CALL, or ASYNC_START+AWAIT",
+        List.of(SemanticOpKind.CALL, SemanticOpKind.CALLBACK_INVOKE,             SemanticOpKind.STDLIB_CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.AWAIT)),
 
     /** Required common form: {@code CALL(EXTERNAL)}/{@code ASYNC_START(EXTERNAL)} with
      * {@code EXTERNAL_ENTRY} on the shared-body callee side, or the retained ABI path. */

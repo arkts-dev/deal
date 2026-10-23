@@ -3,9 +3,9 @@
 // @expected: runtime-error E8002
 // @features: arrays, bounds, nullable, runtime
 
-export function test_nullable_array_index_oob(): int {
-  let xs: (int | null)[] = [1, null, 3];
-  let v: int | null = xs[3];
+export function test_nullable_array_index_oob(): number {
+  let xs: (number | null)[] = [1, null, 3];
+  let v: number | null = xs[3];
   return 0;
 }
 

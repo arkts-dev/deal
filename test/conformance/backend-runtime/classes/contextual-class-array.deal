@@ -3,37 +3,37 @@
 // @expected: runtime-ok
 // @features: classes, arrays, contextual-typing
 
-class Box { n: int = 0; }
+class Box { n: number = 0; }
 class Container { children: Box[] = []; }
 
-function take(a: Box[]): int { return a[0].n; }
+function take(a: Box[]): number { return a[0].n; }
 function make(): Box[] { return [{ n: 2 }]; }
 
-export function test_contextual_variable(): int {
+export function test_contextual_variable(): number {
   let a: Box[] = [{ n: 2 }, {}];
   if (a[0].n !== 2 || a[1].n !== 0) { throw {code: "TEST_FAIL", message: "contextual variable/default"}; }
   return a[0].n;
 }
 
-export function test_contextual_argument(): int {
-  let result: int = take([{ n: 2 }]);
+export function test_contextual_argument(): number {
+  let result: number = take([{ n: 2 }]);
   if (result !== 2) { throw {code: "TEST_FAIL", message: "contextual argument"}; }
   return result;
 }
 
-export function test_contextual_return(): int {
+export function test_contextual_return(): number {
   let a: Box[] = make();
   if (a[0].n !== 2) { throw {code: "TEST_FAIL", message: "contextual return"}; }
   return a[0].n;
 }
 
-export function test_contextual_field(): int {
+export function test_contextual_field(): number {
   let c: Container = { children: [{ n: 2 }] };
   if (c.children[0].n !== 2) { throw {code: "TEST_FAIL", message: "contextual field"}; }
   return c.children[0].n;
 }
 
-export function test_nullable_construction(): int {
+export function test_nullable_construction(): number {
   let b: Box | null = { n: 2 };
   if (b === null) {
     throw {code: "TEST_FAIL", message: "contextual construction became null"};

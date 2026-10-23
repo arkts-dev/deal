@@ -6,7 +6,7 @@
 export function test_table_delete_dynamic_field(): null {
   let t: table = { value: 4 };
   delete t.value;
-  let v: int | null = t.value;
+  let v: number | null = t.value;
   if (v !== null) { throw { code: "TEST_FAIL", message: "deleted table field still present" }; }
   return null;
 }

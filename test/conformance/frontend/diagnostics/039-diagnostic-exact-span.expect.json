@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E3001",
     "line": 7,
-    "column": 20,
-    "message": "Cannot assign number to int"
+    "column": 23,
+    "message": "Cannot assign boolean to number"
   }
 }

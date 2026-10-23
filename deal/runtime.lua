@@ -46,14 +46,6 @@ end
 local __K = __CARRIER_KEYS
 __rt.__keys = __K
 
--- ===== Signed-32 gate (signed-int32 foundation I4) =====
--- The signed-32 gate is active from runtime load: check_int gates
--- [-2147483648, 2147483647] with the pinned template E8004 "int out of
--- safe range". Every int boundary — direct runtime/stdlib
--- callers included — observes the same boundary; no mode selects an
--- alternate range. _json_is_int narrows to signed32 unconditionally
--- (canonical ISSUE-0342, luajit-v1.2-stdlib-contracts D5).
-
 -- ===== Error formatting =====
 
 --- Create an error table in DEALRuntimeError format.
@@ -167,68 +159,6 @@ function __rt.check_boolean(v, file, line, column)
   if type(v) ~= "boolean" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "boolean" }, "E8001",
       "expected boolean", file, line, column, "boolean", __rt.typed_kind(v)))
-  end
-  return v
-end
-
-function __rt.check_int(v, file, line, column)
-  -- The value model's numeric-variant carrier (the std/json decode graph's
-  -- numeric leaf, the read-side variant materialization and the host
-  -- crossing's carrier, ISSUE-0836) crosses a numeric boundary as the
-  -- value it stands for. An int-variant carrier is the admitted int; a
-  -- number-variant carrier runs the same refinement/range ladder as a
-  -- plain number and keeps its own recorded variant on the returned
-  -- carrier — exactly the emitted prelude's int cell, the JVM runtime's
-  -- boxed Long/Double admission and the JS checkInt. The positive-zero
-  -- normalization republishes a fresh zero-valued carrier with the
-  -- recorded variant and never mutates the input carrier.
-  if type(v) == "table" and v[__K.jn] then
-    local function admit_carrier()
-      if v.d == 0 and 1 / v.d < 0 then
-        return { [__K.jn] = true, k = v.k, d = 0 }
-      end
-      return v
-    end
-    if v.k == "int" then return admit_carrier() end
-    if v.d ~= v.d then
-      error(__rt._armErr("INT_CONVERSION_NAN", {}, "E8001",
-        "expected int, got NaN", file, line, column, "int", "NaN"))
-    end
-    if v.d == math.huge or v.d == -math.huge then
-      error(__rt._armErr("INT_CONVERSION_INFINITY", {}, "E8001",
-        "expected int, got infinity", file, line, column, "int", "infinity"))
-    end
-    if v.d % 1 ~= 0 then
-      error(__rt._armErr("INT_CONVERSION_FRACTIONAL", {}, "E8001",
-        "expected int, got non-integer number", file, line, column, "int",
-        "number"))
-    end
-    if v.d < -2147483648 or v.d > 2147483647 then
-      error(__rt._armErr("INT32_RANGE", {}, "E8004", "int out of safe range",
-        file, line, column, nil, nil))
-    end
-    return admit_carrier()
-  end
-  if type(v) ~= "number" then
-    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "int" }, "E8001",
-      "expected int", file, line, column, "int", __rt.typed_kind(v)))
-  end
-  if v ~= v then  -- NaN check: NaN is the only value not equal to itself
-    error(__rt._armErr("INT_CONVERSION_NAN", {}, "E8001",
-      "expected int, got NaN", file, line, column, "int", "NaN"))
-  end
-  v = v + 0  -- normalize -0 to 0 (per spec.md lines 60-65, 2024)
-  if v == math.huge or v == -math.huge then
-    error(__rt._armErr("INT_CONVERSION_INFINITY", {}, "E8001",
-      "expected int, got infinity", file, line, column, "int", "infinity"))
-  end
-  if v % 1 ~= 0 then
-    error(__rt._armErr("INT_CONVERSION_FRACTIONAL", {}, "E8001",
-      "expected int, got non-integer number", file, line, column, "int", "number"))
-  end
-  if v < -2147483648 or v > 2147483647 then
-    error(__rt._armErr("INT32_RANGE", {}, "E8004", "int out of safe range",
-      file, line, column, nil, nil))
   end
   return v
 end
@@ -449,11 +379,7 @@ function __rt.typed_kind(v)
   if v == __rt.__NULL then return "null" end
   local t = type(v)
   if t == "boolean" then return "boolean" end
-  if t == "number" then
-    if v ~= v then return "number" end
-    if v % 1 == 0 and v >= -2147483648 and v <= 2147483647 then return "int" end
-    return "number"
-  end
+  if t == "number" then return "number" end
   if t == "string" then return "string" end
   if t ~= "table" then return t end
   local kind = v[__K.kind]
@@ -538,31 +464,6 @@ end
 
 -- ===== Integer arithmetic =====
 
-function __rt.int_add(a, b, file, line, column)
-  return __rt.check_int(a + b, file, line, column)
-end
-
-function __rt.int_sub(a, b, file, line, column)
-  return __rt.check_int(a - b, file, line, column)
-end
-
-function __rt.int_mul(a, b, file, line, column)
-  return __rt.check_int(a * b, file, line, column)
-end
-
-function __rt.int_div(a, b, file, line, column)
-  if b == 0 then
-    error(__rt._err("E8005", "integer division by zero", file, line, column, nil, nil))
-  end
-  return __rt.check_int(math.modf(a / b), file, line, column)
-end
-
-
-
-function __rt.int_neg(a, file, line, column)
-  return __rt.check_int(-a, file, line, column)
-end
-
 -- ===== Canonical descriptor parser and matcher (v1.3) =====
 --
 -- The canonical cutover (runtime page D3): the legacy dialect parser and
@@ -577,7 +478,7 @@ end
 -- Canonical grammar (canonical-type-system-and-runtime-descriptors D2):
 --
 --   descriptor := primitive | error | class | array | nullable | function
---   primitive  := "null" | "boolean" | "int" | "number" | "string" | "table"
+--   primitive  := "null" | "boolean" | "number" | "string" | "table"
 --   error      := "Error"
 --   class      := "@" component ("/" component)+
 --   array      := "[" descriptor "]"
@@ -599,7 +500,7 @@ end
 -- the canonical parser accepts no legacy spelling at any point.
 
 local CANONICAL_PRIMITIVES = {
-  "null", "boolean", "int", "number", "string", "table",
+  "null", "boolean", "number", "string", "table",
 }
 
 --- Strict canonical recursive-descent parser (total; never throws).
@@ -882,8 +783,6 @@ local function check_canonical_ast(ast, v, file, line, column)
       return __rt.check_null(v, file, line, column)
     elseif name == "boolean" then
       return __rt.check_boolean(v, file, line, column)
-    elseif name == "int" then
-      return __rt.check_int(v, file, line, column)
     elseif name == "number" then
       return __rt.check_number(v, file, line, column)
     elseif name == "string" then
@@ -1740,35 +1639,6 @@ function __rt.has(obj, field)
   return obj[field] ~= nil
 end
 
--- ===== Conversion intrinsics =====
-
---- Convert a value to int. Handles both overloads:
----   (number) => int      — converts number to int, validating range/integer-ness
----   (int | null) => int  — unwraps nullable int, rejecting null
---- Delegates to check_int for range, NaN, Infinity, and non-integer validation.
--- Emitted by the backend as a function-value wrapper (sig "(number)->int");
--- direct calls forward the call-site span through the wrapper.
-function __rt.int_convert(v, file, line, column)
-  if v == nil or v == __rt.__NULL then
-    error(__rt._err("E8001", "cannot convert null to int", file, line, column, "int", "null"))
-  end
-  -- Reuse check_int which validates range, NaN, Infinity, and integer-ness
-  return __rt.check_int(v, file, line, column)
-end
-
---- Convert a value to number. Handles both overloads:
----   (int) => number           — converts int to number
----   (number | null) => number — unwraps nullable number, rejecting null
---- Delegates to check_number for type validation.
--- Emitted by the backend as a function-value wrapper (sig "(int)->number");
--- direct calls forward the call-site span through the wrapper.
-function __rt.number_convert(v, file, line, column)
-  if v == nil or v == __rt.__NULL then
-    error(__rt._err("E8001", "cannot convert null to number", file, line, column, "number", "null"))
-  end
-  return __rt.check_number(v, file, line, column)
-end
-
 -- ===== Internal helpers =====
 
 --- Deep-copy a table recursively.
@@ -1846,31 +1716,6 @@ function __rt._json_is_array(t)
     count = count + 1
   end
   return count == n
-end
-
---- Non-throwing twin of check_int (see check_int above): false for
--- non-numbers, NaN, infinities, non-integers, and values outside the
--- signed-int32 range; true otherwise. The v1.3 int32 narrowing
--- (luajit-v1.2-stdlib-contracts D5): a JSON number maps to DEAL int
--- exactly inside [-2147483648, 2147483647]; every other JSON number
--- maps to number.
-function __rt._json_is_int(v)
-  if type(v) ~= "number" then
-    return false
-  end
-  if v ~= v then  -- NaN check: NaN is the only value not equal to itself
-    return false
-  end
-  if v == math.huge or v == -math.huge then
-    return false
-  end
-  if v % 1 ~= 0 then
-    return false
-  end
-  if v < -2147483648 or v > 2147483647 then
-    return false
-  end
-  return true
 end
 
 --- False for non-numbers, NaN, and infinities; true for every other
@@ -2123,7 +1968,7 @@ function __rt._json_validate_entry(entry, decode)
     end
   end
   local jtype = entry.jtype
-  if jtype == "null" or jtype == "boolean" or jtype == "int"
+  if jtype == "null" or jtype == "boolean"
       or jtype == "number" or jtype == "string" or jtype == "table" then
     return true
   elseif jtype == "class" then
@@ -2380,11 +2225,6 @@ function __rt._json_from_value(fdesc, raw, seen)
       return nil
     end
     return raw
-  elseif jtype == "int" then
-    if not __rt._json_is_int(raw) then
-      return nil
-    end
-    return raw
   elseif jtype == "number" then
     if not __rt._json_is_number(raw) then
       return nil
@@ -2512,11 +2352,6 @@ function __rt._json_to_value(fdesc, v, seen, file, line, column)
       error(__rt._err("E8001", "expected boolean", file, line, column, "boolean", type(v)))
     end
     return v
-  elseif jtype == "int" then
-    -- check_int: E8001 for non-number/NaN/Infinity/non-integer,
-    -- E8004 "int out of range" beyond the signed-int32 range — the int
-    -- type contract (see check_int above).
-    return __rt.check_int(v, file, line, column)
   elseif jtype == "number" then
     if type(v) ~= "number" then
       error(__rt._err("E8001", "expected number", file, line, column, "number", type(v)))

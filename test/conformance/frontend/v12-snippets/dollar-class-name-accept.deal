@@ -3,5 +3,5 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class Cbad {x:int=0;}
+class Cbad {x:number=0;}
 export function f(): null {return null;}

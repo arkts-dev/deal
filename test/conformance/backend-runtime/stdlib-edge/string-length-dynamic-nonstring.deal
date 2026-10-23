@@ -5,7 +5,7 @@
 
 import * as str from "std/string";
 
-export function test_string_length_dynamic_nonstring(): int {
+export function test_string_length_dynamic_nonstring(): number {
   let t: table = { value: 123 };
   return str.length(t.value);
 }

@@ -149,13 +149,13 @@ public class DiagnosticClassificationTest {
         triggers.put("E2000", "function f(): null { break; }");
         triggers.put("E2001", inMain.replace("%s", "let x = y; "));
         triggers.put("E2002", inMain.replace("%s", "let x = 1; let x = 2; "));
-        triggers.put("E3001", inMain.replace("%s", "let x: int = 3.14; "));
+        triggers.put("E3001", inMain.replace("%s", "let x: number = true; "));
         triggers.put("E3002", inMain.replace("%s", "let x = []; "));
         triggers.put("E3018", inMain.replace("%s",
             "let t: table = {}; t[0] = 1; "));
         triggers.put("E3008", inMain.replace("%s", "let x = 1; x(); "));
         triggers.put("E3009", inMain.replace("%s",
-            "function f(x: int): null { return null; } f(1, 2); "));
+            "function f(x: number): null { return null; } f(1, 2); "));
         triggers.put("E4001",
             "class Foo { name: string; } "
             + inMain.replace("%s", "let f: Foo = {}; "));
@@ -163,15 +163,15 @@ public class DiagnosticClassificationTest {
             "class Foo { name: string; } "
             + inMain.replace("%s", "let f: Foo = { name: \"x\", extra: 1 }; "));
         triggers.put("E4007",
-            "// @jsonable\nexport class Foo { fn: (x: int) => null = function(x: int): null { return null; }; }");
-        triggers.put("E5001", "function f(x: int): null {} f(true);");
-        triggers.put("E1047", "function f(...xs: int[]): null { return null; }");
+            "// @jsonable\nexport class Foo { fn: (x: number) => null = function(x: number): null { return null; }; }");
+        triggers.put("E5001", "function f(x: number): null {} f(true);");
+        triggers.put("E1047", "function f(...xs: number[]): null { return null; }");
         triggers.put("E1044",
-            "// @not-a-directive\nclass A { x: int = 0; }\n");
+            "// @not-a-directive\nclass A { x: number = 0; }\n");
         triggers.put("E1045",
-            "// @jsonable:foo\nexport class A { x: int = 0; }\n");
+            "// @jsonable:foo\nexport class A { x: number = 0; }\n");
         triggers.put("E5003",
-            "function f(): int { return \"hi\"; }");
+            "function f(): number { return \"hi\"; }");
 
         int triggered = 0;
         for (var entry : triggers.entrySet()) {
@@ -210,8 +210,8 @@ public class DiagnosticClassificationTest {
             "@", "\"unterminated", "/* unterminated", "1.2.3",
             "{", "class {", "function f( {}", "let x = ;",
             "if true { } else x;", "import x from \"m\";",
-            "export let x = 1;", "let x: int = true;", "let x = [];",
-            "function f(): int { return \"x\"; }", "let x = y;", "break;",
+            "export let x = 1;", "let x: number = true;", "let x = [];",
+            "function f(): number { return \"x\"; }", "let x = y;", "break;",
         };
 
         for (String source : programs) {

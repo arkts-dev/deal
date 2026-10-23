@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: type-system, nullable, narrowing
 
-export function test_narrowing(): int {
-  let n: int | null = 1;
+export function test_narrowing(): number {
+  let n: number | null = 1;
   if (n !== null) {
-    let i: int = n; // OK: narrowed to int
+    let i: number = n; // OK: narrowed to int
     if (i !== 1) {
       throw { code: "TEST_FAIL", message: "nullable narrowing: narrowed value mismatch" };
     }

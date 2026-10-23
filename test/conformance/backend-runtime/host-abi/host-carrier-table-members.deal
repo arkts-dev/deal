@@ -6,8 +6,8 @@
 import * as host from "host/carriertable";
 
 class Point {
-  x: int = 0;
-  y: int = 0;
+  x: number = 0;
+  y: number = 0;
 }
 
 function check(condition: boolean, message: string): null {
@@ -17,18 +17,18 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function bump(x: int): int {
-  let y: int = x + 1;
+function bump(x: number): number {
+  let y: number = x + 1;
   return y;
 }
 
-function pick(): async (w: host.Widget, g: (x: int) => int) => string {
+function pick(): async (w: host.Widget, g: (x: number) => number) => string {
   return host.describeAsync;
 }
 
 export async function test_runtime_resolved_async(): null {
   let w: host.Widget = { label: "w", weight: 7, action: bump };
-  let dyn: async (w: host.Widget, g: (x: int) => int) => string = pick();
+  let dyn: async (w: host.Widget, g: (x: number) => number) => string = pick();
   let text: string = await dyn(w, bump);
   check(text === "W|w|7|true:42", "the runtime-resolved async host call preserves the class and function arguments");
   return null;
@@ -39,9 +39,9 @@ export function test_table_return(): null {
   let w: host.Widget = t.widget;
   check(w.label === "made", "the table-typed host return class member label");
   check(w.weight === 9, "the table-typed host return class member weight");
-  let field: (x: int) => int = w.action;
+  let field: (x: number) => number = w.action;
   check(field(41) === 42, "the table-typed host return class member function field");
-  let member: (x: int) => int = t.action;
+  let member: (x: number) => number = t.action;
   check(member(41) === 42, "the table-typed host return function member");
   check(host.tableIntact(), "the host object the bridge copies is not mutated");
   return null;
@@ -63,7 +63,7 @@ export function test_table_field(): null {
   let meta: table = board.meta;
   let w: host.Widget = meta.widget;
   check(w.weight === 5, "the table-typed host-class field class member");
-  let member: (x: int) => int = meta.action;
+  let member: (x: number) => number = meta.action;
   check(member(41) === 42, "the table-typed host-class field function member");
   return null;
 }

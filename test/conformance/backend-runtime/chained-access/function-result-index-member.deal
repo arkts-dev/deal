@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: functions, arrays, classes, chained-access
 
-class Box { value: int = 0; }
-function box(v: int): Box { return { value: v }; }
+class Box { value: number = 0; }
+function box(v: number): Box { return { value: v }; }
 function makeBoxes(): Box[] { return [box(5), box(11)]; }
 
-export function test_function_result_index_member(): int {
-  let result: int = makeBoxes()[1].value;
+export function test_function_result_index_member(): number {
+  let result: number = makeBoxes()[1].value;
   if (result !== 11) { throw { code: "TEST_FAIL", message: "function result index/member failed" }; }
   return result;
 }

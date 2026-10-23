@@ -3,4 +3,4 @@
 // @expected: companion
 // @features: companion, modules, resolution
 
-export function indexOnly(): int { return 3; }
+export function indexOnly(): number { return 3; }

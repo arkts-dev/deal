@@ -3,9 +3,9 @@
 // @expected: runtime-error E8001
 // @features: type-system, functions, runtime-errors
 
-export function test_dynamic_nonfunction_to_function_runtime_error(): int {
+export function test_dynamic_nonfunction_to_function_runtime_error(): number {
   let t: table = { f: 1 };
-  let f: (x: int) => int = t.f;
+  let f: (x: number) => number = t.f;
   return f(1);
 }
 

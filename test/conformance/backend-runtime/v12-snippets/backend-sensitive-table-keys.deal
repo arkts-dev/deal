@@ -7,10 +7,10 @@ import * as c from "std/console";
 export function main(): null {
  let t: table = {}; let proto: string = "__proto__"; let ctor: string = "constructor"; let own: string = "hasOwnProperty";
  t[proto] = 11; t[ctor] = 12; t[own] = 13;
- let a: int = t[proto]; let b: int = t[ctor]; let d: int = t[own];
+ let a: number = t[proto]; let b: number = t[ctor]; let d: number = t[own];
  if(a !== 11 || b !== 12 || d !== 13) {throw {message:"host object meta-key leaked"};}
- delete t[proto]; let absent: int | null = t[proto];
+ delete t[proto]; let absent: number | null = t[proto];
  if(absent !== null) {throw {message:"delete meta-key failed"};}
- t[proto] = 14; let again: int = t[proto]; if(again !== 14) {throw {message:"rewrite meta-key failed"};}
+ t[proto] = 14; let again: number = t[proto]; if(again !== 14) {throw {message:"rewrite meta-key failed"};}
  c.log("backend-sensitive-table-keys"); return null;
 }

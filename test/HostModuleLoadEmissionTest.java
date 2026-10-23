@@ -31,7 +31,6 @@ import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -96,9 +95,9 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String ORDER_DECLARATION_SOURCE = """
         export class Config {
-          port: int;
-          fallback?: int;
-          peers?: int[];
+          port: number;
+          fallback?: number;
+          peers?: number[];
         }
 
         export function ping(): string;
@@ -130,10 +129,10 @@ public class HostModuleLoadEmissionTest {
     /** The host ABI declaration: scalar, array, function, and async positions. */
     private static final String ABI_DECLARATION_SOURCE = """
         export function ping(): string;
-        export function echoInt(v: int): int;
-        export function badReturn(): int;
+        export function echoInt(v: number): number;
+        export function badReturn(): number;
         export function join(sep: string, parts: string[]): string;
-        export function apply(f: (x: int) => int, v: int): int;
+        export function apply(f: (x: number) => number, v: number): number;
         export async function fetchValue(): string;
         export function nullable(v: string | null): string | null;
         """;
@@ -145,7 +144,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
@@ -239,8 +238,8 @@ public class HostModuleLoadEmissionTest {
         import * as second from "host/abi_probe";
 
         export function main(): null {
-          let a: int = first.echoInt(1);
-          let b: int = second.echoInt(2);
+          let a: number = first.echoInt(1);
+          let b: number = second.echoInt(2);
           return null;
         }
         """;
@@ -263,7 +262,7 @@ public class HostModuleLoadEmissionTest {
 
         export function test_function_value_at_table_param(): null {
           let holder: table = {};
-          holder.f = function(): int { return 1; };
+          holder.f = function(): number { return 1; };
           let out: string = host.consume(holder.f);
           return null;
         }
@@ -446,7 +445,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
@@ -455,12 +454,12 @@ public class HostModuleLoadEmissionTest {
 
         export class Bundle {
           label: string;
-          action: (x: int) => int;
+          action: (x: number) => number;
         }
 
         export function describe(s: ServerConfig): string;
-        export async function fetchConfig(id: int): ServerConfig;
-        export function apply(f: (x: int) => int, v: int): int;
+        export async function fetchConfig(id: number): ServerConfig;
+        export function apply(f: (x: number) => number, v: number): number;
         """;
 
     /**
@@ -471,7 +470,7 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String CARRIER_BASE_DECLARATION_SOURCE = """
         export class Base {
-          id: int;
+          id: number;
           run: (x: string, y: string) => boolean;
         }
 
@@ -480,21 +479,21 @@ public class HostModuleLoadEmissionTest {
     /** A second typed host declaration with a scalar field layout. */
     private static final String CARRIER_NATIVE_DECLARATION_SOURCE = """
         export class Pair {
-          left: int;
+          left: number;
           right: number;
         }
 
-        export function probe(): int;
+        export function probe(): number;
         """;
 
     /** The host-carrier metadata project's own module: a DEAL class and an exported function value. */
     private static final String CARRIER_UTIL_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 0;
+          x: number = 0;
+          y: number = 0;
         }
 
-        export function bump(x: int): int {
+        export function bump(x: number): number {
           return x + 1;
         }
         """;
@@ -514,11 +513,11 @@ public class HostModuleLoadEmissionTest {
 
         export class Widget {
           name: string = "";
-          run: (x: int) => int = function(x: int): int { return x; };
+          run: (x: number) => number = function(x: number): number { return x; };
         }
 
         export function main(): null {
-          let step: (x: int) => int = function(x: int): int { return x + 1; };
+          let step: (x: number) => number = function(x: number): number { return x + 1; };
           let accept: (x: string, y: string) => boolean =
             function(x: string, y: string): boolean { return true; };
           let widget: Widget = { name: "w", run: step };
@@ -527,7 +526,7 @@ public class HostModuleLoadEmissionTest {
           let point: util.Point = { x: 1, y: 2 };
           let pair: native.Pair = { left: 4, right: 9.5 };
           let bundle: cfg.Bundle = { label: "b", action: step };
-          let bumped: int = util.bump(1);
+          let bumped: number = util.bump(1);
           return null;
         }
         """;
@@ -539,8 +538,8 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String HOST_FREE_APP_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 0;
+          x: number = 0;
+          y: number = 0;
         }
 
         export function main(): null {
@@ -794,7 +793,6 @@ public class HostModuleLoadEmissionTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -957,7 +955,7 @@ public class HostModuleLoadEmissionTest {
                     return null;
                 }
                 Map<String, SemanticOracle.Value> defaults = new LinkedHashMap<>();
-                defaults.put("port", new SemanticOracle.Value.IntValue(1));
+                defaults.put("port", new SemanticOracle.Value.NumValue(1));
                 return defaults;
             }
         };
@@ -1168,21 +1166,21 @@ public class HostModuleLoadEmissionTest {
         String expectedFields = "__factories.__hostClassFields = {"
             + "[\"@$external/host/carrier/Endpoint\"] = {[\"path\"] = \"string\"}, "
             + "[\"@$external/host/carrier/ServerConfig\"] = {"
-            + "[\"port\"] = \"int\", "
+            + "[\"port\"] = \"number\", "
             + "[\"endpoint\"] = \"@$external/host/carrier/Endpoint\", "
             + "[\"tags\"] = \"[string]\", [\"note\"] = \"?string\", "
             + "[\"root\"] = \"@$external/host/base/Base\"}, "
             + "[\"@$external/host/carrier/Bundle\"] = {"
-            + "[\"label\"] = \"string\", [\"action\"] = \"(int)->int\"}, "
+            + "[\"label\"] = \"string\", [\"action\"] = \"(number)->number\"}, "
             + "[\"@$external/native/sample/Pair\"] = {"
-            + "[\"left\"] = \"int\", [\"right\"] = \"number\"}, "
+            + "[\"left\"] = \"number\", [\"right\"] = \"number\"}, "
             + "[\"@$external/host/base/Base\"] = {"
-            + "[\"id\"] = \"int\", "
+            + "[\"id\"] = \"number\", "
             + "[\"run\"] = \"(string,string)->boolean\"}, "
             + "[\"@src/util.deal/Point\"] = {"
-            + "[\"x\"] = \"int\", [\"y\"] = \"int\"}, "
+            + "[\"x\"] = \"number\", [\"y\"] = \"number\"}, "
             + "[\"@src/app.deal/Widget\"] = {"
-            + "[\"name\"] = \"string\", [\"run\"] = \"(int)->int\"}}";
+            + "[\"name\"] = \"string\", [\"run\"] = \"(number)->number\"}}";
         check(lua.contains(expectedFields), "the class field map carries every"
             + " declared class in declaration order: " + expectedFields);
 
@@ -1211,14 +1209,14 @@ public class HostModuleLoadEmissionTest {
                     + "{ret = \"string\", cells = "
                     + "{{\"@$external/host/carrier/ServerConfig\", \"class\", "
                     + "\"@$external/host/carrier/ServerConfig\"}}}",
-                "[\"async(int)->@$external/host/carrier/ServerConfig\"] = "
+                "[\"async(number)->@$external/host/carrier/ServerConfig\"] = "
                     + "{ret = \"@$external/host/carrier/ServerConfig\", "
-                    + "cells = {{\"int\", \"int\", \"int\"}}}",
-                "[\"((int)->int,int)->int\"] = {ret = \"int\", cells = "
-                    + "{{\"function(int;int)\", \"function\", \"(int)->int\"}, "
-                    + "{\"int\", \"int\", \"int\"}}}",
-                "[\"(int)->int\"] = {ret = \"int\", "
-                    + "cells = {{\"int\", \"int\", \"int\"}}}",
+                    + "cells = {{\"number\", \"number\", \"number\"}}}",
+                "[\"((number)->number,number)->number\"] = {ret = \"number\", cells = "
+                    + "{{\"function(number;number)\", \"function\", \"(number)->number\"}, "
+                    + "{\"number\", \"number\", \"number\"}}}",
+                "[\"(number)->number\"] = {ret = \"number\", "
+                    + "cells = {{\"number\", \"number\", \"number\"}}}",
                 "[\"(string,string)->boolean\"] = {ret = \"boolean\", "
                     + "cells = {{\"string\", \"string\", \"string\"}, "
                     + "{\"string\", \"string\", \"string\"}}}",
@@ -1357,7 +1355,7 @@ public class HostModuleLoadEmissionTest {
     say("out.error.no-carrier", errorOut[K.d] == nil)
 
     local fnCarrier = {[K.fn] = function(x) return x + 1 end,
-      [K.sig] = "function(int;int)", [K.csig] = "(int)->int"}
+      [K.sig] = "function(number;number)", [K.csig] = "(number)->number"}
     local fnOut = __factories.__hostCarrierOut(nil, fnCarrier, {})
     say("out.fn.kind", fnOut[K.kind])
     say("out.fn.sig", fnOut.sig)
@@ -1375,7 +1373,7 @@ public class HostModuleLoadEmissionTest {
       type(shapeErr) == "string" and string.find(shapeErr, "(boolean)->boolean", 1, true) ~= nil)
     say("out.fn.no-shape-producer",
       type(shapeErr) == "string" and string.find(shapeErr, "producer coverage defect", 1, true) ~= nil)
-    local wrapper = {[K.kind] = "function", sig = "(int)->int", f = function() return 1 end}
+    local wrapper = {[K.kind] = "function", sig = "(number)->number", f = function() return 1 end}
     say("out.fn.wrapper-identity",
       __factories.__hostCarrierOut(nil, wrapper, {}) == wrapper)
     local raw = function() return 2 end
@@ -1385,7 +1383,7 @@ public class HostModuleLoadEmissionTest {
       [K.c] = true, [K.id] = "@src/util.deal/Point", x = 1, y = 2}
     say("out.dual.identity", __factories.__hostCarrierOut(nil, dual, {}) == dual)
     local dualAction = {[K.fn] = function(x) return x + 1 end,
-      [K.sig] = "function(int;int)", [K.csig] = "(int)->int"}
+      [K.sig] = "function(number;number)", [K.csig] = "(number)->number"}
     local dualBundle = {[K.kind] = "class",
       [K.classname] = "@$external/host/carrier/Bundle",
       [K.c] = true, [K.id] = "@$external/host/carrier/Bundle",
@@ -1397,7 +1395,7 @@ public class HostModuleLoadEmissionTest {
     say("out.dual.copy-id", dualOut[K.id])
     say("out.dual.copy-action-kind", dualOut.action[K.kind])
     say("out.dual.copy-action-result", dualOut.action.f(2))
-    say("out.dual.source-action-carrier", dualBundle.action[K.csig] == "(int)->int"
+    say("out.dual.source-action-carrier", dualBundle.action[K.csig] == "(number)->number"
       and dualBundle.action[K.kind] == nil)
 
     local hostOrigin = {[K.kind] = "class",
@@ -1416,7 +1414,7 @@ public class HostModuleLoadEmissionTest {
     local numberCarrier = {[K.jn] = true, k = "number", d = 1.5}
     local sharedArray = {[K.a] = true, [K.n] = 2, 1, numberCarrier}
     say("out.array.identity",
-      __factories.__hostCarrierOut("[int]", sharedArray, {}) == sharedArray)
+      __factories.__hostCarrierOut("[number]", sharedArray, {}) == sharedArray)
     say("out.array.numeric", sharedArray[2])
     say("out.array.mark", sharedArray[K.nK][2] == true)
     local endpointCarrier = {[K.c] = true,
@@ -1585,15 +1583,15 @@ public class HostModuleLoadEmissionTest {
     say("in.error.m", errorIn.m)
 
     local dense = {10, 20, 30}
-    local denseIn = __factories.__hostCarrierIn("[int]", dense, {})
+    local denseIn = __factories.__hostCarrierIn("[number]", dense, {})
     say("in.array.dense-mark", denseIn[K.a])
     say("in.array.dense-length", denseIn[K.n])
     say("in.array.dense-element", denseIn[2])
     say("in.array.dense-marks", type(denseIn[K.nK]))
     local sparse = {[1] = 1, [3] = 3}
-    say("in.array.sparse-identity", __factories.__hostCarrierIn("[int]", sparse, {}) == sparse)
+    say("in.array.sparse-identity", __factories.__hostCarrierIn("[number]", sparse, {}) == sparse)
     local mapTable = {a = 1}
-    say("in.array.map-identity", __factories.__hostCarrierIn("[int]", mapTable, {}) == mapTable)
+    say("in.array.map-identity", __factories.__hostCarrierIn("[number]", mapTable, {}) == mapTable)
     local classElementsIn = __factories.__hostCarrierIn(
       "[@$external/host/carrier/Endpoint]", {hostEndpoint}, {})
     say("in.array.classes-mark", classElementsIn[K.a])
@@ -1643,7 +1641,7 @@ public class HostModuleLoadEmissionTest {
     say("in.fn.carrier-identity",
       __factories.__hostCarrierIn(nil, fnCarrier, {}) == fnCarrier)
     say("in.array.carrier-identity",
-      __factories.__hostCarrierIn("[int]", sharedArray, {}) == sharedArray)
+      __factories.__hostCarrierIn("[number]", sharedArray, {}) == sharedArray)
 
     local cycleOut = {[K.t] = true, [K.keys] = {}, [K.order] = {}}
     cycleOut.self = cycleOut
@@ -1700,10 +1698,10 @@ public class HostModuleLoadEmissionTest {
         out.error.message|boom
         out.error.no-carrier|true
         out.fn.kind|function
-        out.fn.sig|(int)->int
+        out.fn.sig|(number)->number
         out.fn.f-type|function
         out.fn.result|42
-        out.fn.reject|false|E8001|expected int
+        out.fn.reject|false|E8001|expected number
         out.fn.no-shape|false|string
         out.fn.no-shape-names-signature|true
         out.fn.no-shape-producer|true
@@ -1974,14 +1972,14 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String NUMERIC_DECLARATION_SOURCE = """
         export class Cfg {
-          count: int;
+          count: number;
           ratio: number;
         }
 
         export async function absorbAsync(nums: number[]): string;
         export function echoNumbers(nums: number[]): number[];
         export function observeNumbers(nums: number[]): string;
-        export function observeInts(ns: (int | null)[]): string;
+        export function observeInts(ns: (number | null)[]): string;
         export function describeCfg(cfg: Cfg): string;
         """;
 
@@ -2007,7 +2005,7 @@ public class HostModuleLoadEmissionTest {
           let box: table = { xs: echo };
 
           let intsDoc: table = json.parse("{\\"ns\\":[1,null,3]}");
-          let ns: (int | null)[] = intsDoc.ns;
+          let ns: (number | null)[] = intsDoc.ns;
 
           let cfgDoc: table = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
           let count: int = cfgDoc.count;
@@ -2205,9 +2203,9 @@ public class HostModuleLoadEmissionTest {
     private static final String TABLE_PROBE_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
         "{\"xs\":[1,2]}",
-        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2.147483649E9]}",
-        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2.147483649E9]}",
-        "{\"n\":null,\"v\":0.1,\"xs\":[1,0.1,-2.147483649E9]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1.0,0.1,-2.147483649E9]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1.0,0.1,-2.147483649E9]}",
+        "{\"n\":null,\"v\":0.1,\"xs\":[1.0,0.1,-2.147483649E9]}",
         "v=42",
         "{\"n\":null}",
         "{\"v\":0.1}",
@@ -2259,7 +2257,7 @@ public class HostModuleLoadEmissionTest {
                 "a declared host parameter of a decoded numeric array and a"
                     + " decoded numeric class field hands the raw host the"
                     + " declared DEAL values, and the echoed decoded array"
-                    + " keeps its own int/number variants: exit="
+                    + " keeps its own number/number variants: exit="
                     + run.exitCode() + " stdout=" + escaped(run.stdout())
                     + " stderr=" + escaped(run.stderr()));
         } finally {
@@ -2364,7 +2362,7 @@ public class HostModuleLoadEmissionTest {
 
         function joined(keys: string[]): string {
           let out: string = "";
-          let i: int = 0;
+          let i: number = 0;
           while (i < keys.length) {
             if (i > 0) {
               out = out + ",";
@@ -2465,7 +2463,7 @@ public class HostModuleLoadEmissionTest {
         "TRANSCRIPT-BEGIN",
         "keys=a json={\"a\":1} host=a=1 extra=nil",
         "nested={\"inner\":\"x\"} keys=inner",
-        "written=extra,a:{\"extra\":9,\"a\":1} host=a=1 extra=9",
+        "written=extra,a:{\"extra\":9.0,\"a\":1} host=a=1 extra=9",
         "callback=cb:cb:{\"cb\":2}",
         "array=OK:[\"a\",\"b\"]",
         "mixed=E8001|unsupported type for JSON encoding: table",
@@ -2528,9 +2526,9 @@ public class HostModuleLoadEmissionTest {
      * passes a declared {@code int[]} argument into the DEAL callback.
      */
     private static final String ARRAY_CROSSING_DECLARATION_SOURCE = """
-        export async function produce(): int[];
-        export async function produceNested(): int[][];
-        export function consume(f: (xs: int[]) => int): int;
+        export async function produce(): number[];
+        export async function produceNested(): number[][];
+        export function consume(f: (xs: number[]) => number): number;
         """;
 
     /**
@@ -2544,9 +2542,9 @@ public class HostModuleLoadEmissionTest {
     private static final String ARRAY_CROSSING_APP_SOURCE = """
         import * as host from "host/arr_probe";
 
-        function sum(xs: int[]): int {
-          let total: int = 0;
-          let i: int = 0;
+        function sum(xs: number[]): number {
+          let total: number = 0;
+          let i: number = 0;
           while (i < xs.length) {
             total = total + xs[i];
             i = i + 1;
@@ -2554,7 +2552,7 @@ public class HostModuleLoadEmissionTest {
           return total;
         }
 
-        function asyncTotal(xs: int[]): int {
+        function asyncTotal(xs: number[]): number {
           if (xs.length !== 3) {
             throw { code: "TEST_FAIL", message: "async completion length" };
           }
@@ -2564,7 +2562,7 @@ public class HostModuleLoadEmissionTest {
           return sum(xs);
         }
 
-        function callbackTotal(xs: int[]): int {
+        function callbackTotal(xs: number[]): number {
           if (xs.length !== 3) {
             throw { code: "TEST_FAIL", message: "callback argument length" };
           }
@@ -2574,17 +2572,17 @@ public class HostModuleLoadEmissionTest {
           return sum(xs);
         }
 
-        export function runCallback(): int {
+        export function runCallback(): number {
           return host.consume(callbackTotal);
         }
 
-        export async function runAsync(): int {
-          let xs: int[] = await host.produce();
+        export async function runAsync(): number {
+          let xs: number[] = await host.produce();
           return asyncTotal(xs);
         }
 
-        export async function runNested(): int {
-          let xs: int[][] = await host.produceNested();
+        export async function runNested(): number {
+          let xs: number[][] = await host.produceNested();
           if (xs.length !== 2) {
             throw { code: "TEST_FAIL", message: "nested completion length" };
           }
@@ -2728,15 +2726,15 @@ public class HostModuleLoadEmissionTest {
      * instead of the DEAL function value wrapper.
      */
     private static final String ARRAY_FAILURE_DECLARATION_SOURCE = """
-        export async function produceMap(): int[];
-        export async function produceSparse(): int[];
-        export async function produceNum(): int[];
-        export function consumeMap(f: (xs: int[]) => int): int;
-        export function consumeSparse(f: (xs: int[]) => int): int;
-        export function consumeNum(f: (xs: int[]) => int): int;
-        export function consumeMissing(f: (x: int) => int): int;
-        export function consumeNullable(f: (x: int | null) => int): int;
-        export function consumeRawFn(f: (g: (x: int) => int) => int): int;
+        export async function produceMap(): number[];
+        export async function produceSparse(): number[];
+        export async function produceNum(): number[];
+        export function consumeMap(f: (xs: number[]) => number): number;
+        export function consumeSparse(f: (xs: number[]) => number): number;
+        export function consumeNum(f: (xs: number[]) => number): number;
+        export function consumeMissing(f: (x: number) => number): number;
+        export function consumeNullable(f: (x: number | null) => number): number;
+        export function consumeRawFn(f: (g: (x: number) => number) => number): number;
         """;
 
     /**
@@ -2749,9 +2747,9 @@ public class HostModuleLoadEmissionTest {
     private static final String ARRAY_FAILURE_APP_SOURCE = """
         import * as host from "host/arr_probe";
 
-        function sum(xs: int[]): int {
-          let total: int = 0;
-          let i: int = 0;
+        function sum(xs: number[]): number {
+          let total: number = 0;
+          let i: number = 0;
           while (i < xs.length) {
             total = total + xs[i];
             i = i + 1;
@@ -2759,16 +2757,16 @@ public class HostModuleLoadEmissionTest {
           return total;
         }
 
-        function callbackTotal(xs: int[]): int {
+        function callbackTotal(xs: number[]): number {
           return sum(xs);
         }
 
-        function increment(x: int): int {
-          let y: int = x + 1;
+        function increment(x: number): number {
+          let y: number = x + 1;
           return y;
         }
 
-        function nullableJoin(x: int | null): int {
+        function nullableJoin(x: number | null): number {
           if (x === null) {
             return 7;
           } else {
@@ -2776,29 +2774,29 @@ public class HostModuleLoadEmissionTest {
           }
         }
 
-        function outer(g: (x: int) => int): int {
+        function outer(g: (x: number) => number): number {
           return g(5);
         }
 
-        export function runMap(): int { return host.consumeMap(callbackTotal); }
-        export function runSparse(): int { return host.consumeSparse(callbackTotal); }
-        export function runNum(): int { return host.consumeNum(callbackTotal); }
-        export function runMissing(): int { return host.consumeMissing(increment); }
-        export function runNullable(): int { return host.consumeNullable(nullableJoin); }
-        export function runRawFn(): int { return host.consumeRawFn(outer); }
+        export function runMap(): number { return host.consumeMap(callbackTotal); }
+        export function runSparse(): number { return host.consumeSparse(callbackTotal); }
+        export function runNum(): number { return host.consumeNum(callbackTotal); }
+        export function runMissing(): number { return host.consumeMissing(increment); }
+        export function runNullable(): number { return host.consumeNullable(nullableJoin); }
+        export function runRawFn(): number { return host.consumeRawFn(outer); }
 
-        export async function runAsyncMap(): int {
-          let xs: int[] = await host.produceMap();
+        export async function runAsyncMap(): number {
+          let xs: number[] = await host.produceMap();
           return sum(xs);
         }
 
-        export async function runAsyncSparse(): int {
-          let xs: int[] = await host.produceSparse();
+        export async function runAsyncSparse(): number {
+          let xs: number[] = await host.produceSparse();
           return sum(xs);
         }
 
-        export async function runAsyncNum(): int {
-          let xs: int[] = await host.produceNum();
+        export async function runAsyncNum(): number {
+          let xs: number[] = await host.produceNum();
           return sum(xs);
         }
 
@@ -2839,8 +2837,8 @@ public class HostModuleLoadEmissionTest {
         "TRANSCRIPT-BEGIN",
         "runMap=E8001|expected array|array|table",
         "runSparse=E8001|expected array|array|table",
-        "runNum=E8001|expected array|array|int",
-        "runMissing=E8001|expected int|int|null",
+        "runNum=E8001|expected array|array|number",
+        "runMissing=E8001|expected number|number|null",
         "runNullable=ok:7",
         "runRawFn=E8001|expected function|function|function",
         "runAsyncMap=E8001|expected array|array|table",
@@ -2931,7 +2929,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
@@ -2941,7 +2939,7 @@ public class HostModuleLoadEmissionTest {
 
         export class Bundle {
           label: string;
-          action?: (x: int) => int;
+          action?: (x: number) => number;
         }
 
         export class OptionalOnly {
@@ -3045,9 +3043,9 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "second default tags lost" };
           }
           let bundle: cfg.Bundle = { label: "b" };
-          let action: ((x: int) => int) | null = bundle.action;
+          let action: ((x: number) => number) | null = bundle.action;
           if (action !== null) {
-            let r: int = action(41);
+            let r: number = action(41);
             if (r !== 42) {
               throw { code: "TEST_FAIL", message: "function default result" };
             }
@@ -3098,7 +3096,7 @@ public class HostModuleLoadEmissionTest {
         }
         local bundleDefaults = {
           label = "bundle",
-          action = { [K.kind] = "function", sig = "(int)->int",
+          action = { [K.kind] = "function", sig = "(number)->number",
                      f = function(x) return x + 1 end },
         }
         return {
@@ -3274,7 +3272,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
@@ -3288,7 +3286,7 @@ public class HostModuleLoadEmissionTest {
 
         export class Bundle {
           label: string;
-          action: (x: int) => int;
+          action: (x: number) => number;
         }
 
         export function describe(s: ServerConfig): string;
@@ -3337,8 +3335,8 @@ public class HostModuleLoadEmissionTest {
           return f(c, c);
         }
 
-        function bump(x: int): int {
-          let y: int = x + 1;
+        function bump(x: number): number {
+          let y: number = x + 1;
           return y;
         }
 
@@ -3714,7 +3712,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
@@ -3722,10 +3720,10 @@ public class HostModuleLoadEmissionTest {
 
         export class Bundle {
           label: string;
-          action: (x: int) => int;
+          action: (x: number) => number;
         }
 
-        export async function describeAsync(s: ServerConfig, g: (x: int) => int): string;
+        export async function describeAsync(s: ServerConfig, g: (x: number) => number): string;
         export async function describeBundlesAsync(a: Bundle, b: Bundle): string;
         """;
 
@@ -3744,11 +3742,11 @@ public class HostModuleLoadEmissionTest {
         import * as host from "host/async_probe";
 
         class Marker {
-          count: int = 0;
+          count: number = 0;
         }
 
-        function bump(x: int): int {
-          let y: int = x + 1;
+        function bump(x: number): number {
+          let y: number = x + 1;
           return y;
         }
 
@@ -3759,7 +3757,7 @@ public class HostModuleLoadEmissionTest {
           return "ok";
         }
 
-        function pick(): async (s: host.ServerConfig, g: (x: int) => int) => string {
+        function pick(): async (s: host.ServerConfig, g: (x: number) => number) => string {
           return host.describeAsync;
         }
 
@@ -3770,18 +3768,18 @@ public class HostModuleLoadEmissionTest {
             tags: ["dev"],
             note: null,
           };
-          let cb: (x: int) => int = bump;
+          let cb: (x: number) => number = bump;
           // The declared async host call (the statically resolved host
           // start under RUN).
           let direct: string = await host.describeAsync(cfg, cb);
           // The runtime-resolved async host call: the callee value's
           // execution class resolves to the loaded host surface entry at
           // execution (the dynamic HOST arm under RUN).
-          let dyn: async (s: host.ServerConfig, g: (x: int) => int) => string =
+          let dyn: async (s: host.ServerConfig, g: (x: number) => number) => string =
             pick();
           let dynamicText: string = await dyn(cfg, cb);
           let marker: Marker = {};
-          let extra = function(): int {
+          let extra = function(): number {
             marker.count = marker.count + 1;
             return 1;
           };
@@ -3789,10 +3787,10 @@ public class HostModuleLoadEmissionTest {
           // nested source: the source binding is never assigned, so the
           // adapted declaration records the value it was created over and
           // the nested source start is the emitted static host call.
-          let valueSrc: async (s: host.ServerConfig, g: (x: int) => int) => string =
+          let valueSrc: async (s: host.ServerConfig, g: (x: number) => number) => string =
             host.describeAsync;
-          let fixed: async (s: host.ServerConfig, g: (x: int) => int,
-                            extra: int) => string = valueSrc;
+          let fixed: async (s: host.ServerConfig, g: (x: number) => number,
+                            extra: number) => string = valueSrc;
           let fixedText: string = await fixed(cfg, cb, extra());
           // The arity-extended adapter-over-async host call over an assigned
           // source binding: the reassignment defeats the source binding's
@@ -3801,20 +3799,20 @@ public class HostModuleLoadEmissionTest {
           // the source's execution class is selected at execution (the
           // runtime-resolved nested start, the dynamic HOST arm under
           // ELIDED_BY_ADAPTER).
-          let src: async (s: host.ServerConfig, g: (x: int) => int) => string =
+          let src: async (s: host.ServerConfig, g: (x: number) => number) => string =
             host.describeAsync;
           src = src;
-          let sharedFixed: async (s: host.ServerConfig, g: (x: int) => int,
-                                  extra: int) => string = src;
+          let sharedFixed: async (s: host.ServerConfig, g: (x: number) => number,
+                                  extra: number) => string = src;
           let sharedFixedText: string = await sharedFixed(cfg, cb, extra());
           // The arity-extended adapter-over-async host call, runtime-resolved
           // nested source: the materialized source value's execution class is
           // selected at execution (the dynamic HOST arm under
           // ELIDED_BY_ADAPTER).
-          let dynSrc: async (s: host.ServerConfig, g: (x: int) => int) => string =
+          let dynSrc: async (s: host.ServerConfig, g: (x: number) => number) => string =
             pick();
-          let dynFixed: async (s: host.ServerConfig, g: (x: int) => int,
-                               extra: int) => string = dynSrc;
+          let dynFixed: async (s: host.ServerConfig, g: (x: number) => number,
+                               extra: number) => string = dynSrc;
           let dynText: string = await dynFixed(cfg, cb, extra());
           // Two aliased class arguments whose function-typed field needs a
           // host-facing copy: the one crossing memo makes them one object.
@@ -3924,15 +3922,15 @@ public class HostModuleLoadEmissionTest {
     private static final String ASYNC_START_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
         "direct=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
-            + "E8001|expected int",
+            + "E8001|expected number",
         "dynamic=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
-            + "E8001|expected int",
+            + "E8001|expected number",
         "fixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
-            + "E8001|expected int",
+            + "E8001|expected number",
         "sharedFixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:"
-            + "42:E8001|expected int",
+            + "42:E8001|expected number",
         "dynFixed=SC|n=2:port=number:9090:ep=/api:tags=1:dev:note=null:g=true:42:"
-            + "E8001|expected int",
+            + "E8001|expected number",
         "pair=B|n=2:alias=true:kind=class:label=b:action=true:42",
         "same=ok:ok:ok:ok:extra=ok",
         "TRANSCRIPT-END",
@@ -4181,7 +4179,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           backup: Endpoint;
           tags?: string[];
@@ -4195,8 +4193,8 @@ public class HostModuleLoadEmissionTest {
         export async function makeBundle(): table;
         export async function makePlain(): table;
         export async function makeNumber(): number;
-        export async function makeCallback(): (x: int) => int;
-        export async function makeBadArray(): int[];
+        export async function makeCallback(): (x: number) => number;
+        export async function makeBadArray(): number[];
         export async function makeNull(): string | null;
         export function checkClean(): string;
         export function inspectPlain(): string;
@@ -4221,7 +4219,7 @@ public class HostModuleLoadEmissionTest {
 
         function joined(xs: string[]): string {
           let out: string = "";
-          let i: int = 0;
+          let i: number = 0;
           while (i < xs.length) {
             if (i > 0) {
               out = out + ",";
@@ -4277,8 +4275,8 @@ public class HostModuleLoadEmissionTest {
           if (endpoint !== alias) {
             throw { code: "TEST_FAIL", message: "table copy alias" };
           }
-          let bump: (x: int) => int = t.bump;
-          let value: int = bump(41);
+          let bump: (x: number) => number = t.bump;
+          let value: number = bump(41);
           return endpoint.path + ":" + json.stringify({ value: value })
             + ":host=" + host.inspectBundle();
         }
@@ -4295,8 +4293,8 @@ public class HostModuleLoadEmissionTest {
         }
 
         export async function runCallback(): string {
-          let g: (x: int) => int = await host.makeCallback();
-          let value: int = g(41);
+          let g: (x: number) => number = await host.makeCallback();
+          let value: number = g(41);
           return json.stringify({ value: value })
             + ":host=" + host.checkCallback();
         }
@@ -4306,7 +4304,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export async function runBad(): string {
-          let xs: int[] = await host.makeBadArray();
+          let xs: number[] = await host.makeBadArray();
           return "unreachable";
         }
 
@@ -4355,7 +4353,7 @@ public class HostModuleLoadEmissionTest {
         local shared = rt.class_("@$external/host/complete_probe/Endpoint",
           { path = "/" }, { path = "/x" })
 
-        local wrapper = { [K.kind] = "function", sig = "(int)->int",
+        local wrapper = { [K.kind] = "function", sig = "(number)->number",
           f = function(x) return x + 1 end }
         local bundle = { endpoint = endpoint, alias = endpoint,
           bump = wrapper }
@@ -4416,7 +4414,7 @@ public class HostModuleLoadEmissionTest {
           checkCallback = function()
             return tostring(wrapper[K.c] == nil and wrapper[K.fn] == nil
               and wrapper[K.kind] == "function"
-              and wrapper.sig == "(int)->int")
+              and wrapper.sig == "(number)->number")
           end,
           bag = function() return bag end,
         }
@@ -4425,12 +4423,12 @@ public class HostModuleLoadEmissionTest {
     /** The exact results the host async completion crossing must publish. */
     private static final String COMPLETION_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
-        "class={\"port\":7}:/e:a,b:null:host=true/7/true/true",
-        "array={\"length\":2,\"path\":\"/x\"}",
-        "table=/e:{\"value\":42}:host=true/nil/true",
+        "class={\"port\":7.0}:/e:a,b:null:host=true/7/true/true",
+        "array={\"length\":2.0,\"path\":\"/x\"}",
+        "table=/e:{\"value\":42.0}:host=true/nil/true",
         "plain=1/9",
         "number={\"ms\":1.0E17}",
-        "callback={\"value\":42}:host=true",
+        "callback={\"value\":42.0}:host=true",
         "raw.chunk-tag=true",
         "raw.chunk-id=true",
         "raw.kind-tag=true",
@@ -4442,7 +4440,7 @@ public class HostModuleLoadEmissionTest {
         "scores.length=2",
         "scores.elements=1.5,2",
         "scores.marks=table",
-        "bad=E8003|array element 1 type mismatch|int|string",
+        "bad=E8003|array element 1 type mismatch|number|string",
         "null=null",
         "TRANSCRIPT-END",
         "");
@@ -4500,8 +4498,8 @@ public class HostModuleLoadEmissionTest {
             for (String descriptor : List.of(
                     "\"@$external/host/complete_probe/ServerConfig\"",
                     "\"[@$external/host/complete_probe/Endpoint]\"",
-                    "\"table\"", "\"number\"", "\"(int)->int\"",
-                    "\"[int]\"", "\"?string\"")) {
+                    "\"table\"", "\"number\"", "\"(number)->number\"",
+                    "\"[number]\"", "\"?string\"")) {
                 check(lua.contains(carrierIn + descriptor + ", __cA, {})"),
                     "the completion crossing of " + descriptor
                         + " passes its declared descriptor to the bridge");
@@ -4639,7 +4637,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
           note?: string | null;
@@ -4647,17 +4645,17 @@ public class HostModuleLoadEmissionTest {
 
         export class Bundle {
           label: string;
-          action: (x: int) => int;
+          action: (x: number) => number;
         }
 
         export function consume(f: (s: ServerConfig) => ServerConfig): string;
         export function consumeTable(f: () => table): string;
         export function consumeBundle(f: (b: Bundle) => Bundle): string;
         export function consumeBundleValue(f: () => Bundle): string;
-        export function apply(f: (x: int) => int, v: int): int;
-        export function probeValue(f: (x: int) => int): string;
-        export function bind(): (x: int) => int;
-        export function mismatch(): (x: int) => int;
+        export function apply(f: (x: number) => number, v: number): number;
+        export function probeValue(f: (x: number) => number): string;
+        export function bind(): (x: number) => number;
+        export function mismatch(): (x: number) => number;
         export function consumePair(f: (a: ServerConfig, b: ServerConfig) => boolean): string;
         """;
 
@@ -4705,8 +4703,8 @@ public class HostModuleLoadEmissionTest {
           }
         }
 
-        function scale(x: int): int {
-          let y: int = x * 2;
+        function scale(x: number): number {
+          let y: number = x * 2;
           return y;
         }
 
@@ -4719,7 +4717,7 @@ public class HostModuleLoadEmissionTest {
           if (b.label !== "given") {
             throw { code: "TEST_FAIL", message: "callback bundle label" };
           }
-          let value: int = b.action(21);
+          let value: number = b.action(21);
           if (value !== 43) {
             throw { code: "TEST_FAIL", message: "callback host function value" };
           }
@@ -4746,7 +4744,7 @@ public class HostModuleLoadEmissionTest {
           if (shared.action === scale) {
             kept = "yes";
           }
-          let again: int = shared.action(3);
+          let again: number = shared.action(3);
           let invoked: string = "no";
           if (again === 6) {
             invoked = "yes";
@@ -4755,7 +4753,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runApply(): string {
-          let result: int = host.apply(scale, 41);
+          let result: number = host.apply(scale, 41);
           let verdict: string = "no";
           if (result === 182) {
             verdict = "yes";
@@ -4768,8 +4766,8 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runBind(): string {
-          let bound: (x: int) => int = host.bind();
-          let result: int = bound(4);
+          let bound: (x: number) => number = host.bind();
+          let result: number = bound(4);
           let verdict: string = "no";
           if (result === 8) {
             verdict = "yes";
@@ -4779,8 +4777,8 @@ public class HostModuleLoadEmissionTest {
 
         export function runMismatch(): string {
           try {
-            let wrong: (x: int) => int = host.mismatch();
-            let ignored: int = wrong(1);
+            let wrong: (x: number) => number = host.mismatch();
+            let ignored: number = wrong(1);
             return "mismatch=admitted";
           } catch (e) {
             return "mismatch=" + e.code + "|" + e.message;
@@ -4845,7 +4843,7 @@ public class HostModuleLoadEmissionTest {
         end
 
         local function wrapper(f)
-          return {[K.kind] = "function", sig = "(int)->int", f = f}
+          return {[K.kind] = "function", sig = "(number)->number", f = f}
         end
 
         local function bundle(label, action)
@@ -4931,7 +4929,7 @@ public class HostModuleLoadEmissionTest {
             return wrapper(function(x) return x * 2 end)
           end,
           mismatch = function()
-            return {[K.kind] = "function", sig = "(string)->int",
+            return {[K.kind] = "function", sig = "(string)->number",
               f = function(x) return 1 end}
           end,
         }
@@ -4950,14 +4948,14 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String FN_ADAPTER_TRANSCRIPT = """
         TRANSCRIPT-BEGIN
-        runConsume=consume=9090,/back,tags=true,tags-n=2,note=true,top=class,@$external/host/fn_probe/ServerConfig,given=true wrong=E8001|expected class instance|class|int|src/app.deal:51:10
-        runTable=table=kind=function sig=(int)->int f=function res=82 bad=E8001|expected int|int|string|nil
-        runBundle=bundle=back,kind=function sig=(int)->int f=function res=82 bad=E8001|expected int|int|string|nil,top=class,@$external/host/fn_probe/Bundle
-        runBundleValue=value=shared,kind=function sig=(int)->int f=function res=82 bad=E8001|expected int|int|string|nil,top=class,@$external/host/fn_probe/Bundle kept=yes again=yes
+        runConsume=consume=9090,/back,tags=true,tags-n=2,note=true,top=class,@$external/host/fn_probe/ServerConfig,given=true wrong=E8001|expected class instance|class|number|src/app.deal:51:10
+        runTable=table=kind=function sig=(number)->number f=function res=82 bad=E8001|expected number|number|string|nil
+        runBundle=bundle=back,kind=function sig=(number)->number f=function res=82 bad=E8001|expected number|number|string|nil,top=class,@$external/host/fn_probe/Bundle
+        runBundleValue=value=shared,kind=function sig=(number)->number f=function res=82 bad=E8001|expected number|number|string|nil,top=class,@$external/host/fn_probe/Bundle kept=yes again=yes
         runApply=apply=yes
-        runProbeValue=f=function res=82 bad=E8001|expected int|int|string|src/app.deal:88:10
+        runProbeValue=f=function res=82 bad=E8001|expected number|number|string|src/app.deal:88:10
         runBind=bind=yes
-        runMismatch=mismatch=E8010|return value 1 type mismatch: function signature mismatch: expected (int)->int, got (string)->int
+        runMismatch=mismatch=E8010|return value 1 type mismatch: function signature mismatch: expected (number)->number, got (string)->number
         runPair=pair=true
         TRANSCRIPT-END
         """;
@@ -5025,8 +5023,8 @@ public class HostModuleLoadEmissionTest {
                     + "\"@$external/host/fn_probe/ServerConfig\""),
                 "the callback's shape entry carries the declared class return"
                     + " descriptor");
-            check(lua.contains("[\"(int)->int\"] = {ret = \"int\", cells = "
-                    + "{{\"int\", \"int\", \"int\"}}}"),
+            check(lua.contains("[\"(number)->number\"] = {ret = \"number\", cells = "
+                    + "{{\"number\", \"number\", \"number\"}}}"),
                 "the function-typed field and the function values take the"
                     + " declared parameter-entry cells");
             writeFileIn(out, "probe.lua", """
@@ -5091,7 +5089,7 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String UNTYPED_DECLARATION_SOURCE = """
         export class Cfg {
-          count: int;
+          count: number;
           ratio: number;
         }
 
@@ -5122,7 +5120,7 @@ public class HostModuleLoadEmissionTest {
     /** The second module of the drive: a DEAL function value whose signature
      * is not a declared position anywhere in the host declaration. */
     private static final String UNTYPED_UTIL_SOURCE = """
-        export function bump(x: int): int {
+        export function bump(x: number): number {
           return x + 1;
         }
         """;
@@ -5144,8 +5142,8 @@ public class HostModuleLoadEmissionTest {
         import * as json from "std/json";
 
         class Point {
-          x: int = 0;
-          y: int = 0;
+          x: number = 0;
+          y: number = 0;
         }
 
         function scale(s: string): string {
@@ -5155,8 +5153,8 @@ public class HostModuleLoadEmissionTest {
         export function runMakeTable(): string {
           let t: table = host.makeTable();
           let cfg: host.Cfg = t.cfg;
-          let fn: (n: int) => int = t.fn;
-          let r: int = fn(41);
+          let fn: (n: number) => number = t.fn;
+          let r: number = fn(41);
           let ok: string = "no";
           if (cfg.count === 7 && cfg.ratio === 2.5 && r === 42) {
             ok = "yes";
@@ -5167,8 +5165,8 @@ public class HostModuleLoadEmissionTest {
         export function runConsumeTable(): string {
           let made: table = host.makeTable();
           let cfg: host.Cfg = made.cfg;
-          let hfn: (n: int) => int = made.fn;
-          let r: int = hfn(41);
+          let hfn: (n: number) => number = made.fn;
+          let r: number = hfn(41);
           let p: Point = { x: 3, y: 4 };
           let e: Error = { code: "E_X", message: "boom" };
           let t: table = { cfg: cfg, hfn: hfn, fn: util.bump, pt: p,
@@ -5190,8 +5188,8 @@ public class HostModuleLoadEmissionTest {
           let b: Point = echoed.other;
           let xs: Point[] = echoed.xs;
           let c: Point = xs[0];
-          let fn: (n: int) => int = echoed.fn;
-          let r: int = fn(41);
+          let fn: (n: number) => number = echoed.fn;
+          let r: number = fn(41);
           let err: Error = echoed.err;
           let errs: Error[] = echoed.errs;
           let errInArray: Error = errs[0];
@@ -5216,8 +5214,8 @@ public class HostModuleLoadEmissionTest {
         export function runBundle(): string {
           let made: table = host.makeTable();
           let cfg: host.Cfg = made.cfg;
-          let hfn: (n: int) => int = made.fn;
-          let r: int = hfn(41);
+          let hfn: (n: number) => number = made.fn;
+          let r: number = hfn(41);
           let p: Point = { x: 5, y: 6 };
           let b: host.Bundle = { label: "box", action: scale,
             extras: { cfg: cfg, hfn: hfn, pt: p } };
@@ -5253,8 +5251,8 @@ public class HostModuleLoadEmissionTest {
         export function runWrongMember(): string {
           let t: table = host.makeTable();
           try {
-            let fn: (s: string) => int = t.fn;
-            let r: int = fn("x");
+            let fn: (s: string) => number = t.fn;
+            let r: number = fn("x");
             return "wrongMember=admitted";
           } catch (e) {
             return "wrongMember=" + e.code + "|" + e.message;
@@ -5308,8 +5306,8 @@ public class HostModuleLoadEmissionTest {
         export function runWrongRawFunction(): string {
           let t: table = host.makeBadValues();
           try {
-            let fn: (n: int) => int = t.raw;
-            let r: int = fn(41);
+            let fn: (n: number) => number = t.raw;
+            let r: number = fn(41);
             return "rawFunction=admitted";
           } catch (e) {
             return "rawFunction=" + e.code + "|" + e.message;
@@ -5427,7 +5425,7 @@ public class HostModuleLoadEmissionTest {
           makeTable = function()
             keptCfg = cfg(7, 2.5)
             return {cfg = keptCfg,
-              fn = wrapper("(int)->int", function(x) return x + 1 end)}
+              fn = wrapper("(number)->number", function(x) return x + 1 end)}
           end,
 
           observeMade = function()
@@ -5464,7 +5462,7 @@ public class HostModuleLoadEmissionTest {
           end,
 
           makeBundle = function()
-            local extras = {fn = wrapper("(int)->int",
+            local extras = {fn = wrapper("(number)->number",
               function(x) return x * 2 end)}
             return rt.class_(SPEC .. "Bundle",
               {label = "", action = rt.__MISSING,
@@ -5503,13 +5501,13 @@ public class HostModuleLoadEmissionTest {
               {label = "", action = rt.__MISSING,
                extras = rt.__MISSING},
               {label = "bad",
-               action = wrapper("(int)->int",
+               action = wrapper("(number)->number",
                  function(x) return x + 1 end),
                extras = {}})
           end,
 
           makePlainTable = function()
-            local t = {n = 1, fn = wrapper("(int)->int",
+            local t = {n = 1, fn = wrapper("(number)->number",
               function(x) return x + 1 end)}
             keptPlain = t
             return t
@@ -5575,17 +5573,17 @@ public class HostModuleLoadEmissionTest {
     private static final String UNTYPED_TRANSCRIPT = """
         TRANSCRIPT-BEGIN
         runMakeTable=makeTable=yes,made=kind=class typed=@$external/host/untyped_probe/Cfg ctag=nil,count=7,ratio=2.5
-        runConsumeTable=consume=cfg:kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,pt:x=3 y=4 kind=class typed=@src/app.deal/Point ctag=nil,alias=true,true,fn:kind=function typed=function sig=(int)->int f=function fnmark=nil res=42 bad=E8001|expected int|int|string|nil,hfn:kind=function typed=function sig=(int)->int f=function fnmark=nil res=42,err:kind=class typed=Error code=E_X message=boom dmark=nil,errs:kind=class typed=Error code=E_X message=boom dmark=nil,erralias=true,invoked=yes
+        runConsumeTable=consume=cfg:kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,pt:x=3 y=4 kind=class typed=@src/app.deal/Point ctag=nil,alias=true,true,fn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42 bad=E8001|expected number|number|string|nil,hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,err:kind=class typed=Error code=E_X message=boom dmark=nil,errs:kind=class typed=Error code=E_X message=boom dmark=nil,erralias=true,invoked=yes
         runEcho=echo=alias:yes,fn:yes,err:yes
-        runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=nil res=ab! bad=E8001|expected string|string|int|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=nil,extras.hfn:kind=function typed=function sig=(int)->int f=function fnmark=nil res=42,invoked=yes
+        runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=nil res=ab! bad=E8001|expected string|string|number|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=nil,extras.hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,invoked=yes
         runFieldCall=field=yes
-        runWrongField=wrongField=E8010|function signature mismatch: expected (string)->string, got (int)->int
-        runWrongMember=wrongMember=E8010|function signature mismatch: expected (string)->int, got (int)->int
+        runWrongField=wrongField=E8010|function signature mismatch: expected (string)->string, got (number)->number
+        runWrongMember=wrongMember=E8010|function signature mismatch: expected (string)->number, got (number)->number
         runShare=plain=extra:9,shared:true,hostextra:9
         runCopy=classy=marker:3,hostmarker:nil,copy:true,memo=yes
         runDense=dense=n:3,array:false,v1:1
         runNull=null=yes,null=note:true,missing:true,ratio:number:2.5
-        runNumeric=numeric={"a":1,"b":0.1,"n":null}
+        runNumeric=numeric={"a":1.0,"b":0.1,"n":null}
         runWrongRawFunction=rawFunction=E8001|expected function
         runWrongClassValue=wrongClass=E8001|expected class instance
         runWrongElement=wrongElement=E8003|array element 1 type mismatch
@@ -5626,8 +5624,8 @@ public class HostModuleLoadEmissionTest {
             }
             String lua = Files.readString(out.resolve("app.lua"),
                 StandardCharsets.UTF_8);
-            check(lua.contains("[\"(int)->int\"] = {ret = \"int\","
-                    + " cells = {{\"int\", \"int\", \"int\"}}}"),
+            check(lua.contains("[\"(number)->number\"] = {ret = \"number\","
+                    + " cells = {{\"number\", \"number\", \"number\"}}}"),
                 "the imported DEAL function value's otherwise-undeclared"
                     + " signature is emitted into __hostFnShapes");
             check(lua.contains("__factories.__hostCarrierOut = function")
@@ -5741,11 +5739,11 @@ public class HostModuleLoadEmissionTest {
             "require-failure");
         checkLuaArmSeed(missing, "host/missing_export.lua",
             "return { ping = function() return \"pong\" end,\n"
-                + "  missing = { [__dealCarrierKeys.kind] = \"function\", sig = \"(int)->string\", "
+                + "  missing = { [__dealCarrierKeys.kind] = \"function\", sig = \"(number)->string\", "
                 + "f = function() end } }\n",
             armMessage(FailureArmId.HOST_LOAD_SIGNATURE_MISMATCH, Map.of("name", "missing",
                 "module", MISSING_SPECIFIER, "expected", "()->string",
-                "actual", "(int)->string")), missingOrigin,
+                "actual", "(number)->string")), missingOrigin,
             "prewrapped-signature-mismatch");
         checkLuaArmSeed(missing, "host/missing_export.lua", "return 42\n",
             armMessage(FailureArmId.HOST_LOAD_NOT_A_MODULE, Map.of("module", MISSING_SPECIFIER)),
@@ -6132,8 +6130,8 @@ public class HostModuleLoadEmissionTest {
                 "nullable ABI uses the boxed carrier");
             check(source.contains("throw JvmRuntime.arm("
                     + "deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_NOTHING, "
-                    + "java.util.Map.of(\"expected\", \"int\"), oFile + \":\" + oLine "
-                    + "+ \":\" + oCol, \"int\", \"nothing\")"),
+                    + "java.util.Map.of(\"expected\", \"number\"), oFile + \":\" + oLine "
+                    + "+ \":\" + oCol, \"number\", \"nothing\")"),
                 "absent sync result renders the return-nothing arm");
             check(source.contains(
                     "throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);"),
@@ -6364,13 +6362,13 @@ public class HostModuleLoadEmissionTest {
 
         final class HostAbi_probe {
           public static Object ping() { return "pong"; }
-          public static Object echoInt(int v) { return Integer.valueOf(v); }
+          public static Object echoInt(double v) { return Double.valueOf(v); }
           public static Object badReturn() { return "junk"; }
           public static Object join(String sep, $DealRt.__StringArray parts) {
             return String.join(sep, parts.data);
           }
-          public static Object apply($DealRt.Fn1_I_R_I f, int v) {
-            return Integer.valueOf(f.invoke(v) + 100);
+          public static Object apply($DealRt.Fn1_N_R_N f, double v) {
+            return Double.valueOf(f.invoke(v) + 100);
           }
           public static Object fetchValue() {
             return CompletableFuture.completedFuture("fetched");
@@ -6430,15 +6428,15 @@ public class HostModuleLoadEmissionTest {
                 // this drive passes the declared carrier directly.
                 Object echo = App.__host$$PROBE$$echoInt(Integer.valueOf(7),
                     "probe.deal", 3, 1);
-                check(Integer.valueOf(7).equals(echo), "the int roundtrip: " + echo);
+                check(Double.valueOf(7).equals(echo), "the number roundtrip: " + echo);
                 Object joined = App.__host$$PROBE$$join("-",
                     new $DealRt.__StringArray(new String[] {"a", "b"}),
                     "probe.deal", 4, 1);
                 check("a-b".equals(joined), "the array carrier roundtrip: " + joined);
-                Object applied = App.__host$$PROBE$$apply(new $DealRt.Fn1_I_R_I() {
-                    int invoke(int p0) { return p0 + 1; }
+                Object applied = App.__host$$PROBE$$apply(new $DealRt.Fn1_N_R_N() {
+                    double invoke(double p0) { return p0 + 1; }
                   }, Integer.valueOf(7), "probe.deal", 5, 1);
-                check(Integer.valueOf(108).equals(applied),
+                check(Double.valueOf(108).equals(applied),
                     "the function carrier reaches the host bridge: " + applied);
 
                 // The pinned E8010 parameter cells.
@@ -6449,8 +6447,8 @@ public class HostModuleLoadEmissionTest {
                     () -> App.__host$$PROBE$$apply(Double.valueOf(1.0),
                         Integer.valueOf(1), "probe.deal", 8, 1));
 
-                // The pinned E8010 return cell (the host returns junk for int).
-                expect("E8010", "return value 1 type mismatch: expected int",
+                // The pinned E8010 return cell (the host returns junk for number).
+                expect("E8010", "return value 1 type mismatch: expected number",
                     () -> App.__host$$PROBE$$badReturn("probe.deal", 9, 1));
 
                 // The declared class-identity cell: a foreign identity renders

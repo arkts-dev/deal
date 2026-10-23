@@ -23,8 +23,7 @@ public final class DynamicReturnBoundaryProtocol {
                 external.executionOwner() == ExternalExecutionOwner.SHARED_BODY
                     ? DynamicResolutionKind.SHARED_BODY
                     : DynamicResolutionKind.EXTERNAL;
-            case FunctionExecutionBinding.IntrinsicFunction ignored ->
-                DynamicResolutionKind.HOST;
+
             case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                 throw new IllegalArgumentException("a DynamicFunctionValue registration "
                     + "names no execution class (the producing op "

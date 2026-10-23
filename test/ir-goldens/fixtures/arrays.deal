@@ -2,8 +2,8 @@
 // Tests array literal expressions and index access.
 
 function main(): null {
-    let a: int[] = [1, 2, 3, 4, 5];
-    let x: int = a[0];
-    let y: int = a[2];
-    let empty: int[] = [];
+    let a: number[] = [1, 2, 3, 4, 5];
+    let x: number = a[0];
+    let y: number = a[2];
+    let empty: number[] = [];
 }

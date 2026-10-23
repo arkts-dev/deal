@@ -117,7 +117,7 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /** The canonical primitive keywords, in grammar order. */
     private static final List<String> PRIMITIVE_KEYWORDS =
-        List.of("null", "boolean", "int", "number", "string", "table");
+        List.of("null", "boolean", "number", "string", "table");
 
     // =========================================================================
     // Per-compilation encode service
@@ -161,7 +161,7 @@ public final class CanonicalRuntimeTypeDescriptor {
         return switch (type) {
             case Type.Null ignored -> "null";
             case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
+
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";

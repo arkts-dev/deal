@@ -5,6 +5,6 @@
     "code": "E3001",
     "line": 7,
     "column": 31,
-    "message": "Cannot assign null to int"
+    "message": "Cannot assign null to number"
   }
 }

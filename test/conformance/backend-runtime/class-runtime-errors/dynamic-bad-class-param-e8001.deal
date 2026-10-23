@@ -5,10 +5,10 @@
 
 import * as json from "std/json";
 
-class Box { value: int = 0; }
-function needBox(b: Box): int { return b.value; }
+class Box { value: number = 0; }
+function needBox(b: Box): number { return b.value; }
 
-export function test_dynamic_bad_class_param(): int {
+export function test_dynamic_bad_class_param(): number {
   let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
   return needBox(holder.item);
 }

@@ -5,6 +5,6 @@
     "code": "E5003",
     "line": 7,
     "column": 10,
-    "message": "Return type mismatch: expected int, got number"
+    "message": "Return type mismatch: expected number, got boolean"
   }
 }

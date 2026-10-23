@@ -41,7 +41,6 @@ import deal.semantic.ir.FailureProjections;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -566,9 +565,9 @@ public final class SemanticOracle {
     /** The oracle's closed runtime-value model. */
     public sealed interface Value
         permits Value.NullValue, Value.MissingValue, Value.AbsentValue,
-                Value.BoolValue, Value.IntValue,
+                Value.BoolValue,
                 Value.NumValue, Value.StrValue, Value.TableValue, Value.ArrayValue,
-                Value.FuncValue, Value.AdapterValue, Value.IntrinsicValue,
+                Value.FuncValue, Value.AdapterValue,
                 Value.ErrorValue, Value.SlotValue, Value.ClassValue,
                 Value.StdlibCallableValue, Value.HostEntryValue {
 
@@ -592,10 +591,8 @@ public final class SemanticOracle {
         record BoolValue(boolean value) implements Value {
         }
 
-        record IntValue(long value) implements Value {
-        }
 
-        record NumValue(double value) implements Value {
+record NumValue(double value) implements Value {
         }
 
         /**
@@ -649,9 +646,6 @@ public final class SemanticOracle {
                          Map<BindingId, Cell> captures) implements Value {
         }
 
-        /** An intrinsic function value (int()/number() as first-class values). */
-        record IntrinsicValue(String name) implements Value {
-        }
 
         /**
          * The in-target cataloged stdlib callable (M3/M4): one memoized
@@ -1544,13 +1538,13 @@ public final class SemanticOracle {
                 case Value.MissingValue ignored -> "missing";
                 case Value.AbsentValue ignored -> "missing";
                 case Value.BoolValue bool -> "bool:" + bool.value();
-                case Value.IntValue intValue -> SemanticRuntimeModel.intAtom(intValue.value());
+
                 case Value.NumValue num -> SemanticRuntimeModel.numberAtom(num.value());
                 case Value.StrValue str -> "str:" + SemanticRuntimeModel.escapeString(str.value());
                 case Value.ErrorValue error -> "err:" + error.code() + ":"
                     + SemanticRuntimeModel.escapeString(error.message());
                 case Value.SlotValue slot -> switch (slot.slot()) {
-                    case NormalizedSlot.ArraySlot array -> "slot:" + array.index() + "/"
+                    case NormalizedSlot.ArraySlot array -> "slot:" + Double.toHexString(array.index()) + "/"
                         + array.present() + "/" + array.append();
                     case NormalizedSlot.TableSlot table -> "keyslot:"
                         + SemanticRuntimeModel.escapeString(table.key());
@@ -1558,7 +1552,7 @@ public final class SemanticOracle {
                 case Value.TableValue table -> allocate(table);
                 case Value.ArrayValue array -> allocate(array);
                 case Value.FuncValue func -> allocate(func);
-                case Value.IntrinsicValue intrinsic -> allocate(intrinsic);
+
                 case Value.AdapterValue adapter -> allocate(adapter);
                 case Value.ClassValue classValue -> allocate(classValue);
                 case Value.StdlibCallableValue callable -> allocate(callable);
@@ -2007,7 +2001,7 @@ public final class SemanticOracle {
                 case FUNCTION_ADAPT -> executeFunctionAdapt(op);
                 case ENTRY_INVOKE -> executeEntryInvoke(op);
                 case EXPORT_PUBLISH -> executeExportPublish(op);
-                case INTRINSIC_CALL -> executeIntrinsic(op);
+
                 case STDLIB_CALL -> executeStdlib(op);
                 case BRANCH -> executeBranch(op);
                 case LOOP -> executeLoop(op);
@@ -2051,7 +2045,7 @@ public final class SemanticOracle {
             Value value = switch (scalar) {
                 case ScalarValue.Null ignored -> Value.NullValue.INSTANCE;
                 case ScalarValue.Boolean bool -> new Value.BoolValue(bool.value());
-                case ScalarValue.Int intValue -> new Value.IntValue(intValue.value());
+
                 case ScalarValue.Number number -> new Value.NumValue(number.value());
                 case ScalarValue.String string -> new Value.StrValue(string.value());
             };
@@ -2064,13 +2058,7 @@ public final class SemanticOracle {
             return switch (payload.selector()) {
                 case BOOL_NOT -> publish(op,
                     new Value.BoolValue(!((Value.BoolValue) input).value()));
-                case INT32_NEG -> {
-                    long value = integerUse(input);
-                    if (value == Integer.MIN_VALUE) {
-                        throw int32ResultFailure(op);
-                    }
-                    yield publish(op, new Value.IntValue(-value));
-                }
+
                 case NUMBER_NEG -> publish(op,
                     new Value.NumValue(-numberUse(input)));
             };
@@ -2080,8 +2068,7 @@ public final class SemanticOracle {
             KindPayload.BinaryPayload payload = (KindPayload.BinaryPayload) op.payload();
             Value left = valueOf(op.operands().get(0));
             Value right = valueOf(op.operands().get(1));
-            if (payload.selector().name().startsWith("INT32_")
-                    || payload.selector().name().startsWith("NUMBER_")) {
+            if (payload.selector().name().startsWith("NUMBER_")) {
                 boolean comparison = payload.selector().name().endsWith("_EQ")
                     || payload.selector().name().endsWith("_NE")
                     || payload.selector().name().endsWith("_LT")
@@ -2094,63 +2081,37 @@ public final class SemanticOracle {
             }
             // An int boundary admits integral number variants without changing
             // storage. Supply integer views only to integer comparison consumers.
-            boolean integerComparison = payload.selector().name().startsWith("INT32_")
-                || payload.innerDescriptor() instanceof RuntimeDescriptor.Int;
             boolean numberComparison = payload.selector().name().startsWith("NUMBER_")
                 || payload.innerDescriptor() instanceof RuntimeDescriptor.Number;
             boolean result = ComparisonExecutor.compare(payload.selector(),
-                integerComparison ? integerComparisonView(left)
-                    : numberComparison ? numberComparisonView(left) : viewOf(left),
-                integerComparison ? integerComparisonView(right)
-                    : numberComparison ? numberComparisonView(right) : viewOf(right),
+                numberComparison ? numberComparisonView(left) : viewOf(left),
+                numberComparison ? numberComparisonView(right) : viewOf(right),
                 payload.innerDescriptor(), payload.side());
             return publish(op, new Value.BoolValue(result));
         }
 
         /** A numeric view for integer use; the admitted value itself is never replaced. */
         private long integerUse(Value value) {
-            if (value instanceof Value.IntValue integer) {
-                return integer.value();
-            }
-            return (long) ((Value.NumValue) value).value();
-        }
 
-        private ComparisonOperandView integerComparisonView(Value value) {
-            return value instanceof Value.NumValue
-                ? new ComparisonOperandView.Int((int) integerUse(value)) : viewOf(value);
+            return (long) ((Value.NumValue) value).value();
         }
 
         /** A numeric view for number use, without replacing the stored carrier. */
         private double numberUse(Value value) {
-            return value instanceof Value.IntValue integer
-                ? integer.value() : ((Value.NumValue) value).value();
+            return ((Value.NumValue) value).value();
         }
 
         private ComparisonOperandView numberComparisonView(Value value) {
-            return value instanceof Value.IntValue
-                ? new ComparisonOperandView.Number(numberUse(value)) : viewOf(value);
+            return viewOf(value);
         }
 
         /** The closed int32/number arithmetic rows (E8004/E8005 projections). */
         private Value arithmetic(SemanticOp op, deal.semantic.ir.BinarySelector selector,
                                  Value left, Value right) {
             return switch (selector) {
-                case INT32_ADD -> int32Result(op, integerUse(left) + integerUse(right));
-                case INT32_SUB -> int32Result(op, integerUse(left) - integerUse(right));
-                case INT32_MUL -> int32Result(op, integerUse(left) * integerUse(right));
-                case INT32_DIV_TRUNC -> {
-                    long divisor = integerUse(right);
-                    if (divisor == 0) {
-                        throw registryFailure(op, FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
-                            null, null);
-                    }
-                    long dividend = integerUse(left);
-                    if (dividend == Integer.MIN_VALUE && divisor == -1) {
-                        throw registryFailure(op, FailurePolicyId.INT32_RESULT, null, null);
-                    }
-                    yield int32Result(op, dividend / divisor);
-                }
-                case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
+
+
+case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 case NUMBER_SUB -> new Value.NumValue(numberUse(left) - numberUse(right));
                 case NUMBER_MUL -> new Value.NumValue(numberUse(left) * numberUse(right));
                 case NUMBER_DIV_IEEE -> new Value.NumValue(numberUse(left) / numberUse(right));
@@ -2159,13 +2120,6 @@ public final class SemanticOracle {
             };
         }
 
-        /** The signed32 range projection: E8004 at the operation origin. */
-        private Value int32Result(SemanticOp op, long result) {
-            if (result < Integer.MIN_VALUE || result > Integer.MAX_VALUE) {
-                throw registryFailure(op, FailurePolicyId.INT32_RESULT, null, null);
-            }
-            return new Value.IntValue(result);
-        }
 
         /** A pinned registry-row failure at the operation origin. */
         private DealFailure registryFailure(SemanticOp op, FailurePolicyId policy,
@@ -2179,11 +2133,8 @@ public final class SemanticOracle {
             return DealFailure.of(failure, op.origin(), List.copyOf(frames));
         }
 
-        private DealFailure int32ResultFailure(SemanticOp op) {
-            return registryFailure(op, FailurePolicyId.INT32_RESULT, null, null);
-        }
 
-        /** Identity wrappers for heap values (record equality never decides
+/** Identity wrappers for heap values (record equality never decides
          *  reference identity). */
         private final Map<Value, Object> refIdentities = new java.util.IdentityHashMap<>();
 
@@ -2197,8 +2148,7 @@ public final class SemanticOracle {
                 case Value.NullValue ignored -> ComparisonOperandView.Null.INSTANCE;
                 case Value.MissingValue ignored -> ComparisonOperandView.Missing.INSTANCE;
                 case Value.BoolValue bool -> new ComparisonOperandView.Boolean(bool.value());
-                case Value.IntValue intValue ->
-                    new ComparisonOperandView.Int((int) intValue.value());
+
                 case Value.NumValue num -> new ComparisonOperandView.Number(num.value());
                 case Value.StrValue str -> new ComparisonOperandView.String(
                     (UnicodeScalars.Valid) UnicodeScalars.validate(str.value()));
@@ -2225,8 +2175,7 @@ public final class SemanticOracle {
                 case Value.AdapterValue adapter ->
                     // An adapter is a function value with reference identity.
                     new ComparisonOperandView.Ref(refIdentity(adapter));
-                case Value.IntrinsicValue intrinsic ->
-                    new ComparisonOperandView.Ref(refIdentity(intrinsic));
+
                 case Value.StdlibCallableValue callable ->
                     // The in-target cataloged callable (M4): a heap value whose
                     // identity is its memoized allocation, exactly like the
@@ -2280,7 +2229,7 @@ public final class SemanticOracle {
                 (KindPayload.ArrayLengthPayload) op.payload();
             Value receiver = valueOf(payload.arrayValue());
             Value.ArrayValue array = (Value.ArrayValue) receiver;
-            return publish(op, new Value.IntValue(array.elements().size()));
+            return publish(op, new Value.NumValue(array.elements().size()));
         }
 
         private String executeMemberRead(SemanticOp op) {
@@ -2964,9 +2913,8 @@ public final class SemanticOracle {
         /** The oracle runtime value → the executor's closed value view. */
         private ClassOpsExecutor.Value executorValueOf(Value value) {
             if (value instanceof Value.NullValue || value instanceof Value.MissingValue
-                    || value instanceof Value.BoolValue || value instanceof Value.IntValue
+                    || value instanceof Value.BoolValue
                     || value instanceof Value.NumValue || value instanceof Value.StrValue
-                    || value instanceof Value.IntrinsicValue
                     || value instanceof Value.SlotValue) {
                 return convertExecutorView(value);
             }
@@ -2984,7 +2932,6 @@ public final class SemanticOracle {
             if (value instanceof ClassOpsExecutor.Value.Null
                     || value instanceof ClassOpsExecutor.Value.Missing
                     || value instanceof ClassOpsExecutor.Value.Bool
-                    || value instanceof ClassOpsExecutor.Value.Int
                     || value instanceof ClassOpsExecutor.Value.Number
                     || value instanceof ClassOpsExecutor.Value.String) {
                 return convertOracleView(value);
@@ -3014,8 +2961,7 @@ public final class SemanticOracle {
                         + "(producer defect)");
                 case Value.BoolValue bool ->
                     new ClassOpsExecutor.Value.Bool(bool.value());
-                case Value.IntValue intValue ->
-                    new ClassOpsExecutor.Value.Int((int) intValue.value());
+
                 case Value.NumValue num ->
                     new ClassOpsExecutor.Value.Number(num.value());
                 case Value.StrValue str ->
@@ -3080,9 +3026,7 @@ public final class SemanticOracle {
                             ClassOpsExecutor.Value.string(error.code())),
                         new ClassOpsExecutor.FieldState.Present(
                             ClassOpsExecutor.Value.string(error.message()))));
-                case Value.IntrinsicValue intrinsic ->
 
-                    new ClassOpsExecutor.Value.Function(intrinsicViewOf(intrinsic));
                 case Value.SlotValue ignored ->
                     throw new IllegalStateException("a normalize-computed slot is never "
                         + "a construction input (producer defect)");
@@ -3096,8 +3040,7 @@ public final class SemanticOracle {
                 case ClassOpsExecutor.Value.Missing ignored -> Value.MissingValue.INSTANCE;
                 case ClassOpsExecutor.Value.Bool bool ->
                     new Value.BoolValue(bool.value());
-                case ClassOpsExecutor.Value.Int intValue ->
-                    new Value.IntValue(intValue.value());
+
                 case ClassOpsExecutor.Value.Number number ->
                     new Value.NumValue(number.value());
                 case ClassOpsExecutor.Value.String string -> {
@@ -3490,18 +3433,7 @@ public final class SemanticOracle {
             oracleOriginals.put(updated, receiver);
         }
 
-        private static RuntimeDescriptor.Func intrinsicViewOf(
-                Value.IntrinsicValue value) {
-            for (IntrinsicKind kind : IntrinsicKind.values()) {
-                if (kind.name().equals(value.name())) {
-                    return kind.declaredSignature();
-                }
-            }
-            return new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Number.INSTANCE,
-                false);
-        }
 
-        /** The array/table commit mutation (slot mechanics of the carrier). */
         private void commitIndexWrite(SemanticOp commit, Value container, NormalizedSlot slot,
                                       Value value) {
             switch (slot) {
@@ -3510,7 +3442,7 @@ public final class SemanticOracle {
                     if (array.append()) {
                         target.elements().add(value);
                     } else {
-                        target.elements().set(array.index(), value);
+                        target.elements().set((int) array.index(), value);
                     }
                 }
                 case NormalizedSlot.TableSlot table ->
@@ -3523,7 +3455,7 @@ public final class SemanticOracle {
                 case NormalizedSlot.ArraySlot array -> {
                     Value.ArrayValue target = (Value.ArrayValue) container;
                     if (array.index() < target.elements().size()) {
-                        target.elements().set(array.index(), Value.MissingValue.INSTANCE);
+                        target.elements().set((int) array.index(), Value.MissingValue.INSTANCE);
                     }
                     // index == length: the nil write at the append slot is a
                     // no-op on a dense array (A-D4).
@@ -3540,7 +3472,7 @@ public final class SemanticOracle {
             Value currentLength = valueOf(payload.currentLength());
             NormalizedSlot slot = switch (payload.mode()) {
                 case ARRAY_READ, ARRAY_WRITE -> NormalizedSlot.arraySlot(payload.mode(),
-                    (int) integerUse(rawKey),
+                    numberUse(rawKey),
                     (int) integerUse(currentLength));
                 case TABLE_READ, TABLE_WRITE -> NormalizedSlot.tableSlot(payload.mode(),
                     ((Value.StrValue) rawKey).value());
@@ -3558,15 +3490,15 @@ public final class SemanticOracle {
             switch (slot) {
                 case NormalizedSlot.ArraySlot array -> {
                     Value.ArrayValue target = (Value.ArrayValue) container;
-                    int index = array.index();
+                    double index = array.index();
                     int length = readLengthOf(op, payload.slot());
                     Value read;
-                    if (index < 0 || index >= length) {
+                    if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index >= length) {
                         // The cell's pinned E8002 before any storage
                         // access or element/result validation.
                         read = Value.MissingValue.INSTANCE;
                     } else if (index < target.elements().size()) {
-                        read = target.elements().get(index);
+                        read = target.elements().get((int) index);
                     } else {
                         read = Value.MissingValue.INSTANCE;
                     }
@@ -3622,11 +3554,13 @@ public final class SemanticOracle {
                     KindPayload.IndexNormalizePayload normalize =
                         (KindPayload.IndexNormalizePayload) candidate.payload();
                     Value length = valueOf(normalize.currentLength());
-                    if (length instanceof Value.IntValue intValue) {
-                        return (int) intValue.value();
+                    if (length instanceof Value.NumValue number && Double.isFinite(number.value())
+                            && number.value() >= 0 && number.value() <= Integer.MAX_VALUE
+                            && number.value() == Math.floor(number.value())) {
+                        return (int) number.value();
                     }
                     throw new IllegalStateException("the array read's currentLength operand "
-                        + "is not an int value (producer defect)");
+                        + "is not a valid storage length (producer defect)");
                 }
             }
             throw new IllegalStateException("the array read's slot " + slotId
@@ -3780,7 +3714,7 @@ public final class SemanticOracle {
                     // marker's MISSING view).
                     BoundaryValueView.of(ActualKind.NOTHING);
                 case Value.BoolValue bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-                case Value.IntValue intValue -> intBoundaryViewOf(intValue.value());
+
                 case Value.NumValue num -> BoundaryValueView.ofNumber(num.value());
                 case Value.StrValue str -> {
                     UnicodeScalars.Defect defect = str.defect() != null
@@ -3796,9 +3730,7 @@ public final class SemanticOracle {
                 case Value.FuncValue func -> BoundaryValueView.ofFunction(func.signature());
                 case Value.AdapterValue adapter ->
                     BoundaryValueView.ofFunction(adapter.signature());
-                case Value.IntrinsicValue intrinsic ->
 
-                    BoundaryValueView.ofFunction(intrinsicViewOf(intrinsic));
                 case Value.StdlibCallableValue callable ->
                     BoundaryValueView.ofFunction(callable.descriptor());
                 case Value.HostEntryValue entry ->
@@ -3808,31 +3740,12 @@ public final class SemanticOracle {
                     : BoundaryValueView.ofArray(List.of());
                 case Value.ClassValue classValue ->
                     BoundaryValueView.ofClass(classValue.classId().text());
-                case Value.SlotValue slot -> BoundaryValueView.of(ActualKind.INT);
+                case Value.SlotValue slot -> BoundaryValueView.ofNumber(0);
             };
         }
 
-        /**
-         * The typed-boundary classification of one raw integer carrier: the
-         * closed int carrier is signed32, so an integral raw long outside
-         * that range is not the int carrier — the raw carrier projection
-         * keeps its own numeric variant and classifies it {@code number},
-         * exactly like the emitted Lua prelude's {@code __typedBoundaryKind}
-         * and the JVM host surface's {@code actualOf} classify the same raw
-         * value. The number view lets the int path's canonical range step
-         * ({@code E8004}) select the failure, and an enclosing array's
-         * element arm render the element's own {@code number} token, while
-         * {@link BoundaryValueView#ofInt(long)} keeps its signed32
-         * invariant: an out-of-range raw host long is never re-spelled as an
-         * int carrier and never fails closed as a producer defect.
-         */
-        private static BoundaryValueView intBoundaryViewOf(long value) {
-            return value < Integer.MIN_VALUE || value > Integer.MAX_VALUE
-                ? BoundaryValueView.ofNumber(value)
-                : BoundaryValueView.ofInt(value);
-        }
 
-        /**
+/**
          * The carrier-classification view of one invalid async handle: the
          * returned value's outer carrier kind only, without the
          * typed-boundary payload validation. An integer carrier's payload is
@@ -3846,9 +3759,7 @@ public final class SemanticOracle {
          * keeps the validated view through {@link #viewOfValue}.
          */
         private BoundaryValueView carrierViewOfValue(Value value) {
-            if (value instanceof Value.IntValue intValue) {
-                return BoundaryValueView.ofNumber(intValue.value());
-            }
+
             return shallowViewOfValue(value);
         }
 
@@ -3901,26 +3812,8 @@ public final class SemanticOracle {
             Cell cell = storeCellOf(payload.binding(), payload.generation());
             Value value = valueOf(payload.value());
             if (value == null) {
-                // The seed's producer-less intrinsic identity (int()/number()
-                // as first-class values; J2): one value per seeded identity
-                // carrying the closed intrinsic kind tag, keyed once in the
-                // value-keyed binding map to the identity's own
-                // IntrinsicFunction registration, so every later use — the
-                // load's republished value, a boundary check, a call's
-                // value-keyed resolution — resolves the same registration.
-                // Its two function views project the kind's declared
-                // signature.
-                FunctionExecutionBinding registration = bindingOf(payload.value());
-                String name = "intrinsic";
-                if (registration instanceof FunctionExecutionBinding.IntrinsicFunction
-                        intrinsic) {
-                    name = intrinsic.kind().name();
-                }
-                value = new Value.IntrinsicValue(name);
-                putValue(payload.value(), value);
-                if (registration instanceof FunctionExecutionBinding.IntrinsicFunction) {
-                    bindingsByValue.put(value, registration);
-                }
+                throw new IllegalStateException("binding init has no producing value: "
+                    + payload.value());
             }
             cell.value = value;
             cell.initialized = true;
@@ -4114,7 +4007,7 @@ public final class SemanticOracle {
                     slot = ((Value.SlotValue) valueOf(normalizeResult)).slot();
                 } else if (child.kind() == SemanticOpKind.ARRAY_LENGTH
                         && child.result() instanceof ValueId lengthResult) {
-                    length = (int) ((Value.IntValue) valueOf(lengthResult)).value();
+                    length = (int) ((Value.NumValue) valueOf(lengthResult)).value();
                 }
             }
             if (slot == null || length < 0) {
@@ -4144,7 +4037,7 @@ public final class SemanticOracle {
                         + "normalize slot/length facts (a malformed chain — the "
                         + "production protocol rejects this)");
                 }
-                int lengthValue = (int) ((Value.IntValue) length).value();
+                int lengthValue = (int) ((Value.NumValue) length).value();
                 return switch (slot.slot()) {
                     case NormalizedSlot.ArraySlot array ->
                         BoundaryContext.writeBounds(array.index(), lengthValue);
@@ -4249,13 +4142,7 @@ public final class SemanticOracle {
                             hostValue.descriptor(), checkedArgs);
                     case FunctionExecutionBinding.ExternalFunction external ->
                         invokeExternalCall(op, payload, external, checkedArgs);
-                    case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                        Value converted = invokeIntrinsicValue(op, intrinsic,
-                            checkedArgs);
-                        yield runBoundaryChild(opOf(payload.returnBoundaryOpId()),
-                            converted, BoundaryContext.none());
-                    }
                     case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                         throw dynamicFunctionValueDefect(dynamic);
                 };
@@ -4277,37 +4164,8 @@ public final class SemanticOracle {
             return active != null ? active : op.origin();
         }
 
-        /**
-         * The one conversion ladder at an intrinsic value call (ISSUE-0679;
-         * design source {@code conversion-intrinsic-function-values} J4): the
-         * closed kind's conversion runs through the landed
-         * {@link #convertInt}/{@link #convertNumber} arms — the same algorithm
-         * authority the direct {@code INTRINSIC_CALL} arm runs — with the
-         * invoking op's own origin, so the pinned texts and the FAILURE event
-         * carry the invoking op (the direct arm keeps {@code INTRINSIC_CALL}).
-         * The argument domain is the recorded parameter cells': the value
-         * handed over is the cell-admitted one, so a null or wrong-kind
-         * argument is a parameter-cell projection and never reaches the
-         * ladder.
-         */
-        private Value invokeIntrinsicValue(SemanticOp op,
-                FunctionExecutionBinding.IntrinsicFunction intrinsic,
-                List<Value> checkedArgs) {
-            if (checkedArgs.size() != intrinsic.descriptor().paramTypes().size()) {
-                throw new IllegalStateException("the intrinsic value call " + op.opId()
-                    + " carries " + checkedArgs.size() + " checked arguments for the '"
-                    + intrinsic.kind() + "' intrinsic's "
-                    + intrinsic.descriptor().paramTypes().size() + " declared "
-                    + "parameter(s) (producer defect)");
-            }
-            Value argument = checkedArgs.get(0);
-            return switch (intrinsic.kind()) {
-                case INT_CONVERT -> convertInt(op, argument);
-                case NUMBER_CONVERT -> convertNumber(op, argument);
-            };
-        }
 
-        /** The parameter boundaries of one call/async/callback op in one-based order. */
+/** The parameter boundaries of one call/async/callback op in one-based order. */
         private List<Value> runParameterBoundaries(SemanticOp op, List<OpId> boundaryIds) {
             List<Value> checked = new ArrayList<>();
             for (int i = 0; i < boundaryIds.size(); i++) {
@@ -4472,12 +4330,7 @@ public final class SemanticOracle {
                     throw new IllegalStateException("the adapter chain descent "
                         + "resolved a nested adapter binding for " + nested.adaptOpId()
                         + " (producer defect)");
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                    Value value = invokeIntrinsicValue(op, intrinsic, leading);
-                    yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
-                        BoundaryContext.none());
-                }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicFunctionValueDefect(dynamic);
             };
@@ -4671,9 +4524,7 @@ public final class SemanticOracle {
                 case FunctionExecutionBinding.AdapterBinding ignored ->
                     throw new IllegalStateException("an adapter binding resolves its "
                         + "source before classification (producer defect)");
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
 
-                    invokeIntrinsicValue(op, intrinsic, args);
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicFunctionValueDefect(dynamic);
             };
@@ -5046,14 +4897,8 @@ public final class SemanticOracle {
             return binding;
         }
 
-        private static IllegalStateException intrinsicExecutionDefect(
-                FunctionExecutionBinding.IntrinsicFunction intrinsic) {
-            return new IllegalStateException("the '" + intrinsic.kind() + "' intrinsic "
-                + "function value has no execution in this slice (the intrinsic carrier "
-                + "is the function-typed-value child's — producer defect)");
-        }
 
-        private static IllegalStateException dynamicFunctionValueDefect(
+private static IllegalStateException dynamicFunctionValueDefect(
                 FunctionExecutionBinding.DynamicFunctionValue dynamic) {
             return new IllegalStateException("the dynamic function value produced by op "
                 + dynamic.materializingOpId() + " has no execution in this slice (its "
@@ -5213,20 +5058,7 @@ public final class SemanticOracle {
                     executeAsyncEntry(entry, op.opId(), checkedArgs, calleeTokenId,
                         token.tokenId());
                 }
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                    if (checkedArgs.size() != intrinsic.descriptor().paramTypes().size()) {
-                        throw new IllegalStateException("the async intrinsic start "
-                            + op.opId() + " carries " + checkedArgs.size()
-                            + " checked argument(s) for the '" + intrinsic.kind()
-                            + "' intrinsic's "
-                            + intrinsic.descriptor().paramTypes().size()
-                            + " declared parameter(s) (producer defect)");
-                    }
-                    tasks.put(token.tokenId(), new Task(token,
-                        () -> invokeIntrinsicValue(op, intrinsic, checkedArgs)));
-                    readyQueue.add(token.tokenId());
-                }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicFunctionValueDefect(dynamic);
             }
@@ -5308,24 +5140,7 @@ public final class SemanticOracle {
                     });
                 }
                 case HOST -> {
-                    if (sourceBinding
-                            instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
 
-                        if (leading.size() != intrinsic.descriptor()
-                                .paramTypes().size()) {
-                            throw new IllegalStateException("the runtime adapter "
-                                + "branch's intrinsic source at ASYNC_START "
-                                + op.opId() + " projects " + leading.size()
-                                + " leading argument(s) onto the '" + intrinsic.kind()
-                                + "' intrinsic's "
-                                + intrinsic.descriptor().paramTypes().size()
-                                + " declared parameter(s) (producer defect)");
-                        }
-                        tasks.put(token.tokenId(), new Task(token,
-                            () -> invokeIntrinsicValue(op, intrinsic, leading)));
-                        readyQueue.add(token.tokenId());
-                        return;
-                    }
                     requireHostResponder();
                     ModuleId module;
                     String export;
@@ -5982,8 +5797,7 @@ public final class SemanticOracle {
                         FunctionExecutionBinding sourceBinding = chain.binding();
                         List<Value> leading = chain.leading();
                         yield switch (sourceBinding) {
-                            case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                                throw intrinsicExecutionDefect(intrinsic);
+
                             case FunctionExecutionBinding.LoweredBody body -> {
                                 UnitState state = stateOf(callback.opId());
                                 bindParamCells(state, body.blockId(), m, leading);
@@ -6043,8 +5857,7 @@ public final class SemanticOracle {
                         yield runBoundaryChild(opOf(payload.returnBoundaryOpId()), value,
                             BoundaryContext.none());
                     }
-                    case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                        throw intrinsicExecutionDefect(intrinsic);
+
                     case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                         throw dynamicFunctionValueDefect(dynamic);
                 };
@@ -6056,81 +5869,8 @@ public final class SemanticOracle {
             }
         }
 
-        private String executeIntrinsic(SemanticOp op) {
-            KindPayload.IntrinsicCallPayload payload =
-                (KindPayload.IntrinsicCallPayload) op.payload();
-            Value input = valueOf(payload.input());
-            Value result = switch (payload.kind()) {
-                case INT_CONVERT -> convertInt(op, input);
-                case NUMBER_CONVERT -> convertNumber(op, input);
-            };
-            return publish(op, result);
-        }
 
-
-
-        /**
-         * The INT_CONVERSION ladder: null → NaN → infinity → fractional → the
-         * E8004 range gate → the closed typed-boundary kind arm
-         * ({@code TYPED_BOUNDARY_KIND}, the suffix-less {@code expected int}).
-         * Each arm throws through its own closed arm render, so the oracle
-         * projects the same texts the shared {@code SharedValueSemantics}
-         * rows and both artifacts project — the one algorithm authority with
-         * the invoking op's own context.
-         */
-        private Value convertInt(SemanticOp op, Value input) {
-            if (input instanceof Value.NullValue) {
-                throw armFailure(op, FailureArmId.INT_CONVERSION_NULL, "int", "null");
-            }
-            if (input instanceof Value.NumValue num) {
-                double value = num.value();
-                if (Double.isNaN(value)) {
-                    throw armFailure(op, FailureArmId.INT_CONVERSION_NAN, "int", "NaN");
-                }
-                if (Double.isInfinite(value)) {
-                    throw armFailure(op, FailureArmId.INT_CONVERSION_INFINITY, "int",
-                        "infinity");
-                }
-                if (value != Math.rint(value)) {
-                    // The fractional case's text names the case while its
-                    // actual token is the closed number kind (the pinned
-                    // corpus projection).
-                    throw armFailure(op, FailureArmId.INT_CONVERSION_FRACTIONAL, "int",
-                        "number");
-                }
-                if (value < -2147483648d || value > 2147483647d) {
-                    throw armFailure(op, FailureArmId.INT32_RANGE, null, null);
-                }
-                return new Value.IntValue((long) value);
-            }
-            if (input instanceof Value.IntValue intValue) {
-                return intValue;
-            }
-            throw armFailure(op, FailureArmId.TYPED_BOUNDARY_KIND, "int",
-                canonicalKind(input));
-        }
-
-        /**
-         * The NUMBER_CONVERSION ladder: null first, then the wrong-kind
-         * {@code TYPE_DESCRIPTOR} projection; an int converts to its exact
-         * double and the conversion itself never fails.
-         */
-        private Value convertNumber(SemanticOp op, Value input) {
-            if (input instanceof Value.NullValue) {
-                throw armFailure(op, FailureArmId.NUMBER_CONVERSION_NULL, "number",
-                    "null");
-            }
-            if (input instanceof Value.IntValue intValue) {
-                return new Value.NumValue((double) intValue.value());
-            }
-            if (input instanceof Value.NumValue num) {
-                return num;
-            }
-            throw armFailure(op, FailureArmId.TYPED_BOUNDARY_KIND, "number",
-                canonicalKind(input));
-        }
-
-        /**
+/**
          * One conversion/typed-boundary arm failure at the invoking op's
          * origin: the arm's own template with its declared expected token
          * and the closed actual projection, never a composed text.
@@ -6171,7 +5911,7 @@ public final class SemanticOracle {
                 case Value.NullValue ignored -> "null";
                 case Value.AbsentValue ignored -> "nil";
                 case Value.BoolValue ignored -> "boolean";
-                case Value.IntValue ignored -> "int";
+
                 case Value.NumValue ignored -> "number";
                 // The closed typed-boundary projection's invalid-scalar
                 // classification (the same viewOfValue classification the
@@ -6182,7 +5922,7 @@ public final class SemanticOracle {
                 case Value.ArrayValue ignored -> "array";
                 case Value.FuncValue ignored -> "function";
                 case Value.AdapterValue ignored -> "function";
-                case Value.IntrinsicValue ignored -> "function";
+
                 case Value.StdlibCallableValue ignored -> "function";
                 case Value.HostEntryValue ignored -> "function";
 
@@ -6305,15 +6045,7 @@ public final class SemanticOracle {
                         + "(producer defect)");
                 case Value.BoolValue bool ->
                     new SharedStdlibSemantics.Value.Bool(bool.value());
-                case Value.IntValue intValue -> {
-                    long v = intValue.value();
-                    if (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE) {
-                        throw new IllegalStateException(
-                            "a stdlib int carrier must be signed32; got " + v
-                                + " (the int parameter boundary's admission set)");
-                    }
-                    yield new SharedStdlibSemantics.Value.Int((int) v);
-                }
+
                 case Value.NumValue num ->
                     new SharedStdlibSemantics.Value.Number(num.value());
                 case Value.StrValue str ->
@@ -6354,8 +6086,7 @@ public final class SemanticOracle {
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
                 case Value.AdapterValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
-                case Value.IntrinsicValue ignored ->
-                    new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
+
                 case Value.StdlibCallableValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
                 case Value.HostEntryValue ignored ->
@@ -6391,8 +6122,7 @@ public final class SemanticOracle {
                     Value.NullValue.INSTANCE;
                 case SharedStdlibSemantics.Value.Bool bool ->
                     new Value.BoolValue(bool.value());
-                case SharedStdlibSemantics.Value.Int intValue ->
-                    new Value.IntValue(intValue.value());
+
                 case SharedStdlibSemantics.Value.Number number ->
                     new Value.NumValue(number.value());
                 case SharedStdlibSemantics.Value.String string -> {
@@ -6853,8 +6583,8 @@ public final class SemanticOracle {
                     value = entry == null ? Value.MissingValue.INSTANCE : entry;
                 }
                 case STDLIB -> value = stdlibCallableOf(op, payload);
-                case null -> value = new Value.IntrinsicValue("export:"
-                    + payload.module().path() + "." + payload.name());
+                case null -> throw new IllegalStateException("export read has no import: "
+                    + payload.module());
             }
             return publish(op, value);
         }

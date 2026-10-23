@@ -9,6 +9,14 @@
 // and the observed alias identity between the elements.
 
 final class HostCarrieruntyped {
+  // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
+  static String numericText(Object value) {
+    if (value instanceof Number n) {
+      return java.math.BigDecimal.valueOf(n.doubleValue()).stripTrailingZeros().toPlainString();
+    }
+    return String.valueOf(value);
+  }
+
   static String report(deal.codegen.jvm.JvmRuntime.Table t) {
     Object member = t.read("point");
     String kind = "false";
@@ -16,16 +24,16 @@ final class HostCarrieruntyped {
     if (member instanceof deal.codegen.jvm.JvmRuntime.ClassInstance instance) {
       String name = String.valueOf(instance.classIdText());
       kind = String.valueOf(name.endsWith("/Point"));
-      fields = String.valueOf(instance.read("x")) + ","
-          + String.valueOf(instance.read("y"));
+      fields = numericText(instance.read("x")) + ","
+          + numericText(instance.read("y"));
     }
     String alias = String.valueOf(t.read("point") == t.read("twin"));
     String stepText = "none";
     Object step = t.read("step");
     if (step instanceof deal.codegen.jvm.JvmRuntime.FunctionValue function) {
       try {
-        stepText = "true:" + String.valueOf(
-            function.fn.invoke(new Object[] { Long.valueOf(41) }));
+        stepText = "true:" + numericText(
+            function.fn.invoke(new Object[] { Double.valueOf(41) }));
       } catch (RuntimeException failure) {
         stepText = "false:" + failure.getMessage();
       }
@@ -51,8 +59,8 @@ final class HostCarrieruntyped {
     }
     String name = String.valueOf(instance.classIdText());
     return String.valueOf(name.endsWith("/Point")) + "|"
-        + String.valueOf(instance.read("x")) + ","
-        + String.valueOf(instance.read("y"));
+        + numericText(instance.read("x")) + ","
+        + numericText(instance.read("y"));
   }
 
   static deal.codegen.jvm.JvmRuntime.Table copyTable(

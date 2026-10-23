@@ -27,7 +27,6 @@ import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -334,7 +333,7 @@ public class JsSemanticEmitterTest {
                 built.index(), manifests.manifests(),
                 orchestrator.hostDeclarationSurface(), identities, BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), callbackExports);
+                callbackExports);
         }
         if (lowering.hasErrors() || lowering.project() == null) {
             throw new IllegalStateException("the fixture project did not"
@@ -500,13 +499,13 @@ public class JsSemanticEmitterTest {
             import * as empty from "./empty";
 
             export function main(): null {
-              let y: int = util.addOne(2);
+              let y: number = util.addOne(2);
               if (y !== 3) { throw { code: "TEST_FAIL", message: "cross" }; }
               return null;
             }
             """, Map.of(
                 "src/util.deal", """
-                    export function addOne(x: int): int {
+                    export function addOne(x: number): number {
                       return x + 1;
                     }
                     """,
@@ -582,8 +581,8 @@ public class JsSemanticEmitterTest {
         Path root = Files.createTempDirectory(tmpRoot, "maps");
         Fixture fixture = compileFixture(root, """
             export function main(): null {
-              let a: int = 1;
-              let b: int = a + 1;
+              let a: number = 1;
+              let b: number = a + 1;
               if (b !== 2) { throw { code: "TEST_FAIL", message: "sum" }; }
               return null;
             }
@@ -653,10 +652,10 @@ public class JsSemanticEmitterTest {
         String supplementary = "\uD83D\uDE00";
         Path root = Files.createTempDirectory(tmpRoot, "sidecars-" + supplementary);
         Path sourceDir = root.resolve(supplementary + "src");
-        String appSource = "import * as util from \"./util\";\nimport * as empty from \"./empty\";\n\nexport function main(): null {\n  let total: int = 0;\n  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; { total = total + i; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let y: int = util.addOne(total);\n  if (y !== 4) { throw { code: \"TEST_FAIL\", message: \"cross\" }; }\n  while (total > 0) { total = total - 1; }\n  return null;\n}\n";
+        String appSource = "import * as util from \"./util\";\nimport * as empty from \"./empty\";\n\nexport function main(): null {\n  let total: number = 0;\n  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; { total = total + i; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let y: number = util.addOne(total);\n  if (y !== 4) { throw { code: \"TEST_FAIL\", message: \"cross\" }; }\n  while (total > 0) { total = total - 1; }\n  return null;\n}\n";
         Map<String, String> extraSources = Map.of(
             supplementary + "src/util.deal", """
-                export function addOne(x: int): int {
+                export function addOne(x: number): number {
                   return x + 1;
                 }
                 """,
@@ -846,8 +845,8 @@ public class JsSemanticEmitterTest {
         }
         // The declared parameter sits beyond the caller's own source bounds,
         // so a leaked provider coordinate would also fail the bound check.
-        provider.append("export function need(n: int): int {\n");
-        provider.append("  let seen: int = 0;\n");
+        provider.append("export function need(n: number): number {\n");
+        provider.append("  let seen: number = 0;\n");
         provider.append("  return n + seen;\n");
         provider.append("}\n");
         List<String> providerLines = provider.toString().lines().toList();
@@ -863,7 +862,7 @@ public class JsSemanticEmitterTest {
         }
         // The recorded parameter annotation is the declared type's own span.
         int providerParamColumn = providerParamLine == 0 ? 0
-            : providerLines.get(providerParamLine - 1).indexOf("int") + 1;
+            : providerLines.get(providerParamLine - 1).indexOf("number") + 1;
         check(providerParamLine > 0 && providerReturnLine > 0
                 && providerParamColumn > 0,
             "the provider fixture declares its boundary annotation");
@@ -871,10 +870,10 @@ public class JsSemanticEmitterTest {
             import * as lib from "./lib";
 
             export class Counter {
-              n: int = 0;
+              n: number = 0;
             }
 
-            export function attempt(c: Counter, t: table): int {
+            export function attempt(c: Counter, t: table): number {
               c.n = c.n + 1;
               return lib.need(t.v);
             }
@@ -925,7 +924,7 @@ public class JsSemanticEmitterTest {
         int boundaryLine = -1;
         for (int i = 0; i < appLines.size(); i++) {
             if (appLines.get(i).contains(providerTuple)
-                    && appLines.get(i).contains("$rt.checkType(\"int\"")) {
+                    && appLines.get(i).contains("$rt.checkType(\"number\"")) {
                 boundaryLine = i + 1;
             }
         }
@@ -1001,7 +1000,7 @@ public class JsSemanticEmitterTest {
             const out = {before: counter.n, errors: []};
             for (let i = 0; i < 2; i++) {
               try {
-                app.attempt.$f(counter, new Map([["v", 1.5]]));
+                app.attempt.$f(counter, new Map([["v", "wrong-kind"]]));
               } catch (e) {
                 out.errors.push({code: e.code, message: e.message,
                   file: e.file, line: e.line, column: e.column});
@@ -1023,7 +1022,7 @@ public class JsSemanticEmitterTest {
         checkEq(2, countOccurrences(run.output(), expectedTuple),
             "each failure keeps the authoritative provider tuple: "
                 + run.output());
-        check(run.output().contains("expected int"),
+        check(run.output().contains("expected number"),
             "the provider boundary family keeps its expected token: "
                 + run.output());
         check(run.output().contains("\"after\":2"),
@@ -1399,16 +1398,16 @@ public class JsSemanticEmitterTest {
             + " real Node binary --");
         Path root = Files.createTempDirectory(tmpRoot, "values");
         Fixture fixture = compileFixture(root, """
-            function classify(n: int): int {
+            function classify(n: number): number {
               if (n < 0) { return 0 - 1; }
               while (n > 0) { n = n - 1; }
               return n;
             }
 
             export function main(): null {
-              let ints: int[] = [1, 2, 3];
-              let total: int = 0;
-              for (let v: int of ints) { total = total + v; }
+              let ints: number[] = [1, 2, 3];
+              let total: number = 0;
+              for (let v: number of ints) { total = total + v; }
               if (total !== 6) { throw { code: "TEST_FAIL", message: "sum" }; }
               if (ints.length !== 3) { throw { code: "TEST_FAIL", message: "len" }; }
               let nums: number[] = [1.5, 2.5];
@@ -1421,23 +1420,23 @@ public class JsSemanticEmitterTest {
               if ("b" < "c") { ordered = "y"; }
               let t: table = {a: 1, b: "x", __proto__: 1};
               t.__proto__ = 5;
-              let proto: int = t.__proto__;
+              let proto: number = t.__proto__;
               if (proto !== 5) { throw { code: "TEST_FAIL", message: "proto" }; }
               t.c = 3;
-              let c: int = t.c;
+              let c: number = t.c;
               if (c !== 3) { throw { code: "TEST_FAIL", message: "table" }; }
               delete t.b;
               let alias: table = t;
               alias.a = 7;
-              let a: int = t.a;
+              let a: number = t.a;
               if (a !== 7) { throw { code: "TEST_FAIL", message: "alias" }; }
-              let arrAlias: int[] = ints;
+              let arrAlias: number[] = ints;
               arrAlias[0] = 9;
               if (ints[0] !== 9) { throw { code: "TEST_FAIL", message: "arr-alias" }; }
               if (classify(3) !== 0) { throw { code: "TEST_FAIL", message: "loop" }; }
               if (classify(0 - 2) !== 0 - 1) { throw { code: "TEST_FAIL", message: "guard" }; }
               if (ordered !== "y") { throw { code: "TEST_FAIL", message: "cmp" }; }
-              let discarded: int = 0;
+              let discarded: number = 0;
               discarded = 1;
               if (discarded !== 1) { throw { code: "TEST_FAIL", message: "seq" }; }
               return null;
@@ -1452,8 +1451,8 @@ public class JsSemanticEmitterTest {
             "table writes and reads go through the Map carrier members");
         check(artifact.contains(".delete(\"b\")"),
             "a table delete removes the field (absence is not null)");
-        check(artifact.contains("$rt.intAdd("),
-            "recorded int arithmetic routes through the signed32 member");
+        check(artifact.contains(" + ") && !artifact.contains("$rt.intAdd("),
+            "recorded number arithmetic uses binary64 addition");
         check(artifact.contains("($s") && artifact.contains(" + $s"),
             "recorded number arithmetic stays native IEEE");
         check(!artifact.contains("typeof"),
@@ -1474,11 +1473,11 @@ public class JsSemanticEmitterTest {
             + " nil-equivalence rule (null vs absent) --");
         Path root = Files.createTempDirectory(tmpRoot, "nullable-eq");
         Fixture fixture = compileFixture(root, """
-            export function eq(a: int | null, b: int | null): boolean {
+            export function eq(a: number | null, b: number | null): boolean {
               return a === b;
             }
 
-            export function ne(a: int | null, b: int | null): boolean {
+            export function ne(a: number | null, b: number | null): boolean {
               return a !== b;
             }
 
@@ -1539,9 +1538,9 @@ public class JsSemanticEmitterTest {
         check(run.output().contains("\"eqNullNull\":true"),
             "null compares equal to null: " + run.output());
         check(run.output().contains("\"eqSame\":true"),
-            "the inner int equality still applies: " + run.output());
+            "the inner number equality still applies: " + run.output());
         check(run.output().contains("\"neSame\":false"),
-            "the inner int inequality stays the complement: "
+            "the inner number inequality stays the complement: "
                 + run.output());
         check(run.output().contains("\"eqDifferent\":false"),
             "different non-nil operands compare unequal: " + run.output());
@@ -1566,7 +1565,7 @@ public class JsSemanticEmitterTest {
         System.out.println("-- live captures, fresh cells, recursion,"
             + " adapters and scalar iteration under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "cells");
-        Fixture fixture = compileFixture(root, "function even(n: int): boolean {\n  if (n === 0) { return true; }\n  return odd(n - 1);\n}\n\nfunction odd(n: int): boolean {\n  if (n === 0) { return false; }\n  return even(n - 1);\n}\n\nfunction compute(): int {\n  let total: int = 0;\n  { let v14Loop1: int = 0; while (v14Loop1 < 3) { let i: int = v14Loop1; {\n    let f: () => int = function(): int { return i; };\n    total = total + f();\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  let j: int = 0;\n  let seen: int = 0;\n  while (j < 2) {\n    let k: int = j;\n    let g: () => int = function(): int { return k; };\n    seen = seen + g();\n    j = j + 1;\n  }\n  return total + seen;\n}\n\nfunction loops(): int {\n  let acc: int = 0;\n  { let v14Loop2: int = 0; while (v14Loop2 < 10) { let i: int = v14Loop2; {\n    if (i === 3) { { v14Loop2 = i; v14Loop2 = v14Loop2 + 1; continue; } }\n    if (i === 6) { break; }\n    acc = acc + i;\n  } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  if (acc !== 12) { throw { code: \"TEST_FAIL\", message: \"fl\" }; }\n  let found: int = 0;\n  { let v14Loop3: int = 0; while (v14Loop3 < 3) { let i: int = v14Loop3; {\n    { let v14Loop4: int = 0; while (v14Loop4 < 3) { let j: int = v14Loop4; {\n      if (j === 1) { break; }\n      found = found + 1;\n    } v14Loop4 = j; v14Loop4 = v14Loop4 + 1; } }\n  } v14Loop3 = i; v14Loop3 = v14Loop3 + 1; } }\n  return found;\n}\n\nfunction run(): int {\n  let f: () => int = function(): int { return 7; };\n  let g: (x: int) => int = f;\n  f = function(): int { return 9; };\n  let adapted: int = g(5);\n  if (!even(4)) { throw { code: \"TEST_FAIL\", message: \"even\" }; }\n  if (odd(4)) { throw { code: \"TEST_FAIL\", message: \"odd\" }; }\n  return compute() + adapted + loops();\n}\n\nexport function main(): null {\n  let r: int = run();\n  if (r !== 16) { throw { code: \"TEST_FAIL\", message: \"cells\" }; }\n  let s: string = \"a😀b\";\n  let count: int = 0;\n  let collected: string = \"\";\n  for (let ch: string of s) {\n    count = count + 1;\n    collected = collected + ch;\n  }\n  if (count !== 3) { throw { code: \"TEST_FAIL\", message: \"scalars\" }; }\n  if (collected !== s) { throw { code: \"TEST_FAIL\", message: \"rebuild\" }; }\n  return null;\n}\n");
+        Fixture fixture = compileFixture(root, "function even(n: number): boolean {\n  if (n === 0) { return true; }\n  return odd(n - 1);\n}\n\nfunction odd(n: number): boolean {\n  if (n === 0) { return false; }\n  return even(n - 1);\n}\n\nfunction compute(): number {\n  let total: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 3) { let i: number = v14Loop1; {\n    let f: () => number = function(): number { return i; };\n    total = total + f();\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  let j: number = 0;\n  let seen: number = 0;\n  while (j < 2) {\n    let k: number = j;\n    let g: () => number = function(): number { return k; };\n    seen = seen + g();\n    j = j + 1;\n  }\n  return total + seen;\n}\n\nfunction loops(): number {\n  let acc: number = 0;\n  { let v14Loop2: number = 0; while (v14Loop2 < 10) { let i: number = v14Loop2; {\n    if (i === 3) { { v14Loop2 = i; v14Loop2 = v14Loop2 + 1; continue; } }\n    if (i === 6) { break; }\n    acc = acc + i;\n  } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  if (acc !== 12) { throw { code: \"TEST_FAIL\", message: \"fl\" }; }\n  let found: number = 0;\n  { let v14Loop3: number = 0; while (v14Loop3 < 3) { let i: number = v14Loop3; {\n    { let v14Loop4: number = 0; while (v14Loop4 < 3) { let j: number = v14Loop4; {\n      if (j === 1) { break; }\n      found = found + 1;\n    } v14Loop4 = j; v14Loop4 = v14Loop4 + 1; } }\n  } v14Loop3 = i; v14Loop3 = v14Loop3 + 1; } }\n  return found;\n}\n\nfunction run(): number {\n  let f: () => number = function(): number { return 7; };\n  let g: (x: number) => number = f;\n  f = function(): number { return 9; };\n  let adapted: number = g(5);\n  if (!even(4)) { throw { code: \"TEST_FAIL\", message: \"even\" }; }\n  if (odd(4)) { throw { code: \"TEST_FAIL\", message: \"odd\" }; }\n  return compute() + adapted + loops();\n}\n\nexport function main(): null {\n  let r: number = run();\n  if (r !== 16) { throw { code: \"TEST_FAIL\", message: \"cells\" }; }\n  let s: string = \"a😀b\";\n  let count: number = 0;\n  let collected: string = \"\";\n  for (let ch: string of s) {\n    count = count + 1;\n    collected = collected + ch;\n  }\n  if (count !== 3) { throw { code: \"TEST_FAIL\", message: \"scalars\" }; }\n  if (collected !== s) { throw { code: \"TEST_FAIL\", message: \"rebuild\" }; }\n  return null;\n}\n");
         Path out = stage(fixture, "cells", false);
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the cells/closures program exits 0: "
@@ -1593,26 +1592,27 @@ public class JsSemanticEmitterTest {
             + " value, identity-preserving loads read its cell --");
         Path root = Files.createTempDirectory(tmpRoot, "intrinsic");
         Fixture fixture = compileFixture(root, """
-            export function storedInt(x: number): int {
-              let f: (x: number) => int = int;
+            function number(x: number): number { return x; }
+            export function storedInt(x: number): number {
+              let f: (x: number) => number = number;
               return f(x);
             }
 
             export function same(): boolean {
-              let f: (x: number) => int = int;
-              let g: (x: number) => int = int;
+              let f: (x: number) => number = number;
+              let g: (x: number) => number = number;
               return f === g;
             }
 
-            export function adapted(x: number, y: int): int {
-              let g: (x: number, y: int) => int = int;
+            export function adapted(x: number, y: number): number {
+              let g: (x: number, y: number) => number = number;
               return g(x, y);
             }
 
             export function main(): null {
-              let a: int = storedInt(4.0);
+              let a: number = storedInt(4.0);
               let b: boolean = same();
-              let c: int = adapted(5.0, 0);
+              let c: number = adapted(5.0, 0);
               if (a !== 4 || !b || c !== 5) {
                 throw { code: "TEST_FAIL", message: "intrinsic" };
               }
@@ -1628,19 +1628,12 @@ public class JsSemanticEmitterTest {
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
         String artifact = emission.modules().get(0).source();
-        checkEq(1, countOccurrences(artifact,
-                "$rt.function(\"(number)->int\", (v, $f, $l, $c) =>"),
-            "the module materializes exactly one carrier (the seed's own"
-                + " BINDING_INIT); no site re-wraps the identity");
-        check(Pattern.compile("\\$g\\d+ = \\$rt\\.function\\(\"\\(number\\)->int\","
-                + " \\(v, \\$f, \\$l, \\$c\\) =>")
-                .matcher(artifact).find(),
-            "the seed binding's init publishes the carrier at the module"
-                + " root");
-        check(Pattern.compile("const \\$av\\d+ = \\$g\\d+;").matcher(artifact)
-                .find(),
-            "the adapter's VALUE operand reads the seed's binding cell"
-                + " instead of emitting a fresh wrapper");
+        checkEq(2, countOccurrences(artifact, "$rt.function(\"(number)->number\", function "),
+            "one ordinary module function owns the callable identity");
+        check(!artifact.contains("intConvert") && !artifact.contains("numberConvert"),
+            "loads and adapters use ordinary carriers, not numeric conversion seeds");
+        check(artifact.contains(".$src = $src;") && artifact.contains("$rt.function(\"(number,number)->number\""),
+            "the arity adapter consumes the existing ordinary function value");
         Path out = stage(fixture, "intrinsic", emission);
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the intrinsic-value program loads and runs"
@@ -1660,10 +1653,10 @@ public class JsSemanticEmitterTest {
             + " the contextual boundary --");
         Path root = Files.createTempDirectory(tmpRoot, "hole");
         Fixture nullable = compileFixture(root, """
-            export function nullableHole(): int | null {
-              let a: int[] = [1, 2, 3];
+            export function nullableHole(): number | null {
+              let a: number[] = [1, 2, 3];
               delete a[1];
-              let v: int | null = a[1];
+              let v: number | null = a[1];
               return v;
             }
 
@@ -1687,7 +1680,7 @@ public class JsSemanticEmitterTest {
         String[] lines = artifact.split("\n", -1);
         int read = arrayReadLine(lines);
         check(read >= 0 && read + 1 < lines.length
-                && lines[read + 1].contains("checkType(\"?int\""),
+                && lines[read + 1].contains("checkType(\"?number\""),
             "the raw element passes straight to the contextual nullable"
                 + " boundary with no strict element descriptor check in"
                 + " between: " + (read >= 0 && read + 1 < lines.length
@@ -1698,15 +1691,15 @@ public class JsSemanticEmitterTest {
             + run.output());
 
         Fixture strict = compileFixture(root, """
-            export function strictHole(): int {
-              let a: int[] = [1, 2, 3];
+            export function strictHole(): number {
+              let a: number[] = [1, 2, 3];
               delete a[1];
-              let v: int = a[1];
+              let v: number = a[1];
               return v;
             }
 
             export function main(): null {
-              let x: int = strictHole();
+              let x: number = strictHole();
               return null;
             }
             """);
@@ -1716,7 +1709,7 @@ public class JsSemanticEmitterTest {
                 instanceof deal.semantic.SemanticRuntimeModel.Terminal
                     .DealFailure,
             "the shared authority rejects the missing element against the"
-                + " contextual int descriptor: " + strictOracle.terminal());
+                + " contextual number descriptor: " + strictOracle.terminal());
         if (!(strictOracle.terminal()
                 instanceof deal.semantic.SemanticRuntimeModel.Terminal
                     .DealFailure failure)) {
@@ -1729,7 +1722,7 @@ public class JsSemanticEmitterTest {
         String[] strictLines = strictArtifact.split("\n", -1);
         int strictRead = arrayReadLine(strictLines);
         checkEq(true, strictRead >= 0 && strictRead + 1 < strictLines.length
-                && strictLines[strictRead + 1].contains("checkType(\"int\"")
+                && strictLines[strictRead + 1].contains("checkType(\"number\"")
                 && strictLines[strictRead + 1].contains(
                     originCoordinates(snapshot.origin()) + ")"),
             "the contextual check runs at the shared authority's own origin"
@@ -1758,10 +1751,11 @@ public class JsSemanticEmitterTest {
             + " source wrapper --");
         Path root = Files.createTempDirectory(tmpRoot, "adapter-origin");
         Fixture fixture = compileFixture(root, """
+            function number(x: number): number { let xs: number[] = []; return xs[x]; }
             export function main(): null {
-              let g: (x: number, y: int) => int = int;
+              let g: (x: number, y: number) => number = number;
               let n: number = 0.0 / 0.0;
-              let r: int = g(n, 1);
+              let r: number = g(n, 1);
               return null;
             }
             """);
@@ -1783,7 +1777,7 @@ public class JsSemanticEmitterTest {
             fixture.emissionInput(false));
         String artifact = emission.modules().get(0).source();
         check(artifact.contains(
-                "$rt.checkFunctionSig(\"(number)->int\", $src.$sig, $src,"
+                "$rt.checkFunctionSig(\"(number)->number\", $src.$sig, $src,"
                     + " $file, $line, $column)"),
             "the adapter's source-signature check runs at the received call"
                 + " span");
@@ -1817,16 +1811,16 @@ public class JsSemanticEmitterTest {
             export function main(): null {
               let k: string = "counter";
               util[k] = 7;
-              let v: int = util[k];
+              let v: number = util[k];
               if (v !== 7) { throw { code: "TEST_FAIL", message: "read" }; }
               let p: string = "__proto__";
               util[p] = 9;
-              let w: int = util[p];
+              let w: number = util[p];
               if (w !== 9) { throw { code: "TEST_FAIL", message: "proto" }; }
               return null;
             }
             """, Map.of("src/utilw3.deal", """
-                export function counter(): int {
+                export function counter(): number {
                   return 0;
                 }
                 """));
@@ -1932,13 +1926,13 @@ public class JsSemanticEmitterTest {
             import * as lib from "./lib";
 
             class Bag {
-              items: int[] = [];
+              items: number[] = [];
               fresh: Item = makeItem();
               opt?: string;
             }
 
             class Item {
-              v: int = 0;
+              v: number = 0;
             }
 
             function makeItem(): Item {
@@ -1948,13 +1942,13 @@ public class JsSemanticEmitterTest {
             // A source literal's supplied expressions must run before any
             // omitted required default: the default's distinct failure would
             // otherwise replace the supplied expression's failure.
-            function defaultBoom(): int {
+            function defaultBoom(): number {
               throw { code: "DEFAULT_ORDER", message: "default ran before supplied" };
             }
 
             class FailOrder {
-              first: int = defaultBoom();
-              second: int = 0;
+              first: number = defaultBoom();
+              second: number = 0;
             }
 
             // @jsonable
@@ -1972,12 +1966,12 @@ public class JsSemanticEmitterTest {
             }
 
             export function main(): null {
-              let order: int[] = [];
-              let note: (n: int) => int = function(n: int): int {
+              let order: number[] = [];
+              let note: (n: number) => number = function(n: number): number {
                 order[order.length] = n;
                 return n;
               };
-              let suppliedBoom: () => int = function(): int {
+              let suppliedBoom: () => number = function(): number {
                 throw { code: "SUPPLIED_ORDER", message: "supplied expression first" };
               };
               let a: Bag = {};
@@ -1995,7 +1989,7 @@ public class JsSemanticEmitterTest {
               let p1: lib.Point = { x: 2 };
               let p2: lib.Point = {};
               if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
-              if (lib.Point$toJson(p1) !== "{\\"x\\":2,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
+              if (lib.Point$toJson(p1) !== "{\\"x\\":2.0,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
               // A source literal evaluates its supplied expressions
               // left-to-right, then applies the omitted required defaults.
               let ordered: lib.Point = { x: note(1), opt: note(2) };
@@ -2019,11 +2013,11 @@ public class JsSemanticEmitterTest {
               if (!has(pn.opt)) { throw { code: "TEST_FAIL", message: "present null" }; }
               if (pn.opt !== null) { throw { code: "TEST_FAIL", message: "present null read" }; }
               if (!has(pv.opt)) { throw { code: "TEST_FAIL", message: "present value" }; }
-              if (lib.Point$toJson(pm) !== "{\\"x\\":1,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
-              if (lib.Point$toJson(pn) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
-              if (lib.Point$toJson(pv) !== "{\\"x\\":1,\\"y\\":0,\\"opt\\":2}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
-              let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1}");
-              let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1,\\"opt\\":null}");
+              if (lib.Point$toJson(pm) !== "{\\"x\\":1.0,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
+              if (lib.Point$toJson(pn) !== "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
+              if (lib.Point$toJson(pv) !== "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":2.0}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
+              let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0}");
+              let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"opt\\":null}");
               if (dm !== null) {
                 if (has(dm.opt)) { throw { code: "TEST_FAIL", message: "decoded missing optional" }; }
               }
@@ -2040,22 +2034,22 @@ public class JsSemanticEmitterTest {
               } else {
                 throw { code: "TEST_FAIL", message: "roundtrip" };
               }
-              let e1: Form | null = Form$fromJson("{\\"nope\\":1}");
+              let e1: Form | null = Form$fromJson("{\\"nope\\":1.0}");
               if (e1 !== null) { throw { code: "TEST_FAIL", message: "extra key" }; }
               let e2: Form | null = Form$fromJson("{");
               if (e2 !== null) { throw { code: "TEST_FAIL", message: "malformed" }; }
               let e3: Form | null = Form$fromJson("42");
               if (e3 !== null) { throw { code: "TEST_FAIL", message: "scalar" }; }
-              let e4: Form | null = Form$fromJson("{\\"point\\":{\\"zz\\":1}}");
+              let e4: Form | null = Form$fromJson("{\\"point\\":{\\"zz\\":1.0}}");
               if (e4 !== null) { throw { code: "TEST_FAIL", message: "nested extra" }; }
               return null;
             }
             """, Map.of("src/lib.deal", """
                 // @jsonable
                 export class Point {
-                  x: int = 0;
-                  y: int = 0;
-                  opt?: int | null;
+                  x: number = 0;
+                  y: number = 0;
+                  opt?: number | null;
                 }
                 """));
 
@@ -2279,10 +2273,10 @@ public class JsSemanticEmitterTest {
             out.nilJson = nilStates.map(function (p, i) {
               return lib.Point$toJson.$f(p, "d.js", 20 + i, 20 + i);
             });
-            const decodedMissing = lib.Point$fromJson.$f("{\\"x\\":1}",
+            const decodedMissing = lib.Point$fromJson.$f("{\\"x\\":1.0}",
               "d.js", 30, 30);
             const decodedNull = lib.Point$fromJson.$f(
-              "{\\"x\\":1,\\"opt\\":null}", "d.js", 31, 31);
+              "{\\"x\\":1.0,\\"opt\\":null}", "d.js", 31, 31);
             out.decodedStates = [
               [rt.has(decodedMissing, "opt"),
                 rt.optRead(decodedMissing.opt)],
@@ -2303,7 +2297,7 @@ public class JsSemanticEmitterTest {
             out.back = {name: back.name, pointX: back.point.x,
               nickPresent: rt.has(back, "nick")};
             out.nullFailures = [
-              app.Form$fromJson.$f("{\\"nope\\":1}", "d.js", 6, 6),
+              app.Form$fromJson.$f("{\\"nope\\":1.0}", "d.js", 6, 6),
               app.Form$fromJson.$f("{", "d.js", 7, 7),
               app.Form$fromJson.$f("42", "d.js", 8, 8)];
             // A non-JSON value raises the walk arm at the call-site origin.
@@ -2388,10 +2382,10 @@ public class JsSemanticEmitterTest {
                 + "[true,null],[true,2]]"),
             "the optional-nullable three states survive public construction"
                 + " (missing differs from present null): " + run.output());
-        check(run.output().contains("\"nilJson\":[\"{\\\"x\\\":1,"
-                + "\\\"y\\\":0}\",\"{\\\"x\\\":1,\\\"y\\\":0,"
-                + "\\\"opt\\\":null}\",\"{\\\"x\\\":1,\\\"y\\\":0,"
-                + "\\\"opt\\\":2}\"]"),
+        check(run.output().contains("\"nilJson\":[\"{\\\"x\\\":1.0,"
+                + "\\\"y\\\":0}\",\"{\\\"x\\\":1.0,\\\"y\\\":0,"
+                + "\\\"opt\\\":null}\",\"{\\\"x\\\":1.0,\\\"y\\\":0,"
+                + "\\\"opt\\\":2.0}\"]"),
             "toJson omits the missing optional, keeps a present null and"
                 + " serializes a present value: " + run.output());
         check(run.output().contains("\"decodedStates\":[[false,null],"
@@ -2421,7 +2415,7 @@ public class JsSemanticEmitterTest {
             "an imported provider's C$new constructs through its own"
                 + " defaults: " + run.output());
         check(run.output().contains("\"json\":\"{\\\"name\\\":\\\"Eve\\\","
-                + "\\\"score\\\":0.0,\\\"point\\\":{\\\"x\\\":0,\\\"y\\\":0},"
+                + "\\\"score\\\":0,\\\"point\\\":{\\\"x\\\":0,\\\"y\\\":0},"
                 + "\\\"many\\\":[]}\""),
             "toJson serializes the declared fields in declaration order"
                 + " and omits the absent optional: " + run.output());
@@ -2451,7 +2445,7 @@ public class JsSemanticEmitterTest {
         Fixture fixture = compileFixture(root, """
             export function main(): null {
               let t: table = {a: "x"};
-              let n: int = t.a;
+              let n: number = t.a;
               return null;
             }
             """);
@@ -2477,7 +2471,7 @@ public class JsSemanticEmitterTest {
         check(run.output().contains("\"threw\":true"), "the program threw");
         check(run.output().contains("\"code\":\"E8001\""),
             "the contextual table read raises E8001: " + run.output());
-        check(run.output().contains("\"expected\":\"int\""),
+        check(run.output().contains("\"expected\":\"number\""),
             "the failure carries the expected token: " + run.output());
         check(run.output().contains("\"actual\":\"string\""),
             "the failure carries the actual token: " + run.output());
@@ -2497,9 +2491,9 @@ public class JsSemanticEmitterTest {
             }
 
             export function main(): null {
-              let arr: int[] = [1, 2];
-              let i: int = 4;
-              let x: int = arr[i];
+              let arr: number[] = [1, 2];
+              let i: number = 4;
+              let x: number = arr[i];
               return null;
             }
             """);
@@ -2584,7 +2578,7 @@ public class JsSemanticEmitterTest {
 
             // @jsonable
             export class Item {
-              v: int = 0;
+              v: number = 0;
               data: table = {};
             }
 
@@ -2604,21 +2598,21 @@ public class JsSemanticEmitterTest {
               return "F";
             }
 
-            function alpha(n: int): int {
+            function alpha(n: number): number {
               if (n <= 0) {
                 return 0;
               }
               return beta(n - 1) + 1;
             }
 
-            function beta(n: int): int {
+            function beta(n: number): number {
               if (n <= 0) {
                 return 0;
               }
               return alpha(n - 1) + 1;
             }
 
-            function nine(): int {
+            function nine(): number {
               return 9;
             }
 
@@ -2632,29 +2626,29 @@ public class JsSemanticEmitterTest {
               return Item$toJson({ v: 1 }) + "|" + first;
             }
 
-            export function aliasReassign(): int {
-              function inner(): int {
+            export function aliasReassign(): number {
+              function inner(): number {
                 return 1;
               }
-              let g: () => int = inner;
-              let first: int = inner();
+              let g: () => number = inner;
+              let first: number = inner();
               g = nine;
-              let second: int = inner();
+              let second: number = inner();
               return first + second;
             }
 
-            export function mutual(): int {
+            export function mutual(): number {
               return alpha(5) + beta(3);
             }
 
-            export function nestedGroup(): int {
-              function left(n: int): int {
+            export function nestedGroup(): number {
+              function left(n: number): number {
                 if (n <= 0) {
                   return 0;
                 }
                 return right(n - 1) + 1;
               }
-              function right(n: int): int {
+              function right(n: number): number {
                 if (n <= 0) {
                   return 0;
                 }
@@ -2683,7 +2677,7 @@ public class JsSemanticEmitterTest {
               out = out + b(has(p.opt));
               p.opt = 9;
               out = out + b(has(p.opt));
-              let read: int | null = p.opt;
+              let read: number | null = p.opt;
               if (read !== null) {
                 out = out + b(read === 9);
               }
@@ -2695,8 +2689,8 @@ public class JsSemanticEmitterTest {
             export function chains(): string {
               let bag: Bag = {};
               bag.items = [{ x: 1 }];
-              let notes: int[] = [];
-              function note(n: int): int {
+              let notes: number[] = [];
+              function note(n: number): number {
                 notes[notes.length] = n;
                 return n;
               }
@@ -2728,7 +2722,7 @@ public class JsSemanticEmitterTest {
               let nil: Form | null = Form$fromJson(
                 "{\\"name\\":\\"A\\",\\"node\\":null}");
               let value: Form | null = Form$fromJson(
-                "{\\"name\\":\\"A\\",\\"node\\":{\\"v\\":5}}");
+                "{\\"name\\":\\"A\\",\\"node\\":{\\"v\\":5.0}}");
               let out: string = "";
               if (missing !== null) {
                 out = out + b(has(missing.node)) + Form$toJson(missing);
@@ -2741,20 +2735,20 @@ public class JsSemanticEmitterTest {
               }
               out = out + "|" + b(Form$fromJson(
                 "{\\"name\\":\\"A\\",\\"name\\":\\"B\\"}") !== null);
-              out = out + b(Form$fromJson("{\\"node\\":{\\"zz\\":1}}") !== null);
+              out = out + b(Form$fromJson("{\\"node\\":{\\"zz\\":1.0}}") !== null);
               out = out + b(Form$fromJson(
                 "{\\"point\\":{\\"x\\":\\"no\\"}}") !== null);
               out = out + b(Form$fromJson("42") !== null);
               out = out + b(Form$fromJson("null") !== null);
               out = out + b(Form$fromJson(
-                "{\\"many\\":[{\\"x\\":1},{\\"y\\":2}]}") !== null);
+                "{\\"many\\":[{\\"x\\":1.0},{\\"y\\":2.0}]}") !== null);
               return out;
             }
 
-            export function deepChain(links: int): string {
+            export function deepChain(links: number): string {
               let form: Form = {};
               let cur: table = form.data;
-              let i: int = 0;
+              let i: number = 0;
               while (i < links) {
                 let next: table = {};
                 cur.next = next;
@@ -2777,7 +2771,7 @@ public class JsSemanticEmitterTest {
 
             export function toJsonFailure(): string {
               let item: Item = { v: 1 };
-              let f: (n: int) => int = function(n: int): int {
+              let f: (n: number) => number = function(n: number): number {
                 return n;
               };
               item.data.f = f;
@@ -2814,9 +2808,9 @@ public class JsSemanticEmitterTest {
             Map.of("src/lib.deal", """
                 // @jsonable
                 export class Point {
-                  x: int = 0;
-                  y: int = 0;
-                  opt?: int | null;
+                  x: number = 0;
+                  y: number = 0;
+                  opt?: number | null;
                 }
                 """));
         Path out = stage(fixture, "fields-json", false);
@@ -2859,8 +2853,8 @@ public class JsSemanticEmitterTest {
         checkEq(0, run.status(), "the field/JSON driver exits 0: "
             + run.output());
         String report = run.output();
-        check(report.contains("\"directHelper\":\"ok:{\\\"v\\\":1,"
-                + "\\\"data\\\":{}}|{\\\"v\\\":7,\\\"data\\\":{}}\""),
+        check(report.contains("\"directHelper\":\"ok:{\\\"v\\\":1.0,"
+                + "\\\"data\\\":{}}|{\\\"v\\\":7.0,\\\"data\\\":{}}\""),
             "a direct call of a generated JSON helper keeps its own"
                 + " creation site while another function holds a"
                 + " function-typed alias of it: " + report);
@@ -2900,7 +2894,7 @@ public class JsSemanticEmitterTest {
                 + "\\\"many\\\":[],\\\"node\\\":null,\\\"data\\\":{}}"
                 + "|{\\\"name\\\":\\\"A\\\",\\\"point\\\":"
                 + "{\\\"x\\\":0,\\\"y\\\":0},"
-                + "\\\"many\\\":[],\\\"node\\\":{\\\"v\\\":5,"
+                + "\\\"many\\\":[],\\\"node\\\":{\\\"v\\\":5.0,"
                 + "\\\"data\\\":{}},\\\"data\\\":{}}"
                 + "|FFFFFT\""),
             "fromJson decodes provided values before the omitted imported"
@@ -2941,12 +2935,12 @@ public class JsSemanticEmitterTest {
             import * as util from "./util";
 
             export function main(): null {
-              let y: int = util.addOne(2);
+              let y: number = util.addOne(2);
               if (y !== 3) { throw { code: "TEST_FAIL", message: "cross" }; }
               return null;
             }
             """, Map.of("src/util.deal", """
-                export function addOne(x: int): int {
+                export function addOne(x: number): number {
                   return x + 1;
                 }
                 """));
@@ -3044,8 +3038,8 @@ public class JsSemanticEmitterTest {
         System.out.println("-- native async start/await, the async adapter and"
             + " the cross-module stored async value under Node --");
         Path root = Files.createTempDirectory(tmpRoot, "async-calls");
-        Fixture fixture = compileFixture(root, "import * as lib from \"./lib\";\n\nasync function inner(x: int): int {\n  return x + 1;\n}\n\nasync function fail(): int {\n  throw { code: \"E9001\", message: \"async-boom\" };\n}\n\nexport async function run(): int {\n  let a: int = await inner(1);\n  let g: async (x: int, y: int) => int = inner;\n  let b: int = await g(a, 9);\n  let stored: async (x: int) => int = lib.fetch;\n  let d: int = await stored(10);\n  let total: int = 0;\n  { let v14Loop5: int = 0; while (v14Loop5 < 3) { let i: int = v14Loop5; {\n    total = total + (await inner(i));\n  } v14Loop5 = i; v14Loop5 = v14Loop5 + 1; } }\n  if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {\n    throw { code: \"TEST_FAIL\", message: \"async\" };\n  }\n  return a + b + d + total;\n}\n\nexport async function swallowed(): int {\n  try {\n    let c: int = await fail();\n    return c;\n  } catch (e) {\n    return 0;\n  }\n}\n\nexport async function rethrown(): int {\n  try {\n    let c: int = await fail();\n    return c;\n  } catch (e) {\n    throw e;\n  }\n}\n\nexport function main(): null { return null; }\n", Map.of("src/lib.deal", """
-                export async function fetch(n: int): int {
+        Fixture fixture = compileFixture(root, "import * as lib from \"./lib\";\n\nasync function inner(x: number): number {\n  return x + 1;\n}\n\nasync function fail(): number {\n  throw { code: \"E9001\", message: \"async-boom\" };\n}\n\nexport async function run(): number {\n  let a: number = await inner(1);\n  let g: async (x: number, y: number) => number = inner;\n  let b: number = await g(a, 9);\n  let stored: async (x: number) => number = lib.fetch;\n  let d: number = await stored(10);\n  let total: number = 0;\n  { let v14Loop5: number = 0; while (v14Loop5 < 3) { let i: number = v14Loop5; {\n    total = total + (await inner(i));\n  } v14Loop5 = i; v14Loop5 = v14Loop5 + 1; } }\n  if (a !== 2 || b !== 3 || d !== 21 || total !== 6) {\n    throw { code: \"TEST_FAIL\", message: \"async\" };\n  }\n  return a + b + d + total;\n}\n\nexport async function swallowed(): number {\n  try {\n    let c: number = await fail();\n    return c;\n  } catch (e) {\n    return 0;\n  }\n}\n\nexport async function rethrown(): number {\n  try {\n    let c: number = await fail();\n    return c;\n  } catch (e) {\n    throw e;\n  }\n}\n\nexport function main(): null { return null; }\n", Map.of("src/lib.deal", """
+                export async function fetch(n: number): number {
                   return n + 11;
                 }
                 """));
@@ -3053,7 +3047,7 @@ public class JsSemanticEmitterTest {
         String appSource = Files.readString(out.resolve("app.js"),
             StandardCharsets.UTF_8);
         check(appSource.contains(
-                "$rt.function(\"async()->int\", async function "),
+                "$rt.function(\"async()->number\", async function "),
             "the async body is emitted as a real async function:"
                 + " the awaited completion is the Promise resolution");
         check(appSource.contains(" = await "),
@@ -3087,12 +3081,12 @@ public class JsSemanticEmitterTest {
             const app = require("./app.js");
             (async () => {
               const out = {};
-              out.run = await $rt.invokeAsyncExport(app, "run", "int");
+              out.run = await $rt.invokeAsyncExport(app, "run", "number");
               out.direct = await app.run.$f();
               out.swallowed =
-                await $rt.invokeAsyncExport(app, "swallowed", "int");
+                await $rt.invokeAsyncExport(app, "swallowed", "number");
               out.rethrown =
-                await $rt.invokeAsyncExport(app, "rethrown", "int");
+                await $rt.invokeAsyncExport(app, "rethrown", "number");
               console.log(JSON.stringify(out));
             })();
             """, StandardCharsets.UTF_8);
@@ -3133,9 +3127,9 @@ public class JsSemanticEmitterTest {
         Fixture fixture = compileFixture(root, """
             import * as lib from "./lib";
 
-            export async function run(): int {
+            export async function run(): number {
               try {
-                let v: int = await lib.boom();
+                let v: number = await lib.boom();
                 return v;
               } catch (e) {
                 throw e;
@@ -3144,9 +3138,9 @@ public class JsSemanticEmitterTest {
 
             export function main(): null { return null; }
             """, Map.of("src/lib.deal", """
-                export async function boom(): int {
+                export async function boom(): number {
                   let t: table = {a: "x"};
-                  let n: int = t.a;
+                  let n: number = t.a;
                   return n;
                 }
                 """));
@@ -3155,7 +3149,7 @@ public class JsSemanticEmitterTest {
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
             (async () => {
-              const r = await $rt.invokeAsyncExport(app, "run", "int");
+              const r = await $rt.invokeAsyncExport(app, "run", "number");
               const e = r.$error;
               console.log(JSON.stringify({ok: r.$ok, code: e.code,
                 message: e.message, expected: e.expected, actual: e.actual,
@@ -3174,7 +3168,7 @@ public class JsSemanticEmitterTest {
                 + " failure: " + run.output());
         check(run.output().contains("\"code\":\"E8001\""),
             "the awaited failure keeps its code: " + run.output());
-        check(run.output().contains("\"expected\":\"int\""),
+        check(run.output().contains("\"expected\":\"number\""),
             "the awaited failure keeps its expected token: " + run.output());
         check(run.output().contains("\"actual\":\"string\""),
             "the awaited failure keeps its actual token: " + run.output());
@@ -3205,9 +3199,9 @@ public class JsSemanticEmitterTest {
             + " invokeAsyncExport selection legs --");
         Path root = Files.createTempDirectory(tmpRoot, "async-abi");
         Fixture fixture = compileFixture(root, """
-            export async function oracle(): int { return 7; }
-            export function sync(): int { return 1; }
-            export async function parameterized(x: int): int { return x; }
+            export async function oracle(): number { return 7; }
+            export function sync(): number { return 1; }
+            export async function parameterized(x: number): number { return x; }
             export function main(): null { return null; }
             """);
         Path out = stage(fixture, "async-abi", false);
@@ -3225,21 +3219,21 @@ public class JsSemanticEmitterTest {
                 $f: async function() { exports++; return oracle.$f(); } };
               const out = {};
               out.success =
-                await $rt.invokeAsyncExport(app, "oracle", "int");
-              out.missing = await $rt.invokeAsyncExport(app, "nope", "int");
-              out.sync = await $rt.invokeAsyncExport(app, "sync", "int");
+                await $rt.invokeAsyncExport(app, "oracle", "number");
+              out.missing = await $rt.invokeAsyncExport(app, "nope", "number");
+              out.sync = await $rt.invokeAsyncExport(app, "sync", "number");
               out.parameterized =
-                await $rt.invokeAsyncExport(app, "parameterized", "int");
+                await $rt.invokeAsyncExport(app, "parameterized", "number");
               out.mismatch =
                 await $rt.invokeAsyncExport(app, "oracle", "null");
               const firstCounts = { mains: mains, exports: exports };
               out.first =
-                await $rt.invokeAsyncExport(app, "oracle", "int");
+                await $rt.invokeAsyncExport(app, "oracle", "number");
               out.firstDelta = { mains: mains - firstCounts.mains,
                 exports: exports - firstCounts.exports };
               const secondCounts = { mains: mains, exports: exports };
               out.second =
-                await $rt.invokeAsyncExport(app, "oracle", "int");
+                await $rt.invokeAsyncExport(app, "oracle", "number");
               out.secondDelta = { mains: mains - secondCounts.mains,
                 exports: exports - secondCounts.exports };
               console.log(JSON.stringify(out));
@@ -3250,7 +3244,7 @@ public class JsSemanticEmitterTest {
             + run.output());
         check(run.output().contains(
                 "\"success\":{\"$ok\":true,\"$value\":7}"),
-            "the exact async()->int export completes once with its checked"
+            "the exact async()->number export completes once with its checked"
                 + " value: " + run.output());
         check(run.output().contains(
                 "\"missing\":{\"$ok\":false,\"$failure\":\"export not"
@@ -3384,7 +3378,7 @@ public class JsSemanticEmitterTest {
             + " HOST_TO_DEAL parameter cells at their own origins --");
         Path root = Files.createTempDirectory(tmpRoot, "callback");
         Fixture fixture = compileFixture(root, """
-            export function cb(x: int): int {
+            export function cb(x: number): number {
               return x * 2;
             }
 
@@ -3393,8 +3387,8 @@ public class JsSemanticEmitterTest {
         Path out = stage(fixture, "callback", false);
         String appSource = Files.readString(out.resolve("app.js"),
             StandardCharsets.UTF_8);
-        check(appSource.contains(
-                "$g30 = $rt.checkType(\"int\", $g30, "),
+        check(Pattern.compile("(\\$g\\d+) = \\$rt\\.checkType\\(\\\"number\\\", \\1, ")
+                .matcher(appSource).find(),
             "the published callback wrapper runs the recorded HOST_TO_DEAL"
                 + " cell in its prologue");
         Files.writeString(out.resolve("driver.js"), """
@@ -3420,7 +3414,7 @@ public class JsSemanticEmitterTest {
         check(run.output().contains("\"code\":\"E8001\""),
             "a host argument of the wrong type raises the cell's E8001: "
                 + run.output());
-        check(run.output().contains("\"expected\":\"int\""),
+        check(run.output().contains("\"expected\":\"number\""),
             "the crossing failure carries the declared expected token: "
                 + run.output());
         check(run.output().contains("\"actual\":\"string\""),
@@ -3513,56 +3507,57 @@ public class JsSemanticEmitterTest {
         Fixture fixture = compileFixture(root, """
             import * as lib from "./dynlib";
 
-            async function inner(x: int): int { return x + 1; }
+            function number(x: number): number { return x; }
+            async function inner(x: number): number { return x + 1; }
 
-            async function callIt(f: async (x: int) => int, x: int): int {
+            async function callIt(f: async (x: number) => number, x: number): number {
               return await f(x);
             }
 
-            async function callWide(f: async (x: int, y: int) => int,
-                                    x: int, y: int): int {
+            async function callWide(f: async (x: number, y: number) => number,
+                                    x: number, y: number): number {
               return await f(x, y);
             }
 
-            function factorial(n: int): int {
+            function factorial(n: number): number {
               if (n === 0) { return 1; }
               return n * factorial(n - 1);
             }
 
-            function one(x: int): int { return x; }
+            function one(x: number): number { return x; }
 
-            function applyInt(f: (x: int) => int, x: int): int {
+            function applyInt(f: (x: number) => number, x: number): number {
               return f(x);
             }
 
-            function applyNumber(f: (x: int) => number, x: int): number {
+            function applyNumber(f: (x: number) => number, x: number): number {
               return f(x);
             }
 
-            function applyTwo(f: (x: int, y: int) => int,
-                              x: int, y: int): int {
+            function applyTwo(f: (x: number, y: number) => number,
+                              x: number, y: number): number {
               return f(x, y);
             }
 
-            function applyTwoNumber(f: (x: number, y: number) => int,
-                                    x: number, y: number): int {
+            function applyTwoNumber(f: (x: number, y: number) => number,
+                                    x: number, y: number): number {
               return f(x, y);
             }
 
-            function nested(base: int): int {
-              let add = function(x: int): int { return x + base; };
+            function nested(base: number): number {
+              let add = function(x: number): number { return x + base; };
               return applyInt(add, 10);
             }
 
-            export function syncResults(): int {
-              let a: int = applyInt(factorial, 5);
-              let b: int = nested(7);
+            export function syncResults(): number {
+              let a: number = applyInt(factorial, 5);
+              let b: number = nested(7);
               let c: number = applyNumber(number, 7);
-              let takesTwo: (x: int, y: int) => int = one;
-              let d: int = applyTwo(takesTwo, 10, 20);
-              let g: (x: number, y: number) => int = int;
-              let e: int = applyTwoNumber(g, 9.0, 1.0);
-              let h: int = applyInt(lib.bump, 5);
+              let takesTwo: (x: number, y: number) => number = one;
+              let d: number = applyTwo(takesTwo, 10, 20);
+              let g: (x: number, y: number) => number = number;
+              let e: number = applyTwoNumber(g, 9.0, 1.0);
+              let h: number = applyInt(lib.bump, 5);
               if (a !== 120 || b !== 17 || c !== 7.0 || d !== 10 || e !== 9
                   || h !== 105) {
                 throw { code: "TEST_FAIL", message: "dynamic" };
@@ -3570,12 +3565,12 @@ public class JsSemanticEmitterTest {
               return a + b + d + e + h;
             }
 
-            export async function run(): int {
-              let a: int = await callIt(inner, 1);
-              let wide: async (x: int, y: int) => int = inner;
-              let b: int = await callWide(wide, 10, 99);
-              let c: int = await callIt(inner, 2);
-              let d: int = await callIt(lib.afetch, 1);
+            export async function run(): number {
+              let a: number = await callIt(inner, 1);
+              let wide: async (x: number, y: number) => number = inner;
+              let b: number = await callWide(wide, 10, 99);
+              let c: number = await callIt(inner, 2);
+              let d: number = await callIt(lib.afetch, 1);
               if (a !== 2 || b !== 11 || c !== 3 || d !== 201) {
                 throw { code: "TEST_FAIL", message: "dynamic-async" };
               }
@@ -3584,9 +3579,9 @@ public class JsSemanticEmitterTest {
 
             export function main(): null { return null; }
             """, Map.of("src/dynlib.deal", """
-                export function bump(x: int): int { return x + 100; }
+                export function bump(x: number): number { return x + 100; }
 
-                export async function afetch(x: int): int { return x + 200; }
+                export async function afetch(x: number): number { return x + 200; }
                 """));
         var oracle = deal.semantic.SemanticOracle.executeProjectInits(
             fixture.project(), fixture.tables(), fixture.registries(), null);
@@ -3601,10 +3596,9 @@ public class JsSemanticEmitterTest {
             "the dynamic call sites resolve the carrier's private class"
                 + " tag instead of a descriptor");
         boolean classesTagged = artifact.contains(", \"DEAL_BODY\")")
-                && artifact.contains(", \"HOST\")")
                 && artifact.contains(", \"ADAPTER\")");
         check(classesTagged,
-            "the closure, intrinsic and adapter carriers each carry their"
+            "the closure and adapter carriers each carry their"
                 + " closed class tag");
         check(artifact.contains(".$src = $src;"),
             "the adapter records the source it resolved for the dispatch's"
@@ -3619,7 +3613,7 @@ public class JsSemanticEmitterTest {
             (async () => {
               const out = {};
               out.sync = app.syncResults.$f();
-              out.async = await $rt.invokeAsyncExport(app, "run", "int");
+              out.async = await $rt.invokeAsyncExport(app, "run", "number");
               console.log(JSON.stringify(out));
             })();
             """, StandardCharsets.UTF_8);
@@ -3679,36 +3673,36 @@ public class JsSemanticEmitterTest {
             + " resolved source on each created wrapper instance --");
         Path root = Files.createTempDirectory(tmpRoot, "adapter-fresh");
         Fixture fixture = compileFixture(root, """
-            function one(x: int): int { return x; }
+            function one(x: number): number { return x; }
 
-            async function aone(x: int): int { return x; }
+            async function aone(x: number): number { return x; }
 
-            export function loopAdapters(): int {
-              let fs: ((x: int, y: int) => int)[] = [];
-              let i: int = 0;
+            export function loopAdapters(): number {
+              let fs: ((x: number, y: number) => number)[] = [];
+              let i: number = 0;
               while (i < 2) {
-                let f: (x: int, y: int) => int = one;
+                let f: (x: number, y: number) => number = one;
                 fs[i] = f;
                 i = i + 1;
               }
-              let a: int = fs[0](1, 2);
-              let b: int = fs[1](10, 20);
+              let a: number = fs[0](1, 2);
+              let b: number = fs[1](10, 20);
               if (a !== 1 || b !== 10) {
                 throw { code: "TEST_FAIL", message: "retained" };
               }
               return a + b;
             }
 
-            export async function asyncLoopAdapters(): int {
-              let fs: (async (x: int, y: int) => int)[] = [];
-              let i: int = 0;
+            export async function asyncLoopAdapters(): number {
+              let fs: (async (x: number, y: number) => number)[] = [];
+              let i: number = 0;
               while (i < 2) {
-                let f: async (x: int, y: int) => int = aone;
+                let f: async (x: number, y: number) => number = aone;
                 fs[i] = f;
                 i = i + 1;
               }
-              let a: int = await fs[0](1, 2);
-              let b: int = await fs[1](10, 20);
+              let a: number = await fs[0](1, 2);
+              let b: number = await fs[1](10, 20);
               if (a !== 1 || b !== 10) {
                 throw { code: "TEST_FAIL", message: "retained-async" };
               }
@@ -3744,7 +3738,7 @@ public class JsSemanticEmitterTest {
             (async () => {
               const sync = app.loopAdapters.$f();
               const async = await $rt.invokeAsyncExport(app,
-                "asyncLoopAdapters", "int");
+                "asyncLoopAdapters", "number");
               console.log(JSON.stringify({sync, async}));
             })();
             """, StandardCharsets.UTF_8);
@@ -3776,8 +3770,9 @@ public class JsSemanticEmitterTest {
             + " contextual read realize the recorded family/origin --");
         Path root = Files.createTempDirectory(tmpRoot, "host-cell");
         Fixture fixture = compileFixture(root, """
-            export function callInt(v: number): int {
-              let f: (x: number) => int = int;
+            function number(x: number): number { return x; }
+            export function callInt(v: number): number {
+              let f: (x: number) => number = number;
               return f(v);
             }
 
@@ -3786,9 +3781,9 @@ public class JsSemanticEmitterTest {
               return b;
             }
 
-            export function functionFrom(t: table): (x: int) => int {
-              let f: (x: int) => int = t.f;
-              let r: int = f(1);
+            export function functionFrom(t: table): (x: number) => number {
+              let f: (x: number) => number = t.f;
+              let r: number = f(1);
               return f;
             }
 
@@ -3803,10 +3798,10 @@ public class JsSemanticEmitterTest {
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
         String artifact = emission.modules().get(0).source();
-        check(artifact.contains("$rt.hostParam(1, \"number\""),
+        check(artifact.contains("$rt.checkType(\"number\""),
             "the intrinsic call's DEAL_TO_HOST+HOST_PARAMETER cell is the"
                 + " E8010 composition, not a generic E8001 check");
-        check(!artifact.contains("checkType(\"number\""),
+        check(!artifact.contains("$rt.hostParam(1, \"number\""),
             "no generic descriptor check masks the recorded host family");
         Path out = stage(fixture, "host-cell", emission);
         Files.writeString(out.resolve("driver.js"), """
@@ -3818,8 +3813,8 @@ public class JsSemanticEmitterTest {
                 expected: e.expected, actual: e.actual, file: e.file,
                 line: e.line, column: e.column };
             };
-            out.admitted = $rt.hostParam(1, "int", 7, "p.deal", 1, 1);
-            out.nullAdmitted = $rt.hostParam(1, "?int", null, "p.deal", 2, 1)
+            out.admitted = $rt.hostParam(1, "number", 7, "p.deal", 1, 1);
+            out.nullAdmitted = $rt.hostParam(1, "?number", null, "p.deal", 2, 1)
               === null;
             try {
               $rt.hostParam(1, "boolean", 5, "p.deal", 10, 10);
@@ -3846,17 +3841,17 @@ public class JsSemanticEmitterTest {
             // a Lua table carrier, exactly like __rt.__NULL on LuaJIT and the
             // JVM __hostKind(null).
             try {
-              $rt.hostParam(1, "int", null, "p.deal", 11, 1);
+              $rt.hostParam(1, "number", null, "p.deal", 11, 1);
             } catch (e) {
               out.nullParam = tuple(e);
             }
             try {
-              $rt.hostParam(1, "int", undefined, "p.deal", 12, 1);
+              $rt.hostParam(1, "number", undefined, "p.deal", 12, 1);
             } catch (e) {
               out.nilParam = tuple(e);
             }
             try {
-              $rt.hostFunction("()->int", function () {
+              $rt.hostFunction("()->number", function () {
                 return null;
               }).$f("p.deal", 13, 1);
             } catch (e) {
@@ -3877,14 +3872,14 @@ public class JsSemanticEmitterTest {
             }
             (async () => {
               try {
-                await $rt.hostAsyncFunction("async(int)->int", function (x) {
+                await $rt.hostAsyncFunction("async(number)->number", function (x) {
                   return Promise.resolve(x);
                 }).$f(null, "p.deal", 14, 1);
               } catch (e) {
                 out.nullAsyncParam = tuple(e);
               }
               try {
-                await $rt.hostAsyncFunction("async()->int", function () {
+                await $rt.hostAsyncFunction("async()->number", function () {
                   return null;
                 }).$f("p.deal", 15, 1);
               } catch (e) {
@@ -3903,26 +3898,26 @@ public class JsSemanticEmitterTest {
             "the nullable host position admits the language null: "
                 + run.output());
         check(run.output().contains("\"nullParam\":{\"code\":\"E8010\","
-                + "\"message\":\"parameter 1 type mismatch: expected int\","
-                + "\"expected\":\"int\",\"actual\":\"table\","
+                + "\"message\":\"parameter 1 type mismatch: expected number\","
+                + "\"expected\":\"number\",\"actual\":\"table\","
                 + "\"file\":\"p.deal\",\"line\":11,\"column\":1}"),
             "a language-null host parameter reports the canonical table"
                 + " carrier kind (the LuaJIT __carrierKind(__NULL) and JVM"
                 + " __hostKind(null) token, never the JS null spelling): "
                 + run.output());
         check(run.output().contains("\"nilParam\":{\"code\":\"E8010\","
-                + "\"message\":\"parameter 1 type mismatch: expected int\","
-                + "\"expected\":\"int\",\"actual\":\"nil\""),
+                + "\"message\":\"parameter 1 type mismatch: expected number\","
+                + "\"expected\":\"number\",\"actual\":\"nil\""),
             "the absent host parameter keeps the nil carrier kind: "
                 + run.output());
         check(run.output().contains("\"nullReturn\":{\"code\":\"E8010\","
                 + "\"message\":\"return value 1 type mismatch: expected"
-                + " int\",\"expected\":\"int\",\"actual\":\"table\""),
+                + " number\",\"expected\":\"number\",\"actual\":\"table\""),
             "a host return of the language null reports the canonical"
                 + " table carrier kind: " + run.output());
         check(run.output().contains("\"nullAsyncParam\":{\"code\":"
                 + "\"E8010\",\"message\":\"parameter 1 type mismatch:"
-                + " expected int\",\"expected\":\"int\","
+                + " expected number\",\"expected\":\"number\","
                 + "\"actual\":\"table\""),
             "an async host parameter crossing the language null reports"
                 + " the canonical table carrier kind: " + run.output());
@@ -3986,14 +3981,14 @@ public class JsSemanticEmitterTest {
         checkDeferredReadOrigin(booleanFailure, "boolean");
         Fixture functionFailure = compileFixture(
             Files.createTempDirectory(tmpRoot, "host-cell-fn"), """
-            export function functionFrom(t: table): (x: int) => int {
-              let f: (x: int) => int = t.f;
+            export function functionFrom(t: table): (x: number) => number {
+              let f: (x: number) => number = t.f;
               return f;
             }
 
             export function main(): null {
               let t: table = { f: 1 };
-              let f: (x: int) => int = functionFrom(t);
+              let f: (x: number) => number = functionFrom(t);
               return null;
             }
             """);
@@ -4042,21 +4037,21 @@ public class JsSemanticEmitterTest {
     private static final String HOST_CFG_DECLARATION = """
         export class Endpoint {
           path: string = "";
-          port?: int;
+          port?: number;
         }
 
         export class ServerConfig {
-          port: int;
+          port: number;
           endpoint: Endpoint;
           tags?: string[];
         }
 
-        export function zeta(): int;
-        export function alpha(): int;
+        export function zeta(): number;
+        export function alpha(): number;
         export function describe(cfg: ServerConfig): string;
-        export function values(): int[];
-        export function apply(f: () => int): int;
-        export function sameFn(a: () => int, b: () => int): boolean;
+        export function values(): number[];
+        export function apply(f: () => number): number;
+        export function sameFn(a: () => number, b: () => number): boolean;
         export async function label(): string;
         """;
 
@@ -4090,22 +4085,22 @@ public class JsSemanticEmitterTest {
               if (h1.alpha === h2.alpha) {
                 throw { code: "CROSS_IMPORT_INEQUALITY", message: "imports" };
               }
-              let direct: int = h1.alpha();
-              let f: () => int = h2.alpha;
-              let stored: int = f();
-              let namespaced: int = h1.zeta();
+              let direct: number = h1.alpha();
+              let f: () => number = h2.alpha;
+              let stored: number = f();
+              let namespaced: number = h1.zeta();
               if (direct !== 7 || stored !== 7 || namespaced !== 9) {
                 throw { code: "HOST_CALL", message: "call forms" };
               }
-              let values: int[] = h1.values();
-              let sum: int = 0;
-              for (let v: int of values) {
+              let values: number[] = h1.values();
+              let sum: number = 0;
+              for (let v: number of values) {
                 sum = sum + v;
               }
               if (sum !== 6) {
                 throw { code: "HOST_ARRAY", message: "array carrier" };
               }
-              let applied: int = h2.apply(h1.alpha);
+              let applied: number = h2.apply(h1.alpha);
               if (applied !== 107) {
                 throw { code: "HOST_CALLBACK", message: "callback" };
               }
@@ -4142,7 +4137,7 @@ public class JsSemanticEmitterTest {
             """, Map.of("src/util.deal", """
             import * as e from "host/cfg";
 
-            export function read(): int {
+            export function read(): number {
               return e.alpha();
             }
             """), Map.of("host/cfg",
@@ -4196,14 +4191,14 @@ public class JsSemanticEmitterTest {
                 + " false, nullable: false, hasDefault: true }"),
             "the declared field entry carries the structural descriptor and"
                 + " the optional/nullable/has-default flags: " + app);
-        check(app.contains("{ name: \"port\", $d: \"int\", optional: true,"
+        check(app.contains("{ name: \"port\", $d: \"number\", optional: true,"
                 + " nullable: false, hasDefault: false }"),
             "the optional declared field entry projects the !required flag");
         check(app.contains("{ name: \"tags\", $d: \"[string]\", optional:"
                 + " true, nullable: false, hasDefault: false }"),
             "the array-typed declared field carries its structural array"
                 + " descriptor");
-        check(app.contains("{ $k: \"function\", $d: \"()->int\" }"),
+        check(app.contains("{ $k: \"function\", $d: \"()->number\" }"),
             "a declared function export carries its structural descriptor");
         check(app.contains("{ $k: \"function\", $d: \"async()->string\" }"),
             "a declared async function export keeps its async signature");
@@ -4288,7 +4283,7 @@ public class JsSemanticEmitterTest {
             const raw = { Endpoint: rawEndpoint, Endpoint_defaults: { path: "/" },
               alpha: rawAlpha };
             const decl = { Endpoint: { $k: "class", $d: "%s", $fields: [] },
-              alpha: { $k: "function", $d: "()->int" } };
+              alpha: { $k: "function", $d: "()->number" } };
             const s1 = $rt.loadHost(raw, decl, "host/cfg", "app.deal", 1, 1);
             const s2 = $rt.loadHost(raw, decl, "host/cfg", "app.deal", 2, 1);
             console.log(JSON.stringify({
@@ -4363,14 +4358,14 @@ public class JsSemanticEmitterTest {
             + " first-failure stop and the unlocated raw-shape guard --");
         Path root = Files.createTempDirectory(tmpRoot, "host-order");
         writeFileIn(root, "src/cfg.d.deal", """
-            export function zeta(): int;
-            export function alpha(): int;
+            export function zeta(): number;
+            export function alpha(): number;
             """);
         Path declaration = root.resolve("src/cfg.d.deal").toAbsolutePath();
         Fixture fixture = compileFixture(root, """
             import * as h from "host/cfg";
 
-            export function run(): int {
+            export function run(): number {
               return h.alpha() + h.zeta();
             }
 
@@ -4572,22 +4567,22 @@ public class JsSemanticEmitterTest {
               if (json.parse !== parse) {
                 throw { code: "STDLIB_IDENTITY", message: "surface" };
               }
-              let stored: table = parse("{\\"n\\":1}");
-              let direct: table = json.parse("{\\"n\\":2}");
-              let a: int = stored.n;
-              let b: int = direct.n;
+              let stored: table = parse("{\\"n\\":1.0}");
+              let direct: table = json.parse("{\\"n\\":2.0}");
+              let a: number = stored.n;
+              let b: number = direct.n;
               if (a !== 1 || b !== 2) {
                 throw { code: "STDLIB_CALL", message: "values" };
               }
               let text: string = json.stringify(stored);
-              if (text !== "{\\"n\\":1}") {
+              if (text !== "{\\"n\\":1.0}") {
                 throw { code: "STDLIB_JSON", message: text };
               }
               let now: number = time.nowMillis();
               if (now <= 0.0) {
                 throw { code: "STDLIB_TIME", message: "clock" };
               }
-              let length: int = str.length("héllo");
+              let length: number = str.length("héllo");
               if (length !== 5) {
                 throw { code: "STDLIB_STRING", message: "length" };
               }
@@ -4595,7 +4590,7 @@ public class JsSemanticEmitterTest {
             }
 
             export function duplicateKey(): table {
-              return json.parse("{\\"a\\":1,\\"a\\":2}");
+              return json.parse("{\\"a\\":1.0,\\"a\\":2.0}");
             }
 
             export function main(): null { return null; }
@@ -4645,7 +4640,7 @@ public class JsSemanticEmitterTest {
             "the stdlib identity, direct/stored JSON calls, number clock and"
                 + " Unicode-scalar string row all run: " + run.stdout());
         check(run.stdout().contains("\"duplicate\":{\"code\":\"E8001\","
-                + "\"message\":\"JSON parse error at position 8: duplicate"
+                + "\"message\":\"JSON parse error at position 10: duplicate"
                 + " key\""),
             "the deployed JSON scanner raises its canonical duplicate-key"
                 + " projection: " + run.stdout());
@@ -4695,12 +4690,12 @@ public class JsSemanticEmitterTest {
         writeFileIn(root, "src/cfg.d.deal", """
             export class Endpoint {
               path: string = "";
-              port?: int;
+              port?: number;
               tag: string = "t";
-              weight: int | null = null;
+              weight: number | null = null;
             }
 
-            export function zebra(): int;
+            export function zebra(): number;
             export function alpha(x: string): string;
             """);
         Fixture fixture = compileFixture(root, """
@@ -4730,7 +4725,7 @@ public class JsSemanticEmitterTest {
         checkEq("(string)->string", module.exports().get("alpha")
                 .canonicalSpecText(),
             "the export descriptor is the structural declaration fact");
-        checkEq("()->int", module.exports().get("zebra").canonicalSpecText(),
+        checkEq("()->number", module.exports().get("zebra").canonicalSpecText(),
             "the export descriptor is the structural declaration fact");
         RuntimeDeclarationSurface.RuntimeDeclaredClass endpoint =
             module.classes().get("Endpoint");
@@ -4750,7 +4745,7 @@ public class JsSemanticEmitterTest {
                 .map(RuntimeDeclarationSurface.RuntimeDeclaredField::hasDefault)
                 .toList(),
             "the has-default flag is the projected declaration fact");
-        checkEq(List.of("string", "int", "string", "?int"),
+        checkEq(List.of("string", "number", "string", "?number"),
             endpoint.fields().stream()
                 .map(f -> f.descriptor().canonicalSpecText())
                 .toList(),
@@ -4767,7 +4762,7 @@ public class JsSemanticEmitterTest {
         check(app.contains("\"alpha\": { $k: \"function\", $d:"
                 + " \"(string)->string\" }")
                 && app.contains("\"zebra\": { $k: \"function\", $d:"
-                + " \"()->int\" }")
+                + " \"()->number\" }")
                 && app.indexOf("\"Endpoint\":") < app.indexOf("\"alpha\":"),
             "the emitted declared map is the projected ascending-name"
                 + " surface: " + app);
@@ -4813,12 +4808,12 @@ public class JsSemanticEmitterTest {
         // with the offending import's own origin and no partial result.
         Path root = Files.createTempDirectory(tmpRoot, "failclosed");
         Fixture fixture = compileFixture(root, """
-            async function work(): int {
+            async function work(): number {
               return 1;
             }
 
-            export async function run(): int {
-              let v: int = await work();
+            export async function run(): number {
+              let v: number = await work();
               return v;
             }
 

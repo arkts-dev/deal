@@ -13,8 +13,8 @@ final class HostRetained_default {
 
   private static JvmRuntime.Array makeOriginal() {
     JvmRuntime.Array array = new JvmRuntime.Array(2);
-    array.elements.add(Long.valueOf(1));
-    array.elements.add(Long.valueOf(2));
+    array.elements.add(Double.valueOf(1));
+    array.elements.add(Double.valueOf(2));
     return array;
   }
 
@@ -40,7 +40,7 @@ final class HostRetained_default {
   }
 
   public static Object calls() {
-    return Integer.valueOf(calls);
+    return Double.valueOf(calls);
   }
 
   public static Object order() {

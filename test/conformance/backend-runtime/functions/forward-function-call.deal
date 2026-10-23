@@ -3,16 +3,16 @@
 // @expected: runtime-ok
 // @features: functions, hoisting, forward-reference
 
-function first(n: int): int {
+function first(n: number): number {
   return second(n) + 1;
 }
 
-function second(n: int): int {
+function second(n: number): number {
   return n + 2;
 }
 
-export function test_forward_call(): int {
-  let result: int = first(4);
+export function test_forward_call(): number {
+  let result: number = first(4);
   if (result !== 7) { throw { code: "TEST_FAIL", message: "forward call failed" }; }
   return result;
 }

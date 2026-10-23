@@ -4,7 +4,7 @@
 // @features: variables, declaration-order, name-resolution
 
 export function main(): null {
-  let y: int = x;
-  let x: int = 1;
+  let y: number = x;
+  let x: number = 1;
   return null;
 }

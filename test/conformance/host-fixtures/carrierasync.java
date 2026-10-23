@@ -11,6 +11,14 @@ import java.util.concurrent.CompletableFuture;
 // whose completions are the declared class/array values.
 
 final class HostCarrierasync {
+  // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
+  static String numericText(Object value) {
+    if (value instanceof Number n) {
+      return java.math.BigDecimal.valueOf(n.doubleValue()).stripTrailingZeros().toPlainString();
+    }
+    return String.valueOf(value);
+  }
+
   static final String EP = "@$external/host.carrierasync/Endpoint";
   static final String SC = "@$external/host.carrierasync/ServerConfig";
   static final String FARM = "@$external/host.carrierasync/Farm";
@@ -19,7 +27,7 @@ final class HostCarrierasync {
       java.util.Map.of("path", "/");
 
   public static final java.util.Map<String, Object> ServerConfig_defaults =
-      java.util.Map.of("port", Integer.valueOf(0),
+      java.util.Map.of("port", Double.valueOf(0),
           "endpoint", new Object(), "parts", new Object(),
           "tags", new Object(), "note", new Object());
 
@@ -31,7 +39,7 @@ final class HostCarrierasync {
     return new $DealRt.$Host$host$scarrierasync$Endpoint(path);
   }
 
-  static $DealRt.$Host$host$scarrierasync$ServerConfig config(int port,
+  static $DealRt.$Host$host$scarrierasync$ServerConfig config(double port,
       String path) {
     return new $DealRt.$Host$host$scarrierasync$ServerConfig(
         port, endpoint(path),
@@ -61,16 +69,16 @@ final class HostCarrierasync {
 
   public static Object describeAsync(
       $DealRt.$Host$host$scarrierasync$ServerConfig s,
-      $DealRt.Fn1_I_R_I g) {
+      $DealRt.Fn1_N_R_N g) {
     String gText = "none";
     if (g != null) {
       try {
-        gText = "true:" + g.invoke(41);
+        gText = "true:" + numericText(g.invoke(41));
       } catch (RuntimeException failure) {
         gText = "false:" + failure.getMessage();
       }
     }
-    String text = "SC|" + s.port + "|" + s.endpoint.path + "|"
+    String text = "SC|" + numericText(s.port) + "|" + s.endpoint.path + "|"
         + arrayText(s.parts, true) + "|" + arrayText(s.tags, s.tags$present)
         + "|" + textOr(s.note, s.note$present) + "|" + gText;
     return CompletableFuture.completedFuture(text);

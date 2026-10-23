@@ -6,7 +6,7 @@
 // @jsonable
 export class Address {
   city: string = "";
-  zip: int = 0;
+  zip: number = 0;
 }
 
 // @jsonable

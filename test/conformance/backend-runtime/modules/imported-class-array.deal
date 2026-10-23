@@ -5,9 +5,9 @@
 
 import * as Lib from "./module_extra_lib";
 
-export function test_imported_class_array(): int {
+export function test_imported_class_array(): number {
   let pts: Lib.Point[] = Lib.makePoints();
-  let result: int = pts[1].x + pts[1].y;
+  let result: number = pts[1].x + pts[1].y;
   if (result !== 7) { throw { code: "TEST_FAIL", message: "imported class array failed" }; }
   return result;
 }

@@ -191,7 +191,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
     static void testRetiredBuiltinDescriptor() {
         System.out.println("-- descriptor grammar and ordinary class names --");
         for (String text : List.of("bytes", "?bytes", "[bytes]", "(bytes)->null",
-                "async()->bytes")) {
+                "async()->bytes", "int", "?int", "[int]", "(int)->number",
+                "async()->int")) {
             check(parseResult(text) instanceof DescriptorSyntaxError,
                 "the canonical descriptor parser rejects " + text);
             try {
@@ -202,6 +203,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             }
         }
         assertAtom("@src/model/bytes", "bytes remains an ordinary class name");
+        assertAtom("@src/model/int", "int remains an ordinary class name");
     }
 
     // =========================================================================
@@ -212,7 +214,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- primitive round trips --");
 
         String[] primitives = {
-            "null", "boolean", "int", "number", "string", "table"
+            "null", "boolean", "number", "number", "string", "table"
         };
         for (String primitive : primitives) {
             assertAtom(primitive, "primitive " + primitive);
@@ -232,14 +234,14 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         String[] valid = {
             // Arrays / nullables, nested.
-            "[int]", "?int", "[?int]", "?[int]", "[[int]]", "[?[?[?[table]]]]",
+            "[number]", "?number", "[?number]", "?[number]", "[[number]]", "[?[?[?[table]]]]",
             "[table]", "?table", "[?table]", "?[table]",
             // Spec examples (docs/spec-v1.3.md §Runtime type descriptor format).
-            "?[@src/app/User]", "[?@src/app/User]", "(int,string)->boolean",
-            "()->null", "async(int)->string",
+            "?[@src/app/User]", "[?@src/app/User]", "(number,string)->boolean",
+            "()->null", "async(number)->string",
             // Exact sync/async functions over table at depth.
             "(table)->table", "async(table)->table",
-            "(int,string,?[table])->table", "async(?int)->[table]",
+            "(number,string,?[table])->table", "async(?number)->[table]",
             "((table)->table)->null", "async((table)->table)->[table]",
             // Class atoms in every position.
             "(@lib/utils/User)->null", "()->@lib/utils/User",
@@ -469,18 +471,18 @@ public class CanonicalRuntimeTypeDescriptorTest {
     static void testExactSyncAsyncMarkers() {
         System.out.println("-- exact sync/async markers --");
 
-        DescriptorAst sync = atomOf("(int)->int");
-        DescriptorAst async = atomOf("async(int)->int");
+        DescriptorAst sync = atomOf("(number)->number");
+        DescriptorAst async = atomOf("async(number)->number");
         check(sync instanceof DescriptorAst.FunctionAtom sf && !sf.isAsync(),
             "sync function atom carries isAsync=false");
         check(async instanceof DescriptorAst.FunctionAtom af && af.isAsync(),
             "async function atom carries isAsync=true");
         check(!sync.equals(async), "sync and async atoms are distinct");
-        check(atomOf("(int)->int").equals(atomOf("(int)->int")),
+        check(atomOf("(number)->number").equals(atomOf("(number)->number")),
             "sync atom equals itself");
-        check(atomOf("async(int)->int").equals(atomOf("async(int)->int")),
+        check(atomOf("async(number)->number").equals(atomOf("async(number)->number")),
             "async atom equals itself");
-        assertAtom("async(int)->string", "async marker round-trips verbatim");
+        assertAtom("async(number)->string", "async marker round-trips verbatim");
         assertAtom("()->null", "zero-parameter function round-trips verbatim");
         assertAtom("async()->null", "async zero-parameter function round-trips verbatim");
     }
@@ -494,12 +496,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         DescriptorAst fn = new DescriptorAst.FunctionAtom(
             true,
-            List.of(new DescriptorAst.PrimitiveAtom("int"),
+            List.of(new DescriptorAst.PrimitiveAtom("number"),
                     new DescriptorAst.ArrayAtom(new DescriptorAst.PrimitiveAtom("table"))),
             new DescriptorAst.ClassAtom("@lib/utils/User"));
-        check("async(int,[table])->@lib/utils/User".equals(
+        check("async(number,[table])->@lib/utils/User".equals(
                 CanonicalRuntimeTypeDescriptor.render(fn)),
-            "render rebuilds async(int,[table])->@lib/utils/User verbatim");
+            "render rebuilds async(number,[table])->@lib/utils/User verbatim");
         DescriptorParseResult reparsed = parseResult(CanonicalRuntimeTypeDescriptor.render(fn));
         check(reparsed.equals(fn), "parse(render(hand-built atom)) equals the atom");
 
@@ -516,14 +518,14 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- pinned rejection corpus --");
 
         // Legacy T[] / T|null / rest-parameter spellings.
-        assertError("int[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 3,
-            "legacy int[] rejected");
-        assertError("int|null", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 3,
-            "legacy int|null rejected");
+        assertError("number[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
+            "legacy number[] rejected");
+        assertError("number|null", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
+            "legacy number|null rejected");
         assertError("table[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 5,
             "legacy table[] rejected");
-        assertError("int...", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 3,
-            "legacy int... rejected");
+        assertError("number...", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
+            "legacy number... rejected");
         assertError("User[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 4,
             "legacy User[] rejected");
         assertError("User|null", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 4,
@@ -532,13 +534,13 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "legacy ?User[] rejected");
         assertError("?table[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
             "legacy ?table[] rejected");
-        assertError("...int[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 0,
-            "rest-shaped ...int[] rejected");
-        assertError("(int...)", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 4,
-            "rest parameter sig (int...) rejected");
-        assertError("(...int[])", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 1,
-            "rest parameter sig (...int[]) rejected");
-        assertError("[...int]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 1,
+        assertError("...number[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 0,
+            "rest-shaped ...number[] rejected");
+        assertError("(number...)", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 7,
+            "rest parameter sig (number...) rejected");
+        assertError("(...number[])", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 1,
+            "rest parameter sig (...number[]) rejected");
+        assertError("[...number]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 1,
             "rest-shaped array element rejected");
 
         // Bare class names (the builtin Error atom is the one bare name
@@ -559,13 +561,13 @@ public class CanonicalRuntimeTypeDescriptorTest {
         assertAtom("()->Error", "bare Error as a return parses");
 
         // Nested nullables and null inners.
-        assertError("??int", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
-            "nested nullable ??int rejected");
+        assertError("??number", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
+            "nested nullable ??number rejected");
         assertError("??table", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
             "nested nullable ??table rejected");
         assertError("?null", DescriptorSyntaxError.Kind.NULL_INNER, 1,
             "nullable of null rejected");
-        assertError("[??int]", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 2,
+        assertError("[??number]", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 2,
             "nested nullable inside an array rejected");
         assertError("[?null]", DescriptorSyntaxError.Kind.NULL_INNER, 2,
             "nullable of null inside an array rejected");
@@ -573,23 +575,23 @@ public class CanonicalRuntimeTypeDescriptorTest {
         // Empty and malformed arrays.
         assertError("[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 1,
             "empty array [] rejected");
-        assertError("[int", DescriptorSyntaxError.Kind.UNEXPECTED_END, 4,
+        assertError("[number", DescriptorSyntaxError.Kind.UNEXPECTED_END, 7,
             "unterminated array rejected");
 
         // Malformed functions.
-        assertError("(int)int", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 5,
-            "missing arrow (int)int rejected");
-        assertError("(int)", DescriptorSyntaxError.Kind.UNEXPECTED_END, 5,
-            "missing arrow (int) rejected");
+        assertError("(number)number", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 8,
+            "missing arrow (number)number rejected");
+        assertError("(number)", DescriptorSyntaxError.Kind.UNEXPECTED_END, 8,
+            "missing arrow (number) rejected");
         assertError("()", DescriptorSyntaxError.Kind.UNEXPECTED_END, 2,
             "missing arrow () rejected");
-        assertError("(int,)", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 5,
-            "trailing comma (int,) rejected");
-        assertError("(int)->", DescriptorSyntaxError.Kind.UNEXPECTED_END, 7,
+        assertError("(number,)", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 8,
+            "trailing comma (number,) rejected");
+        assertError("(number)->", DescriptorSyntaxError.Kind.UNEXPECTED_END, 10,
             "missing return type rejected");
 
         // Malformed async markers.
-        assertError("async[int]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 5,
+        assertError("async[number]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 5,
             "async not immediately followed by '(' rejected");
         assertError("async", DescriptorSyntaxError.Kind.UNEXPECTED_END, 5,
             "bare async rejected");
@@ -639,7 +641,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "hyphenated final component rejected");
 
         // Trailing content after a complete descriptor.
-        assertError("[int][int]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 5,
+        assertError("[number][number]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 8,
             "two descriptors are trailing content");
         assertError("nullx", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 4,
             "nullx has trailing content");
@@ -647,8 +649,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "trailing junk after a class atom rejected");
         assertError("@a/b\u0000c", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 4,
             "NUL after a class atom rejected");
-        assertError("int\u2028", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 3,
-            "line separator after int rejected");
+        assertError("number\u2028", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
+            "line separator after number rejected");
 
         // Empty and malformed starts.
         assertError("", DescriptorSyntaxError.Kind.UNEXPECTED_END, 0,
@@ -700,8 +702,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
             3, "astral final component rejected at its scalar offset");
 
         // Trailing astral content after int sits at scalar offset 3.
-        assertError("int" + emoji, DescriptorSyntaxError.Kind.TRAILING_CONTENT, 3,
-            "astral trailing content reported at scalar offset 3");
+        assertError("number" + emoji, DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
+            "astral trailing content reported at scalar offset 6");
     }
 
     // =========================================================================
@@ -717,8 +719,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "?", "??", "???", "[", "]", "[[]", "[[[]]]", "(((", ")))", ",", ",,,",
             "->", "-->", "@", "@@", "@@@", "@a/", "@a//b", "@a/b/", "@a/b//",
             "@a/\uD800", "@a/b\uD800", "async", "async(", "async->", "async[",
-            "async\u0000(", "(int", "(int,", "(int,,int)", "(int)->", "(int)->x",
-            "(int)x", "[@a/b", "[@a/b[", "int\u0000", "?", "😀", "int😀",
+            "async\u0000(", "(number", "(number,", "(number,,number)", "(number)->", "(number)->x",
+            "(number)x", "[@a/b", "[@a/b[", "number\u0000", "?", "😀", "number😀",
             "@a/b,", ",@a/b", "-\uD800>", "@a\u00A0b/c", "@a/b\u2028",
             "boolean\u0000", "\u0085int",
         };
@@ -745,7 +747,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- atom immutability --");
 
         List<DescriptorAst> params = new ArrayList<>();
-        params.add(new DescriptorAst.PrimitiveAtom("int"));
+        params.add(new DescriptorAst.PrimitiveAtom("number"));
         DescriptorAst.FunctionAtom fn = new DescriptorAst.FunctionAtom(
             false, params, new DescriptorAst.PrimitiveAtom("null"));
         params.clear();
@@ -775,11 +777,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
     };
 
     private static final String[] LEAVES = {
-        "null", "boolean", "int", "number", "string", "table"
+        "null", "boolean", "number", "number", "string", "table"
     };
 
     private static final String[] NON_NULL_LEAVES = {
-        "boolean", "int", "number", "string", "table"
+        "boolean", "number", "number", "string", "table"
     };
 
     private static String leaf(Random rnd) {
@@ -929,12 +931,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
     /** The canonical primitive keyword set (encode never emits a bare name). */
     private static final Set<String> PRIMITIVE_KEYWORDS_SET =
-        Set.of("null", "boolean", "int", "number", "string", "table");
+        Set.of("null", "boolean", "number", "string", "table");
 
     private static final Type[] PRIMITIVE_TYPES = {
         Type.Null.INSTANCE,
         Type.Boolean.INSTANCE,
-        Type.Int.INSTANCE,
+        Type.Number.INSTANCE,
         Type.Number.INSTANCE,
         Type.String.INSTANCE,
         Type.Table.INSTANCE,
@@ -942,7 +944,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
     private static final Type[] NON_NULL_PRIMITIVE_TYPES = {
         Type.Boolean.INSTANCE,
-        Type.Int.INSTANCE,
+        Type.Number.INSTANCE,
         Type.Number.INSTANCE,
         Type.String.INSTANCE,
         Type.Table.INSTANCE,
@@ -1092,11 +1094,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- encode: primitives verbatim --");
 
         Type[] types = {
-            Type.Null.INSTANCE, Type.Boolean.INSTANCE, Type.Int.INSTANCE,
+            Type.Null.INSTANCE, Type.Boolean.INSTANCE, Type.Number.INSTANCE,
             Type.Number.INSTANCE, Type.String.INSTANCE, Type.Table.INSTANCE,
         };
         String[] texts = {
-            "null", "boolean", "int", "number", "string", "table",
+            "null", "boolean", "number", "number", "string", "table",
         };
         for (int i = 0; i < types.length; i++) {
             DescriptorAst ast = assertEncodeMember(types[i], "primitive " + texts[i]);
@@ -1109,16 +1111,16 @@ public class CanonicalRuntimeTypeDescriptorTest {
     static void testEncodePinnedShapes() {
         System.out.println("-- encode: pinned canonical shapes --");
 
-        check("[int]".equals(ENCODER.encode(new Type.Array(Type.Int.INSTANCE))),
-            "Array(int) encodes to [int]");
+        check("[number]".equals(ENCODER.encode(new Type.Array(Type.Number.INSTANCE))),
+            "Array(number) encodes to [number]");
         check("[?table]".equals(ENCODER.encode(
                 new Type.Array(new Type.Nullable(Type.Table.INSTANCE)))),
             "Array(Nullable(table)) encodes to [?table]");
         check("?[table]".equals(ENCODER.encode(
                 new Type.Nullable(new Type.Array(Type.Table.INSTANCE)))),
             "Nullable(Array(table)) encodes to ?[table]");
-        check("(int,string)->boolean".equals(ENCODER.encode(
-                new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
+        check("(number,string)->boolean".equals(ENCODER.encode(
+                new Type.Func(List.of(Type.Number.INSTANCE, Type.String.INSTANCE),
                     Type.Boolean.INSTANCE))),
             "sync function encodes with the exact marker-less shape");
         check("()->null".equals(ENCODER.encode(
@@ -1128,18 +1130,18 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 new Type.Func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE,
                     true))),
             "async table function encodes to async(table)->table");
-        check("async(?int)->[table]".equals(ENCODER.encode(
-                new Type.Func(List.of(new Type.Nullable(Type.Int.INSTANCE)),
+        check("async(?number)->[table]".equals(ENCODER.encode(
+                new Type.Func(List.of(new Type.Nullable(Type.Number.INSTANCE)),
                     new Type.Array(Type.Table.INSTANCE), true))),
             "async function params/return encode recursively");
 
-        assertEncodeMember(new Type.Array(Type.Int.INSTANCE), "pinned shape [int]");
+        assertEncodeMember(new Type.Array(Type.Number.INSTANCE), "pinned shape [number]");
         assertEncodeMember(new Type.Nullable(new Type.Array(Type.Table.INSTANCE)),
             "pinned shape ?[table]");
         assertEncodeMember(new Type.Func(
-                List.of(Type.Table.INSTANCE, new Type.Nullable(Type.Int.INSTANCE)),
+                List.of(Type.Table.INSTANCE, new Type.Nullable(Type.Number.INSTANCE)),
                 new Type.Array(Type.Table.INSTANCE), true),
-            "pinned shape async(table,?int)->[table]");
+            "pinned shape async(table,?number)->[table]");
     }
 
     static void testEncodeInvariantViolations() {
@@ -1590,8 +1592,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
         if (type == Type.Boolean.INSTANCE) {
             return "boolean";
         }
-        if (type == Type.Int.INSTANCE) {
-            return "int";
+        if (type == Type.Number.INSTANCE) {
+            return "number";
         }
         if (type == Type.Number.INSTANCE) {
             return "number";
@@ -2041,7 +2043,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         Type[] nested = {
             new Type.Array(unregisteredModule),
             new Type.Nullable(unregisteredModule),
-            new Type.Func(List.of(unregisteredModule), Type.Int.INSTANCE),
+            new Type.Func(List.of(unregisteredModule), Type.Number.INSTANCE),
             new Type.Func(List.of(), unregisteredModule, true),
             new Type.Array(new Type.Nullable(new Type.Func(
                 List.of(unregisteredModule),

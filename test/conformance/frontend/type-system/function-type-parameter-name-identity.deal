@@ -3,12 +3,12 @@
 // @expected: compile-ok
 // @features: type-system, functions, type-identity, descriptors, v1.2
 
-function identity(value: int): int {
+function identity(value: number): number {
   return value;
 }
 
-export function probe(): int {
-  let f: (renamed: int) => int = identity;
+export function probe(): number {
+  let f: (renamed: number) => number = identity;
   return f(3);
 }
 

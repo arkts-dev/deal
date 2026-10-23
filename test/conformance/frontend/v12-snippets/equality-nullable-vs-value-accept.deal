@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(a: int | null, b: int): boolean {if(a !== null) {return a === b;} return false;}
+export function f(a: number | null, b: number): boolean {if(a !== null) {return a === b;} return false;}

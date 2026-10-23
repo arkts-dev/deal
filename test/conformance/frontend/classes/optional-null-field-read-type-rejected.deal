@@ -7,6 +7,6 @@ class Box { n?: null; }
 
 export function main(): null {
   let b: Box = {};
-  let wrong: int = b.n;
+  let wrong: number = b.n;
   return null;
 }

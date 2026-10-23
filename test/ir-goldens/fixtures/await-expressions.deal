@@ -3,17 +3,17 @@
 // Verifies that the IrDumper produces "await : <type>" nodes with
 // proper type annotations and walks the callee call expression.
 
-async function add(a: int, b: int): int {
+async function add(a: number, b: number): number {
     return a + b;
 }
 
-async function compute(x: int, y: int): int {
-    let r: int = await add(x, y);
+async function compute(x: number, y: number): number {
+    let r: number = await add(x, y);
     return r;
 }
 
-async function chain(a: int): int {
-    let b: int = await add(a, 1);
-    let c: int = await add(b, 2);
+async function chain(a: number): number {
+    let b: number = await add(a, 1);
+    let c: number = await add(b, 2);
     return await add(c, 3);
 }

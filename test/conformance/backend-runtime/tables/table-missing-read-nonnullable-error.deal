@@ -5,6 +5,6 @@
 
 export function main(): null {
   let t: table = {};
-  let value: int = t.missing;
+  let value: number = t.missing;
   return null;
 }

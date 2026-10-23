@@ -8,17 +8,17 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-array-index-read-e8001.deal\",\"line\":15,\"column\":28,\"expected\":\"int\",\"actual\":\"null\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-array-index-read-e8001.deal\",\"line\":15,\"column\":31,\"expected\":\"number\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "expected int",
+      "message": "expected number",
       "sourceFile": "backend-runtime/types/narrowed-capture-array-index-read-e8001.deal",
       "line": 15,
-      "column": 28,
-      "expected": "int",
+      "column": 31,
+      "expected": "number",
       "actual": "null"
     }
   }

@@ -6,5 +6,5 @@
 // @jsonable
 export class Widget {
   label: string = "";
-  count: int = 0;
+  count: number = 0;
 }

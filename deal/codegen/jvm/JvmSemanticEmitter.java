@@ -23,7 +23,6 @@ import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -182,13 +181,7 @@ public final class JvmSemanticEmitter {
         Type inner = declaredReturn instanceof Type.Nullable nullable
             ? nullable.inner() : declaredReturn;
         boolean nullable = declaredReturn instanceof Type.Nullable;
-        if (inner instanceof Type.Int) {
-            String unbox = "java.lang.Long.valueOf(((java.lang.Number) "
-                + expression + ").longValue())";
-            return nullable
-                ? "(" + expression + " == null ? null : " + unbox + ")"
-                : unbox;
-        }
+
         if (inner instanceof Type.Number) {
             String unbox = "java.lang.Double.valueOf(((java.lang.Number) "
                 + expression + ").doubleValue())";
@@ -222,13 +215,7 @@ public final class JvmSemanticEmitter {
         Type inner = declaredReturn instanceof Type.Nullable nullable
             ? nullable.inner() : declaredReturn;
         boolean nullable = declaredReturn instanceof Type.Nullable;
-        if (inner instanceof Type.Int) {
-            return nullable
-                ? "(" + expression + " == null ? null :"
-                    + " java.lang.Long.valueOf(((java.lang.Number) "
-                    + expression + ").longValue()))"
-                : "java.lang.Long.valueOf(" + expression + ")";
-        }
+
         if (inner instanceof Type.Number) {
             return nullable
                 ? "(" + expression + " == null ? null : java.lang.Double.valueOf("
@@ -1087,7 +1074,7 @@ public final class JvmSemanticEmitter {
             return switch (descriptor) {
                 case RuntimeDescriptor.Null ignored -> "null";
                 case RuntimeDescriptor.Boolean ignored -> "boolean";
-                case RuntimeDescriptor.Int ignored -> "int";
+
                 case RuntimeDescriptor.Number ignored -> "number";
                 case RuntimeDescriptor.String ignored -> "string";
                 case RuntimeDescriptor.Table ignored -> "table";
@@ -1515,7 +1502,7 @@ public final class JvmSemanticEmitter {
                 case ASSIGN -> emitAssign(op, indent);
                 case DELETE -> emitDelete(op, indent);
                 case CALL -> emitCall(op, indent);
-                case INTRINSIC_CALL -> emitIntrinsic(op, indent);
+
                 case STDLIB_CALL -> emitStdlib(op, indent);
                 case BRANCH -> emitBranch(op, indent);
                 case LOOP -> emitLoop(op, indent);
@@ -1594,12 +1581,12 @@ public final class JvmSemanticEmitter {
                 inputs.append("\"keyslot:\" + JvmRuntime.esc((String) ((Object[]) ")
                     .append(slot(op.operands().get(1))).append(")[1])");
             } else {
-                inputs.append("\"slot:\" + ((long[]) ").append(slot(op.operands().get(1)))
-                    .append(")[0] + \"/\" + (((long[]) ").append(slot(op.operands().get(1)))
-                    .append(")[0] < ((long[]) ").append(slot(op.operands().get(1)))
-                    .append(")[1]) + \"/\" + (((long[]) ").append(slot(op.operands().get(1)))
-                    .append(")[2] == 1 && ((long[]) ").append(slot(op.operands().get(1)))
-                    .append(")[0] == ((long[]) ").append(slot(op.operands().get(1)))
+                inputs.append("\"slot:\" + Double.toHexString(((double[]) ").append(slot(op.operands().get(1)))
+                    .append(")[0]) + \"/\" + (((double[]) ").append(slot(op.operands().get(1)))
+                    .append(")[0] < ((double[]) ").append(slot(op.operands().get(1)))
+                    .append(")[1]) + \"/\" + (((double[]) ").append(slot(op.operands().get(1)))
+                    .append(")[2] == 1 && ((double[]) ").append(slot(op.operands().get(1)))
+                    .append(")[0] == ((double[]) ").append(slot(op.operands().get(1)))
                     .append(")[1])");
             }
             for (int i = 2; i < op.operands().size(); i++) {
@@ -1809,7 +1796,7 @@ public final class JvmSemanticEmitter {
                 case ScalarValue.Null ignored -> "null";
                 case ScalarValue.Boolean bool -> bool.value()
                     ? "Boolean.TRUE" : "Boolean.FALSE";
-                case ScalarValue.Int intValue -> "Long.valueOf(" + intValue.value() + "L)";
+
                 case ScalarValue.Number number -> numberLiteral(number.value());
                 case ScalarValue.String string -> javaString(string.value());
             };
@@ -1844,8 +1831,7 @@ public final class JvmSemanticEmitter {
         private void emitBinary(SemanticOp op, int indent) {
             KindPayload.BinaryPayload payload = (KindPayload.BinaryPayload) op.payload();
             emitStart(op, indent);
-            boolean arithmetic = payload.selector().name().startsWith("INT32_")
-                || payload.selector().name().startsWith("NUMBER_");
+            boolean arithmetic = payload.selector().name().startsWith("NUMBER_");
             boolean comparison = payload.selector().name().endsWith("_EQ")
                 || payload.selector().name().endsWith("_NE")
                 || payload.selector().name().endsWith("_LT")
@@ -1976,7 +1962,7 @@ public final class JvmSemanticEmitter {
             String target = slot((ValueId) op.result());
             {
                 out.append(indent(indent)).append(target)
-                    .append(" = Long.valueOf(((").append("JvmRuntime.Array) ")
+                    .append(" = Double.valueOf(((").append("JvmRuntime.Array) ")
                     .append(slot(payload.arrayValue())).append(").length);\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
@@ -2376,7 +2362,7 @@ public final class JvmSemanticEmitter {
                     // runtime number carrier (the value model's variant
                     // representation) unwraps, a plain Long passes through.
                     out.append(indent(indent)).append(target)
-                        .append(" = new long[]{JvmRuntime.indexOf(")
+                        .append(" = new double[]{JvmRuntime.indexOf(")
                         .append(slot(payload.rawKey())).append("), JvmRuntime.indexOf(")
                         .append(slot(payload.currentLength())).append("), ")
                         .append(write ? "1L" : "0L").append("};\n");
@@ -2387,15 +2373,15 @@ public final class JvmSemanticEmitter {
             }
             // SUCCESS with the closed slot atom.
             out.append(indent(indent)).append("if (").append(target)
-                .append(" instanceof long[]) {\n");
-            out.append(indent(indent)).append("  long[] __s = (long[]) ").append(target)
+                .append(" instanceof double[]) {\n");
+            out.append(indent(indent)).append("  double[] __s = (double[]) ").append(target)
                 .append(";\n");
             out.append(indent(indent)).append(
                 "  JvmRuntime.ev(MODULE, ").append(javaString(opKey(op.opId())))
                 .append(", \"SUCCESS\", \"INDEX_NORMALIZE\", ")
                 .append(javaString(op.contract().canonicalDigest())).append(", ")
                 .append(javaString(parentKey(op.origin().parentOpId())))
-                .append(", List.of(), \"slot:\" + __s[0] + \"/\" + (__s[0] < __s[1]) "
+                .append(", List.of(), \"slot:\" + Double.toHexString(__s[0]) + \"/\" + (__s[0] < __s[1]) "
                     + "+ \"/\" + (__s[2] == 1 && __s[0] == __s[1]), null);\n");
             out.append(indent(indent)).append("} else {\n");
             out.append(indent(indent)).append("  Object[] __s = (Object[]) ").append(target)
@@ -2445,8 +2431,8 @@ public final class JvmSemanticEmitter {
                 .append(javaString(parentKey(boundary.origin().parentOpId()))).append(", ")
                 .append(javaString(descriptorText(descriptor))).append(", ")
                 .append(javaString(staticKind(inner))).append(", (JvmRuntime.Array) ")
-                .append(slot(payload.container())).append(", ((long[]) ")
-                .append(slot(payload.slot())).append(")[0], ((long[]) ")
+                .append(slot(payload.container())).append(", ((double[]) ")
+                .append(slot(payload.slot())).append(")[0], ((double[]) ")
                 .append(slot(payload.slot())).append(")[1], ")
                 .append(nullable ? "true" : "false").append(", ")
                 .append(javaString(originOf(op))).append(");\n");
@@ -2461,8 +2447,8 @@ public final class JvmSemanticEmitter {
             String slotName = slot(payload.slot());
             String value = slot(payload.value());
             out.append(indent(indent)).append("if (").append(slotName)
-                .append(" instanceof long[]) {\n");
-            out.append(indent(indent)).append("  long[] __s = (long[]) ").append(slotName)
+                .append(" instanceof double[]) {\n");
+            out.append(indent(indent)).append("  double[] __s = (double[]) ").append(slotName)
                 .append(";\n");
             out.append(indent(indent)).append("  if (__s[2] == 1 && __s[0] == __s[1]) ((")
                 .append("JvmRuntime.Array) ").append(container).append(").length++;\n");
@@ -2492,8 +2478,8 @@ public final class JvmSemanticEmitter {
             String container = slot(payload.container());
             String slotName = slot(payload.slot());
             out.append(indent(indent)).append("if (").append(slotName)
-                .append(" instanceof long[]) {\n");
-            out.append(indent(indent)).append("  long[] __s = (long[]) ").append(slotName)
+                .append(" instanceof double[]) {\n");
+            out.append(indent(indent)).append("  double[] __s = (double[]) ").append(slotName)
                 .append(";\n");
             out.append(indent(indent)).append("  if (__s[0] < ((")
                 .append("JvmRuntime.Array) ").append(container).append(").length && __s[0] < ((")
@@ -2578,8 +2564,8 @@ public final class JvmSemanticEmitter {
                 (KindPayload.BindingInitPayload) op.payload();
             emitStart(op, indent);
             BindingCellKind kind = cellKindOf(payload.binding(), payload.generation());
-            String valueExpr = intrinsicCarrierExpr(payload.value());
-            if (valueExpr == null) {
+            String valueExpr;
+            {
                 valueExpr = hasProducer(payload.value())
                     ? slot(payload.value()) : exportPlaceholderCarrier();
             }
@@ -2594,39 +2580,19 @@ public final class JvmSemanticEmitter {
             emitPlainSuccess(op, indent);
         }
 
-        private String intrinsicCarrierExpr(ValueId valueId) {
-            IntrinsicKind kind = intrinsicKindOf(valueId);
-            return kind == null ? null : intrinsicAccessor(kind);
-        }
 
-        /**
+/**
          * The memoized intrinsic carrier expression of one identity whose
          * registration — the kind's only authority — resolves an intrinsic
          * kind (the residual export-read kind arm's rule), or {@code null}.
          */
-        private String registeredIntrinsicCarrierExpr(ValueId valueId) {
-            IntrinsicKind kind = registeredIntrinsicKindOf(valueId);
-            return kind == null ? null : intrinsicAccessor(kind);
-        }
+
 
         /** The registered intrinsic kind of one value identity, or null. */
-        private IntrinsicKind registeredIntrinsicKindOf(ValueId valueId) {
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                FunctionExecutionBinding found = moduleUnit.functionBindings().get(
-                    new deal.semantic.ir.FunctionAllocationIdentity(valueId.id()));
-                if (found instanceof FunctionExecutionBinding.IntrinsicFunction
-                        intrinsic) {
-                    return intrinsic.kind();
-                }
-                if (found != null) {
-                    return null;
-                }
-            }
-            return null;
-        }
+
 
         private static String exportPlaceholderCarrier() {
-            return "JvmRuntime.intrinsicExport()";
+            throw new IllegalStateException("function value has no producing operation");
         }
 
         /**
@@ -2635,12 +2601,7 @@ public final class JvmSemanticEmitter {
          * spec text — the only descriptor source (never a call site's or
          * an adapter target's).
          */
-        private static String intrinsicAccessor(IntrinsicKind kind) {
-            RuntimeDescriptor.Func declared = kind.declaredSignature();
-            return "JvmRuntime.intrinsic(" + javaString(kind.name()) + ", "
-                + javaString(descriptorText(declared)) + ", "
-                + javaString(declared.canonicalSpecText()) + ")";
-        }
+
 
         private void emitBindingLoad(SemanticOp op, int indent) {
             KindPayload.BindingLoadPayload payload =
@@ -2781,8 +2742,8 @@ public final class JvmSemanticEmitter {
         }
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {
-            String sourceExpr = intrinsicCarrierExpr(value.value());
-            if (sourceExpr == null) {
+            String sourceExpr;
+            {
                 sourceExpr = hasProducer(value.value())
                     ? slot(value.value()) : exportPlaceholderCarrier();
             }
@@ -3028,7 +2989,7 @@ public final class JvmSemanticEmitter {
                             .append(javaString(boundary.contract().canonicalDigest()))
                             .append(", ")
                             .append(javaString(parentKey(boundary.origin().parentOpId())))
-                            .append(", (long[]) ").append(chainSlotExpr(chain))
+                            .append(", (double[]) ").append(chainSlotExpr(chain))
                             .append(", JvmRuntime.indexOf(").append(chainLengthExpr(chain))
                             .append("), ")
                             .append(javaString(originOf(boundary))).append(");\n");
@@ -3038,7 +2999,7 @@ public final class JvmSemanticEmitter {
                         .append(javaString(boundary.contract().canonicalDigest()))
                         .append(", ")
                         .append(javaString(parentKey(boundary.origin().parentOpId())))
-                        .append(", ").append(input).append(", ((long[]) ")
+                        .append(", ").append(input).append(", ((double[]) ")
                         .append(chainSlotExpr(chain)).append(")[0], JvmRuntime.indexOf(")
                         .append(chainLengthExpr(chain)).append("), ")
                         .append(javaString(descriptorText(payload.descriptor())))
@@ -3137,10 +3098,7 @@ public final class JvmSemanticEmitter {
                 return;
             }
 
-            if (binding instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic) {
-                emitIntrinsicValueCall(op, payload, intrinsic, indent);
-                return;
-            }
+
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp boundary = opsById.get(boundaryId);
                 KindPayload.BoundaryPayload boundaryPayload =
@@ -3270,10 +3228,6 @@ public final class JvmSemanticEmitter {
                 }
                 case FunctionExecutionBinding.AdapterBinding adapter -> {
 
-                    if (adapterIntrinsicKind(adapter) != null) {
-                        emitAdapterOverIntrinsicRun(op, payload, adapter, indent);
-                        break;
-                    }
                     String adapterSlot =
                         slot((ValueId) opsById.get(adapter.adaptOpId()).result());
                     StringBuilder args = new StringBuilder();
@@ -3714,43 +3668,6 @@ public final class JvmSemanticEmitter {
                 .append(" = __na").append(id).append(".arity;\n");
             out.append(indent(indent + 1)).append("}\n");
             out.append(indent(indent + 1)).append("if (__src").append(id)
-                .append(" instanceof JvmRuntime.Intrinsic __ii").append(id)
-                .append(") {\n");
-
-            if (payload.parameterBoundaryOpIds().isEmpty()) {
-                // The leading-M projection of the runtime intrinsic source has
-                // no argument to convert (the intrinsic declares one
-                // parameter): the carrier fails closed at the call origin.
-                emitDynamicCarrierFailure(op, carrier, indent + 2);
-            } else {
-                String dynamicArg = slot(((KindPayload.BoundaryPayload)
-                    opsById.get(payload.parameterBoundaryOpIds().get(0)).payload())
-                    .input());
-                String converted = "__di" + id;
-                out.append(indent(indent + 2)).append("Object ").append(converted)
-                    .append(";\n");
-                out.append(indent(indent + 2)).append("if (\"INT_CONVERT\".equals("
-                    + "__ii").append(id).append(".kind)) {\n");
-                out.append(indent(indent + 3)).append(converted).append(" = ")
-                    .append(intrinsicHelper(IntrinsicKind.INT_CONVERT)).append("(")
-                    .append(dynamicArg).append(", ")
-                    .append(intrinsicInvocationArgs(op, IntrinsicKind.INT_CONVERT))
-                    .append(");\n");
-                out.append(indent(indent + 2)).append("} else if (\"NUMBER_CONVERT\""
-                    + ".equals(__ii").append(id).append(".kind)) {\n");
-                out.append(indent(indent + 3)).append(converted).append(" = ")
-                    .append(intrinsicHelper(IntrinsicKind.NUMBER_CONVERT)).append("(")
-                    .append(dynamicArg).append(", ")
-                    .append(intrinsicInvocationArgs(op, IntrinsicKind.NUMBER_CONVERT))
-                    .append(");\n");
-                out.append(indent(indent + 2)).append("} else {\n");
-                out.append(indent(indent + 3)).append("throw new IllegalStateException(\"unknown intrinsic\");\n");
-                out.append(indent(indent + 2)).append("}\n");
-                String dynamicAdmitted = emitHostCellRun(op, hostCell, converted,
-                    indent + 2);
-                out.append(indent(indent + 2)).append(result).append(" = ")
-                    .append(dynamicAdmitted).append(";\n");
-            }
             // A cataloged stdlib callable carries the packed row-invoker
             // calling convention: the adapter dispatches it through the
             // catalog entry with its leading-M projection, exactly the
@@ -3905,36 +3822,8 @@ public final class JvmSemanticEmitter {
             String hostValue = "__dh" + id;
             out.append(indent(indent)).append("Object ").append(hostValue).append(";\n");
 
-            if (payload.parameterBoundaryOpIds().size() == 1) {
-                out.append(indent(indent)).append("if (").append(carrier)
-                    .append(" instanceof JvmRuntime.Intrinsic __iv").append(id)
-                    .append(") {\n");
-                out.append(indent(indent + 1)).append("if (\"INT_CONVERT\".equals(__iv")
-                    .append(id).append(".kind)) {\n");
-                out.append(indent(indent + 2)).append(hostValue).append(" = ")
-                    .append(intrinsicHelper(IntrinsicKind.INT_CONVERT)).append("(")
-                    .append(args).append(", ")
-                    .append(intrinsicInvocationArgs(op, IntrinsicKind.INT_CONVERT))
-                    .append(");\n");
-                out.append(indent(indent + 1)).append("} else if (\"NUMBER_CONVERT\""
-                    + ".equals(__iv").append(id).append(".kind)) {\n");
-                out.append(indent(indent + 2)).append(hostValue).append(" = ")
-                    .append(intrinsicHelper(IntrinsicKind.NUMBER_CONVERT)).append("(")
-                    .append(args).append(", ")
-                    .append(intrinsicInvocationArgs(op, IntrinsicKind.NUMBER_CONVERT))
-                    .append(");\n");
-                out.append(indent(indent + 1)).append("} else {\n");
-                out.append(indent(indent + 2)).append("throw new IllegalStateException(\"unknown intrinsic\");\n");
-                out.append(indent(indent + 1)).append("}\n");
-                out.append(indent(indent)).append("} else if (").append(carrier)
-                    .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
-            } else {
-                out.append(indent(indent)).append("if (").append(carrier)
-                    .append(" instanceof JvmRuntime.Intrinsic) {\n");
-                emitDynamicCarrierFailure(op, carrier, indent + 1);
-                out.append(indent(indent)).append("} else if (").append(carrier)
-                    .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
-            }
+            out.append(indent(indent)).append("if (").append(carrier)
+                .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
             out.append(indent(indent + 1)).append(hostValue)
                 .append(" = JvmRuntime.invokeStdlibCallable((JvmRuntime."
                     + "StdlibFunctionValue) ")
@@ -4059,26 +3948,6 @@ public final class JvmSemanticEmitter {
                 .append(" = __na").append(id).append(".arity;\n");
             out.append(indent(indent + 1)).append("}\n");
 
-            out.append(indent(indent + 1)).append("if (").append(source)
-                .append(" instanceof JvmRuntime.Intrinsic __ii").append(id)
-                .append(") {\n");
-            if (args.isEmpty()) {
-                // The leading-M projection of the runtime intrinsic source has
-                // no argument to convert (the intrinsic declares one
-                // parameter): the carrier fails closed at the start origin.
-                emitDynamicCarrierFailure(op, source, indent + 2);
-            } else {
-                out.append(indent(indent + 2)).append("JvmRuntime.startBodyTask(")
-                    .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> ")
-                    .append("\"INT_CONVERT\".equals(__ii").append(id)
-                    .append(".kind) ? JvmRuntime.intConv(").append(args.get(0))
-                    .append(", ").append(javaString(op.kind().name()))
-                    .append(", \"number\", ").append(intrinsicContextArgs(op))
-                    .append(") : JvmRuntime.numConv(").append(args.get(0)).append(", ")
-                    .append(javaString(op.kind().name())).append(", \"int\", ")
-                    .append(intrinsicContextArgs(op)).append("));\n");
-            }
-            out.append(indent(indent + 1)).append("} else {\n");
             out.append(indent(indent + 1)).append("if (!(").append(source)
                 .append(" instanceof JvmRuntime.FunctionValue) || "
                     + "((JvmRuntime.FunctionValue) ").append(source)
@@ -4127,7 +3996,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 3)).append("JvmRuntime.setModule(__prevM);\n");
             out.append(indent(indent + 2)).append("}\n");
             out.append(indent(indent + 1)).append("});\n");
-            out.append(indent(indent + 1)).append("}\n");
             // DEAL_BODY: the carrier's own invoker under the callee's
             // module; the module context is restored on every path and the
             // carrier owns its own frame.
@@ -4319,108 +4187,9 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        private void emitIntrinsicValueCall(SemanticOp op, KindPayload.CallPayload payload,
-                FunctionExecutionBinding.IntrinsicFunction intrinsic, int indent) {
-            List<String> checked = new ArrayList<>();
-            int index = 1;
-            for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
-                SemanticOp boundary = opsById.get(boundaryId);
-                KindPayload.BoundaryPayload boundaryPayload =
-                    (KindPayload.BoundaryPayload) boundary.payload();
-                RuntimeDescriptor descriptor = boundaryPayload.descriptor();
-                if (descriptor instanceof RuntimeDescriptor.Nullable
-                        || descriptor instanceof RuntimeDescriptor.Class
-                        || descriptor instanceof RuntimeDescriptor.Func) {
-                    throw rejectedOp(op, "the conversion intrinsic '"
-                        + intrinsic.kind() + "' arrives at " + op.opId()
-                        + " with the parameter position "
-                        + descriptor.canonicalSpecText() + ", whose host-facing "
-                        + "projection is not the identity — a producer defect");
-                }
-                String input = slot(boundaryPayload.input());
-                emitBoundaryStart(boundary, input, descriptor, indent);
-                String name = "__ip_" + boundary.opId().id();
-                out.append(indent(indent)).append("Object ").append(name).append(";\n");
-                out.append(indent(indent)).append("try {\n");
-                out.append(indent(indent + 1)).append(name)
-                    .append(" = __hostParamCheck(").append(index).append(", ")
-                    .append(javaString(descriptorText(descriptor))).append(", ")
-                    .append(input).append(", ").append(originArgs(op)).append(");\n");
-                out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
-                emitFailureEvent(boundary.opId(), "BOUNDARY", boundary,
-                    "JvmRuntime.errtext(__be)", indent + 1);
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__be)", indent + 1);
-                out.append(indent(indent + 1)).append("throw __be;\n");
-                out.append(indent(indent)).append("}\n");
-                emitBoundarySuccess(boundary, name, descriptor, indent);
-                checked.add(name);
-                index++;
-            }
-            if (checked.size() != intrinsic.descriptor().paramTypes().size()) {
-                throw rejectedOp(op, "the conversion intrinsic call "
-                    + op.opId() + " records " + checked.size() + " parameter cell(s) for "
-                    + "the '" + intrinsic.kind() + "' intrinsic's "
-                    + intrinsic.descriptor().paramTypes().size() + " declared "
-                    + "parameter(s) (a producer defect)");
-            }
-            // The one conversion ladder at the call site: the invoking CALL op's
-            // context, origin, and kind label (the pinned conversion texts and
-            // the FAILURE event carry the invoking op).
-            String result = "__ic_" + op.opId().id();
-            String helper = intrinsicHelper(intrinsic.kind());
-            out.append(indent(indent)).append("Object ").append(result).append(" = ")
-                .append(helper).append("(")
-                .append(String.join(", ", checked)).append(", ")
-                .append(intrinsicInvocationArgs(op, intrinsic.kind())).append(");\n");
-            // The recorded HOST_TO_DEAL + HOST_SYNC_RETURN cell, run by the call
-            // op exactly once per invocation.
-            SemanticOp returnBoundary = payload.returnBoundaryOpId() == null ? null
-                : opsById.get(payload.returnBoundaryOpId());
-            if (returnBoundary != null) {
-                KindPayload.BoundaryPayload boundaryPayload =
-                    (KindPayload.BoundaryPayload) returnBoundary.payload();
-                emitBoundaryStart(returnBoundary, result, boundaryPayload.descriptor(),
-                    indent);
-                String admitted = "__iac_" + op.opId().id();
-                out.append(indent(indent)).append("Object ").append(admitted)
-                    .append(";\n");
-                out.append(indent(indent)).append("try {\n");
-                out.append(indent(indent + 1)).append(admitted).append(" = ")
-                    .append(hostCellCheck(boundaryPayload.descriptor(), result, op))
-                    .append(";\n");
-                out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
-                emitFailureEvent(returnBoundary.opId(), "BOUNDARY", returnBoundary,
-                    "JvmRuntime.errtext(__be)", indent + 1);
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__be)", indent + 1);
-                out.append(indent(indent + 1)).append("throw __be;\n");
-                out.append(indent(indent)).append("}\n");
-                emitBoundarySuccess(returnBoundary, admitted,
-                    boundaryPayload.descriptor(), indent);
-                result = admitted;
-            }
-            out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = ")
-                .append(result).append(";\n");
-            emitResultSuccess(op, slot((ValueId) op.result()),
-                (RuntimeDescriptor) op.resultType(), indent);
-        }
 
-        private IntrinsicKind adapterIntrinsicKind(
-                FunctionExecutionBinding.AdapterBinding adapter) {
-            if (!(adapter.sourceRef() instanceof AdaptSourceRef.Value value)) {
-                return null;
-            }
-            return intrinsicKindOf(value.value());
-        }
+/** The emitted helper of one intrinsic kind's invocation ladder. */
 
-        /** The emitted helper of one intrinsic kind's invocation ladder. */
-        private static String intrinsicHelper(IntrinsicKind kind) {
-            return switch (kind) {
-                case INT_CONVERT -> "JvmRuntime.intConv";
-                case NUMBER_CONVERT -> "JvmRuntime.numConv";
-            };
-        }
 
         /**
          * The trailing argument list of one intrinsic invocation: the
@@ -4430,72 +4199,9 @@ public final class JvmSemanticEmitter {
          * is the only descriptor source (never a call site's or an adapter
          * target's).
          */
-        private String intrinsicInvocationArgs(SemanticOp op, IntrinsicKind kind) {
-            StringBuilder args = new StringBuilder();
-            args.append(javaString(op.kind().name())).append(", ");
-            args.append(javaString(staticKind(
-                kind.declaredSignature().paramTypes().get(0)))).append(", ");
-            args.append(javaString(opKey(op.opId()))).append(", ")
-                .append(javaString(op.contract().canonicalDigest())).append(", ")
-                .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                .append(javaString(originOf(op)));
-            return args.toString();
-        }
 
-        private void emitAdapterOverIntrinsicRun(SemanticOp op,
-                KindPayload.CallPayload payload,
-                FunctionExecutionBinding.AdapterBinding adapter, int indent) {
-            IntrinsicKind kind = adapterIntrinsicKind(adapter);
-            if (kind == null) {
-                throw rejectedOp(op, "CALL " + op.opId()
-                    + " records an adapter whose source is not the seeded intrinsic "
-                    + "identity (producer defect)");
-            }
-            RuntimeDescriptor.Func declared = kind.declaredSignature();
-            String adapterSlot = slot((ValueId) opsById.get(adapter.adaptOpId()).result());
 
-            String source = "__ais" + op.opId().id();
-            out.append(indent(indent)).append("try {\n");
-            out.append(indent(indent + 1)).append("Object ").append(source)
-                .append(" = JvmRuntime.fnCheck(JvmRuntime.adapterSource("
-                    + "(JvmRuntime.AdapterValue) ")
-                .append(adapterSlot).append("), ")
-                .append(javaString(adapter.sourceSignature().canonicalSpecText()))
-                .append(", ").append(javaString(originOf(op))).append(");\n");
-            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op,
-                "JvmRuntime.errtext(__e)", indent + 1);
-            out.append(indent(indent + 1)).append("throw __e;\n");
-            out.append(indent(indent)).append("}\n");
-            int m = adapter.sourceSignature().paramTypes().size();
-            if (m != declared.paramTypes().size()
-                    || m > payload.parameterBoundaryOpIds().size()) {
-                throw rejectedOp(op, "the adapter-over-intrinsic call "
-                    + op.opId() + " projects " + m + " leading source argument(s) "
-                    + "onto the '" + kind + "' intrinsic's "
-                    + declared.paramTypes().size() + " declared parameter(s) with "
-                    + payload.parameterBoundaryOpIds().size()
-                    + " recorded target cell(s) (producer defect)");
-            }
-            SemanticOp leading = opsById.get(payload.parameterBoundaryOpIds().get(0));
-            String input = slot(((KindPayload.BoundaryPayload) leading.payload()).input());
-            // The one conversion/allocation ladder at the adapter call site:
-            // the invoking CALL op's context, origin, and kind label.
-            String helper = intrinsicHelper(kind);
-            String converted = "__aiv" + op.opId().id();
-            out.append(indent(indent)).append("Object ").append(converted)
-                .append(" = ").append(helper).append("(").append(input).append(", ")
-                .append(intrinsicInvocationArgs(op, kind)).append(");\n");
-            // The recorded HOST_TO_DEAL + HOST_SYNC_RETURN cell, run by the
-            // call op exactly once per invocation (the source class HOST).
-            SemanticOp returnBoundary = payload.returnBoundaryOpId() == null ? null
-                : opsById.get(payload.returnBoundaryOpId());
-            String admitted = emitHostCellRun(op, returnBoundary, converted, indent);
-            out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = ")
-                .append(admitted).append(";\n");
-        }
-
-        /**
+/**
          * The recorded host return cell's check expression, retaining the
          * cell's declared descriptor and policy.
          */
@@ -5397,37 +5103,8 @@ public final class JvmSemanticEmitter {
             return null;
         }
 
-        private void emitIntrinsic(SemanticOp op, int indent) {
-            KindPayload.IntrinsicCallPayload payload =
-                (KindPayload.IntrinsicCallPayload) op.payload();
-            emitStart(op, indent);
-            String target = slot((ValueId) op.result());
-            String input = slot(payload.input());
-            String kind = staticKind(op.operandTypes().get(0));
-            String origin = originOf(op);
-            switch (payload.kind()) {
 
-                case INT_CONVERT -> out.append(indent(indent)).append(target)
-                    .append(" = JvmRuntime.intConv(").append(input).append(", ")
-                    .append(javaString(op.kind().name())).append(", ")
-                    .append(javaString(kind)).append(", ")
-                    .append(javaString(opKey(op.opId()))).append(", ")
-                    .append(javaString(op.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(javaString(origin)).append(");\n");
-                case NUMBER_CONVERT -> out.append(indent(indent)).append(target)
-                    .append(" = JvmRuntime.numConv(").append(input).append(", ")
-                    .append(javaString(op.kind().name())).append(", ")
-                    .append(javaString(kind)).append(", ")
-                    .append(javaString(opKey(op.opId()))).append(", ")
-                    .append(javaString(op.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(javaString(origin)).append(");\n");
-            }
-            emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
-        }
-
-        /**
+/**
          * One checked boundary admission assigning into an existing
          * expression under the caller's enclosing block (the stdlib
          * parameter and return shapes): the value is checked into
@@ -6329,11 +6006,7 @@ public final class JvmSemanticEmitter {
                     }
                     emitHostCallbackValue(op, payload, slot(boundary.input()), indent);
                 }
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                    throw rejectedOp(op, "CALLBACK_INVOKE " + op.opId()
-                        + " resolves the " + intrinsic.kind() + " intrinsic carrier"
-                        + " (the intrinsic carrier is the function-typed-value"
-                        + " child's — a fail-closed producer defect)");
+
                 case FunctionExecutionBinding.ExternalFunction external ->
                     throw rejectedOp(op, "CALLBACK_INVOKE " + op.opId()
                         + " resolves an external binding outside the statically-"
@@ -6733,27 +6406,7 @@ public final class JvmSemanticEmitter {
                 case FunctionExecutionBinding.ExternalFunction external ->
                     emitAsyncExternalStart(op, indent, token, payload.externalAsyncLink(),
                         args);
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                    if (args.size() != intrinsic.descriptor().paramTypes().size()) {
-                        throw rejectedOp(op, "ASYNC_START " + op.opId()
-                            + " carries " + args.size() + " argument(s) for the '"
-                            + intrinsic.kind() + "' intrinsic's "
-                            + intrinsic.descriptor().paramTypes().size()
-                            + " declared parameter(s) (producer defect)");
-                    }
-                    out.append(indent(indent)).append("JvmRuntime.startBodyTask(")
-                        .append(token.tokenId())
-                        .append(", \"DEAL_BODY_TASK\", () -> ")
-                        .append(intrinsic.kind() == IntrinsicKind.INT_CONVERT
-                            ? "JvmRuntime.intConv(" : "JvmRuntime.numConv(")
-                        .append(args.get(0)).append(", ")
-                        .append(javaString(op.kind().name())).append(", ")
-                        .append(javaString(staticKind(
-                            intrinsic.descriptor().paramTypes().get(0))))
-                        .append(", ").append(intrinsicContextArgs(op))
-                        .append("));\n");
-                }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw rejectedOp(op, "ASYNC_START " + op.opId()
                         + " resolves the dynamic function value produced by "
@@ -7409,10 +7062,7 @@ public final class JvmSemanticEmitter {
                         payload.name()))).append(");\n");
             } else {
 
-                String carrier = registeredIntrinsicCarrierExpr((ValueId) op.result());
-                out.append(" = ")
-                    .append(carrier == null ? exportPlaceholderCarrier() : carrier)
-                    .append(";\n");
+                throw rejectedOp(op, "EXPORT_READ has no resolved import");
             }
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType(), indent);

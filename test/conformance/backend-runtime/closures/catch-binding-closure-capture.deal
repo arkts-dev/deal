@@ -98,7 +98,7 @@ function testRepeatedLoopCatches(): null {
   let messages: string[] = ["first", "second", "third"];
   let readers: (() => string)[] = [];
   let writers: (() => null)[] = [];
-  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
+  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
     try { throw { code: "E_LOOP", message: messages[i] }; }
     catch (e) {
       readers[i] = function(): string { return e.message; };
@@ -117,7 +117,7 @@ function testRepeatedLoopCatches(): null {
 
 function testWhileCatches(): null {
   let readers: (() => string)[] = [];
-  let n: int = 0;
+  let n: number = 0;
   while (n < 2) {
     let message: string = "zero";
     if (n === 1) { message = "one"; }
@@ -244,8 +244,8 @@ function testOrdinaryReadControl(): null {
 
 function testForOfCatchShadowing(): null {
   let readers: (() => string)[] = [];
-  let visits: int = 0;
-  for (let e: int of [1, 2]) {
+  let visits: number = 0;
+  for (let e: number of [1, 2]) {
     try { throw { code: "E_FE", message: "for-of catch" }; }
     catch (e) {
       readers[visits] = function(): string { return e.message; };

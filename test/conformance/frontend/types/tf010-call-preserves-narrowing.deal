@@ -3,15 +3,15 @@
 // @expected: compile-ok
 // @features: type-system, nullable, narrowing, functions, v1.2
 
-function consume(value: int): null {
+function consume(value: number): null {
   return null;
 }
 
 export function main(): null {
-  let value: int | null = 1;
+  let value: number | null = 1;
   if (value !== null) {
     consume(value);
-    let stillPresent: int = value;
+    let stillPresent: number = value;
   }
   return null;
 }

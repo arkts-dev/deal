@@ -3,13 +3,13 @@
 // @expected: runtime-ok
 // @features: arrays, functions, mutation
 
-function bump(xs: int[]): null {
+function bump(xs: number[]): null {
   xs[0] = xs[0] + 10;
   return null;
 }
 
-export function test_array_mutation_through_call(): int {
-  let xs: int[] = [1, 2, 3];
+export function test_array_mutation_through_call(): number {
+  let xs: number[] = [1, 2, 3];
   bump(xs);
   if (xs[0] !== 11) { throw { code: "TEST_FAIL", message: "array mutation through call failed" }; }
   return xs[0];

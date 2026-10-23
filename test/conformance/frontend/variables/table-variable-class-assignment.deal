@@ -3,7 +3,7 @@
 // @expected: compile-error E3001
 // @features: tables, assignment, type-system
 
-class Box { n: int = 0; }
+class Box { n: number = 0; }
 export function main(): null {
   let t: table = {};
   let b: Box = {};

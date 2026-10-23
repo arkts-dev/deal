@@ -3,10 +3,10 @@
 // @expected: compile-ok
 // @features: parser, blocks
 
-export function test_blocks(): int {
-  let x: int = 1;
+export function test_blocks(): number {
+  let x: number = 1;
   {
-    let y: int = 2;
+    let y: number = 2;
     x = x + y;
   }
   return x;

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: for-of, string, unicode
 
-export function test_for_of_unicode(): int {
+export function test_for_of_unicode(): number {
   // a, U+00E9, U+4E2D, U+1F600, b — 5 Unicode scalar values (11 UTF-8 bytes)
   let s: string = "aé中😀b";
   let collected: string[] = [];

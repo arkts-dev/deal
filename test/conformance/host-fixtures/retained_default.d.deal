@@ -6,9 +6,9 @@
 // Resolved on demand by the host-fixture registry; the discovery walk
 // skips test/conformance/host-fixtures/ entirely.
 
-export function retained(): int[];
-export function provideFirst(): int[];
-export function provideSecond(): int[];
+export function retained(): number[];
+export function provideFirst(): number[];
+export function provideSecond(): number[];
 export function bump(): null;
-export function calls(): int;
+export function calls(): number;
 export function order(): string;

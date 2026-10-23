@@ -4,6 +4,11 @@
 // @features: classes, jsonable, toJson, tables, host-abi, v1.3
 
 import * as host from "host/jsonabletable";
+import * as json from "std/json";
+
+function equivalent(text: string, expected: string): boolean {
+  return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+}
 
 function check(condition: boolean, message: string): null {
   if (!condition) {
@@ -38,18 +43,18 @@ export class TableElements {
 export function test_host_table_field(): null {
   let w: TableField = { data: host.makeTable() };
   let text: string = TableField$toJson(w);
-  check(text === "{\"data\":{\"a\":1}}", "the host table field spells " + text);
+  check(equivalent(text, "{\"data\":{\"a\":1}}"), "the host table field spells " + text);
   return null;
 }
 
 export function test_host_table_nested_content(): null {
   let carrier: TableField = { data: { inner: host.makeTable() } };
   let carrierText: string = TableField$toJson(carrier);
-  check(carrierText === "{\"data\":{\"inner\":{\"a\":1}}}",
+  check(equivalent(carrierText, "{\"data\":{\"inner\":{\"a\":1}}}"),
     "the plain host table nested in a table carrier spells " + carrierText);
   let nested: TableField = { data: host.makeNested() };
   let nestedText: string = TableField$toJson(nested);
-  check(nestedText === "{\"data\":{\"inner\":{\"a\":1},\"xs\":[10,20]}}",
+  check(equivalent(nestedText, "{\"data\":{\"inner\":{\"a\":1},\"xs\":[10,20]}}"),
     "the host table's nested object and array members spell " + nestedText);
   return null;
 }
@@ -57,7 +62,7 @@ export function test_host_table_nested_content(): null {
 export function test_host_table_array_elements(): null {
   let w: TableElements = { rows: [host.makeTable(), host.makeNested()] };
   let text: string = TableElements$toJson(w);
-  check(text === "{\"rows\":[{\"a\":1},{\"inner\":{\"a\":1},\"xs\":[10,20]}]}",
+  check(equivalent(text, "{\"rows\":[{\"a\":1},{\"inner\":{\"a\":1},\"xs\":[10,20]}]}"),
     "a table[] element holding a host table spells " + text);
   return null;
 }

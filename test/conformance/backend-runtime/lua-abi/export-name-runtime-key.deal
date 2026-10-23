@@ -5,8 +5,8 @@
 
 import * as Lib from "./lua_abi_export_lib";
 
-export function test_export_name_runtime_key(): int {
-  let result: int = Lib.normalExport(4);
+export function test_export_name_runtime_key(): number {
+  let result: number = Lib.normalExport(4);
   if (result !== 8) { throw { code: "TEST_FAIL", message: "export runtime key failed" }; }
   return result;
 }

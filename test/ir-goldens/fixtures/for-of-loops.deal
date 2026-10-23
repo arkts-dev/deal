@@ -1,8 +1,8 @@
 // IR golden fixture: for-of-loops
 
-function testForOfArray(xs: int[]): null {
-    for (let x: int of xs) {
-        let y: int = x;
+function testForOfArray(xs: number[]): null {
+    for (let x: number of xs) {
+        let y: number = x;
     }
     return;
 }

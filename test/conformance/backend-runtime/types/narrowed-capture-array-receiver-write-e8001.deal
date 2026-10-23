@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, arrays, runtime-errors
 
 export function main(): null {
-  let xs: int[] | null = [0];
+  let xs: number[] | null = [0];
   let clear: () => null = function(): null {
     xs = null;
     return null;

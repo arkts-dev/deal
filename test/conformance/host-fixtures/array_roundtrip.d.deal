@@ -1,15 +1,15 @@
 // @expected: host-fixture
 // @description: Host-module declaration fixture for the host-array-*
-// conformance tests (ISSUE-0551): plain and nullable int[]
+// conformance tests (ISSUE-0551): plain and nullable number[]
 // parameters/returns on the shared carrier, a fresh-buffer maker, a
 // shared-buffer provider (the retained-identity default probe,
 // ISSUE-0552), a byte reader, a call counter (the
 // no-call-on-failure probe), and a wrong-kind return probe.
 
-export function echoArray(b: int[]): int[];
-export function nullableArray(b: int[] | null): int[] | null;
-export function makeArray(n: int): int[];
-export function sharedArray(): int[];
-export function readElement(b: int[]): int;
-export function callCount(): int;
-export function badArrayReturn(): int[];
+export function echoArray(b: number[]): number[];
+export function nullableArray(b: number[] | null): number[] | null;
+export function makeArray(n: number): number[];
+export function sharedArray(): number[];
+export function readElement(b: number[]): number;
+export function callCount(): number;
+export function badArrayReturn(): number[];

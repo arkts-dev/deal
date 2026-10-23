@@ -6,8 +6,8 @@
 export function main(): null {
   let x: string | null = "a";
   if (x !== null) {
-    let x: int = 4;
-    let n: int = x;
+    let x: number = 4;
+    let n: number = x;
   }
   return null;
 }

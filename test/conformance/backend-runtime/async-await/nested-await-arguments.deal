@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: async, await, nested-await
 
-async function one(): int { return 1; }
-async function two(): int { return 2; }
-function add(a: int, b: int): int { return a + b; }
+async function one(): number { return 1; }
+async function two(): number { return 2; }
+function add(a: number, b: number): number { return a + b; }
 
-export async function test_nested_await_arguments(): int {
-  let result: int = add(await one(), await two());
+export async function test_nested_await_arguments(): number {
+  let result: number = add(await one(), await two());
   if (result !== 3) { throw { code: "TEST_FAIL", message: "nested await arguments failed" }; }
   return result;
 }

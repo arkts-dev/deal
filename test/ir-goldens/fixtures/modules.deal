@@ -3,11 +3,11 @@
 
 import * as Lib from "./lib/modules-helper";
 
-function compute(x: int): int {
+function compute(x: number): number {
     return x + 1;
 }
 
-export function run(): int {
-    let base: int = 10;
+export function run(): number {
+    let base: number = 10;
     return compute(base);
 }

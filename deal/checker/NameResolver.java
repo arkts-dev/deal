@@ -225,18 +225,6 @@ public final class NameResolver {
     // =======================================================================
 
     private void seedIntrinsics() {
-        // int intrinsic: (number) => int  (with intrinsic resolver for overloads)
-        Type.Func intFuncType = new Type.Func(
-            List.of(Type.Number.INSTANCE), Type.Int.INSTANCE);
-        root.define("int", new Symbol.IntrinsicSymbol("int",
-            intFuncType, IntrinsicResolvers.INT));
-
-        // number intrinsic: (int) => number  (with intrinsic resolver for overloads)
-        Type.Func numFuncType = new Type.Func(
-            List.of(Type.Int.INSTANCE), Type.Number.INSTANCE);
-        root.define("number", new Symbol.IntrinsicSymbol("number",
-            numFuncType, IntrinsicResolvers.NUMBER));
-
         // F7: The `has` intrinsic is handled by HasExpr in the type checker,
         // not via call-intrinsic path.  Store it with a boolean type for
         // symbol-table correctness; the intrinsic resolver is dead code
@@ -923,7 +911,6 @@ public final class NameResolver {
         return switch (name) {
             case "null"      -> Type.Null.INSTANCE;
             case "boolean"   -> Type.Boolean.INSTANCE;
-            case "int"       -> Type.Int.INSTANCE;
             case "number"    -> Type.Number.INSTANCE;
             case "string"    -> Type.String.INSTANCE;
             case "table"     -> Type.Table.INSTANCE;

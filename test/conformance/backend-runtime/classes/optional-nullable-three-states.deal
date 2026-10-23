@@ -4,7 +4,7 @@
 // @features: classes, optional, nullable, has
 
 class Tri {
-  field?: int | null;
+  field?: number | null;
 }
 
 export function test_optional_nullable_states(): null {
@@ -17,7 +17,7 @@ export function test_optional_nullable_states(): null {
 
   let value: Tri = { field: 5 };
   if (!has(value.field)) { throw { code: "TEST_FAIL", message: "value should be present" }; }
-  let field: int | null = value.field;
+  let field: number | null = value.field;
   if (field !== null) {
     if (field !== 5) { throw { code: "TEST_FAIL", message: "value mismatch" }; }
   } else {

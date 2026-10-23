@@ -4,7 +4,7 @@
 // @features: async, await, diagnostics
 
 export function main(): null {
-let await: int = 1;
+let await: number = 1;
 
 return null;
 }

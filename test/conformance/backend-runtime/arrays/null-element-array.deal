@@ -35,7 +35,7 @@ export function main(): null {
   let appended: null = xs[1];
   xs[0] = null;
   let rewritten: null = xs[0];
-  let seen: int = 0;
+  let seen: number = 0;
   for (let e: null of xs) {
     seen = seen + 1;
   }
@@ -49,12 +49,12 @@ export function main(): null {
   grid[0][0] = null;
   grid[0][grid[0].length] = null;
   expectTrue("nested append", grid[0].length === 2);
-  let rows: int = 0;
+  let rows: number = 0;
   for (let row: null[] of grid) {
     rows = rows + 1;
   }
   expectTrue("nested rows iterate once each", rows === 2);
-  let cells: int = 0;
+  let cells: number = 0;
   for (let cell: null of grid[1]) {
     cells = cells + 1;
   }

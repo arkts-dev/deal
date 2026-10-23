@@ -4,14 +4,14 @@
 // @features: arrays, classes, chained-access
 
 class Box {
-  value: int = 0;
+  value: number = 0;
 }
 
-function box(v: int): Box { return { value: v }; }
+function box(v: number): Box { return { value: v }; }
 
-export function test_array_index_then_field(): int {
+export function test_array_index_then_field(): number {
   let xs: Box[] = [box(4), box(9)];
-  let result: int = xs[1].value;
+  let result: number = xs[1].value;
   if (result !== 9) { throw { code: "TEST_FAIL", message: "arr[0].field lowering failed" }; }
   return result;
 }

@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: closures, for-loop, arrays
 
-export function test_loop_closure_sum(): int {
-  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];
-  { let v14Loop0: int = 0; while (v14Loop0 < 4) { let i: int = v14Loop0; {
-    fs[i] = function(): int { return i; };
+export function test_loop_closure_sum(): number {
+  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
+  { let v14Loop0: number = 0; while (v14Loop0 < 4) { let i: number = v14Loop0; {
+    fs[i] = function(): number { return i; };
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
-  let total: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();
+  let total: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();
   if (total !== 6) { throw { code: "TEST_FAIL", message: "loop closure binding failed" }; }
   return total;
 }

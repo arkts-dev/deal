@@ -12,12 +12,12 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function bump(x: int): int {
-  let y: int = x + 1;
+function bump(x: number): number {
+  let y: number = x + 1;
   return y;
 }
 
-function pick(): async (s: host.ServerConfig, g: (x: int) => int) => string {
+function pick(): async (s: host.ServerConfig, g: (x: number) => number) => string {
   return host.describeAsync;
 }
 
@@ -31,7 +31,7 @@ export async function test_async_class_parameter(): null {
   };
   let direct: string = await host.describeAsync(cfg, bump);
   check(direct === "SC|9090|/api|2:p1|1:dev|null|true:42", "the declared async host call preserves the class and function arguments");
-  let dyn: async (s: host.ServerConfig, g: (x: int) => int) => string = pick();
+  let dyn: async (s: host.ServerConfig, g: (x: number) => number) => string = pick();
   let runtime: string = await dyn(cfg, bump);
   check(runtime === direct, "the runtime-resolved async host call preserves the class and function arguments");
   return null;

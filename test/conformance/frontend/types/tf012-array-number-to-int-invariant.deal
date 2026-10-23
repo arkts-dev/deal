@@ -5,6 +5,6 @@
 
 export function main(): null {
   let numbers: number[] = [1.0];
-  let integers: int[] = numbers;
+  let integers: boolean[] = numbers;
   return null;
 }

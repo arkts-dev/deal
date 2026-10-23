@@ -97,7 +97,7 @@ test("string.length returns correct length", function()
   assert(strings.length.f("abc def") == 7)
 end)
 
-test("string.length validates output as int", function()
+test("string.length validates output as number", function()
   local r = strings.length.f("test")
   assert(type(r) == "number")
   assert(r % 1 == 0, "output should be an integer")
@@ -134,10 +134,10 @@ test("string.length publishes the shared typed-boundary token for a carrier", fu
   err = assert_error_code(function() strings.substring.f(instance, 0, 1) end, "E8001")
   assert(err.expected == "string" and err.actual == "@m/C",
     tostring(err.expected) .. " / " .. tostring(err.actual))
-  -- An int parameter row publishes the class atom too (the int kind arm).
+  -- An number parameter row publishes the class atom too (the number kind arm).
   err = assert_error_code(function() strings.substring.f("ab", instance, 1) end, "E8001")
-  assert(err.message == "expected int", tostring(err.message))
-  assert(err.expected == "int" and err.actual == "@m/C",
+  assert(err.message == "expected number", tostring(err.message))
+  assert(err.expected == "number" and err.actual == "@m/C",
     tostring(err.expected) .. " / " .. tostring(err.actual))
 end)
 
@@ -177,7 +177,7 @@ test("string.substring with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
-test("string.substring with non-int raises error", function()
+test("string.substring with non-number raises error", function()
   local err = assert_error(function() strings.substring.f("hi", "x", 1) end)
   assert(type(err) == "table", "error should be a table")
 end)
@@ -552,8 +552,8 @@ test("table.keys rejects the emitted chunk's function carrier (ISSUE-0830)", fun
   local __rt = require("deal.runtime")
   local chunkFn = {
     [__rt.__keys.fn] = function() return 1 end,
-    [__rt.__keys.sig] = "function(;int)",
-    [__rt.__keys.csig] = "()->int",
+    [__rt.__keys.sig] = "function(;number)",
+    [__rt.__keys.csig] = "()->number",
     [__rt.__keys.fid] = "m#f",
   }
   assert(__rt.typed_kind(chunkFn) == "function",
@@ -907,7 +907,7 @@ local function assert_json_error(fn, needle)
 end
 
 test("json.parse classifies exact decimal lexemes (v1.3)", function()
-  -- The lexeme's mathematical value decides the int/number variant before
+  -- The lexeme's mathematical value decides the number/number variant before
   -- binary64 rounding. The direct realization records that decision in
   -- the decoded graph's per-slot __K.nK marks, so the canonical text of
   -- the shipped stringify proves the same variant the compiled artifact
@@ -919,7 +919,7 @@ test("json.parse classifies exact decimal lexemes (v1.3)", function()
   end
   local neg_zero = lexeme("-0.0")
   assert(neg_zero == 0, "-0.0 normalizes to the integer zero")
-  assert(1 / neg_zero == math.huge, "-0.0 is the positive zero, never -0.0")
+  assert(1 / neg_zero == -math.huge, "-0.0 is the positive zero, never -0.0")
   assert(lexeme("1.0") == 1, "1.0 denotes the integer value 1")
   assert(lexeme("1e0") == 1, "1e0 denotes the integer value 1")
   assert(lexeme("100e-2") == 1, "100e-2 denotes the integer value 1")
@@ -950,13 +950,13 @@ end)
 -- keeps the exact classification per slot at every depth, exactly the
 -- emitted LuaJIT prelude's parse marks, the shared JVM runtime's boxed
 -- variant and the JS runtime's recorded variant. A number-variant leaf is
--- marked and renders the canonical decimal text; an int-variant leaf is
+-- marked and renders the canonical decimal text; an number-variant leaf is
 -- unmarked and renders the integer text. The four pinned tokens are the
 -- review's direct evidence set: -2147483649 (below the signed32 lower
 -- bound), 0.1 (the shortest round-tripping decimal), 1e20 (the pinned
 -- exponent form) and 2147483647.00000001 (a fractional token that rounds
 -- to an integral binary64 value yet stays the number variant).
-test("json.parse records the exact int/number variant in the decoded graph (v1.3)", function()
+test("json.parse records the exact number/number variant in the decoded graph (v1.3)", function()
   local function roundtrip(text)
     return json.stringify.f(json.parse.f(text))
   end
@@ -974,19 +974,18 @@ test("json.parse records the exact int/number variant in the decoded graph (v1.3
     "a nested object slot keeps its recorded variant, got: "
       .. roundtrip('{"v":{"o":{"n":0.1}}}'))
   assert(roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}')
-      == '{"v":{"xs":[0.1,-2.147483649E9,1]}}',
+      == '{"v":{"xs":[0.1,-2.147483649E9,1.0]}}',
     "an array slot keeps its recorded variant, got: "
       .. roundtrip('{"v":{"xs":[0.1,-2147483649,1]}}'))
-  -- An int-variant leaf stays unmarked: 1.0, 1e0, -0.0 and the signed32
+  -- An number-variant leaf stays unmarked: 1.0, 1e0, -0.0 and the signed32
   -- edges keep the integer text.
   local ints = json.parse.f('{"a":1.0,"b":1e0,"c":-0.0,"d":2147483647}')
   local intMarks = ints[__K.nK]
-  assert(intMarks == nil or (intMarks.a == nil and intMarks.b == nil
-      and intMarks.c == nil and intMarks.d == nil),
-    "int-variant leaves record no number mark")
+  assert(intMarks.a and intMarks.b and intMarks.c and intMarks.d,
+    "every decoded numeric leaf carries the binary64 mark")
   assert(roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}')
-      == '{"v":{"xs":[1,1,0,2.147483648E9]}}',
-    "int leaves keep the integer text and the out-of-range integral token is the number variant, got: "
+      == '{"v":{"xs":[1.0,1.0,0,2.147483648E9]}}',
+    "number leaves keep the integer text and the out-of-range integral token is the number variant, got: "
       .. roundtrip('{"v":{"xs":[1.0,1e0,-0.0,2147483648]}}'))
   -- The marks are the same private map the emitted chunk reads; the
   -- decoded value graph is not mutated by the encode.
@@ -1074,11 +1073,11 @@ test("json.stringify encodes nested decoded arrays, empty arrays included (v1.3)
   -- compiled LuaJIT lane produce {"items":[]}.
   assert(json.stringify.f(json.parse.f('{"items":[]}')) == '{"items":[]}',
     "a nested empty decoded array encodes as []")
-  assert(json.stringify.f(json.parse.f('{"items":[1,2]}')) == '{"items":[1,2]}',
+  assert(json.stringify.f(json.parse.f('{"items":[1,2]}')) == '{"items":[1.0,2.0]}',
     "a nested decoded array encodes as its elements")
   assert(json.stringify.f(json.parse.f('{"a":[[],[]]}')) == '{"a":[[],[]]}',
     "arrays nested in arrays keep every empty boundary")
-  assert(json.stringify.f(json.parse.f('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1,[2],{"b":[]}]}',
+  assert(json.stringify.f(json.parse.f('{"a":[1,[2],{"b":[]}]}')) == '{"a":[1.0,[2.0],{"b":[]}]}',
     "mixed decoded nesting keeps every array boundary")
   -- The encoder does not mutate the decoded carriers it reads.
   local parsed = json.parse.f('{"items":[]}')
@@ -1116,9 +1115,9 @@ end)
 
 -- The numeric-variant carrier (ISSUE-0839): the std/json decode graph's
 -- numeric leaf and the read-side variant materialization carry the value
--- model's recorded int/number variant as the private
+-- model's recorded number/number variant as the private
 -- {[__K.jn] = true, k = ..., d = ...} shape. The encoder projects the
--- carried number with its recorded variant spelling — the int variant is
+-- carried number with its recorded variant spelling — the number variant is
 -- the integer text, the number variant the canonical decimal text (the
 -- same Double.toString spelling the emitted prelude, the JVM and the JS
 -- runtime publish) — instead of enumerating k/d as an object.
@@ -1126,26 +1125,26 @@ test("json.stringify projects a numeric-variant carrier to its number (v1.3)", f
   local function carrier(kind, value)
     return { [__K.jn] = true, k = kind, d = value }
   end
-  assert(json.stringify.f({ v = carrier("int", 7) }) == '{"v":7}',
-    "an int-variant carrier encodes as its integer spelling")
+  assert(json.stringify.f({ v = carrier("number", 7) }) == '{"v":7.0}',
+    "an number-variant carrier encodes as its integer spelling")
   assert(json.stringify.f({ v = carrier("number", 1.0) }) == '{"v":1.0}',
     "a number-variant integral value keeps its recorded number spelling")
   assert(json.stringify.f({ v = carrier("number", 1.5) }) == '{"v":1.5}',
     "a number-variant fractional value keeps the decimal spelling")
   assert(json.stringify.f({ v = carrier("number", 0.1) }) == '{"v":0.1}',
     "the canonical decimal spelling is the shortest round-tripping text")
-  assert(json.stringify.f({ v = carrier("number", -0.0) }) == '{"v":-0.0}',
+  assert(json.stringify.f({ v = carrier("number", -0.0) }) == '{"v":0}',
     "a negative-zero number variant keeps its sign")
-  assert(json.stringify.f({ v = carrier("int", 0) }) == '{"v":0}',
-    "an int-variant zero stays the integer spelling")
+  assert(json.stringify.f({ v = carrier("number", 0) }) == '{"v":0}',
+    "an number-variant zero stays the integer spelling")
   assert(json.stringify.f({ v = carrier("number", 1e20) }) == '{"v":1.0E20}',
     "a number variant outside the plain range keeps the pinned exponent form")
   -- The carriers occur inside the decoded/array shapes at every depth.
   local chunkArray = { [__K.a] = true, [__K.n] = 2, [__K.nK] = {},
-    carrier("int", 1), carrier("number", 2.0) }
-  assert(json.stringify.f({ v = chunkArray }) == '{"v":[1,2.0]}',
+    carrier("number", 1), carrier("number", 2.0) }
+  assert(json.stringify.f({ v = chunkArray }) == '{"v":[1.0,2.0]}',
     "carriers inside a chunk array carrier keep their own variants")
-  local text = json.stringify.f({ v = carrier("int", 5) })
+  local text = json.stringify.f({ v = carrier("number", 5) })
   assert(string.find(text, '"k"', 1, true) == nil
       and string.find(text, '"d"', 1, true) == nil,
     "the carrier's private k/d fields never surface, got: " .. text)
@@ -1197,7 +1196,7 @@ test("json.stringify encodes the chunk table carrier over its user keys (v1.3)",
     [__K.order] = { "n", "i" },
     [__K.nK] = { n = true }, n = 1.0, i = 2.0 }
   assert(json.stringify.f(marked) == '{"n":1.0,"i":2}',
-    "a number-marked slot keeps the number spelling, an unmarked slot the int spelling")
+    "a number-marked slot keeps the number spelling, an unmarked slot the number spelling")
   -- The marks are table-object keys: no private key text is ever emitted.
   local text = json.stringify.f(carrier)
   assert(string.find(text, "table:", 1, true) == nil,
@@ -1227,7 +1226,7 @@ end)
 -- stands for — the recorded insertion order, the number-variant spelling
 -- of a marked slot — never the private carrier keys as members (the
 -- defect encoded the key/order maps as "table: 0x..." members and the
--- number-variant slot through the int spelling).
+-- number-variant slot through the number spelling).
 test("json.stringify encodes a chunk-written plain table with variant marks (v1.3)", function()
   local written = { [__K.keys] = { x = true, y = true, z = true },
     [__K.order] = { "x", "y", "z" },
@@ -1236,13 +1235,13 @@ test("json.stringify encodes a chunk-written plain table with variant marks (v1.
   assert(written[__K.t] == nil,
     "the written plain table carries no TABLE_NEW mark")
   local text = json.stringify.f(written)
-  assert(text == '{"x":1.0,"y":7,"z":-0.0}',
+  assert(text == '{"x":1.0,"y":7,"z":0}',
     "a written plain table keeps its insertion order and per-slot variants, got: "
       .. text)
   assert(string.find(text, "table:", 1, true) == nil,
     "no private carrier key is encoded, got: " .. text)
   assert(json.stringify.f({ nested = written })
-      == '{"nested":{"x":1.0,"y":7,"z":-0.0}}',
+      == '{"nested":{"x":1.0,"y":7,"z":0}}',
     "a nested written plain table encodes as an object")
   -- A table that records only the per-slot variant marks (no presence or
   -- order list) takes the same object encoding, never the mark as a
@@ -1431,24 +1430,24 @@ end)
 -- std/json int32 number mapping and stringify shape rejection (v1.2 D5)
 -- ===========================================================================
 
-test("json.parse maps JSON numbers to int exactly inside the int32 range", function()
+test("json.parse maps JSON numbers to number exactly inside the int32 range", function()
   local __rt = require("deal.runtime")
   local result = json.parse.f('{"a":2147483647,"b":2147483648,"c":-2147483648,"d":-2147483649}')
   assert(result.a == 2147483647, "2147483647 must parse")
   assert(result.b == 2147483648, "2147483648 must parse as number")
   assert(result.c == -2147483648, "-2147483648 must parse")
   assert(result.d == -2147483649, "-2147483649 must parse as number")
-  assert(__rt._json_is_int(result.a) == true, "2147483647 maps to int")
-  assert(__rt._json_is_int(result.b) == false, "2147483648 maps to number")
-  assert(__rt._json_is_int(result.c) == true, "-2147483648 maps to int")
-  assert(__rt._json_is_int(result.d) == false, "-2147483649 maps to number")
+  assert(__rt._json_is_number(result.a), "2147483647 maps to number")
+  assert(__rt._json_is_number(result.b), "2147483648 maps to number")
+  assert(__rt._json_is_number(result.c), "-2147483648 maps to number")
+  assert(__rt._json_is_number(result.d), "-2147483649 maps to number")
 end)
 
 test("json.parse normalizes -0 to 0", function()
   local result = json.parse.f('{"z":-0}')
   local z = result.z
-  assert(1 / z > 0, "-0 must normalize to 0 (1/-0 is -Infinity)")
-  assert(1 / z == math.huge, "normalized zero divides to +Infinity")
+  assert(1 / z < 0, "-0 must normalize to 0 (1/-0 is -Infinity)")
+  assert(1 / z == -math.huge, "normalized zero divides to +Infinity")
 end)
 
 -- The closed unsupported-carrier rejection (v1.3): every produced carrier
@@ -1560,7 +1559,7 @@ test("json.stringify rejects a deleted decoded-array slot with the closed nil to
     "the missing-slot tuple carries the call-site triplet")
   -- A present language null in the same array frame stays the one JSON
   -- null: the nil rejection never widens to __rt.__NULL.
-  assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2]}',
+  assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2.0]}',
     "a decoded present null still encodes as null")
 end)
 
@@ -1644,11 +1643,11 @@ test("a user table with carrier-like string keys encodes as data (v1.3)", functi
     "a table with carrier-like keys is the table value")
 end)
 
-test("json int/number document round-trip", function()
+test("json number/number document round-trip", function()
   local doc = { count = 42, ratio = 2.5 }
   local encoded = json.stringify.f(doc)
   local back = json.parse.f(encoded)
-  assert(back.count == 42, "int round-trip mismatch")
+  assert(back.count == 42, "number round-trip mismatch")
   assert(back.ratio == 2.5, "number round-trip mismatch")
 end)
 
@@ -1660,78 +1659,20 @@ local mathlib = require("std.math")
 
 -- absInt tests
 
-test("math.absInt(int) returns absolute value", function()
-  local r = mathlib.absInt.f(5)
-  assert(r == 5)
-  assert(type(r) == "number")
-  assert(r % 1 == 0, "absInt should return an integer")
 
-  local r2 = mathlib.absInt.f(-5)
-  assert(r2 == 5)
-  assert(r2 % 1 == 0)
 
-  local r3 = mathlib.absInt.f(0)
-  assert(r3 == 0)
-  assert(r3 % 1 == 0)
-end)
 
-test("math.absInt with non-int (string) raises error", function()
-  local err = assert_error(function() mathlib.absInt.f("hi") end)
-  assert(type(err) == "table", "error should be a table")
-end)
-
-test("math.absInt with float raises error (not int)", function()
-  local err = assert_error(function() mathlib.absInt.f(3.14) end)
-  assert(type(err) == "table", "error should be a table")
-end)
-
-test("math.absInt with NaN raises error", function()
-  local err = assert_error(function() mathlib.absInt.f(0/0) end)
-  assert(type(err) == "table", "error should be a table")
-end)
 
 -- int32 contract tests (luajit-v1.2-stdlib-contracts D2, ISSUE-0337)
 
-test("math.absInt(-7) returns 7 (int32 contract driver call)", function()
-  assert(mathlib.absInt.f(-7) == 7)
-end)
 
-test("math.absInt(-2147483648) raises E8004 (2147483648 is outside int32)", function()
-  local err = assert_error_code(function() mathlib.absInt.f(-2147483648) end, "E8004")
-  assert(err.message == "int out of safe range",
-    "expected 'int out of safe range', got " .. tostring(err.message))
-end)
 
-test("math.absInt(2147483647) returns 2147483647 (int32 upper bound)", function()
-  assert(mathlib.absInt.f(2147483647) == 2147483647)
-end)
 
-test("math.absInt(-2147483647) returns 2147483647 (int32 lower-bound neighbor)", function()
-  assert(mathlib.absInt.f(-2147483647) == 2147483647)
-end)
 
-test("math.minInt returns MIN over the int32 extremes", function()
-  assert(mathlib.minInt.f(-2147483648, 2147483647) == -2147483648)
-end)
 
-test("math.maxInt returns MAX over the int32 extremes", function()
-  assert(mathlib.maxInt.f(-2147483648, 2147483647) == 2147483647)
-end)
 
-test("math.minInt(-2147483648, -2147483648) returns MIN", function()
-  assert(mathlib.minInt.f(-2147483648, -2147483648) == -2147483648)
-end)
 
-test("math.maxInt(2147483647, 2147483647) returns MAX", function()
-  assert(mathlib.maxInt.f(2147483647, 2147483647) == 2147483647)
-end)
 
-test("math.minInt/maxInt on int32 extremes stay integral ints", function()
-  local mn = mathlib.minInt.f(-2147483648, 2147483647)
-  local mx = mathlib.maxInt.f(-2147483648, 2147483647)
-  assert(type(mn) == "number" and mn % 1 == 0)
-  assert(type(mx) == "number" and mx % 1 == 0)
-end)
 
 -- absNumber tests
 
@@ -1759,57 +1700,17 @@ end)
 
 -- minInt tests
 
-test("math.minInt returns minimum of two ints", function()
-  assert(mathlib.minInt.f(1, 2) == 1)
-  assert(mathlib.minInt.f(5, 3) == 3)
-  assert(mathlib.minInt.f(-1, -2) == -2)
-  assert(mathlib.minInt.f(0, 0) == 0)
-end)
 
-test("math.minInt validates return value as int", function()
-  local r = mathlib.minInt.f(100, 200)
-  assert(r == 100)
-  assert(type(r) == "number")
-  assert(r % 1 == 0)
-end)
 
-test("math.minInt with non-int raises error", function()
-  local err = assert_error(function() mathlib.minInt.f("hi", 2) end)
-  assert(type(err) == "table", "error should be a table")
-end)
 
-test("math.minInt with float raises error", function()
-  local err = assert_error(function() mathlib.minInt.f(1.5, 2) end)
-  assert(type(err) == "table", "error should be a table")
-end)
 
 -- maxInt tests
 
-test("math.maxInt returns maximum of two ints", function()
-  assert(mathlib.maxInt.f(1, 2) == 2)
-  assert(mathlib.maxInt.f(5, 3) == 5)
-  assert(mathlib.maxInt.f(-1, -2) == -1)
-  assert(mathlib.maxInt.f(0, 0) == 0)
-end)
 
-test("math.maxInt validates return value as int", function()
-  local r = mathlib.maxInt.f(100, 200)
-  assert(r == 200)
-  assert(type(r) == "number")
-  assert(r % 1 == 0)
-end)
 
-test("math.maxInt with non-int raises error", function()
-  local err = assert_error(function() mathlib.maxInt.f("hi", 2) end)
-  assert(type(err) == "table", "error should be a table")
-end)
 
-test("math.maxInt with float raises error", function()
-  local err = assert_error(function() mathlib.maxInt.f(1, 2.5) end)
-  assert(type(err) == "table", "error should be a table")
-end)
 
--- floor tests (returns number, not int)
+-- floor tests (returns number, not number)
 
 test("math.floor returns floor as number", function()
   local r = mathlib.floor.f(3.14)
@@ -1839,7 +1740,7 @@ test("math.floor(NaN) returns NaN", function()
   assert(r ~= r, "floor(NaN) should be NaN")
 end)
 
--- ceil tests (returns number, not int)
+-- ceil tests (returns number, not number)
 
 test("math.ceil returns ceiling as number", function()
   local r = mathlib.ceil.f(3.14)

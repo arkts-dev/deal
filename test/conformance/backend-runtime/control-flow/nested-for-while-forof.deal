@@ -3,13 +3,13 @@
 // @expected: runtime-ok
 // @features: loops, for-of, arrays
 
-export function test_nested_loop_mix(): int {
-  let values: int[] = [1, 2, 3];
-  let total: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {
-    let j: int = 0;
+export function test_nested_loop_mix(): number {
+  let values: number[] = [1, 2, 3];
+  let total: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {
+    let j: number = 0;
     while (j < 2) {
-      for (let v: int of values) {
+      for (let v: number of values) {
         total = total + v;
       }
       j = j + 1;

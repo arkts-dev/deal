@@ -19,9 +19,6 @@ import java.util.Set;
  *       unpaired-surrogate sub-message);</li>
  *   <li>{@code E8003} — {@code array element {i} type mismatch} at the
  *       first failing index;</li>
- *   <li>{@code E8004} — {@code int out of safe range} (finite integral
- *       outside the signed-32 {@code int} domain
- *       {@code [-2147483648, 2147483647]});</li>
  *   <li>{@code E8010} — {@code function signature mismatch: expected
  *       {D}, got {actual}} on any carried-descriptor byte delta.</li>
  * </ul>
@@ -36,7 +33,7 @@ public record RuntimeCheckFailure(String code, String message, RuntimeSourceLoca
      * The pinned failure codes of the normative check table — the only
      * codes a {@code RuntimeCheckFailure} may carry.
      */
-    public static final Set<String> PINNED_CODES = Set.of("E8001", "E8003", "E8004", "E8010");
+    public static final Set<String> PINNED_CODES = Set.of("E8001", "E8003", "E8010");
 
     public RuntimeCheckFailure {
         if (code == null || !PINNED_CODES.contains(code)) {

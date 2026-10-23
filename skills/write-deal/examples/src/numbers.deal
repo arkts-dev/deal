@@ -2,11 +2,11 @@ import * as check from "./check";
 import * as math from "std/math";
 import * as strings from "std/string";
 
-function fraction(done: int, total: int): number {
+function fraction(done: number, total: number): number {
   if (total === 0) {
     throw { code: "ZERO_TOTAL", message: "total must be nonzero" };
   }
-  return number(done) / number(total);
+  return done / total;
 }
 
 function denominatorRejected(): boolean {
@@ -18,8 +18,8 @@ function denominatorRejected(): boolean {
   return false;
 }
 
-function decimal(value: int): string {
-  if (value < 0) {
+function decimal(value: number): string {
+  if (value < 0 || value > 9007199254740991 || math.floor(value) !== value) {
     throw { code: "NEGATIVE_VALUE", message: "expected nonnegative integer" };
   }
   if (value === 0) {
@@ -27,19 +27,20 @@ function decimal(value: int): string {
   }
   let digits: string = "0123456789";
   let result: string = "";
-  let remaining: int = value;
+  let remaining: number = value;
   while (remaining > 0) {
-    let digit: int = remaining - (remaining / 10) * 10;
+    let quotient: number = math.floor(remaining / 10);
+    let digit: number = remaining - quotient * 10;
     result = strings.substring(digits, digit, digit + 1) + result;
-    remaining = remaining / 10;
+    remaining = quotient;
   }
   return result;
 }
 
 export function exercise(): null {
-  check.require(5 / 2 === 2, "integer division");
-  check.require(fraction(1, 4) === 0.25, "explicit numeric conversion");
-  check.require(int(math.floor(3.9)) === 3, "deliberate rounding");
+  check.require(5 / 2 === 2.5, "binary64 division");
+  check.require(fraction(1, 4) === 0.25, "numeric fraction");
+  check.require(math.floor(3.9) === 3, "deliberate rounding");
   check.require(denominatorRejected(), "zero denominator");
   check.require(decimal(0) === "0" && decimal(2048) === "2048", "explicit integer formatting");
   return null;

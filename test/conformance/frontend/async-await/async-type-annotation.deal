@@ -3,9 +3,9 @@
 // @expected: compile-ok
 // @features: async, types
 
-async function g(id: int): string { return "x"; }
+async function g(id: number): string { return "x"; }
 
 export function main(): null {
-  let f: async (id: int) => string = g;
+  let f: async (id: number) => string = g;
   return null;
 }

@@ -3,8 +3,8 @@
 // @expected: compile-error E1055
 // @features: parser, arguments, trailing-comma
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 export function main(): null {
-  let n: int = one(1,);
+  let n: number = one(1,);
   return null;
 }

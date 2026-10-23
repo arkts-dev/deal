@@ -6,7 +6,7 @@
 import * as A from "./type_identity_model";
 import * as B from "././type_identity_model";
 
-export function check(): int {
+export function check(): number {
   let a: A.Item = A.make(7);
   let b: B.Item = a;
   return B.read(b);

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async-await, type-system
 
-async function intFn(): int {
+async function intFn(): number {
   return 42;
 }
 
@@ -11,8 +11,8 @@ async function stringFn(): string {
   return "hello";
 }
 
-export async function test_int_propagation(): int {
-  let x: int = await intFn();
+export async function test_int_propagation(): number {
+  let x: number = await intFn();
   if (x !== 42) {
     throw { code: "TEST_FAIL", message: "awaited int type propagation mismatch: expected 42" };
   }

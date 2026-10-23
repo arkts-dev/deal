@@ -22,7 +22,6 @@ import deal.semantic.SemanticRequirementManifest;
 import deal.semantic.SemanticRuntimeModel;
 import deal.semantic.SharedStdlibSemantics;
 import deal.semantic.ir.ExternalModuleInterface;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
 import deal.semantic.ir.ReleaseState;
@@ -80,7 +79,7 @@ public class FailClosedGuardRetargetingTest {
      * recorded {@code EXTERNAL_ENTRY}.
      */
     private static final String CALLEE_LIB_SOURCE = """
-        export function add(a: int, b: int): int {
+        export function add(a: number, b: number): number {
           return a + b;
         }
         """;
@@ -89,7 +88,7 @@ public class FailClosedGuardRetargetingTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let x: int = lib.add(1, 2);
+          let x: number = lib.add(1, 2);
           return null;
         }
         """;
@@ -97,8 +96,8 @@ public class FailClosedGuardRetargetingTest {
     /** The imported-class owner of the RETAINED_ABI_DEFERRED seed. */
     private static final String UTIL_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 1;
+          x: number = 0;
+          y: number = 1;
         }
         """;
 
@@ -120,7 +119,7 @@ public class FailClosedGuardRetargetingTest {
 
     /** The extern-C provider's host declaration. */
     private static final String HOST_PROVIDER_DECLARATION = """
-        export function ping(): int;
+        export function ping(): number;
         """;
 
 
@@ -228,7 +227,6 @@ public class FailClosedGuardRetargetingTest {
             index, manifests, fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 project.modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
     }
 
@@ -429,15 +427,15 @@ public class FailClosedGuardRetargetingTest {
         import * as console from "std/console";
 
         export function main(): null {
-          let calls: int = 0;
-          function down(n: int): int {
+          let calls: number = 0;
+          function down(n: number): number {
             calls = calls + 1;
             if (n === 0) {
               return 0;
             }
             return down(n - 1);
           }
-          let r: int = down(4);
+          let r: number = down(4);
           if (r === 0 && calls === 5) {
             console.log("PROBE|RESIDUAL|ok");
           } else {
@@ -447,9 +445,9 @@ public class FailClosedGuardRetargetingTest {
         }
         """;
 
-    private static final String CAPTURE_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let fs: (() => int)[] = [function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }, function(): int { return -1; }];\n  { let v14Loop0: int = 0; while (v14Loop0 < 4) { let i: int = v14Loop0; {\n    fs[i] = function(): int { return i; };\n  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let total: int = fs[0]() + fs[1]() + fs[2]() + fs[3]();\n  if (total === 6) {\n    console.log(\"PROBE|CAPTURE|ok\");\n  } else {\n    console.log(\"PROBE|CAPTURE|bad\");\n  }\n  return null;\n}\n";
+    private static final String CAPTURE_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];\n  { let v14Loop0: number = 0; while (v14Loop0 < 4) { let i: number = v14Loop0; {\n    fs[i] = function(): number { return i; };\n  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let total: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();\n  if (total === 6) {\n    console.log(\"PROBE|CAPTURE|ok\");\n  } else {\n    console.log(\"PROBE|CAPTURE|bad\");\n  }\n  return null;\n}\n";
 
-    private static final String TRANSFER_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let vals: int[] = [1, 2, 3, 4, 5];\n  let sum: int = 0;\n  for (let x: int of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: int = 0;\n  { let v14Loop1: int = 0; while (v14Loop1 < 5) { let i: int = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    console.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    console.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
+    private static final String TRANSFER_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let vals: number[] = [1, 2, 3, 4, 5];\n  let sum: number = 0;\n  for (let x: number of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 5) { let i: number = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    console.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    console.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
 
     private static void testRealizedConstructProbes() throws Exception {
         System.out.println("-- the realized construct families compile through "
@@ -459,10 +457,10 @@ public class FailClosedGuardRetargetingTest {
         probe("array value semantics", """
             import * as console from "std/console";
             export function main(): null {
-              let b: int[] = [0, 0, 0, 0];
+              let b: number[] = [0, 0, 0, 0];
               b[0] = 7;
               b[3] = 250;
-              let n: int = b[0] + b[3] + b.length;
+              let n: number = b[0] + b[3] + b.length;
               if (n === 261) { console.log("PROBE|ARRAY|ok"); }
               else { console.log("PROBE|ARRAY|bad"); }
               return null;
@@ -471,7 +469,7 @@ public class FailClosedGuardRetargetingTest {
         probe("same-module @jsonable public CLI", """
             import * as console from "std/console";
             // @jsonable
-            export class Person { name: string = ""; score: int = 0; }
+            export class Person { name: string = ""; score: number = 0; }
             export function main(): null {
               let p: Person = { name: "Carol", score: 7 };
               let s: string = Person$toJson(p);
@@ -487,7 +485,7 @@ public class FailClosedGuardRetargetingTest {
         probeSources("cross-module @jsonable public CLI", Map.of(
             "src/lib.deal", """
                 // @jsonable
-                export class Widget { label: string = ""; count: int = 0; }
+                export class Widget { label: string = ""; count: number = 0; }
                 """,
             "src/main.deal", """
                 import * as console from "std/console";
@@ -651,7 +649,6 @@ public class FailClosedGuardRetargetingTest {
             productionInvocation(), built.input(), built.index(),
             manifests.manifests(), surface, Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(lowered.project() != null,
             label + ": the oracle closure lowers with zero diagnostics: "

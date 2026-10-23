@@ -3,7 +3,7 @@
 // @expected: compile-error E1037
 // @features: parser, operators, diagnostics, arithmetic
 
-export function test_int_pow_negative(): int {
+export function test_int_pow_negative(): number {
   return 2 ** -1;
 }
 

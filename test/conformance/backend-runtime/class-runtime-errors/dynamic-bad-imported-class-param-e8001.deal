@@ -6,7 +6,7 @@
 import * as json from "std/json";
 import * as Lib from "./imported_class_lib";
 
-export function test_dynamic_bad_imported_class_param(): int {
+export function test_dynamic_bad_imported_class_param(): number {
   let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
   return Lib.needBox(holder.item);
 }

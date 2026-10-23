@@ -75,7 +75,7 @@ public final class Types {
         return switch (a) {
             case Type.Null ignored -> true;
             case Type.Boolean ignored -> true;
-            case Type.Int ignored -> true;
+
             case Type.Number ignored -> true;
             case Type.String ignored -> true;
             case Type.Table ignored -> true;

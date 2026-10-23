@@ -24,7 +24,7 @@ end
 -- Returns the number of Unicode scalar values in the string (v1.3).
 -- The trailing span triplet carries the call site (ISSUE-0598), so the
 -- dynamic-nonstring E8001 reports it byte-exact.
-stringlib.length = __rt.function_("(string)->int", function(s, file, line, column)
+stringlib.length = __rt.function_("(string)->number", function(s, file, line, column)
   __rt.check_string(s, file, line, column)
   local count = 0
   local cursor = 0
@@ -34,7 +34,7 @@ stringlib.length = __rt.function_("(string)->int", function(s, file, line, colum
     count = count + 1
     cursor = next_cursor
   end
-  return __rt.check_int(count, file, line, column)
+  return __rt.check_number(count, file, line, column)
 end)
 
 --- substring(s: string, start: int, end: int): string
@@ -42,10 +42,16 @@ end)
 -- with positions measured in Unicode scalar values (v1.3).
 -- start > end, start beyond the string, or end <= 0 produce the empty
 -- string; out-of-range end clamps to the string end.
-stringlib.substring = __rt.function_("(string,int,int)->string", function(s, start, end_, file, line, column)
+stringlib.substring = __rt.function_("(string,number,number)->string", function(s, start, end_, file, line, column)
   __rt.check_string(s, file, line, column)
-  __rt.check_int(start, file, line, column)
-  __rt.check_int(end_, file, line, column)
+  __rt.check_number(start, file, line, column)
+  __rt.check_number(end_, file, line, column)
+  if start ~= start or start == math.huge or start == -math.huge
+      or start ~= math.floor(start) or end_ ~= end_
+      or end_ == math.huge or end_ == -math.huge or end_ ~= math.floor(end_) then
+    error(__rt._armErr("SUBSTRING_BOUNDS", {}, "E8001",
+      "substring bounds must be finite integers", file, line, column), 0)
+  end
   -- Walk scalar values to translate scalar positions to byte offsets.
   local cursor = 0
   local pos = 0

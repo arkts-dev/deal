@@ -4,7 +4,7 @@
 // @features: parser, function-expression, parenthesized-expression, call, v1.2
 
 export function test_parenthesized_function_expression_call(): null {
-  let value: int = (function(input: int): int { return input + 1; })(4);
+  let value: number = (function(input: number): number { return input + 1; })(4);
   if (value !== 5) {
     throw { code: "TEST_FAIL", message: "parenthesized function expression call parsed incorrectly" };
   }

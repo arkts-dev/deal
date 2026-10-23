@@ -31,7 +31,6 @@ public enum SemanticOpKind {
     CALL,
     EXTERNAL_ENTRY,
     CALLBACK_INVOKE,
-    INTRINSIC_CALL,
     STDLIB_CALL,
     ASYNC_START,
     AWAIT,
@@ -96,7 +95,7 @@ public enum SemanticOpKind {
             case CALL -> KindPayload.CallPayload.class;
             case EXTERNAL_ENTRY -> KindPayload.ExternalEntryPayload.class;
             case CALLBACK_INVOKE -> KindPayload.CallbackInvokePayload.class;
-            case INTRINSIC_CALL -> KindPayload.IntrinsicCallPayload.class;
+
             case STDLIB_CALL -> KindPayload.StdlibCallPayload.class;
             case ASYNC_START -> KindPayload.AsyncStartPayload.class;
             case AWAIT -> KindPayload.AwaitPayload.class;

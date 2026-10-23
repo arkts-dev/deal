@@ -1,10 +1,14 @@
-// @spec: Runtime execution model — Integer arithmetic overflow
-// @description: int multiplication leaving the signed 32-bit range raises E8004 (v1.2: int is [-2147483648, 2147483647])
-// @expected: runtime-error E8004
+// @spec: Type system
+// @description: Binary64 arithmetic admits and preserves the computed value without signed32 refinement
+// @expected: runtime-ok
 // @features: runtime, int, overflow, v1.2
 
-export function test_int_mul_overflow(): int {
-  return 65536 * 65536;
+export function test_int_mul_overflow(): number {
+  let result: number = 65536 * 65536;
+  if (result !== (4294967296)) {
+    throw { code: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
+  }
+  return result;
 }
 
 export function main(): null {

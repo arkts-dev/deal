@@ -3,8 +3,8 @@
 // @expected: runtime-error E8002
 // @features: arrays, bounds, runtime
 
-export function test_array_empty_index_read(): int {
-  let xs: int[] = [];
+export function test_array_empty_index_read(): number {
+  let xs: number[] = [];
   return xs[0];
 }
 

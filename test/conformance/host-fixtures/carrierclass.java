@@ -13,14 +13,14 @@ import java.util.concurrent.CompletableFuture;
 
 final class HostCarrierclass {
   public static final java.util.Map<String, Object> Config_defaults =
-      java.util.Map.of("value", Integer.valueOf(0));
+      java.util.Map.of("value", Double.valueOf(0));
 
   public static final java.util.Map<String, Object> Holder_defaults =
       java.util.Map.of("label", "", "primary", new Object(),
           "optional", new Object(), "maybe", new Object(),
           "items", new Object());
 
-  static $DealRt.$Host$host$scarrierclass$Config config(int value) {
+  static $DealRt.$Host$host$scarrierclass$Config config(double value) {
     return new $DealRt.$Host$host$scarrierclass$Config(value);
   }
 
@@ -34,7 +34,7 @@ final class HostCarrierclass {
 
   public static Object describeAsync(
       $DealRt.$Host$host$scarrierclass$Config c) {
-    return CompletableFuture.completedFuture(Long.valueOf((long) c.value));
+    return CompletableFuture.completedFuture(Double.valueOf(c.value));
   }
 
   public static Object makeAsync() {
@@ -57,7 +57,7 @@ final class HostCarrierclass {
 
   public static Object describeOrNull(
       $DealRt.$Host$host$scarrierclass$Config c) {
-    return Integer.valueOf(c == null ? -1 : c.value);
+    return Double.valueOf(c == null ? -1 : c.value);
   }
 
   public static Object maybeMakeAsync(boolean flag) {
@@ -74,18 +74,18 @@ final class HostCarrierclass {
   public static Object consume(
       $DealRt.Fn1_$$a$$external$shost$icarrierclass$sConfig_R_$$a$$external$shost$icarrierclass$sConfig g) {
     if (g == null) {
-      return Integer.valueOf(-2);
+      return Double.valueOf(-2);
     }
     try {
       $DealRt.$Host$host$scarrierclass$Config result = g.invoke(config(42));
-      return Integer.valueOf(result == null ? -3 : result.value);
+      return Double.valueOf(result == null ? -3 : result.value);
     } catch (RuntimeException failure) {
-      return Integer.valueOf(-4);
+      return Double.valueOf(-4);
     }
   }
 
   public static Object makeWrongKind() {
-    return Integer.valueOf(42);
+    return Double.valueOf(42);
   }
 
   public static Object makeNullClass() {

@@ -28,17 +28,14 @@ public interface RuntimeValueModel {
     String stringPayload(Object value);
 
     /**
-     * Whether {@code value} is a number scalar carrier (the
-     * {@code number} row's backend scalar predicate and the
-     * {@code int} row's carrier — see the type-level javadoc).
+     * Whether {@code value} is a binary64 number scalar carrier.
      */
     boolean isNumber(Object value);
 
     /**
      * The number scalar payload of a number carrier — called only when
-     * {@link #isNumber(Object)} is true.  This is also the int row's
-     * carrier payload: the matcher applies the finite/integral/-0
-     * normalization/signed-32 range gates to it, never the seam.
+     * {@link #isNumber(Object)} is true. Preserve negative zero, NaN and
+     * infinities; integral-position checks belong to their consumers.
      */
     double numberPayload(Object value);
 

@@ -5,10 +5,10 @@
 
 import * as Lib from "./closure_batch2_lib";
 
-export function test_closure_returned_from_module(): int {
-  let c: () => int = Lib.makeCounter(10);
-  let a: int = c();
-  let b: int = c();
+export function test_closure_returned_from_module(): number {
+  let c: () => number = Lib.makeCounter(10);
+  let a: number = c();
+  let b: number = c();
   if (a !== 11 || b !== 12) { throw { code: "TEST_FAIL", message: "module closure state failed" }; }
   return b;
 }

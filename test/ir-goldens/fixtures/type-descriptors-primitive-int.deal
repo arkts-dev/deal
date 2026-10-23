@@ -1,4 +1,4 @@
-// IR golden fixture: type-descriptors-primitive-int
-// Migrated IR-containment pin for legacy case 'primitive-int' (ISSUE-0358).
+// IR golden fixture: type-descriptors-primitive-number
+// Migrated IR-containment pin for legacy case 'primitive-number' (ISSUE-0358).
 
-function f(): null { let x: int = 42; return; }
+function f(): null { let x: number = 42; return; }

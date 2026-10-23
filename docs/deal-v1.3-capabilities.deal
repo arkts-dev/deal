@@ -12,7 +12,7 @@ import * as time from "std/time";
 
 class Address {
   city: string = "";
-  zip: int = 0;
+  zip: number = 0;
 }
 
 class Profile {
@@ -41,24 +41,24 @@ function assertBoolean(value: boolean, message: string): null {
   return null;
 }
 
-function sumAll(values: int[]): int {
-  let total: int = 0;
-  for (let value: int of values) {
+function sumAll(values: number[]): number {
+  let total: number = 0;
+  for (let value: number of values) {
     total = total + value;
   }
   return total;
 }
 
-function safeDivide(a: int, b: int): int | null {
+function safeDivide(a: number, b: number): number | null {
   if (b === 0) {
     return null;
   }
   return a / b;
 }
 
-function makeCounter(start: int): () => int {
-  let current: int = start;
-  return function(): int {
+function makeCounter(start: number): () => number {
+  let current: number = start;
+  return function(): number {
     current = current + 1;
     return current;
   };
@@ -79,12 +79,12 @@ function describeProfile(p: Profile): string {
   return `${p.name} from ${p.address.city}`;
 }
 
-function useArrays(): int {
-  let values: int[] = [1, 2, 3];
+function useArrays(): number {
+  let values: number[] = [1, 2, 3];
   values[values.length] = 4;
   values[0] = 10;
-  let total: int = 0;
-  for (let value: int of values) {
+  let total: number = 0;
+  for (let value: number of values) {
     total = total + value;
   }
   return total;
@@ -107,11 +107,11 @@ function useStrings(): string {
   return replaced;
 }
 
-function useTables(): int {
+function useTables(): number {
   let data: table = { name: "Ada", score: 7 };
   data.extra = true;
   data.note = null;
-  let score: int = data.score;
+  let score: number = data.score;
   let keys: string[] = tables.keys(data);
   delete data.note;
   return score + keys.length;
@@ -120,7 +120,7 @@ function useTables(): int {
 function useJson(): string {
   let raw: table = json.parse("{\"name\":\"Ada\",\"score\":7}");
   let name: string = raw.name;
-  let score: int = raw.score;
+  let score: number = raw.score;
   if (name !== "Ada") {
     fail("json name mismatch");
   }
@@ -130,14 +130,14 @@ function useJson(): string {
   return json.stringify(raw);
 }
 
-function useMath(): int {
+function useMath(): number {
   let floor: number = math.floor(3.9);
   let ceil: number = math.ceil(3.1);
   let root: number = math.sqrt(9.0);
-  let abs: int = math.absInt(-5);
-  let min: int = math.minInt(8, 2);
-  let max: int = math.maxInt(8, 2);
-  return int(floor) + int(ceil) + int(root) + abs + min + max;
+  let abs: number = math.absNumber(-5);
+  let min: number = 2;
+  let max: number = 8;
+  return floor + ceil + root + abs + min + max;
 }
 
 function useClasses(): string {
@@ -151,55 +151,55 @@ function useClasses(): string {
   assertBoolean(has(p.nick), "nick should be present");
   let q: Profile = { name: "Grace", address: { city: "Arlington", zip: 2000 } };
   assertBoolean(!has(q.nick), "nick should be missing");
-  let score: int = p.meta.score;
+  let score: number = p.meta.score;
   assertBoolean(score === 99, "table field in class mismatch");
   return `${describeProfile(p)} / ${describeProfile(q)}`;
 }
 
-function useFunctions(): int {
-  let plus: (a: int, b: int) => int = function(a: int, b: int): int {
+function useFunctions(): number {
+  let plus: (a: number, b: number) => number = function(a: number, b: number): number {
     return a + b;
   };
-  let oneArg = function(x: int): int {
+  let oneArg = function(x: number): number {
     return x;
   };
-  let widened: (x: int, y: int) => int = oneArg;
-  let counter: () => int = makeCounter(40);
+  let widened: (x: number, y: number) => number = oneArg;
+  let counter: () => number = makeCounter(40);
   return plus(2, 3) + widened(9, 99) + counter() + counter();
 }
 
 function useErrors(): string {
   try {
-    let values: int[] = [1, 2, 3];
-    let missing: int = values[99];
+    let values: number[] = [1, 2, 3];
+    let missing: number = values[99];
     return "unexpected array read success";
   } catch (e) {
     return e.code;
   }
 }
 
-async function delayedDouble(x: int): int {
+async function delayedDouble(x: number): number {
   return x * 2;
 }
 
-async function delayedAdd(a: int, b: int): int {
-  let left: int = await delayedDouble(a);
-  let right: int = await delayedDouble(b);
+async function delayedAdd(a: number, b: number): number {
+  let left: number = await delayedDouble(a);
+  let right: number = await delayedDouble(b);
   return left + right;
 }
 
 export function demo_summary(): string {
-  let arrays: int = useArrays();
-  let tableScore: int = useTables();
-  let mathScore: int = useMath();
-  let functionScore: int = useFunctions();
+  let arrays: number = useArrays();
+  let tableScore: number = useTables();
+  let mathScore: number = useMath();
+  let functionScore: number = useFunctions();
   let selected: string = chooseName(null);
   let stringsResult: string = useStrings();
   let classesResult: string = useClasses();
   let jsonResult: string = useJson();
   let errorCode: string = useErrors();
-  let quotient: int | null = safeDivide(10, 2);
-  let zeroDivision: int | null = safeDivide(10, 0);
+  let quotient: number | null = safeDivide(10, 2);
+  let zeroDivision: number | null = safeDivide(10, 0);
   if (quotient !== null) {
     assertBoolean(quotient === 5, "safe divide quotient mismatch");
   } else {
@@ -214,7 +214,7 @@ export function demo_summary(): string {
   return `${selected}|${stringsResult}|${classesResult}|${jsonResult}|${errorCode}`;
 }
 
-export async function demo_async(): int {
+export async function demo_async(): number {
   return await delayedAdd(10, 20);
 }
 
@@ -230,7 +230,7 @@ export function main(): null {
 export function demo_runtime_checks(): null {
   let point: Point = { x: 3.0, y: 4.0 };
   assertBoolean(point.x === 3.0, "point x mismatch");
-  assertBoolean(number(5) === 5.0, "number conversion mismatch");
-  assertBoolean(int(5.0) === 5, "int conversion mismatch");
+  assertBoolean(5 === 5.0, "binary64 arithmetic mismatch");
+  assertBoolean(5 / 2 === 2.5, "binary64 arithmetic mismatch");
   return null;
 }

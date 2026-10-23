@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, intrinsics
 
-function apply(f: (x: int) => number, x: int): number {
+function apply(f: (x: number) => number, x: number): number {
   return f(x);
 }
 
@@ -18,3 +18,6 @@ export function test_intrinsic_as_callback(): number {
 export function main(): null {
   return null;
 }
+
+function int(value: number): number { return value; }
+function number(value: number): number { return value; }

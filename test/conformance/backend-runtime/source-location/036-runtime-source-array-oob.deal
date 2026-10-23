@@ -4,7 +4,7 @@
 // @features: diagnostics, runtime-location, arrays
 
 export function main(): null {
-  let values: int[] = [1];
-  let value: int = values[2];
+  let values: number[] = [1];
+  let value: number = values[2];
   return null;
 }

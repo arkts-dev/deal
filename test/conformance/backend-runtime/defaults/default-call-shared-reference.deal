@@ -6,30 +6,30 @@
 import * as c from "std/console";
 import * as state from "host/retained_default";
 
-function shared(xs: int[]): () => int[] {
-  return function(): int[] {return xs;};
+function shared(xs: number[]): () => number[] {
+  return function(): number[] {return xs;};
 }
 
 class Box {
-  first: int[] = state.provideFirst();
-  second: int[] = state.provideSecond();
+  first: number[] = state.provideFirst();
+  second: number[] = state.provideSecond();
 }
 
-function failProvide(): int[] {
+function failProvide(): number[] {
   state.bump();
   throw { code: "DEFAULT_FAIL", message: "default provider failure" };
 }
 
 class FailingBox {
-  xs: int[] = failProvide();
+  xs: number[] = failProvide();
 }
 
 export function main(): null {
   if (state.calls() !== 0 || state.order() !== "") {
     throw { code: "REGISTRATION_DEFAULT", message: "a default executed at class registration" };
   }
-  let original: int[] = state.retained();
-  let provider: () => int[] = shared(original);
+  let original: number[] = state.retained();
+  let provider: () => number[] = shared(original);
   let a: Box = {};
   let b: Box = {};
   if (state.calls() !== 4 || state.order() !== "ABAB") {
@@ -41,7 +41,7 @@ export function main(): null {
   if (provider() !== original) {
     throw { code: "CLOSURE_REFERENCE", message: "the captured closure lost the array" };
   }
-  let supplied: int[] = [5];
+  let supplied: number[] = [5];
   let explicit: Box = { first: supplied, second: supplied };
   if (state.calls() !== 4 || explicit.first !== supplied || explicit.second !== supplied) {
     throw { code: "PROVIDED_SKIP", message: "a provided field ran its default" };

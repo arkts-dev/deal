@@ -3,5 +3,5 @@
 // @expected: compile-error E1024
 // @features: modules, exports, diagnostics, v1.2
 
-function value(): int { return 1; }
+function value(): number { return 1; }
 export { value };

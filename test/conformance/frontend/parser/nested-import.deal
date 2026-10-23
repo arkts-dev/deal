@@ -3,7 +3,7 @@
 // @expected: compile-error E1050
 // @features: parser, modules, import, v1.2
 
-function outer(): int {
+function outer(): number {
   import * as m from "./nonexistent";
   return 0;
 }

@@ -378,7 +378,7 @@ final class JvmHostAbiEmission {
         return switch (type) {
             case Type.Null ignored -> "java.lang.Object";
             case Type.Boolean ignored -> "boolean";
-            case Type.Int ignored -> "int";
+
             case Type.Number ignored -> "double";
             case Type.String ignored -> "java.lang.String";
             case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls);
@@ -393,7 +393,7 @@ final class JvmHostAbiEmission {
 
     private String boxedCarrier(Type inner) {
         return switch (inner) {
-            case Type.Int ignored -> "java.lang.Integer";
+
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
@@ -410,7 +410,7 @@ final class JvmHostAbiEmission {
             return orNullArrayCarrier(nullable.inner());
         }
         return switch (element) {
-            case Type.Int ignored -> "__IntArray";
+
             case Type.Number ignored -> "__NumberArray";
             case Type.String ignored -> "__StringArray";
             case Type.Boolean ignored -> "__BooleanArray";
@@ -421,7 +421,7 @@ final class JvmHostAbiEmission {
 
     private String orNullArrayCarrier(Type inner) {
         return switch (inner) {
-            case Type.Int ignored -> "__IntOrNullArray";
+
             case Type.Number ignored -> "__NumberOrNullArray";
             case Type.String ignored -> "__StringOrNullArray";
             case Type.Boolean ignored -> "__BooleanOrNullArray";
@@ -455,7 +455,7 @@ final class JvmHostAbiEmission {
         boolean nullable = type instanceof Type.Nullable;
         Type inner = unwrapNullable(type);
         return switch (inner) {
-            case Type.Int ignored -> nullable ? "java.lang.Integer.class" : "int.class";
+
             case Type.Number ignored -> nullable ? "java.lang.Double.class" : "double.class";
             case Type.Boolean ignored -> nullable ? "java.lang.Boolean.class" : "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
@@ -1010,15 +1010,6 @@ final class JvmHostAbiEmission {
             + " int oLine, int oCol) {\n");
         out.append("    return JvmRuntime.fail(\"E8001\", reason, oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
         out.append("  }\n\n");
-        // The signed32-range non-admission of the int cell, shared by the
-        // Long and Double carrier branches: the closed INT32_RANGE arm's
-        // own render at the checked site (never a composed range text),
-        // exactly like the deployed check_int's range branch.
-        out.append("  static JvmRuntime.DealError __hostRangeFail(java.lang.String oFile,"
-            + " int oLine, int oCol) {\n");
-        out.append("    return JvmRuntime.arm(deal.semantic.ir.FailureArmId.INT32_RANGE,"
-            + " java.util.Map.of(), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
-        out.append("  }\n\n");
         out.append("  static java.lang.String __hostKind(java.lang.Object v) {\n");
         out.append("    if (v == JvmRuntime.MISSING) return \"nil\";\n");
         out.append("    if (v == null) return \"table\";\n");
@@ -1135,7 +1126,6 @@ final class JvmHostAbiEmission {
         out.append("    java.lang.String inner = d.startsWith(\"?\") ? d.substring(1) : d;\n");
         out.append("    if (inner.startsWith(\"(\") || inner.startsWith(\"async(\")) return __hostFnCarrier(inner, v);\n");
         out.append("    if (inner.startsWith(\"[\")) return __hostArrayFromDeal(inner, v);\n");
-        out.append("    if (inner.equals(\"int\")) return java.lang.Integer.valueOf(((java.lang.Number) v).intValue());\n");
         out.append("    if (inner.equals(\"number\")) return java.lang.Double.valueOf(((java.lang.Number) v).doubleValue());\n");
         out.append("    return v;\n");
         out.append("  }\n\n");
@@ -1337,7 +1327,7 @@ final class JvmHostAbiEmission {
             return boxedCarrier(nullable.inner());
         }
         return switch (element) {
-            case Type.Int ignored -> "int";
+
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
@@ -1358,8 +1348,7 @@ final class JvmHostAbiEmission {
             // rebind the null test into the wrong branch.
             String slot = "(" + expression + ")";
             String boxed = switch (inner) {
-                case Type.Int ignored -> "java.lang.Integer.valueOf(((java.lang.Number) "
-                    + slot + ").intValue())";
+
                 case Type.Number ignored -> "java.lang.Double.valueOf(((java.lang.Number) "
                     + slot + ").doubleValue())";
                 case Type.Boolean ignored -> "java.lang.Boolean.valueOf((java.lang.Boolean) "
@@ -1369,7 +1358,7 @@ final class JvmHostAbiEmission {
             return "(" + slot + " == null ? null : " + boxed + ")";
         }
         return switch (element) {
-            case Type.Int ignored -> "((java.lang.Number) (" + expression + ")).intValue()";
+
             case Type.Number ignored -> "((java.lang.Number) (" + expression + ")).doubleValue()";
             case Type.Boolean ignored -> "((java.lang.Boolean) (" + expression + ")).booleanValue()";
             case Type.String ignored -> "(java.lang.String) (" + expression + ")";
@@ -1388,8 +1377,7 @@ final class JvmHostAbiEmission {
         Type inner = element instanceof Type.Nullable nullable ? nullable.inner() : element;
         boolean nullable = element instanceof Type.Nullable;
         String boxed = switch (inner) {
-            case Type.Int ignored -> "java.lang.Long.valueOf(((java.lang.Number) ("
-                + expression + ")).longValue())";
+
             case Type.Number ignored -> "java.lang.Double.valueOf(((java.lang.Number) ("
                 + expression + ")).doubleValue())";
             case Type.Boolean ignored -> "java.lang.Boolean.valueOf(((java.lang.Boolean) ("
@@ -1454,24 +1442,6 @@ final class JvmHostAbiEmission {
         out.append("    }\n");
         out.append("    if (d.equals(\"null\")) { if (v == null) return null; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(JvmRuntime.kindReason(\"boolean\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"int\")) {\n");
-        out.append("      if (v instanceof java.lang.Integer) return v;\n");
-        // The admitted Long carrier is a numeric host carrier like the
-        // Double one: it cannot be NaN, infinite, or fractional, so only
-        // the signed32 range step of the pinned int ladder applies before
-        // admission (the pre-fix branch admitted every Long, including an
-        // out-of-range one, and the declared int return then truncated or
-        // crashed on the cast instead of rendering the range arm).
-        out.append("      if (v instanceof java.lang.Long __ll) { if (__ll < -2147483648L || __ll > 2147483647L) throw __hostRangeFail(oFile, oLine, oCol); return v; }\n");
-        out.append("      if (v instanceof java.lang.Double __dd) {\n");
-        out.append("        if (__dd.isNaN()) throw __hostFail(JvmRuntime.refinementReason(\"NaN\"), d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd.isInfinite()) throw __hostFail(JvmRuntime.refinementReason(\"infinity\"), d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd % 1.0 != 0.0) throw __hostFail(JvmRuntime.refinementReason(\"number\"), d, v, oFile, oLine, oCol);\n");
-        out.append("        if (__dd < -2147483648.0 || __dd > 2147483647.0) throw __hostRangeFail(oFile, oLine, oCol);\n");
-        out.append("        return v;\n");
-        out.append("      }\n");
-        out.append("      throw __hostFail(JvmRuntime.kindReason(\"int\"), d, v, oFile, oLine, oCol);\n");
-        out.append("    }\n");
         // The number cell admits every numeric host carrier: the boxed
         // int carrier (Integer) is a numeric host carrier like Long and
         // Double, exactly as the oracle's NUMBER/INT view and the deployed
@@ -1619,11 +1589,9 @@ final class JvmHostAbiEmission {
             + " implementations compile against these classes unchanged.\n");
         out.append("class $DealRt {\n");
         out.append("  interface FnValue { java.lang.String descriptor(); }\n");
-        out.append("  static final class __IntArray { int[] data; __IntArray(int[] data) { this.data = data; } }\n");
         out.append("  static final class __NumberArray { double[] data; __NumberArray(double[] data) { this.data = data; } }\n");
         out.append("  static final class __StringArray { java.lang.String[] data; __StringArray(java.lang.String[] data) { this.data = data; } }\n");
         out.append("  static final class __BooleanArray { boolean[] data; __BooleanArray(boolean[] data) { this.data = data; } }\n");
-        out.append("  static final class __IntOrNullArray { java.lang.Integer[] data; __IntOrNullArray(java.lang.Integer[] data) { this.data = data; } }\n");
         out.append("  static final class __NumberOrNullArray { java.lang.Double[] data; __NumberOrNullArray(java.lang.Double[] data) { this.data = data; } }\n");
         out.append("  static final class __StringOrNullArray { java.lang.String[] data; __StringOrNullArray(java.lang.String[] data) { this.data = data; } }\n");
         out.append("  static final class __BooleanOrNullArray { java.lang.Boolean[] data; __BooleanOrNullArray(java.lang.Boolean[] data) { this.data = data; } }\n");
@@ -1884,10 +1852,7 @@ final class JvmHostAbiEmission {
         boolean nullable = param instanceof Type.Nullable;
         Type inner = unwrapNullable(param);
         return switch (inner) {
-            case Type.Int ignored -> nullable
-                ? "(" + name + " == null ? null : java.lang.Long.valueOf((long) "
-                    + name + ".intValue()))"
-                : "java.lang.Long.valueOf((long) " + name + ")";
+
             case Type.Number ignored -> "java.lang.Double.valueOf(" + name + ")";
             case Type.Boolean ignored -> "java.lang.Boolean.valueOf(" + name + ")";
             default -> name;

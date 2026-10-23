@@ -3,14 +3,14 @@
 // @expected: runtime-ok
 // @features: functions, recursion, function-values
 
-function factorial(n: int): int {
+function factorial(n: number): number {
   if (n === 0) { return 1; }
   return n * factorial(n - 1);
 }
 
-export function test_recursive_function_value(): int {
-  let f: (x: int) => int = factorial;
-  let result: int = f(5);
+export function test_recursive_function_value(): number {
+  let f: (x: number) => number = factorial;
+  let result: number = f(5);
   if (result !== 120) { throw { code: "TEST_FAIL", message: "factorial failed" }; }
   return result;
 }

@@ -192,86 +192,6 @@ end
 -- bounded magnitude comparisons (a very long exponent saturates), so no
 -- machine overflow and no input cap can change the decision; -0/-0.0
 -- normalize to the integer 0.
-local function json_int_or_nil(text)
-  local i = 1
-  local neg = false
-  if string.sub(text, 1, 1) == "-" then neg = true; i = 2 end
-  local int_start = i
-  while i <= #text do
-    local b = string.byte(text, i)
-    if b < 48 or b > 57 then break end
-    i = i + 1
-  end
-  local int_end = i - 1
-  local frac_start, frac_end = nil, nil
-  if i <= #text and string.sub(text, i, i) == "." then
-    i = i + 1
-    frac_start = i
-    while i <= #text do
-      local b = string.byte(text, i)
-      if b < 48 or b > 57 then break end
-      i = i + 1
-    end
-    frac_end = i - 1
-  end
-  local expo = 0
-  local exp_neg = false
-  if i <= #text then
-    local e = string.sub(text, i, i)
-    if e == "e" or e == "E" then
-      i = i + 1
-      local c = string.sub(text, i, i)
-      if c == "+" or c == "-" then
-        exp_neg = (c == "-")
-        i = i + 1
-      end
-      -- The exponent magnitude accumulates its digits with bounded
-      -- saturation: leading zeroes contribute nothing, so an exponent
-      -- text longer than 18 characters whose value is small stays exact
-      -- (the shared JsonNumberClassifier rule), and the arithmetic can
-      -- never overflow.
-      local magnitude = 0
-      while i <= #text do
-        local d = string.byte(text, i) - 48
-        if magnitude > (1000000000000 - d) / 10 then
-          magnitude = 1000000000000
-        else
-          magnitude = magnitude * 10 + d
-        end
-        i = i + 1
-      end
-      expo = magnitude
-    end
-  end
-  local digits = string.sub(text, int_start, int_end)
-  if frac_start ~= nil then
-    digits = digits .. string.sub(text, frac_start, frac_end)
-  end
-  local stripped = string.gsub(digits, "^0+", "")
-  if stripped == "" then return 0 end
-  local trailing = 0
-  while string.sub(stripped, #stripped - trailing, #stripped - trailing) == "0" do
-    trailing = trailing + 1
-  end
-  local significant = string.sub(stripped, 1, #stripped - trailing)
-  local frac_len = 0
-  if frac_start ~= nil then frac_len = frac_end - frac_start + 1 end
-  local effective = expo - frac_len + trailing
-  if exp_neg then effective = -expo - frac_len + trailing end
-  if effective < 0 then return nil end
-  if #significant + effective > 10 then return nil end
-  local value = tonumber(significant .. string.rep("0", effective))
-  if value == nil then return nil end
-  -- The signed32 range check compares the unsigned magnitude before the
-  -- sign is applied: negating first would leave the negative branch dead
-  -- for every magnitude in [2147483649, ...] (the shared classifier
-  -- rule: at most 2147483648 may carry the minus sign).
-  local limit = neg and 2147483648 or 2147483647
-  if value > limit then return nil end
-  if neg then value = -value end
-  return value
-end
-
 -- The canonical decimal spelling (Java Double.toString parity) of one
 -- finite binary64 value: the shortest round-tripping digit string, the
 -- closest such decimal, and the even last digit when the value is exactly
@@ -371,7 +291,7 @@ end
 local function json_number_text(v)
   local neg = false
   if v < 0 or (v == 0 and 1 / v < 0) then neg = true; v = -v end
-  if v == 0 then return neg and "-0.0" or "0.0" end
+  if v == 0 then return "0" end
   local digits, expo = nil, nil
   for N = 2, 17 do
     digits, expo = json_num_digits(v, N)
@@ -1090,17 +1010,11 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     if #num_str == 0 then
       parse_error("invalid number: empty")
     end
-    -- The exact decimal classification (DEAL v1.3): the lexeme's
-    -- mathematical value decides the int/number variant before any
-    -- binary64 rounding; -0/-0.0 normalize to the integer 0.
-    local exact = json_int_or_nil(num_str)
-    if exact ~= nil then
-      return exact, false
-    end
     local n = tonumber(num_str)
     if n == nil then
       parse_error("invalid number")
     end
+    if n == 0 and num_str:sub(1, 1) == "-" then n = -0.0 end
     return n, true
   end
 

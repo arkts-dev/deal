@@ -22,6 +22,7 @@
 // never mutated, no shared state, no I/O.
 
 const $rt = require("../deal/runtime");
+const $Number = Number;
 
 // $isTrimChar: the Lua %s character set — space, tab, newline, vertical
 // tab, form feed, carriage return (the six C-locale isspace characters
@@ -37,9 +38,9 @@ const $string = {};
 
 // length(s: string): int — the number of Unicode scalar values in s
 // (the code-point count; scalarLength walks one code point per step).
-$string.length = $rt.function("(string)->int", function(s, $file, $line, $column) {
+$string.length = $rt.function("(string)->number", function(s, $file, $line, $column) {
   $rt.checkString(s, $file, $line, $column);
-  return $rt.checkInt($rt.scalarLength(s), $file, $line, $column);
+  return $rt.checkNumber($rt.scalarLength(s), $file, $line, $column);
 });
 
 // substring(s: string, start: int, end: int): string — the substring at
@@ -52,10 +53,13 @@ $string.length = $rt.function("(string)->int", function(s, $file, $line, $column
 // negative-j / beyond-length corrections produce exactly these
 // outcomes. The collection is one code-point walk over [start, end)
 // after the clamping.
-$string.substring = $rt.function("(string,int,int)->string", function(s, start, end, $file, $line, $column) {
+$string.substring = $rt.function("(string,number,number)->string", function(s, start, end, $file, $line, $column) {
   $rt.checkString(s, $file, $line, $column);
-  $rt.checkInt(start, $file, $line, $column);
-  $rt.checkInt(end, $file, $line, $column);
+  $rt.checkNumber(start, $file, $line, $column);
+  $rt.checkNumber(end, $file, $line, $column);
+  if (!$Number.isInteger(start) || !$Number.isInteger(end)) {
+    $rt.fail("E8001", "substring bounds must be finite integers", $file, $line, $column);
+  }
   const $len = $rt.scalarLength(s);
   let $st = start < 0 ? 0 : start;
   let $en = end < 0 ? 0 : end;

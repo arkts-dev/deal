@@ -4,15 +4,15 @@
 // @features: type-system, nullable, narrowing, arrays, runtime-errors
 
 export function main(): null {
-  let items: int[] = [4, 5];
-  let i: int | null = 1;
+  let items: number[] = [4, 5];
+  let i: number | null = 1;
   let clear: () => null = function(): null {
     i = null;
     return null;
   };
   if (i !== null) {
     clear();
-    let value: int = items[i];
+    let value: number = items[i];
   }
   return null;
 }

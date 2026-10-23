@@ -90,7 +90,7 @@ public class FieldOpsExecutorTest {
     private static final ModuleId MOD = new ModuleId("corpus.fieldops");
     private static final ClassId CLS = new ClassId(MOD.path(), "Point");
     private static final ClassId OTHER_CLS = new ClassId(MOD.path(), "Other");
-    private static final RuntimeDescriptor INT = RuntimeDescriptor.Int.INSTANCE;
+    private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STRING = RuntimeDescriptor.String.INSTANCE;
     private static final RuntimeDescriptor NULLABLE_INT = new RuntimeDescriptor.Nullable(INT);
     private static final RuntimeDescriptor BOOLEAN = RuntimeDescriptor.Boolean.INSTANCE;
@@ -374,7 +374,6 @@ public class FieldOpsExecutorTest {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-            case Value.Int intValue -> BoundaryValueView.ofInt(intValue.value());
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
             case Value.Table ignored -> BoundaryValueView.of(ActualKind.TABLE);
@@ -429,11 +428,11 @@ public class FieldOpsExecutorTest {
         Outcome<Value> xRead = ClassOpsExecutor.executeFieldRead(x.op(), base.heap(),
             x.receiverBoundary(), x.fieldBoundary(), layouts, realDelegate(log));
         check(xRead instanceof Outcome.Success<Value> xSuccess
-                && xSuccess.value().equals(new Value.Int(1)),
+                && xSuccess.value().equals(new Value.Number(1)),
             "reading the required present x publishes the checked value 1; got " + xRead);
         check(log.size() == 2
                 && log.get(0).equals("child UNTYPED_CLASS_INPUT <- class:" + CLS.text())
-                && log.get(1).equals("child OPTIONAL_FIELD_READ <- int"),
+                && log.get(1).equals("child OPTIONAL_FIELD_READ <- number"),
             "the nominal receiver boundary runs first, then the field boundary; got " + log);
 
         FieldReadFixture t = fieldReadFixture(BASE_REF, CLS, "t", LAYOUT);
@@ -474,13 +473,13 @@ public class FieldOpsExecutorTest {
             valueY.heap(), yRead.receiverBoundary(), yRead.fieldBoundary(), layouts,
             realDelegate(null));
         check(presentValue instanceof Outcome.Success<Value> presentValueSuccess
-                && presentValueSuccess.value().equals(new Value.Int(7)),
+                && presentValueSuccess.value().equals(new Value.Number(7)),
             "reading a present-value optional field publishes the checked value 7; got "
                 + presentValue);
 
         // The required-field missing read: a defective instance whose
         // required x is missing — the pre-map to null crosses the
-        // non-nullable int descriptor and fails E8001 expected int, got null.
+        // non-nullable int descriptor and fails E8001 expected number, got null.
         Value.Class defective = instanceOf(CLS,
             FieldState.Missing.INSTANCE, FieldState.Missing.INSTANCE,
             new FieldState.Present(Value.string("v")));
@@ -491,12 +490,12 @@ public class FieldOpsExecutorTest {
             realDelegate(null));
         check(requiredMissing instanceof Outcome.Failure<Value> requiredFail
                 && requiredFail.failure().failure().code() == DiagnosticCode.E8001
-                && "expected int".equals(requiredFail.failure().failure().message())
-                && "int".equals(requiredFail.failure().failure().expected())
+                && "expected number".equals(requiredFail.failure().failure().message())
+                && "number".equals(requiredFail.failure().failure().expected())
                 && "null".equals(requiredFail.failure().failure().actual())
                 && requiredFail.failure().origin().equals(xRead.op().origin()),
             "a missing required field pre-maps to null and the non-nullable descriptor "
-                + "fails E8001 'expected int' at the op origin; got "
+                + "fails E8001 'expected number' at the op origin; got "
                 + requiredMissing);
     }
 
@@ -522,7 +521,7 @@ public class FieldOpsExecutorTest {
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, nullLayout);
 
         // The missing state: the pre-mapped null crosses the null descriptor.
-        BaseInstanceFixture missing = baseInstance(Map.of("x", new Value.Int(1)), nullLayout);
+        BaseInstanceFixture missing = baseInstance(Map.of("x", new Value.Number(1)), nullLayout);
         FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "n", nullLayout);
         check(read.op().resultType() == nullDescriptor,
             "the FIELD_READ publishes the null-atom result descriptor; got "
@@ -537,7 +536,7 @@ public class FieldOpsExecutorTest {
 
         // The present-null state: the explicit null crosses the same descriptor.
         BaseInstanceFixture presentNull = baseInstance(
-            Map.of("x", new Value.Int(1), "n", Value.Null.INSTANCE), nullLayout);
+            Map.of("x", new Value.Number(1), "n", Value.Null.INSTANCE), nullLayout);
         Outcome<Value> presentNullRead = ClassOpsExecutor.executeFieldRead(read.op(),
             presentNull.heap(), read.receiverBoundary(), read.fieldBoundary(), layouts,
             realDelegate(null));
@@ -551,7 +550,7 @@ public class FieldOpsExecutorTest {
         // stored.
         ValueId stored = nextValue();
         Map<ValueId, Value> writeHeap = new LinkedHashMap<>(missing.heap());
-        writeHeap.put(stored, new Value.Int(3));
+        writeHeap.put(stored, new Value.Number(3));
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "n", nullLayout, stored);
         Outcome<Value> rejected = ClassOpsExecutor.executeFieldWrite(write.op(), writeHeap,
             write.receiverBoundary(), write.fieldBoundary(), layouts, realDelegate(null));
@@ -596,7 +595,7 @@ public class FieldOpsExecutorTest {
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "x", LAYOUT, stored);
         Map<ValueId, Value> nullWriteHeap = new LinkedHashMap<>();
         nullWriteHeap.put(BASE_REF, Value.Null.INSTANCE);
-        nullWriteHeap.put(stored, new Value.Int(9));
+        nullWriteHeap.put(stored, new Value.Number(9));
         Outcome<Value> nullWrite = ClassOpsExecutor.executeFieldWrite(write.op(),
             nullWriteHeap, write.receiverBoundary(), write.fieldBoundary(), layouts,
             realDelegate(null));
@@ -618,7 +617,7 @@ public class FieldOpsExecutorTest {
                 + nullDelete);
 
         // (b) wrong-identity receiver — read/write/delete.
-        Value.Class other = instanceOf(OTHER_CLS, new FieldState.Present(new Value.Int(3)));
+        Value.Class other = instanceOf(OTHER_CLS, new FieldState.Present(new Value.Number(3)));
         Map<ValueId, Value> otherHeap = Map.of(BASE_REF, other);
         Outcome<Value> wrongRead = ClassOpsExecutor.executeFieldRead(read.op(), otherHeap,
             read.receiverBoundary(), read.fieldBoundary(), layouts, realDelegate(null));
@@ -633,7 +632,7 @@ public class FieldOpsExecutorTest {
 
         Map<ValueId, Value> otherWriteHeap = new LinkedHashMap<>();
         otherWriteHeap.put(BASE_REF, other);
-        otherWriteHeap.put(stored, new Value.Int(9));
+        otherWriteHeap.put(stored, new Value.Number(9));
         Outcome<Value> wrongWrite = ClassOpsExecutor.executeFieldWrite(write.op(),
             otherWriteHeap, write.receiverBoundary(), write.fieldBoundary(), layouts,
             realDelegate(null));
@@ -671,20 +670,20 @@ public class FieldOpsExecutorTest {
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "x", LAYOUT, stored);
         List<String> log = new ArrayList<>();
         Map<ValueId, Value> writeHeap = new LinkedHashMap<>(base.heap());
-        writeHeap.put(stored, new Value.Int(9));
+        writeHeap.put(stored, new Value.Number(9));
         Outcome<Value> committed = ClassOpsExecutor.executeFieldWrite(write.op(), writeHeap,
             write.receiverBoundary(), write.fieldBoundary(), layouts, realDelegate(log));
         check(committed instanceof Outcome.Success<Value> committedSuccess
                 && committedSuccess.value() instanceof Value.Class updated
                 && updated.classId().equals(CLS)
-                && fieldValue(updated, LAYOUT, "x").equals(new Value.Int(9))
+                && fieldValue(updated, LAYOUT, "x").equals(new Value.Number(9))
                 && fieldState(updated, LAYOUT, "y") == FieldState.Missing.INSTANCE
                 && fieldValue(updated, LAYOUT, "t").equals(Value.string("v")),
             "the successful write publishes the updated instance with x=9, y still "
                 + "missing, t unchanged; got " + committed);
         check(log.size() == 2
                 && log.get(0).equals("child UNTYPED_CLASS_INPUT <- class:" + CLS.text())
-                && log.get(1).equals("child CLASS_FIELD_ASSIGNMENT <- int"),
+                && log.get(1).equals("child CLASS_FIELD_ASSIGNMENT <- number"),
             "the write runs the receiver boundary first, then the field boundary; got "
                 + log);
 
@@ -695,7 +694,7 @@ public class FieldOpsExecutorTest {
         Outcome<Value> observed = ClassOpsExecutor.executeFieldRead(read.op(), rebounded,
             read.receiverBoundary(), read.fieldBoundary(), layouts, realDelegate(null));
         check(observed instanceof Outcome.Success<Value> observedSuccess
-                && observedSuccess.value().equals(new Value.Int(9)),
+                && observedSuccess.value().equals(new Value.Number(9)),
             "a later read observes the committed write; got " + observed);
 
         // A successful optional-field write: y=3 lands and later reads
@@ -703,12 +702,12 @@ public class FieldOpsExecutorTest {
         ValueId yStored = nextValue();
         FieldWriteFixture yWrite = fieldWriteFixture(BASE_REF, CLS, "y", LAYOUT, yStored);
         Map<ValueId, Value> yHeap = new LinkedHashMap<>(rebounded);
-        yHeap.put(yStored, new Value.Int(3));
+        yHeap.put(yStored, new Value.Number(3));
         Outcome<Value> yCommitted = ClassOpsExecutor.executeFieldWrite(yWrite.op(), yHeap,
             yWrite.receiverBoundary(), yWrite.fieldBoundary(), layouts, realDelegate(null));
         check(yCommitted instanceof Outcome.Success<Value> yCommittedSuccess
                 && yCommittedSuccess.value() instanceof Value.Class yUpdated
-                && fieldValue(yUpdated, LAYOUT, "y").equals(new Value.Int(3)),
+                && fieldValue(yUpdated, LAYOUT, "y").equals(new Value.Number(3)),
             "the optional-field write y=3 lands; got " + yCommitted);
 
         // A failing field boundary commits nothing: writing the string
@@ -725,10 +724,10 @@ public class FieldOpsExecutorTest {
             realDelegate(null));
         check(badCommitted instanceof Outcome.Failure<Value> badFail
                 && badFail.failure().failure().code() == DiagnosticCode.E8001
-                && "expected int".equals(badFail.failure().failure().message()),
+                && "expected number".equals(badFail.failure().failure().message()),
             "a wrong-kind stored value fails the CLASS_FIELD_ASSIGNMENT boundary E8001 "
-                + "'expected int'; got " + badCommitted);
-        check(fieldValue(base.instance(), LAYOUT, "x").equals(new Value.Int(1))
+                + "'expected number'; got " + badCommitted);
+        check(fieldValue(base.instance(), LAYOUT, "x").equals(new Value.Number(1))
                 && fieldState(base.instance(), LAYOUT, "y") == FieldState.Missing.INSTANCE
                 && fieldValue(base.instance(), LAYOUT, "t").equals(Value.string("v")),
             "a failed write commits nothing: the receiver instance state is unchanged "
@@ -739,7 +738,7 @@ public class FieldOpsExecutorTest {
         // child) and nothing commits.
         Map<ValueId, Value> nullHeap = new LinkedHashMap<>();
         nullHeap.put(BASE_REF, Value.Null.INSTANCE);
-        nullHeap.put(stored, new Value.Int(9));
+        nullHeap.put(stored, new Value.Number(9));
         List<String> stopped = new ArrayList<>();
         Outcome<Value> stoppedOutcome = ClassOpsExecutor.executeFieldWrite(write.op(),
             nullHeap, write.receiverBoundary(), write.fieldBoundary(), layouts,
@@ -768,7 +767,7 @@ public class FieldOpsExecutorTest {
         check(deleted instanceof Outcome.Success<Value> deletedSuccess
                 && deletedSuccess.value() instanceof Value.Class afterDelete
                 && fieldState(afterDelete, LAYOUT, "y") == FieldState.Missing.INSTANCE
-                && fieldValue(afterDelete, LAYOUT, "x").equals(new Value.Int(1))
+                && fieldValue(afterDelete, LAYOUT, "x").equals(new Value.Number(1))
                 && fieldValue(afterDelete, LAYOUT, "t").equals(Value.string("v")),
             "the delete turns present y into missing and every other field is unchanged; "
                 + "got " + deleted);
@@ -847,7 +846,7 @@ public class FieldOpsExecutorTest {
 
         ValueId stored = nextValue();
         CountingMap writeHeap = new CountingMap(base.heap());
-        writeHeap.put(stored, new Value.Int(9));
+        writeHeap.put(stored, new Value.Number(9));
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "x", LAYOUT, stored);
         Outcome<Value> writeOutcome = ClassOpsExecutor.executeFieldWrite(write.op(),
             writeHeap, write.receiverBoundary(), write.fieldBoundary(), layouts,
@@ -1054,7 +1053,7 @@ public class FieldOpsExecutorTest {
 
         // Field-count mismatches.
         Value.Class shortInstance = instanceOf(CLS,
-            new FieldState.Present(new Value.Int(1)));
+            new FieldState.Present(new Value.Number(1)));
         Map<ValueId, Value> shortHeap = Map.of(BASE_REF, shortInstance);
         expectDefect(() -> ClassOpsExecutor.executeFieldRead(read.op(), shortHeap,
                 read.receiverBoundary(), read.fieldBoundary(), layouts, pass),
@@ -1067,11 +1066,11 @@ public class FieldOpsExecutorTest {
             "a null receiver passing a pass-through receiver boundary");
         expectDefect(() -> ClassOpsExecutor.executeFieldRead(read.op(),
                 Map.of(BASE_REF, instanceOf(OTHER_CLS,
-                    new FieldState.Present(new Value.Int(3)))),
+                    new FieldState.Present(new Value.Number(3)))),
                 read.receiverBoundary(), read.fieldBoundary(), layouts, pass),
             "a wrong-identity instance passing a pass-through receiver boundary");
         expectDefect(() -> ClassOpsExecutor.executeHasField(has,
-                Map.of(BASE_REF, new Value.Int(4)), layouts),
+                Map.of(BASE_REF, new Value.Number(4)), layouts),
             "a non-class has receiver");
         expectDefect(() -> ClassOpsExecutor.executeHasField(has, base.heap(), Map.of()),
             "executeHasField with an empty layout-resolution context");
@@ -1099,7 +1098,7 @@ public class FieldOpsExecutorTest {
 
         ValueId stored = nextValue();
         Map<ValueId, Value> writeHeap = new LinkedHashMap<>(base.heap());
-        writeHeap.put(stored, new Value.Int(9));
+        writeHeap.put(stored, new Value.Number(9));
         FieldWriteFixture write = fieldWriteFixture(BASE_REF, CLS, "x", LAYOUT, stored);
         Outcome<Value> firstWrite = ClassOpsExecutor.executeFieldWrite(write.op(), writeHeap,
             write.receiverBoundary(), write.fieldBoundary(), layouts, realDelegate(null));
@@ -1200,12 +1199,12 @@ public class FieldOpsExecutorTest {
         System.out.println("=== Field Ops Executor Tests (ISSUE-0513 K-D6/K-D7) ===\n");
 
         BaseInstanceFixture missingSeed = baseInstance(
-            Map.of("x", new Value.Int(1), "t", Value.string("v")), LAYOUT);
+            Map.of("x", new Value.Number(1), "t", Value.string("v")), LAYOUT);
         BaseInstanceFixture nullSeed = baseInstance(
-            Map.of("x", new Value.Int(1), "y", Value.Null.INSTANCE, "t", Value.string("v")),
+            Map.of("x", new Value.Number(1), "y", Value.Null.INSTANCE, "t", Value.string("v")),
             LAYOUT);
         BaseInstanceFixture valueSeed = baseInstance(
-            Map.of("x", new Value.Int(1), "y", new Value.Int(7), "t", Value.string("v")),
+            Map.of("x", new Value.Number(1), "y", new Value.Number(7), "t", Value.string("v")),
             LAYOUT);
         testT2InstanceFeedsFieldReads(missingSeed);
         testReadPresenceMatrix(nullSeed, valueSeed);

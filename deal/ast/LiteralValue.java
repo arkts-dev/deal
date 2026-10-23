@@ -6,7 +6,6 @@ package deal.ast;
 public sealed interface LiteralValue
     permits LiteralValue.NullLiteral,
             LiteralValue.BooleanLiteral,
-            LiteralValue.IntLiteral,
             LiteralValue.NumberLiteral,
             LiteralValue.StringLiteral {
 
@@ -15,10 +14,6 @@ public sealed interface LiteralValue
     }
 
     record BooleanLiteral(boolean value) implements LiteralValue {
-        @Override public String toString() { return String.valueOf(value); }
-    }
-
-    record IntLiteral(long value) implements LiteralValue {
         @Override public String toString() { return String.valueOf(value); }
     }
 

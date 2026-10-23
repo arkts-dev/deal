@@ -33,7 +33,7 @@ function expectFailure(label: string, code: string, message: string,
 
 export async function test_async_class_parameter(): null {
   let c: host.Config = { value: 42 };
-  let got: int = await host.describeAsync(c);
+  let got: number = await host.describeAsync(c);
   check(got === 42, "the asynchronous class parameter value");
   return null;
 }
@@ -72,10 +72,10 @@ export function test_nullable_class_return(): null {
 
 export function test_nullable_class_parameter(): null {
   let nullArgument: host.Config | null = null;
-  let absent: int = host.describeOrNull(nullArgument);
+  let absent: number = host.describeOrNull(nullArgument);
   check(absent === -1, "the nullable class parameter language null");
   let valueArgument: host.Config | null = { value: 42 };
-  let present: int = host.describeOrNull(valueArgument);
+  let present: number = host.describeOrNull(valueArgument);
   check(present === 42, "the nullable class parameter value");
   return null;
 }
@@ -107,7 +107,7 @@ export function test_class_fields(): null {
 }
 
 export function test_host_invoked_callback(): null {
-  let got: int = host.consume(read);
+  let got: number = host.consume(read);
   check(got === 42, "the host-invoked callback class parameter and return");
   return null;
 }

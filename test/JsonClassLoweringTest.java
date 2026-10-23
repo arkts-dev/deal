@@ -658,7 +658,7 @@ public class JsonClassLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             export class Plain {
-              x: int = 1;
+              x: number = 1;
             }
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -699,7 +699,7 @@ public class JsonClassLoweringTest {
 
         String source = """
             // @jsonable
-            export class Widget { n: int = 1; }
+            export class Widget { n: number = 1; }
             """;
 
         // (a) both generated signatures (fromJson, toJson), known offsets:
@@ -729,12 +729,12 @@ public class JsonClassLoweringTest {
             check(range.origin() == RangeOrigin.SOURCE
                     && "main.deal".equals(range.file())
                     && range.startLine() == 2 && range.startColumn() == 8
-                    && range.endLine() == 2 && range.endColumn() == 36
+                    && range.endLine() == 2 && range.endColumn() == 39
                     && range.startScalarOffset() == 20
-                    && range.endScalarOffset() == 48
-                    && range.scalarLength() == 28,
+                    && range.endScalarOffset() == 51
+                    && range.scalarLength() == 31,
                 "the corrupted " + helper + " failure carries the class declaration's "
-                    + "own exact SOURCE range main.deal 2:8-2:36 [20,48) length 28; got "
+                    + "own exact SOURCE range main.deal 2:8-2:39 [20,51) length 31; got "
                     + range);
             check(range.equals(declaration.span().range()),
                 "the " + helper + " range is exactly the class declaration's own span "
@@ -883,7 +883,7 @@ public class JsonClassLoweringTest {
             // @jsonable
             export class Address {
               city: string = "berlin";
-              zip: int = 10115;
+              zip: number = 10115;
             }
             """;
         String callerSource = """
@@ -892,7 +892,7 @@ public class JsonClassLoweringTest {
             // @jsonable
             export class Person {
               name: string = "anon";
-              age: int = 0;
+              age: number = 0;
               home: Owner.Address = {city: "seed"};
             }
 
@@ -932,7 +932,7 @@ public class JsonClassLoweringTest {
         SemanticLowerer.ClassDeclarationCoreResult a = lowerModule("""
             // @jsonable
             export class Point {
-              x: int = 40 + 2;
+              x: number = 40 + 2;
               tag: string = "p" + "t";
               note?: string;
             }
@@ -941,7 +941,7 @@ public class JsonClassLoweringTest {
         SemanticLowerer.ClassDeclarationCoreResult b = lowerModule("""
             // @jsonable
             export class Point {
-              x: int = 40 + 2;
+              x: number = 40 + 2;
               tag: string = "p" + "t";
               note?: string;
             }

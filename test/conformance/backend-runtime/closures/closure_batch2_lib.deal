@@ -3,12 +3,12 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-export function makeCounter(base: int): () => int {
-  let x: int = base;
-  return function(): int {
+export function makeCounter(base: number): () => number {
+  let x: number = base;
+  return function(): number {
     x = x + 1;
     return x;
   };
 }
 
-export function add(a: int, b: int): int { return a + b; }
+export function add(a: number, b: number): number { return a + b; }

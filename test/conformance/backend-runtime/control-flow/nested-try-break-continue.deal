@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: loops, try, break, continue
 
-export function test_nested_try_break_continue(): int {
-  let total: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 6) { let i: int = v14Loop0; {
+export function test_nested_try_break_continue(): number {
+  let total: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 6) { let i: number = v14Loop0; {
     try {
       try {
         if (i === 1) { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } }

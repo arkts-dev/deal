@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): null {async function a(): int {return 1;} let b: async (x:int) => int = a; return null;}
+export function f(): null {async function a(): number {return 1;} let b: async (x:number) => number = a; return null;}

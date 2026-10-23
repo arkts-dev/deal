@@ -14,7 +14,6 @@ import deal.semantic.ir.FrameLabels;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -983,7 +982,7 @@ public abstract class EmitterSessionBase {
                 }
             }
         }
-        return RuntimeDescriptor.Int.INSTANCE;
+        return RuntimeDescriptor.Number.INSTANCE;
     }
 
     protected final RuntimeDescriptor elementDescriptorOf(SemanticOp op) {
@@ -1079,36 +1078,7 @@ public abstract class EmitterSessionBase {
      * cell whose init is the alias declaration's re-publication of the
      * same identity.
      */
-    protected final IntrinsicKind intrinsicKindOf(ValueId valueId) {
-        FunctionExecutionBinding registration = null;
-        for (LoweredModuleUnit moduleUnit : units.values()) {
-            FunctionExecutionBinding found = moduleUnit.functionBindings().get(
-                new FunctionAllocationIdentity(valueId.id()));
-            if (found != null) {
-                registration = found;
-                break;
-            }
-        }
-        if (!(registration instanceof FunctionExecutionBinding.IntrinsicFunction
-                intrinsic)) {
-            return null;
-        }
-        for (LoweredModuleUnit moduleUnit : units.values()) {
-            for (SemanticOp op : moduleUnit.ops()) {
-                if (!valueId.equals(op.result())) {
-                    continue;
-                }
-                if (op.kind() != SemanticOpKind.BINDING_LOAD
-                        || !(op.payload() instanceof KindPayload.BindingLoadPayload
-                            load)
-                        || !isSeedInitOperand(valueId, load.binding(),
-                            load.generation())) {
-                    return null;
-                }
-            }
-        }
-        return intrinsic.kind();
-    }
+
 
     /**
      * The structure ancestors of a block, innermost first (static). The

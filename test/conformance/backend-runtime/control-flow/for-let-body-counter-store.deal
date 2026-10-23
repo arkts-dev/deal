@@ -4,8 +4,8 @@
 // @features: control-flow, for, closures
 
 function testBodyStoreFeedsUpdateAndTest(): null {
-  let visits: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
+  let visits: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
     visits = visits + 1;
     i = i + 1;
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
@@ -16,8 +16,8 @@ function testBodyStoreFeedsUpdateAndTest(): null {
 }
 
 function testOmittedUpdateStillCarries(): null {
-  let visits: int = 0;
-  { let v14Loop1: int = 0; while (v14Loop1 < 2) { let i: int = v14Loop1; {
+  let visits: number = 0;
+  { let v14Loop1: number = 0; while (v14Loop1 < 2) { let i: number = v14Loop1; {
     visits = visits + 1;
     i = i + 1;
     if (visits === 3) { break; }
@@ -29,8 +29,8 @@ function testOmittedUpdateStillCarries(): null {
 }
 
 function testContinueInTryAfterStore(): null {
-  let visits: int = 0;
-  { let v14Loop2: int = 0; while (v14Loop2 < 3) { let i: int = v14Loop2; {
+  let visits: number = 0;
+  { let v14Loop2: number = 0; while (v14Loop2 < 3) { let i: number = v14Loop2; {
     visits = visits + 1;
     i = i + 1;
     try {
@@ -46,9 +46,9 @@ function testContinueInTryAfterStore(): null {
 }
 
 function testContinueInNestedBlocks(): null {
-  let hits: int = 0;
-  let second: int = 0;
-  { let v14Loop3: int = 0; while (v14Loop3 < 3) { let i: int = v14Loop3; {
+  let hits: number = 0;
+  let second: number = 0;
+  { let v14Loop3: number = 0; while (v14Loop3 < 3) { let i: number = v14Loop3; {
     hits = hits + 1;
     i = i + 1;
     {
@@ -65,8 +65,8 @@ function testContinueInNestedBlocks(): null {
 }
 
 function testClosureMutationFeedsUpdate(): null {
-  let visits: int = 0;
-  { let v14Loop4: int = 0; while (v14Loop4 < 4) { let i: int = v14Loop4; {
+  let visits: number = 0;
+  { let v14Loop4: number = 0; while (v14Loop4 < 4) { let i: number = v14Loop4; {
     visits = visits + 1;
     let mutate: () => null = function(): null { i = i + 1; return; };
     mutate();
@@ -78,9 +78,9 @@ function testClosureMutationFeedsUpdate(): null {
 }
 
 function testUpdateReadsOtherState(): null {
-  let total: int = 0;
-  let step: int = 1;
-  { let v14Loop5: int = 0; while (v14Loop5 < 6) { let i: int = v14Loop5; {
+  let total: number = 0;
+  let step: number = 1;
+  { let v14Loop5: number = 0; while (v14Loop5 < 6) { let i: number = v14Loop5; {
     total = total + i;
     i = i + 1;
     step = 2;
@@ -92,13 +92,13 @@ function testUpdateReadsOtherState(): null {
 }
 
 function testBreakBeforeUpdate(): null {
-  let visits: int = 0;
-  let updates: int = 0;
-  function bump(x: int): int {
+  let visits: number = 0;
+  let updates: number = 0;
+  function bump(x: number): number {
     updates = updates + 1;
     return x + 1;
   }
-  { let v14Loop6: int = 0; while (v14Loop6 < 10) { let i: int = v14Loop6; {
+  { let v14Loop6: number = 0; while (v14Loop6 < 10) { let i: number = v14Loop6; {
     visits = visits + 1;
     i = i + 1;
     if (visits === 2) { break; }
@@ -110,12 +110,12 @@ function testBreakBeforeUpdate(): null {
 }
 
 function testNestedLoopsTransferTheirOwnBinding(): null {
-  let outer: int = 0;
-  let inner: int = 0;
-  { let v14Loop7: int = 0; while (v14Loop7 < 2) { let i: int = v14Loop7; {
+  let outer: number = 0;
+  let inner: number = 0;
+  { let v14Loop7: number = 0; while (v14Loop7 < 2) { let i: number = v14Loop7; {
     outer = outer + 1;
     i = i + 1;
-    { let v14Loop8: int = 0; while (v14Loop8 < 2) { let j: int = v14Loop8; {
+    { let v14Loop8: number = 0; while (v14Loop8 < 2) { let j: number = v14Loop8; {
       inner = inner + 1;
       j = j + 1;
     } v14Loop8 = j; v14Loop8 = v14Loop8 + 1; } }
@@ -127,13 +127,13 @@ function testNestedLoopsTransferTheirOwnBinding(): null {
 }
 
 function testCapturesStayPerIteration(): null {
-  let fs: (() => int)[] = [
-    function(): int { return -1; },
-    function(): int { return -1; }
+  let fs: (() => number)[] = [
+    function(): number { return -1; },
+    function(): number { return -1; }
   ];
-  let k: int = 0;
-  { let v14Loop9: int = 0; while (v14Loop9 < 4) { let i: int = v14Loop9; {
-    fs[k] = function(): int { return i; };
+  let k: number = 0;
+  { let v14Loop9: number = 0; while (v14Loop9 < 4) { let i: number = v14Loop9; {
+    fs[k] = function(): number { return i; };
     k = k + 1;
     i = i + 1;
   } v14Loop9 = i; v14Loop9 = v14Loop9 + 1; } }
@@ -147,7 +147,7 @@ function testCapturesStayPerIteration(): null {
 }
 
 function testStringCounterStore(): null {
-  let visits: int = 0;
+  let visits: number = 0;
   { let v14Loop10: string = ""; while (v14Loop10 !== "aa") { let s: string = v14Loop10; {
     visits = visits + 1;
     s = s + "a";
@@ -159,7 +159,7 @@ function testStringCounterStore(): null {
 }
 
 function testNumberCounterStore(): null {
-  let visits: int = 0;
+  let visits: number = 0;
   { let v14Loop11: number = 0.0; while (v14Loop11 < 1.5) { let n: number = v14Loop11; {
     visits = visits + 1;
     n = n + 0.5;
@@ -171,25 +171,25 @@ function testNumberCounterStore(): null {
 }
 
 function testReturnAndThrowSkipUpdate(): null {
-  let calls: int = 0;
-  function next(x: int): int {
+  let calls: number = 0;
+  function next(x: number): number {
     calls = calls + 1;
     return x + 1;
   }
-  function firstBodyValue(): int {
-    { let v14Loop12: int = 0; while (v14Loop12 < 3) { let i: int = v14Loop12; {
+  function firstBodyValue(): number {
+    { let v14Loop12: number = 0; while (v14Loop12 < 3) { let i: number = v14Loop12; {
       i = i + 1;
       return i;
     } v14Loop12 = i; v14Loop12 = next(v14Loop12); } }
     return -1;
   }
-  let got: int = firstBodyValue();
+  let got: number = firstBodyValue();
   if (got !== 1) {
     throw { code: "TEST_FAIL", message: "the returning body lost its store" };
   }
   let caught: boolean = false;
   try {
-    { let v14Loop13: int = 0; while (v14Loop13 < 3) { let i: int = v14Loop13; {
+    { let v14Loop13: number = 0; while (v14Loop13 < 3) { let i: number = v14Loop13; {
       if (i === 0) { throw { message: "stop" }; }
     } v14Loop13 = i; v14Loop13 = next(v14Loop13); } }
   } catch (e) {

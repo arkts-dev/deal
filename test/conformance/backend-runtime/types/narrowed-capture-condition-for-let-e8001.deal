@@ -11,7 +11,7 @@ export function main(): null {
   };
   if (flag !== null) {
     clear();
-    { let v14Loop0: int = 0; while (flag) { let step: int = v14Loop0; {
+    { let v14Loop0: number = 0; while (flag) { let step: number = v14Loop0; {
     } v14Loop0 = step; v14Loop0 = v14Loop0 + 1; } }
   }
   return null;

@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): null {function a(x:int | null): int {if(x !== null) {return x;} return 0;} let b: (x:int | null,y:int) => int = a; return null;}
+export function f(): null {function a(x:number | null): number {if(x !== null) {return x;} return 0;} let b: (x:number | null,y:number) => number = a; return null;}

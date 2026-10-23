@@ -3,4 +3,4 @@
 // @expected: compile-error E3001
 // @features: v1.2, frontend, reject
 
-export function f(): null {function a(): int {return 1;} let b:(x:int)=>int | null=a; return null;}
+export function f(): null {function a(): number {return 1;} let b:(x:number)=>number | null=a; return null;}

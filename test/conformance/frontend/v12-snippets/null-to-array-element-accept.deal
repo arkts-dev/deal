@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): int[] | null {return null;}
+export function f(): number[] | null {return null;}

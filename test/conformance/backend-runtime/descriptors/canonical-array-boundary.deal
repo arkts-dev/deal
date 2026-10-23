@@ -3,31 +3,31 @@
 // @expected: runtime-ok
 // @features: descriptors, arrays, functions
 
-function first(xs: int[]): int {
+function first(xs: number[]): number {
   return xs[0];
 }
 
-function applyAll(fs: ((x: int) => int)[], x: int): int {
-  let acc: int = x;
-  for (let f: (x: int) => int of fs) {
+function applyAll(fs: ((x: number) => number)[], x: number): number {
+  let acc: number = x;
+  for (let f: (x: number) => number of fs) {
     acc = f(acc);
   }
   return acc;
 }
 
-function nested(): int[][] {
+function nested(): number[][] {
   return [[1, 2], [3, 4]];
 }
 
 export function test_canonical_array_boundary(): string {
-  let xs: int[] = [7, 8, 9];
-  let f: int = first(xs);
-  let fs: ((x: int) => int)[] = [
-    function(x: int): int { return x + 1; },
-    function(x: int): int { return x * 2; }
+  let xs: number[] = [7, 8, 9];
+  let f: number = first(xs);
+  let fs: ((x: number) => number)[] = [
+    function(x: number): number { return x + 1; },
+    function(x: number): number { return x * 2; }
   ];
-  let total: int = applyAll(fs, f);
-  let grid: int[][] = nested();
+  let total: number = applyAll(fs, f);
+  let grid: number[][] = nested();
   if (total !== 16) {
     throw { code: "TEST_FAIL", message: "array boundary value mismatch" };
   }

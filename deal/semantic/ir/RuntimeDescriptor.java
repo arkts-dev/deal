@@ -7,7 +7,6 @@ import java.util.Objects;
 public sealed interface RuntimeDescriptor extends OpResultType
     permits RuntimeDescriptor.Null,
             RuntimeDescriptor.Boolean,
-            RuntimeDescriptor.Int,
             RuntimeDescriptor.Number,
             RuntimeDescriptor.String,
             RuntimeDescriptor.Table,
@@ -123,8 +122,8 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return parseFunc(text, pos, false);
         }
         // Fixed scalar spellings.
-        java.lang.String[] fixed = {"null", "boolean", "int", "number", "string", "table"};
-        RuntimeDescriptor[] mapped = {Null.INSTANCE, Boolean.INSTANCE, Int.INSTANCE,
+        java.lang.String[] fixed = {"null", "boolean", "number", "string", "table"};
+        RuntimeDescriptor[] mapped = {Null.INSTANCE, Boolean.INSTANCE,
             Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
         for (int i = 0; i < fixed.length; i++) {
             if (text.startsWith(fixed[i], pos[0])) {
@@ -229,23 +228,6 @@ public sealed interface RuntimeDescriptor extends OpResultType
         @Override
         public java.lang.String canonicalSpecText() {
             return "boolean";
-        }
-    }
-
-    /**
-     * The signed32 {@code int} descriptor; canonical text {@code "int"}.
-     *
-     * <p>Integer descriptor values are signed 32-bit
-     * ({@code [-2147483648, 2147483647]}); every integer descriptor path
-     * delegates to signed32 and can produce E8004 after kind/integrality
-     * validation. No safe-range representation exists.</p>
-     */
-    enum Int implements RuntimeDescriptor {
-        INSTANCE;
-
-        @Override
-        public java.lang.String canonicalSpecText() {
-            return "int";
         }
     }
 

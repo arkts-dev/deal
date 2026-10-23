@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: classes, arrays, contextual-typing
 
-class Box { n: int = 0; }
+class Box { n: number = 0; }
 export function main(): null {
   let a: Box[] = [{ n: 2 }, {}];
   return null;

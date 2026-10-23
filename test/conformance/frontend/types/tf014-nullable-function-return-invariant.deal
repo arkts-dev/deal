@@ -3,11 +3,11 @@
 // @expected: compile-error E3001
 // @features: type-system, functions, nullable, invariance, diagnostics, v1.2
 
-function exactValue(): int {
+function exactValue(): number {
   return 1;
 }
 
 export function main(): null {
-  let nullableValue: () => int | null = exactValue;
+  let nullableValue: () => number | null = exactValue;
   return null;
 }

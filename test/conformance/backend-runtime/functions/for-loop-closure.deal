@@ -3,18 +3,18 @@
 // @expected: runtime-ok
 // @features: functions, closures, for-loop
 
-export function test_for_closure(): int {
-  let f0: (() => int) = function(): int { return -1; };
-  let f1: (() => int) = function(): int { return -1; };
-  let f2: (() => int) = function(): int { return -1; };
-  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
-    if (i === 0) { f0 = function(): int { return i; }; }
-    if (i === 1) { f1 = function(): int { return i; }; }
-    if (i === 2) { f2 = function(): int { return i; }; }
+export function test_for_closure(): number {
+  let f0: (() => number) = function(): number { return -1; };
+  let f1: (() => number) = function(): number { return -1; };
+  let f2: (() => number) = function(): number { return -1; };
+  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
+    if (i === 0) { f0 = function(): number { return i; }; }
+    if (i === 1) { f1 = function(): number { return i; }; }
+    if (i === 2) { f2 = function(): number { return i; }; }
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
-  let v0: int = f0(); // each captured closure invoked once
-  let v1: int = f1();
-  let v2: int = f2();
+  let v0: number = f0(); // each captured closure invoked once
+  let v1: number = f1();
+  let v2: number = f2();
   if (v0 !== 0) {
     throw { code: "TEST_FAIL", message: "for-loop closure f0 captured value mismatch" };
   }

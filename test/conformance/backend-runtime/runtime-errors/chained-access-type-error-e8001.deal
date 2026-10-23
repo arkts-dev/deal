@@ -3,10 +3,10 @@
 // @expected: runtime-error E8001
 // @features: runtime-errors, chained-access
 
-export function test_chained_access_type_error(): int {
+export function test_chained_access_type_error(): number {
   let t: table = { inner: { value: "bad" } };
   let inner: table = t.inner;
-  let result: int = inner.value;
+  let result: number = inner.value;
   return result;
 }
 

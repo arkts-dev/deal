@@ -1,68 +1,68 @@
 // @spec: Arrays — Byte indexing and buffer semantics
-// @description: The JVM int[] container layer (ISSUE-0160 step 2): int[][] and (int[] | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the strict v1.3 array-read bounds E8002 for the past-end and negative-index shapes of both element forms
+// @description: The JVM number[] container layer (ISSUE-0160 step 2): number[][] and (number[] | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the strict v1.3 array-read bounds E8002 for the past-end and negative-index shapes of both element forms
 // @expected: runtime-ok
-// @features: int[], arrays, runtime, v1.2
+// @features: number[], arrays, runtime, v1.2
 
 export function test_array_array_container_ops(): null {
-  // int[][] literal construction: the elements flow through the E6
-  // int[] helpers at the T1 direct positions and the container holds
+  // number[][] literal construction: the elements flow through the E6
+  // number[] helpers at the T1 direct positions and the container holds
   // wrapper references, never copies.
-  let xs: int[][] = [[0], [0, 0]];
+  let xs: number[][] = [[0], [0, 0]];
   if (xs.length !== 2) {
-    throw { code: "TEST_FAIL", message: "int[][] literal length mismatch" };
+    throw { code: "TEST_FAIL", message: "number[][] literal length mismatch" };
   }
   if (xs[0].length !== 1 || xs[1].length !== 2) {
-    throw { code: "TEST_FAIL", message: "int[][] element length mismatch" };
+    throw { code: "TEST_FAIL", message: "number[][] element length mismatch" };
   }
   // Reads and mutation route through the shared wrapper: a write into
   // an element buffer is visible through the container read.
   xs[0][0] = 200;
   if (xs[0][0] !== 200 || xs[1][0] !== 0) {
-    throw { code: "TEST_FAIL", message: "int[][] element mutation mismatch" };
+    throw { code: "TEST_FAIL", message: "number[][] element mutation mismatch" };
   }
   // Append at i == length grows the wrapper storage in place: every
   // alias observes the appended element and later writes through it.
-  let alias: int[][] = xs;
+  let alias: number[][] = xs;
   xs[xs.length] = [0, 0, 0];
   if (xs.length !== 3 || alias.length !== 3) {
-    throw { code: "TEST_FAIL", message: "int[][] append-growth length mismatch" };
+    throw { code: "TEST_FAIL", message: "number[][] append-growth length mismatch" };
   }
   if (xs[2] !== alias[2]) {
-    throw { code: "TEST_FAIL", message: "int[][] append must share the stored reference" };
+    throw { code: "TEST_FAIL", message: "number[][] append must share the stored reference" };
   }
   alias[2][0] = 77;
   if (xs[2][0] !== 77) {
-    throw { code: "TEST_FAIL", message: "int[][] alias must observe the write" };
+    throw { code: "TEST_FAIL", message: "number[][] alias must observe the write" };
   }
-  // (int[] | null)[]: the OrNull element policy stores and accepts the
+  // (number[] | null)[]: the OrNull element policy stores and accepts the
   // DEAL null element, keeps real buffer references, and yields the
   // DEAL null past the end (a valid nullable element — no E8001).
-  let ys: (int[] | null)[] = [];
+  let ys: (number[] | null)[] = [];
   ys[0] = null;
   ys[1] = [0, 0];
-  let first: int[] | null = ys[0];
+  let first: number[] | null = ys[0];
   if (first !== null) {
-    throw { code: "TEST_FAIL", message: "(int[] | null)[] must accept the null element" };
+    throw { code: "TEST_FAIL", message: "(number[] | null)[] must accept the null element" };
   }
-  let second: int[] | null = ys[1];
+  let second: number[] | null = ys[1];
   if (second !== null) {
     second[0] = 5;
   } else {
-    throw { code: "TEST_FAIL", message: "(int[] | null)[] value element lost" };
+    throw { code: "TEST_FAIL", message: "(number[] | null)[] value element lost" };
   }
-  let checkBack: int[] | null = ys[1];
+  let checkBack: number[] | null = ys[1];
   if (checkBack !== null) {
     if (checkBack[0] !== 5) {
-      throw { code: "TEST_FAIL", message: "(int[] | null)[] element reference mismatch" };
+      throw { code: "TEST_FAIL", message: "(number[] | null)[] element reference mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "(int[] | null)[] value element lost on re-read" };
+    throw { code: "TEST_FAIL", message: "(number[] | null)[] value element lost on re-read" };
   }
   // A past-end read of either element form is the strict v1.3 array
   // bounds failure: E8002 at the read expression, never a language null
   // and never the element descriptor check.
   try {
-    let past: int[] | null = ys[9];
+    let past: number[] | null = ys[9];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (e) {
     if (e.code !== "E8002") {
@@ -70,7 +70,7 @@ export function test_array_array_container_ops(): null {
     }
   }
   try {
-    let z: int[] = xs[9];
+    let z: number[] = xs[9];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (e) {
     if (e.code !== "E8002") {
@@ -80,7 +80,7 @@ export function test_array_array_container_ops(): null {
   // A negative index raises E8002 in both element forms (the strict
   // bounds check runs unconditionally at the read).
   try {
-    let z: int[] = xs[-1];
+    let z: number[] = xs[-1];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (e) {
     if (e.code !== "E8002") {
@@ -88,7 +88,7 @@ export function test_array_array_container_ops(): null {
     }
   }
   try {
-    let z: int[] | null = ys[-1];
+    let z: number[] | null = ys[-1];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
   } catch (e) {
     if (e.code !== "E8002") {

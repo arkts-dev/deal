@@ -5,6 +5,6 @@
 // the fixture pins. Resolved on demand by the host-fixture registry; the
 // discovery walk skips test/conformance/host-fixtures/ entirely.
 
-export function inc(x: int): int;
-export function dec(x: int): int;
+export function inc(x: number): number;
+export function dec(x: number): number;
 export function trace(): string;

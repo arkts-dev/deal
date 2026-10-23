@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: async, await
 
-async function immediate(): int {
+async function immediate(): number {
   return 42;
 }
 
 export async function test_immediate_async(): null {
-  let v: int = await immediate();
+  let v: number = await immediate();
   if (v !== 42) {
     throw { code: "TEST_FAIL", message: "immediate async result mismatch" };
   }

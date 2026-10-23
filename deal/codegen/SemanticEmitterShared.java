@@ -29,9 +29,7 @@ public final class SemanticEmitterShared {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return "bool";
         }
-        if (descriptor instanceof RuntimeDescriptor.Int) {
-            return "int";
-        }
+
         if (descriptor instanceof RuntimeDescriptor.Number) {
             return "number";
         }
@@ -74,9 +72,7 @@ public final class SemanticEmitterShared {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return "boolean";
         }
-        if (descriptor instanceof RuntimeDescriptor.Int) {
-            return "int";
-        }
+
         if (descriptor instanceof RuntimeDescriptor.Number) {
             return "number";
         }

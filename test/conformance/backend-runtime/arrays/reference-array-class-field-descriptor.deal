@@ -1,21 +1,21 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: Class atoms with int[]-typed fields cross the canonical boundary: construction tags instances with the module-qualified atom, int[] fields read and write as real buffers, and provided per-instance values stay isolated (v1.2)
+// @description: Class atoms with number[]-typed fields cross the canonical boundary: construction tags instances with the module-qualified atom, number[] fields read and write as real buffers, and provided per-instance values stay isolated (v1.2)
 // @expected: runtime-ok
-// @features: descriptors, int[], classes
+// @features: descriptors, number[], classes
 
 class Payload {
-  data: int[] = [0, 0];
+  data: number[] = [0, 0];
   tag: string = "";
 }
 
-function describe(p: Payload): int {
+function describe(p: Payload): number {
   return p.data.length;
 }
 
 export function test_array_class_field_descriptor(): string {
   let p: Payload = { data: [0, 0, 0], tag: "a" };
   if (describe(p) !== 3) {
-    throw { code: "TEST_FAIL", message: "int[] class field boundary mismatch" };
+    throw { code: "TEST_FAIL", message: "number[] class field boundary mismatch" };
   }
   p.data[1] = 200;
   let q: Payload = { data: [0], tag: "b" };
@@ -23,9 +23,9 @@ export function test_array_class_field_descriptor(): string {
     throw { code: "TEST_FAIL", message: "second instance length mismatch" };
   }
   if (p.data[1] !== 200) {
-    throw { code: "TEST_FAIL", message: "instances must not share int[] storage" };
+    throw { code: "TEST_FAIL", message: "instances must not share number[] storage" };
   }
-  return "canonical int[] class field descriptor ok";
+  return "canonical number[] class field descriptor ok";
 }
 
 export function main(): null {

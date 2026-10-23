@@ -9,10 +9,10 @@ export function main(): null {
   let counter: State.Counter = State.makeCounter(40);
   let alias: State.Counter = counter;
   let audit: table = { calls: 0 };
-  let step: () => int = State.makeStep(counter, audit);
-  let first: int = step();
-  let second: int = step();
-  let calls: int = audit.calls;
+  let step: () => number = State.makeStep(counter, audit);
+  let first: number = step();
+  let second: number = step();
+  let calls: number = audit.calls;
 
   if (first !== 41 || second !== 42) {
     throw { code: "TEST_FAIL", message: "imported closure call order mismatch" };

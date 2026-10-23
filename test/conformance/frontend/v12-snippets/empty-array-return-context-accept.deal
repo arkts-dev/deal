@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): int[] {return [];}
+export function f(): number[] {return [];}

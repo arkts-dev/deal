@@ -92,14 +92,6 @@ public final class SemanticRuntimeModel {
         return "num:" + deal.semantic.ir.CanonicalJson.numberHex(value);
     }
 
-    /** The canonical signed32 int atom. */
-    public static String intAtom(long value) {
-        if (value < -2147483648L || value > 2147483647L) {
-            throw new IllegalArgumentException("int atom outside signed32: " + value);
-        }
-        return "int:" + value;
-    }
-
     /**
      * The canonical origin text ({@code sourceId:line:column}); line and
      * column are 1-based. {@code null} origin yields {@code "-"}.

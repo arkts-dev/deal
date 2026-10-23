@@ -3,16 +3,16 @@
 // @expected: runtime-ok
 // @features: closures, mutation
 
-export function test_nested_closure_mutation(): int {
-  let x: int = 1;
-  let make: () => () => int = function(): () => int {
-    return function(): int {
+export function test_nested_closure_mutation(): number {
+  let x: number = 1;
+  let make: () => () => number = function(): () => number {
+    return function(): number {
       return x;
     };
   };
-  let f: () => int = make();
+  let f: () => number = make();
   x = 9;
-  let result: int = f();
+  let result: number = f();
   if (result !== 9) { throw { code: "TEST_FAIL", message: "closure mutation failed" }; }
   return result;
 }

@@ -16,7 +16,6 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>{@code FOUNDATION_VALUES} → {@code {CONST, UNARY, BINARY, STRING_CONCAT}}</li>
- *   <li>{@code SIGNED_INT32} → {@code {CONST(Int), UNARY(INT32_*), BINARY(INT32_*), INTRINSIC_CALL(INT_CONVERT), BOUNDARY(int descriptor)}}</li>
  *   <li>{@code CONTAINERS_AND_STRINGS} → {@code {ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, MEMBER_*, INDEX_*, OPTIONAL_READ, HAS_FIELD, FOR_EACH}}</li>
  *   <li>{@code DESCRIPTORS} → {@code {BOUNDARY}}</li>
  *   <li>{@code BOUNDARIES} → {@code {BOUNDARY}}</li>
@@ -67,13 +66,6 @@ public final class CapabilityRequirementCatalog {
             RequiredOperation.of("UNARY", SemanticOpKind.UNARY),
             RequiredOperation.of("BINARY", SemanticOpKind.BINARY),
             RequiredOperation.of("STRING_CONCAT", SemanticOpKind.STRING_CONCAT)));
-
-        catalog.put(SemanticCapability.SIGNED_INT32, List.of(
-            RequiredOperation.of("CONST(Int)", SemanticOpKind.CONST),
-            RequiredOperation.of("UNARY(INT32_*)", SemanticOpKind.UNARY),
-            RequiredOperation.of("BINARY(INT32_*)", SemanticOpKind.BINARY),
-            RequiredOperation.of("INTRINSIC_CALL(INT_CONVERT)", SemanticOpKind.INTRINSIC_CALL),
-            RequiredOperation.of("BOUNDARY(int descriptor)", SemanticOpKind.BOUNDARY)));
 
         catalog.put(SemanticCapability.CONTAINERS_AND_STRINGS, List.of(
             RequiredOperation.of("ARRAY_NEW", SemanticOpKind.ARRAY_NEW),

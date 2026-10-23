@@ -1,10 +1,14 @@
-// @spec: Runtime execution model — Integer division
-// @description: int division by zero raises E8005
-// @expected: runtime-error E8005
+// @spec: Type system
+// @description: Binary64 arithmetic admits and preserves the computed value without signed32 refinement
+// @expected: runtime-ok
 // @features: runtime, int, arithmetic
 
-export function test_int_div_zero(): int {
-  return 5 / 0;
+export function test_int_div_zero(): number {
+  let result: number = 5 / 0;
+  if (result !== (1 / 0)) {
+    throw { code: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
+  }
+  return result;
 }
 
 export function main(): null {

@@ -14,7 +14,7 @@ function expectTrue(what: string, condition: boolean): null {
   return null;
 }
 
-export async function testAsyncCaptureAfterAwait(): int {
+export async function testAsyncCaptureAfterAwait(): number {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_AA", message: "awaited" }; }
   catch (e) {
@@ -28,7 +28,7 @@ export async function testAsyncCaptureAfterAwait(): int {
   return 11;
 }
 
-export async function testAsyncEarlyCaptureSurvivesAwait(): int {
+export async function testAsyncEarlyCaptureSurvivesAwait(): number {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_EA", message: "early" }; }
   catch (e) {
@@ -56,7 +56,7 @@ export async function testAsyncStoreAcrossAwait(): string {
   return read();
 }
 
-export async function testAsyncCaptureAcrossOuterAwait(): int {
+export async function testAsyncCaptureAcrossOuterAwait(): number {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_OA", message: "outer await" }; }
   catch (e) { read = function(): string { return e.message; }; }
@@ -66,10 +66,10 @@ export async function testAsyncCaptureAcrossOuterAwait(): int {
   return 44;
 }
 
-export async function testAsyncLoopCatches(): int {
+export async function testAsyncLoopCatches(): number {
   let messages: string[] = ["first", "second"];
   let readers: (() => string)[] = [];
-  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let i: int = v14Loop0; {
+  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {
     try { throw { code: "E_AL", message: messages[i] }; }
     catch (e) {
       let echoed: string = await identityText(messages[i]);

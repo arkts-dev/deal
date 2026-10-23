@@ -5,7 +5,7 @@
 
 import * as probe from "host/planprobe";
 
-function nextStamp(): int {
+function nextStamp(): number {
   return probe.nextValue();
 }
 
@@ -17,7 +17,7 @@ function check(condition: boolean, message: string): null {
 }
 
 class Node {
-  stamp: int = nextStamp();
+  stamp: number = nextStamp();
   next: Node | null = {};
   tag?: string | null;
 }
@@ -36,11 +36,11 @@ class Holder {
 
 class Spin {
   next: Spin | null = { spin: nextStamp() };
-  spin: int = 0;
+  spin: number = 0;
 }
 
 export function test_suppressed_self_default_keeps_override(): null {
-  let base: int = probe.valueCount();
+  let base: number = probe.valueCount();
   let first: Node = { next: null };
   check(probe.valueCount() === base + 1, "the omitted effectful default did not run exactly once for this construction");
   check(first.stamp === (base + 1) * 10, "the omitted effectful default publishes this construction's value");
@@ -73,7 +73,7 @@ export function test_suppressed_self_default_keeps_override(): null {
 }
 
 export function test_suppressed_mutual_defaults(): null {
-  let base: int = probe.valueCount();
+  let base: number = probe.valueCount();
   let ping: Ping = { pong: null };
   let pong: Pong = { ping: null };
   check(ping.pong === null, "the supplied field suppresses its recursive default");
@@ -83,7 +83,7 @@ export function test_suppressed_mutual_defaults(): null {
 }
 
 export function test_nonexecuted_suppressed_default_side_effect(): null {
-  let base: int = probe.valueCount();
+  let base: number = probe.valueCount();
   let spun: Spin = { next: null };
   check(spun.next === null, "the supplied recursive field suppresses its own host call");
   check(spun.spin === 0, "the omitted non-recursive default still runs for this construction");
@@ -92,7 +92,7 @@ export function test_nonexecuted_suppressed_default_side_effect(): null {
 }
 
 export function test_nested_default_literal_override(): null {
-  let base: int = probe.valueCount();
+  let base: number = probe.valueCount();
   let holder: Holder = {};
   check(holder.node.next === null, "the demanded default's own literal supplies the recursive field, so its construction terminates");
   check(holder.node.stamp === 0, "the demanded default's own literal supplies the effectful field");

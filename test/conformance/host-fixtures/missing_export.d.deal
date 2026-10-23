@@ -10,4 +10,4 @@
 // any exported function auto-invocation (R3).
 
 export function ping(): string;
-export function missing(): int;
+export function missing(): number;

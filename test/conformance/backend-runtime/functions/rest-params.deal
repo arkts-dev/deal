@@ -4,6 +4,6 @@
 // @expected: compile-error E1047
 // @features: functions, rest
 
-export function sum(...values: int[]): int {
+export function sum(...values: number[]): number {
   return values.length;
 }

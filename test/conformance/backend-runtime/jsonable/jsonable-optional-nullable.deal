@@ -7,7 +7,7 @@
 export class Profile {
   nick?: string = "";
   bio: string | null = null;
-  score: int = 0;
+  score: number = 0;
 }
 
 export function test_optional_nullable(): null {

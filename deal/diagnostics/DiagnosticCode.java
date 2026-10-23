@@ -95,8 +95,6 @@ public enum DiagnosticCode {
     E1034(Phase.FRONTEND, "Expected field name in member access"),
     /** Expected ']' to close bracket. */
     E1035(Phase.FRONTEND, "Expected ']' to close bracket"),
-    /** Numeric literal out of range. */
-    E1036(Phase.FRONTEND, "Numeric literal out of range"),
     /** Expected expression. */
     E1037(Phase.FRONTEND, "Expected expression"),
     /** Expected property name or '}' in object literal. */
@@ -350,10 +348,6 @@ public enum DiagnosticCode {
     E8002(Phase.RUNTIME, "Array index out of bounds"),
     /** Array element type check failed. */
     E8003(Phase.RUNTIME, "Array element type check failed"),
-    /** Integer out of safe range. */
-    E8004(Phase.RUNTIME, "Integer out of safe range"),
-    /** Integer division by zero. */
-    E8005(Phase.RUNTIME, "Integer division by zero"),
     /** Integer exponent must be non-negative. */
     E8006(Phase.RUNTIME, "Integer exponent must be non-negative"),
     /** Extra field in class instance. */

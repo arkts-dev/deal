@@ -34,7 +34,6 @@ import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.IndexMode;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -217,10 +216,10 @@ public class ContainerBoundaryProductionTest {
     private static void testRejectedRawProfileLeavesNoScratch() throws Exception {
         Path input = Files.createTempDirectory("boundary-profile-input-");
         Path temp = Path.of(System.getProperty("java.io.tmpdir"));
-        String source = "export function main(): null { let n: int = 1; return null; }\n";
+        String source = "export function main(): null { let n: number = 1; return null; }\n";
         try {
             Files.writeString(input.resolve("late-profile.deal"), "\n".repeat(40)
-                + "// @profile: legacy-safe-int\n" + source, StandardCharsets.UTF_8);
+                + "// @profile: legacy-safe-number\n" + source, StandardCharsets.UTF_8);
             checkEq(source, ConformanceHarnessMetadata.productionCorpusSource(
                 source, "profile-control.deal"), "the profile-free boundary control is accepted");
             Set<Path> before;
@@ -409,7 +408,7 @@ public class ContainerBoundaryProductionTest {
      * takes the shared declaration-initializer production and its carry
      * loads resolve the current binding.
      */
-    private static final String GUARD_SEED = "export function main(): null { let x: int = true; return null; }";
+    private static final String GUARD_SEED = "export function main(): null { let x: number = true; return null; }";
 
     /**
      * The marked case (B3): a real {@code std/json} decode whose nested
@@ -432,7 +431,7 @@ public class ContainerBoundaryProductionTest {
      */
     private static final String UNMARKED_NESTED_SOURCE = """
         export function main(): null {
-          let inner: int[] = [1];
+          let inner: number[] = [1];
           let holder: table = { values: [inner] };
           let xs: table[][] = holder.values;
           return null;
@@ -515,14 +514,14 @@ public class ContainerBoundaryProductionTest {
         import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[1,2],[3,4]]}");
-          let xs: int[][] = t.values;
-          let first: int[] = xs[0];
-          let alias: int[] = xs[0];
+          let t: table = json.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
+          let xs: number[][] = t.values;
+          let first: number[] = xs[0];
+          let alias: number[] = xs[0];
           if (first !== alias) {
             throw { code: "TEST_FAIL", message: "decoded identity" };
           }
-          let reread: int[][] = t.values;
+          let reread: number[][] = t.values;
           if (reread !== xs) {
             throw { code: "TEST_FAIL", message: "decoded member identity" };
           }
@@ -537,7 +536,7 @@ public class ContainerBoundaryProductionTest {
             throw { code: "TEST_FAIL", message: "decoded alias mutation" };
           }
           let encoded: string = json.stringify(t);
-          if (encoded !== "{\\"values\\":[[1,9],[3,4]]}") {
+          if (encoded !== "{\\"values\\":[[1.0,9.0],[3.0,4.0]]}") {
             throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded };
           }
           return null;
@@ -553,7 +552,7 @@ public class ContainerBoundaryProductionTest {
         import * as tables from "std/table";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[1,2]]}");
+          let t: table = json.parse("{\\"values\\":[[1.0,2.0]]}");
           let ks: string[] = tables.keys(t.values);
           return null;
         }
@@ -623,7 +622,7 @@ public class ContainerBoundaryProductionTest {
 
     /**
      * The flat case (ISSUE-0768): a {@code number[]} class field decoded
-     * from {@code [2147483648.0]} carries its slot's recorded number mark
+     * from {@code [2147483648]} carries its slot's recorded number mark
      * (the exact v1.3 classification: an integral mathematical value
      * outside signed32 is the number variant), so the same array admitted
      * to a {@code string[]} boundary projects the number actual token —
@@ -637,7 +636,7 @@ public class ContainerBoundaryProductionTest {
         }
 
         export function main(): null {
-          let d: Doc | null = Doc$fromJson("{\\"values\\":[2147483648.0]}");
+          let d: Doc | null = Doc$fromJson("{\\"values\\":[2147483648]}");
           if (d !== null) {
             let holder: table = { xs: d.values };
             let ys: string[] = holder.xs;
@@ -684,7 +683,7 @@ public class ContainerBoundaryProductionTest {
         }
 
         export function main(): null {
-          let d: Deep | null = Deep$fromJson("{\\"values\\":[[2147483648.0]]}");
+          let d: Deep | null = Deep$fromJson("{\\"values\\":[[2147483648]]}");
           if (d !== null) {
             let holder: table = { xs: d.values[0] };
             let ys: string[] = holder.xs;
@@ -774,15 +773,15 @@ public class ContainerBoundaryProductionTest {
      * never the Lua prelude's internal {@code function(int;int)} dialect.
      */
     private static final String CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE = """
-        function identity(x: int): int {
+        function identity(x: number): number {
           return x;
         }
 
         class Box {
-          f: (x: int) => int = identity;
+          f: (x: number) => number = identity;
         }
 
-        function asString(x: int): string {
+        function asString(x: number): string {
           return "s";
         }
 
@@ -799,15 +798,15 @@ public class ContainerBoundaryProductionTest {
      * with the identical canonical signature projection.
      */
     private static final String CLASS_FIELD_FUNCTION_MISMATCH_SOURCE = """
-        function identity(x: int): int {
+        function identity(x: number): number {
           return x;
         }
 
         class Box {
-          f: (x: int) => int = identity;
+          f: (x: number) => number = identity;
         }
 
-        function asString(x: int): string {
+        function asString(x: number): string {
           return "s";
         }
 
@@ -838,13 +837,13 @@ public class ContainerBoundaryProductionTest {
             new FocusedFailure("class literal function field mismatch",
                 CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 15, 16,
                 new Tuple("E8010",
-                    "function signature mismatch: expected (int)->int, got (int)->string",
-                    "(int)->int", "(int)->string")),
+                    "function signature mismatch: expected (number)->number, got (number)->string",
+                    "(number)->number", "(number)->string")),
             new FocusedFailure("class field assignment function mismatch",
                 CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, 16, 3,
                 new Tuple("E8010",
-                    "function signature mismatch: expected (int)->int, got (int)->string",
-                    "(int)->int", "(int)->string")));
+                    "function signature mismatch: expected (number)->number, got (number)->string",
+                    "(number)->number", "(number)->string")));
     }
 
     /**
@@ -856,16 +855,16 @@ public class ContainerBoundaryProductionTest {
      * {@code ARRAY_ELEMENT_ASSIGNMENT} projection).
      */
     private static final String ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE = """
-        function identity(x: int): int {
+        function identity(x: number): number {
           return x;
         }
 
-        function asString(x: int): string {
+        function asString(x: number): string {
           return "s";
         }
 
         export function main(): null {
-          let xs: ((x: int) => int)[] = [identity];
+          let xs: ((x: number) => number)[] = [identity];
           let holder: table = { g: asString };
           xs[0] = holder.g;
           return null;
@@ -879,16 +878,16 @@ public class ContainerBoundaryProductionTest {
      * of the same element assignment cell.
      */
     private static final String ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE = """
-        function identity(x: int): int {
+        function identity(x: number): number {
           return x;
         }
 
-        function asString(x: int): string {
+        function asString(x: number): string {
           return "s";
         }
 
         export function main(): null {
-          let xs: (((x: int) => int) | null)[] = [identity];
+          let xs: (((x: number) => number) | null)[] = [identity];
           let holder: table = { g: asString };
           xs[0] = holder.g;
           return null;
@@ -904,12 +903,12 @@ public class ContainerBoundaryProductionTest {
      * {@code function(int;int)} dialect.
      */
     private static final String CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE = """
-        function identity(x: int): int {
+        function identity(x: number): number {
           return x;
         }
 
         class Box {
-          fs: ((x: int) => int)[] = [];
+          fs: ((x: number) => number)[] = [];
         }
 
         export function main(): null {
@@ -938,17 +937,17 @@ public class ContainerBoundaryProductionTest {
             new FocusedFailure("array element function mismatch",
                 ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE, 12, 3,
                 new Tuple("E8010",
-                    "function signature mismatch: expected (int)->int, got (int)->string",
-                    "(int)->int", "(int)->string")),
+                    "function signature mismatch: expected (number)->number, got (number)->string",
+                    "(number)->number", "(number)->string")),
             new FocusedFailure("array element nullable function mismatch",
                 ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE, 12, 3,
                 new Tuple("E8010",
-                    "function signature mismatch: expected (int)->int, got (int)->string",
-                    "(int)->int", "(int)->string")),
+                    "function signature mismatch: expected (number)->number, got (number)->string",
+                    "(number)->number", "(number)->string")),
             new FocusedFailure("class field function array element mismatch",
                 CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 11, 16,
                 new Tuple("E8003", "array element 1 type mismatch",
-                    "(int)->int", "int")));
+                    "(number)->number", "number")));
     }
 
     private record FocusedFailure(String label, String source, int line, int column,
@@ -1195,7 +1194,7 @@ public class ContainerBoundaryProductionTest {
             productionInvocation(), compiled.checkedProject(), compiled.index(),
             compiled.manifests(), compiled.surface(), compiled.identities(), BuiltinErrorDeclaration.synthesized(
                 compiled.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            Set.of());
         check(result.project() != null, spec.what() + ": the production project entry "
             + "lowers the focused program with zero diagnostics: "
             + result.diagnostics());

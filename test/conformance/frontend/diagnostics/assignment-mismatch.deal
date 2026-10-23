@@ -4,8 +4,8 @@
 // @features: diagnostics, assignment
 
 export function main(): null {
-let y: int = 1;
-y = 2.0;
+let y: number = 1;
+y = true;
 
 return null;
 }

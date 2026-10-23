@@ -3,10 +3,10 @@
 // @expected: compile-error E3001
 // @features: async, functions, diagnostics
 
-async function f(): int { return 1; }
+async function f(): number { return 1; }
 export function main(): null { return null; }
 export function main(): null {
-let g: () => int = f;
+let g: () => number = f;
 
 
 return null;

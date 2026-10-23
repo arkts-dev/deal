@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E3006",
     "line": 6,
-    "column": 59,
-    "message": "Cannot compare int | null with int"
+    "column": 65,
+    "message": "Cannot compare number | null with number"
   }
 }

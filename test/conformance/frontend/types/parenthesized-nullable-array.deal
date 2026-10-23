@@ -1,9 +1,9 @@
 // @spec: Type system — Array literals
-// @description: The spec's parenthesized nullable element type (int | null)[] compiles (v1.2 defect snippet 20)
+// @description: The spec's parenthesized nullable element type (number | null)[] compiles (v1.2 defect snippet 20)
 // @expected: compile-ok
 // @features: types, arrays, nullable, parser
 
 export function main(): null {
-  let a: (int | null)[] = [1, null, 3];
+  let a: (number | null)[] = [1, null, 3];
   return null;
 }

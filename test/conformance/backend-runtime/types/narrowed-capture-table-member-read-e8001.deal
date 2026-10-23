@@ -11,7 +11,7 @@ export function main(): null {
   };
   if (t !== null) {
     clear();
-    let value: int = t.a;
+    let value: number = t.a;
   }
   return null;
 }

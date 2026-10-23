@@ -4,8 +4,8 @@
 // @features: type-system, nullable
 
 export function main(): null {
-let a: int | null = 42;
-let b: int = a;
+let a: number | null = 42;
+let b: number = a;
 
 return null;
 }

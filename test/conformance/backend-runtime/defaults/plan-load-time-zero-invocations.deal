@@ -6,7 +6,7 @@
 import * as probe from "host/planprobe";
 
 class Probe {
-  value: int = probe.nextValue();
+  value: number = probe.nextValue();
 }
 
 export function test_plan_load_time_zero_invocations(): null {

@@ -42,7 +42,6 @@ import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.LoweredFunction;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
@@ -106,14 +105,14 @@ public class BodyInvocationIdentityTest {
     // =========================================================================
 
     private static final String ZERO_CALL_SITE_SOURCE = """
-        function helper(): int {
+        function helper(): number {
           return 7;
         }
 
         export function main(): null {
           // A value reference is not a call site: the declaration keeps zero
           // call sites and its value read publishes the closure identity.
-          let ref: () => int = helper;
+          let ref: () => number = helper;
           return null;
         }
         """;
@@ -159,7 +158,7 @@ public class BodyInvocationIdentityTest {
     private static final String STORED_EXPRESSION_SOURCE = """
         export function main(): null {
           let f: () => null = function(): null {
-            let y: int = 2;
+            let y: number = 2;
             return null;
           };
           return null;
@@ -208,7 +207,7 @@ public class BodyInvocationIdentityTest {
 
     private static final String ASSIGNED_EXPRESSION_SOURCE = """
         export function main(): null {
-          let n: int = 1;
+          let n: number = 1;
           let g: () => null = function(): null {
             return null;
           };
@@ -409,12 +408,12 @@ public class BodyInvocationIdentityTest {
      * never-called declaration plus the pinned {@code main(): null}.
      */
     private static final String CARRIER_SLICE_SOURCE = """
-        function helper(): int {
+        function helper(): number {
           return 7;
         }
 
         function main(): null {
-          let ref: () => int = helper;
+          let ref: () => number = helper;
           return null;
         }
         """;
@@ -1259,7 +1258,6 @@ public class BodyInvocationIdentityTest {
         return SemanticLowerer.lowerProject(invocation(), project.checkedProject(),
             project.index(), project.manifests(), project.surface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 project.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -1407,36 +1405,36 @@ public class BodyInvocationIdentityTest {
      * hanging).
      */
     private static final String REASSIGNED_BINDING_SOURCE = """
-        function one(): int { return 1; }
-        function two(): int { return 2; }
-        function fib(n: int): int {
+        function one(): number { return 1; }
+        function two(): number { return 2; }
+        function fib(n: number): number {
           if (n < 2) { return n; }
           return fib(n - 1) + fib(n - 2);
         }
-        function isEven(n: int): boolean {
+        function isEven(n: number): boolean {
           if (n === 0) { return true; }
           return isOdd(n - 1);
         }
-        function isOdd(n: int): boolean {
+        function isOdd(n: number): boolean {
           if (n === 0) { return false; }
           return isEven(n - 1);
         }
         export function main(): null {
-          let f: () => int = one;
-          let call: () => int = function(): int { return f(); };
+          let f: () => number = one;
+          let call: () => number = function(): number { return f(); };
           f = two;
-          let captured: int = call();
-          let visits: int = 0;
+          let captured: number = call();
+          let visits: number = 0;
           while (f() === 2 && visits < 5) {
             visits = visits + 1;
             f = one;
           }
           let cond: boolean = false;
           if (cond) { f = two; }
-          let afterBranch: int = f();
-          let stable: () => int = two;
-          let stableValue: int = stable();
-          let recursive: int = fib(10);
+          let afterBranch: number = f();
+          let stable: () => number = two;
+          let stableValue: number = stable();
+          let recursive: number = fib(10);
           let mutual: boolean = isEven(10);
           if (captured !== 2 || visits !== 1 || afterBranch !== 1
               || stableValue !== 2 || recursive !== 55 || !mutual) {
@@ -1650,7 +1648,7 @@ public class BodyInvocationIdentityTest {
         RealProject project = null;
         Path workspace = Files.createTempDirectory("for-let-counter-diff-");
         try {
-            project = compileProject("function one(): int { return 1; }\nfunction two(): int { return 2; }\nexport function main(): null {\n  let visits: int = 0;\n  { let v14Loop0: () => int = one; while (v14Loop0() === 1) { let f: () => int = v14Loop0; {\n    visits = visits + 1;\n    if (visits > 3) { break; }\n  } v14Loop0 = f; v14Loop0 = two; } }\n  let stable: int = 0;\n  { let v14Loop1: () => int = two; while (v14Loop1() === 2) { let g: () => int = v14Loop1; {\n    stable = stable + 1;\n    if (stable === 2) { break; }\n  } v14Loop1 = g;  } }\n  let adapted: int = 0;\n  { let v14Loop2: (x: int) => int = one; while (v14Loop2(7) === 1) { let h: (x: int) => int = v14Loop2; {\n    adapted = adapted + 1;\n    if (adapted > 3) { break; }\n  } v14Loop2 = h; v14Loop2 = two; } }\n  if (visits !== 1 || stable !== 2 || adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"function counters\" };\n  }\n  return null;\n}\n");
+            project = compileProject("function one(): number { return 1; }\nfunction two(): number { return 2; }\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop0: () => number = one; while (v14Loop0() === 1) { let f: () => number = v14Loop0; {\n    visits = visits + 1;\n    if (visits > 3) { break; }\n  } v14Loop0 = f; v14Loop0 = two; } }\n  let stable: number = 0;\n  { let v14Loop1: () => number = two; while (v14Loop1() === 2) { let g: () => number = v14Loop1; {\n    stable = stable + 1;\n    if (stable === 2) { break; }\n  } v14Loop1 = g;  } }\n  let adapted: number = 0;\n  { let v14Loop2: (x: number) => number = one; while (v14Loop2(7) === 1) { let h: (x: number) => number = v14Loop2; {\n    adapted = adapted + 1;\n    if (adapted > 3) { break; }\n  } v14Loop2 = h; v14Loop2 = two; } }\n  if (visits !== 1 || stable !== 2 || adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"function counters\" };\n  }\n  return null;\n}\n");
             SemanticLowerer.ProjectLoweringResult result = lower(project);
             if (result.project() == null || !result.diagnostics().isEmpty()) {
                 fail("the function-valued for-let counter lowers for the differential "
@@ -1705,13 +1703,13 @@ public class BodyInvocationIdentityTest {
         RealProject project = null;
         try {
             project = compileProject("""
-                function one(): int { return 1; }
-                function two(): int { return 2; }
+                function one(): number { return 1; }
+                function two(): number { return 2; }
                 export function main(): null {
-                  let alt: () => int = two;
-                  let f: () => int = one;
-                  let a: int = alt();
-                  let b: int = f();
+                  let alt: () => number = two;
+                  let f: () => number = one;
+                  let a: number = alt();
+                  let b: number = f();
                   if (a !== 2 || b !== 1) {
                     throw { code: "TEST_FAIL", message: "static control" };
                   }
@@ -1759,14 +1757,14 @@ public class BodyInvocationIdentityTest {
         RealProject project = null;
         try {
             project = compileProject("""
-                function one(x: int): int { return x; }
-                function two(x: int): int { return x; }
+                function one(x: number): number { return x; }
+                function two(x: number): number { return x; }
                 export function main(): null {
-                  let f: (x: int) => int = one;
-                  let g: (x: int, y: int) => int = f;
+                  let f: (x: number) => number = one;
+                  let g: (x: number, y: number) => number = f;
                   f = two;
-                  let r: int = g(1, 2);
-                  let direct: int = f(1);
+                  let r: number = g(1, 2);
+                  let direct: number = f(1);
                   if (r !== 1 || direct !== 1) {
                     throw { code: "TEST_FAIL", message: "arity extension" };
                   }

@@ -6,8 +6,8 @@
 export function main(): null {
   let x: string | null = "a";
   if (x !== null) {
-    let f: (x: int) => int = function(x: int): int { return x; };
-    let n: int = f(4);
+    let f: (x: number) => number = function(x: number): number { return x; };
+    let n: number = f(4);
   }
   return null;
 }

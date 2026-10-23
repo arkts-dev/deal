@@ -90,7 +90,6 @@ import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IndexMode;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -144,9 +143,8 @@ public final class SemanticLowerer {
     /** The producer fact-defect identifier of the E6005 unlowered-construct arm (D7). */
     public static final String CONSTRUCT_UNLOWERED = "CONSTRUCT_UNLOWERED";
 
-    public static final String INT32_LITERAL_OUT_OF_RANGE = "INT32_LITERAL_OUT_OF_RANGE";
 
-    /**
+/**
      * The pinned canonical realization id of every lowerer-created
      * boundary child (D3): {@code RuntimeValidation("runtime-validation")}
      * — a pinned constant inside the contract digest, so units and dumps
@@ -657,50 +655,8 @@ public final class SemanticLowerer {
         }
     }
 
-    public static final class IntLiteralOutOfRange extends RuntimeException
-            implements DiagnosticOriginCarrier {
 
-        private static final long serialVersionUID = 1L;
-
-        /** The out-of-range literal value carried into the E6005 origin. */
-        private final long value;
-
-        /**
-         * The offending literal's own source span, or {@code null} when the
-         * defect names a producer fact rather than one source construct.
-         */
-        private final Span span;
-
-        public IntLiteralOutOfRange(long value) {
-            this(value, null);
-        }
-
-        public IntLiteralOutOfRange(long value, Span span) {
-            super("int literal " + value
-                + " outside signed32 [-2147483648, 2147483647] (the E1036 "
-                + "signed32 literal gate is ISSUE-0111's frontend item; this "
-                + "stage fails closed, never truncates)");
-            this.value = value;
-            this.span = span;
-        }
-
-        /** The out-of-range literal value carried into the E6005 origin. */
-        public long value() {
-            return value;
-        }
-
-        /** The offending literal's own span, or {@code null}. */
-        public Span span() {
-            return span;
-        }
-
-        @Override
-        public DiagnosticRange diagnosticRange() {
-            return span == null ? null : span.range();
-        }
-    }
-
-    /**
+/**
      * The offending source range of one lowering defect, or {@code null}
      * when the defect names a producer fact rather than one source construct
      * (a guessed anchor is never manufactured). Every source-bearing
@@ -744,13 +700,7 @@ public final class SemanticLowerer {
                 SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CONSTRUCT_UNLOWERED + " (" + unlowered.construct() + ")");
         }
-        if (defect instanceof IntLiteralOutOfRange outOfRange) {
-            return new LoweringFailureDetail(module.path(),
-                SemanticCapability.SIGNED_INT32, INT32_LITERAL_OUT_OF_RANGE,
-                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
-                "SemanticLowerer " + INT32_LITERAL_OUT_OF_RANGE + " ("
-                    + outOfRange.getMessage() + ")");
-        }
+
         if (defect instanceof ClassDefaultCapture capture) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CLASSES, CLASS_DEFAULT_CAPTURE,
@@ -955,10 +905,7 @@ public final class SemanticLowerer {
         } catch (ConstructUnlowered unlowered) {
             return new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), unlowered)));
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange)));
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect)));
         }
@@ -990,11 +937,7 @@ public final class SemanticLowerer {
             return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new BindingCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new BindingCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts());
@@ -1030,7 +973,6 @@ public final class SemanticLowerer {
             module.checks(), allocator, true, true, module.ast().span(), true);
         lowerer.setModuleImports(module.imports());
         try {
-            lowerer.seedIntrinsicBindings();
             lowerer.hoistModuleLevelAllocs(module.ast().statements());
             lowerer.statementWalk.walk(module.ast().statements(), true);
             lowerer.emitEntryMainCall();
@@ -1040,10 +982,7 @@ public final class SemanticLowerer {
         } catch (ConstructUnlowered unlowered) {
             return new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), unlowered)));
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange)));
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect)));
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -1074,7 +1013,6 @@ public final class SemanticLowerer {
         lowerer.setE7Facts(module.exports(), calleeExternalEntries,
             callbackExports);
         try {
-            lowerer.seedIntrinsicBindings();
             lowerer.hoistModuleLevelAllocs(module.ast().statements());
             lowerer.statementWalk.walk(module.ast().statements(), true);
             lowerer.emitE7Terminals();
@@ -1085,11 +1023,7 @@ public final class SemanticLowerer {
             return new FullProgramE7Result(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 Map.of(), Map.of());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new FullProgramE7Result(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                Map.of(), Map.of());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new FullProgramE7Result(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 Map.of(), Map.of());
@@ -1137,7 +1071,6 @@ public final class SemanticLowerer {
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             BuiltinErrorDeclaration builtinError,
-            List<IntrinsicKind> conversionIntrinsics,
             Set<String> callbackExports) {
         Objects.requireNonNull(invocation, "invocation must not be null");
         Objects.requireNonNull(checkedProject, "checkedProject must not be null");
@@ -1148,8 +1081,6 @@ public final class SemanticLowerer {
         Objects.requireNonNull(declarationModuleIdentities,
             "declarationModuleIdentities must not be null");
         Objects.requireNonNull(builtinError, "builtinError must not be null");
-        Objects.requireNonNull(conversionIntrinsics,
-            "conversionIntrinsics must not be null");
         Objects.requireNonNull(callbackExports, "callbackExports must not be null");
         String interfaceHash = interfaceIndex.interfaceIndexDigest();
         String capabilityRegistryHash = invocation.capabilityRegistryHash();
@@ -1292,7 +1223,7 @@ public final class SemanticLowerer {
             LoweredProjectModule lowered = lowerProjectModule(module, manifest,
                 invocation.semanticProfile(), interfaceHash, capabilityRegistryHash, allocator,
                 calleeExternalEntries, callbackExports, seeds.seeds(),
-                conversionIntrinsics, ownInterface, comparisonFacts,
+                ownInterface, comparisonFacts,
                 inProjectFactoryFacts, inProjectProviderFacts,
                 providerConstructionEntries, declaredParameterAnnotations,
                 projectAmbiguousClassIds, jsonPlanFacts);
@@ -1566,7 +1497,6 @@ public final class SemanticLowerer {
             Map<ModuleId, Map<String, OpId>> calleeExternalEntries,
             Set<String> callbackExports,
             ClassRegistrationSeeds seeds,
-            List<IntrinsicKind> conversionIntrinsics,
             deal.semantic.ir.ExternalModuleInterface ownInterface,
             SemanticIrValidator.ComparisonFacts comparisonFacts,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
@@ -1584,7 +1514,6 @@ public final class SemanticLowerer {
         lowerer.setDeclaredParameterAnnotations(declaredParameterAnnotations);
         lowerer.setModuleImports(module.imports());
         lowerer.setRegistrationSeeds(seeds);
-        lowerer.setDeclaredConversionIntrinsics(conversionIntrinsics);
         lowerer.setProviderFactoryFacts(Map.copyOf(providerFactoryFacts),
             providerConstructionEntries, module.classLiteralProviders());
         lowerer.setProjectAmbiguousClassIds(projectAmbiguousClassIds);
@@ -1598,10 +1527,7 @@ public final class SemanticLowerer {
         } catch (ConstructUnlowered unlowered) {
             return LoweredProjectModule.failure(List.of(
                 loweringFailure(module.moduleId(), unlowered)));
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return LoweredProjectModule.failure(List.of(
-                loweringFailure(module.moduleId(), outOfRange)));
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return LoweredProjectModule.failure(List.of(
                 loweringFailure(module.moduleId(), defect)));
         } catch (ComparisonSelectorLowering.Defect defect) {
@@ -2085,11 +2011,7 @@ public final class SemanticLowerer {
             return new ClosureCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new ClosureCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts(), lowerer.closureFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new ClosureCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts());
@@ -2142,11 +2064,7 @@ public final class SemanticLowerer {
             return new GroupCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new GroupCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new GroupCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts());
@@ -2199,12 +2117,7 @@ public final class SemanticLowerer {
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new ImmutabilityCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
-                lowerer.proofFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new ImmutabilityCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
@@ -2263,12 +2176,7 @@ public final class SemanticLowerer {
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new CreationRuleCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
-                lowerer.proofFacts(), lowerer.creationRuleFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new CreationRuleCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
@@ -2328,12 +2236,7 @@ public final class SemanticLowerer {
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new ShapeMapCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
-                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new ShapeMapCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
@@ -2393,12 +2296,7 @@ public final class SemanticLowerer {
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
                 lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new ValidationCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
-                lowerer.proofFacts(), lowerer.creationRuleFacts(), lowerer.shapeMapFacts());
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new ValidationCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 lowerer.bindingFacts(), lowerer.closureFacts(), lowerer.groupFacts(),
@@ -2492,12 +2390,7 @@ public final class SemanticLowerer {
                 List.of(loweringFailure(module.moduleId(), unlowered))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
                 new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
-        } catch (IntLiteralOutOfRange outOfRange) {
-            return new ClassDeclarationCoreResult(new LoweringResult(null, null,
-                List.of(loweringFailure(module.moduleId(), outOfRange))),
-                new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-                new deal.semantic.ir.JsonDefaultChildTable(Map.of()));
-        } catch (ContainerPayloadDescriptors.Defect defect) {
+        }  catch (ContainerPayloadDescriptors.Defect defect) {
             return new ClassDeclarationCoreResult(new LoweringResult(null, null,
                 List.of(loweringFailure(module.moduleId(), defect))),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
@@ -2729,18 +2622,7 @@ public final class SemanticLowerer {
          * mode): the fact surface backing {@link #shapeMapFacts()}.
          */
         private final List<AdapterEmission> shapeMapEmissions = new ArrayList<>();
-        /**
-         * The seeded first-class intrinsic function-value identities by
-         * intrinsic name ({@code int}/{@code number} — the values the
-         * intrinsic bindings' INIT operands commit at module-init top):
-         * the VALUE-over-intrinsic operand of the shape-map child (B7
-         * arm (a) — an intrinsic function value is a materialized
-         * function-value operand; the adapter retains that identity and
-         * the adapter creation site emits no function-typed load of the
-         * intrinsic binding, because the intrinsic arm selects VALUE over
-         * the seeded identity itself).
-         */
-        private final Map<String, ValueId> intrinsicIdentities = new LinkedHashMap<>();
+
         /**
          * The seeded intrinsic bindings by intrinsic name (B1): the
          * module-init-top cells {@link #seedIntrinsicBindings} allocates
@@ -2756,7 +2638,6 @@ public final class SemanticLowerer {
          * modes that do not seed their intrinsic bindings; their
          * classifier falls back to the checker's per-scope table.
          */
-        private final Map<String, BindingId> seededIntrinsicBindings = new LinkedHashMap<>();
         /**
          * The produced recursive groups' member facts in creation order
          * (group-core mode): the fact surface backing
@@ -2850,7 +2731,6 @@ public final class SemanticLowerer {
         private ClassRegistrationSeeds registrationSeeds =
             ClassRegistrationSeeds.builtinErrorOnly();
 
-        private List<IntrinsicKind> declaredConversionIntrinsics = List.of();
 
         private final java.util.LinkedHashMap<ClassId, deal.semantic.ir.ClassLayout>
             classLayouts = new java.util.LinkedHashMap<>();
@@ -3937,7 +3817,6 @@ public final class SemanticLowerer {
                 throw new IllegalStateException(
                     "lowerBindingModule outside binding-core mode (producer defect)");
             }
-            seedIntrinsicBindings();
             hoistModuleLevelAllocs(statements);
             statementWalk.walk(statements, true);
             finalizeCellKinds();
@@ -3965,7 +3844,6 @@ public final class SemanticLowerer {
                     moduleGroupMembers.addAll(scc);
                 }
             }
-            seedIntrinsicBindings();
             hoistModuleLevelAllocs(statements, moduleGroupMembers);
             // Module-init-top groups in declaration order (B4).
             for (List<FunctionDeclaration> group : moduleGroups) {
@@ -3999,7 +3877,6 @@ public final class SemanticLowerer {
                     moduleGroupMembers.addAll(scc);
                 }
             }
-            seedIntrinsicBindings();
             hoistModuleLevelAllocs(statements, moduleGroupMembers);
             // Module-init-top groups in declaration order (B4).
             for (List<FunctionDeclaration> group : moduleGroups) {
@@ -4127,102 +4004,8 @@ public final class SemanticLowerer {
             return new ShapeMapFacts(shapeMapEmissions);
         }
 
-        /**
-         * Seeds the {@code int}/{@code number} intrinsic
-         * bindings at module-init top (B1): exactly the root
-         * {@code Symbol.IntrinsicSymbol} bindings of those three names
-         * (shadowed-by-declaration names resolve to the user declaration,
-         * never the intrinsic — the checker removes the root binding
-         * before defining the shadow, so the symbol fact decides). Each
-         * intrinsic binding gets one ALLOC (generation 0, {@code DIRECT},
-         * not mutable) and one INIT whose operand is the pinned
-         * intrinsic-function-value identity: a dedicated {@code ValueId}
-         * allocated in the pinned order. No closed op produces an
-         * intrinsic function value — the values seam has no
-         * intrinsic-value arm and this child never implements
-         * expression-value lowering — so the identity is wired as the
-         * INIT operand and materialized by the invocation layer (E7); the
-         * child emits no placeholder op, never a {@code CONST}, never a
-         * closure.
-         *
-         * <p>The seeded identity also carries the closed
-         * {@code IntrinsicFunction} registration ({@code kind} plus the
-         * intrinsic's declared signature) through the registry child's
-         * seed entry point, so the key is registered exactly once and
-         * the bindings production validator's closed admission admits
-         * exactly the seed's {@code BINDING_INIT} as its producing
-         * position. The seed's incarnation is added to the static
-         * function-identity tracking (J1), so a function-typed load of
-         * the intrinsic binding publishes the producer-less seeded
-         * identity unchanged — the same identity-preservation rule every
-         * function-typed load follows — and every alias load republishes
-         * the same identity. No further registration exists for that
-         * load: its registration is the seed's own
-         * {@code IntrinsicFunction}, keyed by the identity the load
-         * republishes.</p>
-         */
-        private void seedIntrinsicBindings() {
 
-            List<IntrinsicKind> declared = declaredConversionIntrinsics.isEmpty()
-                ? List.of(IntrinsicKind.values()) : declaredConversionIntrinsics;
-            for (String name : List.of("int", "number")) {
-                if (!(checks.symbolTable().resolve(name)
-                        instanceof Symbol.IntrinsicSymbol intrinsic)) {
-                    continue;
-                }
-                IntrinsicKind kind = conversionIntrinsicKind(intrinsic.name());
-                if (kind == null) {
-                    throw new IllegalStateException("the intrinsic seed resolved '"
-                        + name + "' to the non-conversion intrinsic '"
-                        + intrinsic.name() + "' (producer defect)");
-                }
-                if (!declared.contains(kind)) {
-                    throw new ConstructUnlowered("the module's seeded intrinsic '"
-                        + name + "' is not part of the compilation's declared"
-                        + " intrinsic set " + declared + " (a mismatch between"
-                        + " the module's checker facts and the compiler constants is a"
-                        + " producer defect)");
-                }
-                BindingId binding = ids.nextBindingId(module, nextOrdinal++, 0);
-                BindingCoreIncarnation incarnation = new BindingCoreIncarnation(
-                    INITIAL_LOOP_GENERATION, moduleInitBlock, BindingCellKind.DIRECT,
-                    false, BindingProducer.BINDING_ALLOC, false);
-                registerBinding(name, binding, incarnation);
-                seededIntrinsicBindings.put(name, binding);
-                if (proofAnalysis) {
-                    // B7: intrinsic bindings (int/number) always carry
-                    // the proof — builtin, unassignable — regardless of
-                    // any assignment fact.
-                    assignmentAnalysis.markIntrinsic(binding);
-                }
-                emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
-                    new KindPayload.BindingAllocPayload(binding, moduleInitBlock, false,
-                        cellKinds.cellKindOf(incarnation), INITIAL_LOOP_GENERATION),
-                    moduleInitSpan(), FailurePolicyId.NO_DEAL_FAILURE);
-                ValueId intrinsicValue = ids.nextValueId(module, nextOrdinal++, 0);
-                // The seeded intrinsic identity is the shape-map child's
-                // VALUE-over-intrinsic operand (B7 arm (a)); it is
-                // retained here so the adapted emission wires the exact
-                // identity the intrinsic binding's cell holds.
-                intrinsicIdentities.put(name, intrinsicValue);
-                // The seed's closed registration: exactly one
-                // IntrinsicFunction binding keyed by the seeded
-                // identity, with the intrinsic's declared signature as
-                // the checker's own symbol declares it (the closed gate
-                // pins it against the kind's declared signature).
-                registry.registerIntrinsic(
-                    new FunctionAllocationIdentity(intrinsicValue.id()), kind,
-                    (RuntimeDescriptor.Func) DescriptorService.describe(intrinsic.type()));
-
-                functionIdentity.put(incarnation, intrinsicValue);
-                emitUserNullOp(SemanticOpKind.BINDING_INIT,
-                    new KindPayload.BindingInitPayload(binding, INITIAL_LOOP_GENERATION,
-                        intrinsicValue),
-                    moduleInitSpan(), FailurePolicyId.NO_DEAL_FAILURE);
-            }
-        }
-
-        /**
+/**
          * Hoists the module-level function-name ALLOCs and import-alias
          * ALLOCs to the top of the module-init block in declaration order
          * (B1: the retained per-scope pre-declaration shape; the
@@ -6077,8 +5860,7 @@ public final class SemanticLowerer {
             return switch (name) {
                 case "null" -> Type.Null.INSTANCE;
                 case "boolean" -> Type.Boolean.INSTANCE;
-                case "int" -> Type.Int.INSTANCE;
-                case "number" -> Type.Number.INSTANCE;
+                    case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
                 case "table" -> Type.Table.INSTANCE;
                 case "Error" -> deal.types.Types.classType("Error",
@@ -6263,21 +6045,6 @@ public final class SemanticLowerer {
         private AdapterValueSource completeAdapterValueSource(
                 ExpressionNode value, AdapterShapeMap.SourceShape shape,
                 Optional<BindingImmutabilityProof> proof) {
-            if (shape == AdapterShapeMap.SourceShape.INTRINSIC_FUNCTION_VALUE) {
-                // B7 arm (a): a first-class intrinsic function value —
-                // the seeded intrinsic identity is the materialized
-                // operand; no function-typed load of the intrinsic
-                // binding is emitted (a first-class intrinsic value has
-                // no closed FunctionExecutionBinding shape, B5).
-                String name = ((IdentifierExpr) value).name();
-                ValueId operand = intrinsicIdentities.get(name);
-                if (operand == null) {
-                    throw new IllegalStateException("the intrinsic identity of '"
-                        + name + "' was not seeded at module-init top (producer "
-                        + "defect)");
-                }
-                return new AdapterValueSource(operand, null);
-            }
             ValueId operand = lowerExpression(value);
             BindingImmutabilityProof payloadProof = null;
             if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE) {
@@ -6333,7 +6100,7 @@ public final class SemanticLowerer {
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
             AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
-                decl.initializer(), this::isConversionIntrinsicNameAt);
+                decl.initializer());
             CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
             ThunkSource thunk = null;
             ValueId operand = null;
@@ -8762,7 +8529,7 @@ public final class SemanticLowerer {
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
             AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
-                assignment.value(), this::isConversionIntrinsicNameAt);
+                assignment.value());
             CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
             // REEVALUATE_THUNK: the detached thunk walks before the
             // chain opens — the thunk ops execute only at invocation
@@ -8788,11 +8555,7 @@ public final class SemanticLowerer {
                             assignment.value(), shape, proof);
                         operand = source.operand();
                         payloadProof = source.proof();
-                        if (shape
-                                != AdapterShapeMap.SourceShape
-                                    .INTRINSIC_FUNCTION_VALUE) {
-                            valueOp = producerOpId(operand);
-                        }
+                        valueOp = producerOpId(operand);
                         sourceRef = new AdaptSourceRef.Value(operand);
                         operands = List.of(operand);
                         operandTypes = List.of(sourceSignature);
@@ -9038,13 +8801,13 @@ public final class SemanticLowerer {
                 valueOp = chainChildOp(value);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
-                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
-                    FailurePolicyId.INT32_RESULT);
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
                 lengthOp = producerOpId(length);
                 ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, key, length),
                     index.span(),
-                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
                 normalizeOp = producerOpId(normalizedSlot);
                 boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
@@ -9346,13 +9109,13 @@ public final class SemanticLowerer {
                 keyOp = chainChildOp(key);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
-                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
-                    FailurePolicyId.INT32_RESULT);
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE),
+                    FailurePolicyId.NO_DEAL_FAILURE);
                 lengthOp = producerOpId(length);
                 ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, key, length),
                     index.span(),
-                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
                 normalizeOp = producerOpId(normalizedSlot);
                 boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
@@ -9904,12 +9667,8 @@ public final class SemanticLowerer {
             return new FieldReceiverResolution(legacyFieldLayout(classId), null);
         }
 
-        public void setDeclaredConversionIntrinsics(List<IntrinsicKind> kinds) {
-            Objects.requireNonNull(kinds, "kinds must not be null");
-            this.declaredConversionIntrinsics = List.copyOf(kinds);
-        }
 
-        /** The closed MODULE_IMPORT kind of a resolved import fact. */
+/** The closed MODULE_IMPORT kind of a resolved import fact. */
         private static deal.semantic.ir.ModuleImportKind moduleImportKindOf(
                 ResolvedImport importFact) {
             return switch (importFact.kind()) {
@@ -9952,11 +9711,6 @@ public final class SemanticLowerer {
          * pair is interpreted as a stdlib algorithm here (D1).
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
-            try {
-                return lowerIntrinsicCall(call, slot);
-            } catch (ConstructUnlowered notIntrinsic) {
-                // Fall through: the classifier threw before any emission.
-            }
             Optional<StdlibFunctionCatalog.Entry> stdlibEntry =
                 StdlibCallRecognition.recognize(call.callee(), currentCheckerScope(),
                     moduleImports);
@@ -10656,8 +10410,7 @@ public final class SemanticLowerer {
                     hostValue.descriptor().paramTypes().size();
                 case FunctionExecutionBinding.ExternalFunction external ->
                     external.descriptor().paramTypes().size();
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                    intrinsic.descriptor().paramTypes().size();
+
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicCarrierDefect(dynamic, "a statically classified call "
                         + "arity");
@@ -10934,10 +10687,7 @@ public final class SemanticLowerer {
                         parameterBoundaryIds.add(boundary.opId());
                     }
                 }
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
 
-                    hostParameterBoundaries(intrinsic.descriptor(), args, call,
-                        callOpId, parameterBoundaryOps, parameterBoundaryIds);
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicCarrierDefect(dynamic, "the call of '" + calleeName + "'");
             }
@@ -11052,11 +10802,7 @@ public final class SemanticLowerer {
                                     external.descriptor(), result, call.span(), callOpId);
                             }
                         }
-                        case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
 
-                            returnBoundaryOpId = emitHostReturnBoundary(
-                                intrinsic.descriptor(), result, call.span(),
-                                callOpId).opId();
                         case FunctionExecutionBinding.DynamicFunctionValue ignored -> {
                             // The adapter's source class is runtime-resolved
                             // (the function-typed-value child's producing
@@ -11112,12 +10858,7 @@ public final class SemanticLowerer {
                             external.descriptor(), result, call.span(), callOpId);
                     }
                 }
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
-                    // The single HOST_TO_DEAL + HOST_SYNC_RETURN return cell,
-                    // run by the call op (the intrinsic's class is HOST,
-                    // {@link DynamicReturnBoundaryProtocol#kindOf}).
-                    returnBoundaryOpId = emitHostReturnBoundary(intrinsic.descriptor(),
-                        result, call.span(), callOpId).opId();
+
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicCarrierDefect(dynamic, "the call of '" + calleeName + "'");
             }
@@ -12021,29 +11762,7 @@ public final class SemanticLowerer {
                 case FunctionExecutionBinding.AdapterBinding adapter ->
                     throw new ConstructUnlowered("adapter-over-async lower via "
                         + "lowerAdapterOverAsync (producer defect)", call.span());
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                    source = AsyncStartSource.DEAL_BODY;
-                    startOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                    token = new AsyncTokenId.Canonical(
-                        ids.nextTokenId(module, nextOrdinal++, 0),
-                        AsyncTokenOwner.DEAL_BODY_TASK);
-                    if (args.size() != intrinsic.descriptor().paramTypes().size()) {
-                        throw new ConstructUnlowered("async intrinsic call with "
-                            + args.size() + " arguments for the '" + intrinsic.kind()
-                            + "' intrinsic's "
-                            + intrinsic.descriptor().paramTypes().size()
-                            + " declared parameter(s) (producer defect)", call.span());
-                    }
-                    for (int i = 0; i < args.size(); i++) {
-                        SemanticOp boundary = buildChildBoundary(
-                            BoundaryKind.FUNCTION_PARAMETER,
-                            intrinsic.descriptor().paramTypes().get(i), args.get(i),
-                            call.span(), startOpId);
-                        parameterBoundaryOps.add(boundary);
-                        parameterBoundaryIds.add(boundary.opId());
-                    }
-                }
                 case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                     throw dynamicCarrierDefect(dynamic, "the await call");
             }
@@ -12303,24 +12022,7 @@ public final class SemanticLowerer {
                     throw new IllegalStateException("the adapter-valued async source of '"
                         + calleeName + "' reaches the statically fixed source arm"
                         + " (producer defect)");
-                case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
-                    if (sourceSignature.paramTypes().size()
-                            != intrinsic.descriptor().paramTypes().size()) {
-                        throw new ConstructUnlowered("the adapter-over-async source of '"
-                            + calleeName + "' records "
-                            + sourceSignature.paramTypes().size()
-                            + " source parameter(s) for the '" + intrinsic.kind()
-                            + "' intrinsic's "
-                            + intrinsic.descriptor().paramTypes().size()
-                            + " declared parameter(s) (producer defect)", call.span());
-                    }
-                    nestedOpId = ids.nextOpId(module, nextOrdinal++, 0);
-                    nestedSource = AsyncStartSource.DEAL_BODY;
-                    sourceToken = new AsyncTokenId.Canonical(
-                        ids.nextTokenId(module, nextOrdinal++, 0),
-                        AsyncTokenOwner.DEAL_BODY_TASK);
-                }
                 case null -> throw new ConstructUnlowered("the adapter-over-async"
                     + " source is absent (producer defect)", call.span());
                 case FunctionExecutionBinding.DynamicFunctionValue runtime ->
@@ -13490,13 +13192,7 @@ public final class SemanticLowerer {
             ScalarValue scalar = switch (literal.value()) {
                 case LiteralValue.NullLiteral ignored -> ScalarValue.Null.INSTANCE;
                 case LiteralValue.BooleanLiteral bool -> new ScalarValue.Boolean(bool.value());
-                case LiteralValue.IntLiteral integer -> {
-                    long value = integer.value();
-                    if (value < -2147483648L || value > 2147483647L) {
-                        throw new IntLiteralOutOfRange(value, literal.span());
-                    }
-                    yield new ScalarValue.Int((int) value);
-                }
+
                 case LiteralValue.NumberLiteral number ->
                     new ScalarValue.Number(number.value());
                 case LiteralValue.StringLiteral string ->
@@ -13936,10 +13632,10 @@ public final class SemanticLowerer {
             ValueId key = lowerOperand(index.index());
             ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
                 new KindPayload.ArrayLengthPayload(container), index.span(),
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
-                FailurePolicyId.INT32_RESULT);
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE),
+                FailurePolicyId.NO_DEAL_FAILURE);
             RuntimeDescriptor intDescriptor =
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE);
             ValueId normalize = emitOperandOp(SemanticOpKind.INDEX_NORMALIZE,
                 new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_READ, key, length),
                 List.of(key, length), List.of(
@@ -14135,8 +13831,8 @@ public final class SemanticLowerer {
             ValueId receiver = lowerOperand(access.object());
             return emitValueOp(SemanticOpKind.ARRAY_LENGTH,
                 new KindPayload.ArrayLengthPayload(receiver), access.span(),
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
-                FailurePolicyId.INT32_RESULT, slot);
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Number.INSTANCE),
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
         }
 
         /**
@@ -14659,18 +14355,7 @@ public final class SemanticLowerer {
         private ValueId lowerArithmeticBinary(BinaryExpr binary, ValueId slot) {
             Type leftType = checkedType(binary.left());
             BinarySelector selector;
-            if (leftType instanceof Type.Int) {
-                selector = switch (binary.op()) {
-                    case ADD -> BinarySelector.INT32_ADD;
-                    case SUB -> BinarySelector.INT32_SUB;
-                    case MUL -> BinarySelector.INT32_MUL;
-                    case DIV -> BinarySelector.INT32_DIV_TRUNC;
-
-                    default -> throw new ConstructUnlowered("arithmetic operator "
-                        + binary.op() + " outside the I3 int32 rows (producer defect)",
-                            binary.span());
-                };
-            } else if (leftType instanceof Type.Number) {
+            if (leftType instanceof Type.Number) {
                 selector = switch (binary.op()) {
                     case ADD -> BinarySelector.NUMBER_ADD;
                     case SUB -> BinarySelector.NUMBER_SUB;
@@ -14723,9 +14408,7 @@ public final class SemanticLowerer {
                     selector = UnarySelector.BOOL_NOT;
                 }
                 case NEG -> {
-                    if (operandType instanceof Type.Int) {
-                        selector = UnarySelector.INT32_NEG;
-                    } else if (operandType instanceof Type.Number) {
+                    if (operandType instanceof Type.Number) {
                         selector = UnarySelector.NUMBER_NEG;
                     } else {
                         throw new ConstructUnlowered("unary '-' over non-int/number checked "
@@ -14744,58 +14427,8 @@ public final class SemanticLowerer {
                 SemanticIrValidator.unaryPolicy(selector), slot);
         }
 
-        /**
-         * {@code INTRINSIC_CALL} — the I3 arm: a call of the {@code int}
-         * or {@code number} intrinsic ({@code Symbol.IntrinsicSymbol})
-         * lowers to one {@code INTRINSIC_CALL} with
-         * {@code INT_CONVERT}/{@code NUMBER_CONVERT}, zero {@code BOUNDARY}
-         * children, the single input as one prior step, and the conversion
-         * policy ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION} — the
-         * single closed intrinsic rule) as the terminal check. Every other
-         * call is a foreign construct ({@code CALL} is E7's).
-         */
-        private ValueId lowerIntrinsicCall(CallExpr call) {
-            return lowerIntrinsicCall(call, null);
-        }
 
-        private ValueId lowerIntrinsicCall(CallExpr call, ValueId slot) {
-            IntrinsicKind kind = intrinsicKindOf(call);
-            ExpressionNode argument = call.args().get(0);
-            Type argumentType = checkedType(argument);
-            ValueId input = lowerExpression(argument);
-            return emitOperandOp(SemanticOpKind.INTRINSIC_CALL,
-                new KindPayload.IntrinsicCallPayload(kind, input),
-                List.of(input), List.of(valueDescriptorOf(argumentType)),
-                call.span(), valueDescriptorOf(checkedType(call)),
-                SemanticIrValidator.intrinsicPolicy(kind), slot);
-        }
-
-        /**
-         * The intrinsic-call classifier (I3): exactly {@code int(...)},
-         * and {@code number(...)} calls of the root
-         * {@code Symbol.IntrinsicSymbol} bindings lower; every other call
-         * shape — including {@code has(...)} call fallbacks and ordinary
-         * user calls — fails closed. The callee is classified at its own
-         * position ({@link #conversionIntrinsicKindAt}): a call whose
-         * callee the position resolves to a lexically shadowing local,
-         * parameter, enclosing-block, nested or module-level binding is
-         * that user call, never the intrinsic
-         * (docs/spec-v1.3.md §Name resolution).
-         */
-        private IntrinsicKind intrinsicKindOf(CallExpr call) {
-            if (call.args().size() == 1
-                    && call.callee() instanceof IdentifierExpr identifier) {
-                IntrinsicKind kind = conversionIntrinsicKindAt(identifier.name());
-                if (kind != null) {
-                    return kind;
-                }
-            }
-            throw new ConstructUnlowered("call expression (only the int()/number() "
-                + "conversion intrinsic calls lower to "
-                + "INTRINSIC_CALL; the CALL machinery is the calls slice's)", call.span());
-        }
-
-        /**
+/**
          * The conversion/allocation intrinsic kind one identifier
          * position resolves to, or {@code null} when the position's
          * binding is not that intrinsic — the position-resolved
@@ -14811,22 +14444,7 @@ public final class SemanticLowerer {
          * and the root intrinsics exactly as the checker resolved the
          * occurrence).
          */
-        private IntrinsicKind conversionIntrinsicKindAt(String name) {
-            BindingId seeded = seededIntrinsicBindings.get(name);
-            if (seeded != null) {
-                FrameResolution resolution = resolveFrame(name);
-                if (resolution == null
-                        || !seeded.equals(resolution.entry().cell().id)) {
-                    return null;
-                }
-                return conversionIntrinsicKind(name);
-            }
-            if (siteCheckerScope().resolve(name)
-                    instanceof Symbol.IntrinsicSymbol intrinsic) {
-                return conversionIntrinsicKind(intrinsic.name());
-            }
-            return null;
-        }
+
 
         /**
          * True iff the identifier position's resolution is one of the
@@ -14834,9 +14452,6 @@ public final class SemanticLowerer {
          * position-resolved intrinsic predicate
          * ({@link #conversionIntrinsicKindAt}).
          */
-        private boolean isConversionIntrinsicNameAt(String name) {
-            return conversionIntrinsicKindAt(name) != null;
-        }
 
         /**
          * The innermost checker scope table of the current walk position:
@@ -14868,24 +14483,18 @@ public final class SemanticLowerer {
          * {@code has} intrinsic — maps to no intrinsic kind.
          *
          */
-        private static IntrinsicKind conversionIntrinsicKind(String name) {
-            return switch (name) {
-                case "int" -> IntrinsicKind.INT_CONVERT;
-                case "number" -> IntrinsicKind.NUMBER_CONVERT;
-                default -> null;
-            };
-        }
+
 
         private static RuntimeDescriptor valueDescriptorOf(Type type) {
             boolean admissible = switch (type) {
                 case Type.Null ignored -> true;
                 case Type.Boolean ignored -> true;
-                case Type.Int ignored -> true;
+
                 case Type.Number ignored -> true;
                 case Type.String ignored -> true;
                 case Type.Nullable nullable -> switch (nullable.inner()) {
                     case Type.Boolean ignored -> true;
-                    case Type.Int ignored -> true;
+
                     case Type.Number ignored -> true;
                     default -> false;
                 };

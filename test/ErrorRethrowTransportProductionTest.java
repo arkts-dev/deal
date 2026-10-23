@@ -68,23 +68,23 @@ public class ErrorRethrowTransportProductionTest {
      * {@code relay} handler for the unrelated B failure.
      */
     private static final String LIB_SOURCE = """
-        function inner(): int {
+        function inner(): number {
           let t: table = { value: "bad" };
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
 
-        export function withCause(): int {
+        export function withCause(): number {
           try { return inner(); }
           catch (e) { throw { code: "WRAPPED", message: "wrapped" }; }
         }
 
-        export function relay(original: Error): int {
+        export function relay(original: Error): number {
           try { throw { code: "B", message: "second" }; }
           catch (other) { throw original; }
         }
 
-        export function probeCause(): int {
+        export function probeCause(): number {
           try { return withCause(); }
           catch (original) { return relay(original); }
         }
@@ -95,7 +95,7 @@ public class ErrorRethrowTransportProductionTest {
         import * as helper from "./lib";
 
         export function main(): null {
-          let x: int = helper.probeCause();
+          let x: number = helper.probeCause();
           return null;
         }
         """;
@@ -110,16 +110,16 @@ public class ErrorRethrowTransportProductionTest {
      * consumer — never the later alias edit.
      */
     private static final String SAVED_CAUSE_LIB_SOURCE = """
-        function inner(): int {
+        function inner(): number {
           let t: table = { value: "bad" };
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
 
-        export function probe(): int {
+        export function probe(): number {
           let saved: Error = { code: "seed", message: "seed" };
 
-          function raiseOuter(): int {
+          function raiseOuter(): number {
             try { return inner(); }
             catch (e) {
               saved = e;
@@ -141,7 +141,7 @@ public class ErrorRethrowTransportProductionTest {
         import * as helper from "./lib";
 
         export function main(): null {
-          let x: int = helper.probe();
+          let x: number = helper.probe();
           return null;
         }
         """;
@@ -191,8 +191,6 @@ public class ErrorRethrowTransportProductionTest {
             fixture.orchestrator().hostDeclarationSurface(),
             new LinkedHashMap<>(), BuiltinErrorDeclaration.synthesized(
                 fixture.built().input().modules().get(0).ast().span()),
-            List.of(deal.semantic.ir.IntrinsicKind.INT_CONVERT,
-                deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -262,13 +260,13 @@ public class ErrorRethrowTransportProductionTest {
                 checkEq("E8001", cause.code(), run.consumer()
                     + ": the original cause is the E8001, never the relay's handled "
                         + "B failure");
-                checkEq("expected int", cause.message(), run.consumer()
+                checkEq("expected number", cause.message(), run.consumer()
                     + ": the original cause keeps its message");
                 check(cause.origin() != null
-                        && cause.origin().endsWith("src/lib.deal:3:16"),
+                        && cause.origin().endsWith("src/lib.deal:3:19"),
                     run.consumer() + ": the original cause keeps its source "
                         + "location; got " + cause.origin());
-                checkEq("int", cause.expected(), run.consumer()
+                checkEq("number", cause.expected(), run.consumer()
                     + ": the original cause keeps its expected type");
                 checkEq("string", cause.actual(), run.consumer()
                     + ": the original cause keeps its actual kind");
@@ -361,14 +359,14 @@ public class ErrorRethrowTransportProductionTest {
                 checkEq("E8001", cause.code(), run.consumer()
                     + ": the linked cause stays the E8001, never the edited "
                     + "CHANGED alias code");
-                checkEq("expected int", cause.message(), run.consumer()
+                checkEq("expected number", cause.message(), run.consumer()
                     + ": the linked cause keeps its captured message, never the "
                     + "edited one");
                 check(cause.origin() != null
-                        && cause.origin().endsWith("src/lib.deal:3:16"),
+                        && cause.origin().endsWith("src/lib.deal:3:19"),
                     run.consumer() + ": the linked cause keeps its captured "
                         + "source location; got " + cause.origin());
-                checkEq("int", cause.expected(), run.consumer()
+                checkEq("number", cause.expected(), run.consumer()
                     + ": the linked cause keeps its captured expected type");
                 checkEq("string", cause.actual(), run.consumer()
                     + ": the linked cause keeps its captured actual kind");
@@ -409,31 +407,31 @@ public class ErrorRethrowTransportProductionTest {
     }
 
     static final String HOST_ERROR_LIB_SOURCE = """
-        function inner(): int {
+        function inner(): number {
           let t: table = { value: "bad" };
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
 
-        export function fail(): int {
+        export function fail(): number {
           return inner();
         }
 
-        async function ainner(): int {
+        async function ainner(): number {
           let t: table = { value: "bad" };
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
 
-        export async function afail(): int {
+        export async function afail(): number {
           return await ainner();
         }
 
-        export function boom(): int {
-          return 2147483647 + 1;
+        export function boom(): number {
+          let xs: number[] = []; return xs[0];
         }
 
-        export function echo(e: Error): int { throw e; }
+        export function echo(e: Error): number { throw e; }
         export function alias(): boolean {
           let first: Error = { code: "seed", message: "seed" };
           try { throw { code: "X", message: "x" }; } catch (caught) { first = caught; }
@@ -447,40 +445,40 @@ public class ErrorRethrowTransportProductionTest {
     static final String HOST_ERROR_APP_SOURCE = """
         import * as helper from "./lib";
         export function main(): null { return null; }
-        export function run(): int { return helper.fail(); }
-        export function reraise(): int {
+        export function run(): number { return helper.fail(); }
+        export function reraise(): number {
           try { return helper.fail(); } catch (e) { throw e; }
         }
-        export function leafFail(): int {
+        export function leafFail(): number {
           let t: table = { value: "bad" };
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
-        export function recur(n: int, step: (n: int) => int): int {
+        export function recur(n: number, step: (n: number) => number): number {
           if (n === 0) {
             let t: table = { value: "bad" };
-            let x: int = t.value;
+            let x: number = t.value;
             return x;
           }
           return step(n - 1);
         }
-        export function swallow(): int {
+        export function swallow(): number {
           try { return helper.fail(); } catch (e) { return 0; }
         }
-        export async function arun(): int { return await helper.afail(); }
-        export async function areraise(): int {
+        export async function arun(): number { return await helper.afail(); }
+        export async function areraise(): number {
           try { return await helper.afail(); } catch (e) { throw e; }
         }
-        export function overflow(): int { return helper.boom(); }
-        export function replaced(): int {
+        export function overflow(): number { return helper.boom(); }
+        export function replaced(): number {
           try { return helper.fail(); }
           catch (e) { throw { code: "REPLACED", message: "handled" }; }
         }
-        export function echo(e: Error): int { return helper.echo(e); }
+        export function echo(e: Error): number { return helper.echo(e); }
         export function alias(): boolean { return helper.alias(); }
-        export function mutate(): int {
+        export function mutate(): number {
           let saved: Error = { code: "seed", message: "seed" };
-          function step(): int {
+          function step(): number {
             try {
               try { return helper.fail(); }
               catch (e) { saved = e; throw { code: "OUTER", message: "outer" }; }
@@ -501,7 +499,7 @@ public class ErrorRethrowTransportProductionTest {
             if (line.startsWith("HOST-ERR|")) {
                 String[] fields = line.split("\\|", -1);
                 if (fields.length == 4 && fields[1].equals("swallow")) {
-                    checkEq("HOST-ERR|swallow|none|0", line, "handling export returns zero");
+                    checkEq("HOST-ERR|swallow|none|" + (jvm ? "0.0" : "0"), line, "handling export returns zero");
                 } else {
                     checkEq(9, fields.length, "closed host error row: " + line);
                     if (fields.length == 9) {
@@ -523,13 +521,13 @@ public class ErrorRethrowTransportProductionTest {
             boolean replaced = name.equals("replaced");
             boolean async = name.startsWith("a");
             boolean appOrigin = name.equals("leafFail") || replaced;
-            checkEq(overflow ? "E8004" : replaced ? "REPLACED" : "E8001", row[2], name + " code");
-            checkEq(overflow ? "int out of safe range" : replaced ? "handled" : "expected int",
+            checkEq(overflow ? "E8002" : replaced ? "REPLACED" : "E8001", row[2], name + " code");
+            checkEq(overflow ? "array index out of bounds" : replaced ? "handled" : "expected number",
                 row[3], name + " message");
             check(appOrigin ? row[4].contains("src/app.deal:")
-                : row[4].endsWith("src/lib.deal:" + (overflow ? "22:10" : async ? "13:16" : "3:16")),
+                : row[4].endsWith("src/lib.deal:" + (overflow ? "22:33" : async ? "13:19" : "3:19")),
                 name + " raising origin: " + row[4]);
-            checkEq(overflow || replaced ? "-" : "int", row[5], name + " expected");
+            checkEq(overflow || replaced ? "-" : "number", row[5], name + " expected");
             checkEq(overflow || replaced ? "-" : "string", row[6], name + " actual");
             String frames = appOrigin ? "" : overflow ? "lib#boom@F\\d+,"
                 : async ? "lib#ainner@F\\d+,lib#afail@F\\d+," : "lib#inner@F\\d+,lib#fail@F\\d+,";
@@ -547,10 +545,10 @@ public class ErrorRethrowTransportProductionTest {
         }
         String[] cause = hostFields(stdout, "HOST-CAUSE|mutate|", 9);
         if (cause != null) {
-            checkEq(List.of("OUTER", "outer", "E8001", "expected int"),
+            checkEq(List.of("OUTER", "outer", "E8001", "expected number"),
                 List.of(cause[0], cause[1], cause[2], cause[3]), "saved cause keeps captured values");
-            check(cause[4].endsWith("src/lib.deal:3:16"), "saved cause keeps raising origin");
-            checkEq("int", cause[5], "saved cause expected");
+            check(cause[4].endsWith("src/lib.deal:3:19"), "saved cause keeps raising origin");
+            checkEq("number", cause[5], "saved cause expected");
             checkEq("string", cause[6], "saved cause actual");
             check(cause[7].matches("lib#inner@F\\d+,lib#fail@F\\d+,app#step@F\\d+,app#mutate@F\\d+"),
                 "saved cause keeps captured frames: " + cause[7]);
@@ -559,9 +557,9 @@ public class ErrorRethrowTransportProductionTest {
         String[] reentry = hostFields(stdout, "HOST-REENTRY|recur|", 7);
         if (reentry != null) {
             checkEq("E8001", reentry[0], "reentry code");
-            checkEq("expected int", reentry[1], "reentry message");
+            checkEq("expected number", reentry[1], "reentry message");
             check(reentry[2].contains("src/app.deal:"), "reentry raising origin");
-            checkEq("int", reentry[3], "reentry expected");
+            checkEq("number", reentry[3], "reentry expected");
             checkEq("string", reentry[4], "reentry actual");
             check(reentry[5].matches("app#recur@F\\d+,app#recur@F\\d+,app#recur@F\\d+"),
                 "three live reentry frames: " + reentry[5]);
@@ -588,7 +586,7 @@ public class ErrorRethrowTransportProductionTest {
                 checkEq("true", echo[0], "unchanged rethrow preserves DealError identity");
                 checkEq("true", echo[1], "unchanged rethrow preserves reified Error identity");
                 checkEq("E8001", echo[2], "identity echo code");
-                check(echo[3].endsWith("src/lib.deal:3:16"), "identity echo origin");
+                check(echo[3].endsWith("src/lib.deal:3:19"), "identity echo origin");
                 checkEq("-", echo[4], "identity echo gains no cause");
             }
         }

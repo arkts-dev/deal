@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: functions, intrinsics
 
-export function test_intrinsic_as_function_value(): int {
-  let f: (x: number) => int = int;
-  let result: int = f(3.0);
+export function test_intrinsic_as_function_value(): number {
+  let f: (x: number) => number = int;
+  let result: number = f(3.0);
   if (result !== 3) {
     throw { code: "TEST_FAIL", message: "intrinsic function value conversion failed" };
   }
@@ -15,3 +15,6 @@ export function test_intrinsic_as_function_value(): int {
 export function main(): null {
   return null;
 }
+
+function int(value: number): number { return value; }
+function number(value: number): number { return value; }

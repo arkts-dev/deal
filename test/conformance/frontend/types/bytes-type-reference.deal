@@ -3,6 +3,6 @@
 // @expected: compile-ok
 // @features: types, name-resolution
 
-class bytes { value: int; }
+class bytes { value: number; }
 export function bytes_probe(): bytes { return { value: 4 }; }
 export function main(): null { return null; }

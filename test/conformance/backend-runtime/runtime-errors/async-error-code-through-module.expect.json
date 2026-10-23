@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: ASYNC_MODULE_FAIL\nDEAL_ERROR_SNAPSHOT: {\"code\":\"ASYNC_MODULE_FAIL\",\"message\":\"fail\",\"sourceFile\":\"backend-runtime/runtime-errors/async_error_lib.deal\",\"line\":6,\"column\":37}\n",
+      "stdout": "DEAL_ERROR_CODE: ASYNC_MODULE_FAIL\nDEAL_ERROR_SNAPSHOT: {\"code\":\"ASYNC_MODULE_FAIL\",\"message\":\"fail\",\"sourceFile\":\"backend-runtime/runtime-errors/async_error_lib.deal\",\"line\":6,\"column\":40}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -17,7 +17,7 @@
       "message": "fail",
       "sourceFile": "backend-runtime/runtime-errors/async_error_lib.deal",
       "line": 6,
-      "column": 37
+      "column": 40
     }
   }
 }

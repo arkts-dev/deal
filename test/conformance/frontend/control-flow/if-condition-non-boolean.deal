@@ -3,7 +3,7 @@
 // @expected: compile-error E3007
 // @features: control-flow, boolean, diagnostics
 
-function test_if_requires_boolean(): int {
+function test_if_requires_boolean(): number {
   if (1) {
     return 1;
   }

@@ -12,7 +12,7 @@ export function test_table_keys_string_inclusion(): null {
     throw { code: "TEST_FAIL", message: "keys length mismatch" };
   }
   let found: table = { alpha: false, beta: false, gamma: false };
-  let i: int = 0;
+  let i: number = 0;
   while (i < ks.length) {
     let k: string = ks[i];
     if (k === "alpha") { found.alpha = true; }

@@ -1,9 +1,9 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: Canonical ?T nullable descriptors cross typed boundaries: ?int parameters, ?[string] nullable arrays, and ?((x: int) => int) nullable function values all pass through the canonical boundary matcher; explicit null passes and present values validate inside the narrowed branch.
+// @description: Canonical ?T nullable descriptors cross typed boundaries: ?int parameters, ?[string] nullable arrays, and ?((x: number) => number) nullable function values all pass through the canonical boundary matcher; explicit null passes and present values validate inside the narrowed branch.
 // @expected: runtime-ok
 // @features: descriptors, nullables, functions
 
-function label(x: int | null): string {
+function label(x: number | null): string {
   if (x !== null) {
     if (x === 7) {
       return "seven";
@@ -20,7 +20,7 @@ function firstOrNull(xs: string[] | null): string {
   return "null";
 }
 
-function maybeApply(f: ((x: int) => int) | null, x: int): int {
+function maybeApply(f: ((x: number) => number) | null, x: number): number {
   if (f !== null) {
     return f(x);
   }
@@ -28,16 +28,16 @@ function maybeApply(f: ((x: int) => int) | null, x: int): int {
 }
 
 export function test_canonical_nullable_boundary(): string {
-  let a: int | null = 7;
-  let b: int | null = null;
+  let a: number | null = 7;
+  let b: number | null = null;
   let la: string = label(a);
   let lb: string = label(b);
   let arr: string[] | null = ["ok"];
   let fa: string = firstOrNull(arr);
   let fn: string = firstOrNull(null);
-  let incr: ((x: int) => int) | null = function(x: int): int { return x + 1; };
-  let m1: int = maybeApply(incr, 1);
-  let m2: int = maybeApply(null, 1);
+  let incr: ((x: number) => number) | null = function(x: number): number { return x + 1; };
+  let m1: number = maybeApply(incr, 1);
+  let m2: number = maybeApply(null, 1);
   if (la !== "seven" || lb !== "null") {
     throw { code: "TEST_FAIL", message: "nullable int boundary value mismatch" };
   }

@@ -5,8 +5,8 @@
 
 async function yes(): boolean { return true; }
 
-export async function test_await_in_if_condition(): int {
-  let result: int = 0;
+export async function test_await_in_if_condition(): number {
+  let result: number = 0;
   let trueBranch: boolean = false;
   let falseBranch: boolean = false;
   if (await yes()) {

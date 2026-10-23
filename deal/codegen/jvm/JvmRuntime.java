@@ -285,19 +285,9 @@ public final class JvmRuntime {
         }
     }
 
-    public static final class Intrinsic extends FunctionValue {
-        /** The closed intrinsic kind tag ({@code IntrinsicKind} name). */
-        public final String kind;
 
-        Intrinsic(String kind, String signature, String spec) {
-            super(args -> intrinsicInvoke(kind, args), signature, spec, null);
-            this.kind = kind;
-        }
-    }
+/** The program's memoized intrinsic carriers (one per kind per program). */
 
-    /** The program's memoized intrinsic carriers (one per kind per program). */
-    private static final java.util.Map<String, Intrinsic> INTRINSIC_CARRIERS =
-        new java.util.LinkedHashMap<>();
 
     /**
      * The memoized intrinsic carrier of one kind (J2): the identical
@@ -305,20 +295,9 @@ public final class JvmRuntime {
      * kind's declared signature texts (the caller's arguments are the
      * kind's declared descriptor text and canonical spec text).
      */
-    public static Intrinsic intrinsic(String kind, String signature, String spec) {
-        Intrinsic carrier = INTRINSIC_CARRIERS.get(kind);
-        if (carrier == null) {
-            carrier = new Intrinsic(kind, signature, spec);
-            INTRINSIC_CARRIERS.put(kind, carrier);
-        }
-        return carrier;
-    }
 
-    public static FunctionValue intrinsicExport() {
-        return new FunctionValue(args -> null, "function(;number)", "()->number", null);
-    }
 
-    /**
+/**
      * The intrinsic carrier's generic invoker (J2): the conversion or
      * allocation ladder of the carrier's kind over the caller's first
      * argument, with the invoking call's context when one is supplied
@@ -331,21 +310,7 @@ public final class JvmRuntime {
      * declared-parameter kind is the default static kind (the intrinsic's
      * declared signature is the only descriptor source).
      */
-    static Object intrinsicInvoke(String kind, Object[] args) {
-        Object value = args.length > 0 ? args[0] : null;
-        String evKind = args.length > 1 && args[1] instanceof String text ? text
-            : "INTRINSIC_CALL";
-        String staticKind = args.length > 2 && args[2] instanceof String text ? text
-            : ("INT_CONVERT".equals(kind) ? "number" : "int");
-        String opKey = args.length > 3 && args[3] instanceof String text ? text : "-";
-        String digest = args.length > 4 && args[4] instanceof String text ? text : "-";
-        String parent = args.length > 5 && args[5] instanceof String text ? text : "-";
-        String origin = args.length > 6 && args[6] instanceof String text ? text : "-";
-        if ("INT_CONVERT".equals(kind)) {
-            return intConv(value, evKind, staticKind, opKey, digest, parent, origin);
-        }
-        return numConv(value, evKind, staticKind, opKey, digest, parent, origin);
-    }
+
 
     public static final class StdlibFunctionValue extends FunctionValue {
         /** The catalog row tag ({@code StdlibFunctionId} name). */
@@ -669,16 +634,9 @@ public final class JvmRuntime {
         if (kind == null) {
             return "missing";
         }
-        // The value's own variant wins over the declared kind: the closed
-        // value model keeps the int/number variant through every typed
-        // boundary (an int value admitted at a number-typed position stays
-        // a Long, a number value admitted at an int-typed position stays a
-        // Double) — exactly the oracle's atomOf.
-        if (v instanceof Long longValue) {
-            return "int:" + longValue.longValue();
-        }
-        if (v instanceof Double doubleValue) {
-            double d = doubleValue.doubleValue();
+        // Every admitted host numeric box denotes one binary64 number.
+        if (v instanceof Number numeric) {
+            double d = numeric.doubleValue();
             if (Double.isNaN(d)) {
                 return "num:nan";
             }
@@ -707,9 +665,6 @@ public final class JvmRuntime {
             }
             case "bool" -> {
                 return "bool:" + v;
-            }
-            case "int" -> {
-                return "int:" + v;
             }
             case "number" -> {
                 double d = (Double) v;
@@ -768,10 +723,7 @@ public final class JvmRuntime {
         if (v instanceof Boolean) {
             return "bool:" + v;
         }
-        if (v instanceof Long) {
-            return "int:" + v;
-        }
-        if (v instanceof Double) {
+        if (v instanceof Number) {
             return atom(v, "number");
         }
         if (v instanceof String) {
@@ -782,7 +734,7 @@ public final class JvmRuntime {
         }
         if (v instanceof Table || v instanceof Array
                 || v instanceof FunctionValue
-                || v instanceof Intrinsic || v instanceof ClassInstance) {
+                || v instanceof ClassInstance) {
             return "ref:" + allocId(v);
         }
         return atom(v, kind);
@@ -1009,30 +961,8 @@ public final class JvmRuntime {
         return deal.semantic.ir.FailureContractRegistry.descriptorKindReason(desc);
     }
 
-    /**
-     * The int refinement inner reason ({@code expected int, got NaN} / …):
-     * the closed refinement arms' own texts.
-     */
-    public static String refinementReason(String actualToken) {
-        return switch (actualToken) {
-            case "NaN" -> deal.semantic.ir.FailureContractRegistry
-                .arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_NAN).template();
-            case "infinity" -> deal.semantic.ir.FailureContractRegistry
-                .arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_INFINITY).template();
-            case "number" -> deal.semantic.ir.FailureContractRegistry
-                .arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_FRACTIONAL).template();
-            default -> throw new IllegalStateException(
-                "the int refinement " + actualToken + " has no closed arm (producer defect)");
-        };
-    }
 
-    /** The signed32-range inner reason (the {@code INT32_RANGE} arm's text). */
-    public static String rangeReason() {
-        return deal.semantic.ir.FailureContractRegistry
-            .arm(deal.semantic.ir.FailureArmId.INT32_RANGE).template();
-    }
-
-    /** One inner-only string-carrier reason (the two INNER_ONLY arms' texts). */
+/** One inner-only string-carrier reason (the two INNER_ONLY arms' texts). */
     public static String stringCarrierReason(boolean surrogate) {
         return deal.semantic.ir.FailureContractRegistry.renderInner(
             surrogate ? deal.semantic.ir.FailureArmId.HOST_STRING_SURROGATE
@@ -1127,17 +1057,8 @@ public final class JvmRuntime {
             java.util.Map.of("kind", kindTextOf(desc)), "-", kindTokenOf(desc), actual);
     }
 
-    /** The int path's refinement render (the kind arm, or the completion row's second). */
-    private static DealError refinementFailure(String token, boolean completion) {
-        if (completion) {
-            return arm(deal.semantic.ir.FailureArmId.ASYNC_COMPLETION_REFINEMENT,
-                java.util.Map.of("expected", "int", "actual", token), "-", "int", token);
-        }
-        return arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
-            java.util.Map.of("kind", "int"), "-", "int", token);
-    }
 
-    /**
+/**
      * The actual runtime kind of one value for failure projections: the
      * value's own kind — the absent marker → "nil", null → "null", else
      * the runtime type's canonical kind text (a wrong-kind value projects as
@@ -1154,20 +1075,7 @@ public final class JvmRuntime {
         if (v instanceof Boolean) {
             return "boolean";
         }
-        if (v instanceof Integer) {
-            return "int";
-        }
-        if (v instanceof Long longValue) {
-            // The closed int carrier is signed32: an integral carrier
-            // outside the signed32 range is not the int carrier, so it
-            // projects the number carrier's own token — exactly like the
-            // oracle's NumValue and the emitted Lua prelude's classification
-            // (a raw host long outside signed32 is a number carrier, never
-            // a re-spelled int carrier).
-            return longValue >= -2147483648L && longValue <= 2147483647L
-                ? "int" : "number";
-        }
-        if (v instanceof Double) {
+        if (v instanceof Number) {
             return "number";
         }
         if (v instanceof String string) {
@@ -1183,7 +1091,7 @@ public final class JvmRuntime {
         if (v instanceof Array) {
             return "array";
         }
-        if (v instanceof FunctionValue || v instanceof Intrinsic) {
+        if (v instanceof FunctionValue) {
             return "function";
         }
         if (v instanceof ClassInstance instance) {
@@ -1345,51 +1253,9 @@ public final class JvmRuntime {
         String inner = desc.startsWith("nullable(")
             ? desc.substring(9, desc.length() - 1) : desc;
         if (v instanceof Integer || v instanceof Long || v instanceof Double) {
-            if ("int".equals(inner)) {
-                if (v instanceof Integer intValue) {
-                    return Long.valueOf(intValue.longValue());
-                }
-                if (v instanceof Long longValue) {
-                    if (longValue < -2147483648L || longValue > 2147483647L) {
-                        throw hostCompletionRangeFailure();
-                    }
-                    return v;
-                }
-                double value = ((Double) v).doubleValue();
-                if (Double.isNaN(value)) {
-                    throw refinementFailure("NaN", true);
-                }
-                if (Double.isInfinite(value)) {
-                    throw refinementFailure("infinity", true);
-                }
-                if (value != Math.rint(value)) {
-                    throw refinementFailure("number", true);
-                }
-                if (value < -2147483648d || value > 2147483647d) {
-                    throw hostCompletionRangeFailure();
-                }
-                // The admitted integral Double keeps the number carrier
-                // (the preserved variant); the closed int consumption
-                // rows unwrap it through longOf exactly like the emitted
-                // Lua arithmetic unwraps its carrier.
-                return v;
-            }
+
             if ("number".equals(inner)) {
-                // The declared number cell admits both closed numeric
-                // carriers and keeps the admitted carrier's own variant
-                // (the oracle's core Number case passes the view through
-                // and the emitted Lua completion cell returns its carrier
-                // unchanged): the signed32 carrier and the number carrier
-                // stay themselves, and only the boxed Integer — the
-                // host-side spelling of the production int carrier —
-                // settles onto its production carrier. Converting an
-                // admitted Long would re-spell an int value as a number
-                // value and change every later typed projection of the
-                // stored completion.
-                if (v instanceof Integer intValue) {
-                    return Long.valueOf(intValue.longValue());
-                }
-                return v;
+                return ((Number) v).doubleValue();
             }
         }
         // The complete completion is validated first — the crossing's own
@@ -1404,7 +1270,7 @@ public final class JvmRuntime {
         // nothing.
         Object admitted = bcheck(desc, staticKind, v, true, canon, true);
         if (v instanceof Array array) {
-            settleBoxedIntElements(array);
+            settleHostNumberElements(array);
         }
         return admitted;
     }
@@ -1422,7 +1288,7 @@ public final class JvmRuntime {
      * set. Only a completion that passed the crossing's validation reaches
      * this commit.
      */
-    private static void settleBoxedIntElements(Array root) {
+    private static void settleHostNumberElements(Array root) {
         IdentityHashMap<Array, Boolean> visited = new IdentityHashMap<>();
         ArrayDeque<Array> pending = new ArrayDeque<>();
         visited.put(root, Boolean.TRUE);
@@ -1431,8 +1297,8 @@ public final class JvmRuntime {
             Array array = pending.pop();
             for (int i = 0; i < array.elements.size(); i++) {
                 Object element = array.elements.get(i);
-                if (element instanceof Integer boxed) {
-                    array.elements.set(i, Long.valueOf(boxed.longValue()));
+                if (element instanceof Number number) {
+                    array.elements.set(i, number.doubleValue());
                 } else if (element instanceof Array inner
                         && visited.put(inner, Boolean.TRUE) == null) {
                     pending.push(inner);
@@ -1441,13 +1307,8 @@ public final class JvmRuntime {
         }
     }
 
-    /** The signed32-range non-admission of the host completion crossing. */
-    private static DealError hostCompletionRangeFailure() {
-        return arm(deal.semantic.ir.FailureArmId.INT32_RANGE, java.util.Map.of(), "-",
-            null, null);
-    }
 
-    /**
+/**
      * The class arms: a carried atom projects the identity arm, every other
      * value the closed kind arm.
      */
@@ -1510,69 +1371,10 @@ public final class JvmRuntime {
             }
             throw kindFailure("boolean", actual, completion);
         }
-        if ("int".equals(desc)) {
-            if (v instanceof Long longValue) {
-                if (hostCompletionCrossing
-                        && (longValue < -2147483648L || longValue > 2147483647L)) {
-                    // The signed32 range step of the pinned int ladder at
-                    // the crossing's element positions: the recursive
-                    // host-completion check admits only the signed32 long
-                    // carrier, exactly like the crossing's top-level rule
-                    // and the emitted host ABI's own int branch, so an
-                    // out-of-range long element can never be admitted
-                    // (the enclosing element arm then renders the
-                    // element's own number-carrier token).
-                    throw arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
-                        java.util.Map.of(), "-", null, null);
-                }
-                return v;
-            }
-            if (hostCompletionCrossing && v instanceof Integer intValue) {
-                // The host-completion crossing's boxed int carrier (the
-                // host-side spelling of the production int carrier):
-                // admitted like the crossing's top-level rule, and the
-                // crossing's settlement commits it onto the production
-                // carrier after the complete completion was validated.
-                return Long.valueOf(intValue.longValue());
-            }
-            if (v instanceof Double doubleValue) {
-                double d = doubleValue;
-                if (Double.isNaN(d)) {
-                    throw refinementFailure("NaN", completion);
-                }
-                if (Double.isInfinite(d)) {
-                    throw refinementFailure("infinity", completion);
-                }
-                if (d != Math.rint(d)) {
-                    throw refinementFailure("number", completion);
-                }
-                if (d < -2147483648d || d > 2147483647d) {
-                    throw arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
-                        java.util.Map.of(), "-", null, null);
-                }
-                // The int domain normalizes every zero to positive zero
-                // (spec §Numeric overflow: "-0 is normalized to 0 in int
-                // checks and arithmetic"); the admitted integral double
-                // keeps its own number variant while its sign becomes
-                // positive.
-                return d + 0.0;
-            }
-            throw kindFailure("int", actual, completion);
-        }
+
         if ("number".equals(desc)) {
-            if (v instanceof Double || v instanceof Long) {
-                return v;
-            }
-            if (hostCompletionCrossing && v instanceof Integer intValue) {
-                // The host-completion crossing's boxed int carrier at a
-                // declared number position (a completed array's element
-                // positions recursively included): admitted like the
-                // crossing's top-level number rule, which also settles the
-                // boxed Integer onto the production int carrier while the
-                // admitted Long and Double keep their own variants, and
-                // committed onto the original carrier by the crossing's
-                // settlement after the complete completion was validated.
-                return Long.valueOf(intValue.longValue());
+            if (v instanceof Number number) {
+                return number.doubleValue();
             }
             throw kindFailure("number", actual, completion);
         }
@@ -1824,14 +1626,8 @@ public final class JvmRuntime {
         if (v instanceof Boolean bool) {
             return "bool:" + bool;
         }
-        if (v instanceof Long longValue) {
-            return "int:" + longValue;
-        }
-        if (v instanceof Integer intValue) {
-            return "int:" + intValue;
-        }
-        if (v instanceof Double doubleValue) {
-            return atom(doubleValue, "number");
+        if (v instanceof Number numeric) {
+            return atom(numeric, "number");
         }
         if (v instanceof String string) {
             return "str:" + esc(string);
@@ -2377,25 +2173,9 @@ public final class JvmRuntime {
             return false;
         }
         switch (selector) {
-            case "INT32_EQ" -> {
-                return longOf(l) == longOf(r);
-            }
-            case "INT32_NE" -> {
-                return longOf(l) != longOf(r);
-            }
-            case "INT32_LT" -> {
-                return longOf(l) < longOf(r);
-            }
-            case "INT32_LE" -> {
-                return longOf(l) <= longOf(r);
-            }
-            case "INT32_GT" -> {
-                return longOf(l) > longOf(r);
-            }
-            case "INT32_GE" -> {
-                return longOf(l) >= longOf(r);
-            }
-            case "NUMBER_EQ" -> {
+
+
+case "NUMBER_EQ" -> {
                 return ((Number) l).doubleValue() == ((Number) r).doubleValue();
             }
             case "NUMBER_NE" -> {
@@ -2500,39 +2280,16 @@ public final class JvmRuntime {
         if ("BOOL_NOT".equals(selector)) {
             return !((Boolean) v);
         }
-        if ("INT32_NEG".equals(selector)) {
-            long result = -longOf(v);
-            return int32Result(result, opKey, digest, parent, origin, "UNARY");
-        }
+
         return -((Number) v).doubleValue();
     }
 
     public static Object arith(String selector, Object l, Object r, String opKey,
                                String digest, String parent, String origin) {
         switch (selector) {
-            case "INT32_ADD" -> {
-                return int32Result(longOf(l) + longOf(r), opKey, digest, parent, origin,
-                    "BINARY");
-            }
-            case "INT32_SUB" -> {
-                return int32Result(longOf(l) - longOf(r), opKey, digest, parent, origin,
-                    "BINARY");
-            }
-            case "INT32_MUL" -> {
-                return int32Result(longOf(l) * longOf(r), opKey, digest, parent, origin,
-                    "BINARY");
-            }
-            case "INT32_DIV_TRUNC" -> {
-                long divisor = longOf(r);
-                if (divisor == 0) {
-                    raiseArm(deal.semantic.ir.FailureArmId.INT32_DIVISION_BY_ZERO,
-                        java.util.Map.of(), null, null, opKey, digest, parent, origin,
-                        "BINARY");
-                }
-                return int32Result(longOf(l) / divisor, opKey, digest, parent, origin,
-                    "BINARY");
-            }
-            case "NUMBER_ADD" -> {
+
+
+case "NUMBER_ADD" -> {
                 return ((Number) l).doubleValue() + ((Number) r).doubleValue();
             }
             case "NUMBER_SUB" -> {
@@ -2544,22 +2301,12 @@ public final class JvmRuntime {
             case "NUMBER_DIV_IEEE" -> {
                 return ((Number) l).doubleValue() / ((Number) r).doubleValue();
             }
-            default -> {
-                return 0L;
-            }
+            default -> throw new IllegalStateException("unknown arithmetic selector: " + selector);
         }
     }
 
-    static Object int32Result(long result, String opKey, String digest, String parent,
-                              String origin, String kind) {
-        if (result < Integer.MIN_VALUE || result > Integer.MAX_VALUE) {
-            raiseArm(deal.semantic.ir.FailureArmId.INT32_RANGE, java.util.Map.of(), null,
-                null, opKey, digest, parent, origin, kind);
-        }
-        return result;
-    }
 
-    /**
+/**
      * One closed arm's operation-site failure (canonical failure-projection
      * authority P4 item 3): the arm's own template with its named parameters
      * and its declared expected/actual fields, published as the invoking
@@ -2663,18 +2410,18 @@ public final class JvmRuntime {
             switch (fn) {
                 case "STRING_LENGTH" -> {
                     String text = (String) args[0];
-                    long count = text.codePointCount(0, text.length());
-                    if (count > Integer.MAX_VALUE) {
-                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.INT32_RANGE,
-                            java.util.Map.of(), null, null);
-                    }
-                    return Long.valueOf(count);
+                    return Double.valueOf(text.codePointCount(0, text.length()));
                 }
                 case "STRING_SUBSTRING" -> {
                     int[] codePoints = ((String) args[0]).codePoints().toArray();
-                    long start = longOf(args[1]);
-                    long end = longOf(args[2]);
-                    int lo = (int) Math.max(0, start);
+                    double start = ((Number) args[1]).doubleValue();
+                    double end = ((Number) args[2]).doubleValue();
+                    if (!Double.isFinite(start) || start != Math.rint(start)
+                            || !Double.isFinite(end) || end != Math.rint(end)) {
+                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.SUBSTRING_BOUNDS,
+                            java.util.Map.of(), null, null);
+                    }
+                    int lo = (int) Math.min(Math.max(0, start), codePoints.length);
                     int hi = (int) Math.min(Math.max(0, end), codePoints.length);
                     if (lo >= hi) {
                         return "";
@@ -2791,24 +2538,12 @@ public final class JvmRuntime {
                     }
                     return Math.sqrt(value);
                 }
-                case "MATH_ABS_INT" -> {
-                    long value = longOf(args[0]);
-                    long absolute = value < 0 ? -value : value;
-                    if (absolute > Integer.MAX_VALUE) {
-                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.INT32_RANGE,
-                            java.util.Map.of(), null, null);
-                    }
-                    return Long.valueOf(absolute);
-                }
+
                 case "MATH_ABS_NUMBER" -> {
                     return Math.abs(numberOf(args[0]));
                 }
-                case "MATH_MIN_INT" -> {
-                    return Long.valueOf(Math.min(longOf(args[0]), longOf(args[1])));
-                }
-                case "MATH_MAX_INT" -> {
-                    return Long.valueOf(Math.max(longOf(args[0]), longOf(args[1])));
-                }
+
+
                 case "TIME_NOW_MILLIS" -> {
                     // The K7 target-clock read: the declared number
                     // STDLIB_RETURN boundary (descriptor-kind rule) admits
@@ -2888,8 +2623,8 @@ public final class JvmRuntime {
      * index value admitted at an int-typed position keeps its boxed
      * Double, so the normalized slot never casts it blind).
      */
-    public static long indexOf(Object value) {
-        return longOf(value);
+    public static double indexOf(Object value) {
+        return ((Number) value).doubleValue();
     }
 
     /** A number parameter carrier: a Double or a Long (int → double is exact). */
@@ -3231,10 +2966,6 @@ public final class JvmRuntime {
 
         Object parseNumber() {
             JsonScan.CodePointCursor.NumberScan scan = parseNumberText();
-            Integer exact = JsonNumberClassifier.exactInt32OrNull(scan.text());
-            if (exact != null) {
-                return Long.valueOf(exact.longValue());
-            }
             return Double.valueOf(JsonNumberClassifier.toDouble(scan.text()));
         }
     }
@@ -3412,14 +3143,12 @@ public final class JvmRuntime {
             out.append("null");
         } else if (value instanceof Boolean bool) {
             out.append(bool ? "true" : "false");
-        } else if (value instanceof Long longValue) {
-            out.append(Long.toString(longValue));
-        } else if (value instanceof Double doubleValue) {
-            double d = doubleValue.doubleValue();
+        } else if (value instanceof Number numeric) {
+            double d = numeric.doubleValue();
             if (!Double.isFinite(d)) {
-                throw jsonEncodingFailure(doubleValue);
+                throw jsonEncodingFailure(numeric);
             }
-            out.append(Double.toString(d));
+            out.append(d == 0 ? "0" : Double.toString(d));
         } else if (value instanceof String string) {
             // An invalid scalar sequence is still a string carrier: it
             // rejects through the closed JSON_STRINGIFY_UNSUPPORTED arm
@@ -3500,10 +3229,10 @@ public final class JvmRuntime {
     public static Object arrayRead(String opKey, String digest, String parent,
                                    String bKey, String bDigest, String bParent,
                                    String desc, String inner, Array container,
-                                   long index, long length, boolean nullable,
+                                   double index, double length, boolean nullable,
                                    String origin) {
         Object elem = MISSING;
-        if (index < 0 || index >= length) {
+        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index >= length) {
             ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
                 List.of(atom(MISSING, "missing")), null, null);
             DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS,
@@ -3601,12 +3330,12 @@ public final class JvmRuntime {
 
     /** The ARRAY_ELEMENT_ASSIGNMENT/ARRAY_ELEMENT_DELETE cells. */
     public static void arrayBounds(String bKey, String bDigest, String bParent,
-                                   Object input, long index, long length, String desc,
+                                   Object input, double index, double length, String desc,
                                    String staticKind, String canon, boolean isAssign,
                                    String origin) {
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(atom(input, staticKind)), null, null);
-        if (index < 0 || index > length) {
+        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
             DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS,
                 java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
@@ -3631,13 +3360,13 @@ public final class JvmRuntime {
 
     /** The ARRAY_ELEMENT_DELETE cell whose input operand is the normalized slot. */
     public static void arrayBoundsSlot(String bKey, String bDigest, String bParent,
-                                       long[] slot, long length, String origin) {
-        long index = slot[0];
-        String slotAtom = "slot:" + index + "/" + (index < length) + "/"
+                                       double[] slot, double length, String origin) {
+        double index = slot[0];
+        String slotAtom = "slot:" + Double.toHexString(index) + "/" + (index < length) + "/"
             + (slot[2] == 1 && index == length);
         ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
             List.of(slotAtom), null, null);
-        if (index < 0 || index > length) {
+        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
             DealError e = arm(deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS,
                 java.util.Map.of(), origin, null, null);
             ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
@@ -3665,82 +3394,8 @@ public final class JvmRuntime {
         }
     }
 
-    public static Object intConv(Object v, String evKind, String kind, String opKey,
-                                 String digest, String parent, String origin) {
-        if (v == null) {
-            DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_NULL,
-                java.util.Map.of(), origin, "int", "null");
-            ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
-                List.of(), null, errtext(e));
-            throw e;
-        }
-        if (v instanceof Double doubleValue) {
-            double d = doubleValue;
-            if (Double.isNaN(d)) {
-                DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_NAN,
-                    java.util.Map.of(), origin, "int", "NaN");
-                ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
-                    List.of(), null, errtext(e));
-                throw e;
-            }
-            if (Double.isInfinite(d)) {
-                DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_INFINITY,
-                    java.util.Map.of(), origin, "int", "infinity");
-                ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
-                    List.of(), null, errtext(e));
-                throw e;
-            }
-            if (d != Math.rint(d)) {
-                // The fractional case's text names the case while its actual
-                // token is the closed number kind (the corpus projection).
-                DealError e = arm(deal.semantic.ir.FailureArmId.INT_CONVERSION_FRACTIONAL,
-                    java.util.Map.of(), origin, "int", "number");
-                ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
-                    List.of(), null, errtext(e));
-                throw e;
-            }
-            if (d < -2147483648d || d > 2147483647d) {
-                DealError e = arm(deal.semantic.ir.FailureArmId.INT32_RANGE,
-                    java.util.Map.of(), origin, null, null);
-                ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
-                    List.of(), null, errtext(e));
-                throw e;
-            }
-            return (long) d;
-        }
-        if (v instanceof Long) {
-            return v;
-        }
-        DealError e = arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
-            java.util.Map.of("kind", "int"), origin, "int", actualOf(kind, v));
-        ev(currentModule(), opKey, "FAILURE", evKind, digest, parent, List.of(),
-            null, errtext(e));
-        throw e;
-    }
 
-    public static Object numConv(Object v, String evKind, String kind, String opKey,
-                                 String digest, String parent, String origin) {
-        if (v == null) {
-            DealError e = arm(deal.semantic.ir.FailureArmId.NUMBER_CONVERSION_NULL,
-                java.util.Map.of(), origin, "number", "null");
-            ev(currentModule(), opKey, "FAILURE", evKind, digest, parent,
-                List.of(), null, errtext(e));
-            throw e;
-        }
-        if (v instanceof Long longValue) {
-            return (double) longValue;
-        }
-        if (v instanceof Double) {
-            return v;
-        }
-        DealError e = arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
-            java.util.Map.of("kind", "number"), origin, "number", actualOf(kind, v));
-        ev(currentModule(), opKey, "FAILURE", evKind, digest, parent, List.of(),
-            null, errtext(e));
-        throw e;
-    }
-
-    // =========================================================================
+// =========================================================================
     // Module context
     // =========================================================================
 
@@ -3755,15 +3410,7 @@ public final class JvmRuntime {
     }
 
 
-
-
-
-
-
-
-
-
-    // =========================================================================
+// =========================================================================
     // The reserved async-export host surface
     // =========================================================================
 

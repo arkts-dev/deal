@@ -21,7 +21,7 @@ function step(x) {
 }
 
 function functionValue() {
-  return { $kind: "function", $sig: "(int)->int", $f: step };
+  return { $kind: "function", $sig: "(number)->number", $f: step };
 }
 
 let LAST_TABLE = null;

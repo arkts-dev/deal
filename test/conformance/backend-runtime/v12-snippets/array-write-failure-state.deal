@@ -5,10 +5,10 @@
 
 import * as c from "std/console";
 export function main(): null {
- let trace: string = ""; let xs: int[] = [7]; let alias: int[] = xs;
- function receiver(): int[] {trace = trace + "R"; return xs;}
- function index(): int {trace = trace + "I"; return 2;}
- function value(): int {trace = trace + "V"; return 9;}
+ let trace: string = ""; let xs: number[] = [7]; let alias: number[] = xs;
+ function receiver(): number[] {trace = trace + "R"; return xs;}
+ function index(): number {trace = trace + "I"; return 2;}
+ function value(): number {trace = trace + "V"; return 9;}
  try {receiver()[index()] = value(); trace = trace + "X";} catch(e) {
   if(e.code !== "E8002") {throw {message:"wrong bounds code"};} trace = trace + "C";
  }

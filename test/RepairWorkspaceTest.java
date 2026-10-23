@@ -6,7 +6,7 @@ import java.util.*;
 
 public final class RepairWorkspaceTest {
     private static final String MODULE = "app.deal";
-    private static final String BASE = "export function main(): int { return 0; }\n";
+    private static final String BASE = "export function main(): number { return 0; }\n";
     public static void main(String[] args) {
         var baseline = AmendWorkspace.inspect(BASE, MODULE);
         missingTypeHasExactGrant(baseline);
@@ -31,7 +31,7 @@ public final class RepairWorkspaceTest {
         var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
                 new AmendWorkspace.AddDeclaration(module, "export class Holder { value: Leaf = {value:1}; }"),
-                new AmendWorkspace.AddDeclaration(module, "export class Unrelated { value: int = 7; }")));
+                new AmendWorkspace.AddDeclaration(module, "export class Unrelated { value: number = 7; }")));
         String snapshot = CompilerProtocolJson.encode(workspace);
         var offer = RepairWorkspaceProtocol.inspectRepair(workspace);
         check(offer.disposition() == RepairWorkspaceProtocol.Disposition.EXPANSION_REQUIRED, "missing type needs expansion: " + CompilerProtocolJson.encode(offer));
@@ -42,18 +42,18 @@ public final class RepairWorkspaceTest {
                 "grant is deterministic");
         var forged = new RepairWorkspaceProtocol.Grant(grant.version(), grant.workspaceDigest(), List.of("R1", "R2"),
                 grant.obligations(), grant.expansions(), grant.digest());
-        check(!apply(workspace, forged, List.of(), "export class Leaf { value: int = 0; }").accepted(),
+        check(!apply(workspace, forged, List.of(), "export class Leaf { value: number = 0; }").accepted(),
                 "tampered grant cannot widen write access");
         boolean stale = false;
         try { RepairWorkspaceProtocol.expandRepairScope(workspace, "stale", List.of("add:D1")); }
         catch (IllegalArgumentException expected) { stale = true; }
         check(stale, "stale expansion rejected");
-        var wrong = apply(workspace, grant, List.of(), "export class Other { value: int = 0; }");
+        var wrong = apply(workspace, grant, List.of(), "export class Other { value: number = 0; }");
         check(!wrong.accepted() && wrong.source().equals(BASE) && wrong.workspace().equals(workspace), "unrelated addition rolls back");
         var illegal = apply(workspace, grant, List.of(new SlotPatch("R2", Map.of("declaration",
-                "export class Unrelated { value: int = 99; }"))), "export class Leaf { value: int = 0; }");
+                "export class Unrelated { value: number = 99; }"))), "export class Leaf { value: number = 0; }");
         check(!illegal.accepted() && illegal.source().equals(BASE), "independent slot is not writable");
-        var repaired = apply(workspace, grant, List.of(), "export class Leaf { value: int = 0; }");
+        var repaired = apply(workspace, grant, List.of(), "export class Leaf { value: number = 0; }");
         check(repaired.accepted(), "exact missing declaration repairs candidate: " + repaired.diagnostics());
         check(repaired.workspace().slots().get(1).payloadFingerprint().equals(workspace.slots().get(1).payloadFingerprint()),
                 "unrelated slot fingerprint preserved");
@@ -74,10 +74,10 @@ public final class RepairWorkspaceTest {
     private static void dependenciesUseSyntaxAndScopes(Inspection baseline) {
         var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
-                new AmendWorkspace.AddDeclaration(module, "export function helper(): int { return missing; }"),
+                new AmendWorkspace.AddDeclaration(module, "export function helper(): number { return missing; }"),
                 new AmendWorkspace.AddDeclaration(module, "export function label(): string { return \"helper\"; /* helper */ }"),
-                new AmendWorkspace.AddDeclaration(module, "export function local(helper: int): int { return helper; }"),
-                new AmendWorkspace.AddDeclaration(module, "export function consumer(): int { return helper(); }")));
+                new AmendWorkspace.AddDeclaration(module, "export function local(helper: number): number { return helper; }"),
+                new AmendWorkspace.AddDeclaration(module, "export function consumer(): number { return helper(); }")));
         String provider = workspace.slots().getFirst().dependencyGroupId();
         for (int index : List.of(1, 2)) {
             var slot = workspace.slots().get(index);
@@ -91,9 +91,9 @@ public final class RepairWorkspaceTest {
     private static void dependentProviderCanBeReopened(Inspection baseline) {
         var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
-                new AmendWorkspace.AddDeclaration(module, "export function helper(): int { return 1; }"),
+                new AmendWorkspace.AddDeclaration(module, "export function helper(): number { return 1; }"),
                 new AmendWorkspace.AddDeclaration(module, "export function label(): string { return helper(); }"),
-                new AmendWorkspace.AddDeclaration(module, "export class Independent { value: int = 3; }")));
+                new AmendWorkspace.AddDeclaration(module, "export class Independent { value: number = 3; }")));
         var initial = RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of());
         var retry = AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, initial,
                 List.of(new SlotPatch("R2", Map.of("declaration", "export function label(): string { return helper() + 2; }"))), List.of());
@@ -117,8 +117,8 @@ public final class RepairWorkspaceTest {
         check(!offer.obligations().isEmpty(), "missing function evidence: " + CompilerProtocolJson.encode(workspace));
         check(offer.obligations().getFirst().missing().constraints().equals(List.of("arity=1")), "callee arity is structural evidence");
         var grant = RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of("add:D1"));
-        check(!apply(workspace, grant, List.of(), "export function helper(): int { return 1; }").accepted(), "wrong arity rejected");
-        var result = apply(workspace, grant, List.of(), "export function helper(value: int): int { return value; }");
+        check(!apply(workspace, grant, List.of(), "export function helper(): number { return 1; }").accepted(), "wrong arity rejected");
+        var result = apply(workspace, grant, List.of(), "export function helper(value: number): number { return value; }");
         check(result.accepted(), "new function repairs existing body: " + result.diagnostics());
     }
     private static RepairWorkspaceResult apply(RepairWorkspaceSnapshot workspace, RepairWorkspaceProtocol.Grant grant,

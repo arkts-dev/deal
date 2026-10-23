@@ -5,11 +5,11 @@
 
 import * as host from "host/nullable_fn";
 
-function badFn(s: string): int {
+function badFn(s: string): number {
   return 1;
 }
 
-export function test_host_nullable_function_param_bad(): int {
+export function test_host_nullable_function_param_bad(): number {
   let holder: table = { cb: badFn };
   return host.register(holder.cb);
 }

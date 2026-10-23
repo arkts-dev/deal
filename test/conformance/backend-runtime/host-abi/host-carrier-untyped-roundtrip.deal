@@ -7,8 +7,8 @@ import * as host from "host/carrieruntyped";
 import * as util from "./carrier_untyped_lib";
 
 class Point {
-  x: int = 0;
-  y: int = 0;
+  x: number = 0;
+  y: number = 0;
 }
 
 function check(condition: boolean, message: string): null {
@@ -29,7 +29,7 @@ export function test_untyped_container(): null {
   check(first.x === 3 && first.y === 4, "the DEAL class value round-trips at its declared type");
   let second: Point = back.twin;
   check(first === second, "the aliased class members round-trip as one DEAL value");
-  let step: (x: int) => int = back.step;
+  let step: (x: number) => number = back.step;
   check(step(41) === 42, "the DEAL function value round-trips invocable");
   let err: Error = back.err;
   check(err.code === "E_X" && err.message === "boom", "the builtin Error value round-trips");

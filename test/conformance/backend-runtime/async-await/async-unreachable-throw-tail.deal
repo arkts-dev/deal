@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: async-await, error-handling, reachability, v1.2
 
-export async function check(): int {
-  let n: int = 0;
+export async function check(): number {
+  let n: number = 0;
   try {
     throw { code: "X", message: "same async catch" };
     n = 99;

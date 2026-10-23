@@ -234,11 +234,11 @@ public class ClosureLoweringTest {
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
             function outer(): null {
-              let x: int = 1;
-              let y: int = 2;
+              let x: number = 1;
+              let y: number = 2;
               let h: () => null = function(): null {
-                let a: int = y;
-                let b: int = x;
+                let a: number = y;
+                let b: number = x;
               };
             }
             """);
@@ -335,19 +335,9 @@ public class ClosureLoweringTest {
         check(unit.functionBindings().containsKey(
                 new FunctionAllocationIdentity(((ValueId) hClosure.result()).id())),
             "h's binding is keyed by the allocation identity equal to the result value id");
-        check(unit.functionBindings().size() == closureNews.size() + 2,
-            "one functionBinding per closure (registry one-to-one) plus the two "
-                + "producer-less intrinsic seed registrations (ISSUE-0632): "
-                + unit.functionBindings().size() + " bindings for " + closureNews.size()
-                + " closures");
-        int intrinsicSeeds = 0;
-        for (FunctionExecutionBinding binding : unit.functionBindings().values()) {
-            if (binding instanceof FunctionExecutionBinding.IntrinsicFunction) {
-                intrinsicSeeds++;
-            }
-        }
-        check(intrinsicSeeds == 2, "the int and number intrinsic seeds are registered "
-            + "(ISSUE-0632); got " + intrinsicSeeds);
+        check(unit.functionBindings().size() == closureNews.size(),
+            "one functionBinding per closure: " + unit.functionBindings().size()
+                + " bindings for " + closureNews.size() + " closures");
 
         // Cell kinds: captured x/y SHARED_CELL; uncaptured a, b, h DIRECT.
         check(x.incarnations().get(0).cellKind() == BindingCellKind.SHARED_CELL,
@@ -407,10 +397,10 @@ public class ClosureLoweringTest {
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
             function test_nested_closure_mutation(): null {
-              let x: int = 1;
+              let x: number = 1;
               function make(): null {
                 let inner: () => null = function(): null {
-                  let y: int = x;
+                  let y: number = x;
                 };
               }
               x = 9;
@@ -533,12 +523,12 @@ public class ClosureLoweringTest {
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
             function outer(): null {
-              let x: int = 1;
+              let x: number = 1;
               function mid(): null {
-                let z: int = 2;
+                let z: number = 2;
                 function inner(): null {
-                  let a: int = x;
-                  let b: int = z;
+                  let a: number = x;
+                  let b: number = z;
                 }
               }
               x = 9;
@@ -824,9 +814,9 @@ public class ClosureLoweringTest {
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
             function outer(): null {
-              let x: int | null = 1;
+              let x: number | null = 1;
               let h: () => null = function(): null {
-                let y: int | null = x;
+                let y: number | null = x;
               };
             }
             """);
@@ -868,13 +858,13 @@ public class ClosureLoweringTest {
         }
         check(sawCapture, "h captures x exactly once");
         // The load of x inside the body carries the declared nullable
-        // descriptor (?int), never a narrowed type.
+        // descriptor (?number), never a narrowed type.
         int nullableLoads = 0;
         for (SemanticOp op : ofKind(ops, SemanticOpKind.BINDING_LOAD)) {
             if (op.payload() instanceof KindPayload.BindingLoadPayload load
                     && load.binding().equals(x.binding())
                     && op.resultType() instanceof RuntimeDescriptor.Nullable nullable
-                    && nullable.inner().equals(RuntimeDescriptor.Int.INSTANCE)) {
+                    && nullable.inner().equals(RuntimeDescriptor.Number.INSTANCE)) {
                 nullableLoads++;
             }
         }
@@ -898,7 +888,7 @@ public class ClosureLoweringTest {
         // (a) Reassignable-uncaptured local stays DIRECT with mutable=true.
         SemanticLowerer.ClosureCoreResult uncaptured = lowerSlice("""
             function outer(): null {
-              let x: int = 1;
+              let x: number = 1;
               x = 2;
             }
             """);
@@ -916,7 +906,7 @@ public class ClosureLoweringTest {
         // (b) A store inside the closure body captures the cell.
         SemanticLowerer.ClosureCoreResult storeCapture = lowerSlice("""
             function outer(): null {
-              let x: int = 1;
+              let x: number = 1;
               let h: () => null = function(): null {
                 x = 2;
               };
@@ -1071,7 +1061,7 @@ public class ClosureLoweringTest {
         // (a) Function-signature derivation (closure-core): the corrupted
         // checked FunctionSymbol return type is identified by the function
         // declaration's own exact SOURCE range.
-        CheckedSlice functionSlice = checkSlice("function f(): int {\n  return 1;\n}\n");
+        CheckedSlice functionSlice = checkSlice("function f(): number {\n  return 1;\n}\n");
         if (functionSlice != null) {
             FunctionDeclaration function =
                 (FunctionDeclaration) functionSlice.program().statements().get(0);
@@ -1097,10 +1087,10 @@ public class ClosureLoweringTest {
                         && range.startLine() == 1 && range.startColumn() == 1
                         && range.endLine() == 4 && range.endColumn() == 2
                         && range.startScalarOffset() == 0
-                        && range.endScalarOffset() == 34
-                        && range.scalarLength() == 34,
+                        && range.endScalarOffset() == 37
+                        && range.scalarLength() == 37,
                     "the function-signature failure carries the function declaration's "
-                        + "own exact SOURCE range test.deal 1:1-4:2 [0,34) length 34; got "
+                        + "own exact SOURCE range test.deal 1:1-4:2 [0,37) length 37; got "
                         + range);
                 check(range.equals(function.span().range()),
                     "the range is exactly the function declaration's own span conversion; "
@@ -1110,7 +1100,7 @@ public class ClosureLoweringTest {
 
         // (b) The declared-variable boundary derivation (binding-core): the
         // declared type annotation's own exact SOURCE range.
-        CheckedSlice variableSlice = checkSlice("let x: int = 1;\n");
+        CheckedSlice variableSlice = checkSlice("let x: number = 1;\n");
         if (variableSlice != null) {
             VariableDeclaration declaration =
                 (VariableDeclaration) variableSlice.program().statements().get(0);
@@ -1135,12 +1125,12 @@ public class ClosureLoweringTest {
                 check(range.origin() == RangeOrigin.SOURCE
                         && "test.deal".equals(range.file())
                         && range.startLine() == 1 && range.startColumn() == 8
-                        && range.endLine() == 1 && range.endColumn() == 11
+                        && range.endLine() == 1 && range.endColumn() == 14
                         && range.startScalarOffset() == 7
-                        && range.endScalarOffset() == 10
-                        && range.scalarLength() == 3,
+                        && range.endScalarOffset() == 13
+                        && range.scalarLength() == 6,
                     "the let-boundary failure carries the declared type annotation's own "
-                        + "exact SOURCE range test.deal 1:8-1:11 [7,10) length 3; got "
+                        + "exact SOURCE range test.deal 1:8-1:14 [7,13) length 6; got "
                         + range);
                 check(range.equals(declaration.typeAnnotation().get().span().range()),
                     "the range is exactly the annotation's own span conversion; got "
@@ -1155,14 +1145,14 @@ public class ClosureLoweringTest {
         {
             Span annotationSpan = new Span("writer.deal", 2, 5, 2, 8);
             LiteralExpr initializer = new LiteralExpr(
-                new Span("writer.deal", 2, 11, 2, 12), new LiteralValue.IntLiteral(1));
+                new Span("writer.deal", 2, 11, 2, 12), new LiteralValue.NumberLiteral(1));
             VariableDeclaration declaration = new VariableDeclaration(
                 new Span("writer.deal", 2, 1, 2, 12), "x",
                 Optional.of(new NamedType(annotationSpan, "int")), initializer);
             SymbolTable scope = new SymbolTable();
             scope.define("x", new Symbol.VariableSymbol("x", Type.Error.INSTANCE, false));
             CheckResult checks = new CheckResult(
-                Map.of(initializer, Type.Int.INSTANCE), scope, List.of());
+                Map.of(initializer, Type.Number.INSTANCE), scope, List.of());
             SemanticLowerer.ModuleLowerer lowerer = new SemanticLowerer.ModuleLowerer(
                 MODULE, "writer.deal", checks,
                 SemanticIdAllocator.over(List.of(MODULE)), true,

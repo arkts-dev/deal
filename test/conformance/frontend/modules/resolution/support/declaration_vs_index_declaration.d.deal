@@ -3,4 +3,4 @@
 // @expected: companion
 // @features: companion, modules, resolution
 
-export function directOnly(): int;
+export function directOnly(): number;

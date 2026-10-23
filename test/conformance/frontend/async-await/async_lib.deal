@@ -5,6 +5,6 @@
 // explicit classification, and companions must keep compiling standalone.
 // @spec: Async/Await — cross-module companion module for frontend tests
 // Helper module for import-under-await test
-export async function fetch(id: int): int {
+export async function fetch(id: number): number {
   return id * 2;
 }

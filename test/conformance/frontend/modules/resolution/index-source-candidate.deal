@@ -4,5 +4,5 @@
 // @features: modules, resolution, index-source, v1.2
 
 import * as Lib from "./support/index_source";
-export function probe(): int { return Lib.value(); }
+export function probe(): number { return Lib.value(); }
 export function main(): null { return null; }

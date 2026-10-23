@@ -3,18 +3,18 @@
 // @expected: runtime-ok
 // @features: lua-abi, recursion, structural
 
-function a(n: int): int {
+function a(n: number): number {
   if (n === 0) { return 0; }
   return b(n - 1) + 1;
 }
 
-function b(n: int): int {
+function b(n: number): number {
   if (n === 0) { return 0; }
   return a(n - 1) + 1;
 }
 
-export function test_abi_mutual_recursion_predeclare(): int {
-  let result: int = a(5);
+export function test_abi_mutual_recursion_predeclare(): number {
+  let result: number = a(5);
   if (result !== 5) { throw { code: "TEST_FAIL", message: "mutual recursion ABI failed" }; }
   return result;
 }

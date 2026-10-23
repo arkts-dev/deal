@@ -5,16 +5,16 @@
 // - field-write
 
 class Counter {
-    count: int = 0;
+    count: number = 0;
 }
 
-function increment(c: Counter): int {
+function increment(c: Counter): number {
     c.count = c.count + 1;
     return c.count;
 }
 
 function main(): null {
     let c: Counter = { count: 0 };
-    let n: int = increment(c);
+    let n: number = increment(c);
     n = 42;
 }

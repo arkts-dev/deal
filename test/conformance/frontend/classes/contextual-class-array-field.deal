@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: classes, arrays, contextual-typing
 
-class Box { n: int = 0; }
+class Box { n: number = 0; }
 class Container { children: Box[] = []; }
 export function main(): null {
   let c: Container = { children: [{ n: 2 }] };

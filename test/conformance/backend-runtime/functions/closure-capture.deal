@@ -3,13 +3,13 @@
 // @expected: runtime-ok
 // @features: functions, closures
 
-export function test_closure(): int {
-  let x: int = 1;
-  let f: () => int = function(): int {
+export function test_closure(): number {
+  let x: number = 1;
+  let f: () => number = function(): number {
     return x;
   };
   x = 2;
-  let result: int = f(); // closure invoked once after x = 2
+  let result: number = f(); // closure invoked once after x = 2
   if (result !== 2) {
     throw { code: "TEST_FAIL", message: "closure capture result mismatch after x = 2" };
   }

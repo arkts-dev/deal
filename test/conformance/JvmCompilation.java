@@ -151,12 +151,14 @@ public final class JvmCompilation {
         }
     }
 
-    private static void stopAfterFailure(Throwable failure) throws IOException {
+    private static void stopAfterFailure(Throwable failure) {
         try {
             stop();
         } catch (IOException cleanup) {
-            cleanup.addSuppressed(failure);
-            throw cleanup;
+            // Preserve the causal timeout/worker failure. Closing a killed
+            // worker's pipe may itself fail; retain that cleanup diagnostic
+            // without replacing the bounded operation's primary outcome.
+            failure.addSuppressed(cleanup);
         }
     }
 

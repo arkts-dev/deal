@@ -3,8 +3,8 @@
 // @expected: compile-ok
 // @features: parser, for-loop
 
-export function test_empty_for_forms(): int {
-  let i: int = 0;
+export function test_empty_for_forms(): number {
+  let i: number = 0;
   {  while (i < 3) { {
   } i = i + 1; } }
   return i;

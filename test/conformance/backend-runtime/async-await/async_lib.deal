@@ -5,7 +5,7 @@
 // explicit classification, and companions must keep compiling standalone.
 // @spec: Async/Await — cross-module companion module
 
-export async function getAnswer(): int {
+export async function getAnswer(): number {
   return 42;
 }
 

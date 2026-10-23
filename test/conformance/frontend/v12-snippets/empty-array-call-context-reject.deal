@@ -3,4 +3,4 @@
 // @expected: compile-error E3002
 // @features: v1.2, frontend, reject
 
-export function f(): null {function take(xs:int[]): null {return null;} let xs=[]; return take(xs);}
+export function f(): null {function take(xs:number[]): null {return null;} let xs=[]; return take(xs);}

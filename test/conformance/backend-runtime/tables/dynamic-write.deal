@@ -8,7 +8,7 @@ export function test_table_write(): string {
   t.key = "val";
   t.num = 42;
   let key: string = t.key;
-  let num: int = t.num;
+  let num: number = t.num;
   if (key !== "val") {
     throw { code: "TEST_FAIL", message: "table key post-state mismatch" };
   }

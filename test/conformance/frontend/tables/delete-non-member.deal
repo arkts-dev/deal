@@ -4,7 +4,7 @@
 // @features: tables, delete, diagnostics
 
 export function main(): null {
-let x: int = 1;
+let x: number = 1;
 delete x;
 
 return null;

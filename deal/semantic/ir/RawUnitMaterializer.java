@@ -240,9 +240,7 @@ public final class RawUnitMaterializer {
                 funcSignature(binding.descriptor(), where + " descriptor"),
                 enumOf(ExternalExecutionOwner.class, binding.executionOwner(),
                     where + " executionOwner"));
-            case "intrinsicFunction" -> new FunctionExecutionBinding.IntrinsicFunction(
-                enumOf(IntrinsicKind.class, binding.intrinsicKind(), where + " intrinsicKind"),
-                funcSignature(binding.descriptor(), where + " descriptor"));
+
             case "dynamicFunctionValue" -> new FunctionExecutionBinding.DynamicFunctionValue(
                 requireNonNull(binding.materializingBoundaryOpId(),
                     where + " materializingBoundaryOpId (the preserved wire name)"),
@@ -489,9 +487,7 @@ public final class RawUnitMaterializer {
                 valueIdAt(p, "function", where), funcSignatureAt(p, "descriptor", where),
                 opIds(p, "parameterBoundaryOpIds", where),
                 opIdAt(p, "returnBoundaryOpId", where));
-            case INTRINSIC_CALL -> new KindPayload.IntrinsicCallPayload(
-                enumAt(p, "kind", IntrinsicKind.class, where),
-                valueIdAt(p, "input", where));
+
             case STDLIB_CALL -> new KindPayload.StdlibCallPayload(
                 enumAt(p, "function", StdlibFunctionId.class, where),
                 valueIds(p, "args", where),
@@ -590,9 +586,6 @@ public final class RawUnitMaterializer {
         if (value instanceof CanonicalJson.Bool b) {
             return new ScalarValue.Boolean(b.value());
         }
-        if (value instanceof CanonicalJson.Int i) {
-            return new ScalarValue.Int(i.value());
-        }
         if (value instanceof CanonicalJson.Num n) {
             return new ScalarValue.Number(n.value());
         }
@@ -662,9 +655,7 @@ public final class RawUnitMaterializer {
                 stringAt(binding, "exportName", where),
                 funcSignatureAt(binding, "descriptor", where),
                 enumAt(binding, "executionOwner", ExternalExecutionOwner.class, where));
-            case "intrinsicFunction" -> new FunctionExecutionBinding.IntrinsicFunction(
-                enumAt(binding, "intrinsicKind", IntrinsicKind.class, where),
-                funcSignatureAt(binding, "descriptor", where));
+
             case "dynamicFunctionValue" -> new FunctionExecutionBinding.DynamicFunctionValue(
                 opIdAt(binding, "materializingBoundaryOpId", where),
                 funcSignatureAt(binding, "descriptor", where));

@@ -99,58 +99,58 @@ const LOC = ["probe.js", 1, 1];
 // =========================================================================
 
 test("jsonFromJson parses a document and tags the instance", function() {
-  const fields = [f("name", "string", false, false), f("age", "int", false, false)];
+  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
   const thunk = () => ({ name: "", age: 0 });
-  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Alice","age":30}', ...LOC);
+  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Alice","age":30.0}', ...LOC);
   assert(u !== null, "fromJson returned null for valid JSON");
   assertEqual(u.$kind, "class", "instance kind tag");
   assertEqual(u.$classname, "@m/User", "instance identity tag");
   assertEqual(u.name, "Alice", "string field decoded");
-  assertEqual(u.age, 30, "int field decoded");
+  assertEqual(u.age, 30, "number field decoded");
 });
 
 test("jsonToJson serializes declared fields in declaration order", function() {
-  const fields = [f("name", "string", false, false), f("age", "int", false, false)];
+  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
   const thunk = () => ({ name: "", age: 0 });
-  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"age":30,"name":"Alice"}', ...LOC);
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Alice","age":30}',
+  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"age":30.0,"name":"Alice"}', ...LOC);
+  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Alice","age":30.0}',
     "document key order never leaks into the output (source order)");
 });
 
-test("jsonFromJson rejects decoded-key duplicates and rounded fractional int tokens", function() {
-  const fields = [f("age", "int", false, false)];
+test("jsonFromJson rejects decoded-key duplicates and rounded fractional number tokens", function() {
+  const fields = [f("age", "number", false, false)];
   const thunk = () => ({ age: 0 });
   // A decoded-key duplicate is a parse failure: fromJson collapses it to
   // the DEAL null (never a partial instance or a parser exception).
-  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":1,"age":2}', ...LOC),
+  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":1.0,"age":2.0}', ...LOC),
     "duplicate key");
-  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":null,"\u0061ge":2}', ...LOC),
+  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":null,"\u0061ge":2.0}', ...LOC),
     "escaped-equivalent unknown key stays an extra key");
-  // The exact classification admits 1.0/1e0 as int and keeps a
+  // The exact classification admits 1.0/1e0 as number and keeps a
   // fractional token that rounds to an integral double a number.
   const ok = rt.jsonFromJson("@m/U", fields, thunk, '{"age":1.0}', ...LOC);
-  assert(ok !== null && ok.age === 1, "1.0 denotes the int value");
+  assert(ok !== null && ok.age === 1, "1.0 denotes the number value");
   const okExponent = rt.jsonFromJson("@m/U", fields, thunk, '{"age":1e0}', ...LOC);
-  assert(okExponent !== null && okExponent.age === 1, "1e0 denotes the int value");
-  assertNull(rt.jsonFromJson("@m/U", fields, thunk, '{"age":2147483647.00000001}', ...LOC),
-    "a rounded fractional token never satisfies an int field");
+  assert(okExponent !== null && okExponent.age === 1, "1e0 denotes the number value");
+  assert(rt.jsonFromJson("@m/U", fields, thunk, '{"age":2147483647.00000001}', ...LOC).age === 2147483647,
+    "a rounded fractional token satisfies the binary64 field");
 });
 
 test("jsonFromJson applies defaults for omitted fields", function() {
-  const fields = [f("name", "string", false, false), f("age", "int", false, false)];
+  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
   const thunk = () => ({ name: "", age: 7 });
   const u = rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Bob"}', ...LOC);
   assert(u !== null, "fromJson returned null");
   assertEqual(u.age, 7, "omitted required field got its default");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Bob","age":7}', "defaulted roundtrip");
+  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Bob","age":7.0}', "defaulted roundtrip");
 });
 
 test("jsonFromJson rejects extra keys in document order (null, never throws)", function() {
   const fields = [f("name", "string", false, false)];
   const thunk = () => ({ name: "" });
-  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Ada","extra":1}', ...LOC),
+  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Ada","extra":1.0}', ...LOC),
     "trailing extra key");
-  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"extra":1,"name":"Ada"}', ...LOC),
+  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"extra":1.0,"name":"Ada"}', ...LOC),
     "leading extra key");
 });
 
@@ -171,7 +171,7 @@ test("top-level gate: scalar/null/array documents return null", function() {
 });
 
 test("the empty object decodes to the defaulted instance and [] never does", function() {
-  const fields = [f("name", "string", false, false), f("age", "int", false, false)];
+  const fields = [f("name", "string", false, false), f("age", "number", false, false)];
   const thunk = () => ({ name: "", age: 0 });
   const fromObj = rt.jsonFromJson("@m/User", fields, thunk, "{}", ...LOC);
   assert(fromObj !== null, "{} decode");
@@ -182,7 +182,7 @@ test("the empty object decodes to the defaulted instance and [] never does", fun
 });
 
 test("a nested class value accepts only a JSON object: [] returns null", function() {
-  const child = [{ name: "n", jtype: "int", optional: false, nullable: false, hasDefault: true }];
+  const child = [{ name: "n", jtype: "number", optional: false, nullable: false, hasDefault: true }];
   const fields = [
     f("child", "class", false, false, { className: "@m/Child", fields: child }),
     f("items", "array", false, false, { element: { jtype: "class", optional: false, nullable: false, className: "@m/Child", fields: child } }),
@@ -192,7 +192,7 @@ test("a nested class value accepts only a JSON object: [] returns null", functio
     "a nested empty-array class value is a validation failure");
   assertNull(rt.jsonFromJson("@m/Parent", fields, thunk, '{"items":[[]]}', ...LOC),
     "a nested empty-array class element is a validation failure");
-  assert(rt.jsonFromJson("@m/Parent", fields, thunk, '{"child":{"n":7},"items":[]}', ...LOC) !== null,
+  assert(rt.jsonFromJson("@m/Parent", fields, thunk, '{"child":{"n":7.0},"items":[]}', ...LOC) !== null,
     "the object forms still decode");
 });
 
@@ -257,21 +257,21 @@ test("optional three-state roundtrip: missing omitted, null present, value prese
 });
 
 test("provided-value failure runs no defaults (counting thunk stays at zero)", function() {
-  const fields = [f("a", "int", false, false), f("b", "int", false, false)];
+  const fields = [f("a", "number", false, false), f("b", "number", false, false)];
   let runs = 0;
   const thunk = () => { runs++; return { a: 1, b: 2 }; };
-  const bad = rt.jsonFromJson("@m/C", fields, thunk, '{"b":"not-an-int"}', ...LOC);
-  assertNull(bad, "int kind failure");
+  const bad = rt.jsonFromJson("@m/C", fields, thunk, '{"b":"not-an-number"}', ...LOC);
+  assertNull(bad, "number kind failure");
   assertEqual(runs, 0, "defaults thunk never ran");
 
   // The same thunk runs exactly once on a successful construction.
-  const good = rt.jsonFromJson("@m/C", fields, thunk, '{"b":20}', ...LOC);
+  const good = rt.jsonFromJson("@m/C", fields, thunk, '{"b":20.0}', ...LOC);
   assert(good !== null && good.a === 1 && good.b === 20, "successful decode");
   assertEqual(runs, 1, "defaults thunk ran exactly once per construction");
 });
 
 test("a defaults-evaluator failure returns null and publishes nothing", function() {
-  const fields = [f("a", "int", false, false)];
+  const fields = [f("a", "number", false, false)];
   const thunk = () => { throw rt.fail("E8001", "defaults blew up", ...LOC); };
   assertNull(rt.jsonFromJson("@m/C", fields, thunk, "{}", ...LOC), "evaluator failure collapses to null");
 });
@@ -280,21 +280,19 @@ test("a defaults-evaluator failure returns null and publishes nothing", function
 // Int range, final validation through the canonical matcher rows (D2 step 7)
 // =========================================================================
 
-test("int decode enforces the typed boundary (E8004 range) as null end-to-end", function() {
-  const fields = [f("age", "int", false, false)];
+test("number decode admits finite binary64 values", function() {
+  const fields = [f("age", "number", false, false)];
   const thunk = () => ({ age: 0 });
-  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"age":9007199254740992}', ...LOC),
-    "2^53 exceeds the safe int range");
-  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"age":1e300}', ...LOC),
-    "1e300 exceeds the safe int range");
-  assertNull(rt.jsonFromJson("@m/User", fields, thunk, '{"age":3.5}', ...LOC),
-    "non-integer for an int field");
+  for (const value of [9007199254740992, 1e300, 3.5]) {
+    assert(rt.jsonFromJson("@m/User", fields, thunk, JSON.stringify({age: value}), ...LOC).age === value,
+      "finite binary64 admission");
+  }
   const u = rt.jsonFromJson("@m/User", fields, thunk, '{"age":-0}', ...LOC);
   assert(u !== null && u.age === 0, "-0 normalizes to 0");
 });
 
 test("final validation routes through checkType (class identity byte-compare)", function() {
-  const childFields = [f("value", "int", false, false)];
+  const childFields = [f("value", "number", false, false)];
   const fields = [f("name", "string", false, false),
     f("home", "class", false, false, { className: "@m/Address", fields: childFields })];
   // A defaults thunk whose class default carries the WRONG identity:
@@ -319,55 +317,55 @@ test("final validation routes through checkType (class identity byte-compare)", 
 // =========================================================================
 
 test("nested class fields decode with the full phase order", function() {
-  const childFields = [f("value", "int", false, false)];
+  const childFields = [f("value", "number", false, false)];
   const fields = [f("name", "string", false, false),
     f("home", "class", false, false, { className: "@m/Address", fields: childFields })];
   const thunk = () => ({ name: "",
     home: rt.makeClass("Address", "@m/Address", () => ({ value: 0 }), null, ...LOC) });
-  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Dave","home":{"value":7}}', ...LOC);
+  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"name":"Dave","home":{"value":7.0}}', ...LOC);
   assert(u !== null && u.home.$kind === "class" && u.home.$classname === "@m/Address"
     && u.home.value === 7, "nested instance decoded and tagged");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Dave","home":{"value":7}}',
+  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"name":"Dave","home":{"value":7.0}}',
     "nested roundtrip");
 });
 
 test("nested class extra keys and malformed elements are rejected", function() {
-  const childFields = [f("value", "int", false, false)];
+  const childFields = [f("value", "number", false, false)];
   const fields = [f("children", "array", false, false,
     { element: elem("class", false, { className: "@m/Child", fields: childFields }) })];
   const thunk = () => ({ children: [] });
-  assertNull(rt.jsonFromJson("@m/P", fields, thunk, '{"children":[{"value":1,"extra":2}]}', ...LOC),
+  assertNull(rt.jsonFromJson("@m/P", fields, thunk, '{"children":[{"value":1.0,"extra":2.0}]}', ...LOC),
     "nested extra key");
-  assertNull(rt.jsonFromJson("@m/P", fields, thunk, '{"children":[1]}', ...LOC),
+  assertNull(rt.jsonFromJson("@m/P", fields, thunk, '{"children":[1.0]}', ...LOC),
     "malformed nested element");
   assertNull(rt.jsonFromJson("@m/P", fields, thunk, '{"children":{}}', ...LOC),
     "object where an array is declared");
-  const ok = rt.jsonFromJson("@m/P", fields, thunk, '{"children":[{"value":3},{"value":4}]}', ...LOC);
+  const ok = rt.jsonFromJson("@m/P", fields, thunk, '{"children":[{"value":3.0},{"value":4.0}]}', ...LOC);
   assert(ok !== null && ok.children.length === 2
     && ok.children[0].$classname === "@m/Child" && ok.children[1].value === 4,
     "array of nested classes decodes");
   assertEqual(rt.jsonToJson("@m/P", ok, fields, ...LOC),
-    '{"children":[{"value":3},{"value":4}]}', "array of nested classes roundtrip");
+    '{"children":[{"value":3.0},{"value":4.0}]}', "array of nested classes roundtrip");
 });
 
 test("nested class decode without defaults: absent optionals become MISSING", function() {
-  const childFields = [f("value", "int", false, false), f("nick", "string", true, false)];
+  const childFields = [f("value", "number", false, false), f("nick", "string", true, false)];
   const fields = [f("home", "class", false, false, { className: "@m/Address", fields: childFields })];
   const thunk = () => ({ home: {} });
-  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"home":{"value":5}}', ...LOC);
+  const u = rt.jsonFromJson("@m/User", fields, thunk, '{"home":{"value":5.0}}', ...LOC);
   assert(u !== null && u.home.value === 5 && u.home.nick === rt.MISSING,
     "nested absent optional materializes as MISSING (no nested defaults surface)");
-  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"home":{"value":5}}',
+  assertEqual(rt.jsonToJson("@m/User", u, fields, ...LOC), '{"home":{"value":5.0}}',
     "nested MISSING omitted");
 });
 
 test("nullable nested class accepts null and values", function() {
-  const childFields = [f("value", "int", false, false)];
+  const childFields = [f("value", "number", false, false)];
   const fields = [f("child", "class", true, true, { className: "@m/Child", fields: childFields })];
   const thunk = () => ({ child: rt.MISSING });
   const explicitNull = rt.jsonFromJson("@m/Maybe", fields, thunk, '{"child":null}', ...LOC);
   assert(explicitNull !== null && explicitNull.child === null, "explicit null nested");
-  const value = rt.jsonFromJson("@m/Maybe", fields, thunk, '{"child":{"value":8}}', ...LOC);
+  const value = rt.jsonFromJson("@m/Maybe", fields, thunk, '{"child":{"value":8.0}}', ...LOC);
   assert(value !== null && value.child.value === 8, "nested value");
 });
 
@@ -376,7 +374,7 @@ test("nullable nested class accepts null and values", function() {
 // =========================================================================
 
 test("a failed nested decode fails the enclosing decode, never a present null", function() {
-  const childFields = [f("value", "int", false, false)];
+  const childFields = [f("value", "number", false, false)];
   const fields = [f("child", "class", true, true,
     { className: "@m/Child", fields: childFields })];
   const thunk = () => ({ child: rt.MISSING });
@@ -385,7 +383,7 @@ test("a failed nested decode fails the enclosing decode, never a present null", 
   // decode as a present null, and no partial instance publishes (only a
   // JSON null token reaches the nullable null arm).
   assertNull(rt.jsonFromJson("@m/Maybe", fields, thunk,
-    '{"child":{"value":1,"extra":2}}', ...LOC),
+    '{"child":{"value":1.0,"extra":2.0}}', ...LOC),
     "nested extra key through a nullable class field");
   assertNull(rt.jsonFromJson("@m/Maybe", fields, thunk,
     '{"child":{"value":"no"}}', ...LOC),
@@ -394,7 +392,7 @@ test("a failed nested decode fails the enclosing decode, never a present null", 
     { element: elem("class", true, { className: "@m/Child", fields: childFields }) })];
   const arrayThunk = () => ({ children: [] });
   assertNull(rt.jsonFromJson("@m/Maybe", arrayFields, arrayThunk,
-    '{"children":[{"value":1,"extra":2}]}', ...LOC),
+    '{"children":[{"value":1.0,"extra":2.0}]}', ...LOC),
     "nested failure through a nullable class-array element");
   // A genuine JSON null token in the same positions still decodes as a
   // present null: the three presence states stay distinct.
@@ -409,7 +407,7 @@ test("a failed nested decode fails the enclosing decode, never a present null", 
   // validation fails, and the call still returns the language null with no
   // partial instance published.
   let runs = 0;
-  const effectFields = [f("a", "int", false, false),
+  const effectFields = [f("a", "number", false, false),
     f("b", "string", false, false)];
   effectFields[0].evaluator = function () { runs++; return 1; };
   effectFields[1].evaluator = function () { runs++; return 42; };
@@ -421,7 +419,7 @@ test("a failed nested decode fails the enclosing decode, never a present null", 
 test("table fields decode to the D9 Map shape and roundtrip nested arrays", function() {
   const fields = [f("data", "table", false, false)];
   const thunk = () => ({ data: rt.makeTable({}) });
-  const text = '{"data":{"count":3,"values":[[1,2],[3,4]]}}';
+  const text = '{"data":{"count":3.0,"values":[[1.0,2.0],[3.0,4.0]]}}';
   const u = rt.jsonFromJson("@m/W", fields, thunk, text, ...LOC);
   assert(u !== null, "table field decoded");
   const data = u.data;
@@ -438,9 +436,9 @@ test("table fields decode to the D9 Map shape and roundtrip nested arrays", func
 test("table fields accept only a JSON object", function() {
   const fields = [f("data", "table", false, false)];
   const thunk = () => ({ data: rt.makeTable({}) });
-  assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":[1,2]}', ...LOC), "array for a table field");
+  assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":[1.0,2.0]}', ...LOC), "array for a table field");
   assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":[]}', ...LOC), "empty array for a table field");
-  assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":5}', ...LOC), "scalar for a table field");
+  assertNull(rt.jsonFromJson("@m/W", fields, thunk, '{"data":5.0}', ...LOC), "scalar for a table field");
   assert(rt.jsonFromJson("@m/W", fields, thunk, '{"data":{}}', ...LOC) !== null,
     "empty object for a table field");
 });
@@ -535,12 +533,12 @@ test("jsonToJson raises E8001 for a non-JSON-shaped table value", function() {
     "value at data.bad is not JSON serializable: nil", "MISSING inside table");
 });
 
-test("jsonToJson int fields enforce the boundary (E8004 range)", function() {
-  const fields = [f("age", "int", false, false)];
+test("jsonToJson number fields enforce the boundary (E8004 range)", function() {
+  const fields = [f("age", "number", false, false)];
   const u = rt.makeClass("User", "@m/User", () => ({ age: 0 }), null, ...LOC);
   rt.setProp(u, "age", 9007199254740992);
-  assertError(() => rt.jsonToJson("@m/User", u, fields, ...LOC), "E8004",
-    "int out of safe range", "out-of-range int field (the pinned template)");
+  assert(rt.jsonToJson("@m/User", u, fields, ...LOC).includes("9.007199254740992E15"),
+    "large finite number encodes");
 });
 
 // =========================================================================
@@ -563,10 +561,10 @@ test("jsonParseText/jsonParseValue/jsonStringifyText roundtrip the marked Map sh
   // The conforming scanner (jsonParseText) classifies exactly and
   // records the per-slot variant marks consulted by the encode walk.
   const parsed = rt.jsonParseText('{"i":1.0,"n":1.5}', ...LOC);
-  assertEqual(parsed.i, 1, "1.0 denotes the int value");
+  assertEqual(parsed.i, 1, "1.0 denotes the number value");
   assertEqual(parsed.n, 1.5, "1.5 stays a number");
   const parsedMap = rt.jsonParseValue(parsed, ...LOC);
-  assertEqual(rt.jsonStringifyText(parsedMap, [], ...LOC), '{"i":1,"n":1.5}',
+  assertEqual(rt.jsonStringifyText(parsedMap, [], ...LOC), '{"i":1.0,"n":1.5}',
     "the number-variant marks survive the conversion");
 });
 
@@ -598,8 +596,8 @@ test("classPlan tags and publishes with provided values and absent optionals", f
 
 test("classPlan omitted required defaults evaluate exactly once per attempt in plan order", function() {
   const order = [];
-  const plan = [planEntry("a", "int", false, () => { order.push("a"); return 1; }),
-    planEntry("b", "int", false, () => { order.push("b"); return 2; })];
+  const plan = [planEntry("a", "number", false, () => { order.push("a"); return 1; }),
+    planEntry("b", "number", false, () => { order.push("b"); return 2; })];
   const u = rt.classPlan("C", plan, null, ...LOC);
   const v = rt.classPlan("C", plan, null, ...LOC);
   assertEqual(order.join(","), "a,b,a,b", "declaration-order evaluation, once per attempt");
@@ -608,8 +606,8 @@ test("classPlan omitted required defaults evaluate exactly once per attempt in p
 
 test("classPlan provided fields suppress their evaluators", function() {
   let runs = 0;
-  const plan = [planEntry("a", "int", false, () => { runs++; return 1; }),
-    planEntry("b", "int", false, () => { runs++; return 2; })];
+  const plan = [planEntry("a", "number", false, () => { runs++; return 1; }),
+    planEntry("b", "number", false, () => { runs++; return 2; })];
   const u = rt.classPlan("C", plan, { a: 5, b: 6 }, ...LOC);
   assertEqual(runs, 0, "no default ran for a provided field");
   assertEqual(u.a + u.b, 11, "provided values stored");
@@ -617,17 +615,17 @@ test("classPlan provided fields suppress their evaluators", function() {
 
 test("classPlan extra provided field raises E8007 with zero default evaluation", function() {
   let runs = 0;
-  const plan = [planEntry("a", "int", false, () => { runs++; return 1; })];
+  const plan = [planEntry("a", "number", false, () => { runs++; return 1; })];
   assertError(() => rt.classPlan("C", plan, { extra: 1 }, ...LOC), "E8007",
     "extra field 'extra' in class 'C'", "extra-key rejection");
   assertEqual(runs, 0, "no default evaluated before the E8007");
 });
 
 test("classPlan phase 3 validates provided fields and evaluated defaults in plan order", function() {
-  const plan = [planEntry("a", "int", false, () => 1),
+  const plan = [planEntry("a", "number", false, () => 1),
     planEntry("nick", "?string", true)];
-  assertError(() => rt.classPlan("C", plan, { a: "not-an-int" }, ...LOC), "E8001",
-    "expected int", "provided-value validation");
+  assertError(() => rt.classPlan("C", plan, { a: "not-an-number" }, ...LOC), "E8001",
+    "expected number", "provided-value validation");
   assertError(() => rt.classPlan("C", plan, { a: 1, nick: 42 }, ...LOC), "E8001",
     "expected string", "nullable optional validation");
   const u = rt.classPlan("C", plan, { a: 1, nick: null }, ...LOC);
@@ -635,7 +633,7 @@ test("classPlan phase 3 validates provided fields and evaluated defaults in plan
 });
 
 test("classPlan evaluator-raised DEAL errors propagate unchanged", function() {
-  const plan = [planEntry("a", "int", false, () => rt.fail("E8002", "evaluator boom", ...LOC))];
+  const plan = [planEntry("a", "number", false, () => rt.fail("E8002", "evaluator boom", ...LOC))];
   const err = assertError(() => rt.classPlan("C", plan, null, ...LOC), "E8002",
     "evaluator boom", "evaluator failure propagates");
   assertEqual(err.$dealCode, "E8002", "error code preserved");
@@ -646,39 +644,39 @@ test("classPlan malformed plan shapes fail closed with E8001", function() {
     "class default plan must be a table", "non-array plan");
   assertError(() => rt.classPlan("C", ["x"], null, ...LOC), "E8001",
     "malformed class default plan entry", "non-object entry");
-  assertError(() => rt.classPlan("C", [{ name: 1, descriptor: "int", optional: false }], null, ...LOC),
+  assertError(() => rt.classPlan("C", [{ name: 1, descriptor: "number", optional: false }], null, ...LOC),
     "E8001", "malformed class default plan entry", "non-string name");
   assertError(() => rt.classPlan("C", [{ name: "x", descriptor: 2, optional: false }], null, ...LOC),
     "E8001", "malformed class default plan entry", "non-string descriptor");
-  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "int", optional: "yes" }], null, ...LOC),
+  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "number", optional: "yes" }], null, ...LOC),
     "E8001", "malformed class default plan entry", "non-boolean optional");
-  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "int", optional: false, evaluator: 3 }],
+  assertError(() => rt.classPlan("C", [{ name: "x", descriptor: "number", optional: false, evaluator: 3 }],
     null, ...LOC), "E8001", "malformed class default plan entry", "non-function evaluator");
-  assertError(() => rt.classPlan("C", [planEntry("x", "int", false, () => 1),
-    planEntry("x", "int", false, () => 2)], null, ...LOC), "E8001",
+  assertError(() => rt.classPlan("C", [planEntry("x", "number", false, () => 1),
+    planEntry("x", "number", false, () => 2)], null, ...LOC), "E8001",
     "duplicate field in class default plan: 'x'", "duplicate names");
-  assertError(() => rt.classPlan("C", [planEntry("a", "int", false, () => 1)], 42, ...LOC),
+  assertError(() => rt.classPlan("C", [planEntry("a", "number", false, () => 1)], 42, ...LOC),
     "E8001", "class field values must be a table", "non-table provided");
 });
 
 test("jsonFromDocument consumes plan-carrying per-entry evaluators (omitted required only)", function() {
   let runs = 0;
-  const fields = [f("a", "int", false, false), f("b", "int", false, false)];
+  const fields = [f("a", "number", false, false), f("b", "number", false, false)];
   fields[0].evaluator = () => { runs++; return 1; };
   fields[1].evaluator = () => { runs++; return 2; };
   // Extra keys and provided-value failures still precede every default.
-  assertNull(rt.jsonFromJson("@m/C", fields, null, '{"extra":1}', ...LOC), "extra-key gate");
+  assertNull(rt.jsonFromJson("@m/C", fields, null, '{"extra":1.0}', ...LOC), "extra-key gate");
   assertEqual(runs, 0, "no default ran after the extra-key rejection");
   assertNull(rt.jsonFromJson("@m/C", fields, null, '{"b":"x"}', ...LOC), "decode gate");
   assertEqual(runs, 0, "no default ran after the provided-value failure");
   // Omitted required defaults evaluate exactly once per attempt.
-  const u = rt.jsonFromJson("@m/C", fields, null, '{"b":20}', ...LOC);
+  const u = rt.jsonFromJson("@m/C", fields, null, '{"b":20.0}', ...LOC);
   assert(u !== null, "valid decode");
   assertEqual(runs, 1, "only the omitted a default ran");
   assertEqual(u.a, 1, "evaluated default");
   assertEqual(u.b, 20, "provided value");
   // Fully provided documents run no defaults at all.
-  const v = rt.jsonFromJson("@m/C", fields, null, '{"a":5,"b":6}', ...LOC);
+  const v = rt.jsonFromJson("@m/C", fields, null, '{"a":5.0,"b":6.0}', ...LOC);
   assert(v !== null && v.a === 5 && v.b === 6, "fully provided decode");
   assertEqual(runs, 1, "no default ran for provided fields");
 });

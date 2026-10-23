@@ -4,7 +4,7 @@
 // @features: async, functions
 
 export function main(): null {
-let f: async () => int = async function(): int { return 5; };
+let f: async () => number = async function(): number { return 5; };
 
 return null;
 }

@@ -1,8 +1,8 @@
 // IR golden fixture: type-descriptors-async-function-descriptor
 // Migrated IR-containment pin for legacy case 'async-function-descriptor' (ISSUE-0358).
 
-async function fetch(x: int): string { return "data"; }
+async function fetch(x: number): string { return "data"; }
 export function main(): null {
-let f: async (x: int) => string = fetch;
+let f: async (x: number) => string = fetch;
 return null;
 }

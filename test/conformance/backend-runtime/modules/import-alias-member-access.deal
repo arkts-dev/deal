@@ -5,10 +5,10 @@
 
 import * as Lib from "./module_extra_lib";
 
-export function test_import_alias_member_access(): int {
+export function test_import_alias_member_access(): number {
   let p: Lib.Point = Lib.makePoint(2, 3);
-  let x: int = p.x;
-  let y: int = p.y;
+  let x: number = p.x;
+  let y: number = p.y;
   if (x !== 2 || y !== 3) { throw { code: "TEST_FAIL", message: "import alias member access failed" }; }
   return x + y;
 }

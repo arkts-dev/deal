@@ -50,33 +50,8 @@ public final class FailureContractRegistry {
             "single check: wrong-kind or invalid-unicode-string projection per the checked "
                 + "descriptor (descriptor is expected; actual kind is actual)"));
 
-        rows.put(FailurePolicyId.INT32_RESULT, makeRow(FailurePolicyId.INT32_RESULT,
-            DiagnosticCode.E8004, List.of("int out of safe range"), List.of(),
-            "arithmetic/boundary origin", CAUSE_NONE, FRAMES_ACTIVE,
-            "single range check: integral result outside [-2147483648, 2147483647]"));
 
-        rows.put(FailurePolicyId.INT32_DIVISOR_THEN_RESULT,
-            makeRow(FailurePolicyId.INT32_DIVISOR_THEN_RESULT, DiagnosticCode.E8005,
-                List.of("integer division by zero"), List.of(),
-                ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-                "zero divisor first, then INT32_RESULT; -2147483648 / -1 is E8004"));
-
-        rows.put(FailurePolicyId.INT_CONVERSION, makeRow(FailurePolicyId.INT_CONVERSION,
-            DiagnosticCode.E8001,
-            List.of("cannot convert null to int", "expected int, got NaN",
-                "expected int, got infinity", "expected int, got non-integer number"),
-            List.of(),
-            ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-            "normative order: null, then NaN, then infinity, then fractional, then wrong kind "
-                + "via TYPE_DESCRIPTOR, then integral out of range via E8004"));
-
-        rows.put(FailurePolicyId.NUMBER_CONVERSION,
-            makeRow(FailurePolicyId.NUMBER_CONVERSION, DiagnosticCode.E8001,
-                List.of("cannot convert null to number"), List.of(),
-                ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
-                "null first, then wrong kind via TYPE_DESCRIPTOR; int converts exactly to double"));
-
-        rows.put(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
+rows.put(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
             makeRow(FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
                 List.of("array element {oneBasedIndex} type mismatch"),
                 List.of("oneBasedIndex"),
@@ -131,7 +106,7 @@ public final class FailureContractRegistry {
 
         rows.put(FailurePolicyId.ASYNC_COMPLETION,
             makeRow(FailurePolicyId.ASYNC_COMPLETION, DiagnosticCode.E8001,
-                List.of("expected {expected}", "expected {expected}, got {actual}"),
+                List.of("expected {expected}"),
                 List.of("expected", "actual"),
                 "await origin", CAUSE_NONE, FRAMES_ACTIVE,
                 "operation failure wins, then the completion descriptor check"));
@@ -200,6 +175,11 @@ public final class FailureContractRegistry {
             "call origin", CAUSE_NONE, FRAMES_ACTIVE,
             "first declaration-order unsupported value, wrong identity, cycle, missing "
                 + "required value, or nonfinite number"));
+
+        rows.put(FailurePolicyId.SUBSTRING_BOUNDS, makeRow(FailurePolicyId.SUBSTRING_BOUNDS,
+            DiagnosticCode.E8001, List.of("substring bounds must be finite integers"),
+            List.of(), ORIGIN_OPERATION, CAUSE_NONE, FRAMES_ACTIVE,
+            "reject nonfinite or fractional bounds before clamping"));
 
         rows.put(FailurePolicyId.SQRT_NEGATIVE, makeRow(FailurePolicyId.SQRT_NEGATIVE,
             DiagnosticCode.E8001, List.of("sqrt of negative number"), List.of(),
@@ -299,37 +279,8 @@ public final class FailureContractRegistry {
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.BOUNDARY_CELL, FailureArm.RenderScope.INNER_ONLY));
 
-        declared.add(arm(FailureArmId.INT32_RANGE, FailurePolicyId.INT32_RESULT, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.OPERATION_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.INT32_DIVISION_BY_ZERO,
-            FailurePolicyId.INT32_DIVISOR_THEN_RESULT, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.OPERATION_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.INT_CONVERSION_NULL, FailurePolicyId.INT_CONVERSION, 0,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.INT_CONVERSION_NAN, FailurePolicyId.INT_CONVERSION, 1,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.INT_CONVERSION_INFINITY, FailurePolicyId.INT_CONVERSION, 2,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.INT_CONVERSION_FRACTIONAL,
-            FailurePolicyId.INT_CONVERSION, 3,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.NUMBER_CONVERSION_NULL,
-            FailurePolicyId.NUMBER_CONVERSION, 0,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
 
-        declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
+declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, 0,
             FailureArm.ExpectedSource.ELEMENT_DESCRIPTOR, null,
             FailureArm.ActualProjection.TYPED_BOUNDARY,
@@ -381,13 +332,7 @@ public final class FailureContractRegistry {
             FailureArm.ActualProjection.COMPLETION,
             FailureArm.OriginConvention.AWAIT_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
             "expected", FailureArm.ParameterSource.KIND_TEXT));
-        declared.add(arm(FailureArmId.ASYNC_COMPLETION_REFINEMENT,
-            FailurePolicyId.ASYNC_COMPLETION, 1,
-            FailureArm.ExpectedSource.CELL_DESCRIPTOR, null,
-            FailureArm.ActualProjection.TYPED_BOUNDARY,
-            FailureArm.OriginConvention.AWAIT_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL,
-            "expected", FailureArm.ParameterSource.CELL_DESCRIPTOR,
-            "actual", FailureArm.ParameterSource.TYPED_BOUNDARY_ACTUAL));
+
         declared.add(arm(FailureArmId.ASYNC_SHAPE,
             FailurePolicyId.ASYNC_OPERATION_HANDLE, 0,
             FailureArm.ExpectedSource.ASYNC_OPERATION_TOKEN, null,
@@ -467,6 +412,9 @@ public final class FailureContractRegistry {
             FailurePolicyId.JSON_TO_ERROR, 2,
             FailureArm.ExpectedSource.NONE, null,
             FailureArm.ActualProjection.NONE,
+            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
+        declared.add(arm(FailureArmId.SUBSTRING_BOUNDS, FailurePolicyId.SUBSTRING_BOUNDS, 0,
+            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
         declared.add(arm(FailureArmId.SQRT_NEGATIVE, FailurePolicyId.SQRT_NEGATIVE, 0,
             FailureArm.ExpectedSource.NONE, null,
@@ -827,7 +775,7 @@ public final class FailureContractRegistry {
     // =========================================================================
 
     /** The closed typed-boundary kind tokens (P2 item 1). */
-    private static final Set<String> KIND_TOKENS = Set.of("null", "boolean", "int",
+    private static final Set<String> KIND_TOKENS = Set.of("null", "boolean",
         "number", "string", "table", "array", "function", "class");
 
     /**
@@ -837,13 +785,13 @@ public final class FailureContractRegistry {
      * {@code class} — and a foreign text never derives a DEAL-visible
      * token.
      */
-    private static final Set<String> KIND_TEXTS = Set.of("null", "boolean", "int",
+    private static final Set<String> KIND_TEXTS = Set.of("null", "boolean",
         "number", "string", "table", "array", "function",
         "class instance");
 
     /** The closed typed-boundary actual tokens (P2 item 1). */
     private static final Set<String> TYPED_BOUNDARY_TOKENS = Set.of("nil", "null",
-        "boolean", "int", "number", "string", "invalid-unicode", "table", "array",
+        "boolean", "number", "string", "invalid-unicode", "table", "array",
         "function", "async-operation", "nothing", "NaN", "infinity");
 
     /**
@@ -1116,7 +1064,7 @@ public final class FailureContractRegistry {
 
     /** The closed scalar spellings shared by both descriptor dialects. */
     private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "boolean",
-        "int", "number", "string", "table");
+        "number", "string", "table");
 
     /**
      * The closed kind-only spellings the emitted host ABI's kind rows carry
@@ -1450,11 +1398,7 @@ public final class FailureContractRegistry {
                 return true;
             }
         }
-        for (FailureArmId id : List.of(FailureArmId.INT_CONVERSION_NAN,
-                FailureArmId.INT_CONVERSION_INFINITY,
-                FailureArmId.INT_CONVERSION_FRACTIONAL,
-                FailureArmId.INT32_RANGE,
-                FailureArmId.HOST_STRING_INVALID_UTF8,
+        for (FailureArmId id : List.of(FailureArmId.HOST_STRING_INVALID_UTF8,
                 FailureArmId.HOST_STRING_SURROGATE)) {
             if (text.equals(arm(id).template())) {
                 return true;

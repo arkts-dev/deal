@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: control-flow, while
 
-export function test_while(): int {
-  let x: int = 0;
+export function test_while(): number {
+  let x: number = 0;
   while (x < 10) {
     x = x + 1;
   }

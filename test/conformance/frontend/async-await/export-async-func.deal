@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: async, export, modules
 
-export async function fetchUser(id: int): string {
+export async function fetchUser(id: number): string {
   return "user";
 }
 

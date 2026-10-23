@@ -4,7 +4,7 @@
 // @features: jsonable, arrays, fromJson
 
 // @jsonable
-export class Values { xs: int[] = [4]; }
+export class Values { xs: number[] = [4]; }
 
 export function main(): null {
   let values: Values | null = Values$fromJson("{\"xs\":[]}");

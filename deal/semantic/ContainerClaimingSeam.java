@@ -31,7 +31,7 @@ public final class ContainerClaimingSeam {
         "OPERATION_OUTSIDE_CLAIMED_CAPABILITY";
 
     public static final Set<SemanticCapability> E3_WINDOW_ACTIVATION =
-        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32));
+        Collections.unmodifiableSet(EnumSet.noneOf(SemanticCapability.class));
 
     /**
      * The E3-gate (post-tail) activation hand-off (D9 item 5(a)):
@@ -42,8 +42,7 @@ public final class ContainerClaimingSeam {
      * unit. Identical at every later gate.
      */
     public static final Set<SemanticCapability> E3_GATE_ACTIVATION =
-        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
-            SemanticCapability.FOUNDATION_VALUES));
+        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.FOUNDATION_VALUES));
 
     /**
      * The E4-gate activation hand-off (D9 item 5(b)):
@@ -53,8 +52,7 @@ public final class ContainerClaimingSeam {
      * {@code FOUNDATION_VALUES}-partial units defer.
      */
     public static final Set<SemanticCapability> E4_GATE_ACTIVATION =
-        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
-            SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
+        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
             SemanticCapability.BOUNDARIES));
 
     /**
@@ -67,8 +65,7 @@ public final class ContainerClaimingSeam {
      * {@code DISCARD} ops without {@code LOOP}).
      */
     public static final Set<SemanticCapability> E5_GATE_ACTIVATION =
-        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
-            SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
+        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
             SemanticCapability.BOUNDARIES, SemanticCapability.CONTAINERS_AND_STRINGS,
             SemanticCapability.EVALUATION_ORDER));
 
@@ -80,14 +77,12 @@ public final class ContainerClaimingSeam {
      * set must claim {@code BINDINGS}.
      */
     public static final Set<SemanticCapability> E6_GATE_ACTIVATION =
-        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
-            SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
+        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
             SemanticCapability.BOUNDARIES, SemanticCapability.CONTAINERS_AND_STRINGS,
             SemanticCapability.EVALUATION_ORDER, SemanticCapability.BINDINGS));
 
     public static final Set<SemanticCapability> E9_GATE_ACTIVATION =
-        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.SIGNED_INT32,
-            SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
+        Collections.unmodifiableSet(EnumSet.of(SemanticCapability.FOUNDATION_VALUES, SemanticCapability.DESCRIPTORS,
             SemanticCapability.BOUNDARIES, SemanticCapability.CONTAINERS_AND_STRINGS,
             SemanticCapability.EVALUATION_ORDER, SemanticCapability.BINDINGS,
             SemanticCapability.CLASSES));

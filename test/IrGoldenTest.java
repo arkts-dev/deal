@@ -470,7 +470,7 @@ public final class IrGoldenTest {
 
         // ---- type helpers ----
 
-        private static Type intType()    { return Type.Int.INSTANCE; }
+        private static Type intType()    { return Type.Number.INSTANCE; }
         private static Type numType()    { return Type.Number.INSTANCE; }
         private static Type strType()    { return Type.String.INSTANCE; }
         private static Type boolType()   { return Type.Boolean.INSTANCE; }

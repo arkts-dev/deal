@@ -1,20 +1,24 @@
 {
   "version": 1,
-  "backends": ["luajit", "jvm", "js"],
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int\",\"sourceFile\":\"backend-runtime/tables/table-missing-read-nonnullable-error.deal\",\"line\":8,\"column\":20,\"expected\":\"int\",\"actual\":\"nil\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/tables/table-missing-read-nonnullable-error.deal\",\"line\":8,\"column\":23,\"expected\":\"number\",\"actual\":\"nil\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "expected int",
+      "message": "expected number",
       "sourceFile": "backend-runtime/tables/table-missing-read-nonnullable-error.deal",
       "line": 8,
-      "column": 20,
-      "expected": "int",
+      "column": 23,
+      "expected": "number",
       "actual": "nil"
     }
   }

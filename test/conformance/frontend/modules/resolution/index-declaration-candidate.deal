@@ -4,5 +4,5 @@
 // @features: modules, resolution, declarations, index-declaration, v1.2
 
 import * as Lib from "./support/index_declaration";
-export function probe(): int { return Lib.value(); }
+export function probe(): number { return Lib.value(); }
 export function main(): null { return null; }

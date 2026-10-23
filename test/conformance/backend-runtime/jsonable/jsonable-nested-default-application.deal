@@ -4,7 +4,7 @@
 // @features: jsonable, defaults, nested-class, v1.2
 
 // @jsonable
-export class Child { n: int = 7; }
+export class Child { n: number = 7; }
 
 // @jsonable
 export class Parent { child: Child = {}; }
@@ -14,7 +14,7 @@ export function test_nested_default_application(): null {
   if (p === null) {
     throw { code: "TEST_FAIL", message: "nested default rejected" };
   } else {
-    let n: int = p.child.n;
+    let n: number = p.child.n;
     if (n !== 7) { throw { code: "TEST_FAIL", message: "nested default missing" }; }
   }
   return null;

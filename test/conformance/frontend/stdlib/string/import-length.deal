@@ -5,7 +5,7 @@
 
 import * as str from "std/string";
 
-export function test_string_len(): int {
+export function test_string_len(): number {
   return str.length("hello");
 }
 

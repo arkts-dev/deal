@@ -7,4 +7,4 @@
 // the wrapper's presence rule must raise E8010 on every call path,
 // including the discard path (host-module-abi D3 case 2).
 
-export function ping(): int;
+export function ping(): number;

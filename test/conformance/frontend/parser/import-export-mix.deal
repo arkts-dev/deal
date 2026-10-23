@@ -6,10 +6,10 @@
 import * as Lib from "./parser_import_lib";
 
 export class ParserShape {
-  value: int = 0;
+  value: number = 0;
 }
 
-export function test_import_export_mix(): int {
+export function test_import_export_mix(): number {
   return Lib.value();
 }
 

@@ -11,7 +11,7 @@ import java.util.Objects;
  * <p><b>Closed shapes (A-D3).</b></p>
  *
  * <ul>
- *   <li>Array modes → {@link ArraySlot} — {@code {index: signed32,
+ *   <li>Array modes → {@link ArraySlot} — {@code {index: number,
  *       present: index < currentLength, append: index == currentLength
  *       (ARRAY_WRITE only)}}. {@code present} is the {@code ARRAY_READ}
  *       decision; {@code append} is the {@code ARRAY_WRITE} decision (the
@@ -49,7 +49,7 @@ import java.util.Objects;
  *
  * <p><b>Result type (A-D3).</b> The normalize op's result {@code ValueId}
  * carries the slot's index/key value with
- * {@link ArraySlot#resultType()} = {@code int},
+ * {@link ArraySlot#resultType()} = {@code number},
  * and
  * {@link TableSlot#resultType()} = {@code string}.</p>
  *
@@ -61,17 +61,17 @@ public sealed interface NormalizedSlot
     permits NormalizedSlot.ArraySlot, NormalizedSlot.TableSlot {
 
     /**
-     * The closed array slot: the signed32 index plus the {@code present}
+     * The closed array slot: the unchanged binary64 index plus the {@code present}
      * and {@code append} decisions ({@code present = index <
      * currentLength}; {@code append = index == currentLength} for
      * {@code ARRAY_WRITE}, always {@code false} for {@code ARRAY_READ}).
      *
      */
-    record ArraySlot(int index, boolean present, boolean append) implements NormalizedSlot {
+    record ArraySlot(double index, boolean present, boolean append) implements NormalizedSlot {
 
         @Override
         public RuntimeDescriptor resultType() {
-            return RuntimeDescriptor.Int.INSTANCE;
+            return RuntimeDescriptor.Number.INSTANCE;
         }
     }
 
@@ -96,7 +96,7 @@ public sealed interface NormalizedSlot
 
     /**
      * The {@code INDEX_NORMALIZE} result type this slot pins (A-D3):
-     * {@code int} for array modes, {@code string} for table modes.
+     * {@code number} for array modes, {@code string} for table modes.
      *
      */
     RuntimeDescriptor resultType();
@@ -117,7 +117,7 @@ public sealed interface NormalizedSlot
      * </ul>
      *
      */
-    static ArraySlot arraySlot(IndexMode mode, int index, int currentLength) {
+    static ArraySlot arraySlot(IndexMode mode, double index, int currentLength) {
         Objects.requireNonNull(mode, "mode must not be null");
         return switch (mode) {
             case ARRAY_READ -> new ArraySlot(index, index < currentLength, false);

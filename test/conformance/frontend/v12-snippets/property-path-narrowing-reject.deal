@@ -3,5 +3,5 @@
 // @expected: compile-error E5003
 // @features: v1.2, frontend, reject
 
-class C {x: int | null = null;}
-export function f(c: C): int {if(c.x !== null) {return c.x;} return 0;}
+class C {x: number | null = null;}
+export function f(c: C): number {if(c.x !== null) {return c.x;} return 0;}

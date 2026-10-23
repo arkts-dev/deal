@@ -5,16 +5,16 @@
 
 import * as host from "host/nullable_fn";
 
-function add1(x: int): int {
+function add1(x: number): number {
   return x + 1;
 }
 
-export function test_host_nullable_function_param(): int {
-  let withFn: int = host.register(add1);
+export function test_host_nullable_function_param(): number {
+  let withFn: number = host.register(add1);
   if (withFn !== 42) {
     throw { code: "TEST_FAIL", message: "nullable-function param adaptation failed" };
   }
-  let withNull: int = host.register(null);
+  let withNull: number = host.register(null);
   if (withNull !== 0) {
     throw { code: "TEST_FAIL", message: "nullable-function null param mismatch" };
   }

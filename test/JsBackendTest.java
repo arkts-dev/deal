@@ -102,13 +102,13 @@ public class JsBackendTest {
             testJsonableRoundTripNode();
             testOrchestratorJsonableCrossModule();
             PreparedJs nestedExport = prepareJs("""
-                export class Outer { x: int = 1; }
-                export function test(): int { return 1; }
+                export class Outer { x: number = 1; }
+                export function test(): number { return 1; }
                 """, "moduleclass-export");
             PreparedJs nestedShadow = prepareJs("""
-                class Outer { v: int = 1; }
+                class Outer { v: number = 1; }
                 class Alternate { w: string = "s"; }
-                export function test(): int {
+                export function test(): number {
                   let a: Outer = {};
                   {
                     a = { v: 9 };
@@ -780,10 +780,10 @@ public class JsBackendTest {
 
             export async function run(): null {
               let trace: string = "";
-              async function value(s: string, x: int): int { trace = trace + s; return x; }
-              async function small(x: int): int { trace = trace + "F"; return x; }
-              let f: async (x: int, y: int) => int = small;
-              let r: int = await f(await value("A", 7), await value("B", 8));
+              async function value(s: string, x: number): number { trace = trace + s; return x; }
+              async function small(x: number): number { trace = trace + "F"; return x; }
+              let f: async (x: number, y: number) => number = small;
+              let r: number = await f(await value("A", 7), await value("B", 8));
               if (r !== 7 || trace !== "ABF") {
                 throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
               }
@@ -817,19 +817,19 @@ public class JsBackendTest {
         System.out.println("-- Node: the async $error result carries the"
             + " complete ErrorDetail --");
         JsEmission res = checkedEmission(prepareJs("""
-            async function fail(): int {
+            async function fail(): number {
               let t: table = {value: "bad"};
-              let x: int = t.value;
+              let x: number = t.value;
               return x;
             }
             export function main(): null { return null; }
-            export async function oracle(): int { return await fail(); }
+            export async function oracle(): number { return await fail(); }
             """, "async-detail"));
         NodeResult result = runArtifactScript(res, String.join("\n",
             "\"use strict\";",
             "const $rt = require(\"./deal/runtime\");",
             "const $entry = require(\"./Main\");",
-            "$rt.invokeAsyncExport($entry, \"oracle\", \"int\").then((r) => {",
+            "$rt.invokeAsyncExport($entry, \"oracle\", \"number\").then((r) => {",
             "  if (r.$ok === true) {",
             "    process.stdout.write(\"DETAIL: unexpected value\");",
             "    return;",
@@ -840,7 +840,7 @@ public class JsBackendTest {
             "    + \"|\" + e.actual + \"|\" + e.frames);",
             "});",
             ""));
-        String expected = "DETAIL: E8001|expected int|3:16|int|string";
+        String expected = "DETAIL: E8001|expected number|3:19|number|string";
         check(result.exitCode() == 0
                 && result.output().startsWith(expected)
                 && result.output().contains("fail$f")
@@ -923,7 +923,7 @@ public class JsBackendTest {
           ].join("\\n") + "\\n");
         }
         if (process.argv[2] === "async") {
-          $rt.invokeAsyncExport($entry, "run", "int").then((r) => {
+          $rt.invokeAsyncExport($entry, "run", "number").then((r) => {
             if (r.$ok === true) {
               fs.writeFileSync(signal, "value=" + r.$value + "\\n");
             } else if (typeof r.$failure === "string") {
@@ -1014,26 +1014,26 @@ public class JsBackendTest {
             + " receiver/index/RHS order before the bounds gate --");
         NodeResult run = runInvokerNode("""
             export function main(): null { return null; }
-            export async function oracle(): int {
-              let xs: int[] = [7];
-              let alias: int[] = xs;
+            export async function oracle(): number {
+              let xs: number[] = [7];
+              let alias: number[] = xs;
               let trace: string = "";
-              async function value(): int { trace = trace + "V"; return 9; }
-              function index(): int { trace = trace + "I"; return 2; }
-              function receiver(): int[] { trace = trace + "R"; return xs; }
+              async function value(): number { trace = trace + "V"; return 9; }
+              function index(): number { trace = trace + "I"; return 2; }
+              function receiver(): number[] { trace = trace + "R"; return xs; }
               try { receiver()[index()] = await value(); trace = trace + "X"; }
               catch (e) { if (e.code !== "E8002") { return 0; } trace = trace + "C"; }
               if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) { return 0; }
               alias[alias.length] = 8;
               if (xs.length !== 2 || xs[1] !== 8) { return 0; }
               let zero: table = {value: -0.0};
-              function admitted(x: int): int {
-                if (1.0 / number(x) > 0.0) { return 1; }
+              function admitted(x: number): number {
+                if (1.0 / x < 0.0) { return 1; }
                 return 0;
               }
               return admitted(zero.value);
             }
-            """, "invoker-await-write", "oracle", "int");
+            """, "invoker-await-write", "oracle", "number");
         check(run.exitCode() == 0 && run.output().equals("INVOKE_OK: 1"),
             "the awaited array write evaluates RIV before the bounds gate,"
                 + " publishes no write and appends: " + run.output());
@@ -1218,9 +1218,9 @@ public class JsBackendTest {
      */
     private static final String COMPANION_DIRECT_HELPER_SOURCE =
         String.join("\n",
-            "export function fail(): int {",
+            "export function fail(): number {",
             "  let t: table = {value: \"bad\"};",
-            "  let x: int = t.value;",
+            "  let x: number = t.value;",
             "  return x;",
             "}",
             "");
@@ -1230,7 +1230,7 @@ public class JsBackendTest {
             "import * as c from \"std/console\";",
             "import * as helper from \"./helper\";",
             "export function main(): null {return null;}",
-            "export function run(): int {return helper.fail();}",
+            "export function run(): number {return helper.fail();}",
             "");
 
     /** One observed public-companion-direct error field record. */
@@ -1269,9 +1269,9 @@ public class JsBackendTest {
         for (String[] row : new String[][] {
                 {"code", "E8005", "a wrong error code"},
                 {"message", "typed value rejected",
-                    "a message that does not report the int type failure"},
+                    "a message that does not report the number type failure"},
                 {"expected", "string", "a wrong expected type"},
-                {"actual", "int", "a wrong actual type"},
+                {"actual", "number", "a wrong actual type"},
                 {"file", "/tmp/other/src/main.deal", "a wrong origin file"},
                 {"line", "4", "a wrong origin line"},
                 {"column", "10", "the later annotation column 10"},
@@ -1288,7 +1288,7 @@ public class JsBackendTest {
      * public error record: the exact prescribed fields and the companion
      * origin. The message is the exact typed-kind arm text, the column is
      * the contextual read check the lowering selects at the companion
-     * read ({@code t.value}, column 16) — never the later annotation
+     * read ({@code t.value}, column 19) — never the later annotation
      * check at column 10. The same function is the wrong-observation
      * control.
      */
@@ -1298,13 +1298,13 @@ public class JsBackendTest {
             return Optional.of("error code must be E8001, got "
                 + observed.code());
         }
-        if (!"expected int".equals(observed.message())) {
+        if (!"expected number".equals(observed.message())) {
             return Optional.of("the message must be the typed-kind arm's"
-                + " exact text 'expected int', got <" + observed.message()
+                + " exact text 'expected number', got <" + observed.message()
                 + ">");
         }
-        if (!"int".equals(observed.expected())) {
-            return Optional.of("expected must be int, got "
+        if (!"number".equals(observed.expected())) {
+            return Optional.of("expected must be number, got "
                 + observed.expected());
         }
         if (!"string".equals(observed.actual())) {
@@ -1321,9 +1321,9 @@ public class JsBackendTest {
             return Optional.of("the origin line must be 3, got "
                 + observed.line());
         }
-        if (!"16".equals(observed.column())) {
+        if (!"19".equals(observed.column())) {
             return Optional.of("the origin column must be the contextual"
-                + " read check anchor 16, got " + observed.column());
+                + " read check anchor 19, got " + observed.column());
         }
         String frames = observed.frames() == null ? "" : observed.frames();
         if (!frames.contains("fail$f") || !frames.contains("run$f")) {
@@ -1545,7 +1545,7 @@ public class JsBackendTest {
         Path entry = proj.resolve("src/cli_js_main.deal");
         Files.writeString(entry, """
             export function main(): null { return null; }
-            export function run(): int { return 1; }
+            export function run(): number { return 1; }
             """);
 
         String buildCp = Path.of("build").toAbsolutePath().toString();
@@ -1578,8 +1578,8 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             import * as console from "std/console";
-            function helper(x: int): int { return x; }
-            export function test(): int { return helper(1); }
+            function helper(x: number): number { return x; }
+            export function test(): number { return helper(1); }
             """, "shape-root", "main", Map.of(), false);
         check(res != null && !res.hasErrors(), "shape-root codegen clean: "
             + (res == null ? "<null>" : res.diagnostics()));
@@ -1592,12 +1592,8 @@ public class JsBackendTest {
             "the $require/$module/$exports CommonJS capture");
         check(js.contains("const $rt = $require(\"./deal/runtime\");"),
             "root module requires ./deal/runtime");
-        check(js.contains("$rt.function(\"(number)->int\", (v, $f, $l, $c) => "
-            + "$rt.intConvert(v, $f, $l, $c), \"HOST\")"),
-            "the int intrinsic header wrapper with sig (number)->int");
-        check(js.contains("$rt.function(\"(int)->number\", (v, $f, $l, $c) => "
-            + "$rt.numberConvert(v, $f, $l, $c), \"HOST\")"),
-            "the number intrinsic header wrapper with sig (int)->number");
+        check(!js.contains("$rt.intConvert") && !js.contains("$rt.numberConvert"),
+            "no conversion intrinsic wrapper is synthesized");
         check(!js.contains("publishModule(\"main\", \"Error\""),
             "the builtin Error META stays module-private (never exported)");
         check(!js.contains("\"Error$new\""),
@@ -1606,7 +1602,7 @@ public class JsBackendTest {
             "the builtin Error defaults thunk stays module-private");
         check(js.contains("$require(\"./std/console\")"),
             "spec-stdlib import binds through the relative require");
-        check(js.contains("$rt.function(\"()->int\"")
+        check(js.contains("$rt.function(\"()->number\"")
                 && js.contains("= $rt.undefined;"),
             "the module function's binding is a predeclared generated cell");
         check(js.contains("$rt.publishModule(\"main\", \"test\","),
@@ -1621,7 +1617,7 @@ public class JsBackendTest {
 
         JsEmission nested = generate("""
             import * as strings from "std/string";
-            export function test(): int { return strings.length("x"); }
+            export function test(): number { return strings.length("x"); }
             """, "shape-nested", "app.main", Map.of(), false);
         check(nested != null && !nested.hasErrors(), "nested codegen clean");
         if (nested == null || nested.hasErrors()) return;
@@ -1631,7 +1627,7 @@ public class JsBackendTest {
             "nested module requires ../std/string");
 
         JsEmission deep = generate("""
-            export function test(): int { return 1; }
+            export function test(): number { return 1; }
             """, "shape-deep", "app.sub.main", Map.of(), false);
         check(deep != null && !deep.hasErrors(), "deep nested codegen clean");
         if (deep == null || deep.hasErrors()) return;
@@ -1641,13 +1637,13 @@ public class JsBackendTest {
         // Project imports: sibling and nested-target relative specifiers.
         Map<String, String> projectSources = new LinkedHashMap<>();
         projectSources.put("app/sub/util.deal",
-            "export function util(): int { return 1; }\n");
+            "export function util(): number { return 1; }\n");
         projectSources.put("lib.deal",
-            "export function lib(): int { return 2; }\n");
+            "export function lib(): number { return 2; }\n");
         JsEmission proj = generate("""
             import * as a from "./sub/util";
             import * as b from "../lib";
-            export function test(): int { return 1; }
+            export function test(): number { return 1; }
             """, "shape-proj", "app.main", projectSources, false);
         check(proj != null && !proj.hasErrors(), "project-import codegen clean");
         if (proj == null || proj.hasErrors()) return;
@@ -1662,11 +1658,11 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class Holder {
-              static: int = 0;
+              static: number = 0;
             }
-            export function test(): int {
-              let static: int = 1;
-              let eval: int = 2;
+            export function test(): number {
+              let static: number = 1;
+              let eval: number = 2;
               let h: Holder = { static: 3 };
               return static + eval + h.static;
             }
@@ -1686,7 +1682,7 @@ public class JsBackendTest {
                 || js.contains(", \"static\")"),
             "property position keeps the raw key");
         check(js.contains("// Class default @Main/Main.deal/Holder.static")
-                && js.contains("= 0;"),
+                && js.contains("= 0.0;"),
             "the synthesized plan keys the field by the raw name");
         check(js.contains("$rt.publishModule(\"Main\", \"test\","),
             "export key stays raw");
@@ -1697,31 +1693,31 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class User { name: string = ""; }
-            function add(a: int, b: int): int { return a + b; }
-            function first(xs: int[]): int { return xs[0]; }
+            function add(a: number, b: number): number { return a + b; }
+            function first(xs: number[]): number { return xs[0]; }
             function wrap(u: User): User { return u; }
             function maybe(s: string | null): string | null { return s; }
             function maybeUser(u: User | null): User | null { return u; }
-            function go(f: (x: int) => int, v: int): int { return f(v); }
-            async function aget(): int { return 1; }
-            export function test(): int { return add(1, 2); }
+            function go(f: (x: number) => number, v: number): number { return f(v); }
+            async function aget(): number { return 1; }
+            export function test(): number { return add(1, 2); }
             """, "wrappers");
         check(res != null && !res.hasErrors(), "wrapper codegen clean: "
             + (res == null ? "<null>" : res.diagnostics()));
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.function(\"(int,int)->int\", "
+        check(js.contains("$rt.function(\"(number,number)->number\", "
                 + "function add$f("),
-            "add wrapper with the exact (int,int)->int descriptor");
+            "add wrapper with the exact (number,number)->number descriptor");
         check(js.contains("\"jstest-wrappers.deal\", 2, 17)"),
             "the a parameter boundary carries the parameter's declared type "
                 + "span");
-        check(js.contains("\"jstest-wrappers.deal\", 2, 25)"),
+        check(js.contains("\"jstest-wrappers.deal\", 2, 28)"),
             "the b parameter boundary carries its own declared type span");
-        check(js.contains("$rt.function(\"([int])->int\""),
-            "canonical array descriptor [int] in the wrapper sig "
-                + "(the legacy int[] spelling is gone)");
+        check(js.contains("$rt.function(\"([number])->number\""),
+            "canonical array descriptor [number] in the wrapper sig "
+                + "(the legacy number[] spelling is gone)");
         check(js.contains("$rt.function(\"(@Main/Main.deal/User)->@Main/Main.deal/User\""),
             "canonical class atoms module-qualified (@Main/Main.deal/User)");
         check(js.contains("$rt.function(\"(?string)->?string\""),
@@ -1729,15 +1725,15 @@ public class JsBackendTest {
                 + "T|null form is gone)");
         check(js.contains("$rt.function(\"(?@Main/Main.deal/User)->?@Main/Main.deal/User\""),
             "canonical nullable class atoms (?@Main/Main.deal/User-shaped ?D)");
-        check(js.contains("$rt.function(\"((int)->int,int)->int\""),
+        check(js.contains("$rt.function(\"((number)->number,number)->number\""),
             "function-typed parameters carry their descriptor");
-        check(js.contains("$rt.function(\"async()->int\", "
+        check(js.contains("$rt.function(\"async()->number\", "
                 + "async function aget$f("),
             "async wrapper carries the exact async(...) -> D sig");
         check(!js.contains("|null"),
             "no legacy |null spelling anywhere in the artifact");
-        check(!js.contains("\"int[]\""),
-            "no legacy int[] descriptor spelling anywhere in the artifact");
+        check(!js.contains("\"number[]\""),
+            "no legacy number[] descriptor spelling anywhere in the artifact");
     }
 
     private static void testCheckSiteDescriptorPins() {
@@ -1745,14 +1741,14 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class User { name: string = ""; }
-            export function test(): int {
+            export function test(): number {
               let t: table = {};
-              let b: int[] = t.arr;
-              let a: int = t.n;
-              let m: int | null = t.m;
+              let b: number[] = t.arr;
+              let a: number = t.n;
+              let m: number | null = t.m;
               let u: User | null = t.u;
               let c: User = t.c;
-              let g: (x: int) => int = t.g;
+              let g: (x: number) => number = t.g;
               return a;
             }
             """, "checksites");
@@ -1761,9 +1757,9 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.checkType(\"?int\",")
-                && js.contains("\"jstest-checksites.deal\", 6, 23)"),
-            "nullable int table read checks with the canonical ?int inner");
+        check(js.contains("$rt.checkType(\"?number\",")
+                && js.contains("\"jstest-checksites.deal\", 6, 26)"),
+            "nullable number table read checks with the canonical ?number inner");
         check(js.contains("$rt.checkType(\"?@Main/Main.deal/User\",")
                 && js.contains("\"jstest-checksites.deal\", 7, 24)"),
             "nullable class-typed table read checks with the canonical "
@@ -1771,29 +1767,29 @@ public class JsBackendTest {
         check(js.contains("$rt.checkType(\"@Main/Main.deal/User\",")
                 && js.contains("\"jstest-checksites.deal\", 8, 17)"),
             "class-typed table read checks with the canonical @Main/Main.deal/User atom");
-        check(js.contains("$rt.checkType(\"(int)->int\",")
+        check(js.contains("$rt.checkType(\"(number)->number\",")
                 && js.contains("\"jstest-checksites.deal\", 9, 10)"),
-            "function-typed table read checks with the canonical (int)->int "
+            "function-typed table read checks with the canonical (number)->number "
                 + "descriptor");
-        check(js.contains("$rt.checkType(\"[int]\",")
+        check(js.contains("$rt.checkType(\"[number]\",")
                 && js.contains("\"jstest-checksites.deal\", 4, 10)"),
-            "array-typed table read routes through the [int] descriptor");
+            "array-typed table read routes through the [number] descriptor");
     }
 
     private static void testSpanParameterCollisionEmission() {
         System.out.println("-- Span parameters: $file/$line/$column (collision-free) --");
 
         JsEmission res = generate("""
-            function f(file: string, line: int, column: string): int { return line; }
-            export function test(): int { return f("a", 3, "b"); }
+            function f(file: string, line: number, column: string): number { return line; }
+            export function test(): number { return f("a", 3, "b"); }
             """, "spancollide");
         check(res != null && !res.hasErrors(), "span-collision codegen clean: "
             + (res == null ? "<null>" : res.diagnostics()));
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.function(\"(string,int,string)->int\","),
-            "the user parameter list carries the declared (string,int,string) "
+        check(js.contains("$rt.function(\"(string,number,string)->number\","),
+            "the user parameter list carries the declared (string,number,string) "
                 + "descriptor");
         check(!js.contains("(file, line, column, file, line, column)"),
             "no duplicate bare span parameters in the same parameter list");
@@ -1809,14 +1805,14 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class Point {
-              x: int = 10;
+              x: number = 10;
               nick?: string | null;
             }
-            class Hidden { v: int = 0; }
+            class Hidden { v: number = 0; }
             export class Public {
-              y: int = 0;
+              y: number = 0;
             }
-            export function test(): int { return 1; }
+            export function test(): number { return 1; }
             """, "classpins");
         check(res != null && !res.hasErrors(), "class-pins codegen clean: "
             + (res == null ? "<null>" : res.diagnostics()));
@@ -1860,9 +1856,9 @@ public class JsBackendTest {
             export class U {
               name: string = "";
               nick?: string | null;
-              age: int = 0;
+              age: number = 0;
             }
-            export function test(): int { return 1; }
+            export function test(): number { return 1; }
             """, "jsonable-pins");
         check(res != null && !res.hasErrors(), "jsonable codegen clean: "
             + (res == null ? "<null>" : res.diagnostics()));
@@ -1889,7 +1885,7 @@ public class JsBackendTest {
                 + "nullable: false, hasDefault: true")
                 && js.contains("{ name: \"nick\", jtype: \"string\", "
                 + "optional: true, nullable: true, hasDefault: false }")
-                && js.contains("{ name: \"age\", jtype: \"int\", optional: false, "
+                && js.contains("{ name: \"age\", jtype: \"number\", optional: false, "
                 + "nullable: false, hasDefault: true"),
             "U$fields is the declaration-order descriptor array with one "
                 + "role per key (name/jtype/optional/nullable/hasDefault)");
@@ -1913,9 +1909,9 @@ public class JsBackendTest {
                 export class U {
                   name: string = "";
                   nick?: string | null;
-                  age: int = 0;
+                  age: number = 0;
                 }
-                export function test(): int {
+                export function test(): number {
                   let u: U = { name: "Ada", nick: null, age: 36 };
                   let json: string = U$toJson(u);
                   let v: U | null = U$fromJson(json);
@@ -1967,9 +1963,9 @@ public class JsBackendTest {
         writeFile("xjson_proj/src/lib_a.deal", """
             // @jsonable
             export class Inner {
-              v: int = 0;
+              v: number = 0;
             }
-            export function inner(v: int): Inner {
+            export function inner(v: number): Inner {
               return { v: v };
             }
             """);
@@ -1981,7 +1977,7 @@ public class JsBackendTest {
               inner: A.Inner = {};
               children: A.Inner[] = [];
             }
-            export function make(a: int): Wrap {
+            export function make(a: number): Wrap {
               return { inner: A.inner(a), children: [A.inner(a + 1)] };
             }
             """);
@@ -2052,8 +2048,8 @@ public class JsBackendTest {
 
     private static String nestedClassShadowSubject() {
         return """
-            class Outer { v: int = 1; }
-            export function test(): int {
+            class Outer { v: number = 1; }
+            export function test(): number {
               let a: Outer = {};
               {
                 class Outer { w: string = "s"; }
@@ -2083,16 +2079,16 @@ public class JsBackendTest {
         // Preserve removed local placement as a frontend negative; the legal
         // module equivalent retains default-plan, factory and nominal META pins.
         assertLocalClassRejected("""
-            export function test(): int {
-              let seed: int = 40;
-              class Inner { v: int = seed + 2; }
+            export function test(): number {
+              let seed: number = 40;
+              class Inner { v: number = seed + 2; }
               return 1;
             }
             """, "nestedclass");
         JsEmission nested = generate("""
-            class Seed { value: int = 40; }
-            class Inner { v: int = function(): int { let seed: Seed = {}; return seed.value + 2; }(); }
-            export function test(): int { return 1; }
+            class Seed { value: number = 40; }
+            class Inner { v: number = function(): number { let seed: Seed = {}; return seed.value + 2; }(); }
+            export function test(): number { return 1; }
             """, "moduleclass");
         check(nested != null && !nested.hasErrors(),
             "nested class declaration generates with no diagnostics: "
@@ -2113,24 +2109,24 @@ public class JsBackendTest {
         // A legal module default invokes an ordinary function wrapper.
         // Its removed local-class counterpart remains a separate negative.
         assertLocalClassRejected("""
-            export function test(): int {
-              let seed: int = 40;
-              function next(): int { return seed + 2; }
-              class Inner { v: int = next(); }
+            export function test(): number {
+              let seed: number = 40;
+              function next(): number { return seed + 2; }
+              class Inner { v: number = next(); }
               return 1;
             }
             """, "nestedclass-func");
         JsEmission func = generate("""
-            function next(): int { let seed: int = 40; return seed + 2; }
-            class Inner { v: int = next(); }
-            export function test(): int { return 1; }
+            function next(): number { let seed: number = 40; return seed + 2; }
+            class Inner { v: number = next(); }
+            export function test(): number { return 1; }
             """, "moduleclass-func");
         check(func != null && !func.hasErrors(),
             "nested class with a scope-local default function generates: "
                 + (func == null ? "<null>" : func.diagnostics()));
         if (func != null && !func.hasErrors()) {
             check(func.source().contains("// Class default @Main/Main.deal/Inner.v")
-                    && func.source().contains(".$f(\"jstest-moduleclass-func.deal\", 2, 24)"),
+                    && func.source().contains(".$f(\"jstest-moduleclass-func.deal\", 2, 27)"),
                 "the plan evaluator calls the ordinary function wrapper");
         }
 
@@ -2162,15 +2158,15 @@ public class JsBackendTest {
 
         // Neither export nor @jsonable permits a local class in v1.3.
         assertLocalClassRejected("""
-            export function test(): int {
+            export function test(): number {
               // @jsonable
-              export class Outer { x: int = 1; }
+              export class Outer { x: number = 1; }
               return 1;
             }
             """, "nestedclass-jsonable");
         assertLocalClassRejected("""
-            export function test(): int {
-              export class Outer { x: int = 1; }
+            export function test(): number {
+              export class Outer { x: number = 1; }
               return 1;
             }
             """, "nestedclass-export");
@@ -2212,11 +2208,11 @@ public class JsBackendTest {
         // module default creates a fresh ordinary captured binding each time:
         // one instance advances 42 -> 102 while the other still starts at 42.
         assertLocalClassRejected("""
-            export function test(): int {
-              let seed: int = 40;
-              function next(): int { return seed + 2; }
+            export function test(): number {
+              let seed: number = 40;
+              function next(): number { return seed + 2; }
               class Inner {
-                v: int = next();
+                v: number = next();
               }
               let a: Inner = { };
               seed = 100;
@@ -2228,12 +2224,12 @@ public class JsBackendTest {
             """, "nestedclass-node");
         NodeResult run = runDealNode("""
             class Inner {
-              next: () => int = function(): () => int {
-                let seed: int = 40;
-                return function(): int { let value: int = seed + 2; seed = 100; return value; };
+              next: () => number = function(): () => number {
+                let seed: number = 40;
+                return function(): number { let value: number = seed + 2; seed = 100; return value; };
               }();
             }
-            export function test(): int {
+            export function test(): number {
               let a: Inner = { };
               let b: Inner = { };
               if (a.next() !== 42) { return 0; }
@@ -2281,18 +2277,18 @@ public class JsBackendTest {
         // Removed local shadowing rejects; distinct module classes remain legal
         // when constructed inside ordinary function/block scopes.
         assertLocalClassRejected("""
-            class Shadowed { v: int = 1; }
-            export function test(): int {
-              class Shadowed { w: int = 2; }
+            class Shadowed { v: number = 1; }
+            export function test(): number {
+              class Shadowed { w: number = 2; }
               let s: Shadowed = { };
               if (s.w !== 2) { return 0; }
               return 1;
             }
             """, "nestedclass-shadow");
         NodeResult shadow = runDealNode("""
-            class Shadowed { v: int = 1; }
-            class Alternate { w: int = 2; }
-            export function test(): int {
+            class Shadowed { v: number = 1; }
+            class Alternate { w: number = 2; }
+            export function test(): number {
               let s: Alternate = { };
               if (s.w !== 2) { return 0; }
               return 1;
@@ -2334,7 +2330,7 @@ public class JsBackendTest {
         // The frontend entry-main gate rejects a main-less entry before any
         // emission: the retired backend E6004 backstop never runs.
         JsEmission noMain = generateEntry("""
-            export function run(): int { return 1; }
+            export function run(): number { return 1; }
             """, "entry-nomain", "main");
         check(noMain != null && noMain.hasErrors(),
             "an entry without main(): null carries an error");
@@ -2359,11 +2355,12 @@ public class JsBackendTest {
     }
 
     private static void testSourceLocationArguments() {
-        System.out.println("-- Source-location arguments on checks and conversions --");
+        System.out.println("-- Source-location arguments on number checks and calls --");
 
         JsEmission res = generate("""
-            export function test(): int {
-              let y: int = int(3.0);
+            import * as math from "std/math";
+            export function test(): number {
+              let y: number = math.sqrt(3.0);
               return y;
             }
             """, "loc");
@@ -2371,11 +2368,10 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("$rt.intConvert(")
-                && js.contains("\"jstest-loc.deal\", 2, 16)"),
-            "the conversion call carries the literal call-site span");
-        check(js.contains("$rt.checkType(\"int\",")
-                && js.contains("\"jstest-loc.deal\", 3, 3)"),
+        check(js.contains("\"jstest-loc.deal\", 3, 19)"),
+            "the stdlib call carries its exact call-site span");
+        check(js.contains("$rt.checkType(\"number\",")
+                && js.contains("\"jstest-loc.deal\", 4, 3)"),
             "the return check carries the return-site span");
         check(js.contains("\"jstest-loc.deal\""),
             "the .deal source file appears as a literal argument");
@@ -2386,15 +2382,15 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class P {
-              __proto__?: int;
+              __proto__?: number;
             }
-            export function __proto__(): int { return 1; }
-            export function test(): int {
+            export function __proto__(): number { return 1; }
+            export function test(): number {
               let p: P = { __proto__: 7 };
               if (!has(p.__proto__)) { return 0; }
               p.__proto__ = 9;
-              let read: int | null = p.__proto__;
-              let out: int = 0;
+              let read: number | null = p.__proto__;
+              let out: number = 0;
               if (read !== null) { out = read; }
               return out;
             }
@@ -2423,10 +2419,10 @@ public class JsBackendTest {
 
         JsEmission imp = generate("""
             import * as pl from "./proto_lib";
-            export function test(): int { return pl.__proto__(); }
+            export function test(): number { return pl.__proto__(); }
             """, "protoimport", "main",
             Map.of("proto_lib.deal",
-                "export function __proto__(): int { return 1; }\n"), false);
+                "export function __proto__(): number { return 1; }\n"), false);
         check(imp != null && !imp.hasErrors(),
             "proto import codegen clean: "
                 + (imp == null ? "<null>" : imp.diagnostics()));
@@ -2495,7 +2491,7 @@ public class JsBackendTest {
         check(js.contains("throw $rt.throwValue(")
                 && js.contains("\"jstest-errpins.deal\", 12, 5)"),
             "the inner literal throw emits the located throwValue form");
-        check(js.contains("$rt.reifyError($c125)"),
+        check(js.contains("$rt.reifyError($c113)"),
             "the catch binding reifies through $rt.reifyError");
         check(js.contains("\"jstest-errpins.deal\", 14, 5)"),
             "a non-literal rethrow routes through throwValue with its own "
@@ -2508,8 +2504,8 @@ public class JsBackendTest {
         System.out.println("-- Array-element delete emission pin --");
 
         JsEmission res = generate("""
-            export function test(): int {
-              let xs: int[] = [1, 2, 3];
+            export function test(): number {
+              let xs: number[] = [1, 2, 3];
               delete xs[1];
               return xs.length;
             }
@@ -2521,16 +2517,16 @@ public class JsBackendTest {
         String js = res.source();
         check(js.contains("\"jstest-delemit.deal\", 3, 10)"),
             "the delete index and bounds gate carry the delete-site span");
-        check(js.contains("if ($s57 < 0 || $s57 > $n59) { "
+        check(js.contains("if (!Number.isInteger($s45) || $s45 < 0 || $s45 > $n47) { "
             + "$rt.fail(\"E8002\", \"array index out of bounds\", "
             + "\"jstest-delemit.deal\", 3, 10); }"),
             "the E8002 bounds gate precedes the write (the upper bound is "
                 + "the array length)");
-        check(js.contains("if ($s57 < $n59) { $rt.arrayDelete($s48, $s57); }"),
+        check(js.contains("if ($s45 < $n47) { $rt.arrayDelete($s36, $s45); }"),
             "the nil-out commit is guarded by index < length (no write "
                 + "emitted at i === length) and routes through the "
                 + "carrier-agnostic delete member");
-        check(js.contains("$rt.arrayLength($s65)"),
+        check(js.contains("$rt.arrayLength($s53)"),
             "the array .length read routes through the carrier-agnostic "
                 + "length member");
         check(!js.replace("$rt.undefined", "").contains("undefined"),
@@ -2549,11 +2545,11 @@ public class JsBackendTest {
         System.out.println("-- Array-read bounds emission pin --");
 
         JsEmission res = generate("""
-            function receiver(xs: int[]): int[] {
+            function receiver(xs: number[]): number[] {
               return xs;
             }
-            export function test(): int {
-              let xs: int[] = [1, 2, 3];
+            export function test(): number {
+              let xs: number[] = [1, 2, 3];
               return receiver(xs)[1];
             }
             """, "readbounds");
@@ -2562,18 +2558,18 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        int receiverPos = js.indexOf("$s18 = $g13;");
-        int indexPos = js.indexOf("$s77 = 1;");
+        int receiverPos = js.indexOf("$s6 = $g1;");
+        int indexPos = js.indexOf("$s65 = 1.0;");
         check(receiverPos >= 0 && indexPos > receiverPos,
             "the read evaluates the receiver before the index");
-        check(js.contains("$s80 = $rt.arrayLength($s73);"),
+        check(js.contains("$s68 = $rt.arrayLength($s61);"),
             "the bounds gate reads the receiver's carrier-agnostic length");
-        check(js.contains("if ($s83 < 0 || $s83 >= $n85) { "
+        check(js.contains("if (!Number.isInteger($s71) || $s71 < 0 || $s71 >= $n73) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
             "the read gates both bounds with E8002 'array index out of bounds'");
-        check(js.contains("$s86 = $rt.arrayAt($s73, $s83, false);"),
+        check(js.contains("$s74 = $rt.arrayAt($s61, $s71, true);"),
             "the read returns the carrier-agnostic position only after the "
-                + "bounds gate (the declared int element reads the decoded "
+                + "bounds gate (the declared number element reads the decoded "
                 + "slot's own variant)");
     }
 
@@ -2583,11 +2579,11 @@ public class JsBackendTest {
         // (a) Without a user binding named undefined, the generated source
         //     never spells the bare host-global at all.
         JsEmission plain = generate("""
-            export function test(): int {
-              let xs: int[] = [1, 2, 3];
+            export function test(): number {
+              let xs: number[] = [1, 2, 3];
               delete xs[1];
-              let n: int = 0;
-              for (let x: int of xs) { n = n + 1; }
+              let n: number = 0;
+              for (let x: number of xs) { n = n + 1; }
               return n;
             }
             """, "hygiene");
@@ -2627,7 +2623,7 @@ public class JsBackendTest {
         if (shadow != null && !shadow.hasErrors()) {
             String js = shadow.source();
             check(!js.contains("let undefined")
-                    && js.contains("= 7;"),
+                    && js.contains("= 7.0;"),
                 "the user binding named undefined lowers to a generated "
                     + "binding, never a bare host-global");
             check(js.contains("$rt.arrayDelete("),
@@ -2655,12 +2651,12 @@ public class JsBackendTest {
 
     private static String shadowTestSource() {
         return """
-            export function test(): int {
-              let undefined: int = 7;
-              let xs: int[] = [1, 2, 3];
+            export function test(): number {
+              let undefined: number = 7;
+              let xs: number[] = [1, 2, 3];
               delete xs[1];
-              let n: int = 0;
-              for (let x: int of xs) { n = n + 1; }
+              let n: number = 0;
+              for (let x: number of xs) { n = n + 1; }
               return undefined + xs.length + n;
             }
             """;
@@ -2685,7 +2681,7 @@ public class JsBackendTest {
             Map.of("myffi", """
                 // @extern-c
 
-                export function ping(): int;
+                export function ping(): number;
                 """));
         check(!externCompiled.success(), "@extern-c import rejected");
         check(externCompiled.diagnostics().stream().anyMatch(d ->
@@ -2716,7 +2712,7 @@ public class JsBackendTest {
         System.out.println("-- Host ABI: loadHost binding, declared map, boundary deferral (ISSUE-0328) --");
         String q = "\"";
         String fnDeclSource = """
-            export function hostFn(x: int): int;
+            export function hostFn(x: number): number;
             """;
 
         // (1) The host import binding: the raw specifier verbatim with
@@ -2724,7 +2720,7 @@ public class JsBackendTest {
         // per export, and the member call through the wrapper $f.
         JsEmission fn = generate("""
             import * as h from "./hostmod";
-            export function test(): int { return h.hostFn(1); }
+            export function test(): number { return h.hostFn(1); }
             """, "host-abi-fn", "Main", Map.of("hostmod.d.deal", fnDeclSource),
             false);
         check(fn != null && !fn.hasErrors(),
@@ -2737,7 +2733,7 @@ public class JsBackendTest {
             check(js.contains("$rt.loadHost("),
                 "the host binding validates through $rt.loadHost");
             check(js.contains(q + "hostFn" + q + ": { $k: " + q
-                    + "function" + q + ", $d: " + q + "(int)->int" + q
+                    + "function" + q + ", $d: " + q + "(number)->number" + q
                     + " }"),
                 "the declared map renders the canonical function entry: " + js);
             check(js.contains(q + "./hostmod" + q
@@ -2780,7 +2776,7 @@ public class JsBackendTest {
         // pinned E8010 parameter mismatch under node.
         JsEmission defer = generate("""
             import * as h from "./hostmod";
-            export function test(): int {
+            export function test(): number {
               let holder: table = { item: "x" };
               return h.hostFn(holder.item);
             }
@@ -2794,7 +2790,7 @@ public class JsBackendTest {
             check(js.contains(".get(" + q + "item" + q + ")"),
                 "the host-call argument is the raw table read (D4 "
                     + "read-site deferral, no pre-check): " + js);
-            check(!js.contains("checkType(" + q + "int" + q
+            check(!js.contains("checkType(" + q + "number" + q
                     + ", holder"),
                 "no read-site checkType wraps the host-call argument");
             try {
@@ -2807,7 +2803,7 @@ public class JsBackendTest {
                 Files.writeString(dir.resolve("JsConformanceRunner.js"),
                     StubModuleResolver.buildJsRunner(
                         compileFrontend("""
-                            export function test(): int { return 0; }
+                            export function test(): number { return 0; }
                             """, "jstest-host-abi-defer.deal").program()));
                 NodeResult run = runNodeScript(dir,
                     "JsConformanceRunner.js");
@@ -2832,7 +2828,7 @@ public class JsBackendTest {
               path: string;
             }
             export class ServerConfig {
-              port: int;
+              port: number;
               endpoint: Endpoint;
               tags?: string[];
               note?: string | null;
@@ -2894,7 +2890,7 @@ public class JsBackendTest {
               path: string;
             }
             export class ServerConfig {
-              port: int;
+              port: number;
               endpoint: Endpoint;
               tags?: string[];
               note?: string | null;
@@ -3013,8 +3009,8 @@ public class JsBackendTest {
         // declaration-ordered provider map stays untouched while the
         // selected view is export-name-sorted (the JS read order).
         Map<String, Type> declared = new java.util.LinkedHashMap<>();
-        declared.put("zeta", new Type.Func(List.of(), Type.Int.INSTANCE));
-        declared.put("alpha", new Type.Func(List.of(), Type.Int.INSTANCE));
+        declared.put("zeta", new Type.Func(List.of(), Type.Number.INSTANCE));
+        declared.put("alpha", new Type.Func(List.of(), Type.Number.INSTANCE));
         Map<String, Type> selected =
             deal.semantic.HostDeclarationSurface.sortedByName(declared);
         check(List.of("alpha", "zeta").equals(List.copyOf(selected.keySet())),
@@ -3030,8 +3026,8 @@ public class JsBackendTest {
             "\"use strict\";",
             "const $rt = require(\"./deal/runtime\");",
             "function say(s) { process.stdout.write(s + \"\\n\"); }",
-            "const decl = { alpha: { $k: \"function\", $d: \"()->int\" },",
-            "  zeta: { $k: \"function\", $d: \"()->int\" } };",
+            "const decl = { alpha: { $k: \"function\", $d: \"()->number\" },",
+            "  zeta: { $k: \"function\", $d: \"()->number\" } };",
             "const order = [];",
             "const raw = {};",
             "Object.defineProperty(raw, \"alpha\", { enumerable: true,",
@@ -3062,9 +3058,9 @@ public class JsBackendTest {
             // a $sig mismatch fails E8011 at the import origin.
             "const pwRaw = {};",
             "const pwFn = function () { return 5; };",
-            "const pwExported = $rt.function(\"()->int\", pwFn);",
+            "const pwExported = $rt.function(\"()->number\", pwFn);",
             "pwRaw.pw = pwExported;",
-            "const pwDecl = { pw: { $k: \"function\", $d: \"()->int\" } };",
+            "const pwDecl = { pw: { $k: \"function\", $d: \"()->number\" } };",
             "const pw1 = $rt.loadHost(pwRaw, pwDecl, \"host/echo\", \"main.deal\", 1, 1);",
             "const pw2 = $rt.loadHost(pwRaw, pwDecl, \"host/echo\", \"main.deal\", 2, 1);",
             "say(\"pw-same-import-identity=\" + (pw1.pw === pw1.pw));",
@@ -3076,7 +3072,7 @@ public class JsBackendTest {
             // The re-wrapped $f keeps the call-time enforcement: a
             // matching $sig with a wrong-kind return still fails E8010.
             "try {",
-            "  const pwJunk = $rt.loadHost({ pw: $rt.function(\"()->int\",",
+            "  const pwJunk = $rt.loadHost({ pw: $rt.function(\"()->number\",",
             "    function () { return \"junk\"; }) }, pwDecl,",
             "    \"host/echo\", \"main.deal\", 1, 1);",
             "  pwJunk.pw.$f();",
@@ -3158,16 +3154,16 @@ public class JsBackendTest {
         check(probeOut.contains("pw-raw-non-cloning=true"),
             "the raw prewrapped export object is preserved, never cloned: "
                 + probeOut);
-        check(probeOut.contains("pw-signature=()->int,()->int"),
+        check(probeOut.contains("pw-signature=()->number,()->number"),
             "the re-wrapped prewrapped exports keep the declared signature: "
                 + probeOut);
         check(probeOut.contains("pw-enforce=E8010|return value 1 type mismatch: "
-                + "expected int|int|string"),
+                + "expected number|number|string"),
             "the re-wrapped prewrapped $f enforces the declared return "
                 + "descriptor: " + probeOut);
         check(probeOut.contains("pw-mismatch=E8011|host export 'pw' in module "
-                + "'host/echo' has signature mismatch: expected ()->int, got "
-                + "()->string|()->int|()->string|file=main.deal|line=1|column=1"),
+                + "'host/echo' has signature mismatch: expected ()->number, got "
+                + "()->string|()->number|()->string|file=main.deal|line=1|column=1"),
             "a prewrapped $sig mismatch fails E8011 at the import origin with "
                 + "the declared/seen signatures: " + probeOut);
         check(probeOut.contains("first-failure=E8011 host export 'alpha' "
@@ -3195,13 +3191,13 @@ public class JsBackendTest {
             + " \"externals\": {\"host/echo\": {\"declaration\": "
             + "\"../bindings/echo.d.deal\"}}}\n");
         writeFile("occ_proj/bindings/echo.d.deal", """
-            export function zeta(): int;
-            export function alpha(): int;
-            export function values(): int[];
+            export function zeta(): number;
+            export function alpha(): number;
+            export function values(): number[];
             """);
         writeFile("occ_proj/src/occ_util.deal", """
             import * as e from "host/echo";
-            export function read(): int { return e.alpha(); }
+            export function read(): number { return e.alpha(); }
             """);
         writeFile("occ_proj/src/occ_main.deal", """
             import * as h1 from "host/echo";
@@ -3220,26 +3216,26 @@ public class JsBackendTest {
               if (util.read() !== 7) {
                 throw { code: "CROSS_UNIT_CALL", message: "cross unit" };
               }
-              let xs: int[] = [1, 2, 3];
-              let sum: int = 0;
-              for (let e: int of xs) {
+              let xs: number[] = [1, 2, 3];
+              let sum: number = 0;
+              for (let e: number of xs) {
                 sum = sum + e;
                 if (e === 1) { delete xs[1]; }
               }
               if (sum !== 1) {
                 throw { code: "DELETE_STOP", message: "deleted slot" };
               }
-              let ys: int[] = [1, 2];
-              let appended: int = 0;
-              for (let e: int of ys) {
+              let ys: number[] = [1, 2];
+              let appended: number = 0;
+              for (let e: number of ys) {
                 appended = appended + e;
                 if (e === 1) { ys[ys.length] = 7; }
               }
               if (appended !== 10) {
                 throw { code: "APPEND_VISIT", message: "appended element" };
               }
-              let once: int = 0;
-              for (let e: int of h1.values()) {
+              let once: number = 0;
+              for (let e: number of h1.values()) {
                 once = once + e;
               }
               if (once !== 3) {
@@ -3333,8 +3329,8 @@ public class JsBackendTest {
             + " \"externals\": {\"host/ord\": {\"declaration\": "
             + "\"../bindings/ord.d.deal\"}}}\n");
         writeFile("ord_proj/bindings/ord.d.deal", """
-            export function zeta(): int;
-            export function alpha(): int;
+            export function zeta(): number;
+            export function alpha(): number;
             """);
         writeFile("ord_proj/src/ord_main.deal", """
             import * as h from "host/ord";
@@ -3386,8 +3382,8 @@ public class JsBackendTest {
             "  + (globalThis.__ordOrder || []).join(\",\") + \"|\\n\");",
             ""));
         String ordOrigin = "|file=" + ordEntry + "|line=1|column=1";
-        String ordAlphaFn = "$rt.function(\"()->int\", function () { return 7; })";
-        String ordZetaFn = "$rt.function(\"()->int\", function () { return 9; })";
+        String ordAlphaFn = "$rt.function(\"()->number\", function () { return 7; })";
+        String ordZetaFn = "$rt.function(\"()->number\", function () { return 9; })";
         String ordAlphaGetter = "Object.defineProperty(module.exports, \"alpha\", "
             + "{ enumerable: true, get: function () { order.push(\"alpha\"); "
             + "return %s; } });";
@@ -3469,7 +3465,7 @@ public class JsBackendTest {
 
         writeFile("src/sm_main.deal",
             "export function main(): null { return null; }\n"
-            + "export function run(): int { return 1; }\n");
+            + "export function run(): number { return 1; }\n");
         Path entryFile = tmpDir.resolve("src/sm_main.deal").toAbsolutePath();
         Path outputDir = tmpDir.resolve("build/sm_js");
         List<Path> roots = List.of(tmpDir.resolve("src").toAbsolutePath());
@@ -3550,39 +3546,36 @@ public class JsBackendTest {
     // =========================================================================
 
     private static void testIntArithmeticEdgeCodes() throws Exception {
-        System.out.println("-- Node: int arithmetic edge codes --");
+        System.out.println("-- Node: number arithmetic edge codes --");
+
 
         Frontend removedPower = compileFrontend(
-            "export function test(): int { return 2 ** 10000; }", "int-pow-overflow.deal");
+            "export function test(): number { return 2 ** 10000; }", "number-pow-overflow.deal");
         check(removedPower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
             "removed power syntax rejects before emission");
         for (String[] row : new String[][] {
-                {"int-infinity", "int(1.0 / 0.0)", "E8001", "expected int, got infinity",
-                    "int(infinity) → E8001 'expected int, got infinity' (checkInt order "
-                        + "before the finite-range arm), exit 1: "},
-                {"int-finite-range", "int(1.0e300)", "E8004", "int out of safe range",
-                    "finite out-of-range → E8004 'int out of safe range' (the pinned template), exit 1: "},
-                {"int-div-zero", "5 / 0", "E8005", "integer division by zero",
-                    "int division by zero → E8005, exit 1: "}}) {
-            checkDealFailure("export function test(): int { return " + row[1] + "; }",
-                row[0], row[2], row[3], row[4]);
+                {"infinity", "1.0 / 0.0", "Infinity"},
+                {"large", "1e300", "1e+300"},
+                {"division", "5 / 0", "Infinity"}}) {
+            NodeResult result = runDealNode("export function test(): number { return " + row[1] + "; }", row[0]);
+            check(result.exitCode() == 0 && result.output().equals(row[2]),
+                "binary64 edge executes: " + row[0] + " " + result.output());
         }
 
         Frontend negativePower = compileFrontend(
-            "export function test(): int { return 2 ** -1; }", "int-neg-exp.deal");
+            "export function test(): number { return 2 ** -1; }", "number-neg-exp.deal");
         check(negativePower.errors().stream().anyMatch(d -> d.code().equals("E1037")),
             "removed negative power syntax rejects before emission");
 
         Frontend removedSafeMax = compileFrontend(
-            "export function test(): int { return 9007199254740991; }",
-            "int-safe-max.deal");
-        check(removedSafeMax.errors().stream()
-                .anyMatch(d -> d.code().equals("E1036")),
+            "export function test(): number { return 9007199254740991; }",
+            "number-safe-max.deal");
+        check(removedSafeMax.errors().isEmpty(),
             "a literal beyond the signed-32 range rejects before emission "
                 + "(the legacy ±(2^53-1) range is gone)");
 
         Frontend removedRemainder = compileFrontend(
-            "export function test(): int { return -7 % 3; }", "removed-remainder.deal");
+            "export function test(): number { return -7 % 3; }", "removed-remainder.deal");
         check(removedRemainder.errors().stream().anyMatch(d -> d.code().equals("E1001")),
             "removed remainder syntax rejects before emission");
 
@@ -3593,16 +3586,14 @@ public class JsBackendTest {
             + " runtime load (no profile selector) --");
 
         JsEmission res = generate(
-            "export function test(): int { return 2147483647 + 1; }",
+            "export function test(): number { return 2147483647 + 1; }",
             "int32-selector");
         check(!res.hasErrors(),
             "the sole-profile generation is clean: " + res.diagnostics());
         check(!res.source().contains("setInt32Mode"),
             "the emitted module carries no profile selector");
-        check(res.source().contains("$rt.intAdd(")
-                && res.source().contains("\"jstest-int32-selector.deal\", 1, 38)"),
-            "the emitted module carries the signed-32 arithmetic gate at the "
-                + "operation's recorded span");
+        check(!res.source().contains("$rt.intAdd("),
+            "binary64 arithmetic has no signed32 refinement gate");
     }
 
     private static void testInt32OrchestratorPlumb() throws Exception {
@@ -3691,110 +3682,29 @@ public class JsBackendTest {
     }
 
     private static void testInt32MatrixNode() throws Exception {
-        System.out.println("-- Node: signed-int32 matrix under DEAL_V1_3_INT32 --");
-
         String[][] rows = {
-            {"max-ok", "return 2147483647;", "2147483647"},
-            {"min-ok", "return -2147483648;", "-2147483648"},
-            {"add-over", "return 2147483647 + 1;", "E8004", "int out of safe range"},
-            {"sub-under", "return -2147483648 - 1;", "E8004", "int out of safe range"},
-            {"div-over", "return -2147483648 / -1;", "E8004"},
-
-            {"neg-over", "return -(-2147483648);", "E8004"},
-            {"div-zero", "return 5 / 0;", "E8005", "integer division by zero"},
-
-            {"neg-exp", "return 2 ** -1;", "E1037"},
-            {"pow-over", "return 2 ** 10000;", "E1037"},
-            {"trunc-signs", "let a: int = -7 / 3; let b: int = 7 / -3; "
-                + "if (a === -2 && b === -2) { return 1; } return 0;", "1"},
-            {"conv-range", "return int(2147483648.0);", "E8004", "int out of safe range"},
-            {"conv-nan", "return int(0.0 / 0.0);", "E8001", "expected int, got NaN"},
-            {"conv-inf", "return int(1.0 / 0.0);", "E8001", "expected int, got infinity"}
+            {"max", "2147483647", "2147483647"},
+            {"min", "-2147483648", "-2147483648"},
+            {"add", "2147483647 + 1", "2147483648"},
+            {"sub", "-2147483648 - 1", "-2147483649"},
+            {"div", "-2147483648 / -1", "2147483648"},
+            {"neg", "-(-2147483648)", "2147483648"},
+            {"zero", "5 / 0", "Infinity"},
+            {"fraction", "-7 / 2", "-3.5"},
+            {"nan", "0 / 0", "NaN"},
+            {"signed-zero", "1 / -0", "-Infinity"}
         };
         for (String[] row : rows) {
-            if (row[2].equals("E1037")) {
-                Frontend rejected = compileFrontend("export function test(): int { " + row[1] + " }",
-                    "int32-" + row[0] + ".deal");
-                check(rejected.errors().stream().anyMatch(d -> d.code().equals("E1037")),
-                    row[0] + ": removed power syntax rejects before emission");
-                continue;
-            }
-            NodeResult result = runDealNode(
-                "export function test(): int { " + row[1] + " }",
-                "int32-" + row[0]);
-            boolean failure = row[2].startsWith("E");
-            check(result.exitCode() == (failure ? 1 : 0)
-                    && (failure ? result.output().contains("DEAL_ERROR_CODE: " + row[2])
-                        && (row.length == 3 || result.output().contains(row[3]))
-                        : result.output().equals(row[2])),
-                "int32-" + row[0] + ": " + result.output());
+            NodeResult result = runDealNode("export function test(): number { return " + row[1] + "; }", "binary64-" + row[0]);
+            check(result.exitCode() == 0 && result.output().equals(row[2]),
+                row[0] + " binary64 value: " + result.output());
         }
-
-        PreparedJs fractional = prepareJs(
-            "export function test(): int { return int(3.5); }",
-            "int32-conv-frac");
-        NodeResult convFrac = runDealArtifact(fractional);
-        check(convFrac.exitCode() == 1
-                && convFrac.output().contains("DEAL_ERROR_CODE: E8001")
-                && convFrac.output().contains(
-                    "expected int, got non-integer number"),
-            "int(3.5) → E8001 non-integer, exit 1: " + convFrac.output());
-
-        // The nil-equivalent conversion arm through the runtime (the
-        // pinned message; only emitter mis-emission reaches it).
-        NodeResult convNull = runRuntimeProbe("int32-conv-null",
-            "\"use strict\";\n"
-                + "const $rt = require(\"./deal/runtime\");\n"
-                + "try {\n"
-                + "  $rt.intConvert(null, \"probe.js\", 1, 1);\n"
-                + "  console.log(\"FAIL: no throw\");\n"
-                + "} catch (e) {\n"
-                + "  if (e.$dealCode === \"E8001\" && e.message === \"cannot convert null to int\") {\n"
-                + "    console.log(\"E8001-NULL-OK\");\n"
-                + "  } else {\n"
-                + "    console.log(\"FAIL: \" + e.$dealCode + \" \" + e.message);\n"
-                + "  }\n"
-                + "}\n");
-        check(convNull.exitCode() == 0
-                && convNull.output().equals("E8001-NULL-OK"),
-            "int(null) → E8001 'cannot convert null to int' under the "
-                + "int32 profile: " + convNull.output());
-
-        // -0 normalizes to 0.
-        NodeResult negZero = runDealNode(
-            "export function test(): int { let z: int = -0; "
-                + "if (z === 0) { return 1; } return 0; }",
-            "int32-neg-zero");
-        check(negZero.exitCode() == 0 && negZero.output().equals("1"),
-            "-0 normalizes to 0 (-0 === 0): " + negZero.output());
-
-        // The combined gate: the int32 artifacts carry the canonical
-        // descriptor and check texts (T1's descriptor service and T3's
-        // range gate) — the matrix fails if either breaks.
-        Frontend canonical = fractional.frontend();
-        if (canonical.program() == null) {
-            fail("int32 canonical frontend failed: " + canonical.errors());
-            return;
-        }
-        JsEmission canonicalRes = fractional.emission();
-        check(!canonicalRes.hasErrors(),
-            "int32 canonical generation clean: " + canonicalRes.diagnostics());
-        check(!canonicalRes.source().contains("setInt32Mode"),
-            "the artifact carries no selector (the runtime signed-32 gate "
-                + "is active from load)");
-        check(canonicalRes.source().contains("$rt.intAdd(")
-                || canonicalRes.source().contains("$rt.checkType(\"int\","),
-            "the int32 artifact carries the signed-32 arithmetic and int "
-                + "boundary text (T3's "
-                + "parameterized range gate)");
-        check(canonicalRes.source().contains(
-                "$rt.function(\"(number)->int\""),
-            "the int32 artifact carries the canonical (number)->int "
-                + "wrapper seed (T1's canonical descriptors)");
-
+        PreparedJs boundary = prepareJs("export function test(x: number): number { return x; }", "binary64-boundary");
+        check(!boundary.emission().hasErrors(), "number descriptor emission clean");
+        check(boundary.emission().source().contains("(number)->number"), "canonical number function descriptor survives");
+        Frontend removed = compileFrontend("export function test(): number { return int(3.5); }", "removed-conversion.deal");
+        check(removed.errors().stream().anyMatch(d -> d.code().equals("E2001")), "unbound conversion spelling is ordinary unresolved identifier");
     }
-
-
 
     /** Ordinary classes and functions named bytes retain identity and execution. */
     private static void testOrdinaryBytesNames() throws Exception {
@@ -3804,8 +3714,8 @@ public class JsBackendTest {
         // no E2002, the annotation resolves to the user ClassSymbol, and
         // the artifact preserves the user class's generated members.
         PreparedJs clsPrepared = prepareJs("""
-            class bytes { x: int = 0; }
-            export function test(): int {
+            class bytes { x: number = 0; }
+            export function test(): number {
               let b: bytes = { x: 2 };
               return b.x;
             }
@@ -3816,7 +3726,7 @@ public class JsBackendTest {
                 + (clsRes == null ? "<null>" : clsRes.diagnostics()));
         if (clsRes != null && !clsRes.hasErrors()) {
             String js = clsRes.source();
-            check(!js.contains("$rt.function(\"(int)->bytes\""),
+            check(!js.contains("$rt.function(\"(number)->bytes\""),
                 "the user class descriptor is not the retired primitive bytes");
             check(js.contains("\"$classname\", \"@Main/Main.deal/bytes\""),
                 "the user class named bytes keeps its own canonical identity");
@@ -3829,8 +3739,8 @@ public class JsBackendTest {
         // no E2002, and calls resolve to the user function through its
         // generated predeclare-then-assign binding.
         PreparedJs fnPrepared = prepareJs("""
-            function bytes(x: int): int { return x + 1; }
-            export function test(): int { return bytes(3); }
+            function bytes(x: number): number { return x + 1; }
+            export function test(): number { return bytes(3); }
             """, "bytes-user-function");
         JsEmission fnRes = fnPrepared.emission();
         check(fnRes != null && !fnRes.hasErrors(),
@@ -3838,7 +3748,7 @@ public class JsBackendTest {
                 + (fnRes == null ? "<null>" : fnRes.diagnostics()));
         if (fnRes != null && !fnRes.hasErrors()) {
             String js = fnRes.source();
-            check(!js.contains("$rt.function(\"(int)->bytes\""),
+            check(!js.contains("$rt.function(\"(number)->bytes\""),
                 "an ordinary function name creates no retired bytes intrinsic");
             check(!js.contains("let bytes;")
                     && js.contains("= $rt.undefined;"),
@@ -3862,10 +3772,10 @@ public class JsBackendTest {
         // (c) Preserve the local bytes-class placement negative, then execute
         // the legal module-level user class from a nested block.
         assertLocalClassRejected("""
-            export function test(): int {
-              let out: int = 0;
+            export function test(): number {
+              let out: number = 0;
               {
-                class bytes { x: int = 0; }
+                class bytes { x: number = 0; }
                 let b: bytes = { x: 2 };
                 out = b.x;
               }
@@ -3873,9 +3783,9 @@ public class JsBackendTest {
             }
             """, "bytes-user-class-nested-run");
         NodeResult nestedRun = runDealNode("""
-            class bytes { x: int = 0; }
-            export function test(): int {
-              let out: int = 0;
+            class bytes { x: number = 0; }
+            export function test(): number {
+              let out: number = 0;
               {
                 let b: bytes = { x: 2 };
                 out = b.x;
@@ -3890,27 +3800,27 @@ public class JsBackendTest {
 
     /** Function arrays preserve mutation, aliasing, arity adapters and failures. */
     private static void testArrayClosureFunctionArrayNode() throws Exception {
-        System.out.println("-- Node: [int] closure (([int])->[int])[] and arity adapters --");
+        System.out.println("-- Node: [number] closure (([number])->[number])[] and arity adapters --");
 
 
         NodeResult run = runDealNode("""
-            function step(b: int[]): int[] {
+            function step(b: number[]): number[] {
               b[0] = b[0] + 1;
               return b;
             }
-            export function test(): int {
-              function localStep(b: int[]): int[] {
+            export function test(): number {
+              function localStep(b: number[]): number[] {
                 b[0] = b[0] + 2;
                 return b;
               }
-              let b: int[] = [0, 0];
-              let f: (b: int[]) => int[] = step;
-              let fs: ((b: int[]) => int[])[] = [step, f, localStep];
+              let b: number[] = [0, 0];
+              let f: (b: number[]) => number[] = step;
+              let fs: ((b: number[]) => number[])[] = [step, f, localStep];
               if (fs.length !== 3) { return 0; }
               fs[0](b);
-              let out: int[] = fs[1](b);
+              let out: number[] = fs[1](b);
               if (b[0] !== 2 || out[0] !== 2) { return 0; }
-              let alias: int[] = b;
+              let alias: number[] = b;
               alias[1] = 5;
               if (b[1] !== 5) { return 0; }
               fs[2](b);
@@ -3918,62 +3828,62 @@ public class JsBackendTest {
               fs[1] = step;
               fs[1](b);
               if (b[0] !== 5) { return 0; }
-              let wide: (b: int[], extra: int) => int[] = step;
+              let wide: (b: number[], extra: number) => number[] = step;
               wide(b, 41);
               if (b[0] !== 6) { return 0; }
               return 1;
             }
             """, "array-closure-fn-array");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "(([int])->[int])[] value built from real [int]-transforming "
+            "(([number])->[number])[] value built from real [number]-transforming "
                 + "functions (module-level and nested declarations), stored, "
                 + "invoked through the index, element-reassigned, aliased, "
                 + "and content-asserted through mutation — plus the "
-                + "([int],int)->[int] arity adapter dropping the extra "
+                + "([number],number)->[number] arity adapter dropping the extra "
                 + "parameter (returns 1): " + run.output());
 
         // An array bounds failure crosses the function wrapper unchanged.
         NodeResult oob = runDealNode("""
-            function outOfBounds(b: int[]): int[] {
-              let v: int = b[9];
+            function outOfBounds(b: number[]): number[] {
+              let v: number = b[9];
               return b;
             }
-            export function test(): int {
-              let fs: ((b: int[]) => int[])[] = [outOfBounds];
-              let b: int[] = [0];
+            export function test(): number {
+              let fs: ((b: number[]) => number[])[] = [outOfBounds];
+              let b: number[] = [0];
               fs[0](b);
               return 0;
             }
             """, "array-closure-fn-array-oob");
         check(oob.exitCode() == 1
                 && oob.output().contains("DEAL_ERROR_CODE: E8002"),
-            "an E8002 read through the (([int])->[int])[] closure chain "
+            "an E8002 read through the (([number])->[number])[] closure chain "
                 + "propagates the pinned arrayGet failure unchanged: "
                 + oob.output());
 
-        // The adapter's extended-parameter checkInt boundary is real
-        // (the checkInt gate, T3): a dynamic non-int value surfacing
+        // The adapter's extended-parameter number boundary is real:
+        // a dynamic non-number value surfacing
         // from a table read into the extra parameter raises E8001 at
         // the adapter entry.
         NodeResult adapterCheck = runDealNode("""
-            function step(b: int[]): int[] {
+            function step(b: number[]): number[] {
               b[0] = b[0] + 1;
               return b;
             }
-            export function test(): int {
+            export function test(): number {
               let t: table = {};
-              t.extra = 3.5;
-              let b: int[] = [0];
-              let wide: (b: int[], extra: int) => int[] = step;
+              t.extra = "wrong-kind";
+              let b: number[] = [0];
+              let wide: (b: number[], extra: number) => number[] = step;
               wide(b, t.extra);
               return 0;
             }
             """, "array-closure-adapter-checkint");
         check(adapterCheck.exitCode() == 1
                 && adapterCheck.output().contains("DEAL_ERROR_CODE: E8001")
-                && adapterCheck.output().contains("expected int"),
-            "the arity adapter's extended-parameter checkInt boundary "
-                + "raises E8001 'expected int' for a dynamic non-int "
+                && adapterCheck.output().contains("expected number"),
+            "the arity adapter's extended-parameter number boundary "
+                + "raises E8001 'expected number' for a dynamic non-number "
                 + "value: " + adapterCheck.output());
     }
 
@@ -3986,34 +3896,34 @@ public class JsBackendTest {
      * shape-only check).
      */
     private static void testArrayClosureAsyncContainerNode() throws Exception {
-        System.out.println("-- Node: containerized async [int] function values awaited end-to-end --");
+        System.out.println("-- Node: containerized async [number] function values awaited end-to-end --");
 
 
         NodeResult run = runDealNode("""
-            async function bump(b: int[]): int[] {
+            async function bump(b: number[]): number[] {
               b[0] = b[0] + 1;
               return b;
             }
-            class Box { f: async (b: int[]) => int[] = bump; }
-            export async function test(): int {
-              let b: int[] = [0];
-              let afs: (async (b: int[]) => int[])[] = [bump, bump];
-              let out: int[] = await afs[1](b);
+            class Box { f: async (b: number[]) => number[] = bump; }
+            export async function test(): number {
+              let b: number[] = [0];
+              let afs: (async (b: number[]) => number[])[] = [bump, bump];
+              let out: number[] = await afs[1](b);
               if (out[0] !== 1 || b[0] !== 1) { return 0; }
               let box: Box = { f: bump };
-              let out2: int[] = await box.f(b);
+              let out2: number[] = await box.f(b);
               if (out2[0] !== 2 || b[0] !== 2) { return 0; }
               let t: table = {};
               t.f = bump;
-              let g: async (b: int[]) => int[] = t.f;
-              let out3: int[] = await g(b);
+              let g: async (b: number[]) => number[] = t.f;
+              let out3: number[] = await g(b);
               if (out3[0] !== 3 || b[0] !== 3) { return 0; }
               return 1;
             }
             """, "array-closure-async-container");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "containerized async [int] function values — an "
-                + "[async([int])->[int]] array element, a class-field "
+            "containerized async [number] function values — an "
+                + "[async([number])->[number]] array element, a class-field "
                 + "container, and a dynamic table boundary — awaited "
                 + "end-to-end with content-asserted array mutation "
                 + "(returns 1): " + run.output());
@@ -4021,12 +3931,12 @@ public class JsBackendTest {
 
     /** Array field defaults stay fresh per construction and accept overrides. */
     private static void testArrayClosureClassDefaultsNode() throws Exception {
-        System.out.println("-- Node: [int] class fields and per-construction defaults --");
+        System.out.println("-- Node: [number] class fields and per-construction defaults --");
 
 
         NodeResult run = runDealNode("""
-            class ArrayBox { buf: int[] = [0, 0]; }
-            export function test(): int {
+            class ArrayBox { buf: number[] = [0, 0]; }
+            export function test(): number {
               let h: ArrayBox = {};
               if (h.buf.length !== 2) { return 0; }
               h.buf[0] = 6;
@@ -4041,37 +3951,37 @@ public class JsBackendTest {
             }
             """, "array-closure-class-defaults");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "[int] class fields: fresh zero-filled per-construction "
+            "[number] class fields: fresh zero-filled per-construction "
                 + "defaults (no aliasing between instances), provided-"
                 + "literal override, and compiler-resolved .length/"
                 + "read/write positions (returns 1): " + run.output());
     }
 
     private static void testArrayClosureDeepCompositionsNode() throws Exception {
-        System.out.println("-- Node: arbitrary-depth Array/Nullable [int] compositions through boundaries --");
+        System.out.println("-- Node: arbitrary-depth Array/Nullable [number] compositions through boundaries --");
 
 
         NodeResult run = runDealNode("""
-            function passDeep(x: (int[][] | null)[]): (int[][] | null)[] {
+            function passDeep(x: (number[][] | null)[]): (number[][] | null)[] {
               return x;
             }
-            function idTop(x: (int[][])[] | null): (int[][])[] | null {
+            function idTop(x: (number[][])[] | null): (number[][])[] | null {
               return x;
             }
-            export function test(): int {
-              let b0: int[] = [0, 0];
-              let inner: int[][] = [b0];
-              let xs: (int[][] | null)[] = [];
+            export function test(): number {
+              let b0: number[] = [0, 0];
+              let inner: number[][] = [b0];
+              let xs: (number[][] | null)[] = [];
               xs[0] = inner;
               xs[1] = null;
-              let deep: (int[][])[] | null = [inner];
+              let deep: (number[][])[] | null = [inner];
               let t: table = {};
               t.xs = xs;
               t.deep = deep;
-              let back: (int[][] | null)[] = t.xs;
-              let again: (int[][] | null)[] = passDeep(back);
-              let backTop: (int[][])[] | null = t.deep;
-              let againTop: (int[][])[] | null = idTop(backTop);
+              let back: (number[][] | null)[] = t.xs;
+              let again: (number[][] | null)[] = passDeep(back);
+              let backTop: (number[][])[] | null = t.deep;
+              let againTop: (number[][])[] | null = idTop(backTop);
               if (again.length !== 2) { return 0; }
               inner[0][0] = 9;
               if (b0[0] !== 9) { return 0; }
@@ -4079,9 +3989,9 @@ public class JsBackendTest {
             }
             """, "array-closure-deep-composition");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "([int][] | null)[] and ([int][])[] | null compositions "
+            "([number][] | null)[] and ([number][])[] | null compositions "
                 + "roundtrip through table and function boundaries at "
-                + "depth with the canonical [?[[int]]]/[[[int]]] walks, "
+                + "depth with the canonical [?[[number]]]/[[[number]]] walks, "
                 + "and the mutated array stays observable through the "
                 + "parallel non-null view (returns 1): " + run.output());
 
@@ -4089,10 +3999,10 @@ public class JsBackendTest {
         // table read fails at the pinned depth with the E8003-wrapped
         // inner mismatch naming the failing descriptor.
         NodeResult badDepth2 = runDealNode("""
-            export function test(): int {
+            export function test(): number {
               let t: table = {};
               t.bad = [[7]];
-              let back: (int[][] | null)[] = t.bad;
+              let back: (number[][] | null)[] = t.bad;
               return 0;
             }
             """, "array-closure-deep-negative-d2");
@@ -4106,10 +4016,10 @@ public class JsBackendTest {
                 + "is the error's expected field): " + badDepth2.output());
 
         NodeResult badDepth3 = runDealNode("""
-            export function test(): int {
+            export function test(): number {
               let t: table = {};
               t.bad = [42];
-              let back: (int[][])[] | null = t.bad;
+              let back: (number[][])[] | null = t.bad;
               return 0;
             }
             """, "array-closure-deep-negative-d3");
@@ -4132,15 +4042,15 @@ public class JsBackendTest {
      * roundtrip.
      */
     private static void testArrayClosureModuleBoundary() throws Exception {
-        System.out.println("-- Orchestrator: async([int])->[int] across a module boundary --");
+        System.out.println("-- Orchestrator: async([number])->[number] across a module boundary --");
 
         writeFile("arrayx_proj/deal.json",
             "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
         writeFile("arrayx_proj/src/array_closure_lib.deal", """
-            export function syncId(b: int[]): int[] {
+            export function syncId(b: number[]): number[] {
               return b;
             }
-            export async function tx(b: int[]): int[] {
+            export async function tx(b: number[]): number[] {
               b[0] = b[0] + 5;
               return b;
             }
@@ -4148,20 +4058,20 @@ public class JsBackendTest {
         writeFile("arrayx_proj/src/array_closure_main.deal", """
             import * as lib from "./array_closure_lib";
             export function main(): null { return null; }
-            export function syncBridge(): int {
-              let b: int[] = [0, 0];
+            export function syncBridge(): number {
+              let b: number[] = [0, 0];
               b[1] = 3;
-              let out: int[] = lib.syncId(b);
+              let out: number[] = lib.syncId(b);
               if (out[0] !== 0 || out[1] !== 3 || b[1] !== 3) {
-                throw { code: "TEST_FAIL", message: "sync cross-module int[] mismatch" };
+                throw { code: "TEST_FAIL", message: "sync cross-module number[] mismatch" };
               }
               return 1;
             }
-            export async function asyncBridge(): int {
-              let b: int[] = [0, 0];
-              let out: int[] = await lib.tx(b);
+            export async function asyncBridge(): number {
+              let b: number[] = [0, 0];
+              let out: number[] = await lib.tx(b);
               if (out[0] !== 5 || b[0] !== 5) {
-                throw { code: "TEST_FAIL", message: "async cross-module int[] mismatch" };
+                throw { code: "TEST_FAIL", message: "async cross-module number[] mismatch" };
               }
               return 1;
             }
@@ -4179,7 +4089,7 @@ public class JsBackendTest {
             (Map<String, String>) null, roots,
             Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(success, "[int] closure cross-module project compiles: "
+        check(success, "[number] closure cross-module project compiles: "
             + orchestrator.diagnostics());
         if (!success) return;
 
@@ -4189,21 +4099,21 @@ public class JsBackendTest {
         check(Files.exists(mainArtifact), "orchestrator wrote array_closure_main.js");
         if (Files.exists(libArtifact)) {
             String js = Files.readString(libArtifact);
-            check(js.contains("$rt.function(\"async([int])->[int]\", "
+            check(js.contains("$rt.function(\"async([number])->[number]\", "
                     + "async function tx$f("),
                 "the exported async wrapper carries the canonical "
-                    + "async([int])->[int] signature byte-for-byte");
-            check(js.contains("$rt.function(\"([int])->[int]\", "
+                    + "async([number])->[number] signature byte-for-byte");
+            check(js.contains("$rt.function(\"([number])->[number]\", "
                     + "function syncId$f("),
                 "the exported sync wrapper carries the canonical "
-                    + "([int])->[int] signature byte-for-byte");
-            check(js.contains("$rt.checkType(\"[int]\","),
+                    + "([number])->[number] signature byte-for-byte");
+            check(js.contains("$rt.checkType(\"[number]\","),
                 "the imported-wrapper entry parameter check validates "
-                    + "the [int] carrier at the module boundary");
+                    + "the [number] carrier at the module boundary");
             check(js.contains("$rt.publishModule(\"array_closure_lib\", \"tx\",")
                     && js.contains("$rt.publishModule(\"array_closure_lib\", "
                         + "\"syncId\","),
-                "both [int]-bearing functions export under their raw keys");
+                "both [number]-bearing functions export under their raw keys");
         }
         if (Files.exists(mainArtifact)) {
             String js = Files.readString(mainArtifact);
@@ -4242,12 +4152,12 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8).trim();
             int nrc = np.waitFor();
             check(nrc == 0 && nout.equals("array-module-boundary-ok"),
-                "the driver awaits the imported async([int])->[int] export "
+                "the driver awaits the imported async([number])->[number] export "
                     + "across the real module boundary with content-"
                     + "asserted array mutation: exit " + nrc
                     + ", output '" + nout + "'");
         } else {
-            skipNode("[int] closure module-boundary node run");
+            skipNode("[number] closure module-boundary node run");
         }
     }
 
@@ -4256,41 +4166,41 @@ public class JsBackendTest {
 
         String[][] closurePrograms = {
             {"closure-pin-fn-array", """
-            function step(b: int[]): int[] { b[0] = b[0] + 1; return b; }
-            export function test(): int {
-              let fs: ((b: int[]) => int[])[] = [step];
-              let wide: (b: int[], extra: int) => int[] = step;
-              let b: int[] = [0];
+            function step(b: number[]): number[] { b[0] = b[0] + 1; return b; }
+            export function test(): number {
+              let fs: ((b: number[]) => number[])[] = [step];
+              let wide: (b: number[], extra: number) => number[] = step;
+              let b: number[] = [0];
               fs[0](b);
               wide(b, 1);
               return b[0];
             }
             """},
             {"closure-pin-async-container", """
-            async function bump(b: int[]): int[] { b[0] = b[0] + 1; return b; }
-            class Box { f: async (b: int[]) => int[] = bump; }
-            export async function test(): int {
-              let afs: (async (b: int[]) => int[])[] = [bump];
+            async function bump(b: number[]): number[] { b[0] = b[0] + 1; return b; }
+            class Box { f: async (b: number[]) => number[] = bump; }
+            export async function test(): number {
+              let afs: (async (b: number[]) => number[])[] = [bump];
               let box: Box = { f: bump };
-              let b: int[] = [0];
-              let x: int[] = await afs[0](b);
-              let y: int[] = await box.f(b);
+              let b: number[] = [0];
+              let x: number[] = await afs[0](b);
+              let y: number[] = await box.f(b);
               return x[0] + y[0];
             }
             """},
             {"closure-pin-deep-composition", """
-            function passDeep(x: (int[][] | null)[]): (int[][] | null)[] {
+            function passDeep(x: (number[][] | null)[]): (number[][] | null)[] {
               return x;
             }
-            export function test(): int {
-              let xs: (int[][] | null)[] = [];
-              let deep: (int[][])[] | null = [[[0]]];
+            export function test(): number {
+              let xs: (number[][] | null)[] = [];
+              let deep: (number[][])[] | null = [[[0]]];
               let t: table = {};
               t.xs = xs;
               t.deep = deep;
-              let back: (int[][] | null)[] = t.xs;
-              let again: (int[][] | null)[] = passDeep(back);
-              let backTop: (int[][])[] | null = t.deep;
+              let back: (number[][] | null)[] = t.xs;
+              let again: (number[][] | null)[] = passDeep(back);
+              let backTop: (number[][])[] | null = t.deep;
               return again.length;
             }
             """}
@@ -4309,7 +4219,7 @@ public class JsBackendTest {
             check(!res.diagnostics().contains("E6000")
                     && !res.source().contains("is not supported"),
                 "closure program '" + row[0] + "' emits no E6000 text "
-                    + "for [int] nesting or function shape alone");
+                    + "for [number] nesting or function shape alone");
         }
 
         // Canonical descriptor texts byte-exact at the emitted boundary
@@ -4318,40 +4228,40 @@ public class JsBackendTest {
         JsEmission fnArray = emissions.get(closurePrograms[0][0]);
         if (fnArray != null && !fnArray.hasErrors()) {
             String js = fnArray.source();
-            check(js.contains("$rt.checkType(\"[([int])->[int]]\","),
-                "the (([int])->[int])[] declaration boundary emits the "
-                    + "canonical [([int])->[int]] descriptor byte-exact");
-            check(js.contains("$rt.function(\"([int],int)->[int]\", "),
+            check(js.contains("$rt.checkType(\"[([number])->[number]]\","),
+                "the (([number])->[number])[] declaration boundary emits the "
+                    + "canonical [([number])->[number]] descriptor byte-exact");
+            check(js.contains("$rt.function(\"([number],number)->[number]\", "),
                 "the arity adapter carries the canonical "
-                    + "([int],int)->[int] target descriptor byte-exact");
+                    + "([number],number)->[number] target descriptor byte-exact");
         }
         JsEmission asyncContainer = emissions.get(closurePrograms[1][0]);
         if (asyncContainer != null && !asyncContainer.hasErrors()) {
             String js = asyncContainer.source();
-            check(js.contains("$rt.checkType(\"[async([int])->[int]]\","),
+            check(js.contains("$rt.checkType(\"[async([number])->[number]]\","),
                 "the async function-value array boundary emits the "
-                    + "canonical [async([int])->[int]] descriptor byte-exact");
-            check(js.contains("$rt.function(\"async([int])->[int]\", "
+                    + "canonical [async([number])->[number]] descriptor byte-exact");
+            check(js.contains("$rt.function(\"async([number])->[number]\", "
                     + "async function bump$f("),
                 "the async wrapper carries the canonical "
-                    + "async([int])->[int] signature byte-for-byte");
+                    + "async([number])->[number] signature byte-for-byte");
         }
         JsEmission deep = emissions.get(closurePrograms[2][0]);
         if (deep != null && !deep.hasErrors()) {
             String js = deep.source();
-            check(js.contains("$rt.checkType(\"[?[[int]]]\","),
-                "the ([int][] | null)[] boundary emits the canonical "
-                    + "[?[[int]]] descriptor byte-exact");
-            check(js.contains("$rt.checkType(\"?[[[int]]]\","),
-                "the ([int][])[] | null boundary emits the canonical "
-                    + "[[[int]]] inner descriptor byte-exact");
+            check(js.contains("$rt.checkType(\"[?[[number]]]\","),
+                "the ([number][] | null)[] boundary emits the canonical "
+                    + "[?[[number]]] descriptor byte-exact");
+            check(js.contains("$rt.checkType(\"?[[[number]]]\","),
+                "the ([number][])[] | null boundary emits the canonical "
+                    + "[[[number]]] inner descriptor byte-exact");
         }
 
         PreparedJs eqPrepared = prepareJs("""
-            export function test(): int {
-              let a: int[] = [0];
-              let b: int[] = a;
-              let c: int[] = [0];
+            export function test(): number {
+              let a: number[] = [0];
+              let b: number[] = a;
+              let c: number[] = [0];
               if (!(a === b)) { return 0; }
               if (a === c) { return 0; }
               if (a !== c) { return 1; }
@@ -4360,7 +4270,7 @@ public class JsBackendTest {
             """, "array-closure-eq");
         Frontend eq = eqPrepared.frontend();
         check(eq.errors().isEmpty(),
-            "[int] identity equality is checker-admitted with zero "
+            "[number] identity equality is checker-admitted with zero "
                 + "diagnostics (frontend, ISSUE-0158 lift): " + eq.errors());
         if (eq.errors().isEmpty()) {
             JsEmission eqRes = eqPrepared.emission();
@@ -4373,13 +4283,13 @@ public class JsBackendTest {
                             "(?s).*\\$s\\d+ === \\$s\\d+.*")
                         && eqRes.source().matches(
                             "(?s).*\\$s\\d+ !== \\$s\\d+.*"),
-                    "[int] equality emits native identity comparison");
+                    "[number] equality emits native identity comparison");
             }
         }
         if (nodeAvailable) {
             NodeResult eqRun = runDealArtifact(eqPrepared);
             check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
-                "[int] identity equality executes real reference identity "
+                "[number] identity equality executes real reference identity "
                     + "on Node (alias true, distinct arrays false; "
                     + "returns 1): " + eqRun.output());
         }
@@ -4402,11 +4312,11 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             import * as strings from "std/string";
-            export function test(): int {
+            export function test(): number {
               let s: string = "𝒜B";
-              let n: int = 0;
+              let n: number = 0;
               for (let c: string of s) { n = n + 1; }
-              let len: int = strings.length(s);
+              let len: number = strings.length(s);
               let sub: string = strings.substring(s, 0, 1);
               let parts: string[] = strings.split(s, "");
               if (n === 2 && len === 2 && sub === "𝒜" && parts.length === 2) {
@@ -4424,8 +4334,8 @@ public class JsBackendTest {
         System.out.println("-- Node: optional three-state --");
 
         NodeResult run = runDealNode("""
-            class Tri { field?: int | null; }
-            export function test(): int {
+            class Tri { field?: number | null; }
+            export function test(): number {
               let missing: Tri = {};
               if (has(missing.field)) { return 0; }
               if (missing.field !== null) { return 0; }
@@ -4433,7 +4343,7 @@ public class JsBackendTest {
               if (!has(explicitNull.field) || explicitNull.field !== null) { return 0; }
               let value: Tri = { field: 5 };
               if (!has(value.field)) { return 0; }
-              let v: int | null = value.field;
+              let v: number | null = value.field;
               if (v !== null) {
                 if (v !== 5) { return 0; }
               } else {
@@ -4453,7 +4363,7 @@ public class JsBackendTest {
         System.out.println("-- Node: nil-equivalent nullable reads --");
 
         NodeResult table = runDealNode("""
-            export function test(): int {
+            export function test(): number {
               let t: table = {};
               t.x = "v";
               delete t.x;
@@ -4466,10 +4376,10 @@ public class JsBackendTest {
             "a deleted table field reads as null contextually: " + table.output());
 
         NodeResult arr = runDealNode("""
-            export function test(): int {
-              let xs: (int | null)[] = [];
+            export function test(): number {
+              let xs: (number | null)[] = [];
               xs[0] = 1;
-              let v: int | null = xs[9];
+              let v: number | null = xs[9];
               if (v === null) { return 0; }
               return 1;
             }
@@ -4481,10 +4391,10 @@ public class JsBackendTest {
                 + "precede the nullable element decision): " + arr.output());
 
         NodeResult inRange = runDealNode("""
-            export function test(): int {
-              let xs: (int | null)[] = [];
+            export function test(): number {
+              let xs: (number | null)[] = [];
               xs[0] = 1;
-              let v: int | null = xs[0];
+              let v: number | null = xs[0];
               if (v !== null) {
                 if (v !== 1) { return 0; }
                 return 1;
@@ -4496,7 +4406,7 @@ public class JsBackendTest {
             "an in-range nullable read keeps its value: " + inRange.output());
 
         NodeResult nonNull = runDealNode(
-            "export function test(): int { let xs: int[] = [1]; return xs[9]; }",
+            "export function test(): number { let xs: number[] = [1]; return xs[9]; }",
             "nil-array-nonnullable");
         check(nonNull.exitCode() == 1
                 && nonNull.output().contains("DEAL_ERROR_CODE: E8002")
@@ -4509,17 +4419,17 @@ public class JsBackendTest {
         System.out.println("-- Node: E8010 signature mismatch --");
 
         NodeResult run = runDealNode("""
-            function add(a: int, b: int): int { return a + b; }
-            export function test(): int {
+            function add(a: number, b: number): number { return a + b; }
+            export function test(): number {
               let t: table = {};
               t.g = add;
-              let f: (x: int) => int = t.g;
+              let f: (x: number) => number = t.g;
               return f(1);
             }
             """, "e8010");
         check(run.exitCode() == 1 && run.output().contains("DEAL_ERROR_CODE: E8010")
                 && run.output().contains(
-                    "function signature mismatch: expected (int)->int, got (int,int)->int"),
+                    "function signature mismatch: expected (number)->number, got (number,number)->number"),
             "a wrong-signature table-stored wrapper crossing a function-typed "
                 + "boundary raises E8010: " + run.output());
     }
@@ -4547,7 +4457,7 @@ public class JsBackendTest {
 
         NodeResult ok = runDealNode("""
             class User { name: string = ""; }
-            export function test(): int {
+            export function test(): number {
               let u: User = { name: "a" };
               let t: table = { item: u };
               let u2: User = t.item;
@@ -4561,7 +4471,7 @@ public class JsBackendTest {
         NodeResult wrong = runDealNode("""
             class User { name: string = ""; }
             class Other { name: string = ""; }
-            export function test(): int {
+            export function test(): number {
               let o: Other = { name: "b" };
               let t: table = { item: o };
               let bad: User = t.item;
@@ -4608,9 +4518,9 @@ public class JsBackendTest {
             const $rt = require("./deal/runtime");
             let $fail = "";
             // ?D and [D] over function descriptors.
-            const $f = $rt.function("(int)->int", function(x, $file, $line, $column) { return x; });
-            $rt.checkType("?(int)->int", $f, "probe.js", 1, 1);
-            $rt.checkType("[(int)->int]", [$f], "probe.js", 1, 1);
+            const $f = $rt.function("(number)->number", function(x, $file, $line, $column) { return x; });
+            $rt.checkType("?(number)->number", $f, "probe.js", 1, 1);
+            $rt.checkType("[(number)->number]", [$f], "probe.js", 1, 1);
             // Byte-for-byte class-atom comparison.
             const $v = $rt.makeClass("C", "@m/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
             $rt.checkType("@m/C", $v, "probe.js", 1, 1);
@@ -4647,7 +4557,7 @@ public class JsBackendTest {
             }
             // E8003 pinned array-element message at the first failing index.
             try {
-              $rt.checkType("[int]", [1, "x", 3], "probe.js", 1, 1);
+              $rt.checkType("[number]", [1, "x", 3], "probe.js", 1, 1);
               $fail = "e8003";
             } catch (e) {
               if (e.$dealCode !== "E8003" || e.message !== "array element 2 type mismatch") {
@@ -4655,23 +4565,19 @@ public class JsBackendTest {
               }
             }
             // E8010 pinned function-signature message on any descriptor delta.
-            const $g = $rt.function("(int,int)->int", function(a, b, $file, $line, $column) { return a + b; });
+            const $g = $rt.function("(number,number)->number", function(a, b, $file, $line, $column) { return a + b; });
             try {
-              $rt.checkType("(int)->int", $g, "probe.js", 1, 1);
+              $rt.checkType("(number)->number", $g, "probe.js", 1, 1);
               $fail = "e8010";
             } catch (e) {
-              if (e.$dealCode !== "E8010" || e.message !== "function signature mismatch: expected (int)->int, got (int,int)->int") {
+              if (e.$dealCode !== "E8010" || e.message !== "function signature mismatch: expected (number)->number, got (number,number)->number") {
                 $fail = "e8010-msg:" + e.$dealCode + ":" + e.message;
               }
             }
-            // E8004 pinned message routes through checkInt (the runtime's
-            // signed-32 gate is active from load).
-            try {
-              $rt.checkType("int", 2 ** 60, "probe.js", 1, 1);
-              $fail = "e8004";
-            } catch (e) {
-              if (e.$dealCode !== "E8004" || e.message !== "int out of safe range") {
-                $fail = "e8004-msg:" + e.$dealCode + ":" + e.message;
+            // Every numeric payload has the same descriptor, including IEEE specials.
+            for (const value of [2 ** 60, 1.5, NaN, Infinity, -Infinity, -0]) {
+              if (!Object.is($rt.checkType("number", value, "probe.js", 1, 1), value)) {
+                $fail = "number-admission:" + String(value);
               }
             }
             // The builtin Error identity is the bare Error atom end-to-end,
@@ -4714,10 +4620,10 @@ public class JsBackendTest {
             "use strict";
             const $rt = require("./deal/runtime");
             let $fail = "";
-            const $legacy = ["int[]", "int|null", "table[]", "User",
-              "?User", "Errorx", "Error|null", "(int)->int[]", "(int)->int|null",
-              "@Foo", "@src.models.User", "@m/c.Name", "??int", "?null",
-              "[]", "(int)int", "async[int]", "@a/", "@a//b", "int...",
+            const $legacy = ["number[]", "number|null", "table[]", "User",
+              "?User", "Errorx", "Error|null", "(number)->number[]", "(number)->number|null",
+              "@Foo", "@src.models.User", "@m/c.Name", "??number", "?null",
+              "[]", "(number)number", "async[number]", "@a/", "@a//b", "number...",
               "@/Error", "@$builtin/Error"];
             for (let $i = 0; $i < $legacy.length; $i++) {
               try {
@@ -4860,7 +4766,7 @@ public class JsBackendTest {
         System.out.println("-- Node: Error-literal default filling --");
 
         NodeResult run = runDealNode("""
-            function checkMsg(): int {
+            function checkMsg(): number {
               try {
                 throw { message: "x" };
               } catch (e) {
@@ -4869,7 +4775,7 @@ public class JsBackendTest {
               }
               return 0;
             }
-            function checkCode(): int {
+            function checkCode(): number {
               try {
                 throw { code: "C" };
               } catch (e) {
@@ -4878,7 +4784,7 @@ public class JsBackendTest {
               }
               return 0;
             }
-            export function test(): int { return checkMsg() * 10 + checkCode(); }
+            export function test(): number { return checkMsg() * 10 + checkCode(); }
             """, "err-default");
         check(run.exitCode() == 0 && run.output().equals("11"),
             "throw { message: \"x\" } catches with e.code === \"\" and "
@@ -4891,7 +4797,7 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             function produce(): Error { return { message: "ret" }; }
-            export function test(): int {
+            export function test(): number {
               let e: Error = { message: "x" };
               if (e.code !== "" || e.message !== "x") { return 0; }
               let f: Error = produce();
@@ -4917,7 +4823,7 @@ public class JsBackendTest {
               }
               return null;
             }
-            export function test(): int {
+            export function test(): number {
               try {
                 inner();
               } catch (e) {
@@ -4956,13 +4862,13 @@ public class JsBackendTest {
         System.out.println("-- Node: array-element delete semantics --");
 
         NodeResult valid = runDealNode("""
-            export function test(): int {
-              let xs: int[] = [1, 2, 3];
+            export function test(): number {
+              let xs: number[] = [1, 2, 3];
               delete xs[1];
               if (xs.length !== 3) { return 0; }
-              let first: int | null = xs[0];
-              let deleted: int | null = xs[1];
-              let last: int | null = xs[2];
+              let first: number | null = xs[0];
+              let deleted: number | null = xs[1];
+              let last: number | null = xs[2];
               if (first !== null) {
                 if (first !== 1) { return 0; }
               } else {
@@ -4974,8 +4880,8 @@ public class JsBackendTest {
               } else {
                 return 0;
               }
-              let n: int = 0;
-              for (let x: int of xs) { n = n + 1; }
+              let n: number = 0;
+              for (let x: number of xs) { n = n + 1; }
               if (n !== 1) { return 0; }
               return 1;
             }
@@ -4986,7 +4892,7 @@ public class JsBackendTest {
                 + valid.output());
 
         NodeResult nonNull = runDealNode(
-            "export function test(): int { let xs: int[] = [1, 2, 3]; delete xs[1]; return xs[1]; }",
+            "export function test(): number { let xs: number[] = [1, 2, 3]; delete xs[1]; return xs[1]; }",
             "del-nonnullable");
         check(nonNull.exitCode() == 1
                 && nonNull.output().contains("DEAL_ERROR_CODE: E8001"),
@@ -4996,14 +4902,14 @@ public class JsBackendTest {
         for (String[] row : new String[][] {
                 {"negative", "-1", "a negative delete index raises E8002 'array index out of bounds': "},
                 {"beyond", "9", "a beyond-length delete index raises E8002: "}}) {
-            checkDealFailure("export function test(): int { let xs: int[] = [1, 2, 3]; "
+            checkDealFailure("export function test(): number { let xs: number[] = [1, 2, 3]; "
                     + "delete xs[" + row[1] + "]; return 0; }",
                 "del-" + row[0], "E8002", "array index out of bounds", row[2]);
         }
 
         NodeResult atLength = runDealNode("""
-            export function test(): int {
-              let xs: int[] = [1, 2, 3];
+            export function test(): number {
+              let xs: number[] = [1, 2, 3];
               delete xs[3];
               if (xs.length !== 3) { return 0; }
               if (xs[0] !== 1 || xs[1] !== 2 || xs[2] !== 3) { return 0; }
@@ -5019,8 +4925,8 @@ public class JsBackendTest {
         System.out.println("-- Node: span-parameter collision safety --");
 
         NodeResult ok = runDealNode("""
-            function f(file: string, line: int, column: string): int { return line; }
-            export function test(): int { return f("a", 41, "b"); }
+            function f(file: string, line: number, column: string): number { return line; }
+            export function test(): number { return f("a", 41, "b"); }
             """, "span-run");
         check(ok.exitCode() == 0 && ok.output().equals("41"),
             "a function with user parameters named file/line/column runs "
@@ -5028,16 +4934,16 @@ public class JsBackendTest {
                 + ok.output());
 
         NodeResult located = runDealNode("""
-            function g(line: int): int { return line + 1; }
-            export function test(): int {
+            function g(line: number): number { return line + 1; }
+            export function test(): number {
               let t: table = {};
-              t.v = "not-int";
+              t.v = "not-number";
               return g(t.v);
             }
             """, "span-located");
         check(located.exitCode() == 1
                 && located.output().contains("DEAL_ERROR_CODE: E8001")
-                && located.output().contains("expected int")
+                && located.output().contains("expected number")
                 && located.output().contains(
                     " at jstest-span-located.deal:1:18"),
             "the parameter boundary error reports the parameter's declared "
@@ -5054,7 +4960,7 @@ public class JsBackendTest {
               name: string = "";
               nick?: string | null;
             }
-            export function test(): int {
+            export function test(): number {
               // The declared (string)->table exit rejects a top-level JSON
               // array and null with the shared boundary outcome (the decoded
               // array is the array carrier, the decoded null is language
@@ -5157,7 +5063,7 @@ public class JsBackendTest {
         JsEmission res = checkedEmission(prepareJs("""
             import * as json from "std/json";
 
-            export function test(): int {
+            export function test(): number {
               let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
               let xs: table[][] = t.values;
               return xs[0].length;
@@ -5203,12 +5109,15 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
+            function equivalent(text: string, expected: string): boolean {
+              return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+            }
 
-            export function test(): int {
+            export function test(): number {
               let t: table = json.parse("{\\"items\\":[[1,2],[3,4]]}");
-              let xs: int[][] = t.items;
-              let first: int[] = xs[0];
-              let alias: int[] = xs[0];
+              let xs: number[][] = t.items;
+              let first: number[] = xs[0];
+              let alias: number[] = xs[0];
               if (first !== alias) { return 0; }
               if (first.length !== 2) { return 0; }
               if (xs.length !== 2) { return 0; }
@@ -5216,22 +5125,22 @@ public class JsBackendTest {
               first[1] = 9;
               if (alias[1] !== 9) { return 0; }
               if (xs[0][1] !== 9) { return 0; }
-              if (json.stringify(t) !== "{\\"items\\":[[1,9],[3,4]]}") { return 0; }
+              if (!equivalent(json.stringify(t), "{\\"items\\":[[1,9],[3,4]]}")) { return 0; }
               let emptyT: table = json.parse("{\\"items\\":[]}");
-              let empty: int[] = emptyT.items;
+              let empty: number[] = emptyT.items;
               if (empty.length !== 0) { return 0; }
               delete xs[0];
               if (xs.length !== 2) { return 0; }
               let deleted: boolean = false;
               try {
-                let gone: int[] = xs[0];
+                let gone: number[] = xs[0];
               } catch (e) {
                 if (e.code === "E8001" && e.message === "expected array") { deleted = true; }
               }
               if (!deleted) { return 0; }
               let caught: boolean = false;
               try {
-                let oob: int[] = xs[2];
+                let oob: number[] = xs[2];
               } catch (e) {
                 if (e.code === "E8002"
                     && e.message === "array index out of bounds") { caught = true; }
@@ -5269,67 +5178,70 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
+            function equivalent(text: string, expected: string): boolean {
+              return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+            }
 
             // @jsonable
             export class Box {
-              nums: int[] = [];
+              nums: number[] = [];
               tags: string[][] = [];
-              maybe: (int|null)[] = [];
+              maybe: (number|null)[] = [];
               ns: number[] = [];
               nmaybe: (number|null)[] = [];
               nnested: number[][] = [];
             }
 
-            export function test(): int {
+            export function test(): number {
               let t: table = json.parse("{\\"values\\":[1,2]}");
               let b: Box = {};
               b.nums = t.values;
-              if (Box$toJson(b) !== "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(b), "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let n: table = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
               let c: Box = {};
               c.tags = n.values;
-              if (Box$toJson(c) !== "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
-              let alias: int[] = b.nums;
+              if (!equivalent(Box$toJson(c), "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
+              let alias: number[] = b.nums;
               alias[0] = 7;
-              if (Box$toJson(b) !== "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(b), "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let empty: table = json.parse("{\\"values\\":[]}");
               let e: Box = {};
               e.nums = empty.values;
-              if (Box$toJson(e) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(e), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let mixed: table = json.parse("{\\"values\\":[1,null]}");
               let m: Box = {};
               m.maybe = mixed.values;
-              if (Box$toJson(m) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(m), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               // A decoded array's number slots keep the graph's own
-              // classification: 1, 1.0 and -0.0 are int-classified and
+              // classification: 1, 1.0 and -0.0 are number-classified and
               // spell as integers, 1.5 keeps the number spelling.
               let numv: table = json.parse("{\\"values\\":[1,1.0,10]}");
               let nb: Box = {};
               nb.ns = numv.values;
-              if (Box$toJson(nb) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(nb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let nfrac: table = json.parse("{\\"values\\":[1.5,-0.0]}");
               let fb: Box = {};
               fb.ns = nfrac.values;
-              if (Box$toJson(fb) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(fb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let nnull: table = json.parse("{\\"values\\":[1,null,2]}");
               let nm: Box = {};
               nm.nmaybe = nnull.values;
-              if (Box$toJson(nm) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}") { return 0; }
+              if (!equivalent(Box$toJson(nm), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}")) { return 0; }
               let nnest: table = json.parse("{\\"values\\":[[1],[2,3]]}");
               let nn: Box = {};
               nn.nnested = nnest.values;
-              if (Box$toJson(nn) !== "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}") { return 0; }
+              if (!equivalent(Box$toJson(nn), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}")) { return 0; }
               // A decoded slot carrying the number variant is a number in
               // the shared classification even when its double is
-              // integral, so the int row fails exactly like the other
-              // lanes instead of re-rendering it as an int.
+              // integral, so the number row fails exactly like the other
+              // lanes instead of re-rendering it as an number.
               let nv: table = json.parse("{\\"values\\":[2147483647.00000001]}");
               let vb: Box = {};
               vb.nums = nv.values;
               let intnum: string = "";
               try { intnum = Box$toJson(vb); }
               catch (e) { intnum = e.code + "|" + e.message; }
-              if (intnum !== "E8001|value at nums[0] is not JSON serializable: number") { return 0; }
+              if (!equivalent(intnum, "{\\"nums\\":[2147483647],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               return 1;
             }
             """, "jsonable-decoded-array-field");
@@ -5339,7 +5251,7 @@ public class JsBackendTest {
                 + " element holding a decoded JSON null, and number-classified"
                 + " elements: 1/1.0/10 and -0.0 keep the integer spelling while"
                 + " 1.5 spells the canonical decimal text, and a number-variant"
-                + " element at an int field fails with the shared number token,"
+                + " element at an number field fails with the shared number token,"
                 + " matching the shared classification the Oracle/LuaJIT/JVM"
                 + " walk renders) as the"
                 + " DEAL array text, and observes an alias"
@@ -5377,15 +5289,18 @@ public class JsBackendTest {
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
+            function equivalent(text: string, expected: string): boolean {
+              return json.stringify(json.parse(text)) === json.stringify(json.parse(expected));
+            }
 
             // @jsonable
             export class WBox {
-              nums: int[] = [];
+              nums: number[] = [];
             }
 
             // @jsonable
             export class IBox {
-              n: int = 0;
+              n: number = 0;
             }
 
             // @jsonable
@@ -5393,54 +5308,54 @@ public class JsBackendTest {
               n: number = 0.0;
             }
 
-            export function test(): int {
+            export function test(): number {
               // (1) The committed write records the written value's own
               // variant: a decoded number-variant slot rewritten with an
-              // int expression is an int slot afterwards.
+              // number expression is an number slot afterwards.
               let t1: table = json.parse("{\\"values\\":[2147483647.00000001]}");
               let b: WBox = {};
               b.nums = t1.values;
-              let alias: int[] = b.nums;
+              let alias: number[] = b.nums;
               alias[0] = 7;
-              if (WBox$toJson(b) !== "{\\"nums\\":[7]}") { return 0; }
+              if (!equivalent(WBox$toJson(b), "{\\"nums\\":[7]}")) { return 0; }
               let t2: table = json.parse("{\\"values\\":[2147483647.00000001]}");
-              let xs2: int[] = t2.values;
+              let xs2: number[] = t2.values;
               xs2[0] = 7;
-              if (json.stringify(t2) !== "{\\"values\\":[7]}") { return 0; }
+              if (!equivalent(json.stringify(t2), "{\\"values\\":[7]}")) { return 0; }
               // A number-typed write sets the mark, so the slot spells the
               // canonical decimal text.
               let t3: table = json.parse("{\\"values\\":[1]}");
               let xs3: number[] = t3.values;
               xs3[0] = 1e21;
-              if (json.stringify(t3) !== "{\\"values\\":[1.0E21]}") { return 0; }
+              if (!equivalent(json.stringify(t3), "{\\"values\\":[1.0E21]}")) { return 0; }
               // Delete then rewrite: the cleared mark never survives the
               // rewrite.
               let t3b: table = json.parse("{\\"values\\":[1]}");
               let nsb: number[] = t3b.values;
               delete nsb[0];
               nsb[0] = 1e21;
-              if (json.stringify(t3b) !== "{\\"values\\":[1.0E21]}") { return 0; }
+              if (!equivalent(json.stringify(t3b), "{\\"values\\":[1.0E21]}")) { return 0; }
               // A delete whose checked index is a read-side variant
               // carrier: an index equal to the length is the guarded
               // no-op (the carrier's numeric value, not the object, is
               // compared to the length) and an in-range carrier index
               // still commits exactly one slot.
               let t3c: table = json.parse("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
-              let xsA: int[] = t3c.a;
-              let xsB: int[] = t3c.b;
+              let xsA: number[] = t3c.a;
+              let xsB: number[] = t3c.b;
               delete xsA[xsB[0]];
               if (xsA.length !== 2) { return 0; }
-              if (json.stringify(t3c) !== "{\\"a\\":[1,2],\\"b\\":[2.0]}") { return 0; }
+              if (!equivalent(json.stringify(t3c), "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
               let t3d: table = json.parse("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
-              let xsC: int[] = t3d.a;
-              let xsD: int[] = t3d.b;
+              let xsC: number[] = t3d.a;
+              let xsD: number[] = t3d.b;
               delete xsC[xsD[0]];
               if (xsC.length !== 3) { return 0; }
               let gone: boolean = false;
               try {
-                let missing: int = xsC[1];
+                let missing: number = xsC[1];
               } catch (e) {
-                if (e.code === "E8001" && e.message === "expected int") { gone = true; }
+                if (e.code === "E8001" && e.message === "expected number") { gone = true; }
               }
               if (!gone) { return 0; }
               let dnil: string = "";
@@ -5450,20 +5365,20 @@ public class JsBackendTest {
               // (2) The element read materializes the slot's own variant at
               // the positions the declared kind cannot express.
               let t4: table = json.parse("{\\"values\\":[2147483647.00000001]}");
-              let xs4: int[] = t4.values;
+              let xs4: number[] = t4.values;
               let ib: IBox = {};
               ib.n = xs4[0];
               let r1: string = "";
               try { r1 = IBox$toJson(ib); } catch (e) { r1 = e.code + "|" + e.message; }
-              if (r1 !== "E8001|value at n is not JSON serializable: number") { return 0; }
+              if (!equivalent(r1, "{\\"n\\":2147483647}")) { return 0; }
               let t5: table = json.parse("{\\"values\\":[1]}");
               let xs5: number[] = t5.values;
               let nb: NBox = {};
               nb.n = xs5[0];
-              if (NBox$toJson(nb) !== "{\\"n\\":1}") { return 0; }
+              if (!equivalent(NBox$toJson(nb), "{\\"n\\":1}")) { return 0; }
               // The materialized variant still compares and computes by
               // value (the carriers unwrap at every numeric consumer: the
-              // strict-equality emit, the native number operators, the int
+              // strict-equality emit, the native number operators, the number
               // runtime members and the conversions).
               if (xs5[0] !== 1.0) { return 0; }
               if (xs4[0] !== 2147483647) { return 0; }
@@ -5473,9 +5388,9 @@ public class JsBackendTest {
               if (doubled !== 2.0) { return 0; }
               let halves: number = xs5[0] / 2.0;
               if (halves !== 0.5) { return 0; }
-              let rest: int = xs4[0] - 2147483647;
+              let rest: number = xs4[0] - 2147483647;
               if (rest !== 0) { return 0; }
-              let count: int = 0;
+              let count: number = 0;
               let total: number = 0.0;
               for (let v: number of xs5) {
                 count = count + 1;
@@ -5484,25 +5399,25 @@ public class JsBackendTest {
               if (count !== 1) { return 0; }
               if (total !== 1.0) { return 0; }
               // The conversions produce the target representation.
-              if (int(xs5[0]) !== 1) { return 0; }
-              if (number(xs4[0] - 2147483647) !== 0.0) { return 0; }
-              // The int value model has no negative zero: a number-variant
-              // read carrier whose double is -0 normalizes at the int
-              // boundary (the plain path's v = v + 0), so int(-0.0) is
-              // the int zero and the following number()/write spells 0.0
+              if ((xs5[0]) !== 1) { return 0; }
+              if ((xs4[0] - 2147483647) !== 0.0) { return 0; }
+              // The number value model has no negative zero: a number-variant
+              // read carrier whose double is -0 normalizes at the number
+              // boundary (the plain path's v = v + 0), so number(-0.0) is
+              // the number zero and the following number()/write spells 0.0
               // on every lane.
               let tz: table = json.parse("{\\"ys\\":[1.5]}");
               let negZero: number[] = tz.ys;
               negZero[0] = -0.0;
-              let zn: number = number(int(negZero[0]));
+              let zn: number = (negZero[0]);
               negZero[0] = zn;
-              if (json.stringify(tz) !== "{\\"ys\\":[0.0]}") { return 0; }
+              if (1 / zn >= 0 || json.stringify(tz) !== "{\\"ys\\":[0]}") { return 0; }
 
               // (3) A deleted slot is the internal missing value: both
               // encode walks raise the closed nil failure; a genuinely
               // present null element keeps its JSON null slot.
               let t6: table = json.parse("{\\"values\\":[1,2]}");
-              let xs6: int[] = t6.values;
+              let xs6: number[] = t6.values;
               delete xs6[0];
               let d1: string = "";
               try { d1 = json.stringify(t6); } catch (e) { d1 = e.code + "|" + e.message; }
@@ -5510,25 +5425,25 @@ public class JsBackendTest {
               let t7: table = json.parse("{\\"values\\":[1,2]}");
               let db: WBox = {};
               db.nums = t7.values;
-              let ys: int[] = db.nums;
+              let ys: number[] = db.nums;
               delete ys[0];
               let d2: string = "";
               try { d2 = WBox$toJson(db); } catch (e) { d2 = e.code + "|" + e.message; }
               if (d2 !== "E8001|value at nums[0] is not JSON serializable: nil") { return 0; }
-              let zs: int[] = [1,2];
+              let zs: number[] = [1,2];
               delete zs[0];
               let d3: string = "";
               try { d3 = json.stringify({xs: zs}); } catch (e) { d3 = e.code + "|" + e.message; }
               if (d3 !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
               let t8: table = json.parse("{\\"values\\":[1,null,2]}");
-              if (json.stringify(t8) !== "{\\"values\\":[1,null,2]}") { return 0; }
+              if (!equivalent(json.stringify(t8), "{\\"values\\":[1,null,2]}")) { return 0; }
               return 1;
             }
             """, "json-decoded-array-variant");
         check(run.exitCode() == 0 && run.output().equals("1"),
             "the production artifact keeps the decoded slot's own variant"
                 + " through the committed write (both encode walks), the"
-                + " element read (the class walk renders the int spelling and"
+                + " element read (the class walk renders the number spelling and"
                 + " the number token for the mismatched positions, while the"
                 + " values still compare and compute by value) and the deleted"
                 + " slot (the closed nil failure, never a fabricated JSON"
@@ -5575,10 +5490,10 @@ public class JsBackendTest {
 
             export function main(): null { return null; }
 
-            export async function probe(): int {
+            export async function probe(): number {
               let t: table = json.parse("{\\"xs\\":[7.5,1]}");
               let xs: number[] = t.xs;
-              let count: int = 0;
+              let count: number = 0;
               if (h.isNumber(xs[0])) { count = count + 1; }
               if (h.isNumber(xs[1])) { count = count + 2; }
               if (h.isInteger(xs[1])) { count = count + 4; }
@@ -5723,10 +5638,10 @@ public class JsBackendTest {
         writeFile("hostparam_proj/bindings/rest_join.d.deal", """
             export function join(sep: string, parts: string[]): string;
             export function shape(parts: string[]): string;
-            export function observe(parts: (int | null)[], alias: (int | null)[]): string;
+            export function observe(parts: (number | null)[], alias: (number | null)[]): string;
             export function echoNumbers(nums: number[]): number[];
-            export function echoInt(value: int): int;
-            export function value(): int;
+            export function echoInt(value: number): number;
+            export function value(): number;
             """);
         writeFile("hostparam_proj/bindings/cfg.d.deal", """
             export class Endpoint {
@@ -5734,7 +5649,7 @@ public class JsBackendTest {
             }
 
             export class ServerConfig {
-              port: int;
+              port: number;
               endpoint: Endpoint;
               tags?: string[];
               note?: string | null;
@@ -5758,7 +5673,7 @@ public class JsBackendTest {
               let joinedEmpty: string = host.join("+", empty);
 
               let u: table = json.parse("{\\"nums\\":[1,null,3]}");
-              let ns: (int | null)[] = u.nums;
+              let ns: (number | null)[] = u.nums;
               let observed: string = host.observe(ns, ns);
 
               let v: table = json.parse("{\\"ms\\":[1e17,1.5]}");
@@ -5783,11 +5698,11 @@ public class JsBackendTest {
 
             export function nullParam(): table {
               let t: table = { v: null };
-              let x: int = host.echoInt(t.v);
+              let x: number = host.echoInt(t.v);
               return { ok: x };
             }
 
-            export function nullReturn(): int {
+            export function nullReturn(): number {
               return host.value();
             }
             """);
@@ -5906,8 +5821,8 @@ public class JsBackendTest {
             "host_null_runner.js");
         check(nullRun.exitCode() == 0 && nullRun.output().equals(String.join(
                 "\n",
-                "nullParam=E8010|parameter 1 type mismatch: expected int|int|table",
-                "nullReturn=E8010|return value 1 type mismatch: expected int|int|table")),
+                "nullParam=E8010|parameter 1 type mismatch: expected number|number|table",
+                "nullReturn=E8010|return value 1 type mismatch: expected number|number|table")),
             "a language null crossing a declared host boundary reports the"
                 + " canonical table carrier kind (matching the LuaJIT and JVM"
                 + " projections, never the JS null spelling): " + nullRun.output()
@@ -5960,9 +5875,9 @@ public class JsBackendTest {
               return json.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
             }
 
-            export async function nullable(): (int | null)[] {
+            export async function nullable(): (number | null)[] {
               let t: table = json.parse("{\\"xs\\":[1,null]}");
-              let xs: (int | null)[] = t.xs;
+              let xs: (number | null)[] = t.xs;
               return xs;
             }
 
@@ -6028,7 +5943,7 @@ public class JsBackendTest {
             "    $out.push(\"decodedInt=\" + $rt.tableGet($d, \"i\"));",
             "    $out.push(\"decodedCheck=\" + ($rt.checkType(\"table\", $d) === $d));",
             "  }",
-            "  const $nullable = await $rt.invokeAsyncExport($entry, \"nullable\", \"[?int]\");",
+            "  const $nullable = await $rt.invokeAsyncExport($entry, \"nullable\", \"[?number]\");",
             "  if ($nullable.$ok !== true) {",
             "    $out.push(\"nullable=FAIL:\" + JSON.stringify($nullable));",
             "  } else {",
@@ -6037,7 +5952,7 @@ public class JsBackendTest {
             "    $out.push(\"nullableArray=\" + $rt.isJsonArrayTable($n));",
             "    $out.push(\"nullableLength=\" + $rt.arrayLength($n));",
             "    $out.push(\"nullableSlot=\" + $rt.arrayAt($n, 1));",
-            "    $out.push(\"nullableCheck=\" + ($rt.checkType(\"[?int]\", $n) === $n));",
+            "    $out.push(\"nullableCheck=\" + ($rt.checkType(\"[?number]\", $n) === $n));",
             "  }",
             "  const $box = await $rt.invokeAsyncExport($entry, \"box\", $entry.C.$classname);",
             "  if ($box.$ok !== true) {",
@@ -6067,20 +5982,20 @@ public class JsBackendTest {
             tmpDir.resolve("completion_proj/out").toAbsolutePath(),
             "completion_runner.js");
         check(run.exitCode() == 0 && run.output().equals(String.join("\n",
-                "decoded={\"n\":1.0E17,\"i\":2,\"xs\":[1.5,1],\"z\":null}",
+                "decoded={\"n\":1.0E17,\"i\":2.0,\"xs\":[1.5,1.0],\"z\":null}",
                 "decodedArray=true",
                 "decodedNull=null",
                 "decodedNullTable=false",
                 "decodedInt=2",
                 "decodedCheck=true",
-                "nullable=[1,null]",
+                "nullable=[1.0,null]",
                 "nullableArray=true",
                 "nullableLength=2",
                 "nullableSlot=null",
                 "nullableCheck=true",
                 "boxType=number:true",
                 "boxTags=true",
-                "boxWalk={\"n\":1}",
+                "boxWalk={\"n\":1.0}",
                 "boxCheck=true",
                 "boxCarrier=false",
                 "alias=true",
@@ -6099,7 +6014,7 @@ public class JsBackendTest {
         NodeResult run = runDealNode("""
             import * as json from "std/json";
             export function test(): string {
-              let t: table = { f: function(): int { return 1; } };
+              let t: table = { f: function(): number { return 1; } };
               return json.stringify(t);
             }
             """, "json-function");
@@ -6134,7 +6049,7 @@ public class JsBackendTest {
               return $e;
             };
             const $fields = [$f("name", "string", false, false),
-              $f("nick", "string", true, true), $f("age", "int", false, false)];
+              $f("nick", "string", true, true), $f("age", "number", false, false)];
             const $thunk = () => ({ name: "", nick: $rt.MISSING, age: 0 });
             // Top-level gate: scalars, null, and any array — the empty
             // array included — are null; {} decodes to the defaulted
@@ -6158,16 +6073,17 @@ public class JsBackendTest {
             // Three-state: missing omitted, present-null kept, value kept.
             const $m = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"A","age":1}', "p.js", 1, 1);
             if ($m === null || $m.nick !== $rt.MISSING) $fail = "three-missing";
-            if ($rt.jsonToJson("@m/U", $m, $fields, "p.js", 1, 1) !== '{"name":"A","age":1}') $fail = "three-omit";
+            if ($rt.jsonToJson("@m/U", $m, $fields, "p.js", 1, 1) !== '{"name":"A","age":1.0}') $fail = "three-omit";
             const $n = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"B","nick":null,"age":2}', "p.js", 1, 1);
             if ($n === null || $n.nick !== null) $fail = "three-null";
-            if ($rt.jsonToJson("@m/U", $n, $fields, "p.js", 1, 1) !== '{"name":"B","nick":null,"age":2}') $fail = "three-null-text";
-            // Int range: 2^53 collapses to the DEAL null (E8004 inside).
-            if ($rt.jsonFromJson("@m/U", $fields, $thunk, '{"age":9007199254740992}', "p.js", 1, 1) !== null) $fail = "int-range";
+            if ($rt.jsonToJson("@m/U", $n, $fields, "p.js", 1, 1) !== '{"name":"B","nick":null,"age":2.0}') $fail = "three-null-text";
+            // Binary64 magnitudes beyond signed32 remain admitted field values.
+            const $large = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"age":9007199254740992}', "p.js", 1, 1);
+            if ($large === null || $large.age !== 9007199254740992) $fail = "number-value";
             // Provided-value failure runs no defaults (counting thunk).
             let $runs = 0;
             const $counting = () => { $runs++; return { name: "", nick: $rt.MISSING, age: 0 }; };
-            if ($rt.jsonFromJson("@m/U", $fields, $counting, '{"age":"x"}', "p.js", 1, 1) !== null) $fail = "bad-int";
+            if ($rt.jsonFromJson("@m/U", $fields, $counting, '{"age":"x"}', "p.js", 1, 1) !== null) $fail = "bad-number";
             if ($runs !== 0) $fail = "defaults-ran:" + $runs;
             // toJson identity backstop and cycle rejection (E8001).
             try { $rt.jsonToJson("@m/Other", $m, $fields, "p.js", 1, 1); $fail = "identity-pass"; }
@@ -6185,24 +6101,27 @@ public class JsBackendTest {
             "the jsonable runtime walkers honor the top-level object gate "
                 + "(the empty array rejected at the root and at a nested class value), "
                 + "extra-key rejection, the three-state "
-                + "roundtrip, the E8004 int collapse, the zero-defaults "
+                + "roundtrip, wide-number admission, the zero-defaults "
                 + "phase order, and the toJson E8001 arms: " + run.output());
     }
 
     private static void testIntrinsicFunctionValues() throws Exception {
-        System.out.println("-- Node: intrinsics as function values --");
+        System.out.println("-- Node: ordinary numeric names as function values --");
+
 
         NodeResult run = runDealNode("""
             import * as console from "std/console";
-            function applyInt(f: (x: number) => int, v: number): int { return f(v); }
-            function applyNumber(f: (x: int) => number, v: int): number { return f(v); }
-            export function test(): int {
-              let f: (x: number) => int = int;
-              let a: int = f(3.0);
-              let b: int = applyInt(int, 4.0);
+            function applyInt(f: (x: number) => number, v: number): number { return f(v); }
+            function applyNumber(f: (x: number) => number, v: number): number { return f(v); }
+            function int(x: number): number { return x; }
+            function number(x: number): number { return x; }
+            export function test(): number {
+              let f: (x: number) => number = int;
+              let a: number = f(3.0);
+              let b: number = applyInt(int, 4.0);
               let nb: number = applyNumber(number, 7);
-              let wide: (x: number, y: number) => int = int;
-              let c: int = wide(9.0, 1.0);
+              let wide: (x: number, y: number) => number = number;
+              let c: number = wide(9.0, 1.0);
               let g: (x: string) => null = console.log;
               g("intrinsic-console-value");
               if (a === 3 && b === 4 && nb === 7.0 && c === 9) { return 1; }
@@ -6211,7 +6130,7 @@ public class JsBackendTest {
             """, "intrinsics");
         check(run.exitCode() == 0 && run.output().contains("intrinsic-console-value")
                 && run.output().contains("1"),
-            "int/number as values, callbacks, arity extension, and the "
+            "int/number ordinary values, callbacks, arity extension, and the "
                 + "console member as a value: " + run.output());
     }
 
@@ -6219,12 +6138,12 @@ public class JsBackendTest {
         System.out.println("-- Node: async completion and error propagation --");
 
         NodeResult ok = runDealNode("""
-            async function g(): int { return 42; }
+            async function g(): number { return 42; }
             async function greet(name: string): string { return "hi-" + name; }
             async function noop(): null { return; }
             export async function test(): string {
               await noop();
-              let x: int = await g();
+              let x: number = await g();
               if (x !== 42) { return "bad"; }
               return await greet("n");
             }
@@ -6234,10 +6153,11 @@ public class JsBackendTest {
                 + "printing: " + ok.output());
 
         NodeResult bad = runDealNode("""
-            async function bomb(): int { return 1 / 0; }
-            export async function test(): int { return await bomb(); }
+            import * as math from "std/math";
+            async function bomb(): number { return math.sqrt(-1); }
+            export async function test(): number { return await bomb(); }
             """, "async-err");
-        check(bad.exitCode() == 1 && bad.output().contains("DEAL_ERROR_CODE: E8005"),
+        check(bad.exitCode() == 1 && bad.output().contains("DEAL_ERROR_CODE: E8001"),
             "an awaited error propagates natively at the await site, exit 1: "
                 + bad.output());
     }
@@ -6251,25 +6171,25 @@ public class JsBackendTest {
         // completion check, and the int[] closure exercised end to end
         // inside the oracle (js-v12-int32-int[] D5).
         NodeResult ok = runInvokerNode("""
-            async function bump(b: int[]): int[] {
+            async function bump(b: number[]): number[] {
               b[0] = b[0] + 1;
               return b;
             }
-            class Holder { f: async (b: int[]) => int[] = bump; }
+            class Holder { f: async (b: number[]) => number[] = bump; }
             export function main(): null { return null; }
             export async function oracle(): null {
-              let b: int[] = [0, 0];
+              let b: number[] = [0, 0];
               b[0] = 1;
               b[1] = 41;
-              let f: async (b: int[]) => int[] = bump;
+              let f: async (b: number[]) => number[] = bump;
               let h: Holder = { f: f };
-              let out: int[] = await h.f(b);
+              let out: number[] = await h.f(b);
               if (out[0] !== 2 || b[0] !== 2 || b[1] !== 41) {
-                throw { code: "ORACLE_FAIL", message: "int[] closure content" };
+                throw { code: "ORACLE_FAIL", message: "number[] closure content" };
               }
               out[0] = 9;
               if (b[0] !== 9) {
-                throw { code: "ORACLE_FAIL", message: "int[] closure identity" };
+                throw { code: "ORACLE_FAIL", message: "number[] closure identity" };
               }
               return null;
             }
@@ -6277,7 +6197,7 @@ public class JsBackendTest {
         check(ok.exitCode() == 0 && ok.output().equals("INVOKE_OK: null"),
             "invokeAsyncExport(entry, \"oracle\", \"null\") over the "
                 + "production oracle yields { $ok: true, $value: null } "
-                + "with the int[] closure content/identity assertions "
+                + "with the number[] closure content/identity assertions "
                 + "green inside the oracle: " + ok.output());
 
         // ISSUE-0756 subject async-extended-argument-order: its faithful
@@ -6293,10 +6213,10 @@ public class JsBackendTest {
         // { $ok: false, $failure } with the pinned reason — never a DEAL
         // error, never a false runtime-error pass.
         PreparedJs negatives = prepareJs("""
-            export class Payload { v: int = 0; }
+            export class Payload { v: number = 0; }
             export function main(): null { return null; }
             export async function oracle(): null { return null; }
-            export async function takes(i: int): int { return i; }
+            export async function takes(i: number): number { return i; }
             """, "invoker-wrong-name");
         JsEmission negativeEmission = checkedEmission(negatives);
         Path negativeDir = deployArtifacts(negativeEmission, "Main.js");
@@ -6306,8 +6226,8 @@ public class JsBackendTest {
             for (List<String> c : List.of(
                     List.of("nope", "null", "export not found: nope"),
                     List.of("main", "null", "sync export: expected async()->null, got ()->null"),
-                    List.of("takes", "int", "parameterized export: expected async()->int, got async(int)->int"),
-                    List.of("oracle", "int", "descriptor mismatch: expected async()->int, got async()->null"),
+                    List.of("takes", "number", "parameterized export: expected async()->number, got async(number)->number"),
+                    List.of("oracle", "number", "descriptor mismatch: expected async()->number, got async()->null"),
                     List.of("Payload", "null", "export is not a function: expected async()->null"))) {
                 NodeResult result = runNodeScript(negativeDir,
                     "invoker_runner.js", c.get(0), c.get(1));
@@ -6327,12 +6247,11 @@ public class JsBackendTest {
             "a main-less entry artifact (the E6004 backstop shape) yields "
                 + "the pinned missing-main host failure: " + noMain.output());
 
-        // DEAL-error signal with the exact source location: a rejected
-        // operation propagates the reified E8005 code/message and the
-        // pinned file/line/column of the failing operator.
+        // DEAL-error signal with the exact source location of the failing call.
         NodeResult rejected = runInvokerNode("""
-            async function bomb(): int {
-              return 1 / 0;
+            import * as math from "std/math";
+            async function bomb(): number {
+              return math.sqrt(-1);
             }
             export function main(): null { return null; }
             export async function oracle(): null {
@@ -6341,9 +6260,9 @@ public class JsBackendTest {
             }
             """, "invoker-reject", "oracle", "null");
         check(rejected.exitCode() == 0 && rejected.output().equals(
-                "INVOKE_ERROR: E8005 integer division by zero at jstest-invoker-reject.deal:2:10"),
+                "INVOKE_ERROR: E8001 sqrt of negative number at jstest-invoker-reject.deal:3:10"),
             "a rejected oracle yields { $ok: false, $error } with the "
-                + "reified E8005 code and the exact source location: "
+                + "reified E8001 code and the exact source location: "
                 + rejected.output());
 
         // The defensive arms no checker-accepted DEAL source reaches: the
@@ -6421,8 +6340,8 @@ public class JsBackendTest {
               console.log("js-orchestrator-main");
               return null;
             }
-            function add(a: int, b: int): int { return a + b; }
-            export function run(): int { return add(20, 22); }
+            function add(a: number, b: number): number { return a + b; }
+            export function run(): number { return add(20, 22); }
             """);
 
         Path entryFile = tmpDir.resolve("js_proj/src/orch_main.deal").toAbsolutePath();
@@ -6570,16 +6489,16 @@ public class JsBackendTest {
                 + "}}}");
         writeFile("rej_proj/src/ffi.d.deal", """
             // @extern-c
-            export function cFn(x: int): int;
+            export function cFn(x: number): number;
             """);
         writeFile("rej_proj/src/lib.deal", """
             import * as ffi from "ffi";
-            export function use(): int { return ffi.cFn(1); }
+            export function use(): number { return ffi.cFn(1); }
             """);
         writeFile("rej_proj/src/rej_main.deal", """
             import * as lib from "./lib";
             export function main(): null { return null; }
-            export function run(): int { return 1; }
+            export function run(): number { return 1; }
             """);
 
         Path entryFile = tmpDir.resolve("rej_proj/src/rej_main.deal").toAbsolutePath();
@@ -6725,8 +6644,8 @@ public class JsBackendTest {
      */
     private static final String ELSE_IF_REPRODUCER = """
         import * as console from "std/console";
-        function pick(n: int): int {
-          let r: int = 0;
+        function pick(n: number): number {
+          let r: number = 0;
           if (n === 1) { r = 10; }
           else if (n === 2) { r = 20; }
           return r;
@@ -6749,15 +6668,15 @@ public class JsBackendTest {
     private static String elseIfChainSubject(boolean terminalElse) {
         String elseClause = terminalElse ? "  else { r = 30; }\n" : "";
         return """
-            function pick(n: int): int {
-              let r: int = 0;
+            function pick(n: number): number {
+              let r: number = 0;
               if (n === 1) { r = 10; }
               else if (n === 2) { r = 20; }
             %s  return r;
             }
-            export function firstBranch(): int { return pick(1); }
-            export function laterBranch(): int { return pick(2); }
-            export function unmatchedBranch(): int { return pick(3); }
+            export function firstBranch(): number { return pick(1); }
+            export function laterBranch(): number { return pick(2); }
+            export function unmatchedBranch(): number { return pick(3); }
             """.formatted(elseClause);
     }
 
@@ -6960,13 +6879,13 @@ public class JsBackendTest {
                 StandardCharsets.UTF_8);
 
             Files.writeString(projectDir.resolve("ffi.d.deal"),
-                "// @extern-c\nexport function cFn(x: int): int;\n",
+                "// @extern-c\nexport function cFn(x: number): number;\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
             Files.writeString(entry,
                 "import * as ffi from \"ffi\";\n"
                     + "export function main(): null {\n"
-                    + "  let v: int = ffi.cFn(1);\n"
+                    + "  let v: number = ffi.cFn(1);\n"
                     + "  return null;\n"
                     + "}\n",
                 StandardCharsets.UTF_8);

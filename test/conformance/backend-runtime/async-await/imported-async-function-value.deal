@@ -5,9 +5,9 @@
 
 import * as Lib from "./async_batch2_lib";
 
-export async function test_imported_async_function_value(): int {
-  let f: async (x: int) => int = Lib.plus;
-  let result: int = await f(6);
+export async function test_imported_async_function_value(): number {
+  let f: async (x: number) => number = Lib.plus;
+  let result: number = await f(6);
   if (result !== 7) { throw { code: "TEST_FAIL", message: "imported async function value failed" }; }
   return result;
 }

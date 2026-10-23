@@ -6,22 +6,22 @@
 import * as host from "host/array_roundtrip";
 
 export function test_host_array_nullable_roundtrip(): string {
-  let none: int[] | null = host.nullableArray(null);
+  let none: number[] | null = host.nullableArray(null);
   if (none !== null) {
-    throw { code: "TEST_FAIL", message: "nullable int[] null roundtrip mismatch" };
+    throw { code: "TEST_FAIL", message: "nullable number[] null roundtrip mismatch" };
   }
-  let b: int[] = [0, 0];
+  let b: number[] = [0, 0];
   b[1] = 7;
-  let some: int[] | null = host.nullableArray(b);
+  let some: number[] | null = host.nullableArray(b);
   if (some !== null) {
     if (some.length !== 2) {
       throw { code: "TEST_FAIL", message: "nullable array value roundtrip length mismatch" };
     }
     if (some[1] !== 7) {
-      throw { code: "TEST_FAIL", message: "nullable int[] value roundtrip content mismatch" };
+      throw { code: "TEST_FAIL", message: "nullable number[] value roundtrip content mismatch" };
     }
   } else {
-    throw { code: "TEST_FAIL", message: "nullable int[] value roundtrip returned null" };
+    throw { code: "TEST_FAIL", message: "nullable number[] value roundtrip returned null" };
   }
   return "host-array-nullable-ok";
 }

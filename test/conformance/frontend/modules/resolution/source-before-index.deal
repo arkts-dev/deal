@@ -4,5 +4,5 @@
 // @features: modules, resolution, precedence, v1.2
 
 import * as Lib from "./support/source_vs_index";
-export function probe(): int { return Lib.sourceOnly(); }
+export function probe(): number { return Lib.sourceOnly(); }
 export function main(): null { return null; }

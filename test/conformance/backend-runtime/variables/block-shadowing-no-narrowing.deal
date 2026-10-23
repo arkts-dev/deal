@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: variables, narrowing, shadowing
 
-export function test_block_shadow(): int {
+export function test_block_shadow(): number {
   let x: string | null = "a";
-  let n: int = 0;
+  let n: number = 0;
   if (x !== null) {
-    let x: int = 4;
+    let x: number = 4;
     n = x;
   }
   if (n !== 4 || x === null) { throw {code: "TEST_FAIL", message: "block binding shadow"}; }

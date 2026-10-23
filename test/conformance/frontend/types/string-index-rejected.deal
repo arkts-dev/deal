@@ -1,10 +1,10 @@
 // @spec: Arrays
 // @description: Byte-buffer indexing requires an int index exactly
 // @expected: compile-error E3007
-// @features: int[], indexing, diagnostics, v1.2
+// @features: number[], indexing, diagnostics, v1.2
 
-export function read(): int {
-  let b: int[] = [0];
+export function read(): number {
+  let b: number[] = [0];
   return b["0"];
 }
 

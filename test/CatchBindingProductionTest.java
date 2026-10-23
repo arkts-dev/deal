@@ -13,7 +13,6 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.SemanticLowerer;
 import deal.semantic.SemanticRuntimeModel;
-import deal.semantic.ir.IntrinsicKind;
 import deal.test.conformance.JvmCompilation;
 import deal.test.conformance.SidecarExpectations;
 
@@ -117,11 +116,11 @@ public final class CatchBindingProductionTest {
     }
 
     private static final List<AsyncExport> ASYNC_EXPORTS = List.of(
-        new AsyncExport("testAsyncCaptureAfterAwait", "int", "11"),
-        new AsyncExport("testAsyncEarlyCaptureSurvivesAwait", "int", "22"),
+        new AsyncExport("testAsyncCaptureAfterAwait", "number", "11"),
+        new AsyncExport("testAsyncEarlyCaptureSurvivesAwait", "number", "22"),
         new AsyncExport("testAsyncStoreAcrossAwait", "string", "\"rewritten\""),
-        new AsyncExport("testAsyncCaptureAcrossOuterAwait", "int", "44"),
-        new AsyncExport("testAsyncLoopCatches", "int", "55"),
+        new AsyncExport("testAsyncCaptureAcrossOuterAwait", "number", "44"),
+        new AsyncExport("testAsyncLoopCatches", "number", "55"),
         new AsyncExport("testAsyncAsyncClosure", "string", "\"async closure/inner\""));
 
     private static int passed = 0;
@@ -455,7 +454,8 @@ public final class CatchBindingProductionTest {
     private static String envelope(AsyncExport export) {
         return LuaJitAsyncExportInvoker.RESULT_PREFIX + "{\"status\":\"value\","
             + "\"descriptor\":\"" + export.descriptor() + "\",\"value\":"
-            + jsonString(export.valueJson()) + "}";
+            + jsonString("number".equals(export.descriptor())
+                ? Double.toString(Double.parseDouble(export.valueJson())) : export.valueJson()) + "}";
     }
 
     private static String expectedAsyncTranscript() {
@@ -638,7 +638,7 @@ public final class CatchBindingProductionTest {
             jsAsyncDriver(), StandardCharsets.UTF_8);
         ProcessOutcome run = runProcess(
             List.of("node", "CatchBindingDriver.js"), project.out());
-        assertTranscript("js async", run, 0, expectedAsyncTranscript(), "");
+        assertTranscript("js async", run, 0, expectedAsyncTranscript().replaceAll("(\\\"value\\\":\\\"-?[0-9]+)\\.0\\\"", "$1\\\""), "");
     }
 
     // =========================================================================
@@ -769,7 +769,7 @@ public final class CatchBindingProductionTest {
             orchestrator.requirementManifests().manifests(),
             orchestrator.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 checked.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
+            Set.of());
     }
 
     /**

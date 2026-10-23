@@ -3,6 +3,6 @@
 // @expected: compile-error E1047
 // @features: functions, rest, v1.2
 
-export function probe(f: (...xs: int[]) => int): int {
+export function probe(f: (...xs: number[]) => number): number {
   return 0;
 }

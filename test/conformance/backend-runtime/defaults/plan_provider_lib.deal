@@ -7,10 +7,10 @@
 // Module-local (non-exported) default provider: only the declaring
 // module's evaluator closures can reach it — consumer-module lowering
 // would leave this name unresolved.
-function internalDefault(): int {
+function internalDefault(): number {
   return 7;
 }
 
 export class Provider {
-  value: int = internalDefault();
+  value: number = internalDefault();
 }

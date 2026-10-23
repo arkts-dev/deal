@@ -4,9 +4,9 @@
 // @features: lexer, int
 
 export function main(): null {
-let a: int = 0;
-let b: int = 42;
-let c: int = 1234567890;
+let a: number = 0;
+let b: number = 42;
+let c: number = 1234567890;
 
 return null;
 }

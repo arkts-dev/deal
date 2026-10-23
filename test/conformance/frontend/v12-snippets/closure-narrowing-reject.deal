@@ -3,4 +3,4 @@
 // @expected: compile-error E5003
 // @features: v1.2, frontend, reject
 
-export function f(x: int | null): int {if(x !== null) {let g: () => int = function(): int {return x;}; return g();} return 0;}
+export function f(x: number | null): number {if(x !== null) {let g: () => number = function(): number {return x;}; return g();} return 0;}

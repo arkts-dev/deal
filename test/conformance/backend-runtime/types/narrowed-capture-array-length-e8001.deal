@@ -4,14 +4,14 @@
 // @features: type-system, nullable, narrowing, arrays, runtime-errors
 
 export function main(): null {
-  let xs: int[] | null = [1];
+  let xs: number[] | null = [1];
   let clear: () => null = function(): null {
     xs = null;
     return null;
   };
   if (xs !== null) {
     clear();
-    let value: int = xs.length;
+    let value: number = xs.length;
   }
   return null;
 }

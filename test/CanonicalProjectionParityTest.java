@@ -35,7 +35,6 @@ import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FailurePolicyRow;
 import deal.semantic.ir.FailureProjections;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.ModuleId;
 import deal.semantic.ir.ProjectInterfaceIndex;
@@ -115,8 +114,8 @@ import java.util.stream.Stream;
  *   <li><b>The namespace surface at the array boundaries.</b> The
  *       {@code lib} module's identity-keyed namespace surface (a plain
  *       table without a carrier mark) is stored in a table field through
- *       the import alias cell and read at the declared {@code int[]} and
- *       {@code int[][]} bindings: the unmarked table carrier rejects with
+ *       the import alias cell and read at the declared {@code number[]} and
+ *       {@code number[][]} bindings: the unmarked table carrier rejects with
  *       the value-derived {@code table} actual token on all three
  *       consumers, never the expected {@code array} kind substituted for
  *       its own representation. A real array carrier at the {@code table}
@@ -901,7 +900,6 @@ public class CanonicalProjectionParityTest {
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
                     .findFirst().orElseThrow().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         if (lowering.hasErrors() || lowering.project() == null) {
             throw new IllegalStateException(spec.what() + ": the production "
@@ -1201,7 +1199,7 @@ public class CanonicalProjectionParityTest {
                     // exactly like both production artifacts, never the
                     // typed-boundary {@code int}.
                     return new AsyncStartOutcome.InvalidHandle(
-                        new SemanticOracle.Value.IntValue(42));
+                        new SemanticOracle.Value.NumValue(42));
                 }
                 return new AsyncStartOutcome.Operation(operationLabel);
             }
@@ -1210,7 +1208,7 @@ public class CanonicalProjectionParityTest {
             public SyncOutcome completeAsync(String operationLabel) {
                 if ("async_bad".equals(spec.hostStem())) {
                     return new SyncOutcome.Returned(
-                        new SemanticOracle.Value.IntValue(42));
+                        new SemanticOracle.Value.NumValue(42));
                 }
                 return new SyncOutcome.Returned(
                     new SemanticOracle.Value.StrValue("fetched"));
@@ -1387,8 +1385,20 @@ public class CanonicalProjectionParityTest {
         Compiled compiled = compile(spec);
         try {
             SidecarExpectations.ErrorExpectation pin = luajitPin(spec);
-            check(pin != null, spec.what() + ": the sidecar pins a LuaJIT error");
             if (pin == null) {
+                check(Set.of("arithmetic/int-convert-fraction", "runtime/int-convert-noninteger",
+                    "arithmetic/int-convert-nan", "arithmetic/int-convert-infinity",
+                    "arithmetic/int-add-overflow").contains(spec.corpusPath()),
+                    spec.what() + ": only migrated numeric admissions use the success branch");
+                SemanticRuntimeModel.ConsumerRun run = oracleRun(compiled);
+                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+                    spec.what() + " (oracle): the value-consuming subject succeeds: " + run.terminal());
+                String lua = luaArtifactOutput(compiled);
+                check(lua.lines().anyMatch("OK"::equals) && !lua.contains("ERR|"),
+                    spec.what() + " (luajit): value-consuming production execution succeeds: " + lua);
+                String jvm = jvmArtifactOutput(compiled);
+                check(jvm != null && jvm.lines().anyMatch("OK"::equals) && !jvm.contains("ERR|"),
+                    spec.what() + " (jvm): value-consuming production execution succeeds: " + jvm);
                 return;
             }
             assertModuleExportOrigins(compiled);
@@ -1423,7 +1433,7 @@ public class CanonicalProjectionParityTest {
                     + ": the bounds arm carries no actual token");
                 checkEq(Integer.valueOf(8), oracle.line(), spec.what()
                     + ": the read-expression span");
-                checkEq(Integer.valueOf(20), oracle.column(), spec.what()
+                checkEq(Integer.valueOf(23), oracle.column(), spec.what()
                     + ": the read-expression column");
             }
             case "runtime-errors/type-mismatch-e8001" -> {
@@ -1492,6 +1502,10 @@ public class CanonicalProjectionParityTest {
         if (pin.expected().isPresent()) {
             checkEq(pin.expected().get(), tuple.expected(), spec.what() + " ("
                 + consumer + "): the pinned expected field");
+        } else if (spec.corpusPath().equals("runtime/int-convert-null")
+                || spec.corpusPath().equals("runtime/number-convert-null")) {
+            checkEq("number", tuple.expected(), spec.what() + " (" + consumer
+                + "): the dynamic number boundary publishes its expected descriptor");
         } else {
             check(tuple.expected() == null, spec.what() + " (" + consumer
                 + "): no expected field is fabricated");
@@ -1499,6 +1513,10 @@ public class CanonicalProjectionParityTest {
         if (pin.actual().isPresent()) {
             checkEq(pin.actual().get(), tuple.actual(), spec.what() + " ("
                 + consumer + "): the pinned actual field");
+        } else if (spec.corpusPath().equals("runtime/int-convert-null")
+                || spec.corpusPath().equals("runtime/number-convert-null")) {
+            checkEq("null", tuple.actual(), spec.what() + " (" + consumer
+                + "): the dynamic number boundary publishes the null actual");
         } else {
             check(tuple.actual() == null, spec.what() + " (" + consumer
                 + "): no actual field is fabricated");
@@ -1548,11 +1566,11 @@ public class CanonicalProjectionParityTest {
             switch (spec.corpusPath()) {
                 case "host-abi/host-empty-return-bad" -> assertRegistryArm(spec, lua,
                     jvm, FailureArmId.HOST_SYNC_RETURN_NOTHING,
-                    Map.of("expected", "int"), "int", "nothing");
+                    Map.of("expected", "number"), "number", "nothing");
                 case "host-abi/host-bad-return" -> assertRegistryArm(spec, lua, jvm,
                     FailureArmId.HOST_SYNC_RETURN_CELL,
                     Map.of("inner", FailureProjections.kindReason(
-                        RuntimeDescriptor.Int.INSTANCE)), "int", "string");
+                        RuntimeDescriptor.Number.INSTANCE)), "number", "string");
                 case "host-abi/host-async-shape-bad" -> assertRegistryArm(spec, lua,
                     jvm, FailureArmId.ASYNC_SHAPE, Map.of("actual", "number"),
                     "async operation", "number");
@@ -1594,12 +1612,12 @@ public class CanonicalProjectionParityTest {
                         + ": the oracle and the JVM artifact render the "
                         + "identical tuple");
                     assertOracleCell(spec, lua, FailurePolicyId.HOST_SYNC_RETURN,
-                        RuntimeDescriptor.Int.INSTANCE,
+                        RuntimeDescriptor.Number.INSTANCE,
                         BoundaryValueView.of(ActualKind.NOTHING),
                         BoundaryContext.none());
                 }
                 case "host-abi/host-bad-return" -> assertOracleCell(spec, lua,
-                    FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Int.INSTANCE,
+                    FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Number.INSTANCE,
                     BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none());
                 case "host-abi/host-nullable-return-bad" -> assertOracleCell(spec, lua,
                     FailurePolicyId.HOST_SYNC_RETURN,
@@ -1759,7 +1777,7 @@ public class CanonicalProjectionParityTest {
     private static final String SYNC_PRESENCE_DECLARATION = """
         export function fetchNullable(): string | null;
         export function pingNull(): null;
-        export function fetchMandatory(): int;
+        export function fetchMandatory(): number;
         """;
 
     /**
@@ -1818,8 +1836,8 @@ public class CanonicalProjectionParityTest {
      * host-fixture membership changes.
      */
     private static final String NUMERIC_RETURN_DECLARATION = """
-        export function fetchInt(): int;
-        export function fetchNullableInt(): int | null;
+        export function fetchInt(): number;
+        export function fetchNullableInt(): number | null;
         export function fetchNumber(): number;
         export function fetchFraction(): number;
         """;
@@ -1835,7 +1853,7 @@ public class CanonicalProjectionParityTest {
         import * as host from "host/numeric_return";
 
         export function test_use_int(): null {
-          let v: int = host.fetchInt();
+          let v: number = host.fetchInt();
           if (v !== 7) {
             throw { code: "PROBE_NUMERIC_RETURN", message: "the int return lost its value" };
           }
@@ -1843,7 +1861,7 @@ public class CanonicalProjectionParityTest {
         }
 
         export function test_use_nullable_int(): null {
-          let v: int | null = host.fetchNullableInt();
+          let v: number | null = host.fetchNullableInt();
           if (v !== null) {
             if (v !== 7) {
               throw { code: "PROBE_NUMERIC_RETURN", message: "the nullable int return lost its value" };
@@ -2021,7 +2039,7 @@ public class CanonicalProjectionParityTest {
                     RuntimeDescriptor.Func descriptor,
                     List<SemanticOracle.Value> args) {
                 return new SyncOutcome.Returned(
-                    new SemanticOracle.Value.IntValue(7L));
+                    new SemanticOracle.Value.NumValue(7L));
             }
         };
     }
@@ -2075,7 +2093,7 @@ public class CanonicalProjectionParityTest {
             hostNothingTuple("null", 9, 3), luaAbsentSyncHost(),
             jvmAbsentSyncHost(), "the absent null return");
         assertSyncPresenceFailure(compiled, absent, "test_drop_mandatory",
-            hostNothingTuple("int", 14, 3), luaAbsentSyncHost(),
+            hostNothingTuple("number", 14, 3), luaAbsentSyncHost(),
             jvmAbsentSyncHost(), "the absent int return");
     }
 
@@ -2099,8 +2117,8 @@ public class CanonicalProjectionParityTest {
             luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
             "the present null null return");
         assertSyncPresenceFailure(compiled, presentNull, "test_use_mandatory",
-            hostReturnCellTuple("int", FailureProjections.kindReason(
-                RuntimeDescriptor.Int.INSTANCE), "table", 32, 3),
+            hostReturnCellTuple("number", FailureProjections.kindReason(
+                RuntimeDescriptor.Number.INSTANCE), "table", 32, 3),
             luaPresentNullSyncHost(), jvmPresentNullSyncHost(),
             "the present null int return");
     }
@@ -2154,8 +2172,8 @@ public class CanonicalProjectionParityTest {
      * numeric carriers.
      */
     private static final String NUMERIC_COMPLETION_DECLARATION = """
-        export async function fetchInt(): int;
-        export async function fetchNullableInt(): int | null;
+        export async function fetchInt(): number;
+        export async function fetchNullableInt(): number | null;
         export async function fetchNumber(): number;
         """;
 
@@ -2167,9 +2185,9 @@ public class CanonicalProjectionParityTest {
     private static final String NUMERIC_COMPLETION_INT_DRIVER = """
         import * as host from "host/async_numeric";
 
-        export async function test_use_int(): int {
-          let v: int = await host.fetchInt();
-          let w: int = v + 1;
+        export async function test_use_int(): number {
+          let v: number = await host.fetchInt();
+          let w: number = v + 1;
           return w;
         }
 
@@ -2182,10 +2200,10 @@ public class CanonicalProjectionParityTest {
     private static final String NUMERIC_COMPLETION_NULLABLE_INT_DRIVER = """
         import * as host from "host/async_numeric";
 
-        export async function test_use_nullable_int(): int {
-          let v: int | null = await host.fetchNullableInt();
+        export async function test_use_nullable_int(): number {
+          let v: number | null = await host.fetchNullableInt();
           if (v !== null) {
-            let w: int = v + 1;
+            let w: number = v + 1;
             return w;
           }
           return 0;
@@ -2240,11 +2258,11 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- the numeric host async completions: the closed "
             + "host numeric carriers are validated and settled onto the declared "
             + "production carrier at the await crossing --");
-        check(JvmRuntime.hostCompletion("int", "int", Integer.valueOf(7))
-            instanceof Long, "the host completion seam settles the boxed int onto "
+        check(JvmRuntime.hostCompletion("number", "number", Integer.valueOf(7))
+            instanceof Double, "the host completion seam settles the boxed int onto "
                 + "the production int carrier");
-        check(JvmRuntime.hostCompletion("nullable(int)", "nullable:int",
-            Integer.valueOf(7)) instanceof Long, "the host completion seam "
+        check(JvmRuntime.hostCompletion("nullable(number)", "nullable:number",
+            Integer.valueOf(7)) instanceof Double, "the host completion seam "
                 + "settles a nullable int completion's carrier");
         Case spec = new Case("host-abi/host-async-shape-bad", "test_use_int",
             Entry.ASYNC, List.of(), "async_numeric", null);
@@ -2273,11 +2291,11 @@ public class CanonicalProjectionParityTest {
     /** The int completion drive: admitted carriers and the rejected ones. */
     private static void driveHostIntCompletions(Compiled compiled) throws Exception {
             for (NumericCompletion carrier : List.of(
-                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7L),
                         "7", "java.lang.Integer.valueOf(7)"),
-                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7L),
                         "7", "java.lang.Long.valueOf(7)"),
-                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7L),
                         "7", "java.lang.Double.valueOf(7)"))) {
                 assertAsyncCompletionSuccess(compiled, "async_numeric",
                     numericCompletionResponder(carrier.oracle()), "test_use_int",
@@ -2285,49 +2303,27 @@ public class CanonicalProjectionParityTest {
                     jvmAsyncNumericHost(carrier.jvm()),
                     "the int completion " + carrier.jvm());
             }
-            Tuple range = asyncRangeTuple(NUMERIC_COMPLETION_INT_DRIVER, 4);
-            assertAsyncCompletionFailure(compiled, "async_numeric",
-                numericCompletionResponder(
-                    new SemanticOracle.Value.NumValue(2147483648.0)),
-                "test_use_int", range, luaAsyncNumericHost("2147483648"),
-                jvmAsyncNumericHost("java.lang.Long.valueOf(2147483648L)"),
-                "the out-of-range Long int completion");
-            assertAsyncCompletionFailure(compiled, "async_numeric",
-                numericCompletionResponder(
-                    new SemanticOracle.Value.NumValue(2147483648.0)),
-                "test_use_int", range, luaAsyncNumericHost("2147483648"),
-                jvmAsyncNumericHost("java.lang.Double.valueOf(2147483648.0)"),
-                "the out-of-range Double int completion");
-            assertAsyncCompletionFailure(compiled, "async_numeric",
-                numericCompletionResponder(
-                    new SemanticOracle.Value.NumValue(Double.NaN)),
-                "test_use_int", asyncRefinementTuple(
-                    NUMERIC_COMPLETION_INT_DRIVER, 4, "NaN"),
-                luaAsyncNumericHost("0/0"),
-                jvmAsyncNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
-                "the NaN Double int completion");
-            assertAsyncCompletionFailure(compiled, "async_numeric",
-                numericCompletionResponder(
-                    new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY)),
-                "test_use_int", asyncRefinementTuple(
-                    NUMERIC_COMPLETION_INT_DRIVER, 4, "infinity"),
-                luaAsyncNumericHost("math.huge"),
-                jvmAsyncNumericHost(
-                    "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"),
-                "the infinite Double int completion");
-            assertAsyncCompletionFailure(compiled, "async_numeric",
-                numericCompletionResponder(
-                    new SemanticOracle.Value.NumValue(1.5)),
-                "test_use_int", asyncRefinementTuple(
-                    NUMERIC_COMPLETION_INT_DRIVER, 4, "number"),
-                luaAsyncNumericHost("1.5"),
-                jvmAsyncNumericHost("java.lang.Double.valueOf(1.5)"),
-                "the fractional Double int completion");
+            for (NumericCompletion carrier : List.of(
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(2147483648.0),
+                        "2147483648", "java.lang.Long.valueOf(2147483648L)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(2147483648.0),
+                        "2147483648", "java.lang.Double.valueOf(2147483648.0)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(Double.NaN),
+                        "0/0", "java.lang.Double.valueOf(java.lang.Double.NaN)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY),
+                        "math.huge", "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(1.5),
+                        "1.5", "java.lang.Double.valueOf(1.5)"))) {
+                assertAsyncCompletionSuccess(compiled, "async_numeric",
+                    numericCompletionResponder(carrier.oracle()), "test_use_int",
+                    luaAsyncNumericHost(carrier.lua()), jvmAsyncNumericHost(carrier.jvm()),
+                    "binary64 completion admits and consumes " + carrier.jvm());
+            }
             assertAsyncCompletionFailure(compiled, "async_numeric",
                 numericCompletionResponder(
                     new SemanticOracle.Value.StrValue("x")),
                 "test_use_int", asyncKindTuple(NUMERIC_COMPLETION_INT_DRIVER, 4,
-                    "int", "string"),
+                    "number", "string"),
                 luaAsyncNumericHost("\"x\""),
                 jvmAsyncNumericHost("\"x\""),
                 "the string int completion");
@@ -2336,11 +2332,11 @@ public class CanonicalProjectionParityTest {
     /** The nullable-int completion drive: admitted carriers, null, and the range arm. */
     private static void driveHostNullableIntCompletions(Compiled compiled) throws Exception {
             for (NumericCompletion carrier : List.of(
-                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7L),
                         "7", "java.lang.Integer.valueOf(7)"),
-                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7L),
                         "7", "java.lang.Long.valueOf(7)"),
-                    new NumericCompletion(new SemanticOracle.Value.IntValue(7L),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(7L),
                         "7", "java.lang.Double.valueOf(7)"),
                     new NumericCompletion(SemanticOracle.Value.NullValue.INSTANCE,
                         "rt.__NULL", "null"))) {
@@ -2351,14 +2347,11 @@ public class CanonicalProjectionParityTest {
                     jvmAsyncNumericHost(carrier.jvm()),
                     "the nullable-int completion " + carrier.jvm());
             }
-            assertAsyncCompletionFailure(compiled, "async_numeric",
-                numericCompletionResponder(
-                    new SemanticOracle.Value.NumValue(2147483648.0)),
-                "test_use_nullable_int",
-                asyncRangeTuple(NUMERIC_COMPLETION_DRIVER, 10),
-                luaAsyncNumericHost("2147483648"),
+            assertAsyncCompletionSuccess(compiled, "async_numeric",
+                numericCompletionResponder(new SemanticOracle.Value.NumValue(2147483648.0)),
+                "test_use_nullable_int", luaAsyncNumericHost("2147483648"),
                 jvmAsyncNumericHost("java.lang.Long.valueOf(2147483648L)"),
-                "the out-of-range Long nullable-int completion");
+                "nullable number completion admits values beyond signed32");
     }
 
     /** The number completion drive: every numeric carrier and the kind control. */
@@ -2489,10 +2482,10 @@ public class CanonicalProjectionParityTest {
      * number array.
      */
     private static final String ARRAY_COMPLETION_DECLARATION = """
-        export async function fetchInts(): int[];
-        export async function fetchNullableInts(): int[] | null;
-        export async function fetchNullableElements(): (int | null)[];
-        export async function fetchNestedInts(): int[][];
+        export async function fetchInts(): number[];
+        export async function fetchNullableInts(): number[] | null;
+        export async function fetchNullableElements(): (number | null)[];
+        export async function fetchNestedInts(): number[][];
         export async function fetchNestedStrings(): string[][];
         export async function fetchStrings(): string[];
         export async function fetchNumbers(): number[];
@@ -2507,9 +2500,9 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_int_array(): int {
-          let xs: int[] = await host.fetchInts();
-          let v: int = xs[0];
+        export async function test_use_int_array(): number {
+          let xs: number[] = await host.fetchInts();
+          let v: number = xs[0];
           if (v !== 7) {
             throw { code: "PROBE_BOXED_ELEMENT", message: "the boxed int element did not land 7" };
           }
@@ -2525,10 +2518,10 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NULLABLE_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_nullable_int_array(): int {
-          let xs: int[] | null = await host.fetchNullableInts();
+        export async function test_use_nullable_int_array(): number {
+          let xs: number[] | null = await host.fetchNullableInts();
           if (xs !== null) {
-            let v: int = xs[0];
+            let v: number = xs[0];
             if (v !== 7) {
               throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable boxed int element did not land 7" };
             }
@@ -2549,10 +2542,10 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NULLABLE_ELEMENT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_nullable_elements(): int {
-          let xs: (int | null)[] = await host.fetchNullableElements();
-          let v: int | null = xs[0];
-          let w: int | null = xs[1];
+        export async function test_use_nullable_elements(): number {
+          let xs: (number | null)[] = await host.fetchNullableElements();
+          let v: number | null = xs[0];
+          let w: number | null = xs[1];
           if (w !== null) {
             throw { code: "PROBE_BOXED_ELEMENT", message: "the null element did not stay null" };
           }
@@ -2560,7 +2553,7 @@ public class CanonicalProjectionParityTest {
             if (v !== 7) {
               throw { code: "PROBE_BOXED_ELEMENT", message: "the nullable-element boxed int did not land 7" };
             }
-            let total: int = v + 1;
+            let total: number = v + 1;
             return total;
           }
           return 0;
@@ -2575,9 +2568,9 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NESTED_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_nested_int_array(): int {
-          let xs: int[][] = await host.fetchNestedInts();
-          let v: int = xs[0][0];
+        export async function test_use_nested_int_array(): number {
+          let xs: number[][] = await host.fetchNestedInts();
+          let v: number = xs[0][0];
           if (v !== 7) {
             throw { code: "PROBE_BOXED_ELEMENT", message: "the nested boxed int element did not land 7" };
           }
@@ -2599,7 +2592,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NUMBER_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_number_array(): int {
+        export async function test_use_number_array(): number {
           let xs: number[] = await host.fetchNumbers();
           let v: number = xs[0];
           if (v !== 7.0) {
@@ -2667,9 +2660,9 @@ public class CanonicalProjectionParityTest {
             + "consumers --");
         JvmRuntime.Array boxed = new JvmRuntime.Array(1);
         boxed.elements.add(Integer.valueOf(7));
-        Object settled = JvmRuntime.hostCompletion("array(int)", "array", boxed);
+        Object settled = JvmRuntime.hostCompletion("array(number)", "array", boxed);
         check(settled == boxed && boxed.elements.size() == 1
-                && Long.valueOf(7L).equals(boxed.elements.get(0)),
+                && Double.valueOf(7).equals(boxed.elements.get(0)),
             "the host completion seam preserves the completed array's identity and "
                 + "settles its boxed int element onto the production int carrier");
         JvmRuntime.Array inner = new JvmRuntime.Array(1);
@@ -2677,11 +2670,11 @@ public class CanonicalProjectionParityTest {
         JvmRuntime.Array nested = new JvmRuntime.Array(2);
         nested.elements.add(inner);
         nested.elements.add(inner);
-        Object settledNested = JvmRuntime.hostCompletion("array(array(int))",
+        Object settledNested = JvmRuntime.hostCompletion("array(array(number))",
             "array", nested);
         check(settledNested == nested && nested.elements.get(0) == inner
                 && nested.elements.get(1) == inner
-                && Long.valueOf(7L).equals(inner.elements.get(0)),
+                && Double.valueOf(7).equals(inner.elements.get(0)),
             "the host completion seam keeps the completed tree's identities: one "
                 + "repeated inner carrier stays one array (the reference-identity "
                 + "contract) and its boxed element settles in place");
@@ -2691,7 +2684,7 @@ public class CanonicalProjectionParityTest {
         Object settledNumber = JvmRuntime.hostCompletion(
             "array(nullable(number))", "array", boxedNumber);
         check(settledNumber == boxedNumber
-                && Long.valueOf(7L).equals(boxedNumber.elements.get(0))
+                && Double.valueOf(7).equals(boxedNumber.elements.get(0))
                 && boxedNumber.elements.get(1) == null,
             "the host completion seam admits a boxed int at a nullable number "
                 + "element position in place and keeps the language null element");
@@ -2705,7 +2698,7 @@ public class CanonicalProjectionParityTest {
             check("E8003".equals(element.code)
                     && "array element 1 type mismatch".equals(element.msg)
                     && "string".equals(element.expected)
-                    && "int".equals(element.actual),
+                    && "number".equals(element.actual),
                 "the host completion seam renders the canonical element arm with "
                     + "the boxed int's own kind: " + element.code + " "
                     + element.msg + " expected " + element.expected + " actual "
@@ -2734,7 +2727,7 @@ public class CanonicalProjectionParityTest {
         JvmRuntime.Array cyclic = new JvmRuntime.Array(1);
         cyclic.elements.add(cyclic);
         try {
-            JvmRuntime.hostCompletion("array(int)", "array", cyclic);
+            JvmRuntime.hostCompletion("array(number)", "array", cyclic);
             check(false, "the host completion seam's cyclic carrier walk "
                 + "terminates through the element arm");
         } catch (JvmRuntime.DealError cyclicFailure) {
@@ -2748,41 +2741,25 @@ public class CanonicalProjectionParityTest {
         }
         JvmRuntime.Array rangeElement = new JvmRuntime.Array(1);
         rangeElement.elements.add(Long.valueOf(2147483648L));
-        try {
-            Object admitted = JvmRuntime.hostCompletion("array(int)", "array",
-                rangeElement);
-            check(false, "the host completion seam rejects the out-of-range "
-                + "Long int element: " + admitted);
-        } catch (JvmRuntime.DealError rangeFailure) {
-            check("E8003".equals(rangeFailure.code)
-                    && "array element 1 type mismatch".equals(rangeFailure.msg)
-                    && "int".equals(rangeFailure.expected)
-                    && "number".equals(rangeFailure.actual),
-                "the host completion seam renders the out-of-range Long element "
-                    + "through the element arm with the number carrier's own "
-                    + "token: " + rangeFailure.code + " " + rangeFailure.msg
-                    + " expected " + rangeFailure.expected + " actual "
-                    + rangeFailure.actual);
-        }
-        check(Long.valueOf(2147483648L).equals(rangeElement.elements.get(0)),
-            "the rejected out-of-range completion commits nothing: the host's own "
-                + "carrier keeps its long element untouched");
+        Object admitted = JvmRuntime.hostCompletion("array(number)", "array", rangeElement);
+        check(admitted == rangeElement && Double.valueOf(2147483648.0).equals(rangeElement.elements.get(0)),
+            "number array completion admits signed32 overflow and normalizes only after validation");
         Compiled numeric = compileArrayCompletion("test_use_int_array",
             ARRAY_COMPLETION_NUMERIC_DRIVER);
         try {
-            safely("the int[] host completion", () -> driveHostIntArrayCompletion(numeric));
-            safely("the nullable int[] host completion",
+            safely("the number[] host completion", () -> driveHostIntArrayCompletion(numeric));
+            safely("the nullable number[] host completion",
                 () -> driveHostNullableIntArrayCompletion(numeric));
             safely("the number[] host completion",
                 () -> driveHostNumberArrayCompletion(numeric));
-            safely("the out-of-range long int[] host completion",
+            safely("the out-of-range long number[] host completion",
                 () -> driveHostRangeElementIntArrayCompletion(numeric));
         } finally {
             deleteRecursively(numeric.root());
         }
         safely("the int-or-null element array host completion",
             CanonicalProjectionParityTest::driveHostNullableElementArrayCompletion);
-        safely("the nested int[][] host completion",
+        safely("the nested number[][] host completion",
             CanonicalProjectionParityTest::driveHostNestedIntArrayCompletion);
         Compiled strings = compileArrayCompletion("test_drop_string_array",
             ARRAY_COMPLETION_STRINGS_DRIVER);
@@ -2800,7 +2777,7 @@ public class CanonicalProjectionParityTest {
         } finally {
             deleteRecursively(strings.root());
         }
-        safely("the repeated shared int[] host completion",
+        safely("the repeated shared number[] host completion",
             CanonicalProjectionParityTest::driveHostSharedArrayCompletion);
     }
 
@@ -2873,30 +2850,30 @@ public class CanonicalProjectionParityTest {
     /** The oracle's one-element int array completion value (the boxed element). */
     private static SemanticOracle.Value oracleIntArrayElement(long value) {
         return new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
-            RuntimeDescriptor.Int.INSTANCE, false);
+            new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(value))),
+            RuntimeDescriptor.Number.INSTANCE, false);
     }
 
     /** The oracle's one-element nested int array completion value. */
     private static SemanticOracle.Value oracleNestedIntArrayElement(long value) {
         return new SemanticOracle.Value.ArrayValue(
             new ArrayList<>(List.of(oracleIntArrayElement(value))),
-            RuntimeDescriptor.parseCanonicalText("[int]"), false);
+            RuntimeDescriptor.parseCanonicalText("[number]"), false);
     }
 
     /** The oracle's one-element number array completion value (the boxed element). */
     private static SemanticOracle.Value oracleNumberArrayElement(long value) {
         return new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
+            new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(value))),
             RuntimeDescriptor.Number.INSTANCE, false);
     }
 
     /** The oracle's int-or-null element array completion value. */
     private static SemanticOracle.Value oracleNullableElementArray() {
         return new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(7L),
+            new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(7L),
                 SemanticOracle.Value.NullValue.INSTANCE)),
-            RuntimeDescriptor.parseCanonicalText("?int"), false);
+            RuntimeDescriptor.parseCanonicalText("?number"), false);
     }
 
     /** The oracle's string array completion value carrying one element. */
@@ -3028,30 +3005,30 @@ public class CanonicalProjectionParityTest {
             """.formatted(DEEP_HOST_SUBTREE_LEVELS);
     }
 
-    /** The admitted int[] completion: the boxed element settles and is consumed. */
+    /** The admitted number[] completion: the boxed element settles and is consumed. */
     private static void driveHostIntArrayCompletion(Compiled compiled) throws Exception {
-            assertAsyncArrayCompletionSuccess(compiled, "test_use_int_array", "int:8",
+            assertAsyncArrayCompletionSuccess(compiled, "test_use_int_array", "num:0x1.0p3",
                 arrayCompletionResponder(oracleIntArrayElement(7L)),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("integer"),
-                "the boxed int int[] completion");
+                "the boxed int number[] completion");
     }
 
     /**
-     * The nullable int[] completion: the boxed element settles and is
+     * The nullable number[] completion: the boxed element settles and is
      * consumed, and the language-null control stays the language null.
      */
     private static void driveHostNullableIntArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
-                "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
+                "num:0x1.0p3", arrayCompletionResponder(oracleIntArrayElement(7L)),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("integer"),
-                "the boxed int nullable int[] completion");
+                "the boxed int nullable number[] completion");
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_int_array",
-                "int:0", arrayCompletionResponder(
+                "num:0x0.0p0", arrayCompletionResponder(
                     SemanticOracle.Value.NullValue.INSTANCE),
                 luaAsyncArrayHost("rt.__NULL"), jvmAsyncArrayHost("null"),
-                "the language-null nullable int[] completion");
+                "the language-null nullable number[] completion");
     }
 
     /** The int-or-null element array completion: the boxed element and the null element. */
@@ -3060,7 +3037,7 @@ public class CanonicalProjectionParityTest {
             ARRAY_COMPLETION_NULLABLE_ELEMENT_DRIVER);
         try {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_elements",
-                "int:8", arrayCompletionResponder(oracleNullableElementArray()),
+                "num:0x1.0p3", arrayCompletionResponder(oracleNullableElementArray()),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7}"),
                 jvmAsyncArrayHost("nullable-integer"),
                 "the boxed int and null (int | null)[] completion");
@@ -3069,17 +3046,17 @@ public class CanonicalProjectionParityTest {
         }
     }
 
-    /** The admitted nested int[][] completion: the nested boxed element settles. */
+    /** The admitted nested number[][] completion: the nested boxed element settles. */
     private static void driveHostNestedIntArrayCompletion() throws Exception {
         Compiled compiled = compileArrayCompletion("test_use_nested_int_array",
             ARRAY_COMPLETION_NESTED_INT_DRIVER);
         try {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nested_int_array",
-                "int:8", arrayCompletionResponder(oracleNestedIntArrayElement(7L)),
+                "num:0x1.0p3", arrayCompletionResponder(oracleNestedIntArrayElement(7L)),
                 luaAsyncArrayHost(
                     "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}}"),
                 jvmAsyncArrayHost("nested-integer"),
-                "the nested boxed int int[][] completion");
+                "the nested boxed int number[][] completion");
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -3092,7 +3069,7 @@ public class CanonicalProjectionParityTest {
      */
     private static void driveHostNumberArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_number_array",
-                "int:8", arrayCompletionResponder(oracleNumberArrayElement(7L)),
+                "num:0x1.0p3", arrayCompletionResponder(oracleNumberArrayElement(7L)),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("integer"),
                 "the boxed int number[] completion");
@@ -3102,10 +3079,10 @@ public class CanonicalProjectionParityTest {
     private static void driveHostStringArrayCompletion(Compiled compiled) throws Exception {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(oracleStringArrayElement(
-                    new SemanticOracle.Value.IntValue(7L))),
+                    new SemanticOracle.Value.NumValue(7L))),
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
-                    "int"),
+                    "number"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 7}"),
                 jvmAsyncArrayHost("integer"),
                 "the boxed int string[] completion");
@@ -3117,7 +3094,7 @@ public class CanonicalProjectionParityTest {
             assertAsyncCompletionFailure(compiled, "async_arrays",
                 arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
                     new ArrayList<>(List.of(oracleStringArrayElement(
-                        new SemanticOracle.Value.IntValue(7L)))),
+                        new SemanticOracle.Value.NumValue(7L)))),
                     RuntimeDescriptor.parseCanonicalText("[string]"), false)),
                 "test_drop_nested_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRINGS_DRIVER, 9, 1,
@@ -3152,7 +3129,7 @@ public class CanonicalProjectionParityTest {
                     oracleDeepStringArrayCompletion(DEEP_HOST_SUBTREE_LEVELS)),
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
-                    "int"),
+                    "number"),
                 luaDeepStringArrayHost(DEEP_HOST_SUBTREE_LEVELS),
                 jvmAsyncArrayHost("deep"),
                 "the deep later-subtree string[] completion");
@@ -3169,15 +3146,15 @@ public class CanonicalProjectionParityTest {
      */
     private static SemanticOracle.Value oracleDeepStringArrayCompletion(int levels) {
         SemanticOracle.Value node = new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(), RuntimeDescriptor.Int.INSTANCE, false);
+            new ArrayList<>(), RuntimeDescriptor.Number.INSTANCE, false);
         for (int i = 0; i < levels; i++) {
             List<SemanticOracle.Value> elements = new ArrayList<>();
             elements.add(node);
             node = new SemanticOracle.Value.ArrayValue(elements,
-                RuntimeDescriptor.parseCanonicalText("[int]"), false);
+                RuntimeDescriptor.parseCanonicalText("[number]"), false);
         }
         List<SemanticOracle.Value> elements = new ArrayList<>();
-        elements.add(new SemanticOracle.Value.IntValue(7L));
+        elements.add(new SemanticOracle.Value.NumValue(7L));
         elements.add(node);
         return new SemanticOracle.Value.ArrayValue(elements,
             RuntimeDescriptor.String.INSTANCE, false);
@@ -3212,7 +3189,7 @@ public class CanonicalProjectionParityTest {
                 arrayCompletionResponder(oracleCyclicStringArrayCompletion()),
                 "test_drop_string_array",
                 asyncElementTuple(ARRAY_COMPLETION_STRING_DRIVER, 4, 1, "string",
-                    "int"),
+                    "number"),
                 luaCyclicStringArrayHost(), jvmAsyncArrayHost("cyclic"),
                 "the cyclic later-element string[] completion");
     }
@@ -3228,7 +3205,7 @@ public class CanonicalProjectionParityTest {
         List<SemanticOracle.Value> elements = new ArrayList<>();
         SemanticOracle.Value cyclic = new SemanticOracle.Value.ArrayValue(elements,
             RuntimeDescriptor.String.INSTANCE, false);
-        elements.add(new SemanticOracle.Value.IntValue(7L));
+        elements.add(new SemanticOracle.Value.NumValue(7L));
         elements.add(cyclic);
         return cyclic;
     }
@@ -3295,7 +3272,7 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The out-of-range long int[] completion: the completed array's element is
+     * The out-of-range long number[] completion: the completed array's element is
      * a raw host long outside signed32. The crossing's pinned int ladder
      * rejects it through the shared signed32-range arm, wrapped by the element
      * arm's own render; the failing carrier's own token is the number
@@ -3310,13 +3287,13 @@ public class CanonicalProjectionParityTest {
                 arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
                     new ArrayList<>(List.of(
                         new SemanticOracle.Value.NumValue(2147483648.0))),
-                    RuntimeDescriptor.Int.INSTANCE, false)),
+                    RuntimeDescriptor.Number.INSTANCE, false)),
                 "test_use_int_array",
-                asyncElementTuple(ARRAY_COMPLETION_INT_DRIVER, 4, 1, "int",
-                    "number"),
+                tuple("PROBE_BOXED_ELEMENT", "the boxed int element did not land 7",
+                    "app.deal:7:5", null, null),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 2147483648}"),
                 jvmAsyncArrayHost("range-long"),
-                "the out-of-range long int[] completion");
+                "the out-of-range long number[] completion");
     }
 
     /**
@@ -3325,7 +3302,7 @@ public class CanonicalProjectionParityTest {
      * operation the driver awaits twice.
      */
     private static final String SHARED_ARRAY_COMPLETION_DECLARATION = """
-        export async function fetchSharedInts(): int[];
+        export async function fetchSharedInts(): number[];
         """;
 
     /**
@@ -3339,14 +3316,14 @@ public class CanonicalProjectionParityTest {
     private static final String SHARED_ARRAY_COMPLETION_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_reuse_int_array(): int {
-          let xs: int[] = await host.fetchSharedInts();
-          let ys: int[] = await host.fetchSharedInts();
+        export async function test_reuse_int_array(): number {
+          let xs: number[] = await host.fetchSharedInts();
+          let ys: number[] = await host.fetchSharedInts();
           if (xs !== ys) {
             throw { code: "PROBE_IDENTITY", message: "the same completed array did not keep its identity" };
           }
           xs[0] = 8;
-          let v: int = ys[0];
+          let v: number = ys[0];
           if (v !== 8) {
             throw { code: "PROBE_ALIAS", message: "the alias-observed write was lost" };
           }
@@ -3404,7 +3381,7 @@ public class CanonicalProjectionParityTest {
         """;
 
     /**
-     * The repeated shared int[] completion on all three consumers: the host
+     * The repeated shared number[] completion on all three consumers: the host
      * completes two awaits of one operation with the identical production
      * array, the awaited bindings must compare equal by reference, and the
      * write through the first alias must be observed through the second. The
@@ -3419,9 +3396,9 @@ public class CanonicalProjectionParityTest {
             Map.of("async_arrays", SHARED_ARRAY_COMPLETION_DECLARATION));
         try {
             assertAsyncArrayCompletionSuccess(compiled, "test_reuse_int_array",
-                "int:8", arrayCompletionResponder(oracleIntArrayElement(7L)),
+                "num:0x1.0p3", arrayCompletionResponder(oracleIntArrayElement(7L)),
                 LUA_SHARED_ARRAY_HOST, JVM_SHARED_ARRAY_HOST,
-                "the repeated shared int[] completion");
+                "the repeated shared number[] completion");
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -3454,59 +3431,23 @@ public class CanonicalProjectionParityTest {
             + "canonical element arm on all three consumers --");
         JvmRuntime.Array nullableElement = new JvmRuntime.Array(1);
         nullableElement.elements.add(Long.valueOf(-2147483649L));
-        try {
-            JvmRuntime.hostCompletion("array(nullable(int))", "array",
-                nullableElement);
-            check(false, "the crossing rejects the out-of-range Long at a "
-                + "nullable int element position");
-        } catch (JvmRuntime.DealError error) {
-            check("E8003".equals(error.code)
-                    && "array element 1 type mismatch".equals(error.msg)
-                    && "?int".equals(error.expected)
-                    && "number".equals(error.actual),
-                "the crossing renders the canonical element arm for the "
-                    + "out-of-range Long at a nullable int element position: "
-                    + error.code + " " + error.msg + " expected " + error.expected
-                    + " actual " + error.actual);
-        }
-        check(Long.valueOf(-2147483649L).equals(nullableElement.elements.get(0)),
-            "the rejected nullable-element crossing commits nothing: the host's "
-                + "own carrier keeps its out-of-range Long element");
+        check(JvmRuntime.hostCompletion("array(nullable(number))", "array", nullableElement)
+                == nullableElement
+                && Double.valueOf(-2147483649.0).equals(nullableElement.elements.get(0)),
+            "nullable number elements admit large magnitudes and normalize in place");
         JvmRuntime.Array nestedInner = new JvmRuntime.Array(1);
         nestedInner.elements.add(Long.valueOf(2147483648L));
         JvmRuntime.Array nestedOuter = new JvmRuntime.Array(1);
         nestedOuter.elements.add(nestedInner);
-        try {
-            JvmRuntime.hostCompletion("array(array(int))", "array", nestedOuter);
-            check(false, "the crossing rejects the out-of-range Long at a nested "
-                + "int element position");
-        } catch (JvmRuntime.DealError error) {
-            check("E8003".equals(error.code)
-                    && "array element 1 type mismatch".equals(error.msg)
-                    && "[int]".equals(error.expected)
-                    && "array".equals(error.actual),
-                "the crossing renders the canonical outer element arm for the "
-                    + "out-of-range Long at a nested int element position: "
-                    + error.code + " " + error.msg + " expected " + error.expected
-                    + " actual " + error.actual);
-        }
-        check(nestedOuter.elements.get(0) == nestedInner
-                && Long.valueOf(2147483648L).equals(nestedInner.elements.get(0)),
-            "the rejected nested crossing commits nothing: the inner carrier "
-                + "stays the same array with its out-of-range Long element");
+        check(JvmRuntime.hostCompletion("array(array(number))", "array", nestedOuter) == nestedOuter
+                && nestedOuter.elements.get(0) == nestedInner
+                && Double.valueOf(2147483648.0).equals(nestedInner.elements.get(0)),
+            "nested number admission preserves both carrier identities and consumes the normalized value");
         JvmRuntime.Array nullableArray = new JvmRuntime.Array(1);
         nullableArray.elements.add(Long.valueOf(2147483648L));
-        try {
-            JvmRuntime.hostCompletion("nullable(array(int))", "array",
-                nullableArray);
-            check(false, "the crossing rejects the out-of-range Long at an int "
-                + "element position of a nullable array completion");
-        } catch (JvmRuntime.DealError error) {
-            check("E8003".equals(error.code) && "int".equals(error.expected)
-                    && "number".equals(error.actual),
-                "the crossing renders the canonical element arm behind the "
-                    + "nullable array completion: " + error.code + " " + error.msg);
-        }
+        check(JvmRuntime.hostCompletion("nullable(array(number))", "array", nullableArray) == nullableArray
+                && Double.valueOf(2147483648.0).equals(nullableArray.elements.get(0)),
+            "nullable array admission retains its carrier and large numeric element");
         JvmRuntime.Array ordered = new JvmRuntime.Array(2);
         ordered.elements.add(Integer.valueOf(7));
         ordered.elements.add(Long.valueOf(2147483648L));
@@ -3518,7 +3459,7 @@ public class CanonicalProjectionParityTest {
             check("E8003".equals(error.code)
                     && "array element 1 type mismatch".equals(error.msg)
                     && "string".equals(error.expected)
-                    && "int".equals(error.actual),
+                    && "number".equals(error.actual),
                 "the first failing element decides before the later out-of-range "
                     + "Long is inspected: " + error.code + " " + error.msg
                     + " expected " + error.expected + " actual " + error.actual);
@@ -3529,22 +3470,22 @@ public class CanonicalProjectionParityTest {
                 + "wrong-kind element and the later out-of-range Long stay raw");
         JvmRuntime.Array laterRange = new JvmRuntime.Array(2);
         laterRange.elements.add(Integer.valueOf(7));
-        laterRange.elements.add(Long.valueOf(2147483649L));
+        laterRange.elements.add("wrong-kind");
         try {
-            JvmRuntime.hostCompletion("array(int)", "array", laterRange);
+            JvmRuntime.hostCompletion("array(number)", "array", laterRange);
             check(false, "the crossing rejects the out-of-range Long at the "
                 + "second int element position");
         } catch (JvmRuntime.DealError error) {
             check("E8003".equals(error.code)
                     && "array element 2 type mismatch".equals(error.msg)
-                    && "int".equals(error.expected)
-                    && "number".equals(error.actual),
+                    && "number".equals(error.expected)
+                    && "string".equals(error.actual),
                 "the crossing renders the element arm of the second position "
                     + "after admitting the first: " + error.code + " " + error.msg
                     + " expected " + error.expected + " actual " + error.actual);
         }
         check(Integer.valueOf(7).equals(laterRange.elements.get(0))
-                && Long.valueOf(2147483649L).equals(laterRange.elements.get(1)),
+                && "wrong-kind".equals(laterRange.elements.get(1)),
             "the rejected crossing commits no partial admission: the earlier "
                 + "admitted boxed int element stays the raw Integer carrier");
         JvmRuntime.Array numberCarrier = new JvmRuntime.Array(1);
@@ -3552,26 +3493,17 @@ public class CanonicalProjectionParityTest {
         Object admittedNumber = JvmRuntime.hostCompletion("array(number)", "array",
             numberCarrier);
         check(admittedNumber == numberCarrier
-                && Long.valueOf(2147483648L).equals(numberCarrier.elements.get(0)),
+                && Double.valueOf(2147483648.0).equals(numberCarrier.elements.get(0)),
             "a declared number element position admits the out-of-range Long "
                 + "unchanged (the number carrier keeps its own variant)");
-        try {
-            JvmRuntime.hostCompletion("nullable(int)", "nullable:int",
-                Long.valueOf(2147483648L));
-            check(false, "the crossing rejects the out-of-range Long at the "
-                + "top-level nullable int position");
-        } catch (JvmRuntime.DealError error) {
-            check("E8004".equals(error.code)
-                    && "int out of safe range".equals(error.msg),
-                "the crossing's top-level range step and its element-position "
-                    + "step render the same closed range arm: " + error.code + " "
-                    + error.msg);
-        }
-        safely("the out-of-range int[] host completion",
+        check(Double.valueOf(2147483648.0).equals(JvmRuntime.hostCompletion(
+                "nullable(number)", "nullable:number", Long.valueOf(2147483648L))),
+            "top-level nullable number admission preserves the large binary64 value");
+        safely("the out-of-range number[] host completion",
             CanonicalProjectionParityTest::driveHostOutOfRangeIntArrayCompletion);
         safely("the out-of-range nullable-element array host completion",
             CanonicalProjectionParityTest::driveHostOutOfRangeNullableElementCompletion);
-        safely("the out-of-range nested int[][] host completion",
+        safely("the out-of-range nested number[][] host completion",
             CanonicalProjectionParityTest::driveHostOutOfRangeNestedIntArrayCompletion);
         safely("the out-of-range later-element string[] host completion",
             CanonicalProjectionParityTest::driveHostOutOfRangeLaterElementCompletion);
@@ -3640,15 +3572,15 @@ public class CanonicalProjectionParityTest {
     /**
      * The oracle's one-element out-of-range raw host-long int array
      * completion value: the JVM host's completed carrier is the unrestricted
-     * raw {@code long} the public {@link SemanticOracle.Value.IntValue} seam
+     * raw {@code long} the public {@link SemanticOracle.Value.NumValue} seam
      * admits, and the oracle's boundary view classifies an integral raw
      * carrier outside signed32 as the number view both production consumers
      * project for the same raw value.
      */
     private static SemanticOracle.Value oracleOutOfRangeIntArrayElement(long value) {
         return new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
-            RuntimeDescriptor.Int.INSTANCE, false);
+            new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(value))),
+            RuntimeDescriptor.Number.INSTANCE, false);
     }
 
     /**
@@ -3659,9 +3591,9 @@ public class CanonicalProjectionParityTest {
             long value) {
         return new SemanticOracle.Value.ArrayValue(
             new ArrayList<>(List.of(new SemanticOracle.Value.ArrayValue(
-                new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(value))),
-                RuntimeDescriptor.Int.INSTANCE, false))),
-            RuntimeDescriptor.parseCanonicalText("[int]"), false);
+                new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(value))),
+                RuntimeDescriptor.Number.INSTANCE, false))),
+            RuntimeDescriptor.parseCanonicalText("[number]"), false);
     }
 
     /**
@@ -3672,28 +3604,26 @@ public class CanonicalProjectionParityTest {
     private static SemanticOracle.Value oracleOrderedStringArrayElement(
             long laterValue) {
         return new SemanticOracle.Value.ArrayValue(
-            new ArrayList<>(List.of(new SemanticOracle.Value.IntValue(7L),
-                new SemanticOracle.Value.IntValue(laterValue))),
+            new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(7L),
+                new SemanticOracle.Value.NumValue(laterValue))),
             RuntimeDescriptor.String.INSTANCE, false);
     }
 
     /**
-     * The out-of-range Long at a direct int[] completion on all three
+     * The out-of-range Long at a direct number[] completion on all three
      * consumers: the element arm's complete tuple at the discarded await.
      */
     private static void driveHostOutOfRangeIntArrayCompletion() throws Exception {
         Compiled compiled = compileArrayCompletion("test_drop_int_array",
             ARRAY_COMPLETION_DROP_INT_DRIVER);
         try {
-            assertAsyncCompletionFailure(compiled, "async_arrays",
+            assertAsyncCompletionSuccess(compiled, "async_arrays",
                 arrayCompletionResponder(
                     oracleOutOfRangeIntArrayElement(2147483648L)),
                 "test_drop_int_array",
-                asyncElementTuple(ARRAY_COMPLETION_DROP_INT_DRIVER, 4, 1, "int",
-                    "number"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 2147483648}"),
                 jvmAsyncArrayHost("range-long"),
-                "the out-of-range Long int[] completion");
+                "the out-of-range Long number[] completion");
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -3709,12 +3639,10 @@ public class CanonicalProjectionParityTest {
         Compiled compiled = compileArrayCompletion("test_drop_nullable_elements",
             ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER);
         try {
-            assertAsyncCompletionFailure(compiled, "async_arrays",
+            assertAsyncCompletionSuccess(compiled, "async_arrays",
                 arrayCompletionResponder(
                     oracleOutOfRangeIntArrayElement(-2147483649L)),
                 "test_drop_nullable_elements",
-                asyncElementTuple(ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER, 4, 1,
-                    "?int", "number"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = -2147483649}"),
                 jvmAsyncArrayHost("negative-range-long"),
                 "the out-of-range Long (int | null)[] completion");
@@ -3724,7 +3652,7 @@ public class CanonicalProjectionParityTest {
     }
 
     /**
-     * The out-of-range Long at an int[][] completion on all three consumers:
+     * The out-of-range Long at an number[][] completion on all three consumers:
      * the nested element position applies the same recursive range step and
      * the outermost element arm renders the complete tuple.
      */
@@ -3733,16 +3661,14 @@ public class CanonicalProjectionParityTest {
         Compiled compiled = compileArrayCompletion("test_drop_nested_int_array",
             ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER);
         try {
-            assertAsyncCompletionFailure(compiled, "async_arrays",
+            assertAsyncCompletionSuccess(compiled, "async_arrays",
                 arrayCompletionResponder(
                     oracleOutOfRangeNestedIntArrayElement(2147483648L)),
                 "test_drop_nested_int_array",
-                asyncElementTuple(ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER, 4, 1,
-                    "[int]", "array"),
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = {[__dealCarrierKeys.a] = true, "
                     + "[__dealCarrierKeys.n] = 1, [1] = 2147483648}}"),
                 jvmAsyncArrayHost("nested-range-long"),
-                "the out-of-range Long int[][] completion");
+                "the out-of-range Long number[][] completion");
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -3764,7 +3690,7 @@ public class CanonicalProjectionParityTest {
                     oracleOrderedStringArrayElement(2147483648L)),
                 "test_drop_ordered_strings",
                 asyncElementTuple(ARRAY_COMPLETION_DROP_ORDER_DRIVER, 4, 1, "string",
-                    "int"),
+                    "number"),
                 luaAsyncArrayHost(
                     "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7, [2] = 2147483648}"),
                 jvmAsyncArrayHost("later-range-long"),
@@ -3846,23 +3772,6 @@ public class CanonicalProjectionParityTest {
         }
     }
 
-    /** The completion row's signed32-range tuple (E8004) at one await origin. */
-    private static Tuple asyncRangeTuple(String driver, int line) {
-        BoundaryFailure arm = FailureContractRegistry.render(
-            FailureArmId.INT32_RANGE, Map.of(), null, null, null);
-        return new Tuple(arm.code().name(), arm.message(), "app.deal", line,
-            awaitColumn(driver, line), arm.expected(), arm.actual());
-    }
-
-    /** The completion row's refinement tuple (E8001) at one await origin. */
-    private static Tuple asyncRefinementTuple(String driver, int line, String token) {
-        BoundaryFailure arm = FailureContractRegistry.render(
-            FailureArmId.ASYNC_COMPLETION_REFINEMENT,
-            Map.of("expected", "int", "actual", token), "int", token, null);
-        return new Tuple(arm.code().name(), arm.message(), "app.deal", line,
-            awaitColumn(driver, line), arm.expected(), arm.actual());
-    }
-
     /** The completion cell's kind tuple (E8001) at one await origin. */
     private static Tuple asyncKindTuple(String driver, int line, String expected,
             String actual) {
@@ -3901,23 +3810,23 @@ public class CanonicalProjectionParityTest {
             // (the consuming probe compares the value in-language), and the
             // long/double/int carriers normalize to the declared number.
             assertHostSuccess(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.IntValue(7L)), "test_use_int",
+                new SemanticOracle.Value.NumValue(7L)), "test_use_int",
                 luaNumericHost("7"), jvmNumericHost("java.lang.Integer.valueOf(7)"),
                 "the in-range Integer int return");
             assertHostSuccess(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.IntValue(7L)), "test_use_int",
+                new SemanticOracle.Value.NumValue(7L)), "test_use_int",
                 luaNumericHost("7"), jvmNumericHost("java.lang.Long.valueOf(7)"),
                 "the in-range Long int return");
             assertHostSuccess(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.IntValue(7L)), "test_use_int",
+                new SemanticOracle.Value.NumValue(7L)), "test_use_int",
                 luaNumericHost("7"), jvmNumericHost("java.lang.Double.valueOf(7)"),
                 "the in-range integral Double int return");
             assertHostSuccess(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.IntValue(7L)), "test_use_nullable_int",
+                new SemanticOracle.Value.NumValue(7L)), "test_use_nullable_int",
                 luaNumericHost("7"), jvmNumericHost("java.lang.Long.valueOf(7)"),
                 "the in-range Long nullable-int return");
             check(BoundaryExecutor.check(FailurePolicyId.HOST_SYNC_RETURN,
-                RuntimeDescriptor.Number.INSTANCE, BoundaryValueView.ofInt(7),
+                RuntimeDescriptor.Number.INSTANCE, BoundaryValueView.ofNumber(7),
                 BoundaryContext.none()) instanceof BoundaryOutcome.Pass,
                 "the oracle's number cell admits the boxed-int carrier, the "
                     + "admission the emitted JVM wrapper applies");
@@ -3933,63 +3842,23 @@ public class CanonicalProjectionParityTest {
                 new SemanticOracle.Value.NumValue(7.5)), "test_use_fraction",
                 luaNumericHost("7.5"), jvmNumericHost("java.lang.Double.valueOf(7.5)"),
                 "the in-range fractional Double number return");
-            // The non-admitted int carriers: the signed32-range arm for an
-            // out-of-range Long or Double at both int returns, and the
-            // refinement arms for a fractional, NaN, or infinite Double,
-            // each rendered as the host composite at the call origin.
-            Tuple rangeInt = hostReturnCellTuple("int", FailureContractRegistry
-                .arm(FailureArmId.INT32_RANGE).template(), "number", 39, 3);
-            Tuple rangeNullableInt = hostReturnCellTuple("?int",
-                FailureContractRegistry.arm(FailureArmId.INT32_RANGE).template(),
-                "number", 44, 3);
-            Tuple nanInt = hostReturnCellTuple("int", FailureContractRegistry
-                .arm(FailureArmId.INT_CONVERSION_NAN).template(), "number", 39, 3);
-            Tuple infinityInt = hostReturnCellTuple("int", FailureContractRegistry
-                .arm(FailureArmId.INT_CONVERSION_INFINITY).template(), "number",
-                39, 3);
-            Tuple fractionInt = hostReturnCellTuple("int", FailureContractRegistry
-                .arm(FailureArmId.INT_CONVERSION_FRACTIONAL).template(), "number",
-                39, 3);
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(2147483648.0)), "test_drop_int",
-                rangeInt, luaNumericHost("2147483648"),
-                jvmNumericHost("java.lang.Long.valueOf(2147483648L)"),
-                "the out-of-range Long int return");
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(2147483648.0)), "test_drop_int",
-                rangeInt, luaNumericHost("2147483648"),
-                jvmNumericHost("java.lang.Double.valueOf(2147483648.0)"),
-                "the out-of-range Double int return");
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(1.5)), "test_drop_int",
-                fractionInt, luaNumericHost("1.5"),
-                jvmNumericHost("java.lang.Double.valueOf(1.5)"),
-                "the fractional Double int return");
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(Double.NaN)), "test_drop_int",
-                nanInt, luaNumericHost("0/0"),
-                jvmNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
-                "the NaN Double int return");
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY)),
-                "test_drop_int", infinityInt, luaNumericHost("math.huge"),
-                jvmNumericHost(
-                    "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"),
-                "the infinite Double int return");
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(2147483648.0)),
-                "test_drop_nullable_int", rangeNullableInt,
-                luaNumericHost("2147483648"),
-                jvmNumericHost("java.lang.Long.valueOf(2147483648L)"),
-                "the out-of-range Long nullable-int return");
-            assertHostFailure(compiled, stem, numericReturnResponder(
-                new SemanticOracle.Value.NumValue(Double.NaN)),
-                "test_drop_nullable_int", hostReturnCellTuple("?int",
-                    FailureContractRegistry.arm(
-                        FailureArmId.INT_CONVERSION_NAN).template(), "number",
-                    44, 3), luaNumericHost("0/0"),
-                jvmNumericHost("java.lang.Double.valueOf(java.lang.Double.NaN)"),
-                "the NaN Double nullable-int return");
+            for (NumericCompletion carrier : List.of(
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(2147483648.0),
+                        "2147483648", "java.lang.Long.valueOf(2147483648L)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(2147483648.0),
+                        "2147483648", "java.lang.Double.valueOf(2147483648.0)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(1.5),
+                        "1.5", "java.lang.Double.valueOf(1.5)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(Double.NaN),
+                        "0/0", "java.lang.Double.valueOf(java.lang.Double.NaN)"),
+                    new NumericCompletion(new SemanticOracle.Value.NumValue(Double.POSITIVE_INFINITY),
+                        "math.huge", "java.lang.Double.valueOf(java.lang.Double.POSITIVE_INFINITY)"))) {
+                for (String export : List.of("test_drop_int", "test_drop_nullable_int")) {
+                    assertHostSuccess(compiled, stem, numericReturnResponder(carrier.oracle()),
+                        export, luaNumericHost(carrier.lua()), jvmNumericHost(carrier.jvm()),
+                        "number return admits " + carrier.jvm() + " at " + export);
+                }
+            }
         } finally {
             deleteRecursively(compiled.root());
         }
@@ -4385,31 +4254,31 @@ public class CanonicalProjectionParityTest {
      */
     private static final String NULL_CROSSING_DECLARATION = """
         export function takeNull(value: null): string;
-        export function takeNullableInt(value: int | null): string;
-        export function takeNullableArray(value: (int | null)[]): string;
-        export function takeNestedNullableArray(value: (int | null)[][]): string;
-        export function takeNullableArrayBadReturn(value: (int | null)[]): string;
-        export async function asyncTakeNullableArray(value: (int | null)[]): string;
-        export function takeSharedArray(first: (int | null)[], second: (int | null)[]): string;
-        export function roundtripArray(value: (int | null)[]): (int | null)[];
-        export function writeArray(value: (int | null)[]): string;
-        export function stashArray(value: (int | null)[]): string;
-        export function sameAsStash(value: (int | null)[]): string;
-        export function writeNestedArray(value: (int | null)[][]): string;
-        export async function asyncTakeSharedArray(first: (int | null)[], second: (int | null)[]): string;
-        export async function asyncRoundtripArray(value: (int | null)[]): (int | null)[];
-        export async function asyncWriteArray(value: (int | null)[]): string;
+        export function takeNullableInt(value: number | null): string;
+        export function takeNullableArray(value: (number | null)[]): string;
+        export function takeNestedNullableArray(value: (number | null)[][]): string;
+        export function takeNullableArrayBadReturn(value: (number | null)[]): string;
+        export async function asyncTakeNullableArray(value: (number | null)[]): string;
+        export function takeSharedArray(first: (number | null)[], second: (number | null)[]): string;
+        export function roundtripArray(value: (number | null)[]): (number | null)[];
+        export function writeArray(value: (number | null)[]): string;
+        export function stashArray(value: (number | null)[]): string;
+        export function sameAsStash(value: (number | null)[]): string;
+        export function writeNestedArray(value: (number | null)[][]): string;
+        export async function asyncTakeSharedArray(first: (number | null)[], second: (number | null)[]): string;
+        export async function asyncRoundtripArray(value: (number | null)[]): (number | null)[];
+        export async function asyncWriteArray(value: (number | null)[]): string;
         export function takeNullBadReturn(value: null): string;
         export function takeTable(value: table): string;
-        export function takeArray(value: int[]): string;
+        export function takeArray(value: number[]): string;
         export function returnNull(): null;
-        export function returnNullableInt(): int | null;
+        export function returnNullableInt(): number | null;
         export async function asyncTakeNull(value: null): string;
-        export async function asyncTakeNullableInt(value: int | null): string;
-        export async function asyncTakeNullThenInt(value: null, count: int): string;
-        export async function asyncTakePair(value: int | null, count: int | null): string;
+        export async function asyncTakeNullableInt(value: number | null): string;
+        export async function asyncTakeNullThenInt(value: null, count: number): string;
+        export async function asyncTakePair(value: number | null, count: number | null): string;
         export async function asyncTakeTable(value: table): string;
-        export async function asyncTakeArray(value: int[]): string;
+        export async function asyncTakeArray(value: number[]): string;
         """;
 
     /**
@@ -4427,7 +4296,7 @@ public class CanonicalProjectionParityTest {
         new NullAdmission(3, "test_take_null_literal", false, "", "host.takeNull(null)", "sentinel", "the null literal crossed the null parameter as a non-sentinel"),
         new NullAdmission(11, "test_take_nullable_int_literal", false, "", "host.takeNullableInt(null)", "sentinel", "the null literal crossed the nullable primitive parameter as a non-sentinel"),
         new NullAdmission(19, "test_take_null_from_host", false, "let value: null = host.returnNull();\n", "host.takeNull(value)", "sentinel", "the admitted host null crossed the null parameter as a non-sentinel"),
-        new NullAdmission(28, "test_take_nullable_int_from_host", false, "let value: int | null = host.returnNullableInt();\n", "host.takeNullableInt(value)", "sentinel", "the admitted host null crossed the nullable primitive parameter as a non-sentinel"),
+        new NullAdmission(28, "test_take_nullable_int_from_host", false, "let value: number | null = host.returnNullableInt();\n", "host.takeNullableInt(value)", "sentinel", "the admitted host null crossed the nullable primitive parameter as a non-sentinel"),
         new NullAdmission(42, "test_async_take_null", true, "", "await host.asyncTakeNull(null)", "sentinel", "the async null crossing delivered a non-sentinel"),
         new NullAdmission(50, "test_async_take_nullable_int", true, "", "await host.asyncTakeNullableInt(null)", "sentinel", "the async nullable crossing delivered a non-sentinel"),
         new NullAdmission(58, "test_async_take_null_then_int", true, "", "await host.asyncTakeNullThenInt(null, 7)", "sentinel+7", "the async null crossing shifted the arguments before a non-null parameter"),
@@ -4462,19 +4331,19 @@ public class CanonicalProjectionParityTest {
             "host.takeNullBadReturn(null);\nreturn null;\n"));
         List<NullHelper> helpers = List.of(
             new NullHelper(74, true, "applyAsyncNull", "value: null", "null"),
-            new NullHelper(78, true, "applyAsyncNullableInt", "value: int | null", "null"),
-            new NullHelper(98, true, "applyAsyncNullThenInt", "value: null, count: int", "null, 7"),
-            new NullHelper(102, true, "applyAsyncPair", "value: int | null, count: int | null", "null, 7"),
+            new NullHelper(78, true, "applyAsyncNullableInt", "value: number | null", "null"),
+            new NullHelper(98, true, "applyAsyncNullThenInt", "value: null, count: number", "null, 7"),
+            new NullHelper(102, true, "applyAsyncPair", "value: number | null, count: number | null", "null, 7"),
             new NullHelper(122, false, "applyNull", "value: null", "null"),
-            new NullHelper(126, false, "applyNullableInt", "value: int | null", "null"),
+            new NullHelper(126, false, "applyNullableInt", "value: number | null", "null"),
             new NullHelper(162, false, "applyTable", "value: table", "bag.value"),
-            new NullHelper(166, false, "applyArray", "value: int[]", "bag.value"),
+            new NullHelper(166, false, "applyArray", "value: number[]", "bag.value"),
             new NullHelper(190, true, "applyAsyncTable", "value: table", "bag.value"),
-            new NullHelper(194, true, "applyAsyncArray", "value: int[]", "bag.value"),
+            new NullHelper(194, true, "applyAsyncArray", "value: number[]", "bag.value"),
             new NullHelper(228, false, "applyTableMissing", "value: table", "bag.missing"),
-            new NullHelper(232, false, "applyArrayMissing", "value: int[]", "bag.missing"),
+            new NullHelper(232, false, "applyArrayMissing", "value: number[]", "bag.missing"),
             new NullHelper(246, true, "applyAsyncTableMissing", "value: table", "bag.missing"),
-            new NullHelper(250, true, "applyAsyncArrayMissing", "value: int[]", "bag.missing"),
+            new NullHelper(250, true, "applyAsyncArrayMissing", "value: number[]", "bag.missing"),
             new NullHelper(264, true, "applyAsyncNullValue", "value: null", "value"));
         for (NullHelper row : helpers) {
             String expression = row.expression();
@@ -4521,9 +4390,9 @@ public class CanonicalProjectionParityTest {
     }
 
     private static String nullArrayDriver() {
-        String array = "let xs: (int | null)[] = [null, 7];\n";
-        String nested = "let inner: (int | null)[] = [null, 7];\n"
-            + "let outer: (int | null)[][] = [inner, inner];\n";
+        String array = "let xs: (number | null)[] = [null, 7];\n";
+        String nested = "let inner: (number | null)[] = [null, 7];\n"
+            + "let outer: (number | null)[][] = [inner, inner];\n";
         StringBuilder source = new StringBuilder();
         for (boolean async : List.of(false, true)) {
             String await = async ? "await " : "";
@@ -4536,9 +4405,9 @@ public class CanonicalProjectionParityTest {
                 + nullArrayCheck("seen !== \"sentinel+7\"", "null sentinel at host parameter");
             if (!async) {
                 body += nullArrayCheck("xs.length !== 2", "array length after crossing")
-                    + "let first: int | null = xs[0];\n"
+                    + "let first: number | null = xs[0];\n"
                     + nullArrayCheck("first !== null", "null element after crossing")
-                    + "let second: int | null = xs[1];\n"
+                    + "let second: number | null = xs[1];\n"
                     + nullArrayIntCheck("second", 7);
             }
             source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
@@ -4553,19 +4422,19 @@ public class CanonicalProjectionParityTest {
                     + "return null;\n"));
             source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
                 + "roundtrip_nullable_array", "", "null",
-                array + "let back: (int | null)[] = " + await + "host." + roundtrip + "(xs);\n"
+                array + "let back: (number | null)[] = " + await + "host." + roundtrip + "(xs);\n"
                     + nullArrayCheck("back !== xs", prefix + " roundtrip identity") + "return null;\n"));
             source.append(nullFunction("export ", async, "test_" + (async ? "async_" : "")
                 + "write_nullable_array", "", "null",
                 array + "let written: string = " + await + "host." + write + "(xs);\n"
                     + nullArrayCheck("written !== \"written\"", prefix + " host write report")
-                    + "let second: int | null = xs[1];\n" + nullArrayIntCheck("second", 8)
-                    + "let first: int | null = xs[0];\n"
+                    + "let second: number | null = xs[1];\n" + nullArrayIntCheck("second", 8)
+                    + "let first: number | null = xs[0];\n"
                     + nullArrayCheck("first !== null", prefix + " host write preserves null")
                     + "return null;\n"));
         }
         source.append(nullFunction("export ", false, "test_take_nested_nullable_array", "", "null",
-            "let xs: (int | null)[][] = [[null, 7], [8]];\n"
+            "let xs: (number | null)[][] = [[null, 7], [8]];\n"
                 + "let seen: string = host.takeNestedNullableArray(xs);\n"
                 + nullArrayCheck("seen !== \"nested\"", "nested null sentinel at host parameter")
                 + "return null;\n"));
@@ -4577,9 +4446,9 @@ public class CanonicalProjectionParityTest {
         source.append(nullFunction("export ", false, "test_nested_write_nullable_array", "", "null",
             nested + "let written: string = host.writeNestedArray(outer);\n"
                 + nullArrayCheck("written !== \"written\"", "nested host write report")
-                + "let viaFirst: int | null = outer[0][1];\n" + nullArrayIntCheck("viaFirst", 8)
-                + "let viaAlias: int | null = outer[1][1];\n" + nullArrayIntCheck("viaAlias", 8)
-                + "let firstElement: int | null = outer[0][0];\n"
+                + "let viaFirst: number | null = outer[0][1];\n" + nullArrayIntCheck("viaFirst", 8)
+                + "let viaAlias: number | null = outer[1][1];\n" + nullArrayIntCheck("viaAlias", 8)
+                + "let firstElement: number | null = outer[0][0];\n"
                 + nullArrayCheck("firstElement !== null", "nested host write preserves null")
                 + "return null;\n"));
         return source.toString();
@@ -4691,45 +4560,45 @@ public class CanonicalProjectionParityTest {
               public static Object takeNull(Object value) {
                 return value == null ? "sentinel" : "other";
               }
-              public static Object takeNullableInt(Integer value) {
+              public static Object takeNullableInt(Double value) {
                 return value == null ? "sentinel" : "other";
               }
-              public static Object takeNullableArray($DealRt.__IntOrNullArray value) {
+              public static Object takeNullableArray($DealRt.__NumberOrNullArray value) {
                 return value.data.length == 2 && value.data[0] == null
-                    && java.lang.Integer.valueOf(7).equals(value.data[1])
+                    && java.lang.Double.valueOf(7).equals(value.data[1])
                         ? "sentinel+7" : "other";
               }
               public static Object takeNestedNullableArray($DealRt.__RefArray value) {
                 if (value.data.length != 2) { return "other"; }
                 if (!(value.data[0] instanceof deal.codegen.jvm.JvmRuntime.Array inner)
                     || inner.elements.size() != 2 || inner.elements.get(0) != null
-                    || !java.lang.Long.valueOf(7).equals(inner.elements.get(1))) {
+                    || !java.lang.Double.valueOf(7).equals(inner.elements.get(1))) {
                   return "other";
                 }
                 if (!(value.data[1] instanceof deal.codegen.jvm.JvmRuntime.Array tail)
                     || tail.elements.size() != 1
-                    || !java.lang.Long.valueOf(8).equals(tail.elements.get(0))) {
+                    || !java.lang.Double.valueOf(8).equals(tail.elements.get(0))) {
                   return "other";
                 }
                 return "nested";
               }
-              public static Object takeNullableArrayBadReturn($DealRt.__IntOrNullArray value) {
+              public static Object takeNullableArrayBadReturn($DealRt.__NumberOrNullArray value) {
                 return java.lang.Integer.valueOf(7);
               }
-              public static Object asyncTakeNullableArray($DealRt.__IntOrNullArray value) {
+              public static Object asyncTakeNullableArray($DealRt.__NumberOrNullArray value) {
                 return java.util.concurrent.CompletableFuture.completedFuture(takeNullableArray(value));
               }
-              public static Object takeSharedArray($DealRt.__IntOrNullArray first,
-                  $DealRt.__IntOrNullArray second) {
+              public static Object takeSharedArray($DealRt.__NumberOrNullArray first,
+                  $DealRt.__NumberOrNullArray second) {
                 return first == second ? "same" : "different";
               }
-              public static $DealRt.__IntOrNullArray roundtripArray(
-                  $DealRt.__IntOrNullArray value) {
+              public static $DealRt.__NumberOrNullArray roundtripArray(
+                  $DealRt.__NumberOrNullArray value) {
                 return value;
               }
-              public static Object writeArray($DealRt.__IntOrNullArray value) {
+              public static Object writeArray($DealRt.__NumberOrNullArray value) {
                 if (value.data.length > 1) {
-                  value.data[1] = java.lang.Integer.valueOf(8);
+                  value.data[1] = java.lang.Double.valueOf(8);
                 }
                 return "written";
               }
@@ -4738,32 +4607,32 @@ public class CanonicalProjectionParityTest {
                     && value.data[0]
                         instanceof deal.codegen.jvm.JvmRuntime.Array inner
                     && inner.elements.size() > 1) {
-                  inner.elements.set(1, java.lang.Long.valueOf(8));
+                  inner.elements.set(1, java.lang.Double.valueOf(8));
                 }
                 return "written";
               }
-              public static Object asyncWriteArray($DealRt.__IntOrNullArray value) {
+              public static Object asyncWriteArray($DealRt.__NumberOrNullArray value) {
                 return java.util.concurrent.CompletableFuture.completedFuture(writeArray(value));
               }
-              public static Object stashArray($DealRt.__IntOrNullArray value) {
+              public static Object stashArray($DealRt.__NumberOrNullArray value) {
                 return "stashed";
               }
-              public static Object sameAsStash($DealRt.__IntOrNullArray value) {
+              public static Object sameAsStash($DealRt.__NumberOrNullArray value) {
                 return "same";
               }
-              public static Object asyncTakeSharedArray($DealRt.__IntOrNullArray first,
-                  $DealRt.__IntOrNullArray second) {
+              public static Object asyncTakeSharedArray($DealRt.__NumberOrNullArray first,
+                  $DealRt.__NumberOrNullArray second) {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     first == second ? "same" : "different");
               }
               public static Object asyncRoundtripArray(
-                  $DealRt.__IntOrNullArray value) {
+                  $DealRt.__NumberOrNullArray value) {
                 return java.util.concurrent.CompletableFuture.completedFuture(value);
               }
               public static Object takeTable(Object value) {
                 return "unexpected-table-admission";
               }
-              public static Object takeArray($DealRt.__IntArray value) {
+              public static Object takeArray($DealRt.__NumberArray value) {
                 return "unexpected-array-admission";
               }
               public static Object takeNullBadReturn(Object value) {
@@ -4773,15 +4642,15 @@ public class CanonicalProjectionParityTest {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     value == null ? "sentinel" : "other");
               }
-              public static Object asyncTakeNullableInt(Integer value) {
+              public static Object asyncTakeNullableInt(Double value) {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     value == null ? "sentinel" : "other");
               }
-              public static Object asyncTakeNullThenInt(Object value, int count) {
+              public static Object asyncTakeNullThenInt(Object value, double count) {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     value == null && count == 7 ? "sentinel+7" : "other");
               }
-              public static Object asyncTakePair(Integer value, Integer count) {
+              public static Object asyncTakePair(Double value, Double count) {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     value == null && count != null && count == 7
                         ? "sentinel+7" : "other");
@@ -4790,7 +4659,7 @@ public class CanonicalProjectionParityTest {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     "unexpected-table-admission");
               }
-              public static Object asyncTakeArray($DealRt.__IntArray value) {
+              public static Object asyncTakeArray($DealRt.__NumberArray value) {
                 return java.util.concurrent.CompletableFuture.completedFuture(
                     "unexpected-array-admission");
               }
@@ -4807,7 +4676,7 @@ public class CanonicalProjectionParityTest {
     private static void writeNullableArray(List<SemanticOracle.Value> args) {
         if (args.size() == 1 && args.get(0) instanceof SemanticOracle.Value.ArrayValue array
                 && array.elements().size() > 1) {
-            array.elements().set(1, new SemanticOracle.Value.IntValue(8L));
+            array.elements().set(1, new SemanticOracle.Value.NumValue(8L));
         }
     }
 
@@ -4819,7 +4688,7 @@ public class CanonicalProjectionParityTest {
                 && array.elements().get(0)
                     instanceof SemanticOracle.Value.NullValue
                 && array.elements().get(1)
-                    instanceof SemanticOracle.Value.IntValue value
+                    instanceof SemanticOracle.Value.NumValue value
                 && value.value() == intValue
             ? "sentinel+7" : "other";
     }
@@ -4837,7 +4706,7 @@ public class CanonicalProjectionParityTest {
                 || !(first.elements().get(0)
                     instanceof SemanticOracle.Value.NullValue)
                 || !(first.elements().get(1)
-                    instanceof SemanticOracle.Value.IntValue one)
+                    instanceof SemanticOracle.Value.NumValue one)
                 || one.value() != inner) {
             return "other";
         }
@@ -4845,7 +4714,7 @@ public class CanonicalProjectionParityTest {
                     instanceof SemanticOracle.Value.ArrayValue second)
                 || second.elements().size() != 1
                 || !(second.elements().get(0)
-                    instanceof SemanticOracle.Value.IntValue two)
+                    instanceof SemanticOracle.Value.NumValue two)
                 || two.value() != tail) {
             return "other";
         }
@@ -4911,7 +4780,7 @@ public class CanonicalProjectionParityTest {
                                 && args.get(0)
                                     instanceof SemanticOracle.Value.NullValue
                                 && args.get(1)
-                                    instanceof SemanticOracle.Value.IntValue intValue
+                                    instanceof SemanticOracle.Value.NumValue intValue
                                 && intValue.value() == 7
                             ? "sentinel+7" : "other");
                 } else if ("asyncTakeNullableArray".equals(export)) {
@@ -4951,7 +4820,7 @@ public class CanonicalProjectionParityTest {
                                     instanceof SemanticOracle.Value.NullValue
                                 ? "sentinel" : "other"));
                     case "takeNullBadReturn" -> new SyncOutcome.Returned(
-                        new SemanticOracle.Value.IntValue(7L));
+                        new SemanticOracle.Value.NumValue(7L));
                     case "takeNullableArray" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.StrValue(
                             nullableArrayElement(args, 7)));
@@ -4987,7 +4856,7 @@ public class CanonicalProjectionParityTest {
                             args.size() == 1 && args.get(0) == stashed
                                 ? "same" : "different"));
                     case "takeNullableArrayBadReturn" -> new SyncOutcome.Returned(
-                        new SemanticOracle.Value.IntValue(7L));
+                        new SemanticOracle.Value.NumValue(7L));
                     case "takeTable", "takeArray" -> new SyncOutcome.Returned(
                         new SemanticOracle.Value.StrValue("unexpected-admission"));
                     case "returnNull", "returnNullableInt" -> new SyncOutcome.Returned(
@@ -5237,7 +5106,7 @@ public class CanonicalProjectionParityTest {
      * The crossing's rejection controls: a language null supplied
      * dynamically (a {@code table} read) and a genuine missing field —
      * never a language null — supplied to a non-nullable {@code table}
-     * and a non-nullable {@code int[]} host position must be rejected on
+     * and a non-nullable {@code number[]} host position must be rejected on
      * all three consumers with the identical closed tuple and origin. The
      * declaring call shape and the declaring async host start run the
      * recorded {@code HOST_PARAMETER} cell, so their tuple is the closed
@@ -5279,8 +5148,8 @@ public class CanonicalProjectionParityTest {
             boolean array = row.kind().equals("array");
             Tuple expected = row.indirect()
                 ? typedBoundaryKindTuple(row.kind(), row.actual(), row.line(), row.column())
-                : hostParameterCellTuple(array ? "[int]" : "table", 1,
-                    FailureProjections.kindReason(array ? new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)
+                : hostParameterCellTuple(array ? "[number]" : "table", 1,
+                    FailureProjections.kindReason(array ? new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE)
                         : RuntimeDescriptor.Table.INSTANCE), row.actual(), row.line(), row.column());
             assertNullCrossingRejection(compiled, row.export(), expected, row.export(), row.async());
         }
@@ -5418,9 +5287,9 @@ public class CanonicalProjectionParityTest {
         String drive = "";
         WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_CELL,
             Map.of("inner", FailureProjections.kindReason(
-                RuntimeDescriptor.Int.INSTANCE)),
-            "int", "string", artifactOrigin(compiled, pin), "\"not a number\"",
-            false, FailureArmId.TYPED_BOUNDARY_KIND, "int");
+                RuntimeDescriptor.Number.INSTANCE)),
+            "number", "string", artifactOrigin(compiled, pin), "\"not a number\"",
+            false, FailureArmId.TYPED_BOUNDARY_KIND, "number");
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
             wrapperRecorder(), drive, wrapperTuple(valid)),
             "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
@@ -5438,7 +5307,7 @@ public class CanonicalProjectionParityTest {
             mutatedEntry(FailureArmId.HOST_SYNC_RETURN_CELL, mutated));
         checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
             wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                "return cell expected int"))),
+                "return cell expected number"))),
             "host-abi/host-bad-return (luajit): the wrapper's sync return cell "
             + "follows the artifact's serialized outer template");
     }
@@ -5492,7 +5361,7 @@ public class CanonicalProjectionParityTest {
         }
         String drive = "";
         WrapperPin valid = wrapperPin(FailureArmId.HOST_SYNC_RETURN_NOTHING,
-            Map.of("expected", "int"), "int", "nothing",
+            Map.of("expected", "number"), "number", "nothing",
             artifactOrigin(compiled, pin), "nil", false, null, null);
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
             wrapperRecorder(), drive, wrapperTuple(valid)),
@@ -5513,7 +5382,7 @@ public class CanonicalProjectionParityTest {
             mutatedEntry(FailureArmId.HOST_SYNC_RETURN_NOTHING, mutated));
         checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
             wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                "nothing returned where int was declared"))),
+                "nothing returned where number was declared"))),
             "host-abi/host-empty-return-bad (luajit): the wrapper's no-value "
             + "cell follows the artifact's serialized outer template");
     }
@@ -5831,7 +5700,7 @@ public class CanonicalProjectionParityTest {
      */
     private static void assertAsyncHandleCarriers(Compiled compiled,
             SidecarExpectations.ErrorExpectation pin) {
-        assertScriptedAsyncHandle(compiled, pin, new SemanticOracle.Value.IntValue(42),
+        assertScriptedAsyncHandle(compiled, pin, new SemanticOracle.Value.NumValue(42),
             "number", "integer carrier");
         assertScriptedAsyncHandle(compiled, pin,
             new SemanticOracle.Value.TableValue(new LinkedHashMap<>()), "table",
@@ -5985,7 +5854,7 @@ public class CanonicalProjectionParityTest {
                             List<SemanticOracle.Value> args,
                             String operationLabel) {
                         return new AsyncStartOutcome.InvalidHandle(
-                            new SemanticOracle.Value.IntValue(value));
+                            new SemanticOracle.Value.NumValue(value));
                     }
                 });
             checkEq("E8010", oracle.code(), where + ": the E8010 code");
@@ -6145,12 +6014,12 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- a declared callee with no recorded annotation fails "
             + "closed --");
         String source = """
-            function needInt(x: int): int {
+            function needInt(x: number): number {
               return x;
             }
 
             export function main(): null {
-              let r: int = needInt(1);
+              let r: number = needInt(1);
               return null;
             }
             """;
@@ -6260,7 +6129,6 @@ public class CanonicalProjectionParityTest {
         return SemanticLowerer.lowerProject(invocation, built.input(), built.index(),
             manifests.manifests(), new HostDeclarationSurface(Map.of()), Map.of(),
             BuiltinErrorDeclaration.synthesized(program.span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -6275,7 +6143,7 @@ public class CanonicalProjectionParityTest {
         // The callback-entry drive: the first statement starts after this
         // comment, so the program span is distinguishable from a fabricated
         // default span.
-        export function cb(x: int, s: string): int {
+        export function cb(x: number, s: string): number {
           if (s === "boom") {
             return x + 1;
           }
@@ -6314,7 +6182,6 @@ public class CanonicalProjectionParityTest {
             seed.manifests().manifests(), new HostDeclarationSurface(Map.of()),
             Map.of(), BuiltinErrorDeclaration.synthesized(
                 seed.input().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             callbackExports);
         if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
             fail(what + ": the production project lowering fails: "
@@ -6441,9 +6308,9 @@ public class CanonicalProjectionParityTest {
                 System.out.println("   " + run.consumer() + ": " + error.code()
                     + " | " + error.message() + " | " + error.origin() + " | "
                     + error.expected() + " | " + error.actual());
-                checkEq("expected int", error.message(), run.consumer()
+                checkEq("expected number", error.message(), run.consumer()
                     + ": the callback slot renders the kind arm's suffix-less text");
-                checkEq("int", error.expected(), run.consumer()
+                checkEq("number", error.expected(), run.consumer()
                     + ": the callback slot's expected token");
                 checkEq("string", error.actual(), run.consumer()
                     + ": the callback slot's actual token");
@@ -6463,7 +6330,7 @@ public class CanonicalProjectionParityTest {
 
     /** The invalid-Unicode callback seed: one declared {@code string[]} parameter. */
     private static final String INVALID_UNICODE_CALLBACK_SOURCE = """
-        export function cb(x: int, values: string[]): int {
+        export function cb(x: number, values: string[]): number {
           return x + 1;
         }
 
@@ -6569,7 +6436,7 @@ public class CanonicalProjectionParityTest {
                             new SemanticDifferentialHarness.CallbackArg.Str("ok"),
                             new SemanticDifferentialHarness.CallbackArg.Str("two")))),
                     SemanticDifferentialHarness.Expectation.success(
-                        "the callback array slot control", List.of(), "int:2"),
+                        "the callback array slot control", List.of(), "num:0x1.0p1"),
                     control);
             checkEq(3, verdict.runs().size(), "the valid-array control produced "
                 + "the three consumers: " + verdict.failures());
@@ -7102,7 +6969,6 @@ public class CanonicalProjectionParityTest {
                         .filter(module -> module.moduleId()
                             .equals(compiled.checkedProject().entryModule()))
                         .findFirst().orElseThrow().ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 java.util.Set.of(), backend, false,
                 deal.distribution.DistributionHome.forManifestDirectory(
                     compiled.mirror().toString()), stager);
@@ -7793,16 +7659,16 @@ public class CanonicalProjectionParityTest {
             "a hand-built arm whose projection binding is SIBLING_OWNED fails the "
                 + "completeness check");
         expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "int", "extra", "x"),
-            "int", "string", null), "an extra named parameter");
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "number", "extra", "x"),
+            "number", "string", null), "an extra named parameter");
         expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of(), "int",
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of(), "number",
             "string", null), "a missing named parameter");
-        expectDefect(() -> FailureContractRegistry.render(FailureArmId.INT32_RANGE,
-            Map.of(), "int", null, null), "a fabricated expected token on a "
+        expectDefect(() -> FailureContractRegistry.render(FailureArmId.SUBSTRING_BOUNDS,
+            Map.of(), "number", null, null), "a fabricated expected token on a "
             + "field-less arm");
         expectDefect(() -> FailureContractRegistry.render(
-            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "integer"), "int",
+            FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "integer"), "number",
             "string", null), "an invented kind text");
     }
 
@@ -7820,13 +7686,13 @@ public class CanonicalProjectionParityTest {
                     or tostring(err.message or err.m)))
                 end
                 row("kind", "boolean", 3)
-                row("range", "int", 1e10)
+                row("range", "number", 1e10)
                 row("utf8", "string", "a" .. string.char(128) .. "b")
                 row("surrogate", "string", string.char(237, 160, 128))
                 row("surrogate-embedded", "string",
                   "a" .. string.char(237, 160, 128) .. "b")
                 row("valid", "string", "ok")
-                row("element", "[int]", {1, "x"})
+                row("element", "[number]", {1, "x"})
                 """, StandardCharsets.UTF_8);
             BoundedProcess.BoundedResult captured = BoundedProcess.runCaptured(
                 List.of("luajit", "probe.lua"), workspace, Map.of());
@@ -7838,7 +7704,7 @@ public class CanonicalProjectionParityTest {
                 .filter(line -> line.startsWith("CELL|")).toList();
             checkEq(List.of(
                 "CELL|kind|expected boolean",
-                "CELL|range|int out of safe range",
+                "CELL|range|PASS",
                 "CELL|utf8|expected string, got invalid UTF-8 encoding",
                 "CELL|surrogate|expected string, got UTF-16 surrogate code point",
                 "CELL|surrogate-embedded|expected string, got UTF-16 surrogate code point",
@@ -8278,10 +8144,10 @@ public class CanonicalProjectionParityTest {
      */
     private static final String FOREACH_DELETED_SLOT_SOURCE = """
         function main(): null {
-          let xs: int[] = [1, 2, 3];
-          for (let e: int of xs) {
+          let xs: number[] = [1, 2, 3];
+          for (let e: number of xs) {
             if (e === 1) { delete xs[1]; }
-            if (e === 3) { let z: int = 1 / (e - 3); z = z + 1; }
+            if (e === 3) { let z: number = 1 / (e - 3); z = z + 1; }
           }
           return null;
         }
@@ -8296,10 +8162,10 @@ public class CanonicalProjectionParityTest {
      */
     private static final String FOREACH_APPENDED_SLOT_SOURCE = """
         function main(): null {
-          let xs: int[] = [1, 2];
-          for (let e: int of xs) {
+          let xs: number[] = [1, 2];
+          for (let e: number of xs) {
             if (e === 1) { xs[xs.length] = 7; }
-            if (e === 7) { let z: int = 1 / (e - 7); z = z + 1; }
+            if (e === 7) { let z: number = xs[100]; z = z + 1; }
           }
           return null;
         }
@@ -8467,8 +8333,8 @@ public class CanonicalProjectionParityTest {
             SemanticDifferentialHarness.Verdict verdict =
                 SemanticDifferentialHarness.run(appendSeed.unit(), appendSeed.table(),
                     SemanticDifferentialHarness.Expectation.failure(
-                        "the FOR_EACH appended-element visit", List.of(), "E8005",
-                        "test.deal:5:33"), appendWorkspace);
+                        "the FOR_EACH appended-element visit", List.of(), "E8002",
+                        "test.deal:5:36"), appendWorkspace);
             checkEq(3, verdict.runs().size(), "the appended-slot drive produced the "
                 + "three consumers: " + verdict.failures());
             check(verdict.pass(), "the appended-slot three-consumer verdict passes: "
@@ -8498,17 +8364,17 @@ public class CanonicalProjectionParityTest {
         function main(): null {
           let t: table = { x: 7 };
           let k: string = "x";
-          let n: int = t[k];
-          let n2: int = t[keyOf()];
+          let n: number = t[k];
+          let n2: number = t[keyOf()];
           let u: table = {};
           u["y"] = 9;
           let ky: string = "y";
-          let m: int = u[ky];
+          let m: number = u[ky];
           let q: table = {};
-          let miss: int | null = q[k];
+          let miss: number | null = q[k];
           let v: table = { s: 1 };
-          let nn: int | null = v["s"];
-          let nz: int = 0;
+          let nn: number | null = v["s"];
+          let nz: number = 0;
           if (nn !== null) { nz = nn; }
           return null;
         }
@@ -8523,7 +8389,7 @@ public class CanonicalProjectionParityTest {
         function main(): null {
           let t: table = { x: "str" };
           let k: string = "x";
-          let n: int | null = t[k];
+          let n: number | null = t[k];
           return null;
         }
         """;
@@ -8536,7 +8402,7 @@ public class CanonicalProjectionParityTest {
         function main(): null {
           let t: table = {};
           let k: string = "x";
-          let n: int = t[k];
+          let n: number = t[k];
           return null;
         }
         """;
@@ -8581,7 +8447,7 @@ public class CanonicalProjectionParityTest {
                     SemanticDifferentialHarness.run(wrongKind.unit(), wrongKind.table(),
                         SemanticDifferentialHarness.Expectation.failure(
                             "the dynamic table read wrong-kind value", List.of(),
-                            "E8001", "test.deal:4:23"),
+                            "E8001", "test.deal:4:26"),
                         workspace);
                 checkEq(3, verdict.runs().size(), "the wrong-kind drive produced "
                     + "the three consumers: " + verdict.failures());
@@ -8602,7 +8468,7 @@ public class CanonicalProjectionParityTest {
                     SemanticDifferentialHarness.run(missing.unit(), missing.table(),
                         SemanticDifferentialHarness.Expectation.failure(
                             "the dynamic table read missing key", List.of(),
-                            "E8001", "test.deal:4:16"),
+                            "E8001", "test.deal:4:19"),
                         workspace);
                 checkEq(3, verdict.runs().size(), "the missing-key drive produced "
                     + "the three consumers: " + verdict.failures());
@@ -8628,7 +8494,7 @@ public class CanonicalProjectionParityTest {
         function main(): null {
           let inner: (null)[] = [null];
           let holder: table = { xs: inner };
-          let ys: int[] = holder.xs;
+          let ys: number[] = holder.xs;
           return null;
         }
         """;
@@ -8636,10 +8502,10 @@ public class CanonicalProjectionParityTest {
     /** The deleted-slot seed: the same boundary cell over an absent slot. */
     private static final String DELETED_SLOT_ELEMENT_SOURCE = """
         function main(): null {
-          let inner: int[] = [1];
+          let inner: number[] = [1];
           delete inner[0];
           let holder: table = { xs: inner };
-          let ys: int[] = holder.xs;
+          let ys: number[] = holder.xs;
           return null;
         }
         """;
@@ -8671,10 +8537,10 @@ public class CanonicalProjectionParityTest {
         try {
             driveArrayElementFailure("the present-null element",
                 PRESENT_NULL_ELEMENT_SOURCE, workspace.resolve("present-null"),
-                "test.deal:4:11", "int", "null");
+                "test.deal:4:11", "number", "null");
             driveArrayElementFailure("the deleted-slot element",
                 DELETED_SLOT_ELEMENT_SOURCE, workspace.resolve("deleted-slot"),
-                "test.deal:5:11", "int", "nil");
+                "test.deal:5:11", "number", "nil");
             driveArrayAdmission("the array(null) admission",
                 NULL_ARRAY_ELEMENT_SOURCE, workspace.resolve("null-array"));
         } finally {
@@ -8765,9 +8631,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String ARRAY_LITERAL_WALK_ELEMENT_SOURCE = """
         function main(): null {
-          let inner: int[] = [1, 2];
+          let inner: number[] = [1, 2];
           delete inner[0];
-          let ys: int[][] = [inner];
+          let ys: number[][] = [inner];
           return null;
         }
         """;
@@ -8779,9 +8645,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String ARRAY_LITERAL_NESTED_ELEMENT_SOURCE = """
         function main(): null {
-          let inner: int[] = [1, 2];
+          let inner: number[] = [1, 2];
           delete inner[0];
-          let ys: int[][][] = [[inner]];
+          let ys: number[][][] = [[inner]];
           return null;
         }
         """;
@@ -8792,9 +8658,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String ARRAY_LITERAL_SECOND_ELEMENT_SOURCE = """
         function main(): null {
-          let inner: int[] = [1, 2];
+          let inner: number[] = [1, 2];
           delete inner[0];
-          let ys: int[][] = [[1, 2], inner];
+          let ys: number[][] = [[1, 2], inner];
           return null;
         }
         """;
@@ -8802,8 +8668,8 @@ public class CanonicalProjectionParityTest {
     /** The admitted element control: the typed element value passes the cell. */
     private static final String ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE = """
         function main(): null {
-          let inner: int[] = [1, 2];
-          let ys: int[][] = [inner];
+          let inner: number[] = [1, 2];
+          let ys: number[][] = [inner];
           return null;
         }
         """;
@@ -8815,7 +8681,7 @@ public class CanonicalProjectionParityTest {
      */
     private static final String ARRAY_LITERAL_MISSING_ELEMENT_SOURCE = """
         function main(): null {
-          let ys: (int | null)[] = [null];
+          let ys: (number | null)[] = [null];
           return null;
         }
         """;
@@ -8844,15 +8710,15 @@ public class CanonicalProjectionParityTest {
         try {
             driveArrayLiteralElementFailure("the deleted-slot element",
                 ARRAY_LITERAL_WALK_ELEMENT_SOURCE,
-                workspace.resolve("deleted-slot"), "test.deal:4:22", 1, "[int]",
+                workspace.resolve("deleted-slot"), "test.deal:4:22", 1, "[number]",
                 "array");
             driveArrayLiteralElementFailure("the nested literal element",
                 ARRAY_LITERAL_NESTED_ELEMENT_SOURCE,
-                workspace.resolve("nested-literal"), "test.deal:4:25", 1, "[int]",
+                workspace.resolve("nested-literal"), "test.deal:4:25", 1, "[number]",
                 "array");
             driveArrayLiteralElementFailure("the second literal element",
                 ARRAY_LITERAL_SECOND_ELEMENT_SOURCE,
-                workspace.resolve("second-element"), "test.deal:4:30", 2, "[int]",
+                workspace.resolve("second-element"), "test.deal:4:30", 2, "[number]",
                 "array");
             driveArrayLiteralElementAdmission("the admitted element",
                 ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE,
@@ -9074,7 +8940,7 @@ public class CanonicalProjectionParityTest {
      * holds.
      */
     private static final String NAMESPACE_LIB_SOURCE = """
-        export function ping(): int {
+        export function ping(): number {
           return 1;
         }
         """;
@@ -9082,7 +8948,7 @@ public class CanonicalProjectionParityTest {
     /**
      * The direct array boundary: the import alias cell holds the
      * {@code lib} module's namespace surface, the table field stores it,
-     * and the declared {@code int[]} binding reads it through the deferred
+     * and the declared {@code number[]} binding reads it through the deferred
      * contextual-read seam.
      */
     private static final String NAMESPACE_DIRECT_SOURCE = """
@@ -9090,21 +8956,21 @@ public class CanonicalProjectionParityTest {
 
         export function main(): null {
           let holder: table = { ns: lib };
-          let xs: int[] = holder.ns;
+          let xs: number[] = holder.ns;
           return null;
         }
         """;
 
     /**
      * The nested array boundary: the same namespace surface at a declared
-     * {@code int[][]} binding (the nested descriptor's outer array cell).
+     * {@code number[][]} binding (the nested descriptor's outer array cell).
      */
     private static final String NAMESPACE_NESTED_SOURCE = """
         import * as lib from "./lib";
 
         export function main(): null {
           let holder: table = { ns: lib };
-          let xs: int[][] = holder.ns;
+          let xs: number[][] = holder.ns;
           return null;
         }
         """;
@@ -9120,7 +8986,7 @@ public class CanonicalProjectionParityTest {
         export function main(): null {
           let holder: table = { ns: [1] };
           holder.ns = lib;
-          let xs: int[] = holder.ns;
+          let xs: number[] = holder.ns;
           return null;
         }
         """;
@@ -9135,7 +9001,7 @@ public class CanonicalProjectionParityTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let payload: int[] = [1];
+          let payload: number[] = [1];
           let holder: table = { ns: payload };
           let t: table = holder.ns;
           return null;
@@ -9366,7 +9232,6 @@ public class CanonicalProjectionParityTest {
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
                     .findFirst().orElseThrow().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(lowering != null && !lowering.hasErrors() && lowering.project() != null,
             what + ": the two-module namespace project lowers through the one "
@@ -9469,14 +9334,14 @@ public class CanonicalProjectionParityTest {
         // The negative single-source control: a deliberately composing
         // consumer is caught by field name.
         Tuple reference = tuple("E8001", "expected int",
-            "type-mismatch-e8001.deal:6:21", "int", "string");
+            "type-mismatch-e8001.deal:6:21", "number", "string");
         checkEq(null, firstDifferingField(reference, reference),
             "the identical tuple compares equal (the control is not vacuous)");
         checkEq("message", firstDifferingField(reference, tuple("E8001",
-            "expected int, got string", reference.span(), "int", "string")),
+            "expected int, got string", reference.span(), "number", "string")),
             "the superseded suffixed spelling is caught by field name message");
         checkEq("message", firstDifferingField(reference, tuple("E8001",
-            "expected int, got missing", reference.span(), "int", "missing")),
+            "expected int, got missing", reference.span(), "number", "missing")),
             "the superseded FOR_EACH absent-element text is caught by field name "
                 + "message");
         checkEq("message", firstDifferingField(reference, tuple("E8001",
@@ -9484,7 +9349,7 @@ public class CanonicalProjectionParityTest {
             "boolean", "number")),
             "the superseded host composite is caught by field name message");
         checkEq("span", firstDifferingField(reference, tuple("E8001",
-            "expected int", "type-mismatch-e8001.deal:9:10", "int", "string")),
+            "expected int", "type-mismatch-e8001.deal:9:10", "number", "string")),
             "a call-site span for a declaration-owned arm is caught by field name "
                 + "span");
     }
@@ -9516,7 +9381,7 @@ public class CanonicalProjectionParityTest {
             "a composing capture fails the landed comparison");
         SidecarExpectations.ErrorExpectation unpinnedField =
             new SidecarExpectations.ErrorExpectation(pin.code(), pin.message(),
-                pin.sourceFile(), pin.line(), pin.column(), Optional.of("int"),
+                pin.sourceFile(), pin.line(), pin.column(), Optional.of("number"),
                 Optional.empty(), pin.frames(), pin.cause());
         check(deal.test.conformance.StructuredExpectationComparator.compare("luajit",
             expectation, executed(framing(unpinnedField))).isPresent()

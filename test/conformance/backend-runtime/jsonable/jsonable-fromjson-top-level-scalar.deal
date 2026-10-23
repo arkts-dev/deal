@@ -5,7 +5,7 @@
 
 // @jsonable
 export class C {
-  x: int = 0;
+  x: number = 0;
 }
 
 export function test_fromJson_top_level_scalars(): null {

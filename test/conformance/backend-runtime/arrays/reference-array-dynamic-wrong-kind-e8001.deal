@@ -1,11 +1,11 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: A string crossing the dynamic `int[]` row raises E8001 "expected int[]" with expected "int[]" and actual "string" — the row accepts only the shared int[] carrier (ISSUE-0550).
+// @description: A string crossing the dynamic `number[]` row raises E8001 "expected number[]" with expected "number[]" and actual "string" — the row accepts only the shared number[] carrier (ISSUE-0550).
 // @expected: runtime-error E8001
-// @features: descriptors, int[], dynamic-boundaries
+// @features: descriptors, number[], dynamic-boundaries
 
-export function test_array_dynamic_wrong_kind(): int {
-  let holder: table = { b: "not-int[]" };
-  let b: int[] = holder.b;
+export function test_array_dynamic_wrong_kind(): number {
+  let holder: table = { b: "not-number[]" };
+  let b: number[] = holder.b;
   return b[0];
 }
 

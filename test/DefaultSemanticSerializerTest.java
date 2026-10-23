@@ -326,26 +326,26 @@ public class DefaultSemanticSerializerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class Kinds {
-                  a: int = 1 + 2;
-                  b: int = -3;
-                  c: int[] = [1, 2];
+                  a: number = 1 + 2;
+                  b: number = -3;
+                  c: number[] = [1, 2];
                   d: table = { k: 5 };
                   e: string = `v=${label()}`;
-                  f: int = box().weight;
-                  g: int = arrayOf()[0];
+                  f: number = box().weight;
+                  g: number = arrayOf()[0];
                   h: boolean = has(box().tag);
-                  i: int = helper(2);
-                  j: (x: int) => int = function(x: int): int { return x; };
-                  l: int = (function(x: int): int { return (x = 2); })(1);
-                  m: async () => int = async function(): int { return await source(); };
+                  i: number = helper(2);
+                  j: (x: number) => number = function(x: number): number { return x; };
+                  l: number = (function(x: number): number { return (x = 2); })(1);
+                  m: async () => number = async function(): number { return await source(); };
                 }
 
                 class HasBox {
-                  tag?: int = 0;
-                  weight: int = 3;
+                  tag?: number = 0;
+                  weight: number = 3;
                 }
 
-                function helper(v: int): int {
+                function helper(v: number): number {
                   return v;
                 }
 
@@ -357,7 +357,7 @@ public class DefaultSemanticSerializerTest {
                   return { k: 5 };
                 }
 
-                function arrayOf(): int[] {
+                function arrayOf(): number[] {
                   return [1, 2];
                 }
 
@@ -365,7 +365,7 @@ public class DefaultSemanticSerializerTest {
                   return { tag: 1 };
                 }
 
-                async function source(): int {
+                async function source(): number {
                   return 3;
                 }
 
@@ -447,14 +447,14 @@ public class DefaultSemanticSerializerTest {
                 import * as L from "./lib";
 
                 class AllStatements {
-                  f: int = L.allStatements(1, [2]);
+                  f: number = L.allStatements(1, [2]);
                 }
 
                 export function main(): null {
                   return null;
                 }
                 """,
-            "src/lib.deal", "export function allStatements(n: int, arr: int[]): int {\n  let total: int = 0;\n  total = total + 1;\n  if (n > 0) {\n    total = total + 1;\n  } else {\n    total = total - 1;\n  }\n  let i = 0;\n  while (i < 2) {\n    i = i + 1;\n    if (i === 1) { continue; }\n    break;\n  }\n  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let j: int = v14Loop0; {\n    total = total + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let s: int of arr) {\n    total = total + s;\n  }\n  let t: table = { k: 1 };\n  delete t.k;\n  try {\n    if (total < 0) { throw { message: \"bad\" }; }\n  } catch (e) {\n    total = 0;\n  }\n  function innerFn(v: int): int {\n    return v + 1;\n  }\n  total = total + innerFn(1);\n  class LocalBox {\n    n: int = 1;\n  }\n  return total;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "src/main.deal");
+            "src/lib.deal", "export function allStatements(n: number, arr: number[]): number {\n  let total: number = 0;\n  total = total + 1;\n  if (n > 0) {\n    total = total + 1;\n  } else {\n    total = total - 1;\n  }\n  let i = 0;\n  while (i < 2) {\n    i = i + 1;\n    if (i === 1) { continue; }\n    break;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    total = total + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let s: number of arr) {\n    total = total + s;\n  }\n  let t: table = { k: 1 };\n  delete t.k;\n  try {\n    if (total < 0) { throw { message: \"bad\" }; }\n  } catch (e) {\n    total = 0;\n  }\n  function innerFn(v: number): number {\n    return v + 1;\n  }\n  total = total + innerFn(1);\n  class LocalBox {\n    n: number = 1;\n  }\n  return total;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "src/main.deal");
         try {
             check(!compile.success, "original local-class subject rejects at admission");
             check(compile.diagnostics.stream().anyMatch(d -> "E1057".equals(d.code())),
@@ -468,12 +468,12 @@ public class DefaultSemanticSerializerTest {
             "src/main.deal", """
                 function make(): null {
                   class LocalClass {
-                    n: int = 1;
+                    n: number = 1;
                   }
                   class Box {
                     f: (v: LocalClass) => LocalClass = function(v: LocalClass): LocalClass {
                       class FeLocal {
-                        m: int = 2;
+                        m: number = 2;
                       }
                       let x: LocalClass = v;
                       function innerCopy(w: LocalClass): LocalClass {
@@ -503,13 +503,13 @@ public class DefaultSemanticSerializerTest {
                 import * as L from "./lib";
 
                 class Same {
-                  n: int = 1;
+                  n: number = 1;
                 }
 
                 class Box {
-                  f: int = (function(): int {
+                  f: number = (function(): number {
                     class Same {
-                      m: int = 7;
+                      m: number = 7;
                     }
                     return 3;
                   })();
@@ -523,13 +523,13 @@ public class DefaultSemanticSerializerTest {
             "src/lib.deal", """
                 function make(): null {
                   class Widget {
-                    inner: int = 9;
+                    inner: number = 9;
                   }
                   return null;
                 }
 
                 export class Widget {
-                  tag: int = 3;
+                  tag: number = 3;
                 }
                 """), "src/main.deal");
         try {
@@ -543,10 +543,10 @@ public class DefaultSemanticSerializerTest {
         String mainSource = """
             function makeA(): null {
               class LocalA {
-                x: int = 1;
+                x: number = 1;
               }
               class Same {
-                f: int = (function(v: LocalA): int {
+                f: number = (function(v: LocalA): number {
                   return v.x;
                 })({});
               }
@@ -555,10 +555,10 @@ public class DefaultSemanticSerializerTest {
 
             function makeB(): null {
               class LocalB {
-                y: int = 5;
+                y: number = 5;
               }
               class Same {
-                g: int = (function(w: LocalB): int {
+                g: number = (function(w: LocalB): number {
                   return w.y + 1;
                 })({});
               }
@@ -590,14 +590,14 @@ public class DefaultSemanticSerializerTest {
                 import * as L from "./lib";
 
                 class AllStatements {
-                  f: int = L.allStatements(1, [2]);
+                  f: number = L.allStatements(1, [2]);
                 }
 
                 export function main(): null {
                   return null;
                 }
                 """,
-            "src/lib.deal", "class LocalBox { n: int = 1; }\nexport function allStatements(n: int, arr: int[]): int {\n  let total: int = 0;\n  total = total + 1;\n  if (n > 0) {\n    total = total + 1;\n  } else {\n    total = total - 1;\n  }\n  let i = 0;\n  while (i < 2) {\n    i = i + 1;\n    if (i === 1) { continue; }\n    break;\n  }\n  { let v14Loop1: int = 0; while (v14Loop1 < 2) { let j: int = v14Loop1; {\n    total = total + j;\n  } v14Loop1 = j; v14Loop1 = v14Loop1 + 1; } }\n  for (let s: int of arr) {\n    total = total + s;\n  }\n  let t: table = { k: 1 };\n  delete t.k;\n  try {\n    if (total < 0) { throw { message: \"bad\" }; }\n  } catch (e) {\n    total = 0;\n  }\n  function innerFn(v: int): int {\n    return v + 1;\n  }\n  total = total + innerFn(1);\n  return total;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "src/main.deal");
+            "src/lib.deal", "class LocalBox { n: number = 1; }\nexport function allStatements(n: number, arr: number[]): number {\n  let total: number = 0;\n  total = total + 1;\n  if (n > 0) {\n    total = total + 1;\n  } else {\n    total = total - 1;\n  }\n  let i = 0;\n  while (i < 2) {\n    i = i + 1;\n    if (i === 1) { continue; }\n    break;\n  }\n  { let v14Loop1: number = 0; while (v14Loop1 < 2) { let j: number = v14Loop1; {\n    total = total + j;\n  } v14Loop1 = j; v14Loop1 = v14Loop1 + 1; } }\n  for (let s: number of arr) {\n    total = total + s;\n  }\n  let t: table = { k: 1 };\n  delete t.k;\n  try {\n    if (total < 0) { throw { message: \"bad\" }; }\n  } catch (e) {\n    total = 0;\n  }\n  function innerFn(v: number): number {\n    return v + 1;\n  }\n  total = total + innerFn(1);\n  return total;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "src/main.deal");
         try {
             check(compile.success,
                 "the statement-grammar fixture compiles: "
@@ -617,7 +617,7 @@ public class DefaultSemanticSerializerTest {
             }
             check(content.contains("\"bindingMarker\":\"total\""),
                 "the variable declaration binding marker serializes");
-            check(content.contains("\"typeDescriptor\":\"int\""),
+            check(content.contains("\"typeDescriptor\":\"number\""),
                 "the annotated variable declaration type descriptor"
                     + " serializes");
             check(content.contains("\"condition\""),
@@ -650,13 +650,13 @@ public class DefaultSemanticSerializerTest {
 
     private static final String SENSITIVITY_BASE_MAIN = """
         class Sens {
-          a: int = 1 + 2;
-          c: int[] = [];
-          f: int = helper();
+          a: number = 1 + 2;
+          c: number[] = [];
+          f: number = helper();
           n: number = 1.5;
         }
 
-        function helper(): int {
+        function helper(): number {
           return 1;
         }
 
@@ -705,8 +705,8 @@ public class DefaultSemanticSerializerTest {
 
             // Literal change (field a only).
             Compile literal = base.recompile(sensFiles(
-                SENSITIVITY_BASE_MAIN.replace("a: int = 1 + 2;",
-                    "a: int = 1 + 3;")));
+                SENSITIVITY_BASE_MAIN.replace("a: number = 1 + 2;",
+                    "a: number = 1 + 3;")));
             check(literal.success, "the literal variant compiles");
             check(!sensContentOf(literal, "a").equals(baseA),
                 "a literal change changes canonicalSemanticContent");
@@ -719,8 +719,8 @@ public class DefaultSemanticSerializerTest {
 
             // Operator change.
             Compile operator = base.recompile(sensFiles(
-                SENSITIVITY_BASE_MAIN.replace("a: int = 1 + 2;",
-                    "a: int = 1 * 2;")));
+                SENSITIVITY_BASE_MAIN.replace("a: number = 1 + 2;",
+                    "a: number = 1 * 2;")));
             check(operator.success, "the operator variant compiles");
             check(!sensContentOf(operator, "a").equals(baseA),
                 "an operator change changes canonicalSemanticContent");
@@ -728,36 +728,36 @@ public class DefaultSemanticSerializerTest {
                     .equals(sensContentOf(literal, "a")),
                 "operator and literal changes yield distinct content");
 
-            // Type change (int[] -> number[] with the same literal).
+            // Distinct element descriptors over the same empty array literal.
             Compile typeChange = base.recompile(sensFiles(
-                SENSITIVITY_BASE_MAIN.replace("c: int[] = [];",
-                    "c: number[] = [];")));
+                SENSITIVITY_BASE_MAIN.replace("c: number[] = [];",
+                    "c: string[] = [];")));
             check(typeChange.success, "the type variant compiles: "
                 + typeChange.diagnostics);
             check(!sensContentOf(typeChange, "c").equals(baseC),
                 "a resolved type change changes the canonical content"
                     + " (resultDescriptor)");
             check(sensContentOf(typeChange, "c").contains(
-                    "\"resultDescriptor\":\"[number]\"")
+                    "\"resultDescriptor\":\"[string]\"")
                     && baseC.contains(
-                        "\"resultDescriptor\":\"[int]\""),
+                        "\"resultDescriptor\":\"[number]\""),
                 "the type change is visible as the E4 canonical result"
                     + " descriptor");
 
             // Call-target change (same-module callee).
             Compile target = base.recompile(sensFiles("""
                 class Sens {
-                  a: int = 1 + 2;
-                  c: int[] = [];
-                  f: int = helper2();
+                  a: number = 1 + 2;
+                  c: number[] = [];
+                  f: number = helper2();
                   n: number = 1.5;
                 }
 
-                function helper(): int {
+                function helper(): number {
                   return 1;
                 }
 
-                function helper2(): int {
+                function helper2(): number {
                   return 2;
                 }
 
@@ -795,9 +795,9 @@ public class DefaultSemanticSerializerTest {
                 import * as L from "./lib";
 
                 class Sens {
-                  a: int = 1 + 2;
-                  c: int[] = [];
-                  f: int = L.pick();
+                  a: number = 1 + 2;
+                  c: number[] = [];
+                  f: number = L.pick();
                   n: number = 1.5;
                 }
 
@@ -806,7 +806,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """);
             identityFiles.put("src/lib.deal", """
-                export function pick(): int {
+                export function pick(): number {
                   return 1;
                 }
                 """);
@@ -869,7 +869,7 @@ public class DefaultSemanticSerializerTest {
                 Map<String, String> changed = new LinkedHashMap<>(
                     providerFiles);
                 changed.put("src/lib.deal", """
-                    export function pick(): int {
+                    export function pick(): number {
                       return 3;
                     }
                     """);
@@ -908,9 +908,9 @@ public class DefaultSemanticSerializerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class Pair {
-                  y: int = 1;
-                  x: int = 2;
-                  z?: int;
+                  y: number = 1;
+                  x: number = 2;
+                  z?: number;
                 }
 
                 export function main(): null {
@@ -1003,8 +1003,8 @@ public class DefaultSemanticSerializerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class OrderSensitive {
-                  b?: int;
-                  a?: int;
+                  b?: number;
+                  a?: number;
                 }
 
                 export function main(): null {
@@ -1015,8 +1015,8 @@ public class DefaultSemanticSerializerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class OrderSensitive {
-                  a?: int;
-                  b?: int;
+                  a?: number;
+                  b?: number;
                 }
 
                 export function main(): null {
@@ -1097,9 +1097,9 @@ public class DefaultSemanticSerializerTest {
         Compile compile = new Compile(Map.of(
             "deal.json", MANIFEST,
             "src/main.deal", """
-                class FeLocal { m: int = 2; }
+                class FeLocal { m: number = 2; }
                 class LocalClass {
-                    n: int = 1;
+                    n: number = 1;
                   }
                   class Box {
                     f: (v: LocalClass) => LocalClass = function(v: LocalClass): LocalClass {
@@ -1170,16 +1170,16 @@ public class DefaultSemanticSerializerTest {
         System.out.println("-- Same-named classes in distinct scopes:"
             + " declaration-keyed plans, scopes, and digests --");
         String mainSource = """
-            class LocalA { x: int = 1; }
+            class LocalA { x: number = 1; }
             class Same {
-              f: int = (function(v: LocalA): int { return v.x; })({});
+              f: number = (function(v: LocalA): number { return v.x; })({});
             }
             export function main(): null { return null; }
             """;
         String otherSource = """
-            class LocalB { y: int = 5; }
+            class LocalB { y: number = 5; }
             class Same {
-              g: int = (function(w: LocalB): int { return w.y + 1; })({});
+              g: number = (function(w: LocalB): number { return w.y + 1; })({});
             }
             export function main(): null { return null; }
             """;
@@ -1246,12 +1246,12 @@ public class DefaultSemanticSerializerTest {
             String gContent = sameG.completedPlan().orderedFields().get(0)
                 .defaultExpression().canonicalSemanticContent();
             check(fContent.contains(
-                    "\"(@src/main.deal/LocalA)->int\""),
+                    "\"(@src/main.deal/LocalA)->number\""),
                 "the f-bearing Same default's function-expression"
                     + " parameter annotation resolves in its own"
                     + " declaration scope (LocalA)");
             check(gContent.contains(
-                    "\"(@src/other.deal/LocalB)->int\""),
+                    "\"(@src/other.deal/LocalB)->number\""),
                 "the g-bearing Same default's function-expression"
                     + " parameter annotation resolves in its own"
                     + " declaration scope (LocalB)");
@@ -1317,7 +1317,7 @@ public class DefaultSemanticSerializerTest {
                 "changing the second class's literal changes that"
                     + " class's planDigest (its content is its own)");
             check(mutatedG.canonicalPlanContent().contains(
-                    "\"literalValue\":2"),
+                    "\"literalValue\":0x1.0p1"),
                 "the mutated literal enters the second class's"
                     + " canonical plan content");
         } finally {
@@ -1342,12 +1342,12 @@ public class DefaultSemanticSerializerTest {
                 import * as L from "./lib";
 
                 class Same {
-                  n: int = 1;
+                  n: number = 1;
                 }
 
-                class OtherSame { m: int = 7; }
+                class OtherSame { m: number = 7; }
                 class Box {
-                  f: int = (function(): int {
+                  f: number = (function(): number {
                     let value: OtherSame = {};
                     return value.m;
                   })();
@@ -1359,10 +1359,10 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "src/lib.deal", """
-                class PrivateWidget { inner: int = 9; }
+                class PrivateWidget { inner: number = 9; }
 
                 export class Widget {
-                  tag: int = 3;
+                  tag: number = 3;
                 }
                 """), "src/main.deal");
         try {
@@ -1421,12 +1421,12 @@ public class DefaultSemanticSerializerTest {
             check(nestedSame.canonicalPlanContent().contains(
                     "\"name\":\"m\"")
                     && nestedSame.canonicalPlanContent()
-                        .contains("\"literalValue\":7"),
+                        .contains("\"literalValue\":0x1.cp2"),
                 "the nested Same serializes its own plan with field m");
             check(topSame.canonicalPlanContent().contains(
                     "\"name\":\"n\"")
                     && topSame.canonicalPlanContent()
-                        .contains("\"literalValue\":1"),
+                        .contains("\"literalValue\":0x1.0p0"),
                 "the top-level Same serializes its own plan with"
                     + " field n");
             check(!topSame.planDigest().equals(
@@ -1458,12 +1458,12 @@ public class DefaultSemanticSerializerTest {
             check(nestedWidget.canonicalPlanContent().contains(
                     "\"name\":\"inner\"")
                     && nestedWidget.canonicalPlanContent().contains(
-                        "\"literalValue\":9"),
+                        "\"literalValue\":0x1.2p3"),
                 "the nested Widget serializes its own plan (inner)");
             check(topWidget.canonicalPlanContent().contains(
                     "\"name\":\"tag\"")
                     && topWidget.canonicalPlanContent().contains(
-                        "\"literalValue\":3"),
+                        "\"literalValue\":0x1.8p1"),
                 "the exported Widget serializes its own plan (tag)");
             check(!topWidget.planDigest().equals(
                     nestedWidget.planDigest()),
@@ -1518,7 +1518,7 @@ public class DefaultSemanticSerializerTest {
                 import * as L from "./lib";
 
                 class Consumer {
-                  n: int = L.pick();
+                  n: number = L.pick();
                 }
 
                 export function main(): null {
@@ -1526,7 +1526,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "src/lib.deal", """
-                export function pick(): int {
+                export function pick(): number {
                   return 7;
                 }
                 """);
@@ -1623,17 +1623,17 @@ public class DefaultSemanticSerializerTest {
                 import * as S from "../shared";
 
                 class Outer {
-                  a: int = localHelper();
+                  a: number = localHelper();
                   b: L.Rec = {};
                   c: L.Rec[] = [L.makeRec({ tag: 5 })];
                   d: L.Rec[] = [];
                   e: L.Rec | null = null;
-                  f: int = L.getTag({ tag: 3 });
-                  g: int = S.scale(2);
+                  f: number = L.getTag({ tag: 3 });
+                  g: number = S.scale(2);
                   h: L.Rec = { inner: { tag: 9 } };
                 }
 
-                function localHelper(): int {
+                function localHelper(): number {
                   return 7;
                 }
 
@@ -1643,10 +1643,10 @@ public class DefaultSemanticSerializerTest {
                 """,
             "src/lib.deal", """
                 export class Rec {
-                  tag: int = 0;
+                  tag: number = 0;
                   inner: Rec = {};
                 }
-                export function getTag(r: Rec): int {
+                export function getTag(r: Rec): number {
                   return r.tag;
                 }
                 export function makeRec(r: Rec): Rec {
@@ -1654,7 +1654,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "shared.deal", """
-                export function scale(v: int): int {
+                export function scale(v: number): number {
                   return v * 2;
                 }
                 """), "src/main.deal");
@@ -1800,7 +1800,7 @@ public class DefaultSemanticSerializerTest {
         import * as L from "./lib";
 
         class Consumer {
-          n: int = L.outer(1);
+          n: number = L.outer(1);
         }
 
         export function main(): null {
@@ -1811,15 +1811,15 @@ public class DefaultSemanticSerializerTest {
     private static final String FUNCTION_BASE_LIB = """
         import * as S from "./other";
 
-        export function inner1(v: int): int {
+        export function inner1(v: number): number {
           return v + 1;
         }
 
-        export function inner2(v: int): int {
+        export function inner2(v: number): number {
           return v + 2;
         }
 
-        export function outer(x: int): int {
+        export function outer(x: number): number {
           let s = S.scale(x);
           return s + inner1(x) + inner2(x);
         }
@@ -1830,7 +1830,7 @@ public class DefaultSemanticSerializerTest {
         """;
 
     private static final String OTHER = """
-        export function scale(v: int): int {
+        export function scale(v: number): number {
           return v * 2;
         }
         """;
@@ -1900,7 +1900,7 @@ public class DefaultSemanticSerializerTest {
                 FUNCTION_BASE_LIB);
             embeddedFiles = new LinkedHashMap<>(embeddedFiles);
             embeddedFiles.put("src/other.deal", """
-                export function scale(v: int): int {
+                export function scale(v: number): number {
                   return v * 3;
                 }
                 """);
@@ -2108,7 +2108,7 @@ public class DefaultSemanticSerializerTest {
                 // @jsonable
                 export class Widget {
                   label: string = "";
-                  count: int = 0;
+                  count: number = 0;
                 }
                 """), "src/main.deal");
         try {
@@ -2228,7 +2228,7 @@ public class DefaultSemanticSerializerTest {
                 import * as S from "../shared";
 
                 class Rooted {
-                  g: int = S.scale(2);
+                  g: number = S.scale(2);
                 }
 
                 export function main(): null {
@@ -2236,7 +2236,7 @@ public class DefaultSemanticSerializerTest {
                 }
                 """,
             "shared.deal", """
-                export function scale(v: int): int {
+                export function scale(v: number): number {
                   return v * 2;
                 }
                 """), "src/main.deal");
@@ -2529,7 +2529,7 @@ public class DefaultSemanticSerializerTest {
                 """,
             "src/lib.deal", """
                 export class Rec {
-                  tag: int = 0;
+                  tag: number = 0;
                 }
                 """), "src/main.deal");
         try {
@@ -2663,7 +2663,7 @@ public class DefaultSemanticSerializerTest {
         System.out.println("-- Non-behavior-affecting range changes"
             + " change nothing --");
         ProgramNode program = parseProgram(
-            "class R { x: int = 1 + 2; }\n");
+            "class R { x: number = 1 + 2; }\n");
         ClassDeclaration cd = classOf(program, "R");
         if (cd == null) {
             return;
@@ -2707,26 +2707,26 @@ public class DefaultSemanticSerializerTest {
             DiagnosticRange rootRange, DiagnosticRange leftSpan,
             DiagnosticRange rightSpan) {
         DefaultIrNode left = new DefaultIrNode(
-            DefaultIrNode.NodeKind.LITERAL, null, Type.Int.INSTANCE,
-            List.of(), List.of(), new LiteralValue.IntLiteral(1), null,
+            DefaultIrNode.NodeKind.LITERAL, null, Type.Number.INSTANCE,
+            List.of(), List.of(), new LiteralValue.NumberLiteral(1), null,
             null, null, null, leftSpan);
         DefaultIrNode right = new DefaultIrNode(
-            DefaultIrNode.NodeKind.LITERAL, null, Type.Int.INSTANCE,
-            List.of(), List.of(), new LiteralValue.IntLiteral(2), null,
+            DefaultIrNode.NodeKind.LITERAL, null, Type.Number.INSTANCE,
+            List.of(), List.of(), new LiteralValue.NumberLiteral(2), null,
             null, null, null, rightSpan);
         DefaultIrNode root = new DefaultIrNode(
-            DefaultIrNode.NodeKind.BINARY, "ADD", Type.Int.INSTANCE,
-            List.of(Type.Int.INSTANCE), List.of(left, right), null, null,
+            DefaultIrNode.NodeKind.BINARY, "ADD", Type.Number.INSTANCE,
+            List.of(Type.Number.INSTANCE), List.of(left, right), null, null,
             null, null, null, rootRange);
         ResolvedDefaultExpression expr = new ResolvedDefaultExpression(
             cd.fields().get(0).defaultExpr().orElseThrow(),
-            Type.Int.INSTANCE, rootRange,
+            Type.Number.INSTANCE, rootRange,
             new deal.module.DefaultDeclaringContext(MODULE_A, Map.of()),
             Map.of(), root, null, null, java.util.Set.of());
         CompilerClassDefaultPlan plan = new CompilerClassDefaultPlan(
             IDENTITY_R, MODULE_A,
             List.of(new CompilerClassDefaultEntry("x",
-                Type.Int.INSTANCE, "int", false, expr)),
+                Type.Number.INSTANCE, "number", false, expr)),
             java.util.Set.of());
         PlannedDefaultClass planned = new PlannedDefaultClass(plan, cd,
             List.of());
@@ -2758,8 +2758,8 @@ public class DefaultSemanticSerializerTest {
         "deal.json", MANIFEST,
         "src/main.deal", """
             class Eq {
-              x: int = 1;
-              z: int = 2;
+              x: number = 1;
+              z: number = 2;
             }
 
             export function main(): null {

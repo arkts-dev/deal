@@ -138,7 +138,7 @@ public class ParserTest {
 
         // Expressions
         testLiteralExpressions();
-        testProfileAwareInt32Literals();
+        testNumberLiterals();
         testIdentifierExpression();
         testBinaryExpressions();
         testUnaryExpressions();
@@ -723,7 +723,7 @@ public class ParserTest {
         r = parse("let a: int = 42;");
         vd = (VariableDeclaration) r.program().statements().get(0);
         lit = (LiteralExpr) vd.initializer();
-        check(((LiteralValue.IntLiteral) lit.value()).value() == 42, "int lit");
+        check(((LiteralValue.NumberLiteral) lit.value()).value() == 42, "int lit");
 
         r = parse("let a: number = 3.14;");
         vd = (VariableDeclaration) r.program().statements().get(0);
@@ -737,117 +737,58 @@ public class ParserTest {
     }
 
     // =========================================================================
-    // Profile-aware int32 literal parsing (signed-int32 foundation I1)
+    // Binary64 literal parsing
     // =========================================================================
 
-    static void testProfileAwareInt32Literals() {
-        System.out.println("-- Profile-Aware Int32 Literals (I1) --");
-
-        // ---- v1.2 matrix ----
-
-        // 2147483647 (the signed32 maximum) parses unchanged.
-        ParseResult r = parse("let a: int = 2147483647;");
-        assertNoParseErrors(r, "v1.2 max literal");
-        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
-        LiteralExpr lit = assertExprInstance(vd.initializer(), LiteralExpr.class,
-            "v1.2 max literal");
-        if (lit != null) {
-            check(((LiteralValue.IntLiteral) lit.value()).value() == 2147483647L,
-                "v1.2 max literal value");
+    static void testNumberLiterals() {
+        System.out.println("-- Binary64 Literals --");
+        String[] literals = {"2147483647", "2147483648", "9007199254740993",
+            "1e309", "5e-324", "1e-9999"};
+        double[] expected = {2147483647d, 2147483648d, 9007199254740992d,
+            Double.POSITIVE_INFINITY, Double.MIN_VALUE, 0d};
+        for (int i = 0; i < literals.length; i++) {
+            ParseResult r = parse("let a: number = " + literals[i] + ";");
+            assertNoParseErrors(r, literals[i]);
+            VariableDeclaration declaration = (VariableDeclaration) r.program().statements().get(0);
+            LiteralExpr literal = assertExprInstance(declaration.initializer(), LiteralExpr.class,
+                literals[i]);
+            if (literal != null) check(((LiteralValue.NumberLiteral) literal.value()).value()
+                == expected[i], "binary64 value " + literals[i]);
         }
-
-        // -2147483648: the combined-token in-range literal with the
-        // combined span and no diagnostic.
-        r = parse("let a: int = -2147483648;");
-        assertNoParseErrors(r, "v1.2 min literal via immediate minus");
-        vd = (VariableDeclaration) r.program().statements().get(0);
-        lit = assertExprInstance(vd.initializer(), LiteralExpr.class,
-            "v1.2 -2147483648 is a single literal, not a unary expr");
-        if (lit != null) {
-            check(((LiteralValue.IntLiteral) lit.value()).value() == -2147483648L,
-                "v1.2 -2147483648 value");
-            Span sp = lit.span();
-            check(sp.startColumn() == 14 && sp.endColumn() == 24,
-                "v1.2 -2147483648 combined span covers '-' (col 14) through "
-                    + "the literal end (col 24): got " + sp.startColumn() + ".."
-                    + sp.endColumn());
-            check(sp.hasScalarOffsets() && sp.startScalarOffset() == 13
-                    && sp.endScalarOffset() == 24,
-                "v1.2 -2147483648 combined span scalar offsets [13,24): got ["
-                    + sp.startScalarOffset() + "," + sp.endScalarOffset() + ")");
+        for (String expression : new String[]{"-2147483648", "-(2147483648)",
+                "-2147483649", "2147483648 + 0", "1 - 2147483648", "--2147483648"}) {
+            assertNoParseErrors(parse("let a: number = " + expression + ";"), expression);
         }
-
-        // 2147483648 alone -> exactly one E1036 at the token with the
-        // existing template; parsing recovers with value 0.
-        r = parse("let a: int = 2147483648;");
-        List<CompilerDiagnostic> diags = r.diagnostics();
-        check(diags.size() == 1 && "E1036".equals(diags.get(0).code())
-                && "error".equals(diags.get(0).severity())
-                && "Integer literal out of range: 2147483648".equals(diags.get(0).message()),
-            "v1.2 bare 2147483648 raises exactly one E1036 at the token: " + diags);
-        vd = (VariableDeclaration) r.program().statements().get(0);
-        lit = assertExprInstance(vd.initializer(), LiteralExpr.class,
-            "v1.2 bare 2147483648 recovers");
-        if (lit != null) {
-            check(((LiteralValue.IntLiteral) lit.value()).value() == 0,
-                "v1.2 bare 2147483648 recovers with value 0");
-        }
-
-        // -(2147483648): the parenthesized literal reaches parsePrimary
-        // outside the immediate position -> E1036.
-        r = parse("let a: int = -(2147483648);");
-        assertParseError(r, "E1036", "v1.2 parenthesized 2147483648");
-
-        // -2147483649 -> E1036.
-        r = parse("let a: int = -2147483649;");
-        assertParseError(r, "E1036", "v1.2 -2147483649");
-
-        // 2147483648 + 0 -> E1036.
-        r = parse("let a: int = 2147483648 + 0;");
-        assertParseError(r, "E1036", "v1.2 2147483648 + 0");
-
-        // Binary-position 2147483648 is never the immediate-minus special
-        // case: the binary '-' is consumed as the operator and the
-        // literal reaches parsePrimary -> E1036.
-        r = parse("let a: int = 1 - 2147483648;");
-        assertParseError(r, "E1036", "v1.2 binary-position 2147483648");
-
-        // --2147483648 parses as UnaryExpr(NEG, IntLiteral(-2147483648)):
-        // the inner '-' is the immediate token, and the outer negation's
-        // E8004 is a runtime concern, not a parse error.
-        r = parse("let a: int = --2147483648;");
-        assertNoParseErrors(r, "v1.2 --2147483648 parses");
-        vd = (VariableDeclaration) r.program().statements().get(0);
-        UnaryExpr un = assertExprInstance(vd.initializer(), UnaryExpr.class,
-            "v1.2 --2147483648 outer unary");
-        if (un != null) {
-            check(un.op() == UnaryOp.NEG, "v1.2 --2147483648 outer op is NEG");
-            LiteralExpr inner = assertExprInstance(un.expr(), LiteralExpr.class,
-                "v1.2 --2147483648 inner literal");
-            if (inner != null) {
-                check(((LiteralValue.IntLiteral) inner.value()).value() == -2147483648L,
-                    "v1.2 --2147483648 inner value");
+        ParseResult r = parse("let a: number = -2147483648;");
+        VariableDeclaration declaration = (VariableDeclaration) r.program().statements().get(0);
+        UnaryExpr unary = assertExprInstance(declaration.initializer(), UnaryExpr.class,
+            "negative literals retain their unary operator");
+        if (unary != null) {
+            check(unary.op() == UnaryOp.NEG, "negative literal operator");
+            LiteralExpr literal = assertExprInstance(unary.expr(), LiteralExpr.class,
+                "negative literal magnitude");
+            if (literal != null) {
+                check(((LiteralValue.NumberLiteral) literal.value()).value() == 2147483648d,
+                    "positive magnitude");
+                check(literal.span().startColumn() == 18 && literal.span().endColumn() == 27,
+                    "literal span excludes unary minus");
+                check(literal.span().hasScalarOffsets()
+                    && literal.span().startScalarOffset() == 17
+                    && literal.span().endScalarOffset() == 27, "literal scalar offsets");
             }
         }
-
-        // The v1.2 contract also applies inside template interpolations:
-        // the template sub-parser carries the same profile (I1).
-        r = parse("let a: string = `x ${2147483648} y`;");
-        assertParseError(r, "E1036", "v1.2 template interpolation 2147483648");
         r = parse("let a: string = `x ${-2147483648} y`;");
-        assertNoParseErrors(r, "v1.2 template interpolation -2147483648");
-        vd = (VariableDeclaration) r.program().statements().get(0);
-        TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
-            TemplateLiteralExpr.class, "v1.2 template");
-        if (tl != null && tl.parts().size() == 3) {
-            LiteralExpr part = assertExprInstance(tl.parts().get(1),
-                LiteralExpr.class,
-                "v1.2 template interpolation part is the combined literal");
-            if (part != null) {
-                check(((LiteralValue.IntLiteral) part.value()).value()
-                        == -2147483648L,
-                    "v1.2 template interpolation -2147483648 value");
-            }
+        assertNoParseErrors(r, "template negative magnitude");
+        declaration = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr template = assertExprInstance(declaration.initializer(),
+            TemplateLiteralExpr.class, "template");
+        if (template != null) {
+            check(template.parts().size() == 3, "template parts");
+            UnaryExpr part = assertExprInstance(template.parts().get(1), UnaryExpr.class,
+                "template retains unary expression");
+            if (part != null) check(part.expr() instanceof LiteralExpr literal
+                && literal.value() instanceof LiteralValue.NumberLiteral number
+                && number.value() == 2147483648d, "template magnitude");
         }
     }
 
@@ -1282,7 +1223,7 @@ public class ParserTest {
         // Left-associative: (1 - 2) - 3
         check(bin.op() == BinaryOp.SUB, "top op is SUB");
         check(bin.right() instanceof LiteralExpr, "right is literal 3");
-        check(((LiteralExpr) bin.right()).value() instanceof LiteralValue.IntLiteral il
+        check(((LiteralExpr) bin.right()).value() instanceof LiteralValue.NumberLiteral il
                 && il.value() == 3, "right value is 3");
         check(bin.left() instanceof BinaryExpr, "left is nested");
         BinaryExpr left = (BinaryExpr) bin.left();

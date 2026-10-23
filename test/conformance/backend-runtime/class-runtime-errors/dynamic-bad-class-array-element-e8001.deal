@@ -5,9 +5,9 @@
 
 import * as json from "std/json";
 
-class Box { value: int = 0; }
+class Box { value: number = 0; }
 
-export function test_dynamic_bad_class_array_element(): int {
+export function test_dynamic_bad_class_array_element(): number {
   let holder: table = json.parse("{\"items\":[{\"value\":1},{\"value\":\"bad\"}]}");
   let xs: Box[] = holder.items;
   return xs[0].value;

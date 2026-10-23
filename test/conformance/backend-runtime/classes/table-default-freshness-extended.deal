@@ -11,7 +11,7 @@ export function test_table_default_freshness_extended(): null {
   let a: Holder = {};
   let b: Holder = {};
   a.data.count = 9;
-  let count: int | null = b.data.count;
+  let count: number | null = b.data.count;
   if (count !== null) { throw { code: "TEST_FAIL", message: "table default shared" }; }
   return null;
 }

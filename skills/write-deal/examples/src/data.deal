@@ -1,8 +1,8 @@
 import * as check from "./check";
 import * as json from "std/json";
 
-function readCount(data: table): int {
-  let count: int = data.count;
+function readCount(data: table): number {
+  let count: number = data.count;
   if (count < 0) {
     throw { code: "NEGATIVE_COUNT", message: "count must be nonnegative" };
   }

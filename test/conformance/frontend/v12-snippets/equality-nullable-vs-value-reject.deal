@@ -3,4 +3,4 @@
 // @expected: compile-error E3006
 // @features: v1.2, frontend, reject
 
-export function f(a: int | null, b: int): boolean {return a === b;}
+export function f(a: number | null, b: number): boolean {return a === b;}

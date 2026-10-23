@@ -5,7 +5,7 @@
 
 import * as str from "std/string";
 
-export function test_missing_stdlib_export(): int {
+export function test_missing_stdlib_export(): number {
   return str.noSuchFunction("x");
 }
 

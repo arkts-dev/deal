@@ -78,9 +78,9 @@ public final class IntrinsicShadowingProductionTest {
     private static final List<IntrinsicSite> INTRINSIC_SITES = List.of(
         new IntrinsicSite("INT_CONVERT", 62, 7),     // nestedScopes: int(1.0)
         new IntrinsicSite("INT_CONVERT", 71, 10),    // nestedScopes: int(5.0)
-        new IntrinsicSite("INT_CONVERT", 95, 21),    // declarationOrder: int(2.0)
-        new IntrinsicSite("INT_CONVERT", 110, 25),   // forHeadCounter: int(3.0)
-        new IntrinsicSite("INT_CONVERT", 172, 24),   // intrinsicResults: int(2.0)
+        new IntrinsicSite("INT_CONVERT", 95, 24),    // declarationOrder: int(2.0)
+        new IntrinsicSite("INT_CONVERT", 110, 28),   // forHeadCounter: int(3.0)
+        new IntrinsicSite("INT_CONVERT", 172, 27),   // intrinsicResults: int(2.0)
         new IntrinsicSite("NUMBER_CONVERT", 173, 25)); // intrinsicResults: number(7)
 
     /** One shadowed direct call of the controls fixture. */
@@ -93,10 +93,10 @@ public final class IntrinsicShadowingProductionTest {
      * conversion/allocation emission.
      */
     private static final List<ShadowedCall> SHADOWED_CALLS = List.of(
-        new ShadowedCall(17, 7, "local int shadow"),
-        new ShadowedCall(20, 10, "local int shadow result"),
-        new ShadowedCall(25, 7, "parameter int shadow"),
-        new ShadowedCall(28, 10, "parameter int shadow result"),
+        new ShadowedCall(17, 7, "local number shadow"),
+        new ShadowedCall(20, 10, "local number shadow result"),
+        new ShadowedCall(25, 7, "parameter number shadow"),
+        new ShadowedCall(28, 10, "parameter number shadow result"),
         new ShadowedCall(34, 7, "local number shadow"),
         new ShadowedCall(37, 10, "local number shadow result"),
         new ShadowedCall(44, 7, "local bytes binding"),
@@ -110,9 +110,9 @@ public final class IntrinsicShadowingProductionTest {
         new ShadowedCall(119, 7, "initial shadow value"),
         new ShadowedCall(123, 7, "reassigned shadow value"),
         new ShadowedCall(126, 10, "reassigned shadow value result"),
-        new ShadowedCall(138, 20, "captured callee and argument effects"),
-        new ShadowedCall(142, 21, "second captured-callee call"),
-        new ShadowedCall(191, 35, "captured shadow callee"));
+        new ShadowedCall(138, 23, "captured callee and argument effects"),
+        new ShadowedCall(142, 24, "second captured-callee call"),
+        new ShadowedCall(191, 38, "captured shadow callee"));
 
     /** The static conversion/allocation emission helpers, per backend. */
     private static final List<String> LUAJIT_CONVERSION_HELPERS =
@@ -421,8 +421,10 @@ public final class IntrinsicShadowingProductionTest {
     }
 
     private static final ArtifactExpectation CONTROLS_EXPECTATION =
-        new ArtifactExpectation(CONTROLS_FIXTURE, INTRINSIC_SITES.size(),
-            INTRINSIC_SITES, SHADOWED_CALLS);
+        new ArtifactExpectation(CONTROLS_FIXTURE, 0, List.of(),
+            java.util.stream.Stream.concat(SHADOWED_CALLS.stream(),
+                INTRINSIC_SITES.stream().map(site -> new ShadowedCall(
+                    site.line(), site.column(), "ordinary module callable"))).toList());
 
     /**
      * The module-level declaration fixture calls its own {@code bytes}

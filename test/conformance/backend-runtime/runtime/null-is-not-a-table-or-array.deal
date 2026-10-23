@@ -19,7 +19,7 @@ export function test_null_is_not_a_container(): null {
   }
   let arrayCode: string = "";
   try {
-    let xs: int[] = holder.n;
+    let xs: number[] = holder.n;
     if (xs.length >= 0) {
       arrayCode = "admitted";
     }
@@ -36,7 +36,7 @@ export function test_null_is_not_a_container(): null {
   if (encoded !== "{}") {
     throw { code: "TEST_FAIL", message: "the empty table did not encode: " + encoded };
   }
-  let emptyArray: int[] = [];
+  let emptyArray: number[] = [];
   if (emptyArray.length !== 0) {
     throw { code: "TEST_FAIL", message: "the empty array did not keep its length" };
   }

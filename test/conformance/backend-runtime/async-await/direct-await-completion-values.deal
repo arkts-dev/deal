@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async-await, runtime
 
-async function intValue(): int {
+async function intValue(): number {
   return 21;
 }
 
@@ -15,10 +15,10 @@ async function maybeValue(): string | null {
   return null;
 }
 
-export async function test_direct_await_completion_values(): int {
-  let a: int = await intValue();
-  let b: int = await intValue();
-  let sum: int = a + b;
+export async function test_direct_await_completion_values(): number {
+  let a: number = await intValue();
+  let b: number = await intValue();
+  let sum: number = a + b;
   if (sum !== 42) {
     throw { code: "TEST_FAIL", message: "direct await int completion mismatch" };
   }

@@ -1,6 +1,6 @@
 // IR golden fixture: async-await-async-nested-await
 // Migrated IR-containment pin for legacy case 'async-nested-await' (ISSUE-0358).
 
-async function c(): int { return 10; }
-async function b(): int { return await c(); }
-export async function a(): int { return await b(); }
+async function c(): number { return 10; }
+async function b(): number { return await c(); }
+export async function a(): number { return await b(); }

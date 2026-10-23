@@ -4,7 +4,7 @@
 // @features: jsonable, type-checking
 
 class NonJsonable {
-  data: int = 0;
+  data: number = 0;
 }
 
 // @jsonable

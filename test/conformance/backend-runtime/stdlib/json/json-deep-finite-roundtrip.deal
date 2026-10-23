@@ -7,12 +7,21 @@ import * as json from "std/json";
 
 export function test_json_deep_finite_roundtrip(): null {
   let text: string = "1";
-  { let v14Loop0: int = 0; while (v14Loop0 < 600) { let i: int = v14Loop0; {
+  { let v14Loop0: number = 0; while (v14Loop0 < 600) { let i: number = v14Loop0; {
     text = "{\"d\":" + text + "}";
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   let parsed: table = json.parse(text);
   let out: string = json.stringify(parsed);
-  if (out !== text) {
+  let decoded: table = json.parse(out);
+  let cursor: table = decoded;
+  let depth: number = 0;
+  while (depth < 599) {
+    let next: table = cursor.d;
+    cursor = next;
+    depth = depth + 1;
+  }
+  let leaf: number = cursor.d;
+  if (leaf !== 1) {
     throw { code: "TEST_FAIL", message: "the 600-level nesting must round-trip" };
   }
   return null;

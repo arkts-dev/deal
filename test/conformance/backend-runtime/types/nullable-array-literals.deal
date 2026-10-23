@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: types, arrays, nullable
 
-export function test_empty_nullable_array(): int {
-  let a: int[] | null = [];
+export function test_empty_nullable_array(): number {
+  let a: number[] | null = [];
   if (a === null) {
     throw {code: "TEST_FAIL", message: "empty nullable array became null"};
   } else {
@@ -13,11 +13,11 @@ export function test_empty_nullable_array(): int {
   }
 }
 
-export function test_parenthesized_nullable_array(): int {
-  let a: (int | null)[] = [1, null, 3];
-  let count: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < a.length) { let i: int = v14Loop0; {
-    let v: int | null = a[i];
+export function test_parenthesized_nullable_array(): number {
+  let a: (number | null)[] = [1, null, 3];
+  let count: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < a.length) { let i: number = v14Loop0; {
+    let v: number | null = a[i];
     if (v === null) {
       count = count + 1;
     } else {

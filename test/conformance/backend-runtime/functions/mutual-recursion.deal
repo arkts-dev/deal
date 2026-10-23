@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: functions, recursion, mutual-recursion
 
-function even(n: int): boolean {
+function even(n: number): boolean {
   if (n === 0) { return true; }
   return odd(n - 1);
 }
 
-function odd(n: int): boolean {
+function odd(n: number): boolean {
   if (n === 0) { return false; }
   return even(n - 1);
 }

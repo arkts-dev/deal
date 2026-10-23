@@ -17,7 +17,7 @@ function expectCaught(e: Error, what: string): null {
   return null;
 }
 
-function expectEqual(what: string, actual: int, expected: int): null {
+function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
     throw { code: "CONTROL_FAIL", message: what + " changed the value" };
   }
@@ -36,8 +36,8 @@ export function main(): null {
   // refinement, and the valid value flows through every member position
   // unchanged: the admission republishes the read and the member operation
   // consumes the admitted value.
-  let returns: int = 0;
-  let bump: () => int = function(): int {
+  let returns: number = 0;
+  let bump: () => number = function(): number {
     returns = returns + 1;
     return 9;
   };
@@ -47,21 +47,21 @@ export function main(): null {
   };
   if (config !== null) {
     noop();
-    let stored: int = config.a;
+    let stored: number = config.a;
     expectEqual("member read after a call", stored, 1);
     config.a = bump();
-    let written: int = config.a;
+    let written: number = config.a;
     expectEqual("member write", written, 9);
     expectEqual("member write evaluates its right side once", returns, 1);
     config.inner.b = 4;
     let nested: table = config.inner;
-    let deep: int = nested.b;
+    let deep: number = nested.b;
     expectEqual("nested address chain write", deep, 4);
     config.a = 5;
-    let beforeDelete: int = config.a;
+    let beforeDelete: number = config.a;
     expectEqual("member value before the delete", beforeDelete, 5);
     delete config.a;
-    let afterDelete: int | null = config.a;
+    let afterDelete: number | null = config.a;
     expectTrue("member delete removes the key", afterDelete === null);
     config.a = 6;
   }
@@ -70,15 +70,15 @@ export function main(): null {
   // results: a member read is not rewritten by the refinement admission,
   // with a plain receiver and through a refined receiver alike.
   let slots: table = {present: null, value: 7};
-  let presentNull: int | null = slots.present;
-  let absent: int | null = slots.absent;
-  let presentValue: int = slots.value;
+  let presentNull: number | null = slots.present;
+  let absent: number | null = slots.absent;
+  let presentValue: number = slots.value;
   expectTrue("present null key reads as null", presentNull === null);
   expectTrue("absent key reads as null", absent === null);
   expectEqual("present value key", presentValue, 7);
   if (config !== null) {
-    let narrowedPresentNull: int | null = config.present;
-    let narrowedAbsent: int | null = config.absent;
+    let narrowedPresentNull: number | null = config.present;
+    let narrowedAbsent: number | null = config.absent;
     expectTrue("narrowed receiver: present null key reads as null",
       narrowedPresentNull === null);
     expectTrue("narrowed receiver: absent key reads as null", narrowedAbsent === null);
@@ -94,9 +94,9 @@ export function main(): null {
   };
   if (t !== null) {
     clear();
-    let caught: int = 0;
+    let caught: number = 0;
     try {
-      let value: int = t.a;
+      let value: number = t.a;
       expectNoError("member read");
     } catch (e) {
       expectCaught(e, "member read");
@@ -129,9 +129,9 @@ export function main(): null {
     expectEqual("nested address chain write raised", caught, 4);
     // The failed write and delete mutated nothing: the aliased table still
     // holds its original member value.
-    let kept: int = keep.a;
+    let kept: number = keep.a;
     expectEqual("a failed member write or delete mutates nothing", kept, 1);
-    let keptAgain: int | null = keep.a;
+    let keptAgain: number | null = keep.a;
     expectTrue("the aliased member is still present", keptAgain !== null);
   }
   return null;

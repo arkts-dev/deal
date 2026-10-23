@@ -5,8 +5,8 @@
 
 // This is a line comment
 export function main(): null {
-let x: int = 1; // comment after statement
-let y: int = 2;
+let x: number = 1; // comment after statement
+let y: number = 2;
 
 return null;
 }

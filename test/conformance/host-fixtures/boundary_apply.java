@@ -1,7 +1,7 @@
 
 
 final class HostBoundary_apply {
-  public static Object apply($DealRt.Fn1_I_R_I f, int v) {
-    return Integer.valueOf(f.invoke(v) + 100);
+  public static Object apply($DealRt.Fn1_N_R_N f, double v) {
+    return Double.valueOf(f.invoke(v) + 100);
   }
 }

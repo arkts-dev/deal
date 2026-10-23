@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: error-handling, try, continue, nested
 
-export function test_nested_continue(): int {
-  let sum: int = 0;
+export function test_nested_continue(): number {
+  let sum: number = 0;
   let innerCatchRan: boolean = false;
   let outerCatchRan: boolean = false;
-  { let v14Loop0: int = 0; while (v14Loop0 < 5) { let i: int = v14Loop0; {
+  { let v14Loop0: number = 0; while (v14Loop0 < 5) { let i: number = v14Loop0; {
     try {
       try {
         if (i === 2) { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } }

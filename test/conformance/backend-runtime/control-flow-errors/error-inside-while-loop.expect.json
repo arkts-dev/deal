@@ -8,16 +8,17 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8005\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8005\",\"message\":\"integer division by zero\",\"sourceFile\":\"backend-runtime/control-flow-errors/error-inside-while-loop.deal\",\"line\":9,\"column\":27}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"sqrt of negative number\",\"sourceFile\":\"backend-runtime/control-flow-errors/error-inside-while-loop.deal\",\"line\":10,\"column\":27,\"actual\":\"-0x1.0p0\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
-      "code": "E8005",
-      "message": "integer division by zero",
+      "code": "E8001",
+      "message": "sqrt of negative number",
       "sourceFile": "backend-runtime/control-flow-errors/error-inside-while-loop.deal",
-      "line": 9,
-      "column": 27
+      "line": 10,
+      "column": 27,
+      "actual": "-0x1.0p0"
     }
   }
 }

@@ -5,7 +5,7 @@
 
 import * as str from "std/string";
 
-export function test_source_stdlib_error(): int {
+export function test_source_stdlib_error(): number {
   let holder: table = { value: 10 };
   return str.length(holder.value);
 }

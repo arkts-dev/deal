@@ -14,8 +14,16 @@ import java.util.concurrent.CompletableFuture;
 // declared result.
 
 final class HostCarriertable {
+  // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
+  static String numericText(Object value) {
+    if (value instanceof Number n) {
+      return java.math.BigDecimal.valueOf(n.doubleValue()).stripTrailingZeros().toPlainString();
+    }
+    return String.valueOf(value);
+  }
+
   public static final java.util.Map<String, Object> Widget_defaults =
-      java.util.Map.of("label", "", "weight", Integer.valueOf(0),
+      java.util.Map.of("label", "", "weight", Double.valueOf(0),
           "action", new Object());
 
   public static final java.util.Map<String, Object> Board_defaults =
@@ -27,35 +35,35 @@ final class HostCarriertable {
   // function-typed class field carries the per-signature host wrapper.
   static deal.codegen.jvm.JvmRuntime.FunctionValue functionValue() {
     return new deal.codegen.jvm.JvmRuntime.FunctionValue(
-        args -> Long.valueOf(42L), "function(int;int)", "(int)->int", null);
+        args -> Double.valueOf(42L), "function(number;number)", "(number)->number", null);
   }
 
-  static $DealRt.Fn1_I_R_I fieldValue() {
-    return new $DealRt.Fn1_I_R_I() {
-      int invoke(int x) {
+  static $DealRt.Fn1_N_R_N fieldValue() {
+    return new $DealRt.Fn1_N_R_N() {
+      double invoke(double x) {
         return 42;
       }
     };
   }
 
   static $DealRt.$Host$host$scarriertable$Widget widget(String label,
-      int weight) {
+      double weight) {
     return new $DealRt.$Host$host$scarriertable$Widget(label, weight,
         fieldValue());
   }
 
   public static Object describeAsync(
-      $DealRt.$Host$host$scarriertable$Widget w, $DealRt.Fn1_I_R_I g) {
+      $DealRt.$Host$host$scarriertable$Widget w, $DealRt.Fn1_N_R_N g) {
     String gText = "none";
     if (g != null) {
       try {
-        gText = "true:" + g.invoke(41);
+        gText = "true:" + numericText(g.invoke(41));
       } catch (RuntimeException failure) {
         gText = "false:" + failure.getMessage();
       }
     }
     return CompletableFuture.completedFuture(
-        "W|" + w.label + "|" + w.weight + "|" + gText);
+        "W|" + w.label + "|" + numericText(w.weight) + "|" + gText);
   }
 
   static deal.codegen.jvm.JvmRuntime.Table LAST_TABLE;
@@ -96,16 +104,16 @@ final class HostCarriertable {
     if (point instanceof deal.codegen.jvm.JvmRuntime.ClassInstance instance) {
       String name = String.valueOf(instance.classIdText());
       classed = String.valueOf(name.endsWith("/Point"));
-      fields = String.valueOf(instance.read("x")) + ","
-          + String.valueOf(instance.read("y"));
+      fields = numericText(instance.read("x")) + ","
+          + numericText(instance.read("y"));
     }
     String alias = String.valueOf(t.read("point") == t.read("twin"));
     String stepText = "none";
     Object member = t.read("step");
     if (member instanceof deal.codegen.jvm.JvmRuntime.FunctionValue function) {
       try {
-        stepText = "true:" + String.valueOf(
-            function.fn.invoke(new Object[] { Long.valueOf(41) }));
+        stepText = "true:" + numericText(
+            function.fn.invoke(new Object[] { Double.valueOf(41) }));
       } catch (RuntimeException failure) {
         stepText = "false:" + failure.getMessage();
       }

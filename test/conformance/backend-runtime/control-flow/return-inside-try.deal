@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: try, return
 
-export function test_return_inside_try(): int {
+export function test_return_inside_try(): number {
   let catchRan: boolean = false;
-  function attemptReturn(): int {
+  function attemptReturn(): number {
     try {
       return 7;
     } catch (e) {
@@ -13,7 +13,7 @@ export function test_return_inside_try(): int {
       return 99;
     }
   }
-  let got: int = attemptReturn();
+  let got: number = attemptReturn();
   if (got !== 7 || catchRan !== false) {
     throw { code: "TEST_FAIL", message: "return inside try: wrong result or catch executed" };
   }

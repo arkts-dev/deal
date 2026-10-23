@@ -8,7 +8,7 @@ import * as s from "std/string";
 export function main(): null {
  let text:string="A😀́Z";
  if(s.length(text)!==4 || s.substring(text,1,2)!=="😀" || s.substring(text,2,3)!=="́") {throw {code:"SCALAR_SLICE",message:"scalar slice units"};}
- let count:int=0; let fs:(()=>string)[]=[];
+ let count:number=0; let fs:(()=>string)[]=[];
  for(let ch:string of text) {count=count+1; fs[fs.length]=function(): string {return ch;};}
  if(count!==4 || fs[0]()!=="A" || fs[1]()!=="😀" || fs[2]()!=="́" || fs[3]()!=="Z") {throw {code:"SCALAR_CLOSURES",message:"scalar closure cells"};}
  c.log("unicode-single-scalar-slice"); return null;

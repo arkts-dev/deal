@@ -6,7 +6,7 @@
 import * as strings from "std/string";
 
 export function main(): null {
-  let n: int = strings.length("é");
+  let n: number = strings.length("é");
   if (n !== 1) {
     throw { code: "TEST_FAIL", message: "std/string: scalar length mismatch" };
   }

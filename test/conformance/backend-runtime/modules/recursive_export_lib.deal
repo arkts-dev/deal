@@ -3,7 +3,7 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-export function fib(n: int): int {
+export function fib(n: number): number {
   if (n < 2) { return n; }
   return fib(n - 1) + fib(n - 2);
 }

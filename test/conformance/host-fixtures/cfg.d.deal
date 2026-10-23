@@ -15,7 +15,7 @@ export class Endpoint {
 }
 
 export class ServerConfig {
-  port: int;
+  port: number;
   endpoint: Endpoint;
   tags?: string[];
   note?: string | null;

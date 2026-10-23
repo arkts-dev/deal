@@ -5,14 +5,14 @@
 final class HostFunction_binding {
   private static String trace = "";
 
-  public static Object inc(int x) {
+  public static Object inc(double x) {
     trace = trace + "I";
-    return Integer.valueOf(x + 1);
+    return Double.valueOf(x + 1);
   }
 
-  public static Object dec(int x) {
+  public static Object dec(double x) {
     trace = trace + "D";
-    return Integer.valueOf(x - 1);
+    return Double.valueOf(x - 1);
   }
 
   public static Object trace() {

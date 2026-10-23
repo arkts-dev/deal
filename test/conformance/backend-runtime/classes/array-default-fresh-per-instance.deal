@@ -4,7 +4,7 @@
 // @features: classes, arrays, defaults
 
 class Box {
-  items: int[] = [];
+  items: number[] = [];
 }
 
 export function test_array_default_is_fresh(): null {

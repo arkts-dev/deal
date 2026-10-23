@@ -121,54 +121,54 @@ public class IrDumperTest {
             new Span("test.deal", 1, 1, 1, 30), "M", "./other");
         VariableDeclaration var = new VariableDeclaration(
             new Span("test.deal", 2, 1, 2, 14), "x",
-            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 8, 2, 10), "int")),
+            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 8, 2, 10), "number")),
             new LiteralExpr(new Span("test.deal", 2, 14, 2, 14),
-                new LiteralValue.IntLiteral(42)));
+                new LiteralValue.NumberLiteral(42)));
 
         ProgramNode prog = new ProgramNode(span, java.util.List.of(imp, var));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
-        typeMap.put(var.initializer(), Type.Int.INSTANCE);
+        typeMap.put(var.initializer(), Type.Number.INSTANCE);
         SymbolTable st = new SymbolTable();
-        st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        st.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test", INDEX);
         assertContains(ir, "import * as M from \"./other\"", "import line");
         assertContains(ir, "[boundary: import]", "import boundary");
-        assertContains(ir, "let x: int", "let with type");
-        assertContains(ir, "literal 42 : int", "literal with type");
+        assertContains(ir, "let x: number", "let with type");
+        assertContains(ir, "literal 42.0 : number", "literal with type");
         System.out.println("OK");
     }
 
     static void testFunctionDeclaration() {
         System.out.print("  testFunctionDeclaration... ");
-        String source = "function add(a: int, b: int): int { return a + b; }";
+        String source = "function add(a: number, b: number): number { return a + b; }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
-        assertContains(ir, "function add: int", "function header");
-        assertContains(ir, "param a: int", "param a");
-        assertContains(ir, "param b: int", "param b");
+        assertContains(ir, "function add: number", "function header");
+        assertContains(ir, "param a: number", "param a");
+        assertContains(ir, "param b: number", "param b");
         assertContains(ir, "[boundary: param-entry]", "param-entry boundary");
         assertContains(ir, "body", "function body");
         assertContains(ir, "return", "return statement");
         assertContains(ir, "[boundary: return]", "return boundary");
-        assertContains(ir, "binary + : int", "binary expression");
-        assertContains(ir, "ident a : int", "ident a");
-        assertContains(ir, "ident b : int", "ident b");
+        assertContains(ir, "binary + : number", "binary expression");
+        assertContains(ir, "ident a : number", "ident a");
+        assertContains(ir, "ident b : number", "ident b");
         System.out.println("OK");
     }
 
     static void testVariableDeclaration() {
         System.out.print("  testVariableDeclaration... ");
-        String source = "let x: int = 42;\nlet y = 3.14;";
+        String source = "let x: number = 42;\nlet y = 3.14;";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
-        assertContains(ir, "let x: int", "typed let");
+        assertContains(ir, "let x: number", "typed let");
         assertContains(ir, "[boundary: var-annotation]", "var-annotation boundary");
-        assertContains(ir, "literal 42 : int", "int literal");
+        assertContains(ir, "literal 42.0 : number", "number literal");
         assertContains(ir, "let y: number", "inferred let");
         assertContains(ir, "literal 3.14 : number", "number literal");
         System.out.println("OK");
@@ -188,7 +188,7 @@ public class IrDumperTest {
 
     static void testIfStatement() {
         System.out.print("  testIfStatement... ");
-        String source = "function f(): null { if (true) { let x: int = 1; } }";
+        String source = "function f(): null { if (true) { let x: number = 1; } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -211,7 +211,7 @@ public class IrDumperTest {
 
     static void testForStatement() {
         System.out.print("  testForStatement... ");
-        String source = "function f(): null { { let v14Loop0: int = 0; while (v14Loop0 < 10) { let i: int = v14Loop0; { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } } }";
+        String source = "function f(): null { { let v14Loop0: number = 0; while (v14Loop0 < 10) { let i: number = v14Loop0; { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -222,7 +222,7 @@ public class IrDumperTest {
 
     static void testTryCatch() {
         System.out.print("  testTryCatch... ");
-        String source = "function f(): null { try { let x: int = 1; } catch (e) { let y: int = 2; } }";
+        String source = "function f(): null { try { let x: number = 1; } catch (e) { let y: number = 2; } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -275,13 +275,13 @@ public class IrDumperTest {
 
     static void testClassDeclaration() {
         System.out.print("  testClassDeclaration... ");
-        String source = "class Point { x: int = 0; y?: int; }";
+        String source = "class Point { x: number = 0; y?: number; }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "class Point", "class header");
-        assertContains(ir, "field x: int", "field x");
-        assertContains(ir, "field y?: int", "optional field y");
+        assertContains(ir, "field x: number", "field x");
+        assertContains(ir, "field y?: number", "optional field y");
         assertContains(ir, "[boundary: class-default]", "class-default boundary");
         System.out.println("OK");
     }
@@ -290,15 +290,15 @@ public class IrDumperTest {
         System.out.print("  testExpressionKinds... ");
         String source = """
             function f(): null {
-                let a: int = 1;
-                let b: int = -a;
+                let a: number = 1;
+                let b: number = -a;
                 let c: boolean = !true;
-                let d: int = a + b;
+                let d: number = a + b;
                 let e: boolean = a === b;
                 let f: boolean = a < b && b > 0;
-                let g: int[] = [1, 2, 3];
+                let g: number[] = [1, 2, 3];
                 let h: table = { key: "val" };
-                let i: int = g[0];
+                let i: number = g[0];
                 a = 5;
             }
             """;
@@ -310,7 +310,7 @@ public class IrDumperTest {
         assertContains(ir, "binary +", "binary add");
         assertContains(ir, "binary ===", "binary eq");
         assertContains(ir, "binary &&", "binary and");
-        assertContains(ir, "array : [int]", "array literal");
+        assertContains(ir, "array : [number]", "array literal");
         assertContains(ir, "object : table", "object literal");
         assertContains(ir, "index []", "index expr");
         assertContains(ir, "assign =", "assignment");
@@ -320,8 +320,8 @@ public class IrDumperTest {
     static void testBoundaryAnnotations() {
         System.out.print("  testBoundaryAnnotations... ");
         String source = """
-            function process(a: int): int {
-                let x: int = a;
+            function process(a: number): number {
+                let x: number = a;
                 x = 5;
                 return x;
             }
@@ -340,7 +340,7 @@ public class IrDumperTest {
         System.out.print("  testSpecTypeDescriptors... ");
         String source = """
             class User { name: string = ""; }
-            function f(a: int[], b: int|null): null {
+            function f(a: number[], b: number|null): null {
                 let u: User = { name: "test" };
                 return;
             }
@@ -348,8 +348,8 @@ public class IrDumperTest {
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
-        assertContains(ir, "[int]", "array descriptor uses brackets");
-        assertNotContains(ir, "int[]", "no legacy array format");
+        assertContains(ir, "[number]", "array descriptor uses brackets");
+        assertNotContains(ir, "number[]", "no legacy array format");
         assertContains(ir, "@test/User", "class descriptor uses @");
         System.out.println("OK");
     }
@@ -419,7 +419,7 @@ public class IrDumperTest {
 
         LiteralExpr lit = new LiteralExpr(
             new Span("test.deal", 1, 1, 1, 1),
-            new LiteralValue.IntLiteral(42));
+            new LiteralValue.NumberLiteral(42));
         VariableDeclaration var = new VariableDeclaration(
             null,  // null span — should trigger IllegalStateException
             "x",
@@ -431,9 +431,9 @@ public class IrDumperTest {
             List.of(var));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
-        typeMap.put(lit, Type.Int.INSTANCE);
+        typeMap.put(lit, Type.Number.INSTANCE);
         SymbolTable st = new SymbolTable();
-        st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        st.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         try {
@@ -472,7 +472,7 @@ public class IrDumperTest {
         // typeMap is empty — idExpr is missing
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         SymbolTable st = new SymbolTable();
-        st.define("y", new Symbol.VariableSymbol("y", Type.Int.INSTANCE, false));
+        st.define("y", new Symbol.VariableSymbol("y", Type.Number.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         try {
@@ -495,16 +495,16 @@ public class IrDumperTest {
         System.out.print("  testCallExpr... ");
         String source = """
             class Calc { }
-            function compute(x: int, y: int): int { return x; }
+            function compute(x: number, y: number): number { return x; }
             function main(): null {
-                let r: int = compute(1, 2);
+                let r: number = compute(1, 2);
             }
             """;
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
-        assertContains(ir, "call : int", "call expr");
-        assertContains(ir, "ident compute : (int,int)->int", "callee ident");
+        assertContains(ir, "call : number", "call expr");
+        assertContains(ir, "ident compute : (number,number)->number", "callee ident");
         System.out.println("OK");
     }
 
@@ -545,22 +545,22 @@ public class IrDumperTest {
             new Span("test.deal", 2, 11, 2, 28), callee, List.of(arg));
         VariableDeclaration var = new VariableDeclaration(
             new Span("test.deal", 2, 1, 2, 28), "x",
-            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 5, 2, 10), "int")),
+            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 5, 2, 10), "number")),
             call);
 
         ProgramNode prog = new ProgramNode(span, List.of(imp, var));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         typeMap.put(calleeId, Type.Table.INSTANCE);
-        typeMap.put(callee, Type.Int.INSTANCE);
+        typeMap.put(callee, Type.Number.INSTANCE);
         typeMap.put(arg, Type.String.INSTANCE);
-        typeMap.put(call, Type.Int.INSTANCE);
-        typeMap.put(var.initializer(), Type.Int.INSTANCE);
+        typeMap.put(call, Type.Number.INSTANCE);
+        typeMap.put(var.initializer(), Type.Number.INSTANCE);
 
         SymbolTable st = new SymbolTable();
         st.define("S", new Symbol.ModuleSymbol("S", Map.of("length",
-            Types.func(List.of(Type.String.INSTANCE), Type.Int.INSTANCE)), imp.span()));
-        st.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+            Types.func(List.of(Type.String.INSTANCE), Type.Number.INSTANCE)), imp.span()));
+        st.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test", INDEX);
@@ -583,21 +583,21 @@ public class IrDumperTest {
             new Span("test.deal", 2, 11, 2, 20), callee, List.of());
         VariableDeclaration var = new VariableDeclaration(
             new Span("test.deal", 2, 1, 2, 20), "y",
-            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 5, 2, 10), "int")),
+            java.util.Optional.of(new NamedType(new Span("test.deal", 2, 5, 2, 10), "number")),
             call);
 
         ProgramNode prog = new ProgramNode(span, List.of(imp, var));
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         typeMap.put(calleeId, Type.Table.INSTANCE);
-        typeMap.put(callee, Type.Int.INSTANCE);
-        typeMap.put(call, Type.Int.INSTANCE);
-        typeMap.put(var.initializer(), Type.Int.INSTANCE);
+        typeMap.put(callee, Type.Number.INSTANCE);
+        typeMap.put(call, Type.Number.INSTANCE);
+        typeMap.put(var.initializer(), Type.Number.INSTANCE);
 
         SymbolTable st = new SymbolTable();
         st.define("Ext", new Symbol.ModuleSymbol("Ext", Map.of("foo",
-            Types.func(List.of(), Type.Int.INSTANCE)), imp.span()));
-        st.define("y", new Symbol.VariableSymbol("y", Type.Int.INSTANCE, false));
+            Types.func(List.of(), Type.Number.INSTANCE)), imp.span()));
+        st.define("y", new Symbol.VariableSymbol("y", Type.Number.INSTANCE, false));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test", INDEX);
@@ -625,14 +625,14 @@ public class IrDumperTest {
         // async function g(): int { return 42; }
         LiteralExpr lit42 = new LiteralExpr(
             new Span("test.deal", 2, 18, 2, 20),
-            new LiteralValue.IntLiteral(42));
+            new LiteralValue.NumberLiteral(42));
         ReturnStatement gReturn = new ReturnStatement(
             new Span("test.deal", 2, 9, 2, 21),
             Optional.of(lit42));
         FunctionDeclaration gDecl = new FunctionDeclaration(
             new Span("test.deal", 2, 1, 3, 2), "g",
             List.of(),
-            new NamedType(new Span("test.deal", 2, 17, 2, 17), "int"),
+            new NamedType(new Span("test.deal", 2, 17, 2, 17), "number"),
             new Block(new Span("test.deal", 2, 22, 3, 2), List.of(gReturn)),
             true, false);  // isAsync = true
 
@@ -649,7 +649,7 @@ public class IrDumperTest {
         FunctionDeclaration fDecl = new FunctionDeclaration(
             new Span("test.deal", 4, 1, 5, 1), "f",
             List.of(),
-            new NamedType(new Span("test.deal", 4, 16, 4, 16), "int"),
+            new NamedType(new Span("test.deal", 4, 16, 4, 16), "number"),
             new Block(new Span("test.deal", 4, 22, 5, 1), List.of(fReturn)),
             true, false);  // isAsync = true
 
@@ -657,34 +657,34 @@ public class IrDumperTest {
 
         // Build type map
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
-        typeMap.put(lit42, Type.Int.INSTANCE);
+        typeMap.put(lit42, Type.Number.INSTANCE);
 
         // g has type async()->int
-        Type.Func gType = Types.func(List.of(), Type.Int.INSTANCE, true);
+        Type.Func gType = Types.func(List.of(), Type.Number.INSTANCE, true);
         typeMap.put(gId, gType);
         // gCall result type is int (return type of g)
-        typeMap.put(gCall, Type.Int.INSTANCE);
+        typeMap.put(gCall, Type.Number.INSTANCE);
         // awaitExpr result type is int (return type of async function)
-        typeMap.put(awaitExpr, Type.Int.INSTANCE);
+        typeMap.put(awaitExpr, Type.Number.INSTANCE);
         // fReturn
-        typeMap.put(fReturn.expr().get(), Type.Int.INSTANCE);
+        typeMap.put(fReturn.expr().get(), Type.Number.INSTANCE);
 
         // gReturn
-        typeMap.put(gReturn.expr().get(), Type.Int.INSTANCE);
+        typeMap.put(gReturn.expr().get(), Type.Number.INSTANCE);
 
         SymbolTable st = new SymbolTable();
         st.define("g", new Symbol.FunctionSymbol("g", gType));
         st.define("f", new Symbol.FunctionSymbol("f",
-            Types.func(List.of(), Type.Int.INSTANCE, true)));
+            Types.func(List.of(), Type.Number.INSTANCE, true)));
         CheckResult result = new CheckResult(typeMap, st, List.of());
 
         String ir = IrDumper.dump(prog, result, "test", INDEX);
 
-        assertContains(ir, "async function g: int", "async function g header");
-        assertContains(ir, "async function f: int", "async function f header");
-        assertContains(ir, "await : int", "await expression with type");
-        assertContains(ir, "call : int", "call inside await");
-        assertContains(ir, "ident g : async()->int", "async function type on ident");
+        assertContains(ir, "async function g: number", "async function g header");
+        assertContains(ir, "async function f: number", "async function f header");
+        assertContains(ir, "await : number", "await expression with type");
+        assertContains(ir, "call : number", "call inside await");
+        assertContains(ir, "ident g : async()->number", "async function type on ident");
 
         System.out.println("OK");
     }
@@ -703,10 +703,10 @@ public class IrDumperTest {
             gSpan, "g",
             List.of(
                 new Parameter(new Span("test.deal", 1, 15, 1, 20),
-                    "a", new NamedType(new Span("test.deal", 1, 18, 1, 20), "int")),
+                    "a", new NamedType(new Span("test.deal", 1, 18, 1, 20), "number")),
                 new Parameter(new Span("test.deal", 1, 22, 1, 31),
                     "b", new ArrayType(new Span("test.deal", 1, 26, 1, 31),
-                        new NamedType(new Span("test.deal", 1, 26, 1, 28), "int")))),
+                        new NamedType(new Span("test.deal", 1, 26, 1, 28), "number")))),
             new NamedType(new Span("test.deal", 1, 35, 1, 38), "null"),
             new Block(new Span("test.deal", 1, 39, 1, 41), List.of()), false, false);
 
@@ -721,7 +721,7 @@ public class IrDumperTest {
 
         // Fixed params only: (int, [int]) -> null
         Type.Func funcType = Types.func(
-            List.of(Type.Int.INSTANCE, new Type.Array(Type.Int.INSTANCE)),
+            List.of(Type.Number.INSTANCE, new Type.Array(Type.Number.INSTANCE)),
             Type.Null.INSTANCE);
 
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
@@ -736,7 +736,7 @@ public class IrDumperTest {
         String ir = IrDumper.dump(prog, result, "test", INDEX);
 
         // The function identifier type is (int,[int])->null — no rest arm.
-        assertContains(ir, "(int,[int])->null", "fixed params use (int,[int])->null");
+        assertContains(ir, "(number,[number])->null", "fixed params use (number,[number])->null");
         assertNotContains(ir, "...", "no rest arm in v1.2 descriptors");
 
         System.out.println("OK");

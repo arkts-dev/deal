@@ -1,12 +1,12 @@
 // @spec: Control flow — For-of — Array iteration
-// @description: For-of over int[] sums the array elements
+// @description: For-of over number[] sums the array elements
 // @expected: runtime-ok
 // @features: for-of, array
 
-export function test_sum(): int {
-  let xs: int[] = [1, 2, 3, 4, 5];
-  let total: int = 0;
-  for (let x: int of xs) {
+export function test_sum(): number {
+  let xs: number[] = [1, 2, 3, 4, 5];
+  let total: number = 0;
+  for (let x: number of xs) {
     total = total + x;
   }
   if (total !== 15) {

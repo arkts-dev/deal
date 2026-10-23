@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: async-await
 
-export async function test_async_expr(): int {
-  let f: async () => int = async function(): int {
+export async function test_async_expr(): number {
+  let f: async () => number = async function(): number {
     return 42;
   };
-  let result: int = await f();
+  let result: number = await f();
   if (result !== 42) {
     throw { code: "TEST_FAIL", message: "async function expression awaited result mismatch" };
   }

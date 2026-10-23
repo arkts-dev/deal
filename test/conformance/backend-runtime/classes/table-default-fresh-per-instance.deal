@@ -11,7 +11,7 @@ export function test_table_default_is_fresh(): null {
   let a: Box = {};
   let b: Box = {};
   a.data.x = 7;
-  let bx: int | null = b.data.x;
+  let bx: number | null = b.data.x;
   if (bx !== null) {
     throw { code: "TEST_FAIL", message: "table default was shared across instances" };
   }

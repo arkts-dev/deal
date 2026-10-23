@@ -1,19 +1,19 @@
 // @spec: Arrays — Byte indexing and buffer semantics
-// @description: A int[] write evaluates the receiver and the index exactly once each and the RHS after them: side-effecting chains record one receiver call, one index call, and one RHS call, in that order (v1.2 assignment evaluation order)
+// @description: A number[] write evaluates the receiver and the index exactly once each and the RHS after them: side-effecting chains record one receiver call, one index call, and one RHS call, in that order (v1.2 assignment evaluation order)
 // @expected: runtime-ok
-// @features: int[], runtime, v1.2
+// @features: number[], runtime, v1.2
 
 class Log {
-  seq: int[] = [];
-  buf: int[] = [0, 0, 0, 0];
+  seq: number[] = [];
+  buf: number[] = [0, 0, 0, 0];
 }
 
-function record(l: Log, tag: int): int {
+function record(l: Log, tag: number): number {
   l.seq[l.seq.length] = tag;
   return tag;
 }
 
-function pick(l: Log, tag: int): int[] {
+function pick(l: Log, tag: number): number[] {
   record(l, tag);
   return l.buf;
 }
@@ -22,13 +22,13 @@ export function test_array_write_single_evaluation(): null {
   let l: Log = { seq: [], buf: [0, 0, 0, 0] };
   pick(l, 1)[record(l, 2)] = record(l, 3);
   if (l.seq.length !== 3) {
-    throw { code: "TEST_FAIL", message: "int[] write must evaluate receiver, index, and RHS once each" };
+    throw { code: "TEST_FAIL", message: "number[] write must evaluate receiver, index, and RHS once each" };
   }
   if (l.seq[0] !== 1 || l.seq[1] !== 2 || l.seq[2] !== 3) {
-    throw { code: "TEST_FAIL", message: "int[] write operand order mismatch" };
+    throw { code: "TEST_FAIL", message: "number[] write operand order mismatch" };
   }
   if (l.buf[2] !== 3) {
-    throw { code: "TEST_FAIL", message: "int[] write value mismatch" };
+    throw { code: "TEST_FAIL", message: "number[] write value mismatch" };
   }
   return null;
 }

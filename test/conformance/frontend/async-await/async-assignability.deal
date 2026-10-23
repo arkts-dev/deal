@@ -3,12 +3,12 @@
 // @expected: compile-error E3001
 // @features: async-await, type-system
 
-async function f(): int {
+async function f(): number {
   return 42;
 }
 
 function test(): null {
-  let g: () => int = f;
+  let g: () => number = f;
   return null;
 }
 

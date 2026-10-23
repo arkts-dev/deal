@@ -1,35 +1,35 @@
 // @spec: Arrays
-// @description: ISSUE-0552 integrated verification: int[]-bearing class fields/defaults through the production plan machinery — nested int[][] and int[][][] defaults, sync/async first-class function defaults, once-per-attempt evaluation with zero load-time runs, fresh isolated mutable buffers, retained identity of a host-returned int[] default, no partial instance on default-evaluation or provided-value validation failure (no defaults run after the failure), and json.stringify rejection.
+// @description: ISSUE-0552 integrated verification: number[]-bearing class fields/defaults through the production plan machinery — nested number[][] and number[][][] defaults, sync/async first-class function defaults, once-per-attempt evaluation with zero load-time runs, fresh isolated mutable buffers, retained identity of a host-returned number[] default, no partial instance on default-evaluation or provided-value validation failure (no defaults run after the failure), and json.stringify rejection.
 // @expected: runtime-ok
-// @features: int[], classes, defaults, arrays, functions, async-await, host-abi, json
+// @features: number[], classes, defaults, arrays, functions, async-await, host-abi, json
 
 import * as host from "host/array_roundtrip";
 import * as json from "std/json";
 
-function identity(b: int[]): int[] { return b; }
+function identity(b: number[]): number[] { return b; }
 
-async function echoAsync(b: int[]): int[] { return b; }
+async function echoAsync(b: number[]): number[] { return b; }
 
-function badBytes(): int[] {
-  let holder: table = { b: "not-int[]" };
+function badBytes(): number[] {
+  let holder: table = { b: "not-number[]" };
   return holder.b;
 }
 
 class PlanBox {
-  buf: int[] = [0, 0];
-  nested: int[][] = [[0]];
-  deep: int[][][] = [[[0]]];
-  made: int[] = host.makeArray(2);
-  shared: int[] = host.sharedArray();
-  syncFn: (b: int[]) => int[] = identity;
-  asyncFn: async (b: int[]) => int[] = echoAsync;
+  buf: number[] = [0, 0];
+  nested: number[][] = [[0]];
+  deep: number[][][] = [[[0]]];
+  made: number[] = host.makeArray(2);
+  shared: number[] = host.sharedArray();
+  syncFn: (b: number[]) => number[] = identity;
+  asyncFn: async (b: number[]) => number[] = echoAsync;
 }
 
 class BadBox {
-  payload: int[] = badBytes();
+  payload: number[] = badBytes();
 }
 
-export async function test_array_class_default_integration(): int {
+export async function test_array_class_default_integration(): number {
   if (host.callCount() !== 0) {
     throw { code: "TEST_FAIL", message: "default ran at module load" };
   }
@@ -54,11 +54,11 @@ export async function test_array_class_default_integration(): int {
   if (b.shared[0] !== 55) {
     throw { code: "TEST_FAIL", message: "host-returned default was deep-copied" };
   }
-  let viaSync: int[] = a.syncFn([0]);
+  let viaSync: number[] = a.syncFn([0]);
   if (viaSync.length !== 1) {
     throw { code: "TEST_FAIL", message: "sync fn default failed" };
   }
-  let viaAsync: int[] = await a.asyncFn([0, 0]);
+  let viaAsync: number[] = await a.asyncFn([0, 0]);
   if (viaAsync.length !== 2) {
     throw { code: "TEST_FAIL", message: "async fn default failed" };
   }
@@ -72,11 +72,11 @@ export async function test_array_class_default_integration(): int {
     throw { code: "TEST_FAIL", message: "validation failure did not raise E8001" };
   }
   // A provided-value validation failure (a dynamic string crossing the
-  // int[] field boundary at phase 3) raises E8001 and publishes no
+  // number[] field boundary at phase 3) raises E8001 and publishes no
   // instance; the D5 phase order still ran the omitted defaults once
   // (the count moves 2 -> 3), and the clean attempt after it runs them
   // once more (3 -> 4).
-  let holderBad: table = { b: "not-int[]" };
+  let holderBad: table = { b: "not-number[]" };
   let providedCaught: boolean = false;
   try {
     let provided: bytes = holderBad.b;
@@ -95,7 +95,9 @@ export async function test_array_class_default_integration(): int {
     throw { code: "TEST_FAIL", message: "post-failure attempt did not construct cleanly" };
   }
   let encoded: string = json.stringify({ box: a.buf });
-  if (encoded !== "{\"box\":[200,0]}") {
+  let decoded: table = json.parse(encoded);
+  let box: number[] = decoded.box;
+  if (box.length !== 2 || box[0] !== 200 || box[1] !== 0) {
     throw { code: "TEST_FAIL", message: "array JSON encoding mismatch" };
   }
   return 0;

@@ -270,17 +270,17 @@ public class LoweringSupportTest {
     }
 
     /** The I3 signed32 claim: exactly FOUNDATION_VALUES + SIGNED_INT32, nothing else. */
-    private static boolean claimsSignedInt32(SemanticRequirementManifest manifest) {
+    private static boolean claimsNumeric(SemanticRequirementManifest manifest) {
         return manifest != null
             && manifest.capabilities().equals(EnumSet.of(
-                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32));
+                SemanticCapability.FOUNDATION_VALUES));
     }
 
-    private static boolean claimsSignedInt32AndModules(
+    private static boolean claimsNumericAndModules(
             SemanticRequirementManifest manifest) {
         return manifest != null
             && manifest.capabilities().equals(EnumSet.of(
-                SemanticCapability.FOUNDATION_VALUES, SemanticCapability.SIGNED_INT32,
+                SemanticCapability.FOUNDATION_VALUES,
                 SemanticCapability.MODULES));
     }
 
@@ -627,7 +627,7 @@ public class LoweringSupportTest {
             RequirementManifestResult other = compileAndCompute(tmp.resolve("other"),
                 Map.of(
                     "other.deal", """
-                        export function nowMillis(): int {
+                        export function nowMillis(): number {
                           return 0;
                         }
                         """,
@@ -650,9 +650,9 @@ public class LoweringSupportTest {
                 "an identically-named alias bound to another module does not trigger: the "
                     + "join matches the resolved ModuleSymbol name against the module's "
                     + "ImportDeclaration records, and the resolved target is not std/time");
-            check(claimsSignedInt32AndModules(manifestOf(other, "other")),
+            check(claimsNumericAndModules(manifestOf(other, "other")),
                 "the other module exporting nowMillis claims FOUNDATION_VALUES + "
-                    + "SIGNED_INT32 + MODULES (its return 0 int literal is CONST(Int) "
+                    + "SIGNED_INT32 + MODULES (its return 0 number literal is CONST(Int) "
                     + "— the I3 derivation row claims at the construct kind, never the "
                     + "magnitude; the imported-by arm adds MODULES) "
                     + "and never the removed routing marker");
@@ -808,7 +808,7 @@ public class LoweringSupportTest {
             // declarations and the entry delegation never claim MODULES.
             RequirementManifestResult single = compileAndCompute(tmp.resolve("single"),
                 Map.of("main.deal", """
-                    export function value(): int {
+                    export function value(): number {
                       return 42;
                     }
                     export function main(): null {
@@ -818,7 +818,7 @@ public class LoweringSupportTest {
             if (single == null) {
                 return;
             }
-            check(claimsSignedInt32(manifestOf(single, "main")),
+            check(claimsNumeric(manifestOf(single, "main")),
                 "the import-free single-module project claims exactly "
                     + "FOUNDATION_VALUES + SIGNED_INT32 (exports and the entry "
                     + "delegation never claim MODULES): "
@@ -851,14 +851,14 @@ public class LoweringSupportTest {
     //     kind, never the magnitude
     // =========================================================================
 
-    static void testSignedInt32LiteralClaims() throws Exception {
-        System.out.println("-- I3 claims: int literals claim SIGNED_INT32, number literals do not --");
+    static void testNumberLiteralClaims() throws Exception {
+        System.out.println("-- I3 claims: number literals claim SIGNED_INT32, number literals do not --");
 
         Path tmp = Files.createTempDirectory("deal-manifest-i3-literals");
         try {
             RequirementManifestResult small = compileAndCompute(tmp.resolve("small"),
                 Map.of("main.deal", """
-                    export function one(): int {
+                    export function one(): number {
                       return 1;
                     }
 
@@ -866,7 +866,7 @@ public class LoweringSupportTest {
                     """), "main.deal");
             RequirementManifestResult max = compileAndCompute(tmp.resolve("max"),
                 Map.of("main.deal", """
-                    export function maxInt(): int {
+                    export function maxInt(): number {
                       return 2147483647;
                     }
 
@@ -883,10 +883,10 @@ public class LoweringSupportTest {
             if (small == null || max == null || numberLiteral == null) {
                 return;
             }
-            check(claimsSignedInt32(manifestOf(small, "main")),
+            check(claimsNumeric(manifestOf(small, "main")),
                 "a module with the small literal 1 claims SIGNED_INT32 — the claim "
                     + "attaches to CONST(Int), never the magnitude");
-            check(claimsSignedInt32(manifestOf(max, "main")),
+            check(claimsNumeric(manifestOf(max, "main")),
                 "a module with the literal 2147483647 claims SIGNED_INT32 exactly "
                     + "like the small literal — small literals waive nothing");
             check(claimsOnlyFoundation(manifestOf(numberLiteral, "main")),
@@ -897,7 +897,7 @@ public class LoweringSupportTest {
         }
     }
 
-    static void testSignedInt32UnaryBinaryClaims() throws Exception {
+    static void testNumberUnaryBinaryClaims() throws Exception {
         System.out.println("-- I3 claims: UNARY(INT32_NEG)/BINARY(INT32_*) claim; "
             + "number/boolean rows do not --");
 
@@ -905,7 +905,7 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult neg = compileAndCompute(tmp.resolve("neg"),
                 Map.of("main.deal", """
-                    export function neg(x: int): int {
+                    export function neg(x: number): number {
                       return -x;
                     }
 
@@ -921,7 +921,7 @@ public class LoweringSupportTest {
                     """), "main.deal");
             RequirementManifestResult add = compileAndCompute(tmp.resolve("add"),
                 Map.of("main.deal", """
-                    export function add(x: int, y: int): int {
+                    export function add(x: number, y: number): number {
                       return x + y;
                     }
 
@@ -929,7 +929,7 @@ public class LoweringSupportTest {
                     """), "main.deal");
             RequirementManifestResult eq = compileAndCompute(tmp.resolve("eq"),
                 Map.of("main.deal", """
-                    export function eq(x: int, y: int): boolean {
+                    export function eq(x: number, y: number): boolean {
                       return x === y;
                     }
 
@@ -947,16 +947,16 @@ public class LoweringSupportTest {
                     || addNumber == null) {
                 return;
             }
-            check(claimsSignedInt32(manifestOf(neg, "main")),
-                "unary negation over an int operand claims SIGNED_INT32 "
+            check(claimsNumeric(manifestOf(neg, "main")),
+                "unary negation over an number operand claims SIGNED_INT32 "
                     + "(UNARY(INT32_NEG))");
             check(claimsOnlyFoundation(manifestOf(not, "main")),
                 "boolean negation claims exactly FOUNDATION_VALUES (BOOL_NOT never "
                     + "claims SIGNED_INT32)");
-            check(claimsSignedInt32(manifestOf(add, "main")),
-                "int addition claims SIGNED_INT32 (BINARY(INT32_ADD))");
-            check(claimsSignedInt32(manifestOf(eq, "main")),
-                "int comparison claims SIGNED_INT32 (BINARY(INT32_EQ) — the "
+            check(claimsNumeric(manifestOf(add, "main")),
+                "number addition claims SIGNED_INT32 (BINARY(INT32_ADD))");
+            check(claimsNumeric(manifestOf(eq, "main")),
+                "number comparison claims SIGNED_INT32 (BINARY(INT32_EQ) — the "
                     + "BINARY(INT32_*) row covers comparison selectors too)");
             check(claimsOnlyFoundation(manifestOf(addNumber, "main")),
                 "number addition claims exactly FOUNDATION_VALUES (NUMBER_ADD never "
@@ -966,40 +966,21 @@ public class LoweringSupportTest {
         }
     }
 
-    static void testIntrinsicConversionClaims() throws Exception {
-        System.out.println("-- I3 claims: int(...) claims SIGNED_INT32; number(...) "
-            + "claims FOUNDATION_VALUES only --");
-
-        Path tmp = Files.createTempDirectory("deal-manifest-i3-intrinsics");
+    static void testOrdinaryNumericNameClaims() throws Exception {
+        Path tmp = Files.createTempDirectory("deal-manifest-numeric-names");
         try {
-            RequirementManifestResult toInt = compileAndCompute(tmp.resolve("to-int"),
-                Map.of("main.deal", """
-                    export function cvt(x: number): int {
-                      return int(x);
-                    }
-
-                    export function main(): null { return null; }
-                    """), "main.deal");
-            RequirementManifestResult toNumber = compileAndCompute(tmp.resolve("to-number"),
-                Map.of("main.deal", """
-                    export function cvtN(x: int): number {
-                      return number(x);
-                    }
-
-                    export function main(): null { return null; }
-                    """), "main.deal");
-            if (toInt == null || toNumber == null) {
-                return;
+            for (String name : List.of("int", "number")) {
+                RequirementManifestResult result = compileAndCompute(tmp.resolve(name),
+                    Map.of("main.deal", """
+                        function %s(x: number): number { return x; }
+                        export function value(): number { return %s(1.5); }
+                        export function main(): null { return null; }
+                        """.formatted(name, name)), "main.deal");
+                if (result == null) continue;
+                SemanticRequirementManifest manifest = manifestOf(result, "main");
+                check(manifest.capabilities().contains(SemanticCapability.FOUNDATION_VALUES),
+                    name + " is an ordinary callable, not a conversion seed");
             }
-            check(claimsSignedInt32(manifestOf(toInt, "main")),
-                "int(...) claims SIGNED_INT32 (INTRINSIC_CALL(INT_CONVERT))");
-            check(claimsOnlyFoundation(manifestOf(toNumber, "main")),
-                "number(...) claims exactly FOUNDATION_VALUES "
-                    + "(INTRINSIC_CALL(NUMBER_CONVERT)) and never SIGNED_INT32 — the "
-                    + "module carries no int construct");
-            check(manifestOf(toNumber, "main").capabilities()
-                    .contains(SemanticCapability.FOUNDATION_VALUES),
-                "NUMBER_CONVERT claims FOUNDATION_VALUES (the module-level row)");
         } finally {
             deleteRecursively(tmp);
         }
@@ -1033,7 +1014,7 @@ public class LoweringSupportTest {
                 tmp.resolve("store-only"), Map.of(
                     "main.deal", """
                         export function main(): null {
-                          let x: int = 0;
+                          let x: number = 0;
                           x = 2;
                           return null;
                         }
@@ -1058,9 +1039,9 @@ public class LoweringSupportTest {
                 tmp.resolve("read-back"), Map.of(
                     "main.deal", """
                         export function main(): null {
-                          let x: int = 0;
+                          let x: number = 0;
                           x = 2;
-                          let y: int = x;
+                          let y: number = x;
                           return null;
                         }
                         """), "main.deal");
@@ -1084,11 +1065,11 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult result = compileAndCompute(tmp, Map.of(
                 "helper.deal", """
-                    export function helperFn(): int {
+                    export function helperFn(): number {
                       return 1;
                     }
                     """,
-                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: int = 1;\n  y?: int;\n}\n\nasync function asyncOne(): int { return 1; }\n\nexport async function compute(a: int[]): int {\n  let sum: int = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: int = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: int[] = [1, 2];\n  let obj: table = { k: 1 };\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (has(p.y)) { sum = 1; } else { sum = 2; }\n  let i: int = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: int = 0; while (v14Loop0 < 2) { let j: int = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v: int of a) { sum = sum + v; }\n  let f: () => int = function(): int { return 1; };\n  let g: () => int = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
+                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number = 1;\n  y?: number;\n}\n\nasync function asyncOne(): number { return 1; }\n\nexport async function compute(a: number[]): number {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: table = { k: 1 };\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (has(p.y)) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v: number of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
             if (result == null) {
                 return;
             }
@@ -1248,7 +1229,7 @@ public class LoweringSupportTest {
         // implementation-module manifest (F3).
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
-                EnumSet.of(SemanticCapability.SIGNED_INT32), Map.of());
+                EnumSet.of(SemanticCapability.DESCRIPTORS), Map.of());
             fail("a manifest without FOUNDATION_VALUES must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "a manifest without FOUNDATION_VALUES is rejected at construction");
@@ -1311,8 +1292,8 @@ public class LoweringSupportTest {
                 import * as time from "std/time";
 
                 export class Point {
-                  x: int = 1;
-                  y?: int;
+                  x: number = 1;
+                  y?: number;
                 }
 
                 export function main(): null {
@@ -1459,7 +1440,7 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      let f: () => int = function(): int { return 1; };
+                      let f: () => number = function(): number { return 1; };
                       f();
                       return null;
                     }
@@ -1486,7 +1467,7 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      function down(n: int): int {
+                      function down(n: number): number {
                         if (n === 0) { return 0; }
                         return down(n - 1);
                       }
@@ -1515,11 +1496,11 @@ public class LoweringSupportTest {
             RequirementManifestResult result = compileAndCompute(tmp,
                 Map.of("main.deal", """
                     export function main(): null {
-                      let f: (a: int, b: int) => int = one;
+                      let f: (a: number, b: number) => number = one;
                       f(1, 2);
                       return null;
                     }
-                    function one(x: int): int {
+                    function one(x: number): number {
                       return x;
                     }
                     """), "main.deal");
@@ -1544,7 +1525,7 @@ public class LoweringSupportTest {
         try {
             RequirementManifestResult uncalled = compileAndCompute(tmp.resolve("uncalled"),
                 Map.of("main.deal", """
-                    function orphan(): int { return 1; }
+                    function orphan(): number { return 1; }
 
                     export function main(): null {
                       return null;
@@ -1559,7 +1540,7 @@ public class LoweringSupportTest {
             }
             RequirementManifestResult called = compileAndCompute(tmp.resolve("called"),
                 Map.of("main.deal", """
-                    function helper(x: int): int {
+                    function helper(x: number): number {
                       return x;
                     }
 
@@ -1569,7 +1550,7 @@ public class LoweringSupportTest {
                     }
                     """), "main.deal");
             if (called != null) {
-                check(claimsSignedInt32(manifestOf(called, "main")),
+                check(claimsNumeric(manifestOf(called, "main")),
                     "the called non-exported declaration claims exactly "
                         + "FOUNDATION_VALUES + SIGNED_INT32 (one call site, no CALLS "
                         + "claim): " + manifestOf(called, "main").capabilities());
@@ -1583,12 +1564,12 @@ public class LoweringSupportTest {
                       return null;
                     }
 
-                    function helper(x: int): int {
+                    function helper(x: number): number {
                       return x;
                     }
                     """), "main.deal");
             if (calledMainFirst != null) {
-                check(claimsSignedInt32(manifestOf(calledMainFirst, "main")),
+                check(claimsNumeric(manifestOf(calledMainFirst, "main")),
                     "the main-first called non-exported declaration claims exactly "
                         + "FOUNDATION_VALUES + SIGNED_INT32 (declaration-order-"
                         + "independent call accounting, one call site, no CALLS "
@@ -1609,7 +1590,7 @@ public class LoweringSupportTest {
             RequirementManifestResult binding = compileAndCompute(
                 tmp.resolve("binding"), Map.of("main.deal", """
                     export function main(): null {
-                      let g: () => int = function(): int { return 7; };
+                      let g: () => number = function(): number { return 7; };
                       return null;
                     }
                     """), "main.deal");
@@ -1624,7 +1605,7 @@ public class LoweringSupportTest {
             RequirementManifestResult arrayElement = compileAndCompute(
                 tmp.resolve("array"), Map.of("main.deal", """
                     export function main(): null {
-                      let fs: (() => int)[] = [function(): int { return 7; }];
+                      let fs: (() => number)[] = [function(): number { return 7; }];
                       return null;
                     }
                     """), "main.deal");
@@ -1638,7 +1619,7 @@ public class LoweringSupportTest {
             RequirementManifestResult tableField = compileAndCompute(
                 tmp.resolve("table"), Map.of("main.deal", """
                     export function main(): null {
-                      let t: table = { f: function(): int { return 7; } };
+                      let t: table = { f: function(): number { return 7; } };
                       return null;
                     }
                     """), "main.deal");
@@ -1656,7 +1637,7 @@ public class LoweringSupportTest {
             RequirementManifestResult iife = compileAndCompute(
                 tmp.resolve("iife"), Map.of("main.deal", """
                     export function main(): null {
-                      let x: int = (function(): int { return 7; })();
+                      let x: number = (function(): number { return 7; })();
                       return null;
                     }
                     """), "main.deal");
@@ -1678,7 +1659,7 @@ public class LoweringSupportTest {
         try {
             String source = """
                 export function main(): null {
-                  let xs: int[] = [1, 2, 3];
+                  let xs: number[] = [1, 2, 3];
                   if (xs.length !== 3) {
                     throw { code: "TEST_FAIL", message: "array length mismatch" };
                   }
@@ -1758,9 +1739,9 @@ public class LoweringSupportTest {
         testRetiredOverClaimClosureMember();
         testRetiredOverClaimImporter();
         testModulesImportClaim();
-        testSignedInt32LiteralClaims();
-        testSignedInt32UnaryBinaryClaims();
-        testIntrinsicConversionClaims();
+        testNumberLiteralClaims();
+        testNumberUnaryBinaryClaims();
+        testOrdinaryNumericNameClaims();
         testIdentifierWriteTargetClaimsAssignmentOnly();
         testConstructCoverageRows();
         testE6005InconsistentFacts();

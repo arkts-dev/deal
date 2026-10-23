@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: jsonable, toJson, deep, alias, v1.3
 
-import * as str from "std/string";
+import * as json from "std/json";
 
 // @jsonable
 export class Holder {
@@ -13,7 +13,7 @@ export class Holder {
 export function test_tojson_deep_and_alias(): null {
   let h: Holder = { data: {} };
   let cur: table = h.data;
-  { let v14Loop0: int = 0; while (v14Loop0 < 600) { let i: int = v14Loop0; {
+  { let v14Loop0: number = 0; while (v14Loop0 < 600) { let i: number = v14Loop0; {
     let next: table = {};
     cur.next = next;
     cur = next;
@@ -22,11 +22,21 @@ export function test_tojson_deep_and_alias(): null {
   h.data.aliasA = shared;
   h.data.aliasB = shared;
   let text: string = Holder$toJson(h);
-  if (!str.contains(text, "\"aliasA\":{\"v\":1},\"aliasB\":{\"v\":1}")) {
-    throw { code: "TEST_FAIL", message: "the shared acyclic child must serialize twice" };
+  let decoded: table = json.parse(text);
+  let data: table = decoded.data;
+  let aliasA: table = data.aliasA;
+  let aliasB: table = data.aliasB;
+  let a: number = aliasA.v;
+  let b: number = aliasB.v;
+  if (aliasA === aliasB || a !== 1 || b !== 1) {
+    throw { code: "TEST_FAIL", message: "the shared acyclic child must serialize twice with its value" };
   }
-  if (!str.contains(text, "\"v\":1")) {
-    throw { code: "TEST_FAIL", message: "the shared child value must be present" };
+  let cursor: table = data;
+  let depth: number = 0;
+  while (depth < 600) {
+    let next: table = cursor.next;
+    cursor = next;
+    depth = depth + 1;
   }
   return null;
 }

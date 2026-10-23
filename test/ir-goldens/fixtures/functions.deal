@@ -2,7 +2,7 @@
 // Tests function declarations with parameters, rest params,
 // return type annotations, and recursion.
 
-function add(a: int, b: int): int {
+function add(a: number, b: number): number {
     return a + b;
 }
 

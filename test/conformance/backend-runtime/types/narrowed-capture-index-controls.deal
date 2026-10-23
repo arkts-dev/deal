@@ -14,7 +14,7 @@ function expectCaught(e: Error, what: string, code: string): null {
   return null;
 }
 
-function expectEqual(what: string, actual: int, expected: int): null {
+function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
     throw { code: "CONTROL_FAIL", message: what + " changed the value" };
   }
@@ -24,8 +24,8 @@ function expectEqual(what: string, actual: int, expected: int): null {
 export function main(): null {
   // The valid refinement flows through every index position unchanged: the
   // admission republishes the read and the chain consumes the admitted value.
-  let row: int[] | null = [3, 4];
-  let which: int | null = 1;
+  let row: number[] | null = [3, 4];
+  let which: number | null = 1;
   if (row !== null) {
     if (which !== null) {
       expectEqual("array index read", row[which], 4);
@@ -33,8 +33,8 @@ export function main(): null {
       expectEqual("array index write", row[1], 9);
     }
   }
-  let maybeRow: int[] | null = [5];
-  let seed: int | null = 6;
+  let maybeRow: number[] | null = [5];
+  let seed: number | null = 6;
   if (maybeRow !== null) {
     if (seed !== null) {
       expectEqual("array receiver read", maybeRow[0], 5);
@@ -45,7 +45,7 @@ export function main(): null {
   let config: table | null = { a: 1 };
   if (config !== null) {
     config["a"] = 2;
-    let stored: int = config["a"];
+    let stored: number = config["a"];
     expectEqual("table receiver write", stored, 2);
   }
 
@@ -68,7 +68,7 @@ export function main(): null {
   if (row !== null) {
     clearRow();
     try {
-      let first: int = row[0];
+      let first: number = row[0];
       expectNoError("array receiver read");
     } catch (e) {
       expectCaught(e, "array receiver read", "E8001");
@@ -80,11 +80,11 @@ export function main(): null {
       expectCaught(e, "array receiver write", "E8001");
     }
   }
-  let numbers: int[] = [1, 2];
+  let numbers: number[] = [1, 2];
   if (which !== null) {
     clearWhich();
     try {
-      let picked: int = numbers[which];
+      let picked: number = numbers[which];
       expectNoError("array index read");
     } catch (e) {
       expectCaught(e, "array index read", "E8001");
@@ -105,7 +105,7 @@ export function main(): null {
       expectCaught(e, "table receiver write", "E8001");
     }
     try {
-      let stored: int = config["a"];
+      let stored: number = config["a"];
       expectNoError("table receiver read");
     } catch (e) {
       expectCaught(e, "table receiver read", "E8001");

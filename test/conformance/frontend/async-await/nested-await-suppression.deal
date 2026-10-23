@@ -3,10 +3,10 @@
 // @expected: compile-ok
 // @features: async, await
 
-async function inner(): int { return 42; }
-async function outer(x: int): int { return x; }
+async function inner(): number { return 42; }
+async function outer(x: number): number { return x; }
 
-async function f(): int {
+async function f(): number {
   return await outer(await inner());
 }
 

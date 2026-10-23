@@ -6,7 +6,6 @@ public sealed interface ComparisonOperandView
     permits ComparisonOperandView.Null,
             ComparisonOperandView.Missing,
             ComparisonOperandView.Boolean,
-            ComparisonOperandView.Int,
             ComparisonOperandView.Number,
             ComparisonOperandView.String,
             ComparisonOperandView.Ref {
@@ -27,10 +26,6 @@ public sealed interface ComparisonOperandView
 
     /** A boolean value. */
     record Boolean(boolean value) implements ComparisonOperandView {
-    }
-
-    /** A signed32 integer value (the Java {@code int} carrier is exactly signed32). */
-    record Int(int value) implements ComparisonOperandView {
     }
 
     /** An IEEE-754 number value (NaN and infinity included). */

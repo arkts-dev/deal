@@ -62,7 +62,7 @@ public final class DescriptorService {
         return switch (type) {
             case Type.Null ignored -> RuntimeDescriptor.Null.INSTANCE;
             case Type.Boolean ignored -> RuntimeDescriptor.Boolean.INSTANCE;
-            case Type.Int ignored -> RuntimeDescriptor.Int.INSTANCE;
+
             case Type.Number ignored -> RuntimeDescriptor.Number.INSTANCE;
             case Type.String ignored -> RuntimeDescriptor.String.INSTANCE;
             case Type.Table ignored -> RuntimeDescriptor.Table.INSTANCE;

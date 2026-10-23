@@ -35,7 +35,6 @@ import deal.semantic.ir.DiagnosticOriginCarrier;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailureContractRegistry;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringFailureDetail;
 import deal.semantic.ir.ModuleId;
@@ -130,7 +129,6 @@ public final class ProductionProjectEmission {
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             BuiltinErrorDeclaration builtinError,
-            List<IntrinsicKind> conversionIntrinsics,
             Set<String> callbackExports,
             Backend backend,
             boolean sourceMap,
@@ -146,8 +144,6 @@ public final class ProductionProjectEmission {
         Objects.requireNonNull(declarationModuleIdentities,
             "declarationModuleIdentities must not be null");
         Objects.requireNonNull(builtinError, "builtinError must not be null");
-        Objects.requireNonNull(conversionIntrinsics,
-            "conversionIntrinsics must not be null");
         Objects.requireNonNull(callbackExports, "callbackExports must not be null");
         Objects.requireNonNull(backend, "backend must not be null");
         Objects.requireNonNull(distributionHome, "distributionHome must not be null");
@@ -172,7 +168,7 @@ public final class ProductionProjectEmission {
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, checkedProject, interfaceIndex, requirementManifests,
             declarationSurface, declarationModuleIdentities,
-            builtinError, conversionIntrinsics, callbackExports);
+            builtinError, callbackExports);
         if (lowering.hasErrors()) {
             return new Result(Outcome.FAILED, lowering.diagnostics(), null, null);
         }

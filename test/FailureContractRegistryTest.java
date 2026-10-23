@@ -171,7 +171,7 @@ public class FailureContractRegistryTest {
         tokens.put(ActualKind.NULL, "null");
         tokens.put(ActualKind.MISSING, "missing");
         tokens.put(ActualKind.BOOLEAN, "boolean");
-        tokens.put(ActualKind.INT, "int");
+        tokens.put(ActualKind.NUMBER, "int");
         tokens.put(ActualKind.NUMBER, "number");
         tokens.put(ActualKind.STRING, "string");
         tokens.put(ActualKind.TABLE, "table");

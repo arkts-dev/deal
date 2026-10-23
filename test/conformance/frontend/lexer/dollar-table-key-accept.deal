@@ -5,10 +5,10 @@
 
 export function main(): null {
   let t: table = { bad$key: 1 };
-  let direct: int = t.bad$key;
+  let direct: number = t.bad$key;
   let key: string = "bad$key";
   t[key] = direct;
-  let indexed: int = t[key];
+  let indexed: number = t[key];
   let text: string = "price$";
   let templated: string = `tag$${text}`;
   return null;

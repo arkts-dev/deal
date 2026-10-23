@@ -3,9 +3,9 @@
 // @expected: runtime-error E8002
 // @features: source-location, arrays, runtime-errors
 
-export function test_source_location_nested_array_oob(): int {
-  let rows: int[][] = [[1]];
-  let value: int = rows[0][4];
+export function test_source_location_nested_array_oob(): number {
+  let rows: number[][] = [[1]];
+  let value: number = rows[0][4];
   return value;
 }
 

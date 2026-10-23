@@ -5,7 +5,7 @@
 
 class Address {
   city: string = "";
-  zip: int = 0;
+  zip: number = 0;
 }
 
 class User {

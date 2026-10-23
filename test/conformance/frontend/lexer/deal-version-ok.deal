@@ -5,5 +5,5 @@
 
 // @deal-version 1.3
 export class Shape {
-  value: int = 0;
+  value: number = 0;
 }

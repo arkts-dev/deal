@@ -4,6 +4,6 @@
 // @features: variables, declaration-order, name-resolution
 
 export function main(): null {
-  let x: int = x;
+  let x: number = x;
   return null;
 }

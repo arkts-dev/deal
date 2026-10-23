@@ -4,7 +4,7 @@
 // @features: diagnostics, source-span, assignment
 
 export function main(): null {
-  let value: int = 1;
+  let value: number = 1;
   value = true;
   return null;
 }

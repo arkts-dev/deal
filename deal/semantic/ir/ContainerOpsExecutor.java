@@ -45,7 +45,7 @@ public final class ContainerOpsExecutor {
      * The closed value view the executor consumes and produces over the
      * semantic value model: exactly the values the six container/string
      * operations resolve, store, yield, concatenate, and publish —
-     * language null, boolean, signed32 int, IEEE-754 number, string
+     * language null, boolean, IEEE-754 number, string
      * (carrying the closed {@link UnicodeScalars.ScalarString}
      * classification), table ({@link SemanticTable}), array
      * ({@link SemanticArray}), and the internal {@code missing} (the
@@ -67,7 +67,7 @@ public final class ContainerOpsExecutor {
      * never target representations.</p>
      */
     public sealed interface Value
-        permits Value.Null, Value.Bool, Value.Int, Value.Number, Value.String,
+        permits Value.Null, Value.Bool, Value.Number, Value.String,
                 Value.Table, Value.Array, Value.Missing {
 
         /** The canonical actual kind this value renders as. */
@@ -102,16 +102,8 @@ public final class ContainerOpsExecutor {
             }
         }
 
-        /** A signed32 integer value. */
-        record Int(int value) implements Value {
 
-            @Override
-            public ActualKind actualKind() {
-                return ActualKind.INT;
-            }
-        }
-
-        /** An IEEE-754 number value (NaN and infinity included). */
+/** An IEEE-754 number value (NaN and infinity included). */
         record Number(double value) implements Value {
 
             @Override
@@ -422,18 +414,13 @@ public final class ContainerOpsExecutor {
 
     /**
      * Executes one validated {@code ARRAY_LENGTH} op: the receiver array
-     * resolves exactly once (never re-evaluated) and the signed32 element
-     * count is published with the pinned {@code INT32_RESULT} range check
-     * — a count outside {@code [-2147483648, 2147483647]} fails E8004
-     * {@code int out of safe range} via the registry row (defensive: the
-     * semantic model's counts are bounded, so the model cannot produce an
-     * out-of-range count; the check exists because the closed policy pins
-     * it).
+     * resolves exactly once (never re-evaluated) and its live element
+     * count is published as a number without a language range gate.
      *
      */
-    public static Outcome<Integer> executeArrayLength(SemanticOp op,
+    public static Outcome<Double> executeArrayLength(SemanticOp op,
                                                       Map<ValueId, Value> priorValues) {
-        requireOp(op, SemanticOpKind.ARRAY_LENGTH, FailurePolicyId.INT32_RESULT);
+        requireOp(op, SemanticOpKind.ARRAY_LENGTH, FailurePolicyId.NO_DEAL_FAILURE);
         KindPayload.ArrayLengthPayload payload = (KindPayload.ArrayLengthPayload) op.payload();
 
         Value receiver = resolve(priorValues, payload.arrayValue());
@@ -443,15 +430,7 @@ public final class ContainerOpsExecutor {
                 + ": the pinned receiver is an array — a producer defect, never a projection");
         }
 
-        // The count is promoted so the pinned range check is expressible;
-        // the bounded semantic model never produces an out-of-range count.
-        long count = array.array().size();
-        if (count < -2147483648L || count > 2147483647L) {
-            BoundaryFailure failure = FailureContractRegistry.render(FailureArmId.INT32_RANGE,
-                new LinkedHashMap<>(), null, null, null);
-            return new Outcome.Failure<Integer>(new OpFailure(failure, op.origin()));
-        }
-        return new Outcome.Success<Integer>((int) count);
+        return new Outcome.Success<Double>((double) array.array().size());
     }
 
     // =========================================================================

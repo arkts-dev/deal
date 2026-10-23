@@ -1,14 +1,14 @@
 // @spec: Arrays — value equality
-// @description: int[] === int[] / int[] !== int[] compare wrapper reference identity: shared aliases equal, distinct buffers do not, nullable and null values keep the pinned semantics (v1.2)
+// @description: number[] === number[] / number[] !== number[] compare wrapper reference identity: shared aliases equal, distinct buffers do not, nullable and null values keep the pinned semantics (v1.2)
 // @expected: runtime-ok
-// @features: int[], equality
+// @features: number[], equality
 
-function alias(a: int[]): int[] { return a; }
+function alias(a: number[]): number[] { return a; }
 
-export function test_array_identity_equality(): int {
-  let a: int[] = [0, 0];
-  let b: int[] = a;
-  let c: int[] = [0, 0];
+export function test_array_identity_equality(): number {
+  let a: number[] = [0, 0];
+  let b: number[] = a;
+  let c: number[] = [0, 0];
   if (!(a === b)) {
     throw { code: "TEST_FAIL", message: "shared identity failed" };
   }
@@ -21,20 +21,20 @@ export function test_array_identity_equality(): int {
   if (!(a !== c)) {
     throw { code: "TEST_FAIL", message: "distinct identity neg failed" };
   }
-  let via: int[] = alias(a);
+  let via: number[] = alias(a);
   if (!(via === a)) {
     throw { code: "TEST_FAIL", message: "returned identity failed" };
   }
-  let n1: int[] | null = null;
-  let n2: int[] | null = null;
+  let n1: number[] | null = null;
+  let n2: number[] | null = null;
   if (!(n1 === null)) {
     throw { code: "TEST_FAIL", message: "nullable null eq failed" };
   }
   if (n1 === n2 && !(n1 === null)) {
     throw { code: "TEST_FAIL", message: "nullable pair failed" };
   }
-  let v: int[] | null = [0];
-  let w: int[] | null = v;
+  let v: number[] | null = [0];
+  let w: number[] | null = v;
   if (!(v === w)) {
     throw { code: "TEST_FAIL", message: "nullable value identity failed" };
   }

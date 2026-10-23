@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: lua-abi, tables, reserved-words
 
-export function test_lua_reserved_word_table_fields(): int {
+export function test_lua_reserved_word_table_fields(): number {
   let t: table = { end: 4, local: 5 };
-  let a: int = t.end;
-  let b: int = t.local;
+  let a: number = t.end;
+  let b: number = t.local;
   if (a + b !== 9) { throw { code: "TEST_FAIL", message: "reserved word table fields failed" }; }
   return a + b;
 }

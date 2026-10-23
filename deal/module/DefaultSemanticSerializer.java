@@ -1807,16 +1807,7 @@ public final class DefaultSemanticSerializer {
             if (literal instanceof LiteralValue.BooleanLiteral b) {
                 return CanonicalJson.bool(b.value());
             }
-            if (literal instanceof LiteralValue.IntLiteral i) {
-                if (i.value() < Integer.MIN_VALUE
-                        || i.value() > Integer.MAX_VALUE) {
-                    fail("int literal " + i.value()
-                        + " is outside the signed-int32 range",
-                        node.span());
-                    return null;
-                }
-                return CanonicalJson.intValue((int) i.value());
-            }
+
             if (literal instanceof LiteralValue.NumberLiteral n) {
                 return CanonicalJson.number(n.value());
             }

@@ -4,13 +4,13 @@
 // @features: parser, assignment
 
 class Point {
-  x: int = 0;
-  y: int = 0;
+  x: number = 0;
+  y: number = 0;
 }
 
 export function test_assign(): null {
   // simple variable
-  let a: int = 1;
+  let a: number = 1;
   a = 2;
 
   // member access
@@ -18,7 +18,7 @@ export function test_assign(): null {
   p.x = 3;
 
   // index access
-  let xs: int[] = [1, 2, 3];
+  let xs: number[] = [1, 2, 3];
   xs[0] = 10;
 
   return null;

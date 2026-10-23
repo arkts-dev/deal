@@ -4,7 +4,7 @@
 // @features: type-system, nullable, canonicalization, v1.2
 
 export function main(): null {
-  let left: null | int = 1;
-  let right: int | null = left;
+  let left: null | number = 1;
+  let right: number | null = left;
   return null;
 }

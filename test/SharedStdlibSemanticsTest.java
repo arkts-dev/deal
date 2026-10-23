@@ -95,7 +95,6 @@ public class SharedStdlibSemanticsTest {
         return switch (a) {
             case Value.Null ignored -> true;
             case Value.Bool bool -> bool.value() == ((Value.Bool) b).value();
-            case Value.Int intValue -> intValue.value() == ((Value.Int) b).value();
             case Value.Number number ->
                 Double.compare(number.value(), ((Value.Number) b).value()) == 0;
             case Value.String string -> {
@@ -238,17 +237,17 @@ public class SharedStdlibSemanticsTest {
         System.out.println("-- STRING_LENGTH: Unicode scalar count as signed32 --");
 
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("")),
-            new Value.Int(0), "length of the empty string is 0");
+            new Value.Number(0), "length of the empty string is 0");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("abc")),
-            new Value.Int(3), "length of 'abc' is 3");
+            new Value.Number(3), "length of 'abc' is 3");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("h\u00e9llo")),
-            new Value.Int(5), "length of 'h\u00e9llo' is 5 scalars (\u00e9 is one scalar)");
+            new Value.Number(5), "length of 'h\u00e9llo' is 5 scalars (\u00e9 is one scalar)");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("\ud83d\ude00")),
-            new Value.Int(1), "a surrogate pair is one scalar");
+            new Value.Number(1), "a surrogate pair is one scalar");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("a\ud83d\ude00b")),
-            new Value.Int(3), "mixed BMP/supplementary count is scalar-exact");
+            new Value.Number(3), "mixed BMP/supplementary count is scalar-exact");
         expectSuccess(SharedStdlibSemantics.stringLength(origin(), valid("a".repeat(4000))),
-            new Value.Int(4000), "a long carrier counts every scalar");
+            new Value.Number(4000), "a long carrier counts every scalar");
     }
 
     static void testStringSubstring() {
@@ -415,14 +414,14 @@ public class SharedStdlibSemanticsTest {
         System.out.println("-- TABLE_KEYS: first-insertion order; delete+reinsert appends --");
 
         SemanticTable<Value> table = new SemanticTable<>();
-        table.put("a", new Value.Int(1));
-        table.put("b", new Value.Int(2));
-        table.put("c", new Value.Int(3));
+        table.put("a", new Value.Number(1));
+        table.put("b", new Value.Number(2));
+        table.put("c", new Value.Number(3));
         expectSuccess(SharedStdlibSemantics.tableKeys(origin(), table),
             Value.array(text("a"), text("b"), text("c")),
             "keys come out in first-insertion order");
 
-        table.put("a", new Value.Int(9));
+        table.put("a", new Value.Number(9));
         expectSuccess(SharedStdlibSemantics.tableKeys(origin(), table),
             Value.array(text("a"), text("b"), text("c")),
             "overwriting an existing key keeps its position");
@@ -431,7 +430,7 @@ public class SharedStdlibSemanticsTest {
         expectSuccess(SharedStdlibSemantics.tableKeys(origin(), table),
             Value.array(text("a"), text("c")), "delete removes the order slot");
 
-        table.put("b", new Value.Int(4));
+        table.put("b", new Value.Number(4));
         expectSuccess(SharedStdlibSemantics.tableKeys(origin(), table),
             Value.array(text("a"), text("c"), text("b")),
             "delete+reinsert moves the key to the end");
@@ -476,7 +475,7 @@ public class SharedStdlibSemanticsTest {
             "{} parses to an empty table");
         expectParseValue("[]", Value.array(), "[] parses to an empty array");
         expectParseValue("[1, 2, 3]",
-            Value.array(new Value.Int(1), new Value.Int(2), new Value.Int(3)),
+            Value.array(new Value.Number(1), new Value.Number(2), new Value.Number(3)),
             "an array keeps index order");
         expectParseValue("[null, true, \"x\", 1.5]",
             Value.array(Value.Null.INSTANCE, new Value.Bool(true), text("x"),
@@ -485,8 +484,8 @@ public class SharedStdlibSemanticsTest {
 
         // Object order follows text.
         SemanticTable<Value> ordered = new SemanticTable<>();
-        ordered.put("b", new Value.Int(2));
-        ordered.put("a", new Value.Int(1));
+        ordered.put("b", new Value.Number(2));
+        ordered.put("a", new Value.Number(1));
         expectParseValue("{\"b\": 2, \"a\": 1}", new Value.Table(ordered),
             "object order follows the text order");
 
@@ -500,14 +499,14 @@ public class SharedStdlibSemanticsTest {
         expectParseFailure("{\"o\":{\"k\":1,\"k\":2}}", 13, "duplicate key",
             "nested objects track their own decoded keys");
         SemanticTable<Value> distinct = new SemanticTable<>();
-        distinct.put("a", new Value.Int(1));
-        distinct.put("b", new Value.Int(2));
+        distinct.put("a", new Value.Number(1));
+        distinct.put("b", new Value.Number(2));
         expectParseValue("{\"a\":1,\"b\":2}", new Value.Table(distinct),
             "distinct decoded keys stay accepted");
 
         // Nested structures.
         SemanticTable<Value> nestedInner = new SemanticTable<>();
-        nestedInner.put("b", Value.array(new Value.Int(1), new Value.Int(2)));
+        nestedInner.put("b", Value.array(new Value.Number(1), new Value.Number(2)));
         SemanticTable<Value> nested = new SemanticTable<>();
         nested.put("a", new Value.Table(nestedInner));
         expectParseValue("{\"a\": {\"b\": [1, 2]}}", new Value.Table(nested),
@@ -515,7 +514,7 @@ public class SharedStdlibSemanticsTest {
 
         // Whitespace: space, tab, CR, LF.
         SemanticTable<Value> whitespaceTable = new SemanticTable<>();
-        whitespaceTable.put("a", new Value.Int(1));
+        whitespaceTable.put("a", new Value.Number(1));
         expectParseValue(" \t\r\n { \"a\" : 1 } \t ", new Value.Table(whitespaceTable),
             "RFC-8259 whitespace is skipped outside strings");
 
@@ -530,12 +529,12 @@ public class SharedStdlibSemanticsTest {
             "a pair escape inside text is one scalar");
 
         // Signed32 integer lexical forms → Int; everything else → Number.
-        expectParseValue("0", new Value.Int(0), "0 → int 0");
-        expectParseValue("-0", new Value.Int(0), "-0 normalizes to int 0");
-        expectParseValue("42", new Value.Int(42), "42 → int");
-        expectParseValue("2147483647", new Value.Int(2147483647), "2147483647 → int");
+        expectParseValue("0", new Value.Number(0), "0 → number 0");
+        expectParseValue("-0", new Value.Number(-0.0), "-0 preserves its sign");
+        expectParseValue("42", new Value.Number(42), "42 → number");
+        expectParseValue("2147483647", new Value.Number(2147483647), "2147483647 → number");
         expectParseValue("2147483648", new Value.Number(2147483648d), "2147483648 → number");
-        expectParseValue("-2147483648", new Value.Int(-2147483648), "-2147483648 → int");
+        expectParseValue("-2147483648", new Value.Number(-2147483648), "-2147483648 → number");
         expectParseValue("-2147483649", new Value.Number(-2147483649d), "-2147483649 → number");
         expectParseValue("-2147483649.0", new Value.Number(-2147483649d),
             "an out-of-range negative integral fraction → number");
@@ -543,19 +542,19 @@ public class SharedStdlibSemanticsTest {
             "an out-of-range negative magnitude → number");
         // The exact decimal classification: an integral mathematical value
         // inside signed32 is the int, whatever its lexical form.
-        expectParseValue("1.0", new Value.Int(1), "1.0 → int (mathematically integral)");
-        expectParseValue("1e3", new Value.Int(1000), "1e3 → int");
-        expectParseValue("3E2", new Value.Int(300), "uppercase E exponent → int");
-        expectParseValue("100e-2", new Value.Int(1), "100e-2 → int (trailing zeroes cancel)");
-        expectParseValue("0e3", new Value.Int(0), "0e3 → int 0");
-        expectParseValue("0.000", new Value.Int(0), "an all-zero coefficient → int 0");
-        expectParseValue("-0.0", new Value.Int(0), "-0.0 normalizes to int 0");
-        expectParseValue("-2147483648.0", new Value.Int(-2147483648),
-            "the negative signed32 edge in fraction form → int");
-        expectParseValue("2147483647e0", new Value.Int(2147483647),
-            "the positive signed32 edge in exponent form → int");
+        expectParseValue("1.0", new Value.Number(1), "1.0 → number (mathematically integral)");
+        expectParseValue("1e3", new Value.Number(1000), "1e3 → number");
+        expectParseValue("3E2", new Value.Number(300), "uppercase E exponent → number");
+        expectParseValue("100e-2", new Value.Number(1), "100e-2 → number (trailing zeroes cancel)");
+        expectParseValue("0e3", new Value.Number(0), "0e3 → number 0");
+        expectParseValue("0.000", new Value.Number(0), "an all-zero coefficient → number 0");
+        expectParseValue("-0.0", new Value.Number(-0.0), "-0.0 preserves its sign");
+        expectParseValue("-2147483648.0", new Value.Number(-2147483648),
+            "the negative signed32 edge in fraction form → number");
+        expectParseValue("2147483647e0", new Value.Number(2147483647),
+            "the positive signed32 edge in exponent form → number");
         expectParseValue("-1.5e-2", new Value.Number(-0.015), "-1.5e-2 → number");
-        expectParseValue("0.5", new Value.Number(0.5), "a fraction with zero int part → number");
+        expectParseValue("0.5", new Value.Number(0.5), "a fraction with zero number part → number");
         expectParseValue("123456789012345678901234567890",
             new Value.Number(Double.parseDouble("123456789012345678901234567890")),
             "an out-of-range integer lexical form → number");
@@ -567,25 +566,25 @@ public class SharedStdlibSemanticsTest {
         expectParseValue("1e999999999999999999999",
             new Value.Number(Double.POSITIVE_INFINITY),
             "a huge exponent converts to binary64 infinity (no machine overflow)");
-        expectParseValue("0e999999999999999999999", new Value.Int(0),
-            "an all-zero coefficient with a huge exponent → int 0");
+        expectParseValue("0e999999999999999999999", new Value.Number(0),
+            "an all-zero coefficient with a huge exponent → number 0");
         expectParseValue("1e-999999999999999999999", new Value.Number(0.0),
             "a tiny exponent converts to binary64 zero");
         // The exponent magnitude accumulates its digits with bounded
         // saturation: leading zeroes contribute nothing, so an exponent
         // text longer than 18 characters whose value is small stays
         // exactly classified.
-        expectParseValue("1e0000000000000000001", new Value.Int(10),
-            "a zero-padded long exponent → int 10");
-        expectParseValue("1e00000000000000000000", new Value.Int(1),
-            "a zero-valued zero-padded exponent → int 1");
-        expectParseValue("100e-000000000000000000002", new Value.Int(1),
-            "a zero-padded negative exponent → int 1");
-        expectParseValue("-1e0000000000000000001", new Value.Int(-10),
-            "a negative zero-padded long exponent → int -10");
+        expectParseValue("1e0000000000000000001", new Value.Number(10),
+            "a zero-padded long exponent → number 10");
+        expectParseValue("1e00000000000000000000", new Value.Number(1),
+            "a zero-valued zero-padded exponent → number 1");
+        expectParseValue("100e-000000000000000000002", new Value.Number(1),
+            "a zero-padded negative exponent → number 1");
+        expectParseValue("-1e0000000000000000001", new Value.Number(-10),
+            "a negative zero-padded long exponent → number -10");
         expectParseValue("-2147483648e000000000000000000000",
-            new Value.Int(-2147483648),
-            "the negative signed32 edge with a zero-padded exponent → int");
+            new Value.Number(-2147483648),
+            "the negative signed32 edge with a zero-padded exponent → number");
 
         // Round-trip: parse then stringify reproduces the RFC text.
         Outcome<Value> roundTripParse = SharedStdlibSemantics.jsonParse(origin(),
@@ -597,7 +596,7 @@ public class SharedStdlibSemanticsTest {
                 && success.value() instanceof Value.Table table) {
             Outcome<Value> roundTripStringify =
                 SharedStdlibSemantics.jsonStringify(origin(), table.table());
-            expectSuccess(roundTripStringify, text("{\"a\":[1,2.5,\"x\"],\"b\":true}"),
+            expectSuccess(roundTripStringify, text("{\"a\":[1.0,2.5,\"x\"],\"b\":true}"),
                 "parse→stringify round-trips the JSON text");
         }
     }
@@ -740,9 +739,9 @@ public class SharedStdlibSemanticsTest {
             "language null stringifies as JSON null");
         expectStringify(tableOf("t", new Value.Bool(true), "f", new Value.Bool(false)),
             "{\"t\":true,\"f\":false}", "booleans stringify in insertion order");
-        expectStringify(tableOf("i", new Value.Int(42), "n", new Value.Int(-7)),
-            "{\"i\":42,\"n\":-7}", "ints stringify as decimal integers");
-        expectStringify(tableOf("z", new Value.Int(0)), "{\"z\":0}", "int zero is 0");
+        expectStringify(tableOf("i", new Value.Number(42), "n", new Value.Number(-7)),
+            "{\"i\":42.0,\"n\":-7.0}", "ints stringify as decimal integers");
+        expectStringify(tableOf("z", new Value.Number(0)), "{\"z\":0}", "number zero is 0");
 
         expectStringify(tableOf("n", new Value.Number(1.5)), "{\"n\":1.5}",
             "a finite number uses its shortest round-trippable decimal");
@@ -757,24 +756,24 @@ public class SharedStdlibSemanticsTest {
         expectStringify(tableOf("n", new Value.Number(9.007199254740992E15)),
             "{\"n\":9.007199254740992E15}",
             "2^53 keeps its exact shortest spelling");
-        expectStringify(tableOf("n", new Value.Number(-0.0)), "{\"n\":-0.0}",
+        expectStringify(tableOf("n", new Value.Number(-0.0)), "{\"n\":0}",
             "negative zero keeps its sign");
 
         // Object insertion order; arrays index order.
-        SemanticTable<Value> ordered = tableOf("a", new Value.Int(1), "b", new Value.Int(2),
-            "c", new Value.Int(3));
-        expectStringify(ordered, "{\"a\":1,\"b\":2,\"c\":3}",
+        SemanticTable<Value> ordered = tableOf("a", new Value.Number(1), "b", new Value.Number(2),
+            "c", new Value.Number(3));
+        expectStringify(ordered, "{\"a\":1.0,\"b\":2.0,\"c\":3.0}",
             "object fields follow first-insertion order");
-        expectStringify(tableOf("xs", Value.array(new Value.Int(1), text("x"),
+        expectStringify(tableOf("xs", Value.array(new Value.Number(1), text("x"),
                 Value.Null.INSTANCE)),
-            "{\"xs\":[1,\"x\",null]}", "array elements follow index order");
+            "{\"xs\":[1.0,\"x\",null]}", "array elements follow index order");
 
         // Nested structures and empty containers.
         SemanticTable<Value> inner = new SemanticTable<>();
-        inner.put("b", Value.array(new Value.Int(1), new Value.Int(2)));
+        inner.put("b", Value.array(new Value.Number(1), new Value.Number(2)));
         SemanticTable<Value> nested = new SemanticTable<>();
         nested.put("a", new Value.Table(inner));
-        expectStringify(nested, "{\"a\":{\"b\":[1,2]}}", "nested objects/arrays stringify");
+        expectStringify(nested, "{\"a\":{\"b\":[1.0,2.0]}}", "nested objects/arrays stringify");
         expectStringify(new SemanticTable<>(), "{}", "the empty table is {}");
         expectStringify(tableOf("xs", Value.array()), "{\"xs\":[]}", "the empty array is []");
 
@@ -821,13 +820,13 @@ public class SharedStdlibSemanticsTest {
                 "b", new Value.Other(ActualKind.MISSING, null)),
             "a", "function",
             "the first declaration-order failure wins (a before b)");
-        expectStringifyFailure(tableOf("ok", new Value.Int(1),
+        expectStringifyFailure(tableOf("ok", new Value.Number(1),
                 "a", new Value.Table(tableOf("b", new Value.Other(ActualKind.FUNCTION, null),
                     "c", new Value.Other(ActualKind.MISSING, null)))),
             "a.b", "function",
             "nested failures keep the pre-order walk (the inner function wins over the "
                 + "later missing field)");
-        expectStringifyFailure(tableOf("arr", Value.array(new Value.Int(1),
+        expectStringifyFailure(tableOf("arr", Value.array(new Value.Number(1),
                 new Value.Other(ActualKind.FUNCTION, null))),
             "arr.1", "function", "array elements walk in index order");
         expectStringifyFailure(tableOf("arr", Value.array(new Value.Number(Double.NaN))),
@@ -845,11 +844,11 @@ public class SharedStdlibSemanticsTest {
         root.put("a", new Value.Table(child));
         expectStringifyCycle(root, "an indirect cycle selects the cycle arm");
         SemanticTable<Value> shared = new SemanticTable<>();
-        shared.put("v", new Value.Int(1));
+        shared.put("v", new Value.Number(1));
         SemanticTable<Value> aliasRoot = new SemanticTable<>();
         aliasRoot.put("a", new Value.Table(shared));
         aliasRoot.put("b", new Value.Table(shared));
-        expectStringify(aliasRoot, "{\"a\":{\"v\":1},\"b\":{\"v\":1}}",
+        expectStringify(aliasRoot, "{\"a\":{\"v\":1.0},\"b\":{\"v\":1.0}}",
             "a shared acyclic child is duplicated, never a cycle");
 
         // Acyclic finite data never fails: a deep but finite shape passes.
@@ -860,7 +859,7 @@ public class SharedStdlibSemanticsTest {
             cursor.put("d", new Value.Table(next));
             cursor = next;
         }
-        cursor.put("leaf", new Value.Int(1));
+        cursor.put("leaf", new Value.Number(1));
         Outcome<Value> deepOutcome = SharedStdlibSemantics.jsonStringify(origin(), deep);
         check(deepOutcome instanceof Outcome.Success<Value>,
             "a finite 200-deep shape stringifies without failure");
@@ -886,12 +885,12 @@ public class SharedStdlibSemanticsTest {
             cursor.put("k", new Value.Table(next));
             cursor = next;
         }
-        cursor.put("leaf", new Value.Int(7));
+        cursor.put("leaf", new Value.Number(7));
         StringBuilder expected = new StringBuilder();
         for (int i = 0; i < depth; i++) {
             expected.append("{\"k\":");
         }
-        expected.append("{\"leaf\":7}");
+        expected.append("{\"leaf\":7.0}");
         for (int i = 0; i < depth; i++) {
             expected.append('}');
         }
@@ -1017,18 +1016,8 @@ public class SharedStdlibSemanticsTest {
             null, CanonicalJson.numberHex(Double.NEGATIVE_INFINITY), Map.of(), origin(),
             "sqrt(-Infinity) fails SQRT_NEGATIVE");
 
-        expectSuccess(SharedStdlibSemantics.mathAbsInt(origin(), -3),
-            new Value.Int(3), "absInt(-3) = 3");
-        expectSuccess(SharedStdlibSemantics.mathAbsInt(origin(), 3),
-            new Value.Int(3), "absInt(3) = 3");
-        expectSuccess(SharedStdlibSemantics.mathAbsInt(origin(), 0),
-            new Value.Int(0), "absInt(0) = 0");
-        expectSuccess(SharedStdlibSemantics.mathAbsInt(origin(), 2147483647),
-            new Value.Int(2147483647), "absInt(2147483647) = 2147483647");
-        expectFailure(SharedStdlibSemantics.mathAbsInt(origin(), -2147483648),
-            FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004, "int out of safe range",
-            null, null, Map.of(), origin(),
-            "absInt(-2147483648) fails E8004 int out of safe range at the call origin");
+        expectSuccess(SharedStdlibSemantics.mathAbsNumber(origin(), -2147483648.0),
+            new Value.Number(2147483648.0), "absNumber has no signed32 range gate");
 
         expectSuccess(SharedStdlibSemantics.mathAbsNumber(origin(), -1.5),
             new Value.Number(1.5), "absNumber(-1.5) = 1.5");
@@ -1051,22 +1040,7 @@ public class SharedStdlibSemanticsTest {
                 && number.value() == Double.POSITIVE_INFINITY,
             "absNumber(-Infinity) = +Infinity");
 
-        expectSuccess(SharedStdlibSemantics.mathMinInt(origin(), 2, 3),
-            new Value.Int(2), "minInt(2,3) = 2");
-        expectSuccess(SharedStdlibSemantics.mathMinInt(origin(), 3, 2),
-            new Value.Int(2), "minInt(3,2) = 2");
-        expectSuccess(SharedStdlibSemantics.mathMinInt(origin(), 5, 5),
-            new Value.Int(5), "equal operands return that operand value");
-        expectSuccess(SharedStdlibSemantics.mathMinInt(origin(), -2147483648, 5),
-            new Value.Int(-2147483648), "minInt(-2147483648,5) = -2147483648");
-        expectSuccess(SharedStdlibSemantics.mathMaxInt(origin(), 2, 3),
-            new Value.Int(3), "maxInt(2,3) = 3");
-        expectSuccess(SharedStdlibSemantics.mathMaxInt(origin(), 3, 2),
-            new Value.Int(3), "maxInt(3,2) = 3");
-        expectSuccess(SharedStdlibSemantics.mathMaxInt(origin(), 5, 5),
-            new Value.Int(5), "equal max operands return that operand value");
-        expectSuccess(SharedStdlibSemantics.mathMaxInt(origin(), -2147483648, 5),
-            new Value.Int(5), "maxInt(-2147483648,5) = 5");
+
     }
 
     // =========================================================================
@@ -1315,7 +1289,6 @@ public class SharedStdlibSemanticsTest {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
             case Value.Bool ignored -> BoundaryValueView.of(ActualKind.BOOLEAN);
-            case Value.Int intValue -> BoundaryValueView.ofInt(intValue.value());
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar()
                 instanceof UnicodeScalars.Valid ? ActualKind.STRING : ActualKind.INVALID_UNICODE);
@@ -1355,16 +1328,16 @@ public class SharedStdlibSemanticsTest {
     /** The 21-id seed table in the closed enum declaration order. */
     private static List<Seed> seeds() {
         SemanticTable<Value> table = new SemanticTable<>();
-        table.put("k", new Value.Int(1));
-        table.put("a", new Value.Int(2));
+        table.put("k", new Value.Number(1));
+        table.put("a", new Value.Number(2));
         SemanticTable<Value> parsed = new SemanticTable<>();
-        parsed.put("a", new Value.Int(1));
+        parsed.put("a", new Value.Number(1));
         return List.of(
             seed(StdlibFunctionId.CONSOLE_LOG, Value.string("log"), Value.Null.INSTANCE),
             seed(StdlibFunctionId.CONSOLE_ERROR, Value.string("error"), Value.Null.INSTANCE),
-            seed(StdlibFunctionId.STRING_LENGTH, Value.string("abc"), new Value.Int(3)),
+            seed(StdlibFunctionId.STRING_LENGTH, Value.string("abc"), new Value.Number(3)),
             new Seed(StdlibFunctionId.STRING_SUBSTRING,
-                List.of(Value.string("abc"), new Value.Int(1), new Value.Int(2)),
+                List.of(Value.string("abc"), new Value.Number(1), new Value.Number(2)),
                 Value.string("b")),
             new Seed(StdlibFunctionId.STRING_CONTAINS,
                 List.of(Value.string("abc"), Value.string("b")), new Value.Bool(true)),
@@ -1384,17 +1357,12 @@ public class SharedStdlibSemanticsTest {
             seed(StdlibFunctionId.JSON_PARSE, Value.string("{\"a\": 1}"),
                 new Value.Table(parsed)),
             seed(StdlibFunctionId.JSON_STRINGIFY, new Value.Table(table),
-                Value.string("{\"k\":1,\"a\":2}")),
+                Value.string("{\"k\":1.0,\"a\":2.0}")),
             seed(StdlibFunctionId.MATH_FLOOR, new Value.Number(1.5), new Value.Number(1.0)),
             seed(StdlibFunctionId.MATH_CEIL, new Value.Number(1.5), new Value.Number(2.0)),
             seed(StdlibFunctionId.MATH_SQRT, new Value.Number(4.0), new Value.Number(2.0)),
-            seed(StdlibFunctionId.MATH_ABS_INT, new Value.Int(-3), new Value.Int(3)),
             seed(StdlibFunctionId.MATH_ABS_NUMBER, new Value.Number(-1.5),
                 new Value.Number(1.5)),
-            new Seed(StdlibFunctionId.MATH_MIN_INT,
-                List.of(new Value.Int(2), new Value.Int(3)), new Value.Int(2)),
-            new Seed(StdlibFunctionId.MATH_MAX_INT,
-                List.of(new Value.Int(2), new Value.Int(3)), new Value.Int(3)),
             new Seed(StdlibFunctionId.TIME_NOW_MILLIS, List.of(),
                 new Value.Number((double) FIXED_CLOCK_MILLIS)));
     }
@@ -1423,7 +1391,7 @@ public class SharedStdlibSemanticsTest {
                     function run(): null {
                       console.log("log");
                       console.error("error");
-                      let n1: int = str.length("abc");
+                      let n1: number = str.length("abc");
                       let s2: string = str.substring("abc", 1, 2);
                       let b3: boolean = str.contains("abc", "b");
                       let b4: boolean = str.startsWith("abc", "a");
@@ -1438,10 +1406,7 @@ public class SharedStdlibSemanticsTest {
                       let f12: number = math.floor(1.5);
                       let f13: number = math.ceil(1.5);
                       let f14: number = math.sqrt(4.0);
-                      let i15: int = math.absInt(-3);
                       let f16: number = math.absNumber(-1.5);
-                      let i17: int = math.minInt(2, 3);
-                      let i18: int = math.maxInt(2, 3);
                       let now: number = time.nowMillis();
                       return null;
                     }
@@ -1470,8 +1435,8 @@ public class SharedStdlibSemanticsTest {
                     stdlibOps.add(op);
                 }
             }
-            check(stdlibOps.size() == 21,
-                "exactly one STDLIB_CALL per cataloged call: 21 ops; got "
+            check(stdlibOps.size() == 18,
+                "exactly one STDLIB_CALL per cataloged call: 18 ops; got "
                     + stdlibOps.size());
             EnumSet<StdlibFunctionId> produced = EnumSet.noneOf(StdlibFunctionId.class);
             for (SemanticOp op : stdlibOps) {
@@ -1698,32 +1663,20 @@ public class SharedStdlibSemanticsTest {
         // carrier (exact conversion); an int parameter admits an
         // in-range integral number carrier; anything else fails closed.
         SemanticOp floor = stdlibOpBy(unit, StdlibFunctionId.MATH_FLOOR);
-        expectSuccess(SharedStdlibSemantics.execute(floor, List.of(new Value.Int(2)), null),
-            new Value.Number(2.0), "a number parameter admits an int carrier exactly");
-        SemanticOp absInt = stdlibOpBy(unit, StdlibFunctionId.MATH_ABS_INT);
-        expectSuccess(SharedStdlibSemantics.execute(absInt,
-                List.of(new Value.Number(3.0)), null),
-            new Value.Int(3), "an int parameter admits an in-range integral number carrier");
-        expectDefect(() -> SharedStdlibSemantics.execute(absInt,
-                List.of(new Value.Number(3.5)), null),
-            SharedStdlibSemantics.Defect.class, "int carrier",
-            "a fractional number carrier fails the int admission set");
+        expectSuccess(SharedStdlibSemantics.execute(floor, List.of(new Value.Number(2)), null),
+            new Value.Number(2.0), "a number parameter admits an number carrier exactly");
+        SemanticOp absNumber = stdlibOpBy(unit, StdlibFunctionId.MATH_ABS_NUMBER);
+        expectSuccess(SharedStdlibSemantics.execute(absNumber,
+                List.of(new Value.Number(-3.5)), null),
+            new Value.Number(3.5), "absNumber admits fractional numeric values");
 
         // An invalid-scalar table key is a producer defect (keys are
         // identifier-derived), never a projection and never a crash.
         SemanticTable<Value> badKeyTable = new SemanticTable<>();
-        badKeyTable.put("\ud800", new Value.Int(1));
+        badKeyTable.put("\ud800", new Value.Number(1));
         expectDefect(() -> SharedStdlibSemantics.jsonStringify(origin(), badKeyTable),
             SharedStdlibSemantics.Defect.class, "valid scalar sequence",
             "an invalid-scalar table key fails closed");
-
-        // Spot check: INT32_RESULT carries the overflow origin (the
-        // STDLIB_CALL call origin).
-        Outcome<Value> overflow = SharedStdlibSemantics.execute(absInt,
-            List.of(new Value.Int(-2147483648)), null);
-        expectFailure(overflow, FailurePolicyId.INT32_RESULT, DiagnosticCode.E8004,
-            "int out of safe range", null, null, Map.of(), absInt.origin(),
-            "absInt(-2147483648) through execute fails E8004 at the call origin");
 
         // Spot check: SQRT_NEGATIVE through execute carries the operand.
         SemanticOp sqrt = stdlibOpBy(unit, StdlibFunctionId.MATH_SQRT);

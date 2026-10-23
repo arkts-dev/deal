@@ -4,7 +4,7 @@
 // @features: type-system, diagnostics
 
 export function main(): null {
-let x: int | null | null = 1;
+let x: number | null | null = 1;
 
 return null;
 }

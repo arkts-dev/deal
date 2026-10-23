@@ -165,7 +165,7 @@ public final class LoweringSupport {
 
     /**
      * Computes one module's manifest from its own checked facts: the
-     * closed capability claims (FOUNDATION_VALUES always; SIGNED_INT32,
+     * closed capability claims (FOUNDATION_VALUES always;
      * STDLIB_SEMANTICS, MODULES, CLASSES, CALLS, and
      * CONTAINERS_AND_STRINGS by construct kind) plus the reachable
      * construct rows. One deterministic step per module, never a fixpoint
@@ -177,15 +177,6 @@ public final class LoweringSupport {
         ModuleScan scan = scanModule(module);
         EnumSet<SemanticCapability> capabilities =
             EnumSet.of(SemanticCapability.FOUNDATION_VALUES);
-        // I3 derivation row: int constructs claim SIGNED_INT32 at
-        // the construct kind, never the magnitude (a small literal
-        // claims exactly like 2147483647) — post-activation F4 rule 4
-        // requires SIGNED_INT32 at plan time for every int-using
-        // module.
-        if (scan.signedInt32) {
-            capabilities.add(SemanticCapability.SIGNED_INT32);
-        }
-
         if (scan.stdlibCall) {
             capabilities.add(SemanticCapability.STDLIB_SEMANTICS);
         }
@@ -223,13 +214,9 @@ public final class LoweringSupport {
      * S4) and the claim triggers.
      */
     private static final class ModuleScan {
-        /** The I3 {@code SIGNED_INT32} trigger: any int construct —
-         * {@code CONST(Int)} (an int literal of any magnitude),
-         * {@code UNARY(INT32_NEG)}, {@code BINARY(INT32_*)}, or
-         * {@code INTRINSIC_CALL(INT_CONVERT)}. */
-        boolean signedInt32;
 
-        /** The plan-time {@code STDLIB_SEMANTICS} trigger: a call whose
+
+/** The plan-time {@code STDLIB_SEMANTICS} trigger: a call whose
          *  callee the closed checked-fact recognition predicate maps to a
          *  catalog entry (D1) — the only common stdlib form (D3); a
          *  stdlib-export value read never sets it. */
@@ -473,12 +460,6 @@ public final class LoweringSupport {
         switch (expression) {
             case LiteralExpr literalExpr -> {
                 scan.cover(ConstructKind.SCALAR_LITERAL);
-                // I3: CONST(Int) claims SIGNED_INT32 at the construct
-                // kind, never the magnitude — a small literal claims
-                // exactly like 2147483647.
-                if (literalExpr.value() instanceof LiteralValue.IntLiteral) {
-                    scan.signedInt32 = true;
-                }
             }
             case IdentifierExpr ignored -> scan.cover(ConstructKind.IDENTIFIER);
             case BinaryExpr binaryExpr -> {
@@ -491,27 +472,12 @@ public final class LoweringSupport {
                     scan.cover(ConstructKind.STRING_CONCAT_TEMPLATE);
                 } else {
                     scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
-                    // I3: BINARY(INT32_*) claims SIGNED_INT32 — every
-                    // arithmetic and comparison selector over int-typed
-                    // operands (number/string/boolean/null/nullable/
-                    // reference selectors do not).
-                    if (checkedType(module, binaryExpr.left())
-                            == Type.Int.INSTANCE) {
-                        scan.signedInt32 = true;
-                    }
                 }
                 walkExpression(binaryExpr.left(), module, scan, checkerScope);
                 walkExpression(binaryExpr.right(), module, scan, checkerScope);
             }
             case UnaryExpr unaryExpr -> {
                 scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
-                // I3: UNARY(INT32_NEG) claims SIGNED_INT32 — a negation
-                // over an int-typed operand; BOOL_NOT and NUMBER_NEG do not.
-                if (unaryExpr.op() == UnaryOp.NEG
-                        && checkedType(module, unaryExpr.expr())
-                            == Type.Int.INSTANCE) {
-                    scan.signedInt32 = true;
-                }
                 walkExpression(unaryExpr.expr(), module, scan, checkerScope);
             }
             case CallExpr callExpr -> {
@@ -567,15 +533,7 @@ public final class LoweringSupport {
                         }
                     } else if (calleeSymbol instanceof Symbol.VariableSymbol) {
                         scan.dynamicCall = true;
-                    } else if (calleeSymbol instanceof Symbol.IntrinsicSymbol intrinsic
-                            && "int".equals(intrinsic.name())) {
-                        // I3: INTRINSIC_CALL(INT_CONVERT) claims
-                        // SIGNED_INT32; NUMBER_CONVERT claims
-                        // FOUNDATION_VALUES (the module-level row every
-                        // manifest carries by construction) and never
-                        // SIGNED_INT32.
-                        scan.signedInt32 = true;
-                    }
+                    } else {}
                 } else if (callee instanceof MemberAccessExpr member
                         && member.object() instanceof IdentifierExpr objectIdentifier
                         && checkerScope.resolve(objectIdentifier.name())

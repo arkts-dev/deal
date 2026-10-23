@@ -4,11 +4,11 @@
 // @features: parser, semicolon, statement-boundary
 
 export function main(): null {
-  let n: int = 1
+  let n: number = 1
   try {} catch (e) {}
-  let m: int = 2
+  let m: number = 2
   one(m);
   return null;
 }
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }

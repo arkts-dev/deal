@@ -3,9 +3,9 @@
 // @expected: runtime-error E8001
 // @features: type-system, functions, runtime-errors
 
-function needInt(x: int): int { return x; }
+function needInt(x: number): number { return x; }
 
-export function test_dynamic_to_int_param_runtime_error(): int {
+export function test_dynamic_to_int_param_runtime_error(): number {
   let t: table = { value: "bad" };
   return needInt(t.value);
 }

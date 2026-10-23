@@ -3,10 +3,10 @@
 // @expected: compile-error E2002
 // @features: variables, redeclaration, name-resolution, shadowing
 
-function plus(x: int): int { return x + 1; }
+function plus(x: number): number { return x + 1; }
 
 export function main(): null {
-  let int: (x: int) => int = plus;
-  let int: (x: int) => int = plus;
+  let int: (x: number) => number = plus;
+  let int: (x: number) => number = plus;
   return null;
 }

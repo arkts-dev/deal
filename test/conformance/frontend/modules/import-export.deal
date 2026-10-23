@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: modules, import, export
 
-export function add(a: int, b: int): int {
+export function add(a: number, b: number): number {
   return a + b;
 }
 

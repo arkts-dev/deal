@@ -1,9 +1,9 @@
 // @spec: Lexical elements — Numeric overflow, NaN, and Infinity
 // @description: the int literal 2147483647 (signed 32-bit max) is accepted (v1.2)
 // @expected: compile-ok
-// @features: int, literals, v1.2
+// @features: number, literals, v1.2
 
-export function int32_max(): int {
+export function int32_max(): number {
   return 2147483647;
 }
 

@@ -1,337 +1,141 @@
-// Learn DEAL in 15 Minutes (DEAL v1.3)
+// Learn DEAL — companion to docs/spec-v1.4.md, not a specification.
+// The sections below are independent examples, not one source module.
+// Imports precede declarations. Executable statements belong in functions.
 
-// Two dashes start a one-line comment.
+import * as math from "std/math";
+import * as strings from "std/string";
+import * as json from "std/json";
+import * as tables from "std/table";
 
-/*  Adding * and / makes it a
-    multi-line comment.  */
-
-// Every statement ends with a semicolon; block-ending forms end at '}'.
-
-// -----------------------------------------------------
-// 1. Variables and flow control.
-// -----------------------------------------------------
-
-// All variables are declared with let.
-let n: int = 42;       // int is a signed 32-bit exact integer type.
-let x: number = 3.14;  // number is IEEE 754 double.
-let s: string = "hello";
-let b: boolean = true;
-let nothing: null = null;
-
-// Types are strict — no implicit conversion.
-// let bad: int = 3.14;  // compile-time error
-
-// int values live in [-2147483648, 2147483647]; out-of-range integer
-// literals are compile-time errors, and int arithmetic raises a runtime
-// error on overflow.
-// let huge: int = 2147483648;  // compile-time error
-// let min: int = -2147483648;  // ok: unary minus over the special token
-
-// The operator set has no exponentiation, and '%' is int-only:
-// let power: int = 2 ** 10;   // compile-time error
-// let rest: number = 5.0 % 2.0;  // compile-time error
-
-// Inference works when the type is unambiguous.
-let meaning = 42;       // int
-let pi = 3.14;          // number
-let greeting = "hi";    // string
-let flag = true;        // boolean
-
-// Blocks use { } — same as TypeScript.
-if (n > 0) {
-  n = n + 1;
-} else {
-  n = 0;
-}
-
-// Conditions must be boolean.
-// if (n) { }  // error: int is not boolean
-
-// Loops — C-style for, while, for-of.
-let sum: int = 0;
-for (let i: int = 0; i < 10; i = i + 1) {
-  sum = sum + i;
-}
-
-while (sum > 0) {
-  sum = sum - 1;
-}
-
-// for-of over arrays and strings (one Unicode scalar value per string
-// iteration in v1.3):
-let xs: int[] = [1, 2, 3];
-for (let v: int of xs) {
-  // v = 1, 2, 3
-}
-
-let word: string = "abc";
-for (let c: string of word) {
-  // c = "a", "b", "c"
-}
-
-// Template literals with string interpolation:
-let who: string = "Ada";
-let msg: string = `Sum is ${who}`;
-// ${} must contain a string expression — no implicit conversion.
-// Template text is literal: it excludes line terminators, backticks and
-// '${'; a backslash is ordinary text. An interpolation may contain an
-// expression, comments, line breaks and nested template literals.
-
-// null is the only null-ish value. T | null for nullable.
-let maybe: int | null = 42;
-maybe = null;  // ok
-
-// null narrowing with !== null:
-if (maybe !== null) {
-  let safe: int = maybe;  // narrowed to int
-}
-
-// -----------------------------------------------------
-// 2. Functions.
-// -----------------------------------------------------
-
-// Functions require parameter and return type annotations.
-function add(a: int, b: int): int {
-  return a + b;
-}
-
-// DEAL has no rest parameters: pass an explicit array instead.
-function sumAll(values: int[]): int {
-  let total: int = 0;
-  for (let i: int = 0; i < values.length; i = i + 1) {
-    total = total + values[i];
+// Values and control flow: strict types; boolean conditions; semicolons.
+function values(): number {
+  let count: number = 42;
+  let fraction: number = 5 / 2; // 2.5; every number is IEEE 754 binary64.
+  let label: string = "Ada";
+  let message: string = `Hello ${label}`; // interpolation requires string.
+  let enabled: boolean = true;
+  let nothing: null = null;
+  // Arithmetic rounds nearest/ties-even and does not trap on overflow
+  // or division by zero. NaN, infinities, and signed zero are numbers.
+  let wide: number = 2147483648;
+  let rounded: number = math.floor(fraction);
+  while (count > 0) {
+    count = count - 1;
   }
+  if (enabled) { return rounded; }
+  return wide;
+}
+
+// Functions require parameter and return annotations. A caller may choose
+// to reject a zero divisor; ordinary division itself is nontrapping.
+function divide(a: number, b: number): number | null {
+  if (b === 0) { return null; }
+  return a / b;
+}
+
+function add(a: number, b: number): number { return a + b; }
+function one(x: number): number { return x; }
+function callbacks(): number {
+  let op: (a: number, b: number) => number = add;
+  let extended: (x: number, y: number) => number = one;
+  return op(3, 4) + extended(2, 9); // extra adapted argument is ignored.
+}
+
+// Closures capture bindings. Loop iterations have fresh bindings.
+function counter(start: number): () => number {
+  let current: number = start;
+  return function(): number {
+    current = current + 1;
+    return current;
+  };
+}
+
+// Arrays are homogeneous and zero-based. Indexes must be finite whole
+// numbers. Reads require index < length; writes may append at length.
+function sumAll(values: number[]): number {
+  let total: number = 0;
+  for (let value: number of values) { total = total + value; }
   return total;
 }
+function arrays(): number {
+  let values: number[] = [10, 20, 30];
+  values[values.length] = 40;
+  values[0] = 99;
+  let maybe: (number | null)[] = [1, null, 3];
+  let selected: number | null = maybe[1];
+  if (selected !== null) { return selected; }
+  return sumAll(values);
+}
 
-// Nullable return:
-function divide(a: int, b: int): int | null {
-  if (b === 0) {
+// Tables have dynamic string keys. Reads need a contextual target type
+// and validate the stored value; writes preserve null versus absence.
+function tableData(): number {
+  let data: table = { name: "Ada", age: 36 };
+  let age: number = data.age;
+  data.note = null;
+  delete data.note;
+  let keys: string[] = tables.keys(data);
+  for (let key: string of keys) {
+    let name: string = key;
+  }
+  return age;
+}
+
+// Classes are module-level nominal records, not behavior containers.
+// Supply required fields explicitly. Optional and nullable are distinct.
+class User {
+  name: string;
+  nick?: string;
+  bio: string | null;
+  active: boolean;
+}
+function records(): User {
+  let user: User = { name: "Ada", nick: "beeb", bio: null, active: true };
+  let present: boolean = has(user.nick);
+  let nick: string | null = user.nick;
+  if (nick !== null) { user.name = nick; }
+  delete user.nick;
+  return user;
+}
+// Same-shaped classes remain distinct. Functions operate on records.
+class Point { x: number; y: number; }
+class Vector { x: number; y: number; }
+
+// @jsonable directly precedes an exported class. Generated helpers are
+// Settings$fromJson(string): Settings | null and Settings$toJson(Settings): string.
+// @jsonable
+export class Settings { name: string; note?: string | null; }
+// Parsing rejects duplicate/extra keys and missing required fields.
+// Missing optionals remain absent. Serialization omits absent fields,
+// preserves null, rejects cycles/nonfinite numbers, and emits either zero
+// sign as 0. JSON numeric tokens round to binary64; parsing preserves -0.
+
+// Standard library string positions count Unicode scalars. Substring
+// bounds must be finite whole numbers; valid bounds are then clamped.
+function text(): string {
+  let size: number = strings.length("a😀b"); // 3
+  let part: string = strings.substring("a😀b", 1, 2); // 😀
+  let pieces: string[] = strings.split("a,b", ",");
+  return strings.trim(part);
+}
+
+// Imports use namespaces: import * as models from "./models";
+// Imported classes use models.User. Any import cycle is an error.
+// A manifest specifies roots, languageVersion, output, backend, externals.
+// Async calls are awaited directly inside async bodies; the embedding
+// owns scheduling and host implementations for declared external modules.
+
+// Error is a builtin nominal class with string code/message fields.
+function checkedRead(values: number[]): number | null {
+  try {
+    return values[99];
+  } catch (e) {
     return null;
   }
-  return a / b;  // integer division, truncates toward zero
 }
 
-// Function values are first-class typed values.
-let op: (a: int, b: int) => int = add;
-let r: int = op(3, 4);  // 7
-
-// Arity extension — fewer-param function adapts to more.
-function one(x: int): int { return x; }
-let two: (x: int, y: int) => int = one;  // second arg ignored
-
-// Function expressions (with closures):
-let counter = function(): () => int {
-  let i: int = 0;
-  return function(): int {
-    i = i + 1;
-    return i;
-  };
-};
-
-// Async functions for non-blocking code:
-async function fetch(id: int): string | null {
-  return null;  // placeholder — await host calls here
+// An executable entry exports a synchronous main(): null.
+export function main(): null {
+  let result: number = arrays();
+  return null;
 }
-
-async function fetchAndUse(id: int): string {
-  let data: string | null = await fetch(id);
-  if (data !== null) {
-    return data;
-  }
-  return "";
-}
-// await is only valid inside async function bodies, applied to a direct
-// async call; an async call without await is a compile-time error.
-
-// -----------------------------------------------------
-// 3. Tables.
-// -----------------------------------------------------
-
-// table is a dynamic string-keyed container.
-let t: table = { name: "Ada", age: 36 };
-
-// Reads require a target type (runtime-checked):
-let name: string = t.name;  // ok
-let age: int = t.age;       // ok, runtime check
-
-// Untyped read is an error:
-// let x = t.name;  // compile-time error
-
-// Writes are unrestricted:
-t.key = "value";
-t.flag = true;
-t.n = null;
-
-// The value null is distinct from field absence.
-t.n = null;     // field exists, value is null
-delete t.n;     // field is removed
-
-// Tables are data containers — calling through a table is forbidden.
-// let r: int = t.f(1, 2);  // compile-time error
-
-// Iteration via std/table:
-import * as tables from "std/table";
-let ks: string[] = tables.keys(t);
-for (let i: int = 0; i < ks.length; i = i + 1) {
-  let k: string = ks[i];
-  let v: int = t[k];
-}
-
-// -----------------------------------------------------
-// 4. Arrays.
-// -----------------------------------------------------
-
-// T[] is a 0-based array.
-let nums: int[] = [10, 20, 30];
-let first: int = nums[0];   // 10
-let last: int = nums[2];    // 30
-
-// length is a compiler-resolved property:
-let count: int = nums.length;  // 3
-
-// Append at length:
-nums[nums.length] = 40;  // [10, 20, 30, 40]
-
-// Writes are compile-time and runtime checked:
-nums[0] = 99;           // ok
-// nums[0] = "hi";           // compile-time error: string ≠ int
-// nums[99] = 1;             // runtime error: out of bounds
-// let missing: int = nums[99];  // runtime error: index out of bounds
-
-// Nullable arrays:
-let mixed: (int | null)[] = [1, null, 3];
-let m: int | null = mixed[1];  // null
-
-// -----------------------------------------------------
-// 5. Classes.
-// -----------------------------------------------------
-
-// class declares a nominal record type — data, not behavior. Classes are
-// module-level declarations; a class inside a function body is an error.
-class User {
-  name: string = "";
-  nick?: string;                // optional field, may be missing
-  bio: string | null = null;    // nullable field
-  active: boolean = true;
-}
-
-// Construction via object literal:
-let u: User = { name: "Ada", nick: "beeb" };
-
-// Fields receive defaults when omitted:
-let v: User = {};  // name: "", active: true, bio: null
-
-// Field access:
-let n2: string = u.name;              // required-present → string
-let maybeNick: string | null = u.nick; // optional → string | null
-
-// has() checks optional field presence:
-let present: boolean = has(u.nick);  // true
-// has() does not narrow — field remains T | null
-
-// Extra fields are rejected:
-// let bad: User = { name: "Bob", unknown: 1 };  // error
-
-// Nominal typing — different classes are incompatible:
-class Point { x: number = 0.0; y: number = 0.0; }
-class Vector { x: number = 0.0; y: number = 0.0; }
-// let p: Point = { x: 1.0, y: 2.0 };
-// let w: Vector = p;  // error: Point is not Vector
-
-// JSON serialization with the @jsonable directive (v1.3):
-// @jsonable
-// export class User { ... }
-// Compiler generates User$fromJson(s): User | null
-// and User$toJson(u): string. Attaching @jsonable to any other
-// declaration is a compile-time error.
-
-// -----------------------------------------------------
-// 6. Modules.
-// -----------------------------------------------------
-
-// Export functions and classes:
-export function greet(name: string): string {
-  return `Hello ${name}`;
-}
-
-export class Person {
-  name: string = "";
-}
-
-// Imports come first, before all other top-level declarations; at module
-// top level only imports, functions, classes, and exports are allowed.
-// Import cycles between modules are compile-time errors, and a class is
-// named through one qualifier: settings.Settings.
-import * as math from "std/math";
-let f: number = math.floor(3.14);
-
-// Relative imports:
-// import * as lib from "./lib";
-
-// No named imports, no default export, no re-export.
-
-// When a compiler invocation selects an entry module, that module must
-// export main with the non-async signature (): null.
-// export function main(): null { return null; }
-
-// -----------------------------------------------------
-// 7. Error handling.
-// -----------------------------------------------------
-
-// Error is a builtin class with string code and message fields:
-// throw an error:
-// throw { message: "something went wrong" };
-// throw { code: "E_LIMIT", message: "index out of range" };
-
-// try/catch:
-// try {
-//   let x: int = nums[99];
-// } catch (e) {
-//   // e: Error
-//   console.log(e.message);
-// }
-
-// Errors propagate through function wrappers.
-// Uncaught errors escape to the host.
-
-// -----------------------------------------------------
-// 8. Standard library (all under std/).
-// -----------------------------------------------------
-
-// console — logging
-import * as console from "std/console";
-console.log("hello");
-console.error("oops");
-
-// json — parse and stringify to/from table. Integral JSON numbers in int
-// range parse as int; duplicate keys are rejected; stringify rejects
-// non-finite numbers and cycles.
-import * as json from "std/json";
-let t2: table = json.parse("{\"name\":\"Ada\"}");
-let str: string = json.stringify(t2);
-
-// string — string utilities (Unicode scalar-value positions in v1.3)
-import * as strings from "std/string";
-let parts: string[] = strings.split("a,b,c", ",");
-
-// table — iteration
-import * as tables2 from "std/table";
-let keys: string[] = tables.keys(t2);
-
-// math — number math
-import * as m from "std/math";
-let ceil: number = m.ceil(3.2);
-
-// time
-import * as time from "std/time";
-let ms: number = time.nowMillis();
-
-// conversion intrinsics — built-in, no import:
-let i: int = int(3.0);    // number → int
-let d: number = number(5); // int → number
-
-// -----------------------------------------------------
-// This file demonstrates DEAL v1.3 syntax.
-// Save as learn.deal.
-// -----------------------------------------------------

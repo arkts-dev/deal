@@ -1,10 +1,14 @@
 {
   "version": 1,
-  "backends": ["luajit", "jvm", "js"],
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8002\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/source-location/036-runtime-source-array-oob.deal\",\"line\":8,\"column\":20}\n",
+      "stdout": "DEAL_ERROR_CODE: E8002\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/source-location/036-runtime-source-array-oob.deal\",\"line\":8,\"column\":23}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -13,7 +17,7 @@
       "message": "array index out of bounds",
       "sourceFile": "backend-runtime/source-location/036-runtime-source-array-oob.deal",
       "line": 8,
-      "column": 20
+      "column": 23
     }
   }
 }

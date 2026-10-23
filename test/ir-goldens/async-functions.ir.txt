@@ -1,39 +1,39 @@
 module @test/ir-goldens/fixtures/async-functions.deal:7:1-25:1
-  async function identity: int @test/ir-goldens/fixtures/async-functions.deal:7:1-11:5
-    param x: int @test/ir-goldens/fixtures/async-functions.deal:7:25-7:31
+  async function identity: number @test/ir-goldens/fixtures/async-functions.deal:7:1-11:5
+    param x: number @test/ir-goldens/fixtures/async-functions.deal:7:25-7:34
       [boundary: param-entry]
     body
       return @test/ir-goldens/fixtures/async-functions.deal:8:5-9:1
         [boundary: async-completion]
-        ident x : int @test/ir-goldens/fixtures/async-functions.deal:8:12-8:12
-  async function maybe: ?int @test/ir-goldens/fixtures/async-functions.deal:11:1-18:5
-    param x: int @test/ir-goldens/fixtures/async-functions.deal:11:22-11:28
+        ident x : number @test/ir-goldens/fixtures/async-functions.deal:8:12-8:12
+  async function maybe: ?number @test/ir-goldens/fixtures/async-functions.deal:11:1-18:5
+    param x: number @test/ir-goldens/fixtures/async-functions.deal:11:22-11:31
       [boundary: param-entry]
     body
       if @test/ir-goldens/fixtures/async-functions.deal:12:5-15:10
         binary === : boolean @test/ir-goldens/fixtures/async-functions.deal:12:9-12:15
-          ident x : int @test/ir-goldens/fixtures/async-functions.deal:12:9-12:9
-          literal 0 : int @test/ir-goldens/fixtures/async-functions.deal:12:15-12:15
+          ident x : number @test/ir-goldens/fixtures/async-functions.deal:12:9-12:9
+          literal 0.0 : number @test/ir-goldens/fixtures/async-functions.deal:12:15-12:15
         block @test/ir-goldens/fixtures/async-functions.deal:12:18-14:5
           return @test/ir-goldens/fixtures/async-functions.deal:13:9-14:5
             [boundary: async-completion]
             literal null : null @test/ir-goldens/fixtures/async-functions.deal:13:16-13:19
       return @test/ir-goldens/fixtures/async-functions.deal:15:5-16:1
         [boundary: async-completion]
-        ident x : int @test/ir-goldens/fixtures/async-functions.deal:15:12-15:12
-  async function compute: int @test/ir-goldens/fixtures/async-functions.deal:18:1-22:5
-    param a: int @test/ir-goldens/fixtures/async-functions.deal:18:24-18:30
+        ident x : number @test/ir-goldens/fixtures/async-functions.deal:15:12-15:12
+  async function compute: number @test/ir-goldens/fixtures/async-functions.deal:18:1-22:5
+    param a: number @test/ir-goldens/fixtures/async-functions.deal:18:24-18:33
       [boundary: param-entry]
-    param b: int @test/ir-goldens/fixtures/async-functions.deal:18:32-18:38
+    param b: number @test/ir-goldens/fixtures/async-functions.deal:18:35-18:44
       [boundary: param-entry]
     body
       return @test/ir-goldens/fixtures/async-functions.deal:19:5-20:1
         [boundary: async-completion]
-        binary + : int @test/ir-goldens/fixtures/async-functions.deal:19:12-19:16
-          ident a : int @test/ir-goldens/fixtures/async-functions.deal:19:12-19:12
-          ident b : int @test/ir-goldens/fixtures/async-functions.deal:19:16-19:16
-  async function noAwait: int @test/ir-goldens/fixtures/async-functions.deal:22:1-25:1
+        binary + : number @test/ir-goldens/fixtures/async-functions.deal:19:12-19:16
+          ident a : number @test/ir-goldens/fixtures/async-functions.deal:19:12-19:12
+          ident b : number @test/ir-goldens/fixtures/async-functions.deal:19:16-19:16
+  async function noAwait: number @test/ir-goldens/fixtures/async-functions.deal:22:1-25:1
     body
       return @test/ir-goldens/fixtures/async-functions.deal:23:5-24:1
         [boundary: async-completion]
-        literal 5 : int @test/ir-goldens/fixtures/async-functions.deal:23:12-23:12
+        literal 5.0 : number @test/ir-goldens/fixtures/async-functions.deal:23:12-23:12

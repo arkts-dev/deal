@@ -132,13 +132,13 @@ public class ProductionDispatchTest {
         reverseSiblingImports(SIBLING_MAIN_SOURCE);
 
     private static final String SIBLING_IR_SOURCE = """
-        export class Ir { a: int = 0; }
-        export function useIr(x: Ir): int { return x.a; }
+        export class Ir { a: number = 0; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String SIBLING_CODEC_SOURCE = """
-        export class Codec { b: int = 0; }
-        export function useCodec(y: Codec): int { return y.b; }
+        export class Codec { b: number = 0; }
+        export function useCodec(y: Codec): number { return y.b; }
         """;
 
     /**
@@ -149,14 +149,14 @@ public class ProductionDispatchTest {
      * ({@code a = 93}) must never serialize as the demanded class.
      */
     private static final String COLLISION_IR_SOURCE = """
-        export class Ir { a: int = 7; }
-        export function useIr(x: Ir): int { return x.a; }
+        export class Ir { a: number = 7; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String COLLISION_CODEC_SOURCE = """
-        class Ir { a: int = 93; }
-        export class Codec { b: int = 9; }
-        export function useCodec(y: Codec): int { return y.b; }
+        class Ir { a: number = 93; }
+        export class Codec { b: number = 9; }
+        export function useCodec(y: Codec): number { return y.b; }
         """;
 
     /** The collision consumer: the qualified field annotation names
@@ -187,14 +187,14 @@ public class ProductionDispatchTest {
      * own default never serializes as the demanded class).
      */
     private static final String CONTEXTUAL_IR_SOURCE = """
-        export class Ir { a: int = 7; }
-        export function useIr(x: Ir): int { return x.a; }
+        export class Ir { a: number = 7; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String CONTEXTUAL_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
-        export class Codec { b: int = 9; }
-        export function useCodec(y: Codec): int { return y.b; }
+        export class Ir { a: number = 93; }
+        export class Codec { b: number = 9; }
+        export function useCodec(y: Codec): number { return y.b; }
         """;
 
     /** The contextual collision consumer: the literal is an argument of
@@ -204,7 +204,7 @@ public class ProductionDispatchTest {
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        export class Outer { x: int = ir.useIr({}); c: codec.Codec = {}; }
+        export class Outer { x: number = ir.useIr({}); c: codec.Codec = {}; }
         export function main(): null {
           let o: Outer = {};
           if (o.x === 7 && o.c.b === 9) { console.log("ok"); }
@@ -247,14 +247,14 @@ public class ProductionDispatchTest {
         return "import * as console from \"std/console\";\n"
             + firstImport + secondImport
             + "\n"
-            + "class Ir { a: int = 5; }\n"
+            + "class Ir { a: number = 5; }\n"
             + "\n"
-            + "function g(x: ir.Ir): int { return x.a; }\n"
+            + "function g(x: ir.Ir): number { return x.a; }\n"
             + "function make(): ir.Ir { return {}; }\n"
             + "\n"
             + "export function main(): null {\n"
-            + "  let n: int = ir.useIr({});\n"
-            + "  let m: int = g({});\n"
+            + "  let n: number = ir.useIr({});\n"
+            + "  let m: number = g({});\n"
             + "  let r: ir.Ir = make();\n"
             + "  let local: Ir = {};\n"
             + "  if (n === 7 && m === 7 && r.a === 7 && local.a === 5) {\n"
@@ -278,9 +278,9 @@ public class ProductionDispatchTest {
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        function consume(x: codec.Ir): int { return x.a; }
+        function consume(x: codec.Ir): number { return x.a; }
         export function main(): null {
-          function consume(x: ir.Ir): int { return x.a; }
+          function consume(x: ir.Ir): number { return x.a; }
           if (consume({}) === 7) { console.log("ok"); }
           else { console.log("wrong"); }
           return null;
@@ -298,12 +298,12 @@ public class ProductionDispatchTest {
      * field declaration carries the nested class's provider.
      */
     private static final String NESTED_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         export class Wrap { inner: Ir = {}; }
         """;
 
     private static final String NESTED_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
+        export class Ir { a: number = 93; }
         """;
 
     private static final String NESTED_MAIN_CODEC_FIRST = """
@@ -328,12 +328,12 @@ public class ProductionDispatchTest {
      * demanded default (7), never the sibling's (93).
      */
     private static final String RETURN_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         """;
 
     private static final String RETURN_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
-        export class Codec { b: int = 9; }
+        export class Ir { a: number = 93; }
+        export class Codec { b: number = 9; }
         """;
 
     private static final String RETURN_MAIN_CODEC_FIRST = """
@@ -366,20 +366,20 @@ public class ProductionDispatchTest {
      * first same-named export of the import order.
      */
     private static final String ASSIGN_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         export function make(): Ir { return {}; }
         """;
 
     private static final String ASSIGN_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
-        export class Codec { b: int = 9; }
+        export class Ir { a: number = 93; }
+        export class Codec { b: number = 9; }
         """;
 
     private static final String ASSIGN_MAIN_CODEC_FIRST = """
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        function set(p: ir.Ir): int { p = {}; return p.a; }
+        function set(p: ir.Ir): number { p = {}; return p.a; }
         export function main(): null {
           let x: ir.Ir = {};
           x = {};
@@ -407,13 +407,13 @@ public class ProductionDispatchTest {
      * same-named export of the import order.
      */
     private static final String ASSIGN_MEMBER_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         export class Wrap { inner: Ir = {}; }
         export function makeWrap(): Wrap { return {}; }
         """;
 
     private static final String ASSIGN_MEMBER_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
+        export class Ir { a: number = 93; }
         export class Wrap { inner: Ir = {}; }
         export function makeWrap(): Wrap { return {}; }
         """;
@@ -423,7 +423,7 @@ public class ProductionDispatchTest {
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         class Holder { w: ir.Wrap = {}; }
-        function setParam(w: ir.Wrap): int { w.inner = {}; return w.inner.a; }
+        function setParam(w: ir.Wrap): number { w.inner = {}; return w.inner.a; }
         export function main(): null {
           let w: ir.Wrap = {};
           w.inner = {};
@@ -456,13 +456,13 @@ public class ProductionDispatchTest {
      * diagnostic.
      */
     private static final String SHADOW_IR_SOURCE = """
-        export class Ir { a: int = 7; }
+        export class Ir { a: number = 7; }
         export function make(): Ir { return {}; }
         """;
 
     private static final String SHADOW_CODEC_SOURCE = """
-        export class Ir { a: int = 93; }
-        export class Codec { b: int = 9; }
+        export class Ir { a: number = 93; }
+        export class Codec { b: number = 9; }
         """;
 
     private static final String SHADOW_MAIN_CODEC_FIRST = "import * as console from \"std/console\";\nimport * as codec from \"./m/codec\";\nimport * as ir from \"./m/ir\";\nexport function main(): null {\n  let x: ir.Ir = {};\n  { let x: codec.Ir = (x = {}); }\n  { let x: codec.Ir = (x = {}); while (false) { } }\n  if (x.a === 7) { console.log(\"ok\"); } else { console.log(\"wrong\"); }\n  return null;\n}\n";
@@ -505,7 +505,7 @@ public class ProductionDispatchTest {
 
     /** The covered library module: no call, no later-slice construct. */
     private static final String LIB_SOURCE = """
-        export function value(): int {
+        export function value(): number {
           return 42;
         }
 
@@ -536,7 +536,7 @@ public class ProductionDispatchTest {
      * sidecar mapping).
      */
     private static final String MAP_LIB_SOURCE = """
-        export function value(): int {
+        export function value(): number {
           return 42;
         }
 
@@ -544,7 +544,7 @@ public class ProductionDispatchTest {
           return "lib";
         }
 
-        export async function load(): int {
+        export async function load(): number {
           return 7;
         }
         """;
@@ -566,7 +566,7 @@ public class ProductionDispatchTest {
           return "app";
         }
 
-        export async function worker(): int {
+        export async function worker(): number {
           return await lib.load();
         }
         """;
@@ -577,17 +577,17 @@ public class ProductionDispatchTest {
      * owner module of the construction-time factory group).
      */
     private static final String DIRECT_EMISSION_LIB_SOURCE = """
-        export function value(): int {
+        export function value(): number {
           return 42;
         }
 
         export class Point {
-          x: int = 0;
+          x: number = 0;
         }
 
         export class DefaultPoint {
-          x: int = 3;
-          y: int = 4;
+          x: number = 3;
+          y: number = 4;
         }
         """;
 
@@ -602,7 +602,7 @@ public class ProductionDispatchTest {
         import * as lib from "./lib";
         import * as console from "std/console";
 
-        export function f(x: int): int {
+        export function f(x: number): number {
           return x;
         }
 
@@ -685,7 +685,7 @@ public class ProductionDispatchTest {
     /** The overflow fixture: the production DEAL_ERROR_CODE terminal. */
     private static final String OVERFLOW_SOURCE = """
         export function main(): null {
-          let x: int = 2147483647 + 1;
+          let values: number[] = []; let x: number = values[0];
           return null;
         }
         """;
@@ -693,8 +693,8 @@ public class ProductionDispatchTest {
     /** The array fixture exercises production container lowering. */
     private static final String ARRAY_SOURCE = """
         export function main(): null {
-          let n: int = 3;
-          let b: int[] = [n];
+          let n: number = 3;
+          let b: number[] = [n];
           return null;
         }
         """;
@@ -744,14 +744,14 @@ public class ProductionDispatchTest {
      * the shared declaration-initializer production and its carry loads
      * resolve the current binding.
      */
-    private static final String UNREALIZED_CONSTRUCT_SOURCE = "export function main(): null { let x: int = true; return null; }";
+    private static final String UNREALIZED_CONSTRUCT_SOURCE = "export function main(): null { let x: number = true; return null; }";
 
     /** The cross-module sync call: the realized external-call arm. */
     private static final String SYNC_CALL_SOURCE = """
         import * as lib from "./lib";
 
         export function main(): null {
-          let x: int = lib.value();
+          let x: number = lib.value();
           return null;
         }
         """;
@@ -765,8 +765,8 @@ public class ProductionDispatchTest {
      */
     private static final String DEFAULT_CAPTURE_SOURCE =
         "export function main(): null {\n"
-            + "  let x: int = 3;\n"
-            + "  class Local { n: int = x; }\n"
+            + "  let x: number = 3;\n"
+            + "  class Local { n: number = x; }\n"
             + "  let c: Local = {};\n"
             + "  return null;\n"
             + "}\n";
@@ -778,9 +778,9 @@ public class ProductionDispatchTest {
      * the duplicate declaration (line 3, columns 5-27).
      */
     private static final String DUPLICATE_CLASS_SOURCE =
-        "class A { n: int = 7; }\n"
+        "class A { n: number = 7; }\n"
             + "export function main(): null {\n"
-            + "  { class A { n: int = 9; } }\n"
+            + "  { class A { n: number = 9; } }\n"
             + "  return null;\n"
             + "}\n";
 
@@ -797,10 +797,10 @@ public class ProductionDispatchTest {
             + "}\n";
 
     private static final String IMPORTED_DUPLICATE_LIB =
-        "class A { n: int = 7; }\n"
+        "class A { n: number = 7; }\n"
             + "\n"
             + "export function f(): null {\n"
-            + "  { class A { n: int = 9; } }\n"
+            + "  { class A { n: number = 9; } }\n"
             + "  return null;\n"
             + "}\n";
 
@@ -813,15 +813,15 @@ public class ProductionDispatchTest {
     private static final String SUPPLEMENTARY_TAB_CAPTURE_SOURCE =
         "// " + new String(Character.toChars(0x1F600)) + "\n"
             + "export function main(): null {\n"
-            + "\tlet x: int = 3;\n"
-            + "\tclass Local { n: int = x; }\n"
+            + "\tlet x: number = 3;\n"
+            + "\tclass Local { n: number = x; }\n"
             + "\tlet c: Local = {};\n"
             + "\treturn null;\n"
             + "}\n";
 
     /** The cross-module async library. */
     private static final String ASYNC_LIB_SOURCE = """
-        export async function getValue(): int {
+        export async function getValue(): number {
           return 42;
         }
         """;
@@ -834,7 +834,7 @@ public class ProductionDispatchTest {
           return null;
         }
 
-        async function worker(): int {
+        async function worker(): number {
           return await lib.getValue();
         }
         """;
@@ -850,18 +850,18 @@ public class ProductionDispatchTest {
           return null;
         }
 
-        async function compute(): int {
+        async function compute(): number {
           return 1;
         }
 
-        export async function worker(): int {
+        export async function worker(): number {
           return await compute();
         }
         """;
 
     /** The host declaration of the HOST-import fixture. */
     private static final String HOST_DECLARATION = """
-        export function version(): int;
+        export function version(): number;
         """;
 
     /** The host-import fixture: the import is never called. */
@@ -1369,13 +1369,13 @@ public class ProductionDispatchTest {
      * (7 and the written 11), never the sibling's 93.
      */
     private static final String CALL_RECEIVER_IR_SOURCE = """
-        export class Ir { a: int = 7; nick?: string; }
+        export class Ir { a: number = 7; nick?: string; }
         export function make(): Ir { return { a: 7 }; }
-        export function useIr(x: Ir): int { return x.a; }
+        export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
-        export class Ir { a: int = 93; nick: int = 1; }
+        export class Ir { a: number = 93; nick: number = 1; }
         """;
 
     private static String callReceiverBody(String firstImport,
@@ -1386,13 +1386,13 @@ public class ProductionDispatchTest {
             + "function wrap(): ir.Ir { return { a: 7 }; }\n"
             + "\n"
             + "export function main(): null {\n"
-            + "  let v: int = ir.make().a;\n"
-            + "  let f: (x: ir.Ir) => int = ir.useIr;\n"
-            + "  let n: int = f({});\n"
+            + "  let v: number = ir.make().a;\n"
+            + "  let f: (x: ir.Ir) => number = ir.useIr;\n"
+            + "  let n: number = f({});\n"
             + "  let y = ir.make();\n"
             + "  y.a = 11;\n"
-            + "  let w: int = y.a;\n"
-            + "  let q: int = wrap().a;\n"
+            + "  let w: number = y.a;\n"
+            + "  let q: number = wrap().a;\n"
             + "  let z = ir.make();\n"
             + "  let had: boolean = has(z.nick);\n"
             + "  delete z.nick;\n"
@@ -1443,11 +1443,11 @@ public class ProductionDispatchTest {
      */
     private static final String NESTED_FIELD_PROVIDER_IR_SOURCE = """
         import * as codec from "./codec";
-        export class Ir { inner: codec.Ir = {}; a: int = 7; }
+        export class Ir { inner: codec.Ir = {}; a: number = 7; }
         """;
 
     private static final String NESTED_FIELD_PROVIDER_CODEC_SOURCE = """
-        export class Ir { b: int = 93; }
+        export class Ir { b: number = 93; }
         """;
 
     private static final String NESTED_FIELD_PROVIDER_MAIN_SOURCE = """
@@ -1472,7 +1472,7 @@ public class ProductionDispatchTest {
         """;
 
     private static final String TRANSITIVE_PROVIDER_CODEC_SOURCE = """
-        export class Part { b: int = 93; }
+        export class Part { b: number = 93; }
         """;
 
     private static final String TRANSITIVE_PROVIDER_MAIN_SOURCE = """
@@ -1523,7 +1523,7 @@ public class ProductionDispatchTest {
      */
     private static final String PLAN_IMPORTED_OTHER_SOURCE = """
         // @jsonable
-        export class Point { a: int = 7; }
+        export class Point { a: number = 7; }
         """;
 
     private static final String PLAN_IMPORTED_MAIN_SOURCE = """
@@ -1538,7 +1538,7 @@ public class ProductionDispatchTest {
         export function main(): null {
           let w: Wrap = {};
           let s: string = Wrap$toJson(w);
-          if (s !== "{\\\"p\\\":{\\\"a\\\":7}}") {
+          if (s !== "{\\\"p\\\":{\\\"a\\\":7.0}}") {
             throw { code: "WRONG", message: s };
           }
           console.log("ok");
@@ -1614,7 +1614,7 @@ public class ProductionDispatchTest {
      * default, and an explicitly provided field skips its local default.
      */
     private static final String LAYOUT_SIBLING_OTHER_SOURCE = """
-        export class Point { a: int = 7; }
+        export class Point { a: number = 7; }
         """;
 
     private static final String LAYOUT_SIBLING_MAIN_SOURCE = """
@@ -1714,7 +1714,7 @@ public class ProductionDispatchTest {
      * declaration descriptor is emitted without its declared defaults.
      */
     private static final String DECLARED_JSON_MODEL_DECLARATION = """
-        export class Model { n: int = 0; }
+        export class Model { n: number = 0; }
         export function Model$fromJson(s: string): Model | null;
         export function Model$toJson(v: Model): string;
         """;
@@ -2374,8 +2374,8 @@ public class ProductionDispatchTest {
             ProcessOutcome run = runProcess(project.resolve("out"), "luajit",
                 "main.lua");
             check(run.exitCode() == 1
-                    && run.output().contains("DEAL_ERROR_CODE: E8004"),
-                "the production artifact prints DEAL_ERROR_CODE: E8004 and "
+                    && run.output().contains("DEAL_ERROR_CODE: E8002"),
+                "the production artifact prints DEAL_ERROR_CODE: E8002 and "
                     + "exits 1: exit=" + run.exitCode() + " output="
                     + run.output());
         } finally {
@@ -2665,27 +2665,27 @@ public class ProductionDispatchTest {
         checkPreservedLoweringOrigin("default-block capture",
             Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
-            3, 3, 3, 30, 51, 78, 27);
+            3, 3, 3, 33, 54, 84, 30);
         checkPreservedLoweringOrigin("duplicate class declaration",
             Map.of("src/main.deal", DUPLICATE_CLASS_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'A' is not allowed; classes are module-level",
-            3, 5, 3, 28, 59, 82, 23);
+            3, 5, 3, 31, 62, 88, 26);
         Map<String, String> imported = new java.util.LinkedHashMap<>();
         imported.put("src/main.deal", IMPORTED_DUPLICATE_MAIN);
         imported.put("src/lib.deal", IMPORTED_DUPLICATE_LIB);
         checkPreservedLoweringOrigin("duplicate class declaration in an imported module",
             imported, "lib", "src/lib.deal", "FRONTEND", "E1057",
             "Local class declaration 'A' is not allowed; classes are module-level",
-            4, 5, 4, 28, 57, 80, 23);
+            4, 5, 4, 31, 60, 86, 26);
         checkPreservedLoweringOrigin("supplementary scalar and tab indentation",
             Map.of("src/main.deal", SUPPLEMENTARY_TAB_CAPTURE_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
-            4, 2, 4, 29, 54, 81, 27);
+            4, 2, 4, 32, 57, 87, 30);
         checkPreservedLoweringOrigin("CRLF line endings",
             Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE.replace("\n", "\r\n")),
             "main", "src/main.deal", "FRONTEND", "E1057",
             "Local class declaration 'Local' is not allowed; classes are module-level",
-            3, 3, 3, 30, 53, 80, 27);
+            3, 3, 3, 33, 56, 86, 30);
     }
 
     /**
@@ -4368,23 +4368,23 @@ public class ProductionDispatchTest {
         import * as c from "std/console";
 
         class Log {
-          seq: int[] = [];
+          seq: number[] = [];
         }
 
-        function record(l: Log, tag: int): int {
+        function record(l: Log, tag: number): number {
           l.seq[l.seq.length] = tag;
           return tag;
         }
 
-        function pick(l: Log, tag: int): int[] {
+        function pick(l: Log, tag: number): number[] {
           record(l, tag);
-          return [10, 20, 30];
+          return [10.0, 20, 30];
         }
 
         export function main(): null {
           // Receiver then index, once each, in-range value.
           let l: Log = { seq: [] };
-          let v: int = pick(l, 1)[record(l, 2)];
+          let v: number = pick(l, 1)[record(l, 2)];
           if (l.seq.length !== 2) {
             throw { code: "TEST_FAIL", message: "read must evaluate receiver and index once each" };
           }
@@ -4399,7 +4399,7 @@ public class ProductionDispatchTest {
           let l2: Log = { seq: [] };
           let boundsCode: string = "";
           try {
-            let bad: int = pick(l2, 1)[record(l2, 2) + 4];
+            let bad: number = pick(l2, 1)[record(l2, 2) + 4];
             boundsCode = "NOFAIL";
           } catch (e) {
             boundsCode = e.code;
@@ -4412,10 +4412,10 @@ public class ProductionDispatchTest {
           }
 
           // Every element descriptor: nullable and empty arrays.
-          let nullable: (int | null)[] = [1, null, 3];
+          let nullable: (number | null)[] = [1.0, null, 3];
           let nullableCode: string = "";
           try {
-            let bad: int | null = nullable[3];
+            let bad: number | null = nullable[3];
             nullableCode = "NOFAIL";
           } catch (e) {
             nullableCode = e.code;
@@ -4423,10 +4423,10 @@ public class ProductionDispatchTest {
           if (nullableCode !== "E8002") {
             throw { code: "TEST_FAIL", message: "nullable out-of-range read must raise E8002" };
           }
-          let empty: int[] = [];
+          let empty: number[] = [];
           let emptyCode: string = "";
           try {
-            let bad: int = empty[0];
+            let bad: number = empty[0];
             emptyCode = "NOFAIL";
           } catch (e) {
             emptyCode = e.code;
@@ -4439,7 +4439,7 @@ public class ProductionDispatchTest {
           if (nullable[1] !== null) {
             throw { code: "TEST_FAIL", message: "in-range null element must stay null" };
           }
-          let inRange: int | null = nullable[2];
+          let inRange: number | null = nullable[2];
           if (inRange !== null) {
             if (inRange !== 3) {
               throw { code: "TEST_FAIL", message: "in-range nullable value mismatch" };
@@ -4447,16 +4447,16 @@ public class ProductionDispatchTest {
           } else {
             throw { code: "TEST_FAIL", message: "in-range nullable value lost" };
           }
-          let deletedNullable: (int | null)[] = [1, 2, 3];
+          let deletedNullable: (number | null)[] = [1.0, 2, 3];
           delete deletedNullable[1];
           if (deletedNullable[1] !== null) {
             throw { code: "TEST_FAIL", message: "in-range deleted nullable slot must read null" };
           }
-          let plain: int[] = [7];
+          let plain: number[] = [7];
           delete plain[0];
           let deletedCode: string = "";
           try {
-            let bad: int = plain[0];
+            let bad: number = plain[0];
             deletedCode = "NOFAIL";
           } catch (e) {
             deletedCode = e.code;
@@ -4466,13 +4466,13 @@ public class ProductionDispatchTest {
           }
 
           // Writes: append at length, one commit, nothing on failure.
-          let writes: int[] = [7];
-          let alias: int[] = writes;
+          let writes: number[] = [7];
+          let alias: number[] = writes;
           writes[writes.length] = 8;
           if (writes.length !== 2 || alias[1] !== 8) {
             throw { code: "TEST_FAIL", message: "append-at-length write lost" };
           }
-          let badValue: table = { bad: "not-int" };
+          let badValue: table = { bad: "not-number" };
           let writeCode: string = "";
           try {
             writes[0] = badValue.bad;
@@ -4545,7 +4545,7 @@ public class ProductionDispatchTest {
         }
 
         export function arrayCarrier(): string {
-          let doc: table = json.parse("{\\"xs\\":[1,2]}");
+          let doc: table = json.parse("{\\"xs\\":[1.0,2.0]}");
           return json.stringify(doc.xs);
         }
 
@@ -5758,9 +5758,9 @@ public class ProductionDispatchTest {
                          String kind) {
         }
         List<Injection> injections = List.of(
-            new Injection("legacy profile", "// @profile: legacy-safe-int\n"
-                + raw, "legacy-safe-int",
-                "non-production @profile 'legacy-safe-int'"),
+            new Injection("legacy profile", "// @profile: legacy-safe-number\n"
+                + raw, "legacy-safe-number",
+                "non-production @profile 'legacy-safe-number'"),
             new Injection("unknown profile",
                 "// @profile: no-such-profile\n" + raw, "no-such-profile",
                 "non-production @profile 'no-such-profile'"),
@@ -5772,9 +5772,9 @@ public class ProductionDispatchTest {
                 "// @profile: deal-v1.2-int32\n" + raw, "deal-v1.2-int32",
                 "non-production @profile 'deal-v1.2-int32'"),
             new Injection("profile after the 40-line window",
-                "\n".repeat(40) + "// @profile: legacy-safe-int\n" + raw,
-                "legacy-safe-int",
-                "non-production @profile 'legacy-safe-int'"));
+                "\n".repeat(40) + "// @profile: legacy-safe-number\n" + raw,
+                "legacy-safe-number",
+                "non-production @profile 'legacy-safe-number'"));
         Path root = Files.createTempDirectory("v12-profile-control-");
         try {
             Path snippets = root.resolve("v12-snippets");
@@ -6502,9 +6502,9 @@ public class ProductionDispatchTest {
     private static final String DIAMOND_LEFT = """
         import * as c from "std/console";
         import * as seed from "./seed";
-        function value(): int {c.log("left-default"); return 0;}
-        export class Node {value:int=value();}
-        export function read(): int {let x:seed.Seed={}; return x.value;}
+        function value(): number {c.log("left-default"); return 0;}
+        export class Node {value:number=value();}
+        export function read(): number {let x:seed.Seed={}; return x.value;}
         export function main(): null {c.log("forbidden-left-main"); return null;}
         """;
 
@@ -6514,8 +6514,8 @@ public class ProductionDispatchTest {
     /** The diamond's seed: the default evaluated once per construction. */
     private static final String DIAMOND_SEED = """
         import * as c from "std/console";
-        function value(): int {c.log("seed-default"); return 7;}
-        export class Seed {value:int=value();}
+        function value(): number {c.log("seed-default"); return 7;}
+        export class Seed {value:number=value();}
         export function main(): null {c.log("forbidden-seed-main"); return null;}
         """;
 
@@ -6550,11 +6550,11 @@ public class ProductionDispatchTest {
     /** The copied local-class original (subject 3, exact raw body). */
     private static final String LOCAL_CLASS_ORIGINAL = """
         import * as c from "std/console";
-        function shared(xs: int[]): () => int[] {return function(): int[] {return xs;};}
+        function shared(xs: number[]): () => number[] {return function(): number[] {return xs;};}
         export function main(): null {
-         let original: int[] = [1]; let provider: () => int[] = shared(original); let calls: int = 0;
-         function provide(): int[] {calls = calls + 1; return provider();}
-         class Box {xs: int[] = provide();}
+         let original: number[] = [1]; let provider: () => number[] = shared(original); let calls: number = 0;
+         function provide(): number[] {calls = calls + 1; return provider();}
+         class Box {xs: number[] = provide();}
          let a: Box = {}; let b: Box = {};
          a.xs[0] = 9;
          if(calls !== 2 || a.xs !== original || b.xs !== original || b.xs[0] !== 9) {throw {message:"call default copied"};}
@@ -6574,7 +6574,7 @@ public class ProductionDispatchTest {
 
     /** Subject 11 (exact raw body). */
     private static final String TRY_RETURN_CATCH_FALLTHROUGH_REJECT =
-        "export function f(): int {try {return 1;} catch(e) {} return 2;}\n";
+        "export function f(): number {try {return 1;} catch(e) {} return 2;}\n";
 
     /** The quiet entry importing one raw negative subject. */
     private static final String QUIET_SUBJECT_ENTRY = """
@@ -6735,7 +6735,7 @@ public class ProductionDispatchTest {
         for (String backend : List.of("luajit", "jvm", "js")) {
             checkCornerCaseReject(backend, "local-class original",
                 Map.of("src/main.deal", LOCAL_CLASS_ORIGINAL),
-                "E1057", "src/main.deal", 6, 2, 6, 36,
+                "E1057", "src/main.deal", 6, 2, 6, 39,
                 "classes are module-level");
             checkCornerCaseReject(backend, "table-condition-context-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
@@ -6749,7 +6749,7 @@ public class ProductionDispatchTest {
                 "try-return-catch-fallthrough-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", TRY_RETURN_CATCH_FALLTHROUGH_REJECT),
-                "E5002", "src/subject.deal", 1, 52, 1, 54, null);
+                "E5002", "src/subject.deal", 1, 55, 1, 57, null);
 
             // The legal control completes normally on every target.
             Path legal = Files.createTempDirectory("production-legal-try-");
@@ -6923,14 +6923,14 @@ public class ProductionDispatchTest {
             import * as state from "host/retained_default";
 
             class A {
-              x: int = combine(state.calls(), build());
+              x: number = combine(state.calls(), build());
             }
 
-            function combine(a: int, b: int): int {
+            function combine(a: number, b: number): number {
               return a * 1000 + b;
             }
 
-            function build(): int {
+            function build(): number {
               if (state.calls() >= 1) {
                 return 100;
               }
@@ -6953,14 +6953,14 @@ public class ProductionDispatchTest {
             import * as state from "host/retained_default";
 
             class A {
-              x: int = combine(state.calls(), build());
+              x: number = combine(state.calls(), build());
             }
 
-            function combine(a: int, b: int): int {
+            function combine(a: number, b: number): number {
               return a * 1000 + b;
             }
 
-            function build(): int {
+            function build(): number {
               if (state.calls() >= 1) {
                 throw { code: "INNER_FAIL", message: "inner attempt fails" };
               }
@@ -6986,11 +6986,11 @@ public class ProductionDispatchTest {
             import * as state from "host/retained_default";
 
             class A {
-              x: int = state.calls();
-              y: int = build();
+              x: number = state.calls();
+              y: number = build();
             }
 
-            function build(): int {
+            function build(): number {
               if (state.calls() >= 1) {
                 return 100;
               }
@@ -7016,11 +7016,11 @@ public class ProductionDispatchTest {
             import * as state from "host/retained_default";
 
             class A {
-              x: int = state.calls();
-              y: int = build();
+              x: number = state.calls();
+              y: number = build();
             }
 
-            function build(): int {
+            function build(): number {
               if (state.calls() >= 1) {
                 throw { code: "INNER_FAIL", message: "the nested attempt fails" };
               }
@@ -7063,11 +7063,11 @@ public class ProductionDispatchTest {
             import * as state from "host/retained_default";
 
             export class A {
-              x: int = state.calls();
-              y: int = build();
+              x: number = state.calls();
+              y: number = build();
             }
 
-            function build(): int {
+            function build(): number {
               if (state.calls() >= 1) {
                 return 100;
               }
@@ -7095,11 +7095,11 @@ public class ProductionDispatchTest {
             import * as state from "host/retained_default";
 
             export class A {
-              x: int = state.calls();
-              y: int = build();
+              x: number = state.calls();
+              y: number = build();
             }
 
-            function build(): int {
+            function build(): number {
               if (state.calls() >= 1) {
                 throw { code: "INNER_FAIL", message: "the nested attempt fails" };
               }
@@ -7124,10 +7124,10 @@ public class ProductionDispatchTest {
     private static void runReentrantDefaultSubject(Map<String, String> hostSources,
             String label, String subject, Map<String, String> extraSources) throws Exception {
         String declaration = """
-            export function retained(): int[];
-            export function provideFirst(): int[];
+            export function retained(): number[];
+            export function provideFirst(): number[];
             export function bump(): null;
-            export function calls(): int;
+            export function calls(): number;
             """;
         Path project = Files.createTempDirectory("production-default-reentrancy-");
         try {
@@ -7258,7 +7258,7 @@ public class ProductionDispatchTest {
      * {@code ok} line: every row throws its own {@code TEST_FAIL} error
      * when the counter's value or call target is wrong.
      */
-    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as console from \"std/console\";\n\nfunction one(): int { return 1; }\nfunction two(): int { return 2; }\n\nfunction fib(n: int): int {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: int = 0;\n  { let v14Loop2: () => int = one; while (v14Loop2() === 1) { let f: () => int = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: int = 0;\n  { let v14Loop3: () => int = one; while (v14Loop3() === 1) { let f: () => int = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: int = 0;\n  { let v14Loop4: (x: int) => int = one; while (v14Loop4(0) === 1) { let f: (x: int) => int = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: int = 0;\n  { let v14Loop5: () => int = one; while (captured < 2) { let f: () => int = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { code: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { code: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: int = 0;\n  { let v14Loop6: (n: int) => int = fib; while (v14Loop6(5) === 5) { let f: (n: int) => int = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  console.log(\"ok\");\n  return null;\n}\n";
+    private static final String FOR_LET_FUNCTION_COUNTER_SOURCE = "import * as console from \"std/console\";\n\nfunction one(): number { return 1; }\nfunction two(): number { return 2; }\n\nfunction fib(n: number): number {\n  if (n < 2) { return n; }\n  return fib(n - 1) + fib(n - 2);\n}\n\nexport function main(): null {\n  let visits: number = 0;\n  { let v14Loop2: () => number = one; while (v14Loop2() === 1) { let f: () => number = v14Loop2; {\n    visits = visits + 1;\n    if (visits > 4) { break; }\n  } v14Loop2 = f; v14Loop2 = two; } }\n  if (visits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the update did not select two\" };\n  }\n\n  let bodyVisits: number = 0;\n  { let v14Loop3: () => number = one; while (v14Loop3() === 1) { let f: () => number = v14Loop3; {\n    bodyVisits = bodyVisits + 1;\n    f = two;\n    if (bodyVisits > 4) { break; }\n  } v14Loop3 = f;  } }\n  if (bodyVisits !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the body assignment did not reach the test\" };\n  }\n\n  let adapted: number = 0;\n  { let v14Loop4: (x: number) => number = one; while (v14Loop4(0) === 1) { let f: (x: number) => number = v14Loop4; {\n    adapted = adapted + 1;\n    if (adapted > 4) { break; }\n  } v14Loop4 = f; v14Loop4 = two; } }\n  if (adapted !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the adapted counter visited wrongly\" };\n  }\n\n  let captured: number = 0;\n  { let v14Loop5: () => number = one; while (captured < 2) { let f: () => number = v14Loop5; {\n    if (f() !== (captured + 1)) {\n      throw { code: \"TEST_FAIL\", message: \"the per-iteration value is stale\" };\n    }\n    captured = captured + 1;\n  } v14Loop5 = f; v14Loop5 = two; } }\n  if (captured !== 2) {\n    throw { code: \"TEST_FAIL\", message: \"the per-iteration rows did not finish\" };\n  }\n\n  let recursive: number = 0;\n  { let v14Loop6: (n: number) => number = fib; while (v14Loop6(5) === 5) { let f: (n: number) => number = v14Loop6; {\n    recursive = recursive + 1;\n    if (recursive > 4) { break; }\n  } v14Loop6 = f; v14Loop6 = one; } }\n  if (recursive !== 1) {\n    throw { code: \"TEST_FAIL\", message: \"the recursive counter visited wrongly\" };\n  }\n\n  console.log(\"ok\");\n  return null;\n}\n";
 
     /**
      * The function-valued for-let counter on every production lane: the

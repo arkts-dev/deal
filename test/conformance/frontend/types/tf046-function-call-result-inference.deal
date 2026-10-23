@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: variables, inference, functions, calls, v1.2
 
-function produce(): int {
+function produce(): number {
   return 1;
 }
 

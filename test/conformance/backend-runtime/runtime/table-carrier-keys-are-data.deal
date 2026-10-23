@@ -9,7 +9,7 @@ import * as tablelib from "std/table";
 class Tagged {
   __kind: string = "kind-field";
   __classname: string = "classname-field";
-  __c: int = 1;
+  __c: number = 1;
   __keys: string = "keys-field";
   __t: boolean = true;
 }
@@ -56,7 +56,7 @@ export function test_table_carrier_keys_are_data(): null {
   let orderData: string = back.__order;
   let c: boolean = back.__c;
   let tt: boolean = back.__t;
-  let data: int = back.data;
+  let data: number = back.data;
   if (kind !== "class" || c !== true || tt !== true) {
     throw { code: "TEST_FAIL", message: "carrier-like keys did not survive the JSON round-trip" };
   }

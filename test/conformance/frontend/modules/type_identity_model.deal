@@ -3,13 +3,13 @@
 // @description: Support module for normalized-path nominal identity
 
 export class Item {
-  value: int = 0;
+  value: number = 0;
 }
 
-export function make(value: int): Item {
+export function make(value: number): Item {
   return { value: value };
 }
 
-export function read(item: Item): int {
+export function read(item: Item): number {
   return item.value;
 }

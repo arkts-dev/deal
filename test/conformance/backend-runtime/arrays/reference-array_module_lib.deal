@@ -1,20 +1,20 @@
 // @expected: companion
 // @spec: Arrays — Modules
-// @description: Classified support module for the reference-array-module-identity conformance fixture: a shared-buffer closure factory, a reference echo, and a int[]-transform function-value factory crossing the module boundary.
+// @description: Classified support module for the reference-array-module-identity conformance fixture: a shared-buffer closure factory, a reference echo, and a number[]-transform function-value factory crossing the module boundary.
 
-export function makeShared(): () => int[] {
-  let shared: int[] = [0, 0, 0];
-  return function(): int[] {
+export function makeShared(): () => number[] {
+  let shared: number[] = [0, 0, 0];
+  return function(): number[] {
     return shared;
   };
 }
 
-export function echo(b: int[]): int[] {
+export function echo(b: number[]): number[] {
   return b;
 }
 
-export function makeTransform(): (x: int[]) => int[] {
-  return function(x: int[]): int[] {
+export function makeTransform(): (x: number[]) => number[] {
+  return function(x: number[]): number[] {
     x[0] = x[0] + 1;
     return x;
   };

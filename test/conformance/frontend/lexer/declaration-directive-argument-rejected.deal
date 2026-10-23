@@ -5,7 +5,7 @@
 
 // @jsonable unexpected
 export class Item {
-  value: int = 0;
+  value: number = 0;
 }
 
 export function main(): null {

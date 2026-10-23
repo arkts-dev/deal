@@ -1,4 +1,4 @@
-// IR golden fixture: type-descriptors-nullable-int-spec-format
-// Migrated IR-containment pin for legacy case 'nullable-int-spec-format' (ISSUE-0358).
+// IR golden fixture: type-descriptors-nullable-number-spec-format
+// Migrated IR-containment pin for legacy case 'nullable-number-spec-format' (ISSUE-0358).
 
-function f(n: int | null): null { return; }
+function f(n: number | null): null { return; }

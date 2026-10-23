@@ -3,4 +3,4 @@
 // @expected: compile-error E3015
 // @features: v1.2, frontend, reject
 
-export function f(): null {for(let ch:int of "abc") {} return null;}
+export function f(): null {for(let ch:number of "abc") {} return null;}

@@ -4,5 +4,5 @@
 // @features: modules, resolution, relative-paths, v1.2
 
 import * as Lib from "../support/parent_lib";
-export function probe(): int { return Lib.value(); }
+export function probe(): number { return Lib.value(); }
 export function main(): null { return null; }

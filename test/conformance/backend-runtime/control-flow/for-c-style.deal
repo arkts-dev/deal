@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: control-flow, for
 
-export function test_for(): int {
-  let x: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 5) { let i: int = v14Loop0; {
+export function test_for(): number {
+  let x: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 5) { let i: number = v14Loop0; {
     x = x + i;
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   // 0+1+2+3+4 = 10

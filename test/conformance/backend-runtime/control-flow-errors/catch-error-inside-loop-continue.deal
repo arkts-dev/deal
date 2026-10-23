@@ -1,13 +1,14 @@
+import * as math from "std/math";
 // @spec: Error handling — Runtime errors caught in loops
 // @description: Runtime error inside a loop can be caught and loop execution can continue
 // @expected: runtime-ok
 // @features: control-flow, try, runtime-errors
 
-export function test_catch_error_inside_loop_continue(): int {
-  let total: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
+export function test_catch_error_inside_loop_continue(): number {
+  let total: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
     try {
-      if (i === 1) { total = total + (1 / 0); }
+      if (i === 1) { total = total + (math.sqrt(-1)); }
       total = total + i;
     } catch (e) {
       total = total + 10;

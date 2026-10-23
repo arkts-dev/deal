@@ -8,18 +8,16 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"cannot convert null to int\",\"sourceFile\":\"backend-runtime/runtime/int-convert-null.deal\",\"line\":8,\"column\":10,\"expected\":\"int\",\"actual\":\"null\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/runtime/int-convert-null.deal\",\"line\":8,\"column\":24}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "cannot convert null to int",
+      "message": "expected number",
       "sourceFile": "backend-runtime/runtime/int-convert-null.deal",
       "line": 8,
-      "column": 10,
-      "expected": "int",
-      "actual": "null"
+      "column": 24
     }
   }
 }

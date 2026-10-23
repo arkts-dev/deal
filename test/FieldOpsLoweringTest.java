@@ -234,9 +234,9 @@ public class FieldOpsLoweringTest {
             + "OPTIONAL_FIELD_READ --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int; tag?: string; }
+            class Point { x: number; tag?: string; }
             let p: Point = {x: 1};
-            let a: int = p.x;
+            let a: number = p.x;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -261,8 +261,8 @@ public class FieldOpsLoweringTest {
                 + payload.classId() + "." + payload.field());
         check(read.result() instanceof ValueId,
             "the op publishes a ValueId result");
-        check(read.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the result type is the read's checked result descriptor int; got "
+        check(read.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "the result type is the read's checked result descriptor number; got "
                 + read.resultType());
         check(read.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "the FIELD_READ policy is NO_DEAL_FAILURE; got " + read.failurePolicy());
@@ -308,8 +308,8 @@ public class FieldOpsLoweringTest {
                     && fieldPayload.kind() == BoundaryKind.OPTIONAL_FIELD_READ,
                 "child 2 is a BOUNDARY op of kind OPTIONAL_FIELD_READ");
             if (fieldBoundary.payload() instanceof KindPayload.BoundaryPayload fieldPayload) {
-                check(fieldPayload.descriptor().equals(RuntimeDescriptor.Int.INSTANCE),
-                    "child 2 carries the read's checked result descriptor int (a required "
+                check(fieldPayload.descriptor().equals(RuntimeDescriptor.Number.INSTANCE),
+                    "child 2 carries the read's checked result descriptor number (a required "
                         + "field, no nullable wrap); got "
                         + fieldPayload.descriptor().canonicalSpecText());
                 check(fieldPayload.input().equals(read.result()),
@@ -336,7 +336,7 @@ public class FieldOpsLoweringTest {
             + "result descriptor --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            class Point { x: int; tag?: string; }
+            class Point { x: number; tag?: string; }
             let p: Point = {x: 1};
             let t: string | null = p.tag;
             """);
@@ -467,7 +467,7 @@ public class FieldOpsLoweringTest {
         deal.ast.Span span = new deal.ast.Span(lib, 1, 1, 1, 5);
         deal.checker.Symbol.ClassSymbol child = new deal.checker.Symbol.ClassSymbol("Child",
             List.of(new deal.ast.ClassField(span, "value", false, false,
-                new deal.ast.NamedType(span, "int"), java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "number"), java.util.Optional.empty())),
             lib, IdentityTestFixtures.identityOf(lib, "Child"));
         deal.checker.Symbol.ClassSymbol parent = new deal.checker.Symbol.ClassSymbol("Parent",
             List.of(new deal.ast.ClassField(span, "children", false, false,
@@ -481,7 +481,7 @@ public class FieldOpsLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             import * as Lib from "./jsonable_batch2_lib";
-            class Point { x: int; }
+            class Point { x: number; }
             class Holder { parts: Lib.Parent[] = []; }
             let h: Holder = {};
             let children: Lib.Child[] = h.parts[0].children;
@@ -646,9 +646,9 @@ public class FieldOpsLoweringTest {
             if (fieldBoundary.payload() instanceof KindPayload.BoundaryPayload fieldPayload) {
                 RuntimeDescriptor declared = fieldPayload.descriptor();
                 check(write.field().equals("x")
-                        ? declared.equals(RuntimeDescriptor.Int.INSTANCE)
-                        : declared.equals(RuntimeDescriptor.Int.INSTANCE),
-                    "child 2 carries the field's declared descriptor int (never the "
+                        ? declared.equals(RuntimeDescriptor.Number.INSTANCE)
+                        : declared.equals(RuntimeDescriptor.Number.INSTANCE),
+                    "child 2 carries the field's declared descriptor number (never the "
                         + "optional-read nullable wrap); got " + declared
                             .canonicalSpecText());
             }
@@ -794,7 +794,7 @@ public class FieldOpsLoweringTest {
     static void testNarrowedHasFieldReceiverAdmission() {
         System.out.println("-- has() receiver: NARROWED_READ admission, consumed once --");
         CheckedSlice slice = checkSlice("""
-            class Box { nick?: string | null; other?: int; }
+            class Box { nick?: string | null; other?: number; }
             function f(box: Box | null): null {
               if (box !== null) {
                 let present: boolean = has(box.nick);
@@ -912,14 +912,14 @@ public class FieldOpsLoweringTest {
             + "same instance end-to-end --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            export class Point { x: int = 40 + 2; tag?: string; }
+            export class Point { x: number = 40 + 2; tag?: string; }
             let p: Point = {tag: "t"};
-            let xv: int = p.x;
+            let xv: number = p.x;
             let hasTag: boolean = has(p.tag);
             delete p.tag;
             let hasTag2: boolean = has(p.tag);
             p.x = 99;
-            let xv2: int = p.x;
+            let xv2: number = p.x;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -971,7 +971,7 @@ public class FieldOpsLoweringTest {
         List<String> log = new ArrayList<>();
         BoundaryCheckRunner real = realDelegate(log);
         ClassOpsExecutor.BodyRunner bodyRunner = defaultOp ->
-            new Value.Int(42);
+            new Value.Number(42);
         Map<ClassId, deal.semantic.ir.ClassLayout> layouts = unit.classLayouts();
 
         for (SemanticOp op : unit.ops()) {
@@ -1087,13 +1087,13 @@ public class FieldOpsLoweringTest {
         }
         check(instance.fields().size() == 2
                 && instance.fields().get(0) instanceof FieldState.Present xPresent
-                && xPresent.value().equals(new Value.Int(99)),
+                && xPresent.value().equals(new Value.Number(99)),
             "after the write the same instance carries x=99");
         check(instance.fields().get(1) == FieldState.Missing.INSTANCE,
             "after the delete the same instance carries tag missing");
         check(reads.size() == 2
-                && heap.get((ValueId) reads.get(0).result()).equals(new Value.Int(42))
-                && heap.get((ValueId) reads.get(1).result()).equals(new Value.Int(99)),
+                && heap.get((ValueId) reads.get(0).result()).equals(new Value.Number(42))
+                && heap.get((ValueId) reads.get(1).result()).equals(new Value.Number(99)),
             "the first read observed the defaulted 42 and the later read observed the "
                 + "committed 99 (the write landed)");
         check(hasOps.size() == 2
@@ -1102,8 +1102,8 @@ public class FieldOpsLoweringTest {
             "has(tag) returned true before the delete and false after it (the presence "
                 + "states over the same instance)");
         check(log.contains("child UNTYPED_CLASS_INPUT <- class:" + pointId.text())
-                && log.contains("child OPTIONAL_FIELD_READ <- int")
-                && log.contains("child CLASS_FIELD_ASSIGNMENT <- int"),
+                && log.contains("child OPTIONAL_FIELD_READ <- number")
+                && log.contains("child CLASS_FIELD_ASSIGNMENT <- number"),
             "the real boundary delegate observed the pinned child kinds and the "
                 + "canonical receiver kind; got " + log);
     }
@@ -1150,7 +1150,6 @@ public class FieldOpsLoweringTest {
         KindPayload.ConstPayload payload = (KindPayload.ConstPayload) op.payload();
         return switch (payload.value()) {
             case ScalarValue.Boolean bool -> new Value.Bool(bool.value());
-            case ScalarValue.Int intValue -> new Value.Int(intValue.value());
             case ScalarValue.Number number -> new Value.Number(number.value());
             case ScalarValue.String string -> Value.string(string.value());
             default -> Value.Null.INSTANCE;
@@ -1185,7 +1184,6 @@ public class FieldOpsLoweringTest {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
-            case Value.Int intValue -> BoundaryValueView.ofInt(intValue.value());
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
             case Value.Table ignored -> BoundaryValueView.of(ActualKind.TABLE);
@@ -1208,10 +1206,10 @@ public class FieldOpsLoweringTest {
         System.out.println("-- determinism: two repetitions are byte-identical --");
 
         String source = """
-            export class Line { a: int = 1; b?: string; }
-            class Point { x: int = 2; y?: int = 0; }
+            export class Line { a: number = 1; b?: string; }
+            class Point { x: number = 2; y?: number = 0; }
             let p: Point = {x: 1};
-            let xv: int = p.x;
+            let xv: number = p.x;
             p.y = 3;
             let b: boolean = has(p.y);
             delete p.y;
@@ -1309,7 +1307,6 @@ public class FieldOpsLoweringTest {
                 case deal.ast.NamedType nt -> switch (nt.name()) {
                     case "null" -> deal.types.Type.Null.INSTANCE;
                     case "boolean" -> deal.types.Type.Boolean.INSTANCE;
-                    case "int" -> deal.types.Type.Int.INSTANCE;
                     case "number" -> deal.types.Type.Number.INSTANCE;
                     case "string" -> deal.types.Type.String.INSTANCE;
                     case "table" -> deal.types.Type.Table.INSTANCE;
@@ -1345,7 +1342,7 @@ public class FieldOpsLoweringTest {
         testOptionalNullFieldReadArm();
         testCrossModuleNullableReadArm();
         SemanticLowerer.ClassDeclarationCoreResult fieldMutations = lowerModule("""
-            class Point { x: int; y?: int = 0; }
+            class Point { x: number; y?: number = 0; }
             let p: Point = {x: 1};
             p.x = 9;
             p.y = 3;

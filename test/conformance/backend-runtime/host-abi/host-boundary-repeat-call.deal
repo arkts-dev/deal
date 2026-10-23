@@ -4,4 +4,4 @@
 // @features: host-abi, repeated-call, binding-cache
 
 import * as host from "host/boundary";
-export function main(): null { let first: int = host.nextValue(); let second: int = host.nextValue(); if (first !== 1 || second !== 2) { throw { code: "TEST_FAIL", message: "host repeated call was cached or skipped" }; } return null; }
+export function main(): null { let first: number = host.nextValue(); let second: number = host.nextValue(); if (first !== 1 || second !== 2) { throw { code: "TEST_FAIL", message: "host repeated call was cached or skipped" }; } return null; }

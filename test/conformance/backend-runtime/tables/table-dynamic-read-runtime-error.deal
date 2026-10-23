@@ -3,9 +3,9 @@
 // @expected: runtime-error E8001
 // @features: tables, runtime-errors
 
-export function test_table_dynamic_read_runtime_error(): int {
+export function test_table_dynamic_read_runtime_error(): number {
   let t: table = { value: "bad" };
-  let result: int = t.value;
+  let result: number = t.value;
   return result;
 }
 

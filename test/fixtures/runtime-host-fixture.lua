@@ -13,10 +13,10 @@ local __rt = require("deal.runtime")
 
 local M = {}
 
--- ()->int — correct raw function.
+-- ()->number — correct raw function.
 M.answer = function() return 42 end
 
--- (int,int)->int — parameter enforcement.
+-- (number,number)->number — parameter enforcement.
 M.add = function(a, b) return a + b end
 
 -- (boolean)->string|null — nullable return; __NULL or a string.
@@ -40,7 +40,7 @@ M.ping = function() return __rt.__NULL end
 -- ()->null — sync null return violating the sentinel contract.
 M.ping_bad = function() return "junk" end
 
--- (?(int)->int)->null — nullable-function parameter.
+-- (?(number)->number)->null — nullable-function parameter.
 M.register = function(cb)
   if cb ~= __rt.__NULL then
     cb(41)  -- cb arrives adapted: a plain Lua function
@@ -56,11 +56,11 @@ end
 -- async()->string — async export violating the operation-shape contract.
 M.fetch_bad = function() return "not an async op" end
 
--- ()->int — pre-wrapped with correct sig and conforming behavior.
-M.prewrapped_good = { __kind = "function", sig = "()->int", f = function() return 7 end }
+-- ()->number — pre-wrapped with correct sig and conforming behavior.
+M.prewrapped_good = { __kind = "function", sig = "()->number", f = function() return 7 end }
 
--- ()->int — pre-wrapped with matching sig but junk return (E8010 at call).
-M.prewrapped_bad = { __kind = "function", sig = "()->int", f = function() return "junk" end }
+-- ()->number — pre-wrapped with matching sig but junk return (E8010 at call).
+M.prewrapped_bad = { __kind = "function", sig = "()->number", f = function() return "junk" end }
 
 -- ()->null — pre-wrapped sync null export with sentinel return.
 M.prewrapped_null = { __kind = "function", sig = "()->null", f = function() return __rt.__NULL end }
@@ -72,7 +72,7 @@ M.prewrapped_null_bad = { __kind = "function", sig = "()->null", f = function() 
 M.prewrapped_nosig = { __kind = "function", f = function() return 1 end }
 
 -- Pre-wrapped with a non-function .f (E8011 at load).
-M.prewrapped_badf = { __kind = "function", sig = "()->int", f = 42 }
+M.prewrapped_badf = { __kind = "function", sig = "()->number", f = 42 }
 
 -- Non-function export for a function descriptor (E8011 at load).
 M.not_a_function = 42
@@ -81,7 +81,7 @@ M.not_a_function = 42
 M.ServerConfig = { __kind = "class", __classname = "@$external/host.cfg/ServerConfig" }
 M.ServerConfig_defaults = { port = 80 }
 M.ServerConfig_fields = {
-  { name = "port", jtype = "int", nullable = false, optional = false }
+  { name = "port", jtype = "number", nullable = false, optional = false }
 }
 
 -- Class whose meta identity does not match the declared descriptor.

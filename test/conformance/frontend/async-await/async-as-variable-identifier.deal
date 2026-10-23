@@ -4,7 +4,7 @@
 // @features: async, diagnostics
 
 export function main(): null {
-let async: int = 1;
+let async: number = 1;
 
 return null;
 }

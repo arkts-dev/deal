@@ -3,7 +3,7 @@
 // @expected: compile-error E1037
 // @features: parser, operators, diagnostics, arithmetic
 
-export function test_int32_pow_infinity(): int {
+export function test_int32_pow_infinity(): number {
   return 2 ** 1024;
 }
 

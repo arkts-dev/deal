@@ -56,7 +56,6 @@ import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.DefaultOwner;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -118,35 +117,35 @@ public class ProductionProjectEmissionTest {
     // ProductionProjectEmission directly)
     // =========================================================================
 
-    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: int = 3;\n  {\n    let x: int = x + 1;\n    if (x !== 4) { throw { code: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: int = 9;\n    if (x !== 9) { throw { code: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: int = 11;\n    if (x !== 11) { throw { code: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: int = 0;\n  let values: int[] = [1, 2];\n  for (let v: int of values) {\n    let before: int = v;\n    let v: int = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { code: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: int = 3;\n  let hsum: int = 0;\n  { let v14Loop0: int = h + 1; while (hsum < 9) { let h: int = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { code: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { code: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: int = 0; while (false) { let nl: int = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { code: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: int = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { code: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { code: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e;\n    if (e.code !== \"SHADOW_X\") { throw { code: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
+    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { code: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { code: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { code: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v: number of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { code: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { code: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { code: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { code: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { code: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { code: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e;\n    if (e.code !== \"SHADOW_X\") { throw { code: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
 
     static final String DYNAMIC_TABLE_SOURCE = """
         export function main(): null {
           let t: table = { x: 7 };
           let k: string = "x";
-          let n: int = t[k];
+          let n: number = t[k];
           if (n !== 7) { throw { code: "DYN_FAIL", message: "variable key" }; }
           let u: table = {};
           let mk: () => string = function(): string { return "y"; };
           u[mk()] = 9;
-          let m: int = u[mk()];
+          let m: number = u[mk()];
           if (m !== 9) { throw { code: "DYN_FAIL", message: "effectful key" }; }
           let q: table = {};
-          let miss: int | null = q[k];
+          let miss: number | null = q[k];
           if (miss !== null) { throw { code: "DYN_FAIL", message: "missing" }; }
           let v: table = { s: 1 };
-          let nn: int | null = v["s"];
-          let got: int = 0;
+          let nn: number | null = v["s"];
+          let got: number = 0;
           if (nn !== null) { got = nn; }
           if (got !== 1) { throw { code: "DYN_FAIL", message: "nullable" }; }
-          let order: int = 0;
+          let order: number = 0;
           let receiver: () => table = function(): table { order = order * 10 + 1; return u; };
           let key: () => string = function(): string { order = order * 10 + 2; return "y"; };
-          let value: () => int = function(): int { order = order * 10 + 3; return 11; };
+          let value: () => number = function(): number { order = order * 10 + 3; return 11; };
           receiver()[key()] = value();
           if (order !== 123) { throw { code: "DYN_FAIL", message: "write evaluation order" }; }
           order = 0;
-          let ordered: int = receiver()[key()];
+          let ordered: number = receiver()[key()];
           if (order !== 12 || ordered !== 11) { throw { code: "DYN_FAIL", message: "read evaluation order" }; }
           return null;
         }
@@ -160,11 +159,11 @@ public class ProductionProjectEmissionTest {
 
 
     private static final String LIB_SOURCE = """
-        export function add(a: int, b: int): int {
+        export function add(a: number, b: number): number {
           return a + b;
         }
 
-        export function twice(x: int): int {
+        export function twice(x: number): number {
           return x * 2;
         }
         """;
@@ -222,7 +221,7 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        function f(): int {
+        function f(): number {
           return 41;
         }
         """;
@@ -235,7 +234,7 @@ public class ProductionProjectEmissionTest {
      */
     private static final String GENERATED_HELPER_APP_SOURCE = """
         // @jsonable
-        export class Widget { n: int = 1; }
+        export class Widget { n: number = 1; }
         export function main(): null { return null; }
         """;
 
@@ -244,15 +243,15 @@ public class ProductionProjectEmissionTest {
      * type annotation is the declaration-owned descriptor subject the
      * counter-origin probe corrupts, plus the production entry.
      */
-    private static final String FOR_LET_COUNTER_APP_SOURCE = "export function main(): null {\n  { let v14Loop2: int = 0; while (v14Loop2 < 2) { let i: int = v14Loop2; { } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  return null;\n}\n";
+    private static final String FOR_LET_COUNTER_APP_SOURCE = "export function main(): null {\n  { let v14Loop2: number = 0; while (v14Loop2 < 2) { let i: number = v14Loop2; { } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  return null;\n}\n";
 
     /**
      * The ordinary array fixture stages through the container arm.
      */
     private static final String ARRAY_APP_SOURCE = """
         export function main(): null {
-          let n: int = 3;
-          let b: int[] = [n];
+          let n: number = 3;
+          let b: number[] = [n];
           return null;
         }
         """;
@@ -262,14 +261,14 @@ public class ProductionProjectEmissionTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let x: int = lib.add(1, 2);
+          let x: number = lib.add(1, 2);
           return null;
         }
         """;
 
     /** The HOST declaration: two function exports in declaration order. */
     private static final String HOST_DECLARATION = """
-        export function version(): int;
+        export function version(): number;
         export function describe(s: string): string;
         """;
 
@@ -292,7 +291,7 @@ public class ProductionProjectEmissionTest {
         }
 
         export class Point {
-          x: int = 42;
+          x: number = 42;
         }
         """;
 
@@ -301,7 +300,7 @@ public class ProductionProjectEmissionTest {
 
     /** The async library of the cross-module async fixture. */
     private static final String ASYNC_LIB_SOURCE = """
-        export async function getValue(): int {
+        export async function getValue(): number {
           return 42;
         }
         """;
@@ -317,7 +316,7 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        export async function worker(): int {
+        export async function worker(): number {
           return await lib.getValue();
         }
         """;
@@ -333,11 +332,11 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        async function compute(): int {
+        async function compute(): number {
           return 1;
         }
 
-        export async function worker(): int {
+        export async function worker(): number {
           return await compute();
         }
         """;
@@ -488,8 +487,8 @@ public class ProductionProjectEmissionTest {
     /** The fail-closed source: a nested function declaration (CALLS family). */
     private static final String NESTED_DECLARATION_APP_SOURCE = """
         export function main(): null {
-          function inner(): int { return 1; }
-          let x: int = inner();
+          function inner(): number { return 1; }
+          let x: number = inner();
           return null;
         }
         """;
@@ -511,12 +510,12 @@ public class ProductionProjectEmissionTest {
         import * as c from "std/console";
 
         export function main(): null {
-          let f: (a: int, b: int) => int = make();
-          let r: int = f(1, 2);
+          let f: (a: number, b: number) => number = make();
+          let r: number = f(1, 2);
           if (r !== 1) {
             throw { code: "ARITY_ADAPTER", message: "the adapted call did not run" };
           }
-          let second: int = f(5, 9);
+          let second: number = f(5, 9);
           if (second !== 5) {
             throw { code: "ARITY_ADAPTER_ARGS", message: "the extra argument changed the result" };
           }
@@ -524,13 +523,13 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        function make(): (a: int) => int {
-          return function(a: int): int { return a; };
+        function make(): (a: number) => number {
+          return function(a: number): number { return a; };
         }
 
         export async function runAsync(): null {
-          let g: async (a: int, b: int) => int = makeAsync();
-          let r: int = await g(3, 4);
+          let g: async (a: number, b: number) => number = makeAsync();
+          let r: number = await g(3, 4);
           if (r !== 3) {
             throw { code: "ARITY_ASYNC_ADAPTER", message: "the adapted await did not run" };
           }
@@ -538,8 +537,8 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        function makeAsync(): async (a: int) => int {
-          return async function(a: int): int { return a; };
+        function makeAsync(): async (a: number) => number {
+          return async function(a: number): number { return a; };
         }
         """;
 
@@ -582,10 +581,10 @@ public class ProductionProjectEmissionTest {
 
         class Defaulted {
           name: string = "";
-          tag: int = seven();
+          tag: number = seven();
         }
 
-        function seven(): int {
+        function seven(): number {
           return 7;
         }
         """;
@@ -657,25 +656,25 @@ public class ProductionProjectEmissionTest {
     private static final String JS_HOST_DECLARATION = """
         export class Endpoint {
           path: string = "";
-          port?: int;
+          port?: number;
         }
 
-        export function alpha(): int;
+        export function alpha(): number;
         export function describe(s: string): string;
         """;
 
     private static final String JS_LIB_SOURCE = """
         // @jsonable
         export class Point {
-          x: int = 0;
-          y: int = 0;
+          x: number = 0;
+          y: number = 0;
         }
 
-        export function add(a: int, b: int): int {
+        export function add(a: number, b: number): number {
           return a + b;
         }
 
-        export async function getValue(): int {
+        export async function getValue(): number {
           return 42;
         }
         """;
@@ -701,18 +700,18 @@ public class ProductionProjectEmissionTest {
             throw { code: "JS_PROBE", message: "host call" };
           }
           let p: lib.Point = { x: cfg.alpha() };
-          let total: int = lib.add(p.x, p.y);
+          let total: number = lib.add(p.x, p.y);
           if (total !== 7) {
             throw { code: "JS_PROBE", message: "cross-module call" };
           }
-          if (lib.Point$toJson({ x: 3, y: 4 }) !== "{\\"x\\":3,\\"y\\":4}") {
+          if (lib.Point$toJson({ x: 3, y: 4 }) !== "{\\"x\\":3.0,\\"y\\":4.0}") {
             throw { code: "JS_PROBE", message: "json helper" };
           }
           console.log("PROBE|JS|MAIN");
           return null;
         }
 
-        export async function worker(): int {
+        export async function worker(): number {
           return await lib.getValue();
         }
         """;
@@ -729,9 +728,9 @@ public class ProductionProjectEmissionTest {
 
         export function main(): null {
           let c: Counter = {};
-          let f: (a: int, b: int) => int = make(c);
-          let first: int = f(4, 5);
-          let second: int = f(7, 8);
+          let f: (a: number, b: number) => number = make(c);
+          let first: number = f(4, 5);
+          let second: number = f(7, 8);
           if (first !== 4 || second !== 7) {
             throw { code: "JS_PROBE", message: "adapter result" };
           }
@@ -753,14 +752,14 @@ public class ProductionProjectEmissionTest {
           counter: Counter = {};
         }
 
-        function make(c: Counter): (a: int) => int {
+        function make(c: Counter): (a: number) => number {
           c.n = c.n + 1;
-          return function(a: int): int { return a; };
+          return function(a: number): number { return a; };
         }
 
         class Counter {
-          n: int = 0;
-          x: int = 11;
+          n: number = 0;
+          x: number = 11;
         }
         """;
 
@@ -775,18 +774,18 @@ public class ProductionProjectEmissionTest {
     private static final String AWAIT_ADAPTER_APP_SOURCE = """
         import * as console from "std/console";
 
-        export async function entry(): int {
+        export async function entry(): number {
           return await worker();
         }
 
-        export async function entryAsync(): int {
+        export async function entryAsync(): number {
           return await asyncWorker();
         }
 
-        async function worker(): int {
-          let f: (a: int, b: int) => int = await make();
-          let first: int = f(1, 2);
-          let second: int = f(3, 4);
+        async function worker(): number {
+          let f: (a: number, b: number) => number = await make();
+          let first: number = f(1, 2);
+          let second: number = f(3, 4);
           if (first !== 41 || second !== 43) {
             throw { code: "JS_PROBE", message: "await adapter result" };
           }
@@ -794,10 +793,10 @@ public class ProductionProjectEmissionTest {
           return first;
         }
 
-        async function asyncWorker(): int {
-          let f: async (a: int, b: int) => int = await makeAsync();
-          let first: int = await f(1, 2);
-          let second: int = await f(3, 4);
+        async function asyncWorker(): number {
+          let f: async (a: number, b: number) => number = await makeAsync();
+          let first: number = await f(1, 2);
+          let second: number = await f(3, 4);
           if (first !== 41 || second !== 43) {
             throw { code: "JS_PROBE", message: "await async adapter result" };
           }
@@ -805,12 +804,12 @@ public class ProductionProjectEmissionTest {
           return first;
         }
 
-        async function make(): (a: int) => int {
-          return function(a: int): int { return a + 40; };
+        async function make(): (a: number) => number {
+          return function(a: number): number { return a + 40; };
         }
 
-        async function makeAsync(): async (a: int) => int {
-          return async function(a: int): int { return a + 40; };
+        async function makeAsync(): async (a: number) => number {
+          return async function(a: number): number { return a + 40; };
         }
 
         export function main(): null {
@@ -827,14 +826,14 @@ public class ProductionProjectEmissionTest {
     private static final String ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE = """
         import * as console from "std/console";
 
-        export async function entry(): int {
+        export async function entry(): number {
           return await worker();
         }
 
-        async function worker(): int {
-          let f: async (a: int, b: int) => int = make();
-          let first: int = await f(1, 2);
-          let second: int = await f(3, 4);
+        async function worker(): number {
+          let f: async (a: number, b: number) => number = make();
+          let first: number = await f(1, 2);
+          let second: number = await f(3, 4);
           if (first !== 41 || second !== 43) {
             throw { code: "JS_PROBE", message: "async adapter result" };
           }
@@ -842,8 +841,8 @@ public class ProductionProjectEmissionTest {
           return first;
         }
 
-        function make(): async (a: int) => int {
-          return async function(a: int): int { return a + 40; };
+        function make(): async (a: number) => number {
+          return async function(a: number): number { return a + 40; };
         }
 
         export function main(): null {
@@ -882,12 +881,12 @@ public class ProductionProjectEmissionTest {
         }
 
         class B {
-          n: int = 2;
+          n: number = 2;
           makeA: () => A = function(): A { return {}; };
         }
 
         class Self {
-          n: int = 3;
+          n: number = 3;
           make: () => Self = function(): Self { return {}; };
         }
         """;
@@ -982,7 +981,6 @@ public class ProductionProjectEmissionTest {
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
             fixture.surface(), fixture.declarationIdentities(), BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -994,7 +992,6 @@ public class ProductionProjectEmissionTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
     }
 
@@ -1258,7 +1255,7 @@ public class ProductionProjectEmissionTest {
         Fixture fixture = compileProject(new LinkedHashMap<>(Map.of(
             "src/app.deal", """
                 export function main(): null {
-                  let x: int = 2147483647 + 1;
+                  let values: number[] = []; let x: number = values[0];
                   return null;
                 }
                 """)), Map.of());
@@ -1280,7 +1277,7 @@ public class ProductionProjectEmissionTest {
             checkEq("", run.stdout(),
                 "the failure prints nothing on stdout");
             check(run.stderr().startsWith(
-                    "DEAL_ERROR_CODE: E8004 int out of safe range at "),
+                    "DEAL_ERROR_CODE: E8002 array index out of bounds at "),
                 "the stderr line keeps the located DEAL_ERROR_CODE"
                     + " presentation: " + run.stderr());
             checkEq(1L, run.stderr().lines().count(),
@@ -1682,12 +1679,12 @@ public class ProductionProjectEmissionTest {
             checkEq(2, countOccurrences(artifact, "const $av"),
                 "each awaited adapter retains the materialized source value");
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
-            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
+            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "number"),
                 out);
             assertEmitterRun("both awaited adapters retain the declaration-site source",
                 run, 0, "PROBE|JS|AWAIT-ADAPTER\nINVOKE_OK: 41\n");
             ProcessOutcome asyncRun = runProcess(
-                List.of("node", "invoke.js", "entryAsync", "int"), out);
+                List.of("node", "invoke.js", "entryAsync", "number"), out);
             assertEmitterRun("both async-target awaits complete through the retained source",
                 asyncRun, 0, "PROBE|JS|AWAIT-ASYNC-ADAPTER\nINVOKE_OK: 41\n");
         } finally {
@@ -1763,7 +1760,7 @@ public class ProductionProjectEmissionTest {
                 "each awaited arity-extended call site is one closed dynamic"
                     + " async start over the adapter carrier");
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
-            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
+            ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "number"),
                 out);
             assertEmitterRun("both arity-extension awaits re-evaluate the async source",
                 run, 0, "PROBE|JS|ASYNC-ADAPTER\nINVOKE_OK: 41\n");
@@ -2244,7 +2241,6 @@ public class ProductionProjectEmissionTest {
                 fixture.surface(), Map.of(),
                 BuiltinErrorDeclaration.synthesized(
                     fixture.checkedProject().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 java.util.Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
             check(!result.emitted(),
                 "the incomplete structural companion fails the JS arm closed");
@@ -2348,7 +2344,7 @@ public class ProductionProjectEmissionTest {
             // tree, and the prior live set stays untouched.
             writeFileIn(project, "src/math.d.deal", """
                 // @extern-c
-                export function add(a: int, b: int): int;
+                export function add(a: number, b: number): number;
                 """);
             writeFileIn(project, "src/app.deal", """
                 import * as math from "native/math";
@@ -2456,7 +2452,7 @@ public class ProductionProjectEmissionTest {
         Path root = Files.createTempDirectory("js-runtime-missing-");
         try {
             writeFileIn(root, "src/app.deal", """
-                export class Box { v: int = 1; }
+                export class Box { v: number = 1; }
 
                 export function main(): null {
                   let b: Box = {};
@@ -2912,8 +2908,8 @@ public class ProductionProjectEmissionTest {
     /** The imported-class fixture: a SHARED_FACTORY CLASS_NEW and class field reads. */
     private static final String IMPORTED_CLASS_LIB_SOURCE = """
         export class Point {
-          x: int = 0;
-          y: int = 0;
+          x: number = 0;
+          y: number = 0;
         }
         """;
 
@@ -2922,7 +2918,7 @@ public class ProductionProjectEmissionTest {
 
         export function main(): null {
           let p: Lib.Point = { x: 1, y: 2 };
-          let s: int = p.x + p.y;
+          let s: number = p.x + p.y;
           return null;
         }
         """;
@@ -3478,12 +3474,12 @@ public class ProductionProjectEmissionTest {
                 check(range.origin() == RangeOrigin.SOURCE
                         && range.file().endsWith("src/app.deal")
                         && range.startLine() == 2 && range.startColumn() == 8
-                        && range.endLine() == 2 && range.endColumn() == 36
+                        && range.endLine() == 2 && range.endColumn() == 39
                         && range.startScalarOffset() == 20
-                        && range.endScalarOffset() == 48
-                        && range.scalarLength() == 28,
+                        && range.endScalarOffset() == 51
+                        && range.scalarLength() == 31,
                     "the corrupted " + helper + " failure carries the class "
-                        + "declaration's own exact SOURCE range 2:8-2:36 [20,48) "
+                        + "declaration's own exact SOURCE range 2:8-2:39 [20,51) "
                         + "length 28; got " + range);
                 check(range.equals(target.span().range()),
                     "the " + helper + " range is exactly the class declaration's own "
@@ -3761,7 +3757,7 @@ public class ProductionProjectEmissionTest {
                     driver), fixture.root());
             }
             checkEq(0, run.exitCode(), label + " " + backend + " runs: " + run.output());
-            checkEq("PROBE|ASYNC-RESULT|" + expected + "\n", run.stdout(), label + " await result");
+            checkEq("PROBE|ASYNC-RESULT|" + (backend == Backend.JVM ? expected + ".0" : expected) + "\n", run.stdout(), label + " await result");
             checkEq("", run.stderr(), label + " no trace output");
         }
     }
@@ -4123,9 +4119,9 @@ public class ProductionProjectEmissionTest {
     }
 
     private static final String EMITTER_LIB = """
-        export class Counter { n: int = 0; }
-        export function add(a: int, b: int): int { return a + b; }
-        export function twice(x: int): int { return x * 2; }
+        export class Counter { n: number = 0; }
+        export function add(a: number, b: number): number { return a + b; }
+        export function twice(x: number): number { return x * 2; }
         """;
     private static final String EMITTER_APP = """
         import * as lib from "./lib";
@@ -4262,8 +4258,8 @@ public class ProductionProjectEmissionTest {
                 }
             }
             try (PublishedEmitter overflow = publishedEmitter(backend, EMITTER_LIB,
-                    "export function main(): null { let x: int = 2147483647 + 1; return null; }")) {
-                assertEmitterRun(backend + " overflow terminal", runPublished(overflow, null), 1, "DEAL_ERROR_CODE: E8004\n");
+                    "export function main(): null { let values: number[] = []; let x: number = values[0]; return null; }")) {
+                assertEmitterRun(backend + " overflow terminal", runPublished(overflow, null), 1, "DEAL_ERROR_CODE: E8002\n");
             }
             try (PublishedEmitter host = publishedEmitter(backend,
                     ErrorRethrowTransportProductionTest.HOST_ERROR_LIB_SOURCE,
@@ -4281,7 +4277,7 @@ public class ProductionProjectEmissionTest {
         }
         String libMain = """
             import * as console from "std/console";
-            export function add(a: int, b: int): int { return a + b; }
+            export function add(a: number, b: number): number { return a + b; }
             export function main(): null { console.log("PROBE|LIB-MAIN"); return null; }
             """;
         try (PublishedEmitter nonentry = publishedEmitter(Backend.LUAJIT, libMain, CONSOLE_EMITTER_APP)) {
@@ -4446,8 +4442,8 @@ public class ProductionProjectEmissionTest {
             }
         }
         probe.append(jvm ? """
-              assert java.util.Objects.equals(5L, ((JvmRuntime.FunctionValue) surfaces.get("lib").read("add")).fn.invoke(new Object[]{2L, 3L}));
-              assert java.util.Objects.equals(8L, ((JvmRuntime.FunctionValue) surfaces.get("lib").read("twice")).fn.invoke(new Object[]{4L}));
+              assert java.util.Objects.equals(5.0, ((JvmRuntime.FunctionValue) surfaces.get("lib").read("add")).fn.invoke(new Object[]{2L, 3L}));
+              assert java.util.Objects.equals(8.0, ((JvmRuntime.FunctionValue) surfaces.get("lib").read("twice")).fn.invoke(new Object[]{4L}));
               assert java.util.Objects.equals("app", ((JvmRuntime.FunctionValue) surfaces.get("app").read("label")).fn.invoke(new Object[0]));
               App.dealMain();
               assert surfaces == App.EXPORT_SURFACES && surfaces.size() == 2;
@@ -4479,7 +4475,7 @@ public class ProductionProjectEmissionTest {
                   report("HOST-ERR|" .. name .. "|", ok, e)
                 end
                 local step
-                step = {[__dealCarrierKeys.kind] = "function", sig = "(int)->int", f = function(n) return s.recur.f(n, step) end}
+                step = {[__dealCarrierKeys.kind] = "function", sig = "(number)->number", f = function(n) return s.recur.f(n, step) end}
                 report("HOST-REENTRY|recur|", pcall(s.recur.f, 2, step))
                 print("HOST-EMPTY|recur|" .. ((__frames == nil or next(__frames) == nil) and "-" or table.concat(__frames, ",")))
                 local ok, e = pcall(s.leafFail.f)
@@ -4545,7 +4541,7 @@ public class ProductionProjectEmissionTest {
               System.out.println("HOST-ID|echo|" + (echo == original) + "|" + (echo.reify() == value)
                 + "|" + echo.code + "|" + echo.origin + "|" + (echo.cause == null ? "-" : echo.cause.code));
               JvmRuntime.FunctionValue[] step = new JvmRuntime.FunctionValue[1];
-              step[0] = new JvmRuntime.FunctionValue(a -> invoke("recur", a[0], step[0]), "(int)->int", "(int)->int", null);
+              step[0] = new JvmRuntime.FunctionValue(a -> invoke("recur", a[0], step[0]), "(number)->number", "(number)->number", null);
               System.out.println("HOST-REENTRY|recur|" + fields(capture(() -> invoke("recur", 2L, step[0]))));
               System.out.println("HOST-EMPTY|recur|" + JvmRuntime.framesText());
               System.out.println("HOST-CLEAN|leafFail|" + field(capture(() -> invoke("leafFail")).frames));

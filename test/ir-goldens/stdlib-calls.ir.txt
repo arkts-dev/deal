@@ -4,12 +4,12 @@ module @test/ir-goldens/fixtures/stdlib-calls.deal:5:1-10:1
     [boundary: import]
   function main: null @test/ir-goldens/fixtures/stdlib-calls.deal:7:1-10:1
     body
-      let len: int @test/ir-goldens/fixtures/stdlib-calls.deal:8:5-9:1
+      let len: number @test/ir-goldens/fixtures/stdlib-calls.deal:8:5-9:1
         [boundary: var-annotation]
-        call : int @test/ir-goldens/fixtures/stdlib-calls.deal:8:20-8:36
+        call : number @test/ir-goldens/fixtures/stdlib-calls.deal:8:23-8:39
           [boundary: stdlib-boundary]
-          member .length : (string)->int @test/ir-goldens/fixtures/stdlib-calls.deal:8:20-8:27
+          member .length : (string)->number @test/ir-goldens/fixtures/stdlib-calls.deal:8:23-8:30
             [boundary: table-read]
-            ident S : table @test/ir-goldens/fixtures/stdlib-calls.deal:8:20-8:20
+            ident S : table @test/ir-goldens/fixtures/stdlib-calls.deal:8:23-8:23
               [boundary: import]
-          literal "hello" : string @test/ir-goldens/fixtures/stdlib-calls.deal:8:29-8:35
+          literal "hello" : string @test/ir-goldens/fixtures/stdlib-calls.deal:8:32-8:38

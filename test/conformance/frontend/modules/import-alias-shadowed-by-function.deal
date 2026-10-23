@@ -4,6 +4,6 @@
 // @features: modules, diagnostics
 
 import * as Shadow from "./shadow_lib";
-function Shadow(): int { return 1; }
+function Shadow(): number { return 1; }
 
 export function main(): null { return null; }

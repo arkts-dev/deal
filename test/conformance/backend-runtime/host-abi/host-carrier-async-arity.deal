@@ -6,7 +6,7 @@
 import * as host from "host/carrierarity";
 
 class Marker {
-  count: int = 0;
+  count: number = 0;
 }
 
 function check(condition: boolean, message: string): null {
@@ -16,39 +16,39 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function bump(x: int): int {
-  let y: int = x + 1;
+function bump(x: number): number {
+  let y: number = x + 1;
   return y;
 }
 
-function pick(): async (t: host.Target, g: (x: int) => int) => string {
+function pick(): async (t: host.Target, g: (x: number) => number) => string {
   return host.describeAsync;
 }
 
 export async function test_arity_extended_adapter(): null {
   let target: host.Target = { name: "target" };
-  let callback: (x: int) => int = bump;
+  let callback: (x: number) => number = bump;
   let fixedMarker: Marker = {};
-  let fixedExtra = function(): int {
+  let fixedExtra = function(): number {
     fixedMarker.count = fixedMarker.count + 1;
     return 1;
   };
-  let source: async (t: host.Target, g: (x: int) => int) => string =
+  let source: async (t: host.Target, g: (x: number) => number) => string =
     host.describeAsync;
   source = source;
-  let fixed: async (t: host.Target, g: (x: int) => int, extra: int) => string =
+  let fixed: async (t: host.Target, g: (x: number) => number, extra: number) => string =
     source;
   let fixedText: string = await fixed(target, callback, fixedExtra());
   check(fixedText === "T|target|true:42|n=2", "the statically fixed arity-extended host async call");
   check(fixedMarker.count === 1, "the extra target parameter is evaluated exactly once at the statically fixed call");
   let runtimeMarker: Marker = {};
-  let runtimeExtra = function(): int {
+  let runtimeExtra = function(): number {
     runtimeMarker.count = runtimeMarker.count + 1;
     return 1;
   };
-  let runtimeSource: async (t: host.Target, g: (x: int) => int) => string =
+  let runtimeSource: async (t: host.Target, g: (x: number) => number) => string =
     pick();
-  let dynamic: async (t: host.Target, g: (x: int) => int, extra: int) => string =
+  let dynamic: async (t: host.Target, g: (x: number) => number, extra: number) => string =
     runtimeSource;
   let dynamicText: string = await dynamic(target, callback, runtimeExtra());
   check(dynamicText === "T|target|true:42|n=2", "the runtime-resolved arity-extended host async call");

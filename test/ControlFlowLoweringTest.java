@@ -839,12 +839,12 @@ public class ControlFlowLoweringTest {
     static void testNarrowedForOfIterableAdmission() {
         System.out.println("-- FOR_EACH: the refined iterable is admitted before the loop --");
         narrowedForOfIterable("the array arm", """
-            let xs: int[] | null = [1, 2];
+            let xs: number[] | null = [1, 2];
             if (xs !== null) {
-              for (let n: int of xs) { break; }
+              for (let n: number of xs) { break; }
             }
             """, IterationMode.ARRAY_VALUES,
-            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE));
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE));
         narrowedForOfIterable("the string arm", """
             let name: string | null = "ab";
             if (name !== null) {
@@ -946,7 +946,7 @@ public class ControlFlowLoweringTest {
     static void testForEachArrayValuesArm() {
         System.out.println("-- FOR_EACH(ARRAY_VALUES): iterable once, fresh binding, break target --");
 
-        CheckedSlice slice = checkSlice("for (let x: int of [1, 2]) { break; }");
+        CheckedSlice slice = checkSlice("for (let x: number of [1, 2]) { break; }");
         if (slice == null) {
             return;
         }
@@ -1915,8 +1915,8 @@ public class ControlFlowLoweringTest {
                 mutation.inverse.put(terminal.opId(), block);
             } else { terminal = mutation.first(kind); }
             SemanticOp tail = syntheticOp(new OpId(MODULE, 900002), SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(new ScalarValue.Int(1)), new ValueId(900002),
-                RuntimeDescriptor.Int.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+                new KindPayload.ConstPayload(new ScalarValue.Number(1)), new ValueId(900002),
+                RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
             mutation.ops.add(tail);
             BlockId block = mutation.inverse.get(terminal.opId());
             List<OpId> ids = mutation.blocks.get(block);
@@ -2169,7 +2169,7 @@ public class ControlFlowLoweringTest {
             "the closed ConstructKind set carries exactly its 23 pinned values; got "
                 + ConstructKind.values().length);
 
-        CheckedSlice slice = checkSlice("if (true) {}\nwhile (false) { break; }\n{  while (true) { { {  continue; } }  } }\nfor (let x: int of [1]) {}\ntry {} catch (e) { throw e; }\n\"probe\";\n");
+        CheckedSlice slice = checkSlice("if (true) {}\nwhile (false) { break; }\n{  while (true) { { {  continue; } }  } }\nfor (let x: number of [1]) {}\ntry {} catch (e) { throw e; }\n\"probe\";\n");
         if (slice == null) {
             return;
         }
@@ -2230,7 +2230,7 @@ public class ControlFlowLoweringTest {
     static void testDeterminism() {
         System.out.println("-- Determinism: byte-identical repeated lowerings --");
 
-        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {\n  if (({f: true}).f) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e; }\nfor (let x: int of [1, 2]) { continue; }\n");
+        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {\n  if (({f: true}).f) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e; }\nfor (let x: number of [1, 2]) { continue; }\n");
         if (slice == null) {
             return;
         }

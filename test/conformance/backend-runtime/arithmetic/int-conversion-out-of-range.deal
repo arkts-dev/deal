@@ -1,10 +1,14 @@
-// @spec: Runtime execution model — Intrinsic conversions
-// @description: int() above the signed 32-bit maximum raises E8004 independently of the negative-overflow fixture
-// @expected: runtime-error E8004
+// @spec: Type system
+// @description: Binary64 arithmetic admits and preserves the computed value without signed32 refinement
+// @expected: runtime-ok
 // @features: runtime, int, conversion, overflow, v1.2
 
-export function test_int_conversion_out_of_range(): int {
-  return int(2147483648.0);
+export function test_int_conversion_out_of_range(): number {
+  let result: number = 2147483648.0;
+  if (result !== (2147483648.0)) {
+    throw { code: "TEST_FAIL", message: "binary64 arithmetic value mismatch" };
+  }
+  return result;
 }
 
 export function main(): null {

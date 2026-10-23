@@ -3,12 +3,12 @@
 // @expected: compile-error E5003
 // @features: async-await, type-system, narrowing
 
-async function helper(): int {
+async function helper(): number {
   return 42;
 }
 
-async function test(): int {
-  let x: int | null = 42;
+async function test(): number {
+  let x: number | null = 42;
   if (x !== null) {
     await helper();
     return x;

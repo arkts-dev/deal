@@ -6,7 +6,7 @@
 import * as json from "std/json";
 
 export function test_json_stringify_function_error(): string {
-  let t: table = { f: function(): int { return 1; } };
+  let t: table = { f: function(): number { return 1; } };
   return json.stringify(t);
 }
 

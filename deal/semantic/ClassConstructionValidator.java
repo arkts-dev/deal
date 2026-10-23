@@ -654,7 +654,7 @@ public final class ClassConstructionValidator {
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> "null";
             case RuntimeDescriptor.Boolean ignored -> "boolean";
-            case RuntimeDescriptor.Int ignored -> "int";
+
             case RuntimeDescriptor.Number ignored -> "number";
             case RuntimeDescriptor.String ignored -> "string";
             case RuntimeDescriptor.Table ignored -> "table";
@@ -2373,7 +2373,7 @@ public final class ClassConstructionValidator {
             return switch (descriptor) {
                 case RuntimeDescriptor.Null ignored -> Optional.empty();
                 case RuntimeDescriptor.Boolean ignored -> Optional.empty();
-                case RuntimeDescriptor.Int ignored -> Optional.empty();
+
                 case RuntimeDescriptor.Number ignored -> Optional.empty();
                 case RuntimeDescriptor.String ignored -> Optional.empty();
                 case RuntimeDescriptor.Table ignored -> Optional.empty();

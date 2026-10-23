@@ -4,5 +4,5 @@
 // @features: modules, imports, typing, diagnostics, v1.2
 
 import * as Lib from "./support/int_parameter_lib";
-export function probe(): int { return Lib.id(1, 2); }
+export function probe(): number { return Lib.id(1, 2); }
 export function main(): null { return null; }

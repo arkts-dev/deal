@@ -5,10 +5,10 @@ final class HostPlanprobe {
 
   public static Object nextValue() {
     n = n + 1;
-    return Long.valueOf(n * 10L);
+    return Double.valueOf(n * 10L);
   }
 
   public static Object valueCount() {
-    return Long.valueOf(n);
+    return Double.valueOf(n);
   }
 }

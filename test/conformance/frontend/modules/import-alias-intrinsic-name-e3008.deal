@@ -6,6 +6,6 @@
 import * as bytes from "./shadow_lib";
 
 export function main(): null {
-  let value: int = bytes(2);
+  let value: number = bytes(2);
   return null;
 }

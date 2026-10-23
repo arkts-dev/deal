@@ -4,7 +4,7 @@
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
-class Cell { value: int = 7; }
+class Cell { value: number = 7; }
 export function main(): null {
  let cell: Cell = {}; let alias: Cell = cell; let t: table = {bad:"not-int"}; let caught: boolean = false;
  try {cell.value = t.bad;} catch(e) {if(e.code !== "E8001") {throw {message:"wrong type code"};} caught = true;}

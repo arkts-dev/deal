@@ -3,23 +3,23 @@
 // @expected: runtime-ok
 // @features: async, await, runtime
 
-async function a(): int { return 1; }
-async function b(): int { return 2; }
-async function c(): int { return 3; }
+async function a(): number { return 1; }
+async function b(): number { return 2; }
+async function c(): number { return 3; }
 
-export async function f(): int {
-  let stage: int = 0;
-  let x: int = await a();
+export async function f(): number {
+  let stage: number = 0;
+  let x: number = await a();
   if (x !== 1) {
     throw { code: "TEST_FAIL", message: "first awaited completion mismatch" };
   }
   stage = stage + 1;
-  let y: int = await b();
+  let y: number = await b();
   if (y !== 2) {
     throw { code: "TEST_FAIL", message: "second awaited completion mismatch" };
   }
   stage = stage + 1;
-  let z: int = await c();
+  let z: number = await c();
   if (z !== 3) {
     throw { code: "TEST_FAIL", message: "third awaited completion mismatch" };
   }
@@ -27,7 +27,7 @@ export async function f(): int {
   if (stage !== 3) {
     throw { code: "TEST_FAIL", message: "multiple awaits stage sequence mismatch" };
   }
-  let sum: int = x + y + z;
+  let sum: number = x + y + z;
   if (sum !== 6) {
     throw { code: "TEST_FAIL", message: "multiple awaits sum mismatch" };
   }

@@ -3,23 +3,23 @@
 // required fields with defaults, optional fields, and edge cases.
 
 class Point {
-    x: int = 0;
-    y: int = 0;
+    x: number = 0;
+    y: number = 0;
 }
 
 class User {
     name: string = "";
-    age?: int;
+    age?: number;
     active: boolean = true;
 }
 
 class Config {
     title: string = "untitled";
-    count: int = 1;
+    count: number = 1;
     ratio: number = 1.0;
     enabled: boolean = false;
 }
 
-function makePoint(x: int, y: int): Point {
+function makePoint(x: number, y: number): Point {
     return { x: x, y: y };
 }

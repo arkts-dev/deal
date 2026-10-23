@@ -3,11 +3,11 @@
 // @expected: compile-error E1059
 // @features: parser, semicolon, empty-statement, top-level
 
-function helper(): int { return 1; };
+function helper(): number { return 1; };
 
 ;
 
 export function main(): null {
-  let x: int = helper();
+  let x: number = helper();
   return null;
 }

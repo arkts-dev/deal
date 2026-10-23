@@ -5,10 +5,10 @@
 
 import * as Lib from "./module_extra_lib";
 
-function call(f: (n: int) => int, n: int): int { return f(n); }
+function call(f: (n: number) => number, n: number): number { return f(n); }
 
-export function test_imported_recursive_callback(): int {
-  let result: int = call(Lib.recursiveCountdown, 4);
+export function test_imported_recursive_callback(): number {
+  let result: number = call(Lib.recursiveCountdown, 4);
   if (result !== 4) { throw { code: "TEST_FAIL", message: "imported recursive callback failed" }; }
   return result;
 }

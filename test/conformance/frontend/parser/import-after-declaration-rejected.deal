@@ -3,7 +3,7 @@
 // @expected: compile-error E1048
 // @features: parser, modules, v1.2
 
-export function probe(): int {
+export function probe(): number {
   return 1;
 }
 

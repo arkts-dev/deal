@@ -3,4 +3,4 @@
 // @expected: compile-error E3006
 // @features: v1.2, frontend, reject
 
-export function f(): boolean {let a: () => int = function(): int {return 1;}; let b: (x:int) => int = function(x:int): int {return x;}; return a === b;}
+export function f(): boolean {let a: () => number = function(): number {return 1;}; let b: (x:number) => number = function(x:number): number {return x;}; return a === b;}

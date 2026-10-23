@@ -118,7 +118,7 @@ public final class ErrorIdentityProductionTest {
      * is invented.
      */
     private static final String MUTATED_LIB_SOURCE = """
-        export function raise(): int {
+        export function raise(): number {
           let original: Error = { code: "FIRST", message: "first" };
           let alias: Error = original;
           try {
@@ -139,7 +139,7 @@ public final class ErrorIdentityProductionTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let x: int = lib.raise();
+          let x: number = lib.raise();
           return null;
         }
         """;
@@ -151,13 +151,13 @@ public final class ErrorIdentityProductionTest {
      * expected/actual) with the caught E8001 linked as its cause.
      */
     private static final String WRAPPED_LIB_SOURCE = """
-        function inner(): int {
+        function inner(): number {
           let t: table = { value: "bad" };
-          let x: int = t.value;
+          let x: number = t.value;
           return x;
         }
 
-        export function raise(): int {
+        export function raise(): number {
           let replacement: Error = { code: "OUTER", message: "outer" };
           try {
             return inner();
@@ -403,8 +403,6 @@ public final class ErrorIdentityProductionTest {
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             new LinkedHashMap<>(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(deal.semantic.ir.IntrinsicKind.INT_CONVERT,
-                deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(result.project() != null && result.diagnostics().isEmpty(),
             "the fixture lowers with zero diagnostics: " + result.diagnostics());
@@ -526,12 +524,12 @@ public final class ErrorIdentityProductionTest {
             }
             checkEq("E8001", cause.code(), consumer + ": the linked cause is the "
                 + "typed E8001");
-            checkEq("expected int", cause.message(), consumer
+            checkEq("expected number", cause.message(), consumer
                 + ": the linked cause keeps its message");
-            check(cause.origin() != null && cause.origin().endsWith("src/lib.deal:3:16"),
+            check(cause.origin() != null && cause.origin().endsWith("src/lib.deal:3:19"),
                 consumer + ": the linked cause keeps its raising origin; got "
                     + cause.origin());
-            checkEq("int", cause.expected(), consumer + ": the linked cause keeps "
+            checkEq("number", cause.expected(), consumer + ": the linked cause keeps "
                 + "its expected type");
             checkEq("string", cause.actual(), consumer + ": the linked cause keeps "
                 + "its actual kind");

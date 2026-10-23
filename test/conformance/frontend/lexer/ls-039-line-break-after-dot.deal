@@ -4,12 +4,12 @@
 // @features: parser, semicolon, line-break, member-access, v1.2
 
 class Box {
-  value: int = 1;
+  value: number = 1;
 }
 
 export function main(): null {
   let box: Box = { value: 1 };
-  let value: int = box.
+  let value: number = box.
     value;
   return null;
 }

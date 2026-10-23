@@ -4,14 +4,14 @@
 // @features: type-system, nullable, narrowing, control-flow, for-of, arrays, runtime-errors
 
 export function main(): null {
-  let xs: int[] | null = [1];
+  let xs: number[] | null = [1];
   let clear: () => null = function(): null {
     xs = null;
     return null;
   };
   if (xs !== null) {
     clear();
-    for (let n: int of xs) {
+    for (let n: number of xs) {
       throw { code: "TEST_FAIL", message: "the loop body must not run" };
     }
   }

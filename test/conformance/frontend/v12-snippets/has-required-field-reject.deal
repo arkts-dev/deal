@@ -3,5 +3,5 @@
 // @expected: compile-error E4005
 // @features: v1.2, frontend, reject
 
-class C {x:int=0;}
+class C {x:number=0;}
 export function f(c:C): boolean {return has(c.x);}

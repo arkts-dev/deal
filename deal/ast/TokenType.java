@@ -34,7 +34,6 @@ public enum TokenType {
     AS,         // implicit keyword used in import declaration
 
     // -- Literals --
-    INT_LITERAL,
     NUMBER_LITERAL,
     STRING_LITERAL,
     TEMPLATE_LITERAL,

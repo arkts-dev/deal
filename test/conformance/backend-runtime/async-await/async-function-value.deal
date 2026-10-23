@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: async, function-values
 
-async function value(): int { return 6; }
+async function value(): number { return 6; }
 
-export async function test_async_function_value(): int {
-  let f: async () => int = value;
-  let result: int = await f();
+export async function test_async_function_value(): number {
+  let f: async () => number = value;
+  let result: number = await f();
   if (result !== 6) { throw { code: "TEST_FAIL", message: "async function value failed" }; }
   return result;
 }

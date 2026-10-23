@@ -4,6 +4,6 @@
 // @features: type-system, equality, invariance, diagnostics, v1.2
 
 export function main(): null {
-  let equal: boolean = 1 === 1.0;
+  let equal: boolean = 1 === true;
   return null;
 }

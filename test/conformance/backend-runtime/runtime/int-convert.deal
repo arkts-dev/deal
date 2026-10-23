@@ -1,12 +1,12 @@
 // @spec: Runtime execution model — Runtime library
-// @description: int(3.0) returns 3 at runtime
+// @description: Sole-number binary64 values are admitted without conversion or signed32 refinement
 // @expected: runtime-ok
 // @features: runtime, int, conversion
 
-export function test_int(): int {
-  let i: int = int(3.0);
+export function test_int(): number {
+  let i: number = (3.0);
   if (i !== 3) {
-    throw { code: "TEST_FAIL", message: "int(3.0) did not produce int 3" };
+    throw { code: "TEST_FAIL", message: "(3.0) did not produce int 3" };
   }
   return i;
 }

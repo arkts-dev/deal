@@ -46,7 +46,7 @@ public final class ClassOpsExecutor {
     // =========================================================================
 
     public sealed interface Value
-        permits Value.Null, Value.Bool, Value.Int, Value.Number, Value.String,
+        permits Value.Null, Value.Bool, Value.Number, Value.String,
                 Value.Table, Value.Array, Value.Class, Value.Function,
                 Value.Missing {
 
@@ -77,16 +77,8 @@ public final class ClassOpsExecutor {
             }
         }
 
-        /** A signed32 integer value. */
-        record Int(int value) implements Value {
 
-            @Override
-            public ActualKind actualKind() {
-                return ActualKind.INT;
-            }
-        }
-
-        /** An IEEE-754 number value (NaN and infinity included). */
+/** An IEEE-754 number value (NaN and infinity included). */
         record Number(double value) implements Value {
 
             @Override
@@ -1866,25 +1858,12 @@ public final class ClassOpsExecutor {
                 }
                 yield raw;
             }
-            case RuntimeDescriptor.Int ignored -> {
-                // Int fields accept only Int carriers from the parse's
-                // signed32 lexical mapping — out-of-range, fractional,
-                // or Number carriers fail (the retained pins).
-                if (!(raw instanceof Value.Int)) {
-                    throw new JsonFromFailure("expected int, got " + raw.actualKind()
-                        + " (an int field accepts only signed32 integer lexical "
-                        + "carriers)");
-                }
-                yield raw;
-            }
+
             case RuntimeDescriptor.Number ignored -> {
                 if (raw instanceof Value.Number) {
                     yield raw;
                 }
-                if (raw instanceof Value.Int intValue) {
-                    // An integer lexical carrier converts exactly.
-                    yield new Value.Number((double) intValue.value());
-                }
+
                 throw new JsonFromFailure("expected number, got " + raw.actualKind());
             }
             case RuntimeDescriptor.String ignored -> {
@@ -2031,14 +2010,9 @@ public final class ClassOpsExecutor {
                 }
                 yield seamText(op, stringifier, value, fieldPath, entered);
             }
-            case RuntimeDescriptor.Int ignored -> {
-                if (!(value instanceof Value.Int)) {
-                    throw new JsonToFailure(fieldPath, actualTokenOf(value));
-                }
-                yield seamText(op, stringifier, value, fieldPath, entered);
-            }
+
             case RuntimeDescriptor.Number ignored -> {
-                if (!(value instanceof Value.Number) && !(value instanceof Value.Int)) {
+                if (!(value instanceof Value.Number)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
                 // Nonfinite numbers fail inside the seam (the E8 row).
@@ -2189,13 +2163,9 @@ public final class ClassOpsExecutor {
                     return;
                 }
             }
-            case RuntimeDescriptor.Int ignored -> {
-                if (value instanceof Value.Int) {
-                    return;
-                }
-            }
+
             case RuntimeDescriptor.Number ignored -> {
-                if (value instanceof Value.Number || value instanceof Value.Int) {
+                if (value instanceof Value.Number) {
                     return;
                 }
             }
@@ -2261,8 +2231,7 @@ public final class ClassOpsExecutor {
             }
             case Value.Bool ignored -> {
             }
-            case Value.Int ignored -> {
-            }
+
             case Value.Number ignored -> {
             }
             case Value.Table ignored -> {

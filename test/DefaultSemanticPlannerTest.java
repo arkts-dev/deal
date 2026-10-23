@@ -190,17 +190,17 @@ public class DefaultSemanticPlannerTest {
                 import * as S from "../shared";
 
                 class Outer {
-                  a: int = localHelper();
+                  a: number = localHelper();
                   b: L.Rec = {};
                   c: L.Rec[] = [L.makeRec({ tag: 5 })];
                   d: L.Rec[] = [];
                   e: L.Rec | null = null;
-                  f: int = L.getTag({ tag: 3 });
-                  g: int = S.scale(2);
+                  f: number = L.getTag({ tag: 3 });
+                  g: number = S.scale(2);
                   h: L.Rec = { inner: { tag: 9 } };
                 }
 
-                function localHelper(): int {
+                function localHelper(): number {
                   return 7;
                 }
 
@@ -210,10 +210,10 @@ public class DefaultSemanticPlannerTest {
                 """,
             "src/lib.deal", """
                 export class Rec {
-                  tag: int = 0;
+                  tag: number = 0;
                   inner: Rec = {};
                 }
-                export function getTag(r: Rec): int {
+                export function getTag(r: Rec): number {
                   return r.tag;
                 }
                 export function makeRec(r: Rec): Rec {
@@ -221,7 +221,7 @@ public class DefaultSemanticPlannerTest {
                 }
                 """,
             "shared.deal", """
-                export function scale(v: int): int {
+                export function scale(v: number): number {
                   return v * 2;
                 }
                 """), "src/main.deal");
@@ -245,10 +245,10 @@ public class DefaultSemanticPlannerTest {
                     + outer.orderedFields().stream()
                         .map(CompilerClassDefaultEntry::name).toList());
             check(outer.orderedFields().get(0).resolvedFieldType()
-                        == deal.types.Type.Int.INSTANCE
-                    && "int".equals(
+                        == deal.types.Type.Number.INSTANCE
+                    && "number".equals(
                         outer.orderedFields().get(0).runtimeTypeDescriptor()),
-                "field a: int descriptor 'int'");
+                "field a: number descriptor 'number'");
             check("@src/lib.deal/Rec".equals(
                     outer.orderedFields().get(1).runtimeTypeDescriptor()),
                 "field b: imported class descriptor '@src/lib.deal/Rec', got "
@@ -412,7 +412,7 @@ public class DefaultSemanticPlannerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class Bad {
-                  x: int;
+                  x: number;
                 }
 
                 export function main(): null {
@@ -482,7 +482,7 @@ public class DefaultSemanticPlannerTest {
                 }
 
                 export class ServerConfig {
-                  port: int;
+                  port: number;
                   endpoint: Endpoint;
                 }
 
@@ -514,12 +514,12 @@ public class DefaultSemanticPlannerTest {
             "src/main.deal", """
                 async function build(): null {
                   class Inner {
-                    x: int = await source();
+                    x: number = await source();
                   }
                   return null;
                 }
 
-                async function source(): int {
+                async function source(): number {
                   return 3;
                 }
 
@@ -563,12 +563,12 @@ public class DefaultSemanticPlannerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class Holder {
-                  f: async () => int = async function(): int {
+                  f: async () => number = async function(): number {
                     return await source();
                   };
                 }
 
-                async function source(): int {
+                async function source(): number {
                   return 3;
                 }
 
@@ -609,7 +609,7 @@ public class DefaultSemanticPlannerTest {
             "deal.json", MANIFEST,
             "src/main.deal", """
                 class Bad {
-                  x: int = "oops";
+                  x: number = "oops";
                 }
 
                 export function main(): null {
@@ -625,9 +625,9 @@ public class DefaultSemanticPlannerTest {
                     + implementation.diagnostics);
             if (e3001 != null) {
                 check(e3001.range().startLine() == 2
-                        && e3001.range().startColumn() == 12,
+                        && e3001.range().startColumn() == 15,
                     "E3001 anchors the default expression range (line 2"
-                        + " column 12), got " + e3001.range().startLine()
+                        + " column 15), got " + e3001.range().startLine()
                         + ":" + e3001.range().startColumn());
             }
         } finally {
@@ -658,7 +658,7 @@ public class DefaultSemanticPlannerTest {
                 """,
             "src/lib.deal", """
                 export class Rec {
-                  tag: int = 0;
+                  tag: number = 0;
                 }
                 """);
         Path root = Files.createTempDirectory("deal_plan_det_");

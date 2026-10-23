@@ -223,10 +223,6 @@ public final class BoundaryExecutor {
     private static String innerReason(CoreFail fail, BoundaryValueView view) {
         return switch (fail.caseKind()) {
             case KIND_MISMATCH -> FailureProjections.kindReason(fail.descriptor());
-            case INT_REFINEMENT -> FailureProjections.refinementReason(
-                FailureProjections.kindToken(fail.descriptor()), fail.actualToken());
-            case INT_OUT_OF_RANGE -> FailureContractRegistry
-                .arm(FailureArmId.INT32_RANGE).template();
             case INVALID_UNICODE -> FailureProjections.stringCarrierReason(
                 view.unicodeDefect() == UnicodeScalars.Defect.SURROGATE);
             case CLASS_IDENTITY -> renderIdentity(fail).message();
@@ -270,55 +266,7 @@ public final class BoundaryExecutor {
     private static BoundaryOutcome checkAsyncCompletion(RuntimeDescriptor descriptor,
                                                         BoundaryValueView view) {
         return descriptorKindOutcome(asyncProjection(),
-            completionActual(core(descriptor, view), view));
-    }
-
-    /**
-     * The completion cell's numeric actual token ({@link #checkAsyncCompletion}):
-     * the cell's pinned projection has one numeric kind, so a numeric carrier
-     * of the checked value projects {@code number} — the value itself and the
-     * numeric carrier at an array-element leaf behind the shared {@code E8003}
-     * arm's cause chain (every {@code ELEMENT} wrapper keeps the element's own
-     * reference token, the outer arm's declared actual field). A boxed-int
-     * element at a wrong-kind position therefore renders the element's own
-     * {@code int} token in the enclosing element arm and the cell's completion
-     * variant {@code number} in the nested leaf cause, exactly like the JVM
-     * runtime's {@code completionActualOf} and the emitted Lua prelude's
-     * {@code __completionBoundaryKind}; the leaf cause's projection stays the
-     * executing cell's own row (the pinned leaf-cause rule).
-     */
-    private static CoreResult completionActual(CoreResult result, BoundaryValueView view) {
-        if (result instanceof CoreFail fail
-                && fail.caseKind() == FailureCase.KIND_MISMATCH
-                && view.kind() == ActualKind.INT) {
-            return new CoreFail(fail.caseKind(), fail.descriptor(), "number", 0, null);
-        }
-        return completionElementLeaf(result);
-    }
-
-    /**
-     * The element-leaf projection of the completion cell ({@link
-     * #completionActual}): every {@code ELEMENT} wrapper keeps its own element
-     * reference token and one-based index, and the innermost kind leaf's
-     * numeric carrier follows the cell's single completion variant.
-     */
-    private static CoreResult completionElementLeaf(CoreResult result) {
-        if (!(result instanceof CoreFail fail)) {
-            return result;
-        }
-        if (fail.caseKind() == FailureCase.ELEMENT && fail.cause() != null) {
-            CoreResult cause = completionElementLeaf(fail.cause());
-            if (cause == fail.cause()) {
-                return fail;
-            }
-            return new CoreFail(fail.caseKind(), fail.descriptor(), fail.actualToken(),
-                fail.elementIndex(), (CoreFail) cause);
-        }
-        if (fail.caseKind() == FailureCase.KIND_MISMATCH
-                && "int".equals(fail.actualToken())) {
-            return new CoreFail(fail.caseKind(), fail.descriptor(), "number", 0, null);
-        }
-        return fail;
+            core(descriptor, view));
     }
 
     /** ARRAY_ELEMENT_DESCRIPTOR: element check; E8003 with the leaf cause. */
@@ -358,7 +306,7 @@ public final class BoundaryExecutor {
      */
     private static BoundaryOutcome checkArrayRead(BoundaryValueView view,
                                                   BoundaryContext context) {
-        Integer index = requireContextField(context.index(), "index",
+        Double index = requireContextField(context.index(), "index",
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR");
         Integer length = requireContextField(context.length(), "length",
             "ARRAY_READ_INDEX_THEN_DESCRIPTOR");
@@ -366,7 +314,7 @@ public final class BoundaryExecutor {
             throw new Defect("ARRAY_READ_INDEX_THEN_DESCRIPTOR names a non-negative array "
                 + "length; got " + length);
         }
-        if (index < 0 || index >= length) {
+        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index >= length) {
             return new BoundaryOutcome.Fail(FailureContractRegistry.render(
                 FailureArmId.ARRAY_READ_BOUNDS, new LinkedHashMap<>(), null, null,
                 null));
@@ -380,7 +328,7 @@ public final class BoundaryExecutor {
     private static BoundaryOutcome checkArrayWrite(RuntimeDescriptor descriptor,
                                                    BoundaryValueView view,
                                                    BoundaryContext context) {
-        Integer index = requireContextField(context.index(), "index",
+        Double index = requireContextField(context.index(), "index",
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT");
         Integer length = requireContextField(context.length(), "length",
             "ARRAY_WRITE_BOUNDS_THEN_ELEMENT");
@@ -388,7 +336,7 @@ public final class BoundaryExecutor {
             throw new Defect("ARRAY_WRITE_BOUNDS_THEN_ELEMENT names a non-negative array "
                 + "length; got " + length);
         }
-        if (index < 0 || index > length) {
+        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
             return new BoundaryOutcome.Fail(FailureContractRegistry.render(
                 FailureArmId.ARRAY_WRITE_BOUNDS, new LinkedHashMap<>(), null, null, null));
         }
@@ -398,12 +346,10 @@ public final class BoundaryExecutor {
     }
 
 
-
-
-    /** ARRAY_DELETE_BOUNDS: index < 0 or > length; otherwise pass. */
+/** ARRAY_DELETE_BOUNDS: index < 0 or > length; otherwise pass. */
     private static BoundaryOutcome checkArrayDelete(BoundaryValueView view,
                                                     BoundaryContext context) {
-        Integer index = requireContextField(context.index(), "index",
+        Double index = requireContextField(context.index(), "index",
             "ARRAY_DELETE_BOUNDS");
         Integer length = requireContextField(context.length(), "length",
             "ARRAY_DELETE_BOUNDS");
@@ -411,7 +357,7 @@ public final class BoundaryExecutor {
             throw new Defect("ARRAY_DELETE_BOUNDS names a non-negative array length; got "
                 + length);
         }
-        if (index < 0 || index > length) {
+        if (!Double.isFinite(index) || index != Math.rint(index) || index < 0 || index > length) {
             return new BoundaryOutcome.Fail(FailureContractRegistry.render(
                 FailureArmId.ARRAY_DELETE_BOUNDS, new LinkedHashMap<>(), null, null, null));
         }
@@ -472,10 +418,6 @@ public final class BoundaryExecutor {
         INVALID_UNICODE,
         /** A class instance carrying a different canonical atom (the identity arm). */
         CLASS_IDENTITY,
-        /** The int path's NaN / infinity / non-integer number refinement. */
-        INT_REFINEMENT,
-        /** The int path's signed32 range failure (E8004). */
-        INT_OUT_OF_RANGE,
         /** A function value with a differing carried signature (E8010). */
         SIG_MISMATCH,
         /** A failing array element in increasing index order (E8003 + cause). */
@@ -531,9 +473,9 @@ public final class BoundaryExecutor {
                 view.kind() == ActualKind.NULL ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Boolean ignored ->
                 view.kind() == ActualKind.BOOLEAN ? pass(view) : kindFail(descriptor, view);
-            case RuntimeDescriptor.Int ignored -> coreInt(view);
+
             case RuntimeDescriptor.Number ignored ->
-                view.kind() == ActualKind.NUMBER || view.kind() == ActualKind.INT
+                view.kind() == ActualKind.NUMBER
                     ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.String ignored ->
                 view.kind() == ActualKind.STRING ? pass(view)
@@ -547,34 +489,6 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.Array array -> coreArray(array, view);
             case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view);
             case RuntimeDescriptor.Func func -> coreFunc(func, view);
-        };
-    }
-
-    /** The int path in normative check_int order (docs/spec-v1.3.md §Runtime library). */
-    private static CoreResult coreInt(BoundaryValueView view) {
-        return switch (view.kind()) {
-            case INT -> pass(view);
-            case NUMBER -> {
-                double value = view.numberValue();
-                if (Double.isNaN(value)) {
-                    yield new CoreFail(FailureCase.INT_REFINEMENT, RuntimeDescriptor.Int.INSTANCE,
-                        "NaN", 0, null);
-                }
-                if (Double.isInfinite(value)) {
-                    yield new CoreFail(FailureCase.INT_REFINEMENT, RuntimeDescriptor.Int.INSTANCE,
-                        "infinity", 0, null);
-                }
-                if (value != Math.rint(value)) {
-                    yield new CoreFail(FailureCase.INT_REFINEMENT, RuntimeDescriptor.Int.INSTANCE,
-                        "number", 0, null);
-                }
-                if (value < -2147483648d || value > 2147483647d) {
-                    yield new CoreFail(FailureCase.INT_OUT_OF_RANGE,
-                        RuntimeDescriptor.Int.INSTANCE, "number", 0, null);
-                }
-                yield pass(view);
-            }
-            default -> kindFail(RuntimeDescriptor.Int.INSTANCE, view);
         };
     }
 
@@ -665,20 +579,20 @@ public final class BoundaryExecutor {
     // =========================================================================
 
     /** The arm selection of one descriptor-kind projection set. */
-    private record Projection(FailureArmId kindArm, FailureArmId refinementArm,
+    private record Projection(FailureArmId kindArm,
                               FailureArmId unicodeArm, FailureArmId signatureArm) {
     }
 
     /** TYPE_DESCRIPTOR: kind mismatches, the pinned invalid-unicode variant, E8010 signatures. */
     private static Projection tdProjection() {
-        return new Projection(FailureArmId.TYPED_BOUNDARY_KIND, null,
+        return new Projection(FailureArmId.TYPED_BOUNDARY_KIND,
             FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE,
             FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
     }
 
     /** FUNCTION_SIGNATURE: non-functions project the kind arm. */
     private static Projection signatureProjection() {
-        return new Projection(FailureArmId.TYPED_BOUNDARY_KIND, null, null,
+        return new Projection(FailureArmId.TYPED_BOUNDARY_KIND, null,
             FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
     }
 
@@ -694,7 +608,7 @@ public final class BoundaryExecutor {
      */
     private static Projection asyncProjection() {
         return new Projection(FailureArmId.ASYNC_COMPLETION_KIND,
-            FailureArmId.ASYNC_COMPLETION_REFINEMENT, FailureArmId.ASYNC_COMPLETION_KIND,
+            FailureArmId.ASYNC_COMPLETION_KIND,
             FailureArmId.FUNCTION_SIGNATURE_MISMATCH);
     }
 
@@ -716,11 +630,8 @@ public final class BoundaryExecutor {
     private static BoundaryFailure project(Projection projection, CoreFail fail) {
         return switch (fail.caseKind()) {
             case KIND_MISMATCH -> renderKind(projection.kindArm(), fail);
-            case INT_REFINEMENT -> renderKind(projection.refinementArm() != null
-                ? projection.refinementArm() : projection.kindArm(), fail);
             case INVALID_UNICODE -> renderKind(projection.unicodeArm() != null
                 ? projection.unicodeArm() : projection.kindArm(), fail);
-            case INT_OUT_OF_RANGE -> renderSimple(FailureArmId.INT32_RANGE, fail);
             case CLASS_IDENTITY -> renderIdentity(fail);
             case SIG_MISMATCH -> renderSignature(projection, fail);
             case ELEMENT -> renderElement(projection, fail);
@@ -828,7 +739,7 @@ public final class BoundaryExecutor {
             case NULL -> FailureProjections.CarrierKind.LANGUAGE_NULL;
             case BOOLEAN -> FailureProjections.CarrierKind.BOOLEAN;
             case STRING, INVALID_UNICODE -> FailureProjections.CarrierKind.STRING;
-            case INT, NUMBER -> FailureProjections.CarrierKind.NUMBER;
+            case NUMBER -> FailureProjections.CarrierKind.NUMBER;
             default -> FailureProjections.CarrierKind.TABLE;
         };
     }
@@ -894,20 +805,9 @@ public final class BoundaryExecutor {
                 }
                 yield first;
             }
-            case RuntimeDescriptor.Int ignored -> switch (view.kind()) {
-                case INT -> null;
-                case NUMBER -> {
-                    double value = view.numberValue();
-                    yield Double.isNaN(value) || Double.isInfinite(value)
-                            || value != Math.rint(value)
-                            || value < -2147483648d || value > 2147483647d
-                        ? FailureProjections.typedBoundaryToken(ActualKind.NUMBER, null)
-                        : null;
-                }
-                default -> jsonToken(view);
-            };
+
             case RuntimeDescriptor.Number ignored ->
-                view.kind() == ActualKind.NUMBER || view.kind() == ActualKind.INT
+                view.kind() == ActualKind.NUMBER
                     ? null : jsonToken(view);
             case RuntimeDescriptor.Null ignored ->
                 view.kind() == ActualKind.NULL

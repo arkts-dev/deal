@@ -188,7 +188,7 @@ public class RuntimeTypeMatcherTest {
         testBooleanRow();
         testStringRow();
         testNumberRow();
-        testIntRow();
+        testNumberExtremes();
         testTableRow();
         testClassRow();
         testArrayRow();
@@ -290,79 +290,17 @@ public class RuntimeTypeMatcherTest {
     }
 
     // =========================================================================
-    // int row: E8001 sub-cases and E8004 at the signed-32 domain boundaries
+    // Binary64 admission preserves every numeric payload.
     // =========================================================================
 
-    static void testIntRow() {
-        System.out.println("-- int row --");
-
-        // The one active v1.3 semantic profile: int is signed 32-bit
-        // (docs/spec-v1.3.md §Numeric overflow).
-        check(RuntimeTypeMatcher.INT32_MIN == -2147483648.0d
-                && RuntimeTypeMatcher.INT32_MAX == 2147483647.0d,
-            "pinned int domain is the signed-32 range [-2147483648, 2147483647]");
-
-        double min = RuntimeTypeMatcher.INT32_MIN;
-        double max = RuntimeTypeMatcher.INT32_MAX;
-
-        assertPass("int", 0.0, "integral zero passes");
-        assertPass("int", 42.0, "integral number passes");
-        assertPass("int", -42.0, "negative integral number passes");
-        assertPass("int", max, "upper boundary 2147483647 passes");
-        assertPass("int", min, "lower boundary -2147483648 passes");
-        assertPass("int", max - 1.0, "just inside the upper boundary passes");
-        assertPass("int", min + 1.0, "just inside the lower boundary passes");
-
-        // Negative zero does not exist in int: the admitted value is the
-        // normalized int 0 (spec §Numeric overflow), never -0.0.
-        assertPassNormalizedZero("int", -0.0, "negative zero is admitted as the normalized int 0");
-        assertPassNormalizedZero("?int", -0.0,
-            "the nullable int row normalizes negative zero too");
-
-        assertFailure("int", Boolean.TRUE, "E8001", "expected int, got boolean",
-            "int vs non-number boolean");
-        assertFailure("int", NULL_VALUE, "E8001", "expected int, got null",
-            "int vs non-number null");
-        assertFailure("int", "x", "E8001", "expected int, got string",
-            "int vs non-number string");
-        assertFailure("int", new TableValue(), "E8001", "expected int, got table",
-            "int vs non-number table");
-        assertFailure("int", Double.NaN, "E8001", "expected int, got NaN", "int vs NaN");
-        assertFailure("int", Double.POSITIVE_INFINITY, "E8001",
-            "expected int, got infinity", "int vs positive infinity");
-        assertFailure("int", Double.NEGATIVE_INFINITY, "E8001",
-            "expected int, got infinity", "int vs negative infinity");
-        assertFailure("int", 3.5, "E8001", "expected int, got non-integer number",
-            "int vs non-integer");
-        assertFailure("int", -3.5, "E8001", "expected int, got non-integer number",
-            "int vs negative non-integer");
-
-        assertFailure("int", max + 1.0, "E8004", "int out of safe range",
-            "2147483648 fails E8004");
-        assertFailure("int", min - 1.0, "E8004", "int out of safe range",
-            "-2147483649 fails E8004");
-        assertFailure("int", 4294967296.0, "E8004", "int out of safe range",
-            "2^32 fails E8004");
-        assertFailure("int", -4294967296.0, "E8004", "int out of safe range",
-            "-2^32 fails E8004");
-        // The retired v1.2 ±(2^53-1) range is no longer an admitted domain:
-        // those integral values are out of the signed-32 range.
-        assertFailure("int", 9007199254740991.0, "E8004", "int out of safe range",
-            "the retired +2^53-1 upper bound fails E8004");
-        assertFailure("int", -9007199254740991.0, "E8004", "int out of safe range",
-            "the retired -(2^53-1) lower bound fails E8004");
-        assertFailure("int", 9007199254740992.0, "E8004", "int out of safe range",
-            "the retired 2^53 bound fails E8004");
-        assertFailure("int", 1e308, "E8004", "int out of safe range",
-            "finite integral far above the range fails E8004");
-        assertFailure("int", -1e308, "E8004", "int out of safe range",
-            "finite integral far below the range fails E8004");
-
-        // The pinned order is refinement first, range second: a fractional
-        // value beyond the signed-32 range keeps its E8001 refinement code.
-        assertFailure("int", 3000000000.5, "E8001",
-            "expected int, got non-integer number",
-            "refinement (non-integer) precedes the signed-32 range arm");
+    static void testNumberExtremes() {
+        for (double value : new double[]{0, -0.0, 42, -42, 2147483648d,
+                -2147483649d, 9007199254740992d, 1e308, -1e308,
+                Double.MIN_VALUE, Double.NaN, Double.POSITIVE_INFINITY,
+                Double.NEGATIVE_INFINITY, 3000000000.5}) {
+            assertPass("number", value, "binary64 value passes " + value);
+            assertPass("?number", value, "nullable binary64 value passes " + value);
+        }
     }
 
     // =========================================================================
@@ -443,25 +381,25 @@ public class RuntimeTypeMatcherTest {
     static void testArrayRow() {
         System.out.println("-- array row --");
 
-        assertPass("[int]", new ArrayValue(1.0, 2.0), "int array passes");
-        assertPass("[int]", new ArrayValue(), "empty array passes");
-        assertPass("[[int]]", new ArrayValue(new ArrayValue(1.0), new ArrayValue(2.0, 3.0)),
+        assertPass("[number]", new ArrayValue(1.0, 2.0), "int array passes");
+        assertPass("[number]", new ArrayValue(), "empty array passes");
+        assertPass("[[number]]", new ArrayValue(new ArrayValue(1.0), new ArrayValue(2.0, 3.0)),
             "nested arrays pass");
-        assertPass("[?int]", new ArrayValue(NULL_VALUE, 5.0), "nullable elements pass");
+        assertPass("[?number]", new ArrayValue(NULL_VALUE, 5.0), "nullable elements pass");
         assertPass("[Error]", new ArrayValue(new ClassValue("Error")),
             "class elements pass");
-        assertPass("[(int)->null]", new ArrayValue(new FnValue("(int)->null")),
+        assertPass("[(number)->null]", new ArrayValue(new FnValue("(number)->null")),
             "function elements pass");
 
-        assertFailure("[int]", new TableValue(), "E8001", "expected array, got table",
+        assertFailure("[number]", new TableValue(), "E8001", "expected array, got table",
             "non-array table");
-        assertFailure("[int]", NULL_VALUE, "E8001", "expected array, got null",
+        assertFailure("[number]", NULL_VALUE, "E8001", "expected array, got null",
             "non-array null");
         assertFailure("[string]", new ArrayValue(42.0, "x"), "E8003",
             "array element 1 type mismatch", "first failing index is 1");
-        assertFailure("[int]", new ArrayValue(1.0, "x"), "E8003",
+        assertFailure("[number]", new ArrayValue(1.0, "x"), "E8003",
             "array element 2 type mismatch", "first failing index is 2");
-        assertFailure("[[int]]", new ArrayValue(new ArrayValue(1.0, "x"), new ArrayValue(2.0)),
+        assertFailure("[[number]]", new ArrayValue(new ArrayValue(1.0, "x"), new ArrayValue(2.0)),
             "E8003", "array element 1 type mismatch",
             "outer first failing index reported for nested arrays");
         assertFailure("[Error]",
@@ -472,14 +410,14 @@ public class RuntimeTypeMatcherTest {
         // unchanged value instance is returned.
         ArrayValue array = new ArrayValue(1.0, 2.0);
         Object[] before = array.elements.clone();
-        Object result = MATCHER.check("[int]", array, null);
+        Object result = MATCHER.check("[number]", array, null);
         check(result == array, "checked array returned as the unchanged value");
         check(Arrays.equals(before, array.elements), "array storage not mutated by the check");
 
         // A negative-zero element is admitted by the int row's normalization,
         // and the array's own storage keeps the element the caller supplied.
         ArrayValue zeros = new ArrayValue(-0.0);
-        check(MATCHER.check("[int]", zeros, null) == zeros,
+        check(MATCHER.check("[number]", zeros, null) == zeros,
             "an array holding a negative-zero element passes the int row");
         check(Double.doubleToRawLongBits((Double) zeros.elements[0])
                 == Double.doubleToRawLongBits(-0.0d),
@@ -493,17 +431,17 @@ public class RuntimeTypeMatcherTest {
     static void testNullableRow() {
         System.out.println("-- nullable row --");
 
-        assertPass("?int", NULL_VALUE, "nullable null passes");
-        assertPass("?int", 7.0, "nullable non-null passes");
-        assertPass("?int", null, "Java null passes through the seam's null-ness");
-        assertFailure("?int", "x", "E8001", "expected int, got string",
+        assertPass("?number", NULL_VALUE, "nullable null passes");
+        assertPass("?number", 7.0, "nullable non-null passes");
+        assertPass("?number", null, "Java null passes through the seam's null-ness");
+        assertFailure("?number", "x", "E8001", "expected number, got string",
             "inner failure propagates unchanged");
         assertPass("?[?string]", new ArrayValue(NULL_VALUE, "a"), "nested nullable array passes");
         assertFailure("?[?string]", new ArrayValue(NULL_VALUE, 42.0), "E8003",
             "array element 2 type mismatch", "inner array failure propagates");
-        assertFailure("?[int]", new TableValue(), "E8001", "expected array, got table",
+        assertFailure("?[number]", new TableValue(), "E8001", "expected array, got table",
             "inner non-array failure propagates");
-        assertPass("?(int)->int", NULL_VALUE, "nullable function null passes");
+        assertPass("?(number)->number", NULL_VALUE, "nullable function null passes");
     }
 
     // =========================================================================
@@ -513,31 +451,31 @@ public class RuntimeTypeMatcherTest {
     static void testFunctionRow() {
         System.out.println("-- function row --");
 
-        assertPass("(int)->string", new FnValue("(int)->string"), "sync wrapper byte-matches");
-        assertPass("async(int)->string", new FnValue("async(int)->string"),
+        assertPass("(number)->string", new FnValue("(number)->string"), "sync wrapper byte-matches");
+        assertPass("async(number)->string", new FnValue("async(number)->string"),
             "async wrapper byte-matches");
         assertPass("()->null", new FnValue("()->null"), "zero-arg wrapper byte-matches");
         assertPass("(Error)->null", new FnValue("(Error)->null"),
             "class-typed function byte-matches");
 
-        assertFailure("async(int)->string", new FnValue("(int)->string"), "E8010",
-            "function signature mismatch: expected async(int)->string, got (int)->string",
+        assertFailure("async(number)->string", new FnValue("(number)->string"), "E8010",
+            "function signature mismatch: expected async(number)->string, got (number)->string",
             "sync/async marker delta");
-        assertFailure("(int)->string", new FnValue("(int)->number"), "E8010",
-            "function signature mismatch: expected (int)->string, got (int)->number",
+        assertFailure("(number)->string", new FnValue("(number)->number"), "E8010",
+            "function signature mismatch: expected (number)->string, got (number)->number",
             "return-type delta");
-        assertFailure("(int)->string", new FnValue("(string)->string"), "E8010",
-            "function signature mismatch: expected (int)->string, got (string)->string",
+        assertFailure("(number)->string", new FnValue("(string)->string"), "E8010",
+            "function signature mismatch: expected (number)->string, got (string)->string",
             "parameter delta");
 
-        assertFailure("(int)->string", new TableValue(), "E8001", "expected function",
+        assertFailure("(number)->string", new TableValue(), "E8001", "expected function",
             "non-wrapper table");
-        assertFailure("(int)->string", NULL_VALUE, "E8001", "expected function",
+        assertFailure("(number)->string", NULL_VALUE, "E8001", "expected function",
             "non-wrapper null");
 
-        assertPass("[(int)->int]", new ArrayValue(new FnValue("(int)->int")),
+        assertPass("[(number)->number]", new ArrayValue(new FnValue("(number)->number")),
             "function inside array passes");
-        assertFailure("[(int)->int]", new ArrayValue(new FnValue("(int)->string")), "E8003",
+        assertFailure("[(number)->number]", new ArrayValue(new FnValue("(number)->string")), "E8003",
             "array element 1 type mismatch", "signature delta inside an array");
     }
 
@@ -592,14 +530,14 @@ public class RuntimeTypeMatcherTest {
         assertFailure("@src.models.User", new ClassValue("@src.models.User"), "E8001",
             "internal: cannot parse type descriptor: @src.models.User",
             "dotted class-name position");
-        assertFailure("??int", 1.0, "E8001",
-            "internal: cannot parse type descriptor: ??int", "nested nullable");
+        assertFailure("??number", 1.0, "E8001",
+            "internal: cannot parse type descriptor: ??number", "nested nullable");
         assertFailure("?null", NULL_VALUE, "E8001",
             "internal: cannot parse type descriptor: ?null", "nullable of null");
         assertFailure("[]", new ArrayValue(), "E8001",
             "internal: cannot parse type descriptor: []", "empty array");
-        assertFailure("async[int]", 1.0, "E8001",
-            "internal: cannot parse type descriptor: async[int]", "async not followed by (");
+        assertFailure("async[number]", 1.0, "E8001",
+            "internal: cannot parse type descriptor: async[number]", "async not followed by (");
         assertFailure("", 1.0, "E8001",
             "internal: cannot parse type descriptor: ", "empty descriptor text");
         assertFailure(null, NULL_VALUE, "E8001",
@@ -614,21 +552,21 @@ public class RuntimeTypeMatcherTest {
         System.out.println("-- range propagation --");
 
         RuntimeSourceLocation loc = new RuntimeSourceLocation("main.deal", 12, 4);
-        Object r = MATCHER.check("int", "x", loc);
+        Object r = MATCHER.check("number", "x", loc);
         RuntimeCheckFailure f = failure(r);
         check(f != null && "E8001".equals(f.code())
-                && "expected int, got string".equals(f.message())
+                && "expected number, got string".equals(f.message())
                 && f.range() == loc,
             "failure carries the identical supplied range instance");
         check("main.deal".equals(loc.file()) && loc.line() == 12 && loc.column() == 4,
             "the supplied location itself is untouched");
 
-        Object r2 = MATCHER.check("int", "x", null);
+        Object r2 = MATCHER.check("number", "x", null);
         RuntimeCheckFailure f2 = failure(r2);
         check(f2 != null && f2.range() == null, "absent range yields a failure with null range");
 
         Double seven = 7.0;
-        Object r3 = MATCHER.check("int", seven, loc);
+        Object r3 = MATCHER.check("number", seven, loc);
         check(r3 == seven, "passing check returns the value without a failure");
     }
 
@@ -640,8 +578,8 @@ public class RuntimeTypeMatcherTest {
         System.out.println("-- never throws / no mutation / deep nesting --");
 
         String[] hostile = {
-            "int[]", "@", "async", "[[", "?", "(x)->", "\u0000", "[int]]",
-            "@a//b", "@Foo", "Async(int)->int", "T|null"
+            "int[]", "@", "async", "[[", "?", "(x)->", "\u0000", "[number]]",
+            "@a//b", "@Foo", "Async(number)->int", "T|null"
         };
         for (String descriptor : hostile) {
             try {
@@ -661,7 +599,7 @@ public class RuntimeTypeMatcherTest {
         for (int i = 0; i < depth; i++) {
             deep.append('[');
         }
-        deep.append("int");
+        deep.append("number");
         for (int i = 0; i < depth; i++) {
             deep.append(']');
         }
@@ -723,8 +661,8 @@ public class RuntimeTypeMatcherTest {
         }
         check(threw, "RuntimeSourceLocation rejects column < 1");
 
-        RuntimeCheckFailure ok = new RuntimeCheckFailure("E8004", "int out of safe range", loc);
-        check("E8004".equals(ok.code()) && "int out of safe range".equals(ok.message())
+        RuntimeCheckFailure ok = new RuntimeCheckFailure("E8001", "expected number", loc);
+        check("E8001".equals(ok.code()) && "expected number".equals(ok.message())
                 && ok.range() == loc,
             "RuntimeCheckFailure carries (code, message, range)");
         threw = false;

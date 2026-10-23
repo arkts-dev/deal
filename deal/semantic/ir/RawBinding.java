@@ -52,7 +52,6 @@ public record RawBinding(
     String sourceSignature,
     String targetSignature,
     OpId materializingBoundaryOpId,
-    String intrinsicKind,
     FunctionId functionId,
     BlockId blockId,
     OpId adaptOpId,

@@ -2141,21 +2141,7 @@ public final class BindingsProductionValidator {
                     facts = productionFacts(model);
                 }
 
-                if (seedAdmittedIntrinsicKey(model, facts, operand.id())) {
-                    BindingSite seeded = facts.seedInitsOf().get(operand.id());
-                    if (adapt.proof() != null
-                            && (seeded == null
-                                || !adapt.proof().binding().equals(seeded.binding())
-                                || adapt.proof().generation() != seeded.generation())) {
-                        return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
-                            + op.opId() + " over the seeded intrinsic identity " + operand
-                            + " carries proof {" + adapt.proof().binding() + ", "
-                            + adapt.proof().generation() + "} naming no seeded binding/"
-                            + "generation (a proof over the intrinsic function value must "
-                            + "name the seeded binding/generation)");
-                    }
-                    continue;
-                }
+
                 List<SemanticOp> producingLoads = new ArrayList<>();
                 List<SemanticOp> producingOthers = new ArrayList<>();
                 for (SemanticOp other : model.unit.ops()) {
@@ -2487,19 +2473,7 @@ public final class BindingsProductionValidator {
      * clauses cannot disagree on a unit carrying the identity-preserving
      * load and the adapted declaration at once.
      */
-    private static boolean seedAdmittedIntrinsicKey(Model model, ProductionFacts facts,
-                                                    long key) {
-        if (facts.dealProductions(key) != 0
-                || facts.functionBoundaryInputs().getOrDefault(key, 0) != 0
-                || facts.seedWrites(key) != 1
-                || facts.producingValues().contains(key)) {
-            return false;
-        }
-        return model.unit.functionBindings()
-                .get(new FunctionAllocationIdentity(key))
-                instanceof FunctionExecutionBinding.IntrinsicFunction intrinsic
-            && intrinsic.descriptor().equals(intrinsic.kind().declaredSignature());
-    }
+
 
     private static Optional<CompilerDiagnostic> checkRegistryOneToOne(Model model) {
         ProductionFacts facts = productionFacts(model);
@@ -2521,43 +2495,6 @@ public final class BindingsProductionValidator {
                         + entry.getKey() + " is produced by " + count + " DEAL op(s) and "
                         + boundaryCount + " host crossing(s) (exactly one producing host "
                         + "crossing per HostFunctionValue registration)");
-                }
-            } else if (entry.getValue() instanceof FunctionExecutionBinding.IntrinsicFunction
-                    intrinsic) {
-                // The intrinsic-seed admission (D13): a key whose binding
-                // is IntrinsicFunction is admissible exactly when the
-                // unit carries exactly one seed write over that key (the
-                // seed BINDING_INIT of the seeded binding's own cell, per
-                // ProductionFacts.seedWrites) and the key contributes no
-                // other producing position (no closure/adapt/group/read
-                // production and no host crossing). The seed write is the
-                // BINDING_INIT of the seeded binding's own cell when an
-                // identity-preserving load of the key publishes it: a
-                // later BINDING_INIT storing the same identity into
-                // another binding's cell is the declaration's
-                // re-publication of the seed write and is not counted as
-                // a second seed write (the same predicate the
-                // ADAPTER_SOURCE_SHAPE VALUE-over-intrinsic exemption
-                // consumes).
-                int seedCount = seedInits.getOrDefault(key, 0);
-                int boundaryCount = boundaryInputs.getOrDefault(key, 0);
-                int seedWrites = facts.seedWrites(key);
-                if (count != 0 || boundaryCount != 0 || seedWrites != 1) {
-                    return fail(model, REGISTRY_ONE_TO_ONE, "the IntrinsicFunction key "
-                        + entry.getKey() + " is produced by " + count + " producing op(s), "
-                        + boundaryCount + " host crossing(s), and " + seedCount
-                        + " seed BINDING_INIT(s) (exactly one seed BINDING_INIT whose init "
-                        + "operand is that key, and no other producing position, per "
-                        + "producer-less intrinsic registration)");
-                }
-                // The pinned declared signature: the closed (kind,
-                // descriptor) pair of the registration.
-                if (!intrinsic.descriptor().equals(intrinsic.kind().declaredSignature())) {
-                    return fail(model, REGISTRY_ONE_TO_ONE, "the IntrinsicFunction key "
-                        + entry.getKey() + " carries the pair (" + intrinsic.kind()
-                        + ", " + intrinsic.descriptor().canonicalSpecText()
-                        + ") which is not the kind's pinned declared signature ("
-                        + intrinsic.kind().declaredSignature().canonicalSpecText() + ")");
                 }
             } else if (entry.getValue() instanceof FunctionExecutionBinding.DynamicFunctionValue
                     dynamic) {
@@ -2612,38 +2549,10 @@ public final class BindingsProductionValidator {
                 }
             }
         }
-        // The converse clause: every BINDING_INIT whose init operand
-        // identity is the result of no op of the unit (the
-        // identity-preserving loads of the seeded binding excluded) must
-        // be keyed by exactly one IntrinsicFunction registration in the
-        // same unit and must not be any HOST_TO_DEAL crossing input — the
-        // seed surface is the only admitted producer-less key.
-        for (Map.Entry<Long, Integer> entry : seedInits.entrySet()) {
-            FunctionAllocationIdentity identity =
-                new FunctionAllocationIdentity(entry.getKey());
-            if (boundaryInputs.getOrDefault(entry.getKey(), 0) != 0) {
-                return fail(model, REGISTRY_ONE_TO_ONE, "the producer-less BINDING_INIT "
-                    + "operand " + identity + " is a HOST_TO_DEAL crossing input (the "
-                    + "seed surface is the only admitted producer-less key; a host-"
-                    + "materialized function value registers a HostFunctionValue at "
-                    + "its producing crossing)");
-            }
-            FunctionExecutionBinding binding = model.unit.functionBindings().get(identity);
-            if (!(binding instanceof FunctionExecutionBinding.IntrinsicFunction)) {
-                return fail(model, REGISTRY_ONE_TO_ONE, "the BINDING_INIT operand "
-                    + identity + " is the result of no op of the unit and is keyed by "
-                    + (binding == null ? "no registration" : ("the " + binding.getClass()
-                        .getSimpleName() + " registration"))
-                    + " (a producer-less init operand is admissible only under exactly one "
-                    + "IntrinsicFunction registration)");
-            }
-            if (entry.getValue() != 1
-                    && (facts.preservedCells().get(entry.getKey()) == null
-                        || facts.preservedInits().getOrDefault(entry.getKey(), 0) != 1)) {
-                return fail(model, REGISTRY_ONE_TO_ONE, "the producer-less init operand "
-                    + identity + " carries " + entry.getValue() + " seed BINDING_INIT "
-                    + "op(s) (exactly one seed init per admitted intrinsic key)");
-            }
+        // No producer-less function identity is admitted.
+        if (!seedInits.isEmpty()) {
+            return fail(model, REGISTRY_ONE_TO_ONE,
+                "a BINDING_INIT operand has no producing operation");
         }
         // Every producing allocation registers exactly one binding.
         for (SemanticOp op : model.unit.ops()) {

@@ -583,7 +583,7 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireResultType(unit, chain, c[1], RuntimeDescriptor.Int.INSTANCE,
+        failure = requireResultType(unit, chain, c[1], RuntimeDescriptor.Number.INSTANCE,
             "the array key child at position 1");
         if (failure.isPresent()) {
             return failure;
@@ -716,7 +716,7 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireResultType(unit, chain, c[lengthPos], RuntimeDescriptor.Int.INSTANCE,
+        failure = requireResultType(unit, chain, c[lengthPos], RuntimeDescriptor.Number.INSTANCE,
             "the ARRAY_LENGTH child at position " + lengthPos);
         if (failure.isPresent()) {
             return failure;
@@ -755,7 +755,7 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireResultType(unit, chain, c[normalizePos], RuntimeDescriptor.Int.INSTANCE,
+        failure = requireResultType(unit, chain, c[normalizePos], RuntimeDescriptor.Number.INSTANCE,
             "the INDEX_NORMALIZE child at position " + normalizePos);
         if (failure.isPresent()) {
             return failure;
@@ -988,7 +988,7 @@ public final class AddressChainProtocol {
         if (failure.isPresent()) {
             return failure;
         }
-        failure = requireResultType(unit, chain, c[1], RuntimeDescriptor.Int.INSTANCE,
+        failure = requireResultType(unit, chain, c[1], RuntimeDescriptor.Number.INSTANCE,
             "the array key child at position 1");
         if (failure.isPresent()) {
             return failure;

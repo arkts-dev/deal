@@ -10,8 +10,8 @@
 // declared (no fixture invokes it).
 
 export function echoBoolean(value: boolean): boolean;
-export function echoInt(value: int): int;
+export function echoInt(value: number): number;
 export function echoNumber(value: number): number;
 export function echoString(value: string): string;
-export function nextValue(): int;
-export function nullableInt(value: int | null): int | null;
+export function nextValue(): number;
+export function nullableInt(value: number | null): number | null;

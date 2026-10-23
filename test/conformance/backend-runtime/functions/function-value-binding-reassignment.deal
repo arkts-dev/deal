@@ -6,21 +6,21 @@
 import * as console from "std/console";
 import * as json from "std/json";
 
-function one(): int { return 1; }
-function two(): int { return 2; }
-function bump(x: int): int { return x + 1; }
+function one(): number { return 1; }
+function two(): number { return 2; }
+function bump(x: number): number { return x + 1; }
 
-function fib(n: int): int {
+function fib(n: number): number {
   if (n < 2) { return n; }
   return fib(n - 1) + fib(n - 2);
 }
 
-function isEven(n: int): boolean {
+function isEven(n: number): boolean {
   if (n === 0) { return true; }
   return isOdd(n - 1);
 }
 
-function isOdd(n: int): boolean {
+function isOdd(n: number): boolean {
   if (n === 0) { return false; }
   return isEven(n - 1);
 }
@@ -33,11 +33,11 @@ function check(condition: boolean, message: string): null {
 }
 
 // The captured read: the closure body calls the binding's current value.
-export function test_captured_function_binding(): int {
-  let f: () => int = one;
-  let call: () => int = function(): int { return f(); };
+export function test_captured_function_binding(): number {
+  let f: () => number = one;
+  let call: () => number = function(): number { return f(); };
   f = two;
-  let result: int = call();
+  let result: number = call();
   check(result === 2, "the captured read observes the current binding");
   return result;
 }
@@ -45,9 +45,9 @@ export function test_captured_function_binding(): int {
 // The repeated loop condition: the assignment inside the body governs the
 // next iteration's condition. The visits guard bounds the loop, so a stale
 // callee terminates after at most five iterations instead of never.
-export function test_loop_function_binding(): int {
-  let f: () => int = one;
-  let visits: int = 0;
+export function test_loop_function_binding(): number {
+  let f: () => number = one;
+  let visits: number = 0;
   while (f() === 1 && visits < 5) {
     visits = visits + 1;
     f = two;
@@ -58,14 +58,14 @@ export function test_loop_function_binding(): int {
 
 // The nested capture: a closure body nested inside another closure body
 // reads the enclosing binding's current value.
-export function test_nested_capture_function_binding(): int {
-  let f: () => int = one;
-  let outer: () => (() => int) = function(): (() => int) {
-    return function(): int { return f(); };
+export function test_nested_capture_function_binding(): number {
+  let f: () => number = one;
+  let outer: () => (() => number) = function(): (() => number) {
+    return function(): number { return f(); };
   };
   f = two;
-  let inner: () => int = outer();
-  let result: int = inner();
+  let inner: () => number = outer();
+  let result: number = inner();
   check(result === 2, "the nested capture read observes the current binding");
   return result;
 }
@@ -73,17 +73,17 @@ export function test_nested_capture_function_binding(): int {
 // The alias: a copied value keeps the function value it copied, while a read
 // of the source binding observes the current one — including when the store
 // sits on a conditional path.
-export function test_alias_function_binding(): int {
-  let f: () => int = one;
-  let copied: () => int = f;
+export function test_alias_function_binding(): number {
+  let f: () => number = one;
+  let copied: () => number = f;
   f = two;
-  let copiedValue: int = copied();
-  let currentValue: int = f();
+  let copiedValue: number = copied();
+  let currentValue: number = f();
   let cond: boolean = false;
-  let branchy: () => int = one;
+  let branchy: () => number = one;
   if (cond) { branchy = two; }
-  let branchAlias: () => int = branchy;
-  let branchValue: int = branchAlias();
+  let branchAlias: () => number = branchy;
+  let branchValue: number = branchAlias();
   check(copiedValue === 1, "the alias keeps the copied function value");
   check(currentValue === 2, "the source read observes the current value");
   check(branchValue === 1, "the branch alias copies the taken path's value");
@@ -92,21 +92,21 @@ export function test_alias_function_binding(): int {
 
 // The conditional store: a call after the branch observes the value of the
 // path that ran.
-export function test_branch_function_binding(): int {
-  let f: () => int = one;
+export function test_branch_function_binding(): number {
+  let f: () => number = one;
   let cond: boolean = false;
   if (cond) { f = two; }
-  let result: int = f();
+  let result: number = f();
   check(result === 1, "the post-branch call observes the taken path");
   return result;
 }
 
 // The positive static controls: a never-assigned binding, direct recursion
 // and mutual recursion keep their statically resolved callees.
-export function test_static_function_controls(): int {
-  let stable: () => int = two;
-  let stableValue: int = stable();
-  let recursive: int = fib(10);
+export function test_static_function_controls(): number {
+  let stable: () => number = two;
+  let stableValue: number = stable();
+  let recursive: number = fib(10);
   let mutual: boolean = isEven(10);
   check(stableValue === 2, "the never-assigned binding stays callable");
   check(recursive === 55, "direct recursion");
@@ -115,31 +115,31 @@ export function test_static_function_controls(): int {
 }
 
 // The arity-extension control: the adapter keeps its own source mode.
-export function test_arity_extension_control(): int {
-  let src: (x: int) => int = bump;
-  let widened: (x: int, y: int) => int = src;
+export function test_arity_extension_control(): number {
+  let src: (x: number) => number = bump;
+  let widened: (x: number, y: number) => number = src;
   src = bump;
-  let result: int = widened(3, 4);
+  let result: number = widened(3, 4);
   check(result === 4, "arity extension keeps the source value");
   return result;
 }
 
 export function main(): null {
-  let captured: int = test_captured_function_binding();
-  let visits: int = test_loop_function_binding();
-  let nested: int = test_nested_capture_function_binding();
-  let alias: int = test_alias_function_binding();
-  let afterBranch: int = test_branch_function_binding();
-  let staticControls: int = test_static_function_controls();
-  let widened: int = test_arity_extension_control();
+  let captured: number = test_captured_function_binding();
+  let visits: number = test_loop_function_binding();
+  let nested: number = test_nested_capture_function_binding();
+  let alias: number = test_alias_function_binding();
+  let afterBranch: number = test_branch_function_binding();
+  let staticControls: number = test_static_function_controls();
+  let widened: number = test_arity_extension_control();
   console.log(json.stringify({
-    captured: captured,
-    visits: visits,
-    nested: nested,
-    alias: alias,
-    afterBranch: afterBranch,
-    staticControls: staticControls,
-    widened: widened
+    captured: captured === 2,
+    visits: visits === 1,
+    nested: nested === 2,
+    alias: alias === 121,
+    afterBranch: afterBranch === 1,
+    staticControls: staticControls === 57,
+    widened: widened === 4
   }));
   return null;
 }

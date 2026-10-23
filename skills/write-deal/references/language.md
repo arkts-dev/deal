@@ -1,7 +1,6 @@
 # DEAL language guide
 
-Practical guide, not a specification. Authoritative source:
-[DEAL v1.3](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.3.md).
+Practical guide, not a specification. Authority: the compiler's `docs/spec-v1.4.md`.
 
 ## Syntax
 
@@ -13,11 +12,9 @@ Assignments use `x = x + 1`. Write callbacks as function expressions; `=>` descr
 
 ## Types
 
-Built-ins: `null`, `boolean`, `int`, `number`, `string`, `table`, `Error`. Compose nominal classes, homogeneous `T[]`, nullable `T | null`, and function types.
+Built-ins: `null`, `boolean`, `number`, `string`, `table`, `Error`. Compose nominal classes, homogeneous `T[]`, nullable `T | null`, and function types.
 
-Types are invariant. Integer literals are int; decimal/exponent literals are number. Int is signed 32-bit; number is IEEE 754 double. Integer arithmetic checks overflow; division truncates toward zero and rejects zero divisors. There are no exponentiation or remainder operators.
-
-Explicit `number(intValue)` converts to floating point. `int(numberValue)` requires an integral, finite, in-range value. Round deliberately before converting. Use a typed helper or declared host API for text conversion.
+Types are invariant. Every numeric literal and operation uses IEEE 754 binary64, rounded nearest/ties-even. Arithmetic preserves signed zero, infinities, and NaN; division is nontrapping. Validate finite whole values for indexes and substring bounds. Round deliberately with `math.floor` or `math.ceil`. Use a typed helper or declared host API for text conversion.
 
 Equality uses `===`/`!==` with equal types, except nullable comparison with null. Conditions and logical operators require boolean. String concatenation and interpolation accept strings; format other values explicitly.
 
@@ -53,7 +50,7 @@ Arrays are zero-based. Annotate empty literals. Append at length and iterate wit
 
 Attach `// @jsonable` immediately to an exported class. Call its generated module helpers: `C$fromJson(string): C | null`, `C$toJson(C): string`.
 
-Parsing rejects extra keys and duplicate keys, applies defaults, preserves presence, and returns null on invalid input. Integral JSON numbers in int range parse as int; other numbers parse as number. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Handle non-JSON data, non-finite numbers, and cycles explicitly.
+Parsing rejects extra keys and duplicate keys, applies defaults, preserves presence, and returns null on invalid input. JSON numbers parse as binary64, preserving negative zero; serialization emits either zero sign as `0`. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Handle non-JSON data, non-finite numbers, and cycles explicitly.
 
 ## Modules
 
@@ -68,8 +65,8 @@ The manifest supplies module roots, output, backend, languageVersion, and extern
 export function log(x: string): null;
 export function error(x: string): null;
 // std/string
-export function length(s: string): int;
-export function substring(s: string, start: int, end: int): string;
+export function length(s: string): number;
+export function substring(s: string, start: number, end: number): string;
 export function contains(s: string, part: string): boolean;
 export function startsWith(s: string, part: string): boolean;
 export function endsWith(s: string, part: string): boolean;
@@ -85,10 +82,7 @@ export function stringify(t: table): string;
 export function floor(x: number): number;
 export function ceil(x: number): number;
 export function sqrt(x: number): number;
-export function absInt(x: int): int;
 export function absNumber(x: number): number;
-export function minInt(a: int, b: int): int;
-export function maxInt(a: int, b: int): int;
 // std/time
 export function nowMillis(): number;
 ```

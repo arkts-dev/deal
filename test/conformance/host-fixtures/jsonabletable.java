@@ -13,16 +13,16 @@
 final class HostJsonabletable {
   public static Object makeTable() {
     deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
-    t.write("a", Long.valueOf(1L));
+    t.write("a", Double.valueOf(1L));
     return t;
   }
 
   public static Object makeNested() {
     deal.codegen.jvm.JvmRuntime.Table inner = new deal.codegen.jvm.JvmRuntime.Table();
-    inner.write("a", Long.valueOf(1L));
+    inner.write("a", Double.valueOf(1L));
     deal.codegen.jvm.JvmRuntime.Array xs = new deal.codegen.jvm.JvmRuntime.Array(2);
-    xs.elements.add(Long.valueOf(10L));
-    xs.elements.add(Long.valueOf(20L));
+    xs.elements.add(Double.valueOf(10L));
+    xs.elements.add(Double.valueOf(20L));
     deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
     t.write("inner", inner);
     t.write("xs", xs);
@@ -67,7 +67,7 @@ final class HostJsonabletable {
   public static Object makeInfiniteElements() {
     deal.codegen.jvm.JvmRuntime.Array xs = new deal.codegen.jvm.JvmRuntime.Array(2);
     xs.elements.add(Double.valueOf(Double.POSITIVE_INFINITY));
-    xs.elements.add(Long.valueOf(2L));
+    xs.elements.add(Double.valueOf(2L));
     deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
     t.write("xs", xs);
     return t;
@@ -75,13 +75,13 @@ final class HostJsonabletable {
 
   public static Object makeBadKey() {
     deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
-    t.write("\uD800", Long.valueOf(1L));
+    t.write("\uD800", Double.valueOf(1L));
     return t;
   }
 
   public static Object makeNestedBadKey() {
     deal.codegen.jvm.JvmRuntime.Table inner = new deal.codegen.jvm.JvmRuntime.Table();
-    inner.write("\uD800", Long.valueOf(1L));
+    inner.write("\uD800", Double.valueOf(1L));
     deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
     t.write("inner", inner);
     return t;

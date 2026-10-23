@@ -1,7 +1,7 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: int[] is absent from the jsonable field-type allowlist
+// @description: number[] is absent from the jsonable field-type allowlist
 // @expected: compile-error E4007
-// @features: jsonable, int[], classes, diagnostics, v1.2
+// @features: jsonable, number[], classes, diagnostics, v1.2
 
 // @jsonable
 export class Blob {

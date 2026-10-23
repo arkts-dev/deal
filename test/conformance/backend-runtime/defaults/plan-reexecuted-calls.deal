@@ -6,7 +6,7 @@
 import * as probe from "host/planprobe";
 
 class Counter {
-  value: int = probe.nextValue();
+  value: number = probe.nextValue();
 }
 
 export function test_plan_reexecuted_calls(): null {

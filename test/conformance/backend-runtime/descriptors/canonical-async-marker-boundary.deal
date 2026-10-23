@@ -3,14 +3,14 @@
 // @expected: runtime-ok
 // @features: descriptors, async-await, functions
 
-async function makeValue(): int {
+async function makeValue(): number {
   return 42;
 }
 
-export async function test_canonical_async_marker_boundary(): int {
+export async function test_canonical_async_marker_boundary(): number {
   let holder: table = { f: makeValue };
-  let f: async () => int = holder.f;
-  let result: int = await f();
+  let f: async () => number = holder.f;
+  let result: number = await f();
   if (result !== 42) {
     throw { code: "TEST_FAIL", message: "async marker boundary value mismatch" };
   }

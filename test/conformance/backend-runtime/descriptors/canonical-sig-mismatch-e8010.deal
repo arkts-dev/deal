@@ -3,13 +3,13 @@
 // @expected: runtime-error E8010
 // @features: descriptors, functions, runtime-errors
 
-function asString(x: int): string {
+function asString(x: number): string {
   return "s";
 }
 
-export function test_canonical_sig_mismatch(): int {
+export function test_canonical_sig_mismatch(): number {
   let holder: table = { f: asString };
-  let f: (x: int) => int = holder.f;
+  let f: (x: number) => number = holder.f;
   return f(1);
 }
 

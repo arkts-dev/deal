@@ -3,5 +3,5 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class C {x?:int;}
+class C {x?:number;}
 export function f(c:C): boolean {return has(c.x);}

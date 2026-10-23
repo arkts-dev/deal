@@ -24,7 +24,6 @@ import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.IndexMode;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.IterationMode;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
@@ -133,8 +132,6 @@ public final class JsSemanticEmitter {
     private static final class Session {
 
         /** One binding incarnation: the home cell of a seeded carrier. */
-        private record SeedCell(BindingId binding, long generation) {
-        }
 
         private final JsEmissionInput input;
         private final Map<ModuleId, LoweredModuleUnit> units = new LinkedHashMap<>();
@@ -149,7 +146,6 @@ public final class JsSemanticEmitter {
             new HashMap<>();
         private final Map<Long, SemanticOp> producerByValue = new HashMap<>();
         /** Registered intrinsic kind per allocation identity (value id). */
-        private final Map<Long, IntrinsicKind> intrinsicKinds = new HashMap<>();
         /**
          * The recorded import kind of every module the whole closure
          * resolves (one kind per resolved module by construction): the
@@ -187,7 +183,6 @@ public final class JsSemanticEmitter {
          * load, the adapter's VALUE operand) reads that cell, so one
          * intrinsic is one value and reference identity holds.
          */
-        private final Map<Long, SeedCell> intrinsicSeedCells = new HashMap<>();
         /** The binding cell holding each lowered function's closure. */
         private final Map<Long, String> closureBindings = new HashMap<>();
         private final Map<Long, LoweredFunction> functions = new HashMap<>();
@@ -384,13 +379,8 @@ public final class JsSemanticEmitter {
             }
             for (Map.Entry<FunctionAllocationIdentity, FunctionExecutionBinding>
                     entry : unit.functionBindings().entrySet()) {
-                if (entry.getValue()
-                        instanceof FunctionExecutionBinding.IntrinsicFunction
-                            intrinsic) {
-                    intrinsicKinds.put(entry.getKey().id(), intrinsic.kind());
-                }
+
             }
-            registerIntrinsicSeedCells(unit);
             for (LoweredFunction function : unit.functions().values()) {
                 functions.put(function.functionId().id(), function);
             }
@@ -467,26 +457,7 @@ public final class JsSemanticEmitter {
          * seed init is the cell every other materialization of the identity
          * reads.
          */
-        private void registerIntrinsicSeedCells(LoweredModuleUnit unit) {
-            Set<Long> nonLoadProduced = new HashSet<>();
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.BINDING_LOAD
-                        && op.result() instanceof ValueId produced) {
-                    nonLoadProduced.add(produced.id());
-                }
-            }
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.BINDING_INIT
-                        || !(op.payload() instanceof KindPayload
-                            .BindingInitPayload init)
-                        || !intrinsicKinds.containsKey(init.value().id())
-                        || nonLoadProduced.contains(init.value().id())) {
-                    continue;
-                }
-                intrinsicSeedCells.putIfAbsent(init.value().id(),
-                    new SeedCell(init.binding(), init.generation()));
-            }
-        }
+
 
         /**
          * Marks the ENTRY_INVOKE delegation of a non-entry module as skipped
@@ -1164,7 +1135,7 @@ public final class JsSemanticEmitter {
                 case UNARY -> emitUnary(op);
                 case BINARY -> emitBinary(op);
                 case STRING_CONCAT -> emitConcat(op);
-                case INTRINSIC_CALL -> emitIntrinsicCall(op);
+
                 case ARRAY_NEW -> emitArrayNew(op);
                 case TABLE_NEW -> emitTableNew(op);
                 case ARRAY_LENGTH -> emitArrayLength(op);
@@ -1240,7 +1211,7 @@ public final class JsSemanticEmitter {
             String literal = switch (payload.value()) {
                 case ScalarValue.Null ignored -> "null";
                 case ScalarValue.Boolean bool -> bool.value() ? "true" : "false";
-                case ScalarValue.Int intValue -> Integer.toString(intValue.value());
+
                 case ScalarValue.Number number -> numberLiteral(number.value());
                 case ScalarValue.String string -> jsString(string.value());
             };
@@ -1253,8 +1224,7 @@ public final class JsSemanticEmitter {
             String operand = slot(op.operands().get(0));
             String expression = switch (payload.selector()) {
                 case BOOL_NOT -> "!" + operand;
-                case INT32_NEG -> "$rt.intNeg(" + operand + ", " + spanArgs(op)
-                    + ")";
+
                 case NUMBER_NEG -> "-" + numeric(operand);
             };
             emit(slotOf(op) + " = " + expression + ";");
@@ -1266,16 +1236,9 @@ public final class JsSemanticEmitter {
             String left = slot(op.operands().get(0));
             String right = slot(op.operands().get(1));
             String expression = switch (payload.selector()) {
-                case INT32_ADD -> "$rt.intAdd(" + left + ", " + right + ", "
-                    + spanArgs(op) + ")";
-                case INT32_SUB -> "$rt.intSub(" + left + ", " + right + ", "
-                    + spanArgs(op) + ")";
-                case INT32_MUL -> "$rt.intMul(" + left + ", " + right + ", "
-                    + spanArgs(op) + ")";
-                case INT32_DIV_TRUNC -> "$rt.intDiv(" + left + ", " + right
-                    + ", " + spanArgs(op) + ")";
 
-                case NUMBER_ADD -> "(" + numeric(left) + " + "
+
+case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + numeric(right) + ")";
                 case NUMBER_SUB -> "(" + numeric(left) + " - "
                     + numeric(right) + ")";
@@ -1287,19 +1250,19 @@ public final class JsSemanticEmitter {
                 // variant carrier ($rt.numOf) exactly like the shared
                 // executor's number views: a decoded JSON slot stays
                 // comparable and computable by value on every carrier.
-                case INT32_EQ, NUMBER_EQ -> "(" + numeric(left) + " === "
+                case NUMBER_EQ -> "(" + numeric(left) + " === "
                     + numeric(right) + ")";
                 case BOOLEAN_EQ, REFERENCE_EQ, STRING_EQ -> "(" + left + " === " + right + ")";
-                case INT32_NE, NUMBER_NE -> "(" + numeric(left) + " !== "
+                case NUMBER_NE -> "(" + numeric(left) + " !== "
                     + numeric(right) + ")";
                 case BOOLEAN_NE, REFERENCE_NE, STRING_NE -> "(" + left + " !== " + right + ")";
-                case INT32_LT, NUMBER_LT -> "(" + numeric(left) + " < "
+                case NUMBER_LT -> "(" + numeric(left) + " < "
                     + numeric(right) + ")";
-                case INT32_LE, NUMBER_LE -> "(" + numeric(left) + " <= "
+                case NUMBER_LE -> "(" + numeric(left) + " <= "
                     + numeric(right) + ")";
-                case INT32_GT, NUMBER_GT -> "(" + numeric(left) + " > "
+                case NUMBER_GT -> "(" + numeric(left) + " > "
                     + numeric(right) + ")";
-                case INT32_GE, NUMBER_GE -> "(" + numeric(left) + " >= "
+                case NUMBER_GE -> "(" + numeric(left) + " >= "
                     + numeric(right) + ")";
                 case STRING_LT -> "($rt.strCompare(" + left + ", " + right
                     + ") < 0)";
@@ -1347,8 +1310,7 @@ public final class JsSemanticEmitter {
             RuntimeDescriptor inner = descriptor
                 instanceof RuntimeDescriptor.Nullable nullable
                     ? nullable.inner() : descriptor;
-            return inner == RuntimeDescriptor.Int.INSTANCE
-                    || inner == RuntimeDescriptor.Number.INSTANCE
+            return inner == RuntimeDescriptor.Number.INSTANCE
                 ? numeric(operand) : operand;
         }
 
@@ -1379,24 +1341,9 @@ public final class JsSemanticEmitter {
                 + (expression.length() == 0 ? "\"\"" : expression) + ";");
         }
 
-        private void emitIntrinsicCall(SemanticOp op) {
-            KindPayload.IntrinsicCallPayload payload =
-                (KindPayload.IntrinsicCallPayload) op.payload();
-            emit(slotOf(op) + " = " + intrinsicInvocation(payload.kind(),
-                "(" + slot(payload.input()) + ")", spanArgs(op)) + ";");
-        }
 
-        /** The one conversion ladder of an intrinsic invocation. */
-        private static String intrinsicInvocation(IntrinsicKind kind,
-                                                  String argument,
-                                                  String location) {
-            return switch (kind) {
-                case INT_CONVERT -> "$rt.intConvert(" + argument + ", "
-                    + location + ")";
-                case NUMBER_CONVERT -> "$rt.numberConvert(" + argument + ", "
-                    + location + ")";
-            };
-        }
+/** The one conversion ladder of an intrinsic invocation. */
+
 
         // =====================================================================
         // Containers
@@ -1508,7 +1455,7 @@ public final class JsSemanticEmitter {
                     + ");");
             } else {
                 String length = normalizeLengthSlot(payload.slot());
-                emit("if (" + index + " < 0 || " + index + " >= " + length
+                emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " >= " + length
                     + ") { $rt.fail(\"E8002\", \"array index out of bounds\","
                     + " " + spanArgs(boundary) + "); }");
                 // The carrier split is $rt.arrayAt's own (a native Array
@@ -1822,18 +1769,6 @@ public final class JsSemanticEmitter {
          */
         private String bindingValueExpr(BindingId binding, long generation,
                                         ValueId valueId) {
-            IntrinsicKind kind = intrinsicKinds.get(valueId.id());
-            if (kind != null) {
-                SeedCell seed = intrinsicSeedCells.get(valueId.id());
-                if (seed == null) {
-                    return intrinsicWrapper(kind);
-                }
-                if (seed.binding().equals(binding)
-                        && seed.generation() == generation) {
-                    return intrinsicWrapper(kind);
-                }
-                return cellSource(seed.binding(), seed.generation());
-            }
             if (producerByValue.containsKey(valueId.id())) {
                 return slot(valueId);
             }
@@ -1842,16 +1777,8 @@ public final class JsSemanticEmitter {
                 + " producer defect)");
         }
 
-        private static String intrinsicWrapper(IntrinsicKind kind) {
-            return switch (kind) {
-                case INT_CONVERT -> "$rt.function(\"(number)->int\", (v, $f, $l,"
-                    + " $c) => $rt.intConvert(v, $f, $l, $c), \"HOST\")";
-                case NUMBER_CONVERT -> "$rt.function(\"(int)->number\", (v, $f,"
-                    + " $l, $c) => $rt.numberConvert(v, $f, $l, $c), \"HOST\")";
-            };
-        }
 
-        private void emitBindingLoad(SemanticOp op) {
+private void emitBindingLoad(SemanticOp op) {
             KindPayload.BindingLoadPayload payload =
                 (KindPayload.BindingLoadPayload) op.payload();
             emit(slotOf(op) + " = "
@@ -2166,15 +2093,6 @@ public final class JsSemanticEmitter {
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {
             ValueId valueId = value.value();
-            IntrinsicKind kind = intrinsicKinds.get(valueId.id());
-            if (kind != null) {
-                // The seeded identity's VALUE capture is the seed cell's
-                // carrier: the adapter retains the one materialized value,
-                // never a fresh wrapper (identity preservation).
-                SeedCell seed = intrinsicSeedCells.get(valueId.id());
-                return seed == null ? intrinsicWrapper(kind)
-                    : cellSource(seed.binding(), seed.generation());
-            }
             if (producerByValue.containsKey(valueId.id())) {
                 return slot(valueId);
             }
@@ -2234,7 +2152,7 @@ public final class JsSemanticEmitter {
                 case ARRAY_ELEMENT_ASSIGNMENT -> {
                     String index = chainIndexSlot(chain);
                     String length = chainLengthSlot(chain);
-                    emit("if (" + index + " < 0 || " + index + " > " + length
+                    emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " > " + length
                         + ") { $rt.fail(\"E8002\", \"array index out of"
                         + " bounds\", " + spanArgs(boundary) + "); }");
                     emit(input + " = $rt.checkType("
@@ -2244,7 +2162,7 @@ public final class JsSemanticEmitter {
                 case ARRAY_ELEMENT_DELETE -> {
                     String index = chainIndexSlot(chain);
                     String length = chainLengthSlot(chain);
-                    emit("if (" + index + " < 0 || " + index + " > " + length
+                    emit("if (!Number.isInteger(" + index + ") || " + index + " < 0 || " + index + " > " + length
                         + ") { $rt.fail(\"E8002\", \"array index out of"
                         + " bounds\", " + spanArgs(boundary) + "); }");
                 }
@@ -2356,24 +2274,7 @@ public final class JsSemanticEmitter {
                     boundaryPayload.descriptor(), i + 1);
                 arguments.add(slot(boundaryPayload.input()));
             }
-            if (binding instanceof FunctionExecutionBinding.IntrinsicFunction
-                    intrinsic) {
-                if (arguments.size() != 1) {
-                    throw unsupported(op, "the conversion intrinsic call "
-                        + op.opId() + " records " + arguments.size()
-                        + " parameter cell(s) for one declared parameter"
-                        + " (producer defect)");
-                }
-                emit(slotOf(op) + " = " + intrinsicInvocation(intrinsic.kind(),
-                    arguments.get(0), spanArgs(op)) + ";");
-                SemanticOp returnBoundary = payload.returnBoundaryOpId() == null
-                    ? null : opsById.get(payload.returnBoundaryOpId());
-                if (returnBoundary != null) {
-                    emitBoundaryCheck(returnBoundary, slotOf(op),
-                        descriptorOf(returnBoundary));
-                }
-                return;
-            }
+
             List<String> callArguments = new ArrayList<>(arguments);
             callArguments.add(spanArgs(op));
             if (binding instanceof FunctionExecutionBinding.HostFunction
@@ -3998,9 +3899,6 @@ public final class JsSemanticEmitter {
             }
             if (descriptor == RuntimeDescriptor.Boolean.INSTANCE) {
                 return "boolean";
-            }
-            if (descriptor == RuntimeDescriptor.Int.INSTANCE) {
-                return "int";
             }
             if (descriptor == RuntimeDescriptor.Number.INSTANCE) {
                 return "number";

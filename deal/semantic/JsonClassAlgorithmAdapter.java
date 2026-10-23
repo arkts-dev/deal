@@ -75,8 +75,7 @@ public final class JsonClassAlgorithmAdapter {
                 ClassOpsExecutor.Value.Null.INSTANCE;
             case SharedStdlibSemantics.Value.Bool bool ->
                 new ClassOpsExecutor.Value.Bool(bool.value());
-            case SharedStdlibSemantics.Value.Int intValue ->
-                new ClassOpsExecutor.Value.Int(intValue.value());
+
             case SharedStdlibSemantics.Value.Number number ->
                 new ClassOpsExecutor.Value.Number(number.value());
             case SharedStdlibSemantics.Value.String string -> {
@@ -242,8 +241,7 @@ public final class JsonClassAlgorithmAdapter {
                 SharedStdlibSemantics.Value.Null.INSTANCE;
             case ClassOpsExecutor.Value.Bool bool ->
                 new SharedStdlibSemantics.Value.Bool(bool.value());
-            case ClassOpsExecutor.Value.Int intValue ->
-                new SharedStdlibSemantics.Value.Int(intValue.value());
+
             case ClassOpsExecutor.Value.Number number ->
                 new SharedStdlibSemantics.Value.Number(number.value());
             case ClassOpsExecutor.Value.String string ->
@@ -368,9 +366,7 @@ public final class JsonClassAlgorithmAdapter {
             case ClassOpsExecutor.Value.Bool ignored -> {
                 // A JSON-shaped leaf: no failure.
             }
-            case ClassOpsExecutor.Value.Int ignored -> {
-                // A JSON-shaped leaf: no failure.
-            }
+
             case ClassOpsExecutor.Value.Number number -> {
                 if (!Double.isFinite(number.value())) {
                     throw new FirstFailure(pinnedPath,

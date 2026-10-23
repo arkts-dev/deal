@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: variables, narrowing, parameters
 
-export function test_parameter_shadow(): int {
+export function test_parameter_shadow(): number {
   let x: string | null = "a";
-  let f: (x: int) => int = function(x: int): int { return x; };
-  let result: int = f(4);
+  let f: (x: number) => number = function(x: number): number { return x; };
+  let result: number = f(4);
   if (result !== 4 || x === null) { throw {code: "TEST_FAIL", message: "parameter binding shadow"}; }
   if (x !== null) { if (x !== "a") { throw {code: "TEST_FAIL", message: "outer binding changed"}; } }
   return result;

@@ -190,7 +190,7 @@ public class ContainerLoweringArmsTest {
             ExpressionNode node) {
         Map<ExpressionNode, Type> typeMap =
             new java.util.IdentityHashMap<>(checks.typeMap());
-        typeMap.put(node, deal.types.Type.Int.INSTANCE);
+        typeMap.put(node, deal.types.Type.Number.INSTANCE);
         return new CheckResult(typeMap, checks.symbolTable(), checks.scopeMap(),
             checks.diagnostics(), checks.classScopes(),
             checks.constructedClassDecls());
@@ -427,12 +427,12 @@ public class ContainerLoweringArmsTest {
 
         RuntimeDescriptor[] expectedTypes = {
             RuntimeDescriptor.Null.INSTANCE, RuntimeDescriptor.Boolean.INSTANCE,
-            RuntimeDescriptor.Int.INSTANCE, RuntimeDescriptor.Number.INSTANCE,
+            RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE,
             RuntimeDescriptor.String.INSTANCE
         };
         ScalarValue[] expectedScalars = {
             ScalarValue.Null.INSTANCE, new ScalarValue.Boolean(true),
-            new ScalarValue.Int(42), new ScalarValue.Number(4.5),
+            new ScalarValue.Number(42), new ScalarValue.Number(4.5),
             new ScalarValue.String("abc")
         };
         for (int i = 0; i < literals.size(); i++) {
@@ -464,179 +464,41 @@ public class ContainerLoweringArmsTest {
     //     never truncate; the regression for the silent-narrowing finding)
     // =========================================================================
 
-    static void checkIntLiteralRangeDetail(String what, RuntimeException defect) {
-        check(defect instanceof SemanticLowerer.IntLiteralOutOfRange,
-            what + " raises IntLiteralOutOfRange");
-        if (!(defect instanceof SemanticLowerer.IntLiteralOutOfRange outOfRange)) {
-            return;
-        }
-        check(outOfRange.getMessage().contains(Long.toString(outOfRange.value())),
-            what + " defect message carries the literal value");
-        LoweringFailureDetail detail = SemanticLowerer.loweringFailureDetail(MODULE, defect);
-        check("main".equals(detail.module()), what + " detail module is main");
-        check(detail.capability() == SemanticCapability.SIGNED_INT32,
-            what + " detail capability SIGNED_INT32");
-        check(SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE.equals(detail.validatorRule()),
-            what + " detail validatorRule INT32_LITERAL_OUT_OF_RANGE");
-        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_3_INT32,
-            what + " detail semanticProfile DEAL_V1_3_INT32");
-        check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
-            what + " detail irVersion deal.semantic-ir/2");
-        check(("SemanticLowerer " + SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE + " ("
-                + outOfRange.getMessage() + ")").equals(detail.origin()),
-            what + " detail origin is the pinned component description");
-        CompilerDiagnostic diagnostic = FailureContractRegistry.e6005(detail);
-        check("E6005".equals(diagnostic.code())
-                && diagnostic.diagnosticCode() == DiagnosticCode.E6005
-                && "error".equals(diagnostic.severity()),
-            what + " converts to an error-severity E6005 diagnostic through the registry");
-        check(diagnostic.message().contains(SemanticLowerer.INT32_LITERAL_OUT_OF_RANGE),
-            what + " E6005 message carries the INT32_LITERAL_OUT_OF_RANGE rule");
-    }
-
     static void testConstIntLiteralRangeGate() {
-        System.out.println("-- CONST arm: the signed32 int-literal range gate --");
-
-        // (a) The in-range extrema lower to the exact scalar — the cast is
-        // exact at the boundary, never coerced.
-        long[] inRange = {2147483647L, -2147483648L};
-        for (long value : inRange) {
+        System.out.println("-- CONST arm preserves binary64 values without signed32 gates --");
+        for (double value : new double[] {2147483647, -2147483648, 2147483648.0,
+                -2147483649.0, 9007199254740992.0, Double.MAX_VALUE,
+                Double.POSITIVE_INFINITY, Double.MIN_VALUE, 0.0, -0.0}) {
             Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
-            LiteralExpr literal = new LiteralExpr(span, new LiteralValue.IntLiteral(value));
-            CheckResult checks = new CheckResult(Map.of(literal, Type.Int.INSTANCE),
+            LiteralExpr literal = new LiteralExpr(span, new LiteralValue.NumberLiteral(value));
+            CheckResult checks = new CheckResult(Map.of(literal, Type.Number.INSTANCE),
                 new SymbolTable(), List.of());
             SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
             ValueId result = lowerer.lowerExpression(literal);
-            List<SemanticOp> ops = lowerer.ops();
-            check(ops.size() == 1, "int literal " + value + " produced exactly one op");
-            if (ops.size() != 1) {
-                continue;
-            }
-            SemanticOp op = ops.get(0);
-            check(op.kind() == SemanticOpKind.CONST,
-                "int literal " + value + " (in-range extreme) lowers to CONST");
-            KindPayload.ConstPayload payload = (KindPayload.ConstPayload) op.payload();
-            check(payload.value().equals(new ScalarValue.Int((int) value)),
-                "int literal " + value + " CONST payload is the exact ScalarValue.Int("
-                    + value + "), never coerced");
-            check(op.result().equals(result),
-                "int literal " + value + " CONST publishes its result ValueId");
-            check(op.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-                "int literal " + value + " CONST resultType int");
+            check(lowerer.ops().size() == 1, "one CONST for " + value);
+            SemanticOp op = lowerer.ops().get(0);
+            check(op.kind() == SemanticOpKind.CONST, "numeric literal lowers to CONST");
+            check(((KindPayload.ConstPayload) op.payload()).value()
+                    .equals(new ScalarValue.Number(value)), "literal payload preserves binary64 bits");
+            check(result.equals(op.result()), "CONST publishes its allocated result");
+            check(op.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+                "CONST publishes a number descriptor");
             check(op.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
-                "int literal " + value + " CONST policy NO_DEAL_FAILURE");
+                "literal has no language range failure");
         }
-
-        // (b) The first out-of-range value on each side fails closed: the
-        // exact defect, zero produced ops (never a truncated CONST), and
-        // the exact LoweringFailureDetail + E6005 at the unit-production
-        // seam.
-        long[] outOfRange = {2147483648L, -2147483649L};
-        for (long value : outOfRange) {
-            Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
-            LiteralExpr literal = new LiteralExpr(span, new LiteralValue.IntLiteral(value));
-            CheckResult checks = new CheckResult(Map.of(literal, Type.Int.INSTANCE),
-                new SymbolTable(), List.of());
-            SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
-            RuntimeException defect = null;
-            try {
-                lowerer.lowerExpression(literal);
-            } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
-                defect = raised;
-            }
-            check(defect != null,
-                "int literal " + value + " (out of signed32) raises IntLiteralOutOfRange");
-            check(lowerer.ops().isEmpty(),
-                "int literal " + value + " produced no ops (never a truncated CONST)");
-            checkIntLiteralRangeDetail("int literal " + value, defect);
-        }
-
-        // The hand-built producer-defect shapes: the v1.3 parse contract
-        // admits 2147483648 only as the immediate operand of unary '-', so
-        // an out-of-range IntLiteral can only arrive from a hand-built
-        // tree. The CONST arm fails closed on it — never a truncation.
-        CheckedSlice slice = checkSlice("""
-            function f(): null {
-              let n = 1;
-              return null;
-            }
+        CheckedSlice negative = checkSlice("""
+            function f(): null { let n = -2147483648; return null; }
             """);
-        if (slice != null) {
-            LiteralExpr parsed = first(slice.program(), LiteralExpr.class);
-            check(parsed != null,
-                "the control slice carries its literal");
-            if (parsed != null) {
-                LiteralExpr literal = new LiteralExpr(parsed.span(),
-                    new LiteralValue.IntLiteral(2147483648L));
-                SemanticLowerer.ModuleLowerer lowerer =
-                    lowerer(withCheckedType(slice.checks(), literal));
-                RuntimeException defect = null;
-                try {
-                    lowerer.lowerExpression(literal);
-                } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
-                    defect = raised;
-                }
-                check(defect != null,
-                    "the hand-built literal 2147483648 raises the range defect at the "
-                        + "CONST arm (never ScalarValue.Int(-2147483648))");
-                check(lowerer.ops().isEmpty(),
-                    "the out-of-range literal produced no CONST op (no corrupted scalar "
-                        + "enters the contract digest)");
-                checkIntLiteralRangeDetail("hand-built 2147483648", defect);
-            }
-        }
-
-        // The immediate-minus special case: -2147483648 parses as the
-        // single in-range literal -2147483648 (never a NEG over an
-        // out-of-range operand) and lowers to its CONST.
-        CheckedSlice negated = checkSlice("""
-            function f(): null {
-              let n = -2147483648;
-              return null;
-            }
-            """);
-        if (negated != null) {
-            LiteralExpr combined = first(negated.program(), LiteralExpr.class);
-            check(combined != null
-                    && combined.value() instanceof LiteralValue.IntLiteral intLit
-                    && intLit.value() == -2147483648L,
-                "-2147483648 parses as the combined in-range IntLiteral -2147483648");
-            check(first(negated.program(), UnaryExpr.class) == null,
-                "the immediate-minus special case produces no unary negation node");
-            if (combined != null) {
-                SemanticLowerer.ModuleLowerer lowerer = lowerer(negated.checks());
-                lowerer.lowerExpression(combined);
-                check(lowerer.ops().size() == 1
-                        && lowerer.ops().get(0).kind()
-                            == deal.semantic.ir.SemanticOpKind.CONST,
-                    "the combined literal lowers to one CONST op: "
-                        + lowerer.ops().size());
-            }
-
-            // A hand-built NEG(IntLiteral 2147483648) still fails closed:
-            // the UNARY arm routes its operand through the CONST arm.
-            LiteralExpr operand = new LiteralExpr(combined.span(),
-                new LiteralValue.IntLiteral(2147483648L));
-            UnaryExpr negation = new UnaryExpr(combined.span(),
-                deal.ast.UnaryOp.NEG, operand);
-            CheckResult synthetic = withCheckedType(negated.checks(), operand);
-            synthetic = withCheckedType(synthetic, negation);
-            SemanticLowerer.ModuleLowerer lowerer = lowerer(synthetic);
-            RuntimeException defect = null;
-            try {
-                lowerer.lowerExpression(negation);
-            } catch (SemanticLowerer.IntLiteralOutOfRange raised) {
-                defect = raised;
-            }
-            check(defect != null,
-                "the hand-built negation routes its out-of-range operand through the "
-                    + "CONST arm (IntLiteralOutOfRange — never a truncation)");
-            check(lowerer.ops().isEmpty(),
-                "the negation produced no ops (no CONST for its out-of-range operand)");
-            if (defect != null) {
-                check(((SemanticLowerer.IntLiteralOutOfRange) defect).value()
-                        == 2147483648L,
-                    "the defect carries the out-of-range literal value");
+        if (negative != null) {
+            UnaryExpr unary = first(negative.program(), UnaryExpr.class);
+            check(unary != null, "minus is an ordinary unary expression");
+            if (unary != null) {
+                SemanticLowerer.ModuleLowerer lowerer = lowerer(negative.checks());
+                lowerer.lowerExpression(unary);
+                check(lowerer.ops().size() == 2
+                        && lowerer.ops().get(0).kind() == SemanticOpKind.CONST
+                        && lowerer.ops().get(1).kind() == SemanticOpKind.UNARY,
+                    "negative literal lowers operand then unary operation");
             }
         }
     }
@@ -860,7 +722,7 @@ public class ContainerLoweringArmsTest {
         // (b) The empty literal: zero values and zero children.
         CheckedSlice emptySlice = checkSlice("""
             function f(): null {
-              let e: int[] = [];
+              let e: number[] = [];
               return null;
             }
             """);
@@ -877,8 +739,8 @@ public class ContainerLoweringArmsTest {
                         (KindPayload.ArrayNewPayload) ops.get(0).payload();
                     check(payload.values().isEmpty() && payload.elementBoundaryOpIds().isEmpty(),
                         "[] payload carries zero values and zero element boundaries");
-                    check(payload.elementDescriptor().equals(RuntimeDescriptor.Int.INSTANCE),
-                        "[] elementDescriptor is D(int) = int (the contextual element type)");
+                    check(payload.elementDescriptor().equals(RuntimeDescriptor.Number.INSTANCE),
+                        "[] elementDescriptor is D(number) = number (the contextual element type)");
                 }
             }
         }
@@ -911,8 +773,8 @@ public class ContainerLoweringArmsTest {
                         KindPayload.ArrayNewPayload outerPayload =
                             (KindPayload.ArrayNewPayload) outerNew.payload();
                         check(outerPayload.elementDescriptor().equals(
-                                new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE)),
-                            "outer ARRAY_NEW elementDescriptor is [int]");
+                                new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE)),
+                            "outer ARRAY_NEW elementDescriptor is [number]");
                         check(outerPayload.values().equals(
                                 List.of(arrayNews.get(0).result(), arrayNews.get(1).result())),
                             "outer ARRAY_NEW values are the inner results in source order");
@@ -963,14 +825,14 @@ public class ContainerLoweringArmsTest {
                 && ops.get(2).kind() == SemanticOpKind.CONST,
             "the three entry values are CONST prior steps in source order");
         check(((KindPayload.ConstPayload) ops.get(0).payload()).value()
-                .equals(new ScalarValue.Int(1)),
-            "entry 1 value CONST is ScalarValue.Int(1)");
+                .equals(new ScalarValue.Number(1)),
+            "entry 1 value CONST is ScalarValue.Number(1)");
         check(((KindPayload.ConstPayload) ops.get(1).payload()).value()
                 .equals(new ScalarValue.String("k")),
             "entry 2 value CONST is ScalarValue.String(\"k\")");
         check(((KindPayload.ConstPayload) ops.get(2).payload()).value()
-                .equals(new ScalarValue.Int(2)),
-            "entry 3 value CONST is ScalarValue.Int(2)");
+                .equals(new ScalarValue.Number(2)),
+            "entry 3 value CONST is ScalarValue.Number(2)");
 
         SemanticOp tableNew = ops.get(3);
         check(tableNew.kind() == SemanticOpKind.TABLE_NEW, "op 3 is TABLE_NEW");
@@ -1167,8 +1029,8 @@ public class ContainerLoweringArmsTest {
         System.out.println("-- ARRAY_LENGTH arm --");
 
         CheckedSlice slice = checkSlice("""
-            function f(a: int[]): null {
-              let n: int = a.length;
+            function f(a: number[]): null {
+              let n: number = a.length;
               return null;
             }
             """);
@@ -1204,9 +1066,9 @@ public class ContainerLoweringArmsTest {
         check(payload.arrayValue().equals(ops.get(0).result()),
             "ARRAY_LENGTH payload arrayValue is the receiver ValueId");
         check(length.result().equals(lengthValue), "ARRAY_LENGTH publishes its result ValueId");
-        check(length.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "ARRAY_LENGTH resultType is int");
-        check(length.failurePolicy() == FailurePolicyId.INT32_RESULT,
+        check(length.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "ARRAY_LENGTH resultType is number");
+        check(length.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "ARRAY_LENGTH policy INT32_RESULT (receiver then range policy)");
         checkOrigin("ARRAY_LENGTH", length, access.span(), SourceOriginKind.USER, null);
         checkEmptyOperands("ARRAY_LENGTH", length);
@@ -1225,13 +1087,13 @@ public class ContainerLoweringArmsTest {
     static void testNarrowedArrayLengthReceiverAdmission() {
         System.out.println("-- .length receiver: NARROWED_READ admission, consumed once --");
         checkNarrowedLengthAdmission("""
-            function f(xs: int[] | null): null {
+            function f(xs: number[] | null): null {
               if (xs !== null) {
-                let value: int = xs.length;
+                let value: number = xs.length;
               }
               return null;
             }
-            """, "xs", new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE));
+            """, "xs", new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE));
     }
 
     private static void checkNarrowedLengthAdmission(String source, String receiver,
@@ -1294,7 +1156,7 @@ public class ContainerLoweringArmsTest {
             "ARRAY_LENGTH never reads the unadmitted receiver identity");
         check(length.result().equals(lengthValue),
             "ARRAY_LENGTH publishes its result ValueId");
-        check(length.failurePolicy() == FailurePolicyId.INT32_RESULT,
+        check(length.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "ARRAY_LENGTH keeps its INT32_RESULT terminal policy");
         checkEmptyOperands("ARRAY_LENGTH", length);
     }
@@ -1464,8 +1326,8 @@ public class ContainerLoweringArmsTest {
             "the read slot is the normalize's closed table slot");
         check(read.result().equals(readValue),
             "INDEX_READ publishes its result ValueId");
-        check(read.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the read resultType is the contextual type's descriptor (int)");
+        check(read.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "the read resultType is the contextual type's descriptor (number)");
         check(read.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "INDEX_READ policy NO_DEAL_FAILURE");
         checkOrigin("INDEX_READ", read, index.span(), SourceOriginKind.USER, null);
@@ -1479,8 +1341,8 @@ public class ContainerLoweringArmsTest {
             (KindPayload.BoundaryPayload) child.payload();
         check(boundary.kind() == BoundaryKind.CONTEXTUAL_TABLE_READ,
             "child kind CONTEXTUAL_TABLE_READ");
-        check(boundary.descriptor().equals(RuntimeDescriptor.Int.INSTANCE),
-            "child descriptor D(contextual type) = int");
+        check(boundary.descriptor().equals(RuntimeDescriptor.Number.INSTANCE),
+            "child descriptor D(contextual type) = number");
         check(boundary.input().equals(read.result()),
             "child input is the INDEX_READ result ValueId");
         check(boundary.realization().equals(new BoundaryRealization.RuntimeValidation(
@@ -1593,8 +1455,8 @@ public class ContainerLoweringArmsTest {
         System.out.println("-- Fail-closed arms: CONSTRUCT_UNLOWERED --");
 
         CheckedSlice indexRead = checkSlice("""
-            function f(xs: int[]): null {
-              let n: int = xs[0];
+            function f(xs: number[]): null {
+              let n: number = xs[0];
               return null;
             }
             """);
@@ -1634,7 +1496,7 @@ public class ContainerLoweringArmsTest {
 
         // (b) Class-typed object literal (CLASS_NEW is E9's).
         CheckedSlice classLiteral = checkSlice("""
-            class Point { x: int; }
+            class Point { x: number; }
             function f(): null {
               let p: Point = {x: 1};
               return null;
@@ -1657,9 +1519,9 @@ public class ContainerLoweringArmsTest {
 
         // (c) Class member access (FIELD_READ is E9's).
         CheckedSlice classAccess = checkSlice("""
-            class Point { x: int; }
+            class Point { x: number; }
             function f(p: Point): null {
-              let n: int = p.x;
+              let n: number = p.x;
               return null;
             }
             """);
@@ -2052,8 +1914,7 @@ public class ContainerLoweringArmsTest {
         List<RuntimeException> sourceSignals = List.of(
             new SemanticLowerer.ConstructUnlowered("a construct", span),
             new SemanticLowerer.ClassDefaultCapture("outside", span),
-            new SemanticLowerer.RetainedAbiDeferred("mod.C", span),
-            new SemanticLowerer.IntLiteralOutOfRange(2147483648L, span));
+            new SemanticLowerer.RetainedAbiDeferred("mod.C", span));
         for (RuntimeException signal : sourceSignals) {
             String what = signal.getClass().getSimpleName();
             check(signal instanceof DiagnosticOriginCarrier,
@@ -2083,8 +1944,7 @@ public class ContainerLoweringArmsTest {
         List<RuntimeException> noSpanSignals = List.of(
             new SemanticLowerer.ConstructUnlowered("a construct"),
             new SemanticLowerer.ClassDefaultCapture("outside"),
-            new SemanticLowerer.RetainedAbiDeferred("mod.C"),
-            new SemanticLowerer.IntLiteralOutOfRange(2147483648L));
+            new SemanticLowerer.RetainedAbiDeferred("mod.C"));
         for (RuntimeException signal : noSpanSignals) {
             String what = signal.getClass().getSimpleName();
             check(signal instanceof DiagnosticOriginCarrier
@@ -2130,8 +1990,8 @@ public class ContainerLoweringArmsTest {
         System.out.println("-- Combined dependency step: slice → validated unit → C3 execution --");
 
         CheckedSlice slice = checkSlice("""
-            function f(a: int, b: int, c: int, v: int, i: int): null {
-              let xs: int[] = [a, b, i, c, v];
+            function f(a: number, b: number, c: number, v: number, i: number): null {
+              let xs: number[] = [a, b, i, c, v];
               let t = {x: 1, y: "k", x: 2};
               return null;
             }
@@ -2206,16 +2066,16 @@ public class ContainerLoweringArmsTest {
                 && tableNews.get(0).result().equals(tableValue),
             "the unit ops are the lowered slice ops (same value ids)");
         check(((KindPayload.ArrayNewPayload) arrayNew.payload()).elementDescriptor()
-                .equals(RuntimeDescriptor.Int.INSTANCE),
-            "the ARRAY_NEW elementDescriptor came from the C4 descriptor bridge (int)");
+                .equals(RuntimeDescriptor.Number.INSTANCE),
+            "the ARRAY_NEW elementDescriptor came from the C4 descriptor bridge (number)");
 
         // --- Execute ARRAY_NEW through C3 with the fixture runner. ---
         Map<ValueId, Value> arrayPrior = new LinkedHashMap<>();
         List<KindPayload.ArrayNewPayload> arrayPayload =
             List.of((KindPayload.ArrayNewPayload) arrayNew.payload());
         Value[] elementValues = {
-            new Value.Int(1), new Value.Int(2), new Value.Int(3), new Value.Int(4),
-            new Value.Int(5)
+            new Value.Number(1), new Value.Number(2), new Value.Number(3), new Value.Number(4),
+            new Value.Number(5)
         };
         for (int i = 0; i < 5; i++) {
             arrayPrior.put(arrayPayload.get(0).values().get(i), elementValues[i]);
@@ -2277,7 +2137,7 @@ public class ContainerLoweringArmsTest {
         BoundaryFailure pinnedFailure =
             new BoundaryFailure(
                 FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-                "array element 2 type mismatch", "int", "number", Map.of(), null);
+                "array element 2 type mismatch", "number", "number", Map.of(), null);
         failSecond.failure = pinnedFailure;
         Outcome<SemanticArray<Value>> failedOutcome = ContainerOpsExecutor.executeArrayNew(
             arrayNew, arrayPrior, boundaryOps, failSecond);
@@ -2298,17 +2158,17 @@ public class ContainerLoweringArmsTest {
 
         // --- Execute TABLE_NEW through C3: the pinned first-insertion order. ---
         Map<ValueId, Value> tablePrior = new LinkedHashMap<>();
-        tablePrior.put((ValueId) consts.get(0).result(), new Value.Int(1));
+        tablePrior.put((ValueId) consts.get(0).result(), new Value.Number(1));
         tablePrior.put((ValueId) consts.get(1).result(),
             new Value.String(deal.semantic.ir.UnicodeScalars.validate("k")));
-        tablePrior.put((ValueId) consts.get(2).result(), new Value.Int(2));
+        tablePrior.put((ValueId) consts.get(2).result(), new Value.Number(2));
         SemanticTable<Value> table = ContainerOpsExecutor.executeTableNew(tableNews.get(0),
             tablePrior);
         check(table.keys().equals(List.of("x", "y")),
             "the duplicate literal keys keep the first position: keys() == [x, y]; got "
                 + table.keys());
         check(table.get("x") instanceof SemanticTable.Lookup.Present<Value> presentX
-                && presentX.value().equals(new Value.Int(2)),
+                && presentX.value().equals(new Value.Number(2)),
             "the later duplicate value wins: get(x) == Int(2)");
         check(table.get("y") instanceof SemanticTable.Lookup.Present<Value> presentY
                 && presentY.value().equals(
@@ -2439,11 +2299,11 @@ public class ContainerLoweringArmsTest {
               return null;
             }
             function functionMemberRead(t: table): null {
-              let g: () => int = t.g;
+              let g: () => number = t.g;
               return null;
             }
             function dynamicIndexRead(t: table, k: string): null {
-              let n: int = t[k];
+              let n: number = t[k];
               return null;
             }
             """);

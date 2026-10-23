@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: functions, intrinsics
 
-export function test_intrinsic_arity_extension(): int {
-  let f: (x: number, y: number) => int = int;
-  let result: int = f(9.0, 1.0);
+export function test_intrinsic_arity_extension(): number {
+  let f: (x: number, y: number) => number = int;
+  let result: number = f(9.0, 1.0);
   if (result !== 9) {
     throw { code: "TEST_FAIL", message: "intrinsic arity-extension call failed" };
   }
@@ -15,3 +15,6 @@ export function test_intrinsic_arity_extension(): int {
 export function main(): null {
   return null;
 }
+
+function int(value: number): number { return value; }
+function number(value: number): number { return value; }

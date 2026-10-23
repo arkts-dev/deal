@@ -2,26 +2,13 @@ package deal.semantic.ir;
 
 public enum BinarySelector implements ClosedSelector {
 
-    // Signed32 arithmetic.
-    INT32_ADD,
-    INT32_SUB,
-    INT32_MUL,
-    INT32_DIV_TRUNC,
 
-
-    // Number arithmetic.
+// Number arithmetic.
     NUMBER_ADD,
     NUMBER_SUB,
     NUMBER_MUL,
     NUMBER_DIV_IEEE,
 
-    // Signed32 comparison.
-    INT32_EQ,
-    INT32_NE,
-    INT32_LT,
-    INT32_LE,
-    INT32_GT,
-    INT32_GE,
 
     // Number comparison (IEEE-754, including NaN).
     NUMBER_EQ,

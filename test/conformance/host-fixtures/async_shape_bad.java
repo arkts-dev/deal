@@ -10,6 +10,6 @@
 // Host<Name>.java (test/JvmConformanceTest.java HOST_JAVA pattern).
 final class HostAsync_shape_bad {
   public static Object fetchValue() {
-    return Long.valueOf(42L);
+    return Double.valueOf(42L);
   }
 }

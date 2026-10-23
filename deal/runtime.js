@@ -125,17 +125,7 @@ function $kindOf($v) {
   }
   if ($v instanceof $Map) return "table";
   if ($Array.isArray($v)) return "array";
-  if (typeof $v === "number") {
-    // The value-derived numeric classification (the Lua emitted prelude's
-    // __typedBoundaryKind and the shared JVM runtime's Integer/in-range
-    // Long projection): a plain JS number cannot carry its variant, so an
-    // integral finite value inside the signed32 int range projects the int
-    // carrier and every other numeric value (fractional, nonfinite, or
-    // integral outside signed32) the number carrier — a read-side variant
-    // carrier above keeps its own recorded token.
-    return $v % 1 === 0 && $v >= -2147483648 && $v <= 2147483647
-      ? "int" : "number";
-  }
+  if (typeof $v === "number") return "number";
   return typeof $v;
 }
 
@@ -301,7 +291,7 @@ function $parseOne($d, $cps, $st) {
     return $parseClass($d, $cps, $st);
   }
   // Primitive keywords (disjoint, so order does not matter).
-  const $keywords = ["null", "boolean", "int", "number", "string", "table"];
+  const $keywords = ["null", "boolean", "number", "string", "table"];
   for (let $k = 0; $k < $keywords.length; $k++) {
     if ($matchKeyword($cps, $st.$pos, $keywords[$k])) {
       const $name = $keywords[$k];
@@ -689,30 +679,9 @@ function $arrayFormIndex($key) {
   return $n;
 }
 
-// ===== Exact JSON number classification, the RFC-8259 scanner, and the
-// container number-variant marks (DEAL v1.3 JSON number classification).
-// The scanner is the JS realization of the shared rule: a numeric lexeme
-// denotes the signed32 integer exactly when its exact mathematical
-// decimal value is integral and inside [-2147483648, 2147483647]; every
-// other lexeme denotes the binary64 value of the standard conversion.
-// Decoded documents keep the per-slot variant in the module-private
-// container marks, because JS numbers cannot carry it themselves; the
-// encode walks and the class decode consult the marks, so an integral
-// token written in fraction/exponent form is the int the specification
-// names and a fractional token that rounds to an integral double is
-// never admitted at an int position.
-
-// $jsonNumberMarks: container -> $Map(key -> true|false) for every slot
-// whose numeric variant the container records: true is the number
-// variant, false an explicitly int-classified slot. Decoded graphs store
-// only the number variant (an int-classified token needs no mark — the
-// absence of a number mark is the int/default spelling), so the decoded
-// and written slot marks keep their meaning; the one explicit int mark
-// exists for the host completion projection's class-instance copy
-// ($hostProjectCompletion), whose unwrapped fields must still re-encode
-// with the variant they were read with. Keyed by native parsed
-// containers, the converted marked-Map tables and those projected class
-// copies; never exported (like the shape marks).
+// RFC-8259 scanning rounds every numeric lexeme to binary64. Private
+// per-slot marks preserve decoded carrier provenance across host projection;
+// they never denote a second language numeric type.
 const $jsonNumberMarks = new WeakMap();
 
 function $markNumberVariant($container, $key) {
@@ -724,23 +693,9 @@ function $markNumberVariant($container, $key) {
   $marks.set($key, true);
 }
 
-function $markIntVariant($container, $key) {
-  let $marks = $jsonNumberMarks.get($container);
-  if ($marks === $undefined) {
-    $marks = new $Map();
-    $jsonNumberMarks.set($container, $marks);
-  }
-  $marks.set($key, false);
-}
-
 function $isNumberVariant($container, $key) {
   const $marks = $jsonNumberMarks.get($container);
   return $marks !== $undefined && $marks.get($key) === true;
-}
-
-function $isIntVariant($container, $key) {
-  const $marks = $jsonNumberMarks.get($container);
-  return $marks !== $undefined && $marks.get($key) === false;
 }
 
 // $numCarrier/$isNumCarrier/$numOf: the read-side number-variant carrier
@@ -751,7 +706,7 @@ function $isIntVariant($container, $key) {
 // number cannot carry it itself. The carrier is the runtime's private
 // value form on the same contract the Lua __jn table and the shared
 // JVM runtime's boxed Long/Double implement: `k` is the closed variant
-// ("int"|"number") and `d` the double value. The numeric consumers
+// ("number") and `d` the double value. The numeric consumers
 // unwrap it explicitly ($numOf) wherever they read a number; `valueOf`
 // and `toString` make host-visible coercions of a runtime-owned carrier
 // (the generated std modules' native Math calls included) agree with the
@@ -802,7 +757,7 @@ function $isNumericDescriptor($desc) {
   }
   const $inner = $desc.length > 0 && $desc.charAt(0) === "?"
     ? $desc.slice(1) : $desc;
-  return $inner === "int" || $inner === "number";
+  return $inner === "number";
 }
 
 // $hostProjectArg: the host-facing projection of one checked host-call
@@ -1064,11 +1019,7 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
         // class walk's declared int/number rows spell the projected
         // instance exactly like the DEAL-side instance it stands for
         // (the JVM Long/Double carrier row).
-        if ($element.k === "number") {
-          $markNumberVariant($frame.copy, $key);
-        } else {
-          $markIntVariant($frame.copy, $key);
-        }
+        $markNumberVariant($frame.copy, $key);
       }
       continue;
     }
@@ -1160,113 +1111,7 @@ function $jsonUtf8Length($cp) {
   return $cp < 0x80 ? 1 : $cp < 0x800 ? 2 : $cp < 0x10000 ? 3 : 4;
 }
 
-// $jsonIntOrNil: the exact signed32 value of one grammar-valid RFC-8259
-// numeric lexeme, or null when the mathematical value is fractional or
-// outside signed32. Zero classifies immediately; the fractional scale is
-// cancelled by the coefficient's trailing zeroes; the exponent text is
-// processed with bounded magnitude comparisons (a long exponent
-// saturates), so no machine overflow and no input cap can change the
-// decision, and -0/-0.0 normalize to the int 0.
-function $jsonIntOrNil($text) {
-  let $i = 0;
-  let $neg = false;
-  if ($text.charCodeAt(0) === 0x2d) {
-    $neg = true;
-    $i = 1;
-  }
-  const $intStart = $i;
-  while ($i < $text.length) {
-    const $c = $text.charCodeAt($i);
-    if ($c < 0x30 || $c > 0x39) break;
-    $i++;
-  }
-  const $intEnd = $i;
-  let $fracStart = -1;
-  let $fracEnd = -1;
-  if ($i < $text.length && $text.charCodeAt($i) === 0x2e) {
-    $i++;
-    $fracStart = $i;
-    while ($i < $text.length) {
-      const $c = $text.charCodeAt($i);
-      if ($c < 0x30 || $c > 0x39) break;
-      $i++;
-    }
-    $fracEnd = $i;
-  }
-  let $expo = 0;
-  let $expNeg = false;
-  if ($i < $text.length) {
-    const $e = $text.charCodeAt($i);
-    if ($e === 0x65 || $e === 0x45) {
-      $i++;
-      const $c = $text.charCodeAt($i);
-      if ($c === 0x2b || $c === 0x2d) {
-        $expNeg = $c === 0x2d;
-        $i++;
-      }
-      // The exponent magnitude accumulates its digits with bounded
-      // saturation: leading zeroes contribute nothing, so an exponent
-      // text longer than 18 characters whose value is small stays exact
-      // (the shared JsonNumberClassifier rule), and the arithmetic can
-      // never overflow.
-      let $magnitude = 0;
-      while ($i < $text.length) {
-        const $digit = $text.charCodeAt($i) - 0x30;
-        if ($magnitude > (1000000000000 - $digit) / 10) {
-          $magnitude = 1000000000000;
-        } else {
-          $magnitude = $magnitude * 10 + $digit;
-        }
-        $i++;
-      }
-      $expo = $magnitude;
-    }
-  }
-  let $digits = $text.slice($intStart, $intEnd);
-  if ($fracStart >= 0) {
-    $digits = $digits + $text.slice($fracStart, $fracEnd);
-  }
-  let $first = 0;
-  while ($first < $digits.length && $digits.charCodeAt($first) === 0x30) {
-    $first++;
-  }
-  if ($first === $digits.length) {
-    return 0;
-  }
-  let $trailing = 0;
-  while ($digits.charCodeAt($digits.length - 1 - $trailing) === 0x30) {
-    $trailing++;
-  }
-  const $significant = $digits.slice($first, $digits.length - $trailing);
-  const $fracLen = $fracStart >= 0 ? $fracEnd - $fracStart : 0;
-  const $effective = ($expNeg ? -$expo : $expo) - $fracLen + $trailing;
-  if ($effective < 0) {
-    return null;
-  }
-  if ($significant.length + $effective > 10) {
-    return null;
-  }
-  const $value = Number($significant + "0".repeat($effective));
-  // The signed32 range check compares the unsigned magnitude before the
-  // sign is applied: negating first would leave the negative branch dead
-  // for every magnitude in [2147483649, ...] (the shared classifier
-  // rule: at most 2147483648 may carry the minus sign).
-  const $limit = $neg ? 2147483648 : 2147483647;
-  if ($value > $limit) {
-    return null;
-  }
-  return $neg ? -$value : $value;
-}
-
-// $parseJsonText: the conforming RFC-8259 scanner over the code points of
-// one scalar-valid string (an explicit container stack, so a finite
-// nested document has no call-stack bound). It builds native
-// null/boolean/number/string +
-// null-prototype-object + Array documents and records every number-variant
-// slot in the container marks; a syntax defect — decoded-key duplicates
-// included, positioned at the second key's opening quote — raises the
-// E8001 parse failure with the shared reason texts and the 1-based UTF-8
-// byte offset. There is no fixed nesting bound.
+// Binary64 conversion of a grammar-validated numeric lexeme.
 function $parseJsonText($text, $file, $line, $column) {
   let $pos = 0;
   let $bytes = 0;
@@ -1422,10 +1267,6 @@ function $parseJsonText($text, $file, $line, $column) {
       while (!$atEnd() && $peek() >= 0x30 && $peek() <= 0x39) $advance();
     }
     const $lexeme = $text.slice($start, $pos);
-    const $exact = $jsonIntOrNil($lexeme);
-    if ($exact !== null) {
-      return { value: $exact, variant: false };
-    }
     return { value: Number($lexeme), variant: true };
   };
   // $parseValue: one value plus its own scalar number variant (false for
@@ -1707,7 +1548,7 @@ function $numText($v) {
     $a = -$a;
   }
   if ($a === 0) {
-    return $neg ? "-0.0" : "0.0";
+    return "0";
   }
   let $digits = null;
   let $expo = 0;
@@ -1779,12 +1620,7 @@ function $walkToken($v) {
   // A read-side variant carrier projects its own variant (the shared
   // Value.Int/Value.Number typed-boundary tokens).
   if ($isNumCarrier($v)) return $v.k;
-  if (typeof $v === "number") {
-    if ($v === $v && $v !== Infinity && $v !== -Infinity && $v % 1 === 0) {
-      return "int";
-    }
-    return "number";
-  }
+  if (typeof $v === "number") return "number";
   if (typeof $v === "string") {
     return $isValidScalars($v) ? "string" : "invalid-unicode";
   }
@@ -2017,7 +1853,7 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
 
 // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
 // $rt.jsonFromJson/$rt.jsonToJson over the pinned field-descriptor
-// shape — { name: string, jtype: "null"|"boolean"|"int"|"number"|
+// shape — { name: string, jtype: "null"|"boolean"|"number"|
 // "string"|"table"|"class"|"array", element?: entry, className?:
 // string, fields?: entry[] | imported C$fields ref, optional: boolean,
 // nullable: boolean, hasDefault: boolean } — entries in declaration
@@ -2040,7 +1876,6 @@ function $jsonEntryDescriptor($entry) {
   switch ($entry.jtype) {
     case "null": $base = "null"; break;
     case "boolean": $base = "boolean"; break;
-    case "int": $base = "int"; break;
     case "number": $base = "number"; break;
     case "string": $base = "string"; break;
     case "table": $base = "table"; break;
@@ -2194,15 +2029,6 @@ function $jsonFromValue($entry, $raw, $file, $line, $column, $numberVariant) {
       return $raw;
     case "string":
       return $rt.checkString($raw, $file, $line, $column);
-    case "int":
-      // The exact decimal classification admits the int position only
-      // for an int-variant token: a fractional token that rounds to an
-      // integral double keeps the number variant and rejects here.
-      if ($numberVariant === true) {
-        $rt.fail("E8001", "expected int, got number", $file, $line, $column,
-          "int", "number");
-      }
-      return $rt.checkInt($raw, $file, $line, $column);
     case "number":
       return $rt.checkNumber($raw, $file, $line, $column);
     case "table":
@@ -2288,8 +2114,7 @@ function $jsonToDocument($identity, $v, $fields, $path, $fieldPath, $file, $line
     // ($hostProjectCompletion), so the declared int/number rows spell the
     // copy exactly like the DEAL-side instance. A DEAL-side instance
     // records nothing and keeps the declared-type spelling.
-    const $fieldVariant = $isNumberVariant($v, $name) ? true
-      : ($isIntVariant($v, $name) ? false : $undefined);
+    const $fieldVariant = $isNumberVariant($v, $name) ? true : $undefined;
     $parts.push($jsonEscapeText($name) + ":"
       + $jsonToValue($entry, $value, $path, $fieldPathFor($fieldPath, $name),
         $file, $line, $column, $fieldVariant));
@@ -2349,38 +2174,6 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
         $walkFail();
       }
       return $jsonEscapeText($value);
-    case "int":
-      if ($isNumCarrier($value)) {
-        // The value's own variant decides, never the declared position:
-        // a number-variant carrier is a Value.Number and fails with the
-        // number token even when its double is integral; an int-variant
-        // carrier keeps the integer row.
-        if ($value.k === "number") {
-          $rt.fail("E8001", "value at " + $fieldPath
-            + " is not JSON serializable: number", $file, $line, $column,
-            $undefined, "number");
-        }
-        return String($value.d);
-      }
-      if (typeof $value !== "number" || $value !== $value
-          || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308
-          || $value % 1 !== 0) {
-        $walkFail();
-      }
-      // A decoded slot that carries the number variant is a Value.Number
-      // in the shared model, never a Value.Int, so an int field holding
-      // one fails with the number token even when the stored double is
-      // integral: the exact JSON classification, not the rounded double,
-      // decides (a fractional token like 2147483647.00000001 never
-      // re-renders as an int). The int-classified slot and every
-      // native/scalar position keep the integer row.
-      if ($variant === true) {
-        $rt.fail("E8001", "value at " + $fieldPath
-          + " is not JSON serializable: number", $file, $line, $column,
-          $undefined, "number");
-      }
-      // The signed32 range gate keeps its own E8004 projection.
-      return String($rt.checkInt($value, $file, $line, $column));
     case "number":
       if ($isNumCarrier($value)) {
         // The value's own variant decides the spelling: an int-variant
@@ -2393,7 +2186,7 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
             || $carried < -1.7976931348623157e308) {
           $walkFail();
         }
-        return $value.k === "number" ? $numText($carried) : String($carried);
+        return $numText($carried);
       }
       if (typeof $value !== "number" || $value !== $value
           || $value > 1.7976931348623157e308 || $value < -1.7976931348623157e308) {
@@ -2404,12 +2197,9 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       // an integral token written in fraction/exponent form) spells the
       // canonical decimal text, while the int-classified slot keeps the
       // integer spelling — exactly the $encodeJsonText rule and exactly
-      // the shared model's Value.Number/Value.Int rows. A native Array
+      // the shared model's Value.Number rows. A native Array
       // or a declared scalar position records no variant and keeps the
       // declared number spelling.
-      if ($variant === false) {
-        return String($value);
-      }
       return $numText($value);
     case "table":
       // The declared table row walks the JSON-shaped content only: a
@@ -2857,67 +2647,6 @@ const $rt = {
     return v;
   },
 
-  // checkInt: the exact check_int order (deal/runtime.lua:64-83) — the
-  // ±Infinity E8001 arm fires before the E8004 finite-range arm, so an
-  // overflow to Infinity is E8001 and only finite values outside the
-  // signed-32 range are E8004. The signed-32 gate is active from runtime
-  // load: every int helper, intConvert and the RuntimeTypeMatcher int row
-  // route through checkInt, direct runtime/stdlib callers included. -0
-  // normalizes to 0 (the v = v + 0 step, :72). NaN/±Infinity/non-integer
-  // carry expected "int" exactly like the reference _err calls; the E8004
-  // range arm carries no expected/actual (nil in the reference — fields
-  // absent, the _err convention).
-  checkInt: function $checkInt(v, file, line, column) {
-    if ($isNumCarrier(v)) {
-      // The boundary view of a read-side variant carrier keeps the
-      // value's own representation (the shared coreInt row): an
-      // int-variant carrier passes, a number-variant carrier passes
-      // exactly when its double is an integral in-range value and
-      // otherwise takes the number rows in the shared order. The
-      // admitted value is never re-typed between Value.Number and
-      // Value.Int, but the int value model has no negative zero: a
-      // zero-valued carrier is republished with d = 0 exactly like the
-      // plain path's v = v + 0 step (the Lua int cell's admitCarrier),
-      // so int(-0.0) is 0 on every lane.
-      if (v.k === "number") {
-        const $d = v.d;
-        if ($d !== $d) {
-          $rt.fail("E8001", "expected int, got NaN", file, line, column, "int", "NaN");
-        }
-        if ($d === Infinity || $d === -Infinity) {
-          $rt.fail("E8001", "expected int, got infinity", file, line, column, "int", "infinity");
-        }
-        if ($d % 1 !== 0) {
-          $rt.fail("E8001", "expected int, got non-integer number", file, line, column, "int", "number");
-        }
-        if ($d < -2147483648 || $d > 2147483647) {
-          $rt.fail("E8004", "int out of safe range", file, line, column);
-        }
-      }
-      if (v.d === 0 && 1 / v.d < 0) {
-        return $numCarrier(v.k, 0);
-      }
-      return v;
-    }
-    if (typeof v !== "number") {
-      $rt.fail("E8001", "expected int", file, line, column, "int", $kindOf(v));
-    }
-    if (Number.isNaN(v)) {
-      $rt.fail("E8001", "expected int, got NaN", file, line, column, "int", "NaN");
-    }
-    v = v + 0; // normalize -0 to 0
-    if (v === Infinity || v === -Infinity) {
-      $rt.fail("E8001", "expected int, got infinity", file, line, column, "int", "infinity");
-    }
-    if (v % 1 !== 0) {
-      $rt.fail("E8001", "expected int, got non-integer number", file, line, column, "int", "number");
-    }
-    if (v < -2147483648 || v > 2147483647) {
-      $rt.fail("E8004", "int out of safe range", file, line, column);
-    }
-    return v;
-  },
-
   // checkNumber: NaN and ±Infinity pass (spec §Numeric overflow). A
   // read-side variant carrier is the number value itself (the shared
   // number row admits an int-variant Value.Int unchanged), so it passes
@@ -3022,9 +2751,6 @@ const $rt = {
       }
       if ($parsed.$name === "boolean") {
         return $rt.checkBoolean(v, file, line, column);
-      }
-      if ($parsed.$name === "int") {
-        return $rt.checkInt(v, file, line, column);
       }
       if ($parsed.$name === "number") {
         return $rt.checkNumber(v, file, line, column);
@@ -3178,14 +2904,6 @@ const $rt = {
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
       const $key = String(i + 1);
       const $element = v.get($key);
-      if (typeof $element === "number") {
-        if ($isNumberVariant(v, $key)) {
-          return $numCarrier("number", $element);
-        }
-        if (wantsNumber === true) {
-          return $numCarrier("int", $element);
-        }
-      }
       return $element;
     }
     return v[i];
@@ -3269,47 +2987,6 @@ const $rt = {
       $rt.fail("E8010", "function signature mismatch: expected " + expectedSig + ", got " + actualSig, file, line, column, expectedSig, actualSig);
     }
     return v;
-  },
-
-  // ===== Int arithmetic =====
-  // (js-backend-runtime-artifact D5; js-backend-runtime D4 — the verbatim
-  // mirror of deal/runtime.lua:478-514) Every int result flows through
-  // checkInt (the D3 contract): -0 normalizes to 0, overflow to ±Infinity
-  // is E8001 "expected int, got infinity" before the E8004 finite-range
-  // arm, and finite values outside the signed-32 range are E8004.
-  // intDiv raises E8005 on a zero divisor before any division. The
-  // truncation operations use the T1 $Math capture — $Math.trunc is the
-  // math.modf truncation-toward-zero analog — and every error is produced
-  // through the T2 spine (fail) with the caller's (file, line, column)
-  // forwarded. Number arithmetic is native IEEE in the emitter and has no
-  // runtime member. Pure functions; no mutation.
-
-  intAdd: function $intAdd(a, b, file, line, column) {
-    return $rt.checkInt($numOf(a) + $numOf(b), file, line, column);
-  },
-
-  intSub: function $intSub(a, b, file, line, column) {
-    return $rt.checkInt($numOf(a) - $numOf(b), file, line, column);
-  },
-
-  intMul: function $intMul(a, b, file, line, column) {
-    return $rt.checkInt($numOf(a) * $numOf(b), file, line, column);
-  },
-
-  intNeg: function $intNeg(a, file, line, column) {
-    return $rt.checkInt(-$numOf(a), file, line, column);
-  },
-
-  // intDiv: E8005 on a zero divisor first (no expected/actual, mirroring
-  // the reference _err(nil, nil) pair), then checkInt of the
-  // truncation-toward-zero quotient (deal/runtime.lua:490-494).
-  intDiv: function $intDiv(a, b, file, line, column) {
-    a = $numOf(a);
-    b = $numOf(b);
-    if (b === 0) {
-      $rt.fail("E8005", "integer division by zero", file, line, column);
-    }
-    return $rt.checkInt($Math.trunc(a / b), file, line, column);
   },
 
   // ===== Class construction (js-backend-runtime-artifact D6) =====
@@ -4138,36 +3815,6 @@ const $rt = {
     }
   },
 
-  // intConvert: the int(x) conversion intrinsic (deal/runtime.lua:917-926).
-  // A nil-equivalent input (undefined, null, MISSING) raises E8001
-  // "cannot convert null to int" with expected "int"/actual "null"; any
-  // other value passes through the full checkInt contract — kind, NaN,
-  // ±Infinity, non-integer, the profile range, -0 normalization (D3).
-  // Every
-  // error goes through the D8 spine with the forwarded (file, line,
-  // column); success returns the validated value (pure, no mutation).
-  intConvert: function $intConvert(v, file, line, column) {
-    if ($rt.isNilEquivalent(v)) {
-      $rt.fail("E8001", "cannot convert null to int", file, line, column, "int", "null");
-    }
-    // The conversion produces the target representation: a read-side
-    // variant carrier unwraps to its plain double (the validated value).
-    return $numOf($rt.checkInt(v, file, line, column));
-  },
-
-  // numberConvert: the number(x) conversion intrinsic
-  // (deal/runtime.lua:927-933). A nil-equivalent input raises E8001
-  // "cannot convert null to number" with expected "number"/actual "null";
-  // any other value passes through checkNumber — NaN and ±Infinity pass
-  // and are returned (spec §Numeric overflow). Same spine, span
-  // forwarding, and purity as intConvert.
-  numberConvert: function $numberConvert(v, file, line, column) {
-    if ($rt.isNilEquivalent(v)) {
-      $rt.fail("E8001", "cannot convert null to number", file, line, column, "number", "null");
-    }
-    // The conversion produces the target representation (see intConvert).
-    return $numOf($rt.checkNumber(v, file, line, column));
-  },
   // ===== String scalar-value helpers (js-backend-runtime-artifact D9) =====
   // Code-point measures and ordering. Native JS string iteration walks one
   // Unicode scalar per step (spec §For-of), so these operate over code

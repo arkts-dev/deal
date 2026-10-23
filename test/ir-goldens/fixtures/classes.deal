@@ -3,12 +3,12 @@
 // default expressions.
 
 class Point {
-    x: int = 0;
-    y: int = 0;
+    x: number = 0;
+    y: number = 0;
 }
 
 class User {
     name: string = "";
-    age?: int;
+    age?: number;
     active: boolean = true;
 }

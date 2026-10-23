@@ -2,8 +2,8 @@
 // Tests object literal expressions used to construct class instances.
 
 class Point {
-    x: int = 0;
-    y: int = 0;
+    x: number = 0;
+    y: number = 0;
 }
 
 function main(): null {

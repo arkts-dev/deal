@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): boolean {let a: () => int = function(): int {return 1;}; let b: () => int = a; return a === b;}
+export function f(): boolean {let a: () => number = function(): number {return 1;}; let b: () => number = a; return a === b;}

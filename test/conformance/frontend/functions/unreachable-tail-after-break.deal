@@ -6,7 +6,7 @@
 export function main(): null {
   while (true) {
     break;
-    let unreachable: int = 1;
+    let unreachable: number = 1;
   }
   return null;
 }

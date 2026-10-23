@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: closures, classes, mutation
 
-class Box { value: int = 0; }
+class Box { value: number = 0; }
 
-export function test_closure_mutates_class_field(): int {
+export function test_closure_mutates_class_field(): number {
   let b: Box = { value: 1 };
-  let bump: () => int = function(): int {
+  let bump: () => number = function(): number {
     b.value = b.value + 4;
     return b.value;
   };

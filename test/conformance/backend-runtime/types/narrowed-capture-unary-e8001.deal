@@ -4,14 +4,14 @@
 // @features: type-system, nullable, narrowing, runtime-errors
 
 export function main(): null {
-  let x: int | null = 1;
+  let x: number | null = 1;
   let clear: () => null = function(): null {
     x = null;
     return null;
   };
   if (x !== null) {
     clear();
-    let y: int = -x;
+    let y: number = -x;
   }
   return null;
 }

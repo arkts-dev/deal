@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: async, await, loops
 
-async function inc(x: int): int { return x + 1; }
+async function inc(x: number): number { return x + 1; }
 
-export async function test_await_in_loop_body(): int {
-  let total: int = 0;
-  { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
+export async function test_await_in_loop_body(): number {
+  let total: number = 0;
+  { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
     total = await inc(total);
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   if (total !== 3) { throw { code: "TEST_FAIL", message: "await in loop body failed" }; }

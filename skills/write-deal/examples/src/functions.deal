@@ -1,22 +1,22 @@
 import * as check from "./check";
 
-function makeCounter(start: int): () => int {
-  let current: int = start;
-  return function(): int {
+function makeCounter(start: number): () => number {
+  let current: number = start;
+  return function(): number {
     current = current + 1;
     return current;
   };
 }
 
-function applyTwice(value: int, transform: (value: int) => int): int {
+function applyTwice(value: number, transform: (value: number) => number): number {
   return transform(transform(value));
 }
 
 export function exercise(): null {
-  let next: () => int = makeCounter(10);
+  let next: () => number = makeCounter(10);
   check.require(next() === 11, "first closure call");
   check.require(next() === 12, "captured binding persists");
-  let double: (value: int) => int = function(value: int): int {
+  let double: (value: number) => number = function(value: number): number {
     return value * 2;
   };
   check.require(applyTwice(3, double) === 12, "typed callback");

@@ -379,7 +379,7 @@ public final class ContractSnapshotCanonicalizer {
         return switch (scalar) {
             case ScalarValue.Null ignored -> CanonicalJson.nullValue();
             case ScalarValue.Boolean b -> CanonicalJson.bool(b.value());
-            case ScalarValue.Int i -> CanonicalJson.intValue(i.value());
+
             case ScalarValue.Number n -> CanonicalJson.number(n.value());
             case ScalarValue.String s -> CanonicalJson.str(s.value());
         };
@@ -481,10 +481,7 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("exportName", CanonicalJson.str(b.exportName())),
                 CanonicalJson.e("moduleId", semanticIdJson(b.moduleId())),
                 CanonicalJson.e("type", CanonicalJson.str("externalFunction")));
-            case FunctionExecutionBinding.IntrinsicFunction b -> CanonicalJson.obj(
-                CanonicalJson.e("descriptor", descriptorText(b.descriptor())),
-                CanonicalJson.e("intrinsicKind", CanonicalJson.str(b.kind().name())),
-                CanonicalJson.e("type", CanonicalJson.str("intrinsicFunction")));
+
             case FunctionExecutionBinding.DynamicFunctionValue b -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", descriptorText(b.descriptor())),
                 CanonicalJson.e("materializingBoundaryOpId",
@@ -826,9 +823,7 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("parameterBoundaryOpIds", CanonicalJson.arr(
                     p.parameterBoundaryOpIds().stream().map(ContractSnapshotCanonicalizer::semanticIdJson).toList())),
                 CanonicalJson.e("returnBoundaryOpId", semanticIdJson(p.returnBoundaryOpId())));
-            case KindPayload.IntrinsicCallPayload p -> CanonicalJson.obj(
-                CanonicalJson.e("input", semanticIdJson(p.input())),
-                CanonicalJson.e("kind", CanonicalJson.str(p.kind().name())));
+
             case KindPayload.StdlibCallPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("args", CanonicalJson.arr(
                     p.args().stream().map(ContractSnapshotCanonicalizer::semanticIdJson).toList())),
@@ -1996,10 +1991,7 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("exportName", CanonicalJson.str(binding.exportName())),
                 CanonicalJson.e("moduleId", moduleIdJson(binding.modulePath())),
                 CanonicalJson.e("type", CanonicalJson.str("externalFunction")));
-            case "intrinsicFunction" -> CanonicalJson.obj(
-                CanonicalJson.e("descriptor", CanonicalJson.str(binding.descriptor())),
-                CanonicalJson.e("intrinsicKind", CanonicalJson.str(binding.intrinsicKind())),
-                CanonicalJson.e("type", CanonicalJson.str("intrinsicFunction")));
+
             case "dynamicFunctionValue" -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", binding.descriptor() == null
                     ? CanonicalJson.nullValue()
@@ -2076,7 +2068,6 @@ public final class ContractSnapshotCanonicalizer {
         String sourceSignature = null;
         String targetSignature = null;
         OpId materializingBoundaryOpId = null;
-        String intrinsicKind = null;
         FunctionId functionId = null;
         BlockId blockId = null;
         OpId adaptOpId = null;
@@ -2134,11 +2125,7 @@ public final class ContractSnapshotCanonicalizer {
                 executionOwner = requireString(binding, "executionOwner");
                 descriptor = requireString(binding, "descriptor");
             }
-            case "intrinsicFunction" -> {
-                checkKeys(binding, "descriptor", "intrinsicKind", "type");
-                descriptor = requireString(binding, "descriptor");
-                intrinsicKind = requireString(binding, "intrinsicKind");
-            }
+
             case "dynamicFunctionValue" -> {
                 checkKeys(binding, "descriptor", "materializingBoundaryOpId", "type");
                 // The two required positions (the producing op and the
@@ -2158,7 +2145,7 @@ public final class ContractSnapshotCanonicalizer {
         }
         return new RawBinding(allocationId, shape, modulePath, exportName, executionOwner,
             captureMode, descriptor, sourceSignature, targetSignature,
-            materializingBoundaryOpId, intrinsicKind, functionId, blockId, adaptOpId, sourceRef,
+            materializingBoundaryOpId, functionId, blockId, adaptOpId, sourceRef,
             importCellId);
     }
 

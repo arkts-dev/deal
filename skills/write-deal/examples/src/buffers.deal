@@ -1,14 +1,14 @@
 import * as check from "./check";
 
-function sum(values: int[]): int {
-  let total: int = 0;
-  for (let value: int of values) {
+function sum(values: number[]): number {
+  let total: number = 0;
+  for (let value: number of values) {
     total = total + value;
   }
   return total;
 }
 
-function boundsWriteRejected(values: int[]): boolean {
+function boundsWriteRejected(values: number[]): boolean {
   try {
     values[values.length + 1] = 1;
   } catch (e) {
@@ -17,25 +17,25 @@ function boundsWriteRejected(values: int[]): boolean {
   return false;
 }
 
-function copyValues(source: int[]): int[] {
-  let copy: int[] = [];
-  for (let value: int of source) {
+function copyValues(source: number[]): number[] {
+  let copy: number[] = [];
+  for (let value: number of source) {
     copy[copy.length] = value;
   }
   return copy;
 }
 
 export function exercise(): null {
-  let values: int[] = [2, 3];
+  let values: number[] = [2, 3];
   values[values.length] = 5;
   check.require(sum(values) === 10, "array append and sum");
-  let alias: int[] = values;
+  let alias: number[] = values;
   alias[0] = 255;
   check.require(values[0] === 255, "array alias mutation");
   check.require(boundsWriteRejected(values), "array bounds rejection");
   check.require(values[0] === 255 && values[1] === 3 && values.length === 3,
     "failed array write mutated storage");
-  let copy: int[] = copyValues(values);
+  let copy: number[] = copyValues(values);
   copy[0] = 7;
   check.require(values[0] === 255 && copy[0] === 7, "independent array copy");
   return null;

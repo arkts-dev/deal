@@ -9,9 +9,9 @@
 // compare — no bare-name conflation).
 
 export class Point {
-  x: int = 0;
+  x: number = 0;
 }
 
-export function needBox(p: Point): int {
+export function needBox(p: Point): number {
   return p.x;
 }

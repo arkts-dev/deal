@@ -243,7 +243,7 @@ public final class IrDumper implements Visitor<String> {
         return switch (lit.value()) {
             case LiteralValue.NullLiteral n -> Type.Null.INSTANCE;
             case LiteralValue.BooleanLiteral b -> Type.Boolean.INSTANCE;
-            case LiteralValue.IntLiteral i -> Type.Int.INSTANCE;
+
             case LiteralValue.NumberLiteral n -> Type.Number.INSTANCE;
             case LiteralValue.StringLiteral s -> Type.String.INSTANCE;
         };

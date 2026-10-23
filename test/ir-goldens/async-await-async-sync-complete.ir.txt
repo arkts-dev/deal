@@ -1,8 +1,8 @@
 module @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:1-5:1
   export @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:1-5:1
     [boundary: export]
-    async function f: int @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:8-5:1
+    async function f: number @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:8-5:1
       body
-        return @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:34-4:44
+        return @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:37-4:47
           [boundary: async-completion]
-          literal 5 : int @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:41-4:41
+          literal 5.0 : number @test/ir-goldens/fixtures/async-await-async-sync-complete.deal:4:44-4:44

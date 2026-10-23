@@ -5,7 +5,7 @@
 
 export function main(): null {
   let t: table = { answer: 42 };
-  let value: int = 0;
+  let value: number = 0;
   value = t.answer;
   if (value !== 42) { throw { code: "TEST_FAIL", message: "assignment context mismatch" }; }
   return null;

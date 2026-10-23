@@ -4,18 +4,18 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected ([int],int)->[int], got ([int])->[int]\",\"sourceFile\":\"backend-runtime/arrays/reference-array-fn-adapter-e8010.deal\",\"line\":8,\"column\":21,\"expected\":\"([int],int)->[int]\",\"actual\":\"([int])->[int]\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected ([number],number)->[number], got ([number])->[number]\",\"sourceFile\":\"backend-runtime/arrays/reference-array-fn-adapter-e8010.deal\",\"line\":8,\"column\":21,\"expected\":\"([number],number)->[number]\",\"actual\":\"([number])->[number]\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8010",
-      "message": "function signature mismatch: expected ([int],int)->[int], got ([int])->[int]",
+      "message": "function signature mismatch: expected ([number],number)->[number], got ([number])->[number]",
       "sourceFile": "backend-runtime/arrays/reference-array-fn-adapter-e8010.deal",
       "line": 8,
       "column": 21,
-      "expected": "([int],int)->[int]",
-      "actual": "([int])->[int]"
+      "expected": "([number],number)->[number]",
+      "actual": "([number])->[number]"
     }
   }
 }

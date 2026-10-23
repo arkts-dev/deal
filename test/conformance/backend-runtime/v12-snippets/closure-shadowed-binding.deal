@@ -5,11 +5,11 @@
 
 import * as c from "std/console";
 export function main(): null {
- let x: int = 1; let outer: () => int = function(): int {return x;};
- let inner: () => int = function(): int {return -1;};
- { let x: int = 10; inner = function(): int {x = x + 1; return x;}; }
+ let x: number = 1; let outer: () => number = function(): number {return x;};
+ let inner: () => number = function(): number {return -1;};
+ { let x: number = 10; inner = function(): number {x = x + 1; return x;}; }
  x = 2;
- let a:int=inner(); let b:int=outer(); let d:int=inner();
+ let a:number=inner(); let b:number=outer(); let d:number=inner();
  if(a!==11) {throw {code:"INNER_FIRST",message:"shadowed inner first value"};}
  if(b!==2) {throw {code:"OUTER_VALUE",message:"shadowed outer closure"};}
  if(d!==12) {throw {code:"INNER_SECOND",message:"shadowed inner second value"};}

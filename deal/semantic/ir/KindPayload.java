@@ -33,7 +33,6 @@ public sealed interface KindPayload
             KindPayload.CallPayload,
             KindPayload.ExternalEntryPayload,
             KindPayload.CallbackInvokePayload,
-            KindPayload.IntrinsicCallPayload,
             KindPayload.StdlibCallPayload,
             KindPayload.AsyncStartPayload,
             KindPayload.AwaitPayload,
@@ -211,10 +210,7 @@ public sealed interface KindPayload
         }
     }
 
-    /**
-     * {@code CONST} — a canonical scalar. Out-of-range int literals never
-     * reach the IR (E1036 frontend), so the signed32 value is exact.
-     */
+    /** {@code CONST} — a canonical scalar; numeric payloads preserve binary64 bits. */
     record ConstPayload(ScalarValue value) implements KindPayload {
 
         public ConstPayload {
@@ -283,7 +279,7 @@ public sealed interface KindPayload
         }
     }
 
-    /** {@code ARRAY_LENGTH} — the array value; result is a signed32 count. */
+    /** {@code ARRAY_LENGTH} — the array value; result is a binary64 count. */
     record ArrayLengthPayload(ValueId arrayValue) implements KindPayload {
 
         public ArrayLengthPayload {
@@ -669,29 +665,16 @@ public sealed interface KindPayload
         }
     }
 
-    /**
-     * {@code INTRINSIC_CALL} — the closed conversion and one input. Zero
-     * {@code BOUNDARY} child ops of any kind: the conversion policy
-     * ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION}) is the op's only
-     * terminal check.
-     */
-    record IntrinsicCallPayload(IntrinsicKind kind, ValueId input) implements KindPayload {
 
-        public IntrinsicCallPayload {
-            Objects.requireNonNull(kind, "kind must not be null");
-            Objects.requireNonNull(input, "input must not be null");
-        }
-    }
-
-    /**
+/**
      * {@code STDLIB_CALL} — the closed stdlib function id, the ordered
      * argument values, and the effect capability. Arguments complete
      * left-to-right, then {@code STDLIB_PARAMETER} boundaries run in
      * order; the result passes {@code STDLIB_RETURN}; the op's
      * {@code failurePolicy} is the named algorithm policy from the closed
-     * stdlib table. {@code TIME_NOW_MILLIS} is the 21st member (K7): zero
+     * stdlib table. {@code TIME_NOW_MILLIS} is the clock operation: zero
      * declared parameters, the declared {@code number} return boundary
-     * (the descriptor-kind rule), and no int terminal (v1.3).
+     * (the descriptor-kind rule), with no arithmetic failure.
      */
     record StdlibCallPayload(StdlibFunctionId function, List<ValueId> args,
                              SemanticCapability effectCapability)

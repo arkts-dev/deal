@@ -5,11 +5,11 @@
 
 export function test_computed_table_read(): null {
   let t: table = { x: 7 };
-  let n: int = t["x"];
+  let n: number = t["x"];
   if (n !== 7) { throw { code: "TEST_FAIL", message: "computed table read" }; }
   let u: table = {};
   u["😀"] = 7;
-  let m: int = u["😀"];
+  let m: number = u["😀"];
   if (m !== 7) { throw { code: "TEST_FAIL", message: "Unicode table key" }; }
   return null;
 }

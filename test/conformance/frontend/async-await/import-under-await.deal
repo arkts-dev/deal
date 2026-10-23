@@ -5,7 +5,7 @@
 
 import * as M from "./async_lib";
 
-async function f(): int {
+async function f(): number {
   return await M.fetch(1);
 }
 

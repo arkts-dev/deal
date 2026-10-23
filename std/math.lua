@@ -8,9 +8,6 @@ local mathlib = {}
 --- Returns the absolute value of an int. The trailing span triplet
 -- carries the call site (ISSUE-0598): the input check and the signed-
 -- int32 result gate both report it.
-mathlib.absInt = __rt.function_("(int)->int", function(x, file, line, column)
-  return __rt.check_int(math.abs(__rt.check_int(x, file, line, column)), file, line, column)
-end)
 
 --- Returns the absolute value of a number.
 mathlib.absNumber = __rt.function_("(number)->number", function(x, file, line, column)
@@ -19,18 +16,8 @@ mathlib.absNumber = __rt.function_("(number)->number", function(x, file, line, c
 end)
 
 --- Returns the minimum of two ints.
-mathlib.minInt = __rt.function_("(int,int)->int", function(a, b, file, line, column)
-  __rt.check_int(a, file, line, column)
-  __rt.check_int(b, file, line, column)
-  return __rt.check_int(math.min(a, b), file, line, column)
-end)
 
 --- Returns the maximum of two ints.
-mathlib.maxInt = __rt.function_("(int,int)->int", function(a, b, file, line, column)
-  __rt.check_int(a, file, line, column)
-  __rt.check_int(b, file, line, column)
-  return __rt.check_int(math.max(a, b), file, line, column)
-end)
 
 --- Returns the floor of a number as a number (not int).
 mathlib.floor = __rt.function_("(number)->number", function(x, file, line, column)

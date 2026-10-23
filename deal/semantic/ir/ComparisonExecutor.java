@@ -72,16 +72,13 @@ public final class ComparisonExecutor {
                 boolean eq = referenceEquals(left, right);
                 yield selector == BinarySelector.REFERENCE_EQ ? eq : !eq;
             }
-            case INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
-                 NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
-                 STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
-                 BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE -> {
+            case NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE, STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE, BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE -> {
                 if (isNullish(left) || isNullish(right)) {
                     boolean bothNullish = isNullish(left) && isNullish(right);
                     yield switch (selector) {
-                        case INT32_EQ, NUMBER_EQ, STRING_EQ, BOOLEAN_EQ, NULL_EQ -> bothNullish;
-                        case INT32_NE, NUMBER_NE, STRING_NE, BOOLEAN_NE, NULL_NE -> !bothNullish;
-                        case INT32_LT, INT32_LE, INT32_GT, INT32_GE, NUMBER_LT, NUMBER_LE,
+                        case NUMBER_EQ, STRING_EQ, BOOLEAN_EQ, NULL_EQ -> bothNullish;
+                        case NUMBER_NE, STRING_NE, BOOLEAN_NE, NULL_NE -> !bothNullish;
+                        case NUMBER_LT, NUMBER_LE,
                              NUMBER_GT, NUMBER_GE, STRING_LT, STRING_LE, STRING_GT, STRING_GE ->
                             false;
                         default -> throw new Defect(
@@ -158,13 +155,9 @@ public final class ComparisonExecutor {
     private static boolean scalarCompare(BinarySelector selector, ComparisonOperandView left,
                                          ComparisonOperandView right) {
         return switch (selector) {
-            case INT32_EQ -> intView(left).value() == intView(right).value();
-            case INT32_NE -> intView(left).value() != intView(right).value();
-            case INT32_LT -> intView(left).value() < intView(right).value();
-            case INT32_LE -> intView(left).value() <= intView(right).value();
-            case INT32_GT -> intView(left).value() > intView(right).value();
-            case INT32_GE -> intView(left).value() >= intView(right).value();
-            case NUMBER_EQ -> numberView(left).value() == numberView(right).value();
+
+
+case NUMBER_EQ -> numberView(left).value() == numberView(right).value();
             case NUMBER_NE -> numberView(left).value() != numberView(right).value();
             case NUMBER_LT -> numberView(left).value() < numberView(right).value();
             case NUMBER_LE -> numberView(left).value() <= numberView(right).value();
@@ -188,7 +181,7 @@ public final class ComparisonExecutor {
     private static boolean nullableInnerEquals(RuntimeDescriptor inner, ComparisonOperandView left,
                                                ComparisonOperandView right) {
         return switch (inner) {
-            case RuntimeDescriptor.Int ignored -> intEq(left, right);
+
             case RuntimeDescriptor.Number ignored -> numberEq(left, right);
             case RuntimeDescriptor.String ignored -> stringEq(left, right);
             case RuntimeDescriptor.Boolean ignored -> booleanEq(left, right);
@@ -209,13 +202,6 @@ public final class ComparisonExecutor {
     // Operand-family helpers
     // =========================================================================
 
-    private static ComparisonOperandView.Int intView(ComparisonOperandView view) {
-        if (view instanceof ComparisonOperandView.Int value) {
-            return value;
-        }
-        throw new Defect("expected an Int operand view for a signed32 comparison, got "
-            + variant(view));
-    }
 
     private static ComparisonOperandView.Number numberView(ComparisonOperandView view) {
         if (view instanceof ComparisonOperandView.Number value) {
@@ -252,11 +238,6 @@ public final class ComparisonExecutor {
     /** The closed variant name for defect reporting. */
     private static String variant(ComparisonOperandView view) {
         return view.getClass().getSimpleName();
-    }
-
-    /** Signed32 integral equality. */
-    private static boolean intEq(ComparisonOperandView left, ComparisonOperandView right) {
-        return intView(left).value() == intView(right).value();
     }
 
     /** IEEE-754 equality (NaN unequal to itself; -0.0 equal to 0.0). */

@@ -58,8 +58,6 @@ public final class StdlibFunctionCatalog {
 
     private static final RuntimeDescriptor STRING =
         DescriptorService.describe(Type.String.INSTANCE);
-    private static final RuntimeDescriptor INT =
-        DescriptorService.describe(Type.Int.INSTANCE);
     private static final RuntimeDescriptor NUMBER =
         DescriptorService.describe(Type.Number.INSTANCE);
     private static final RuntimeDescriptor BOOLEAN =
@@ -89,9 +87,9 @@ public final class StdlibFunctionCatalog {
             List.of(STRING), NULL),
         // std.string
         new Entry(StdlibFunctionId.STRING_LENGTH, "std.string", "length",
-            List.of(STRING), INT),
+            List.of(STRING), NUMBER),
         new Entry(StdlibFunctionId.STRING_SUBSTRING, "std.string", "substring",
-            List.of(STRING, INT, INT), STRING),
+            List.of(STRING, NUMBER, NUMBER), STRING),
         new Entry(StdlibFunctionId.STRING_CONTAINS, "std.string", "contains",
             List.of(STRING, STRING), BOOLEAN),
         new Entry(StdlibFunctionId.STRING_STARTS_WITH, "std.string", "startsWith",
@@ -119,14 +117,8 @@ public final class StdlibFunctionCatalog {
             List.of(NUMBER), NUMBER),
         new Entry(StdlibFunctionId.MATH_SQRT, "std.math", "sqrt",
             List.of(NUMBER), NUMBER),
-        new Entry(StdlibFunctionId.MATH_ABS_INT, "std.math", "absInt",
-            List.of(INT), INT),
         new Entry(StdlibFunctionId.MATH_ABS_NUMBER, "std.math", "absNumber",
             List.of(NUMBER), NUMBER),
-        new Entry(StdlibFunctionId.MATH_MIN_INT, "std.math", "minInt",
-            List.of(INT, INT), INT),
-        new Entry(StdlibFunctionId.MATH_MAX_INT, "std.math", "maxInt",
-            List.of(INT, INT), INT),
         // std.time (K7)
         new Entry(StdlibFunctionId.TIME_NOW_MILLIS, "std.time", "nowMillis",
             List.of(), NUMBER)

@@ -3,16 +3,16 @@
 // @expected: runtime-ok
 // @features: arrays, functions, nullable
 
-function add1(x: int): int { return x + 1; }
+function add1(x: number): number { return x + 1; }
 
-export function test_nullable_function_array_values(): int {
-  let fs: (((x: int) => int) | null)[] = [];
+export function test_nullable_function_array_values(): number {
+  let fs: (((x: number) => number) | null)[] = [];
   fs[0] = add1;
   fs[1] = null;
-  let f0: ((x: int) => int) | null = fs[0];
+  let f0: ((x: number) => number) | null = fs[0];
   if (f0 !== null) {
-    let result: int = f0(3);
-    let f1: ((x: int) => int) | null = fs[1];
+    let result: number = f0(3);
+    let f1: ((x: number) => number) | null = fs[1];
     if (f1 !== null) {
       throw { code: "TEST_FAIL", message: "second element was not null" };
     }

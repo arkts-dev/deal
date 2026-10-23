@@ -15,7 +15,7 @@ function expectCaught(e: Error, what: string, code: string, message: string): nu
   return null;
 }
 
-function expectEqual(what: string, actual: int, expected: int): null {
+function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
     throw { code: "CONTROL_FAIL", message: what + " changed the value" };
   }
@@ -29,8 +29,8 @@ function preserveCall(): null {
 export function main(): null {
   // A live refinement reads the live length: the valid non-null binding, the
   // empty array keep their normal length behavior.
-  let xs: int[] | null = [3, 4];
-  let alias: int[] = [];
+  let xs: number[] | null = [3, 4];
+  let alias: number[] = [];
   if (xs !== null) {
     expectEqual("valid array length", xs.length, 2);
     alias = xs;
@@ -40,19 +40,19 @@ export function main(): null {
     preserveCall();
     expectEqual("call-preserved array length", xs.length, 2);
   }
-  let empty: int[] | null = [];
+  let empty: number[] | null = [];
   if (empty !== null) {
     expectEqual("empty array length", empty.length, 0);
   }
 
 
   // The receiver expression completes exactly once per length read.
-  let calls: int = 0;
-  let make: () => int[] = function(): int[] {
+  let calls: number = 0;
+  let make: () => number[] = function(): number[] {
     calls = calls + 1;
     return [7, 8];
   };
-  let made: int = make().length;
+  let made: number = make().length;
   expectEqual("receiver evaluations", calls, 1);
   expectEqual("call receiver length", made, 2);
 
@@ -77,7 +77,7 @@ export function main(): null {
     // canonical error was caught, never a raw backend error or a coercion.
     let directCaught: boolean = false;
     try {
-      let n: int = xs.length;
+      let n: number = xs.length;
       expectNoError("direct length");
     } catch (e) {
       expectCaught(e, "direct length", "E8001", "expected array");
@@ -92,7 +92,7 @@ export function main(): null {
     // admission and each raises its own catchable E8001.
     let arithmeticCaught: boolean = false;
     try {
-      let total: int = 1 + xs.length;
+      let total: number = 1 + xs.length;
       expectNoError("arithmetic length");
     } catch (e) {
       expectCaught(e, "arithmetic length", "E8001", "expected array");
@@ -116,7 +116,7 @@ export function main(): null {
     }
     let loopCaught: boolean = false;
     try {
-      { let v14Loop0: int = 0; while (v14Loop0 < xs.length) { let i: int = v14Loop0; {
+      { let v14Loop0: number = 0; while (v14Loop0 < xs.length) { let i: number = v14Loop0; {
         expectNoError("loop length");
       } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
       expectNoError("loop length");

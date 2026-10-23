@@ -169,7 +169,7 @@ public class AddressChainLoweringTest {
     }
 
     private static LiteralExpr intLit(long value, int column) {
-        return new LiteralExpr(span(column, column), new LiteralValue.IntLiteral(value));
+        return new LiteralExpr(span(column, column), new LiteralValue.NumberLiteral(value));
     }
 
     private static LiteralExpr stringLit(String value, int column) {
@@ -223,9 +223,9 @@ public class AddressChainLoweringTest {
         LiteralExpr value = intLit(1, 5);
         AssignmentExpr assignment = assign(target, value);
         SymbolTable table = new SymbolTable();
-        table.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        table.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult checked = checks(
-            Map.of(target, Type.Int.INSTANCE, value, Type.Int.INSTANCE), table);
+            Map.of(target, Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         ValueId result = lowerer.lowerAssignment(assignment);
@@ -244,7 +244,7 @@ public class AddressChainLoweringTest {
 
         check(valueOp.kind() == SemanticOpKind.CONST
                 && ((KindPayload.ConstPayload) valueOp.payload()).value()
-                    .equals(new ScalarValue.Int(1)),
+                    .equals(new ScalarValue.Number(1)),
             "the value child is the CONST producing the committed value 1");
         check(valueOp.result() instanceof ValueId, "the value child publishes a ValueId");
         ValueId committed = (ValueId) valueOp.result();
@@ -257,8 +257,8 @@ public class AddressChainLoweringTest {
             (KindPayload.BoundaryPayload) boundaryOp.payload();
         check(boundary.kind() == BoundaryKind.VARIABLE_ASSIGNMENT,
             "the boundary kind is VARIABLE_ASSIGNMENT");
-        check(boundary.descriptor().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the boundary descriptor is the declared target descriptor (int)");
+        check(boundary.descriptor().equals(RuntimeDescriptor.Number.INSTANCE),
+            "the boundary descriptor is the declared target descriptor (number)");
         check(boundaryOp.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
             "the non-function descriptor uses the TYPE_DESCRIPTOR policy (descriptor-kind "
                 + "rule)");
@@ -289,8 +289,8 @@ public class AddressChainLoweringTest {
             "the child list is exactly [valueOp, boundaryOp, commitOp] in payload order");
         check(chainOp.result().equals(committed),
             "ASSIGN publishes the committed value's identity (A-D6)");
-        check(chainOp.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "ASSIGN resultType is the target position's checked descriptor (int)");
+        check(chainOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "ASSIGN resultType is the target position's checked descriptor (number)");
         check(chainOp.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "the chain op carries NO_DEAL_FAILURE");
         check(result.equals(committed), "lowerAssignment returns the committed value");
@@ -318,7 +318,7 @@ public class AddressChainLoweringTest {
 
         // (a) Function-typed target: the boundary carries the declared
         // function descriptor with policy FUNCTION_SIGNATURE.
-        Type.Func funcType = new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE);
+        Type.Func funcType = new Type.Func(List.of(Type.Number.INSTANCE), Type.Number.INSTANCE);
         IdentifierExpr target = ident("f", 1);
         IdentifierExpr value = ident("n", 5);
         AssignmentExpr assignment = assign(target, value);
@@ -347,15 +347,15 @@ public class AddressChainLoweringTest {
         check(valueOp.kind() == SemanticOpKind.BINDING_LOAD,
             "the value child is the loop-binding load of n");
         RuntimeDescriptor.Func functionDescriptor =
-            new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Int.INSTANCE),
-                RuntimeDescriptor.Int.INSTANCE);
+            new RuntimeDescriptor.Func(List.of(RuntimeDescriptor.Number.INSTANCE),
+                RuntimeDescriptor.Number.INSTANCE);
         check(valueOp.resultType().equals(functionDescriptor),
-            "the load publishes the function descriptor (int)->int");
+            "the load publishes the function descriptor (number)->number");
         KindPayload.BoundaryPayload boundary =
             (KindPayload.BoundaryPayload) boundaryOp.payload();
         check(boundary.kind() == BoundaryKind.VARIABLE_ASSIGNMENT
                 && boundary.descriptor().equals(functionDescriptor),
-            "the boundary descriptor is the declared function descriptor (int)->int");
+            "the boundary descriptor is the declared function descriptor (number)->number");
         check(boundaryOp.failurePolicy() == FailurePolicyId.FUNCTION_SIGNATURE,
             "the function descriptor uses the FUNCTION_SIGNATURE policy (descriptor-kind "
                 + "rule)");
@@ -374,9 +374,9 @@ public class AddressChainLoweringTest {
         LiteralExpr value2 = intLit(2, 5);
         AssignmentExpr assignment2 = assign(target2, value2);
         SymbolTable table2 = new SymbolTable();
-        table2.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        table2.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult checked2 = checks(
-            Map.of(target2, Type.Int.INSTANCE, value2, Type.Int.INSTANCE), table2);
+            Map.of(target2, Type.Number.INSTANCE, value2, Type.Number.INSTANCE), table2);
         SemanticLowerer.ModuleLowerer reuse = lowerer(checked2);
         ValueId firstValue = reuse.lowerAssignment(assignment2);
         ValueId secondValue = reuse.lowerAssignment(assignment2);
@@ -439,7 +439,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("t", new Symbol.VariableSymbol("t", Type.Table.INSTANCE, false));
         CheckResult checked = checks(Map.of(receiver, Type.Table.INSTANCE, target,
-            Type.Table.INSTANCE, value, Type.Int.INSTANCE), table);
+            Type.Table.INSTANCE, value, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("t");
@@ -507,7 +507,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("t", new Symbol.VariableSymbol("t", Type.Table.INSTANCE, false));
         CheckResult checked = checks(Map.of(receiver, Type.Table.INSTANCE, key,
-            Type.String.INSTANCE, target, Type.Table.INSTANCE, value, Type.Int.INSTANCE),
+            Type.String.INSTANCE, target, Type.Table.INSTANCE, value, Type.Number.INSTANCE),
             table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
@@ -590,11 +590,11 @@ public class AddressChainLoweringTest {
         IndexExpr target = index(receiver, key, 3);
         LiteralExpr value = intLit(9, 7);
         AssignmentExpr assignment = assign(target, value);
-        Type.Array arrayType = new Type.Array(Type.Int.INSTANCE);
+        Type.Array arrayType = new Type.Array(Type.Number.INSTANCE);
         SymbolTable table = new SymbolTable();
         table.define("a", new Symbol.VariableSymbol("a", arrayType, false));
-        CheckResult checked = checks(Map.of(receiver, arrayType, key, Type.Int.INSTANCE,
-            target, Type.Int.INSTANCE, value, Type.Int.INSTANCE), table);
+        CheckResult checked = checks(Map.of(receiver, arrayType, key, Type.Number.INSTANCE,
+            target, Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("a");
@@ -624,8 +624,8 @@ public class AddressChainLoweringTest {
         ValueId slot = (ValueId) normalizeOp.result();
 
         check(lengthOp.kind() == SemanticOpKind.ARRAY_LENGTH
-                && lengthOp.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the length child is an ARRAY_LENGTH read of the resolved receiver (int "
+                && lengthOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "the length child is an ARRAY_LENGTH read of the resolved receiver (number "
                 + "result)");
         check(((KindPayload.ArrayLengthPayload) lengthOp.payload()).arrayValue()
                 .equals(container),
@@ -642,8 +642,8 @@ public class AddressChainLoweringTest {
                 && normalize.currentLength().equals(length),
             "the normalize carries rawKey = the key result and currentLength = the length "
                 + "read at normalize time");
-        check(normalizeOp.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the normalize result type is int (ArraySlot)");
+        check(normalizeOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "the normalize result type is number (ArraySlot)");
 
         check(boundaryOp.kind() == SemanticOpKind.BOUNDARY
                 && boundaryOp.failurePolicy() == FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
@@ -652,8 +652,8 @@ public class AddressChainLoweringTest {
             (KindPayload.BoundaryPayload) boundaryOp.payload();
         check(boundary.kind() == BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
             "the boundary kind is ARRAY_ELEMENT_ASSIGNMENT");
-        check(boundary.descriptor().equals(RuntimeDescriptor.Int.INSTANCE),
-            "the boundary descriptor is the element descriptor (int)");
+        check(boundary.descriptor().equals(RuntimeDescriptor.Number.INSTANCE),
+            "the boundary descriptor is the element descriptor (number)");
         check(boundary.input().equals(committed),
             "the boundary input is the checked RHS value");
         checkCanonicalRealization("the ARRAY_ELEMENT_ASSIGNMENT boundary",
@@ -677,9 +677,9 @@ public class AddressChainLoweringTest {
             "the chain is ARRAY_SLOT [containerOp, keyOp, valueOp, lengthOp, normalizeOp, "
                 + "boundaryOp, INDEX_WRITE]");
         check(chainOp.result().equals(committed)
-                && chainOp.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
+                && chainOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
             "ASSIGN publishes the committed value with the target position's checked "
-                + "descriptor (the element descriptor int)");
+                + "descriptor (the element descriptor number)");
         check(result.equals(committed), "lowerAssignment returns the committed value");
         for (SemanticOp child : ops.subList(0, 7)) {
             checkParentage(child.kind().name() + " child", child, chainOp.opId());
@@ -699,11 +699,11 @@ public class AddressChainLoweringTest {
         IndexExpr target = index(receiver, lengthAccess, 4);
         LiteralExpr value = intLit(9, 14);
         AssignmentExpr assignment = assign(target, value);
-        Type.Array arrayType = new Type.Array(Type.Int.INSTANCE);
+        Type.Array arrayType = new Type.Array(Type.Number.INSTANCE);
         SymbolTable table = new SymbolTable();
         table.define("xs", new Symbol.VariableSymbol("xs", arrayType, false));
         CheckResult checked = checks(Map.of(receiver, arrayType, lengthAccess,
-            Type.Int.INSTANCE, target, Type.Int.INSTANCE, value, Type.Int.INSTANCE), table);
+            Type.Number.INSTANCE, target, Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("xs");
@@ -738,7 +738,7 @@ public class AddressChainLoweringTest {
                 && ((KindPayload.ArrayLengthPayload) keyOp.payload()).arrayValue()
                     .equals((ValueId) keyReceiverOp.result()),
             "the key child is the ARRAY_LENGTH read of the .length source occurrence "
-                + "(keyOp result type int)");
+                + "(keyOp result type number)");
         check(lengthOp.kind() == SemanticOpKind.ARRAY_LENGTH
                 && ((KindPayload.ArrayLengthPayload) lengthOp.payload()).arrayValue()
                     .equals(container),
@@ -763,7 +763,7 @@ public class AddressChainLoweringTest {
         check(payload.targetKind() == AssignTargetKind.ARRAY_SLOT && payload.childOps().size() == 7,
             "the append idiom lowers through the standard seven-child ARRAY_SLOT chain");
         check(chainOp.result().equals(committed)
-                && chainOp.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
+                && chainOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
             "ASSIGN publishes the committed value with the element descriptor");
         check(result.equals(committed), "lowerAssignment returns the committed value");
     }
@@ -782,8 +782,8 @@ public class AddressChainLoweringTest {
         Type.Class classType = IdentityTestFixtures.classType("C", "main");
         SymbolTable table = new SymbolTable();
         table.define("c", new Symbol.VariableSymbol("c", classType, false));
-        CheckResult checked = checks(Map.of(receiver, classType, target, Type.Int.INSTANCE,
-            value, Type.Int.INSTANCE), table);
+        CheckResult checked = checks(Map.of(receiver, classType, target, Type.Number.INSTANCE,
+            value, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("c");
@@ -820,8 +820,8 @@ public class AddressChainLoweringTest {
                     List.of(containerOp.opId(), valueOp.opId(), commitOp.opId())),
             "the chain is CLASS_FIELD [containerOp, valueOp, FIELD_WRITE]");
         check(chainOp.result().equals(committed)
-                && chainOp.resultType().equals(RuntimeDescriptor.Int.INSTANCE),
-            "ASSIGN publishes the committed value with the field descriptor (int)");
+                && chainOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "ASSIGN publishes the committed value with the field descriptor (number)");
         check(result.equals(committed), "lowerAssignment returns the committed value");
         check(ops.stream().noneMatch(op -> op.kind() == SemanticOpKind.BOUNDARY),
             "CLASS_FIELD writes carry zero write-check boundaries here "
@@ -948,11 +948,11 @@ public class AddressChainLoweringTest {
             LiteralExpr key = intLit(0, 10);
             IndexExpr target = index(receiver, key, 10);
             DeleteStatement delete = delete(target);
-            Type.Array arrayType = new Type.Array(Type.Int.INSTANCE);
+            Type.Array arrayType = new Type.Array(Type.Number.INSTANCE);
             SymbolTable table = new SymbolTable();
             table.define("a", new Symbol.VariableSymbol("a", arrayType, false));
-            CheckResult checked = checks(Map.of(receiver, arrayType, key, Type.Int.INSTANCE,
-                target, Type.Int.INSTANCE), table);
+            CheckResult checked = checks(Map.of(receiver, arrayType, key, Type.Number.INSTANCE,
+                target, Type.Number.INSTANCE), table);
             SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
             lowerer.openForEachScope("a");
             lowerer.lowerDelete(delete);
@@ -1030,7 +1030,7 @@ public class AddressChainLoweringTest {
             SymbolTable table = new SymbolTable();
             table.define("c", new Symbol.VariableSymbol("c", classType, false));
             CheckResult checked = checks(
-                Map.of(receiver, classType, target, Type.Int.INSTANCE), table);
+                Map.of(receiver, classType, target, Type.Number.INSTANCE), table);
             SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
             lowerer.openForEachScope("c");
             lowerer.lowerDelete(delete);
@@ -1079,10 +1079,10 @@ public class AddressChainLoweringTest {
         AssignmentExpr inner = assign(innerTarget, value);
         AssignmentExpr outer = assign(outerTarget, inner);
         SymbolTable table = new SymbolTable();
-        table.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
-        table.define("y", new Symbol.VariableSymbol("y", Type.Int.INSTANCE, false));
-        CheckResult checked = checks(Map.of(outerTarget, Type.Int.INSTANCE, innerTarget,
-            Type.Int.INSTANCE, value, Type.Int.INSTANCE), table);
+        table.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
+        table.define("y", new Symbol.VariableSymbol("y", Type.Number.INSTANCE, false));
+        CheckResult checked = checks(Map.of(outerTarget, Type.Number.INSTANCE, innerTarget,
+            Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         ValueId result = lowerer.lowerAssignment(outer);
@@ -1244,7 +1244,7 @@ public class AddressChainLoweringTest {
 
         // .length assignment never reaches lowering (E3017 frontend
         // rejection).
-        CheckedSlice lengthSlice = checkSlice("let xs: int[] = [1];\nxs.length = 2;\n");
+        CheckedSlice lengthSlice = checkSlice("let xs: number[] = [1];\nxs.length = 2;\n");
         if (lengthSlice != null) {
             check(lengthSlice.checks().hasErrors()
                     && lengthSlice.checks().diagnostics().stream()
@@ -1270,13 +1270,13 @@ public class AddressChainLoweringTest {
         LiteralExpr key = intLit(0, 3);
         IndexExpr indexTarget = index(receiver, key, 3);
         DeleteStatement delete = delete(indexTarget);
-        Type.Array arrayType = new Type.Array(Type.Int.INSTANCE);
+        Type.Array arrayType = new Type.Array(Type.Number.INSTANCE);
         SymbolTable table = new SymbolTable();
-        table.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        table.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         table.define("a", new Symbol.VariableSymbol("a", arrayType, false));
-        CheckResult checked = checks(Map.of(target, Type.Int.INSTANCE, value,
-            Type.Int.INSTANCE, receiver, arrayType, key, Type.Int.INSTANCE, indexTarget,
-            Type.Int.INSTANCE), table);
+        CheckResult checked = checks(Map.of(target, Type.Number.INSTANCE, value,
+            Type.Number.INSTANCE, receiver, arrayType, key, Type.Number.INSTANCE, indexTarget,
+            Type.Number.INSTANCE), table);
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("a");
         lowerer.lowerAssignment(assignment);
@@ -1540,15 +1540,15 @@ public class AddressChainLoweringTest {
         IdentifierExpr receiver = ident("r", 1), variable = ident("x", 2);
         LiteralExpr key = arm == 1 ? stringLit("k", 3) : intLit(0, 3);
         LiteralExpr value = intLit(7, 5);
-        Type receiverType = arm == 1 ? Type.Table.INSTANCE : new Type.Array(Type.Int.INSTANCE);
+        Type receiverType = arm == 1 ? Type.Table.INSTANCE : new Type.Array(Type.Number.INSTANCE);
         ExpressionNode target = arm == 0 ? variable : arm == 1 ? member(receiver, "k", 3) : index(receiver, key, 3);
         SymbolTable symbols = new SymbolTable();
         symbols.define("r", new Symbol.VariableSymbol("r", receiverType, false));
-        symbols.define("x", new Symbol.VariableSymbol("x", Type.Int.INSTANCE, false));
+        symbols.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         Map<ExpressionNode, Type> types = new java.util.IdentityHashMap<>();
-        types.put(receiver, receiverType); types.put(variable, Type.Int.INSTANCE);
-        types.put(key, arm == 1 ? Type.String.INSTANCE : Type.Int.INSTANCE);
-        types.put(value, Type.Int.INSTANCE); types.put(target, arm == 1 ? Type.Table.INSTANCE : Type.Int.INSTANCE);
+        types.put(receiver, receiverType); types.put(variable, Type.Number.INSTANCE);
+        types.put(key, arm == 1 ? Type.String.INSTANCE : Type.Number.INSTANCE);
+        types.put(value, Type.Number.INSTANCE); types.put(target, arm == 1 ? Type.Table.INSTANCE : Type.Number.INSTANCE);
         SemanticLowerer.ModuleLowerer producer = lowerer(checks(types, symbols));
         if (arm != 0) { producer.openForEachScope("r"); }
         producer.lowerAssignment(assign(target, value));
@@ -1666,10 +1666,10 @@ public class AddressChainLoweringTest {
         check(AddressChainProtocol.validate(protocolUnit(List.of(seeds.get(0).getFirst()))).isEmpty(), "non-chain unit outside protocol domain");
         testProtocolOrigins(seeds.get(0));
         CheckedSlice adapterSource = checkSlice("""
-            function inner(x: int): null {}
+            function inner(x: number): null {}
             function main(): null {
-              let f: (x: int) => null = inner;
-              let g: (a: int, b: int) => null = inner;
+              let f: (x: number) => null = inner;
+              let g: (a: number, b: number) => null = inner;
               g = f;
             }
             """);
@@ -1852,7 +1852,7 @@ public class AddressChainLoweringTest {
                     deal.semantic.ir.NormalizedSlot.ArraySlot slot = deal.semantic.ir.NormalizedSlot.arraySlot(mode, index, length);
                     check(slot.index() == index && slot.present() == (index < length)
                             && slot.append() == (mode == IndexMode.ARRAY_WRITE && index == length)
-                            && slot.resultType() == RuntimeDescriptor.Int.INSTANCE,
+                            && slot.resultType() == RuntimeDescriptor.Number.INSTANCE,
                         "normalization pure computation " + mode + " " + index + "/" + length);
                     check(slot.equals(deal.semantic.ir.NormalizedSlot.arraySlot(mode, index, length)), "normalization stable");
                 }
@@ -1911,14 +1911,14 @@ public class AddressChainLoweringTest {
         IdentifierExpr readReceiver = ident("xs", 11);
         IdentifierExpr readKey = ident("i", 14);
         IndexExpr read = index(readReceiver, readKey, 13);
-        Type.Array arrayType = new Type.Array(Type.Int.INSTANCE);
+        Type.Array arrayType = new Type.Array(Type.Number.INSTANCE);
         SymbolTable table = new SymbolTable();
         table.define("xs", new Symbol.VariableSymbol("xs", arrayType, false));
-        table.define("i", new Symbol.VariableSymbol("i", Type.Int.INSTANCE, false));
+        table.define("i", new Symbol.VariableSymbol("i", Type.Number.INSTANCE, false));
         CheckResult checked = new CheckResult(
-            Map.of(receiver, arrayType, key, Type.Int.INSTANCE, target, Type.Int.INSTANCE,
-                value, Type.Int.INSTANCE, readReceiver, arrayType,
-                readKey, Type.Int.INSTANCE, read, Type.Int.INSTANCE),
+            Map.of(receiver, arrayType, key, Type.Number.INSTANCE, target, Type.Number.INSTANCE,
+                value, Type.Number.INSTANCE, readReceiver, arrayType,
+                readKey, Type.Number.INSTANCE, read, Type.Number.INSTANCE),
             table, Map.of(), List.of(), Map.of(), Map.of(), Map.of(),
             Set.of(receiver, key, readReceiver, readKey));
 
@@ -1972,9 +1972,9 @@ public class AddressChainLoweringTest {
             "the chain's receiver/key/length/normalize/commit children resolve");
 
         checkAdmission("the chain's receiver child", receiverCell, BoundaryKind.NARROWED_READ,
-            new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE), chain);
+            new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE), chain);
         checkAdmission("the chain's key child", keyCell, BoundaryKind.NARROWED_READ,
-            RuntimeDescriptor.Int.INSTANCE, chain);
+            RuntimeDescriptor.Number.INSTANCE, chain);
         if (receiverCell != null && keyCell != null && length != null
                 && normalize != null && commit != null) {
             KindPayload.ArrayLengthPayload lengthPayload =
@@ -2113,10 +2113,10 @@ public class AddressChainLoweringTest {
         table.define("t", new Symbol.VariableSymbol("t",
             new Type.Nullable(Type.Table.INSTANCE), false));
         CheckResult checked = new CheckResult(
-            Map.of(writeReceiver, Type.Table.INSTANCE, writeTarget, Type.Int.INSTANCE,
-                value, Type.Int.INSTANCE, deleteReceiver, Type.Table.INSTANCE,
-                deleteTarget, Type.Int.INSTANCE, readReceiver, Type.Table.INSTANCE,
-                read, Type.Int.INSTANCE),
+            Map.of(writeReceiver, Type.Table.INSTANCE, writeTarget, Type.Number.INSTANCE,
+                value, Type.Number.INSTANCE, deleteReceiver, Type.Table.INSTANCE,
+                deleteTarget, Type.Number.INSTANCE, readReceiver, Type.Table.INSTANCE,
+                read, Type.Number.INSTANCE),
             table, Map.of(), List.of(), Map.of(), Map.of(), Map.of(),
             Set.of(writeReceiver, deleteReceiver, readReceiver));
 

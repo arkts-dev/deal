@@ -5,10 +5,10 @@
 
 import * as c from "std/console";
 export function main(): null {
- let fs: (() => int)[] = []; let updates: int = 0;
- function next(x: int): int {updates = updates + 1; return x + 1;}
- { let v14Loop0: int = 0; while (v14Loop0 < 3) { let i: int = v14Loop0; {
-  fs[fs.length] = function(): int {return i;};
+ let fs: (() => number)[] = []; let updates: number = 0;
+ function next(x: number): number {updates = updates + 1; return x + 1;}
+ { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
+  fs[fs.length] = function(): number {return i;};
   if(i === 1) {{ v14Loop0 = i; v14Loop0 = next(v14Loop0); continue; }}
  } v14Loop0 = i; v14Loop0 = next(v14Loop0); } }
  if(updates !== 3 || fs.length !== 3 || fs[0]() !== 0 || fs[1]() !== 1 || fs[2]() !== 2) {throw {message:"update mutated captured iteration"};}

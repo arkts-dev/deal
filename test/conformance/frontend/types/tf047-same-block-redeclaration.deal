@@ -3,7 +3,7 @@
 // @expected: compile-error E2002
 // @features: variables, scopes, parameters, diagnostics, v1.2
 
-function combine(value: int, value: int): int {
+function combine(value: number, value: number): number {
   return value;
 }
 

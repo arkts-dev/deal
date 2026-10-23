@@ -3,10 +3,10 @@
 // @expected: compile-error E5004
 // @features: functions, diagnostics
 
-function two(a: int, b: int): int { return a + b; }
+function two(a: number, b: number): number { return a + b; }
 export function main(): null { return null; }
 export function main(): null {
-let one: (a: int) => int = two;
+let one: (a: number) => number = two;
 
 
 return null;

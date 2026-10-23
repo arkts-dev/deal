@@ -3,8 +3,8 @@
 // @expected: compile-error E3001
 // @features: classes, nominal
 
-class A { x: int = 0; }
-class B { x: int = 0; }
+class A { x: number = 0; }
+class B { x: number = 0; }
 export function main(): null { return null; }
 export function main(): null {
 

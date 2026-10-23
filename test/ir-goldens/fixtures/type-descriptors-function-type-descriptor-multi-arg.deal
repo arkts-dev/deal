@@ -1,8 +1,8 @@
 // IR golden fixture: type-descriptors-function-type-descriptor-multi-arg
 // Migrated IR-containment pin for legacy case 'function-type-descriptor-multi-arg' (ISSUE-0358).
 
-function add(a: int, b: int): int { return a + b; }
+function add(a: number, b: number): number { return a + b; }
 export function main(): null {
-let f: (a: int, b: int) => int = add;
+let f: (a: number, b: number) => number = add;
 return null;
 }

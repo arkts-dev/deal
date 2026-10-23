@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: async-await, error-handling, reachability, v1.2
 
-async function fail(): int {
+async function fail(): number {
   throw { code: "X", message: "async failure" };
   return 99;
 }
 
-export async function check(): int {
+export async function check(): number {
   try { return await fail(); }
   catch (e) {
     if (e.code !== "X") { throw e; }

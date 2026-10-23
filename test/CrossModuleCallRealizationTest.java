@@ -36,7 +36,6 @@ import deal.semantic.ir.ExternalExecutionOwner;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.InternalResultType;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -218,11 +217,11 @@ public class CrossModuleCallRealizationTest {
     }
 
     private static final String PROBE_LIB = """
-        export function add(a: int, b: int): int {
+        export function add(a: number, b: number): number {
           return a + b;
         }
 
-        export function fib(n: int): int {
+        export function fib(n: number): number {
           if (n < 2) { return n; }
           return fib(n - 1) + fib(n - 2);
         }
@@ -231,14 +230,14 @@ public class CrossModuleCallRealizationTest {
     private static final String PROBE_APP = """
         import * as lib from "./lib";
 
-        function twice(x: int): int {
+        function twice(x: number): number {
           return x * 2;
         }
 
         export function main(): null {
-          let a: int = lib.add(1, 2);
-          let b: int = lib.fib(6);
-          let c: int = twice(a);
+          let a: number = lib.add(1, 2);
+          let b: number = lib.fib(6);
+          let c: number = twice(a);
           if (a !== 3 || b !== 8 || c !== 6) {
             throw { code: "PROBE_FAIL", message: "cross-module probe" };
           }
@@ -280,8 +279,8 @@ public class CrossModuleCallRealizationTest {
         Path moduleRoot = root.resolve("src");
         Files.createDirectories(moduleRoot);
         writeFileIn(root, "src/lib.deal", """
-            export function boom(n: int): int {
-              let doubled: int = n * 2;
+            export function boom(n: number): number {
+              let doubled: number = n * 2;
               throw { code: "BOOM", message: "callee failure" };
             }
             """);
@@ -289,7 +288,7 @@ public class CrossModuleCallRealizationTest {
             import * as lib from "./lib";
 
             export function main(): null {
-              let r: int = lib.boom(1);
+              let r: number = lib.boom(1);
               return null;
             }
             """);
@@ -321,7 +320,6 @@ public class CrossModuleCallRealizationTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of());
     }
 
@@ -333,7 +331,6 @@ public class CrossModuleCallRealizationTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
     }
 
@@ -595,11 +592,11 @@ public class CrossModuleCallRealizationTest {
                 }
             }
             check(callSuccesses.stream().anyMatch(event ->
-                    "app".equals(event.module()) && "int:3".equals(event.output())),
+                    "app".equals(event.module()) && "num:0x1.8p1".equals(event.output())),
                 "the caller's CALL SUCCESS publishes the crossed add value: "
                     + callSuccesses);
             check(callSuccesses.stream().anyMatch(event ->
-                    "app".equals(event.module()) && "int:8".equals(event.output())),
+                    "app".equals(event.module()) && "num:0x1.0p3".equals(event.output())),
                 "the caller's CALL SUCCESS publishes the crossed fib value: "
                     + callSuccesses);
         }

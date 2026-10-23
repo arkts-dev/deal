@@ -151,18 +151,18 @@ public final class DefaultIrRecorderTest {
                 new DefaultPlanImport("/proj/src/lib.deal", "src.lib",
                     providerProgram, PROVIDER_LOCATION,
                     Map.of("Rec", REC_TYPE, "getTag",
-                        Types.func(List.of(REC_TYPE), Type.Int.INSTANCE)),
+                        Types.func(List.of(REC_TYPE), Type.Number.INSTANCE)),
                     new SymbolTable(), false));
             // The declaration scope: the import alias L and the
             // intrinsic int conversion.
             SymbolTable scope = new SymbolTable();
             scope.define("L", new deal.checker.Symbol.ModuleSymbol("L",
                 Map.of("Rec", REC_TYPE, "getTag",
-                    Types.func(List.of(REC_TYPE), Type.Int.INSTANCE)),
+                    Types.func(List.of(REC_TYPE), Type.Number.INSTANCE)),
                 new Span("main.deal", 1, 1, 1, 5)));
             scope.define("int", new deal.checker.Symbol.IntrinsicSymbol(
                 "int", Types.func(List.of(Type.Number.INSTANCE),
-                    Type.Int.INSTANCE), null));
+                    Type.Number.INSTANCE), null));
             Map<String, CanonicalModuleIdentity> classification =
                 Map.of("src.main",
                     new CanonicalModuleIdentity.ProjectModule(
@@ -200,7 +200,7 @@ public final class DefaultIrRecorderTest {
         List<ClassField> fields = List.of(new ClassField(span, "tag",
             false, false, new NamedType(span, "int"),
             java.util.Optional.of(new LiteralExpr(span,
-                new LiteralValue.IntLiteral(0)))));
+                new LiteralValue.NumberLiteral(0)))));
         ClassDeclaration rec = new ClassDeclaration(span, "Rec", fields);
         deal.ast.FunctionDeclaration getTag = new deal.ast.FunctionDeclaration(
             span, "getTag",
@@ -325,7 +325,7 @@ public final class DefaultIrRecorderTest {
         // The recorder walk records the call before its callee member
         // access: the first occurrence keeps the CALL range.
         RecorderRun run = new RecorderRun("n: int",
-            "L.getTag({ tag: 3 })", Type.Int.INSTANCE, REC_TYPE);
+            "L.getTag({ tag: 3 })", Type.Number.INSTANCE, REC_TYPE);
         List<DefaultResourceOccurrence> occurrences = run.occurrences();
         check(occurrences.size() == 2,
             "the call and the argument literal produce two occurrences,"
@@ -355,7 +355,7 @@ public final class DefaultIrRecorderTest {
         System.out.println("-- Same-module targets record bindings, no"
             + " occurrences --");
         RecorderRun run = new RecorderRun("n: int", "int(3.0)",
-            Type.Int.INSTANCE, null);
+            Type.Number.INSTANCE, null);
         check(run.occurrences().isEmpty(),
             "an intrinsic conversion publishes no occurrence");
         check(run.bindings().containsKey("int"),
@@ -379,7 +379,7 @@ public final class DefaultIrRecorderTest {
         // Await at evaluator scope (the checker-accepted shape inside an
         // async function body): E3020 at the await range.
         RecorderRun evaluatorScope = new RecorderRun("x: int",
-            "await source()", Type.Int.INSTANCE, null);
+            "await source()", Type.Number.INSTANCE, null);
         List<CompilerDiagnostic> diagnostics =
             evaluatorScope.awaitDiagnostics();
         check(diagnostics.size() == 1
@@ -396,7 +396,7 @@ public final class DefaultIrRecorderTest {
         // Await inside a nested async function-expression body: legal.
         RecorderRun nested = new RecorderRun("f: async () => int",
             "async function(): int { return await source(); }",
-            Types.func(List.of(), Type.Int.INSTANCE, true), null);
+            Types.func(List.of(), Type.Number.INSTANCE, true), null);
         check(nested.awaitDiagnostics().isEmpty(),
             "await inside the nested async function-expression body is"
                 + " legal, got " + nested.awaitDiagnostics());
@@ -465,7 +465,7 @@ public final class DefaultIrRecorderTest {
                 }
             }
             exports.put(functionName(), Types.func(List.of(classType),
-                Type.Int.INSTANCE));
+                Type.Number.INSTANCE));
             return new DefaultPlanImport(sourcePath, modulePath, program,
                 new SourceModuleLocation(sourcePath,
                     new SemanticModuleIdentity(DEPLOYMENT,
@@ -536,7 +536,7 @@ public final class DefaultIrRecorderTest {
     private static List<ClassField> siblingFields(Span span) {
         return List.of(new ClassField(span, "v", false, false,
             new NamedType(span, "int"), java.util.Optional.of(
-                new LiteralExpr(span, new LiteralValue.IntLiteral(0)))));
+                new LiteralExpr(span, new LiteralValue.NumberLiteral(0)))));
     }
 
     /**
@@ -614,7 +614,7 @@ public final class DefaultIrRecorderTest {
             : callee.alias() + "." + callee.functionName()
                 + "({ v: 7 })";
         return siblingRun(providers, Map.of(), "x: int", call,
-            Type.Int.INSTANCE, callee.classType(),
+            Type.Number.INSTANCE, callee.classType(),
             localCallee ? callableType(callee)
                 : callee.planImport().exports()
                     .get(callee.functionName()),
@@ -1153,7 +1153,7 @@ public final class DefaultIrRecorderTest {
 
     private static Type callableType(SiblingProvider provider) {
         return Types.func(List.of(provider.classType()),
-            Type.Int.INSTANCE);
+            Type.Number.INSTANCE);
     }
 
     /**

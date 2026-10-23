@@ -2,30 +2,30 @@ module @test/ir-goldens/fixtures/for-loops.deal:4:1-9:1
   function main: null @test/ir-goldens/fixtures/for-loops.deal:4:1-9:1
     body
       block @test/ir-goldens/fixtures/for-loops.deal:5:5-7:48
-        let v14Loop0: int @test/ir-goldens/fixtures/for-loops.deal:5:7-5:34
+        let v14Loop0: number @test/ir-goldens/fixtures/for-loops.deal:5:7-5:37
           [boundary: var-annotation]
-          literal 0 : int @test/ir-goldens/fixtures/for-loops.deal:5:27-5:27
-        while @test/ir-goldens/fixtures/for-loops.deal:5:30-7:48
-          binary < : boolean @test/ir-goldens/fixtures/for-loops.deal:5:37-5:49
-            ident v14Loop0 : int @test/ir-goldens/fixtures/for-loops.deal:5:37-5:44
-            literal 10 : int @test/ir-goldens/fixtures/for-loops.deal:5:48-5:49
-          block @test/ir-goldens/fixtures/for-loops.deal:5:52-7:46
-            let i: int @test/ir-goldens/fixtures/for-loops.deal:5:54-5:77
+          literal 0.0 : number @test/ir-goldens/fixtures/for-loops.deal:5:30-5:30
+        while @test/ir-goldens/fixtures/for-loops.deal:5:33-7:48
+          binary < : boolean @test/ir-goldens/fixtures/for-loops.deal:5:40-5:52
+            ident v14Loop0 : number @test/ir-goldens/fixtures/for-loops.deal:5:40-5:47
+            literal 10.0 : number @test/ir-goldens/fixtures/for-loops.deal:5:51-5:52
+          block @test/ir-goldens/fixtures/for-loops.deal:5:55-7:46
+            let i: number @test/ir-goldens/fixtures/for-loops.deal:5:57-5:83
               [boundary: var-annotation]
-              ident v14Loop0 : int @test/ir-goldens/fixtures/for-loops.deal:5:67-5:74
-            block @test/ir-goldens/fixtures/for-loops.deal:5:77-7:5
-              let x: int @test/ir-goldens/fixtures/for-loops.deal:6:9-7:5
+              ident v14Loop0 : number @test/ir-goldens/fixtures/for-loops.deal:5:73-5:80
+            block @test/ir-goldens/fixtures/for-loops.deal:5:83-7:5
+              let x: number @test/ir-goldens/fixtures/for-loops.deal:6:9-7:5
                 [boundary: var-annotation]
-                ident i : int @test/ir-goldens/fixtures/for-loops.deal:6:22-6:22
+                ident i : number @test/ir-goldens/fixtures/for-loops.deal:6:25-6:25
             expr-stmt @test/ir-goldens/fixtures/for-loops.deal:7:7-7:18
-              assign = : int @test/ir-goldens/fixtures/for-loops.deal:7:7-7:18
+              assign = : number @test/ir-goldens/fixtures/for-loops.deal:7:7-7:18
                 [boundary: assignment]
-                ident v14Loop0 : int @test/ir-goldens/fixtures/for-loops.deal:7:7-7:14
-                ident i : int @test/ir-goldens/fixtures/for-loops.deal:7:18-7:18
+                ident v14Loop0 : number @test/ir-goldens/fixtures/for-loops.deal:7:7-7:14
+                ident i : number @test/ir-goldens/fixtures/for-loops.deal:7:18-7:18
             expr-stmt @test/ir-goldens/fixtures/for-loops.deal:7:21-7:43
-              assign = : int @test/ir-goldens/fixtures/for-loops.deal:7:21-7:43
+              assign = : number @test/ir-goldens/fixtures/for-loops.deal:7:21-7:43
                 [boundary: assignment]
-                ident v14Loop0 : int @test/ir-goldens/fixtures/for-loops.deal:7:21-7:28
-                binary + : int @test/ir-goldens/fixtures/for-loops.deal:7:32-7:43
-                  ident v14Loop0 : int @test/ir-goldens/fixtures/for-loops.deal:7:32-7:39
-                  literal 1 : int @test/ir-goldens/fixtures/for-loops.deal:7:43-7:43
+                ident v14Loop0 : number @test/ir-goldens/fixtures/for-loops.deal:7:21-7:28
+                binary + : number @test/ir-goldens/fixtures/for-loops.deal:7:32-7:43
+                  ident v14Loop0 : number @test/ir-goldens/fixtures/for-loops.deal:7:32-7:39
+                  literal 1.0 : number @test/ir-goldens/fixtures/for-loops.deal:7:43-7:43

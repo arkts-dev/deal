@@ -5,10 +5,10 @@
 // @features: async, await, runtime
 
 // Invocation-local stage carrier threaded through the private chain helpers.
-class ChainStage { step: int = 0; }
+class ChainStage { step: number = 0; }
 
 // Level 3: sync completion — no internal await
-async function level3_sync(stage: ChainStage): int {
+async function level3_sync(stage: ChainStage): number {
   // The innermost completion must be the first chain event: stage 0.
   if (stage.step !== 0) {
     throw { code: "TEST_FAIL", message: "level3_sync completion stage mismatch" };
@@ -18,8 +18,8 @@ async function level3_sync(stage: ChainStage): int {
 }
 
 // Level 2: awaits level3_sync (which completes synchronously)
-async function level2(stage: ChainStage): int {
-  let v: int = await level3_sync(stage);
+async function level2(stage: ChainStage): number {
+  let v: number = await level3_sync(stage);
   // level2 resumes once after the innermost completion: stage must be 1.
   if (stage.step !== 1) {
     throw { code: "TEST_FAIL", message: "level2 resume stage mismatch" };
@@ -32,8 +32,8 @@ async function level2(stage: ChainStage): int {
 }
 
 // Level 1: awaits level2
-async function level1(stage: ChainStage): int {
-  let v: int = await level2(stage);
+async function level1(stage: ChainStage): number {
+  let v: number = await level2(stage);
   // level1 resumes once after level2's resume: stage must be 2.
   if (stage.step !== 2) {
     throw { code: "TEST_FAIL", message: "level1 resume stage mismatch" };
@@ -45,9 +45,9 @@ async function level1(stage: ChainStage): int {
   return v;
 }
 
-export async function test(): int {
+export async function test(): number {
   let stage: ChainStage = { step: 0 };
-  let v: int = await level1(stage);
+  let v: number = await level1(stage);
   // Every chain level completed and resumed exactly once: final stage 3.
   if (stage.step !== 3) {
     throw { code: "TEST_FAIL", message: "final chain stage mismatch" };

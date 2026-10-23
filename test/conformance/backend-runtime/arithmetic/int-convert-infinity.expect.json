@@ -6,20 +6,11 @@
     "js"
   ],
   "expected": {
-    "mode": "runtime-error",
+    "mode": "runtime-ok",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected int, got infinity\",\"sourceFile\":\"backend-runtime/arithmetic/int-convert-infinity.deal\",\"line\":9,\"column\":10,\"expected\":\"int\",\"actual\":\"infinity\"}\n",
+      "stdout": "",
       "stderr": ""
     },
-    "exitCode": 1,
-    "error": {
-      "code": "E8001",
-      "message": "expected int, got infinity",
-      "sourceFile": "backend-runtime/arithmetic/int-convert-infinity.deal",
-      "line": 9,
-      "column": 10,
-      "expected": "int",
-      "actual": "infinity"
-    }
+    "exitCode": 0
   }
 }

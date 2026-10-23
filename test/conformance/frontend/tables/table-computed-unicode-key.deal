@@ -6,6 +6,6 @@
 export function main(): null {
   let t: table = {};
   t["😀"] = 7;
-  let n: int = t["😀"];
+  let n: number = t["😀"];
   return null;
 }

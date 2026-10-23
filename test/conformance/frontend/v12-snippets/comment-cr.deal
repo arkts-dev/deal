@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, lexer, raw-source
 
-// ordinaryexport function f(): int {// ignoredreturn 3;}
+// ordinaryexport function f(): number {// ignoredreturn 3;}

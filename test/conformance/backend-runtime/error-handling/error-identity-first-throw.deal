@@ -13,7 +13,7 @@ function mutateReturned(e: Error): Error {
 }
 
 // The first throw happens inside the callee, the rethrow in its handler.
-function rethrowCaught(e: Error): int {
+function rethrowCaught(e: Error): number {
   try {
     throw e;
   } catch (caught) {
@@ -51,7 +51,7 @@ function assertRethrowIdentity(): null {
   let original: Error = { code: "R", message: "r" };
   let caughtAgain: boolean = false;
   try {
-    let x: int = rethrowCaught(original);
+    let x: number = rethrowCaught(original);
   } catch (again) {
     caughtAgain = true;
     if (again !== original) {
@@ -115,13 +115,13 @@ export async function test_awaited_error_identity(): string {
   let original: Error = { code: "A", message: "a" };
   let alias: Error = original;
 
-  async function asyncThrow(): int {
+  async function asyncThrow(): number {
     throw original;
   }
 
   let caught: boolean = false;
   try {
-    let x: int = await asyncThrow();
+    let x: number = await asyncThrow();
   } catch (e) {
     caught = true;
     if (e !== original || e !== alias) {

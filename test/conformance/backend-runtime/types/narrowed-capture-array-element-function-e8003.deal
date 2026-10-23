@@ -3,19 +3,19 @@
 // @expected: runtime-error E8003
 // @features: type-system, nullable, narrowing, arrays, functions, descriptors, runtime-errors
 
-function asInt(value: int): int {
+function asInt(value: number): number {
   return value;
 }
 
 export function main(): null {
-  let f: ((value: int) => int) | null = asInt;
+  let f: ((value: number) => number) | null = asInt;
   let clear: () => null = function(): null {
     f = null;
     return null;
   };
   if (f !== null) {
     clear();
-    let xs: ((value: int) => int)[] = [f];
+    let xs: ((value: number) => number)[] = [f];
   }
   return null;
 }

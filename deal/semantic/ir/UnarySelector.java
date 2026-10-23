@@ -15,9 +15,7 @@ public enum UnarySelector implements ClosedSelector {
     /** Logical not over booleans. */
     BOOL_NOT,
 
-    /** Signed32 arithmetic negation (policy {@code INT32_RESULT}). */
-    INT32_NEG,
 
-    /** IEEE-754 number negation (policy {@code NO_DEAL_FAILURE}). */
+/** IEEE-754 number negation (policy {@code NO_DEAL_FAILURE}). */
     NUMBER_NEG
 }

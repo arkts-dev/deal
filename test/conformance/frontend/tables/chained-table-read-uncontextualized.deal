@@ -5,6 +5,6 @@
 
 export function main(): null {
   let t: table = { child: { x: 7 } };
-  let n: int = t.child.x;
+  let n: number = t.child.x;
   return null;
 }

@@ -5,8 +5,8 @@
 
 import * as c from "std/console";
 export function main(): null {
- let xs: int[] = []; let alias: int[] = xs;
- { let v14Loop0: int = 0; while (v14Loop0<65) { let i: int = v14Loop0; {alias[alias.length] = i;} v14Loop0 = i; v14Loop0=v14Loop0+1; } }
+ let xs: number[] = []; let alias: number[] = xs;
+ { let v14Loop0: number = 0; while (v14Loop0<65) { let i: number = v14Loop0; {alias[alias.length] = i;} v14Loop0 = i; v14Loop0=v14Loop0+1; } }
  if(xs !== alias || xs.length !== 65 || xs[0] !== 0 || xs[32] !== 32 || xs[64] !== 64) {throw {message:"append reallocated identity"};}
  xs[64] = 99; if(alias[64] !== 99) {throw {message:"growth alias detached"};}
  c.log("empty-array-alias-growth"); return null;

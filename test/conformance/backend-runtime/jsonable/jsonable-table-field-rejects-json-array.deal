@@ -30,7 +30,7 @@ export function test_table_field_rejects_json_array(): null {
   // to the DEAL table carrier.
   let keyed: Wrapper | null = Wrapper$fromJson("{\"data\":{\"count\":3}}");
   if (keyed !== null) {
-    let count: int = keyed.data.count;
+    let count: number = keyed.data.count;
     if (count !== 3) {
       throw { code: "TEST_FAIL", message: "a keyed table field value must decode" };
     }

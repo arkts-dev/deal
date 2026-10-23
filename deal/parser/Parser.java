@@ -88,12 +88,8 @@ public final class Parser {
      * The events-carrying constructor
      * (fixed-name-directive-events D1): the production shape — the
      * lexer's {@code directiveEvents} flow in, file-directive evaluation
-     * and declaration binding run exactly as in production. The parse
-     * contract is the sole v1.3 contract: every {@code INT_LITERAL}
-     * outside {@code [-2147483648, 2147483647]} raises E1036, with the
-     * sole exception that the decimal token {@code 2147483648} is
-     * permitted as the immediate operand of unary {@code -}, where both
-     * tokens combine into the in-range literal {@code -2147483648}.
+     * and declaration binding run exactly as in production. Numeric tokens
+     * decode directly to binary64; unary negation is always an expression.
      */
     public Parser(List<Token> tokens, String file,
                   List<CompilerDirective> directiveEvents) {
@@ -1127,18 +1123,6 @@ public final class Parser {
 
         if (match(TokenType.MINUS)) {
             Token minus = previous();
-            // The immediate-token special case: "-" immediately followed
-            // by the INT_LITERAL token 2147483648 combines into the
-            // in-range literal -2147483648 with the combined span and no
-            // error. Any other position for 2147483648 (parenthesized,
-            // bare, or otherwise) reaches parsePrimary and raises E1036.
-            if (peek().type() == TokenType.INT_LITERAL
-                    && peek().lexeme().equals("2147483648")) {
-                Token intToken = advance();
-                Span sp = spanBetween(minus, intToken);
-                return new LiteralExpr(sp,
-                    new LiteralValue.IntLiteral(-2147483648L));
-            }
             ExpressionNode operand = parseUnary();
             if (operand == null) return null;
             Span sp = spanBetween(spanOf(minus), operand.span());
@@ -1222,36 +1206,13 @@ public final class Parser {
                 return new LiteralExpr(spanOf(previous()),
                         new LiteralValue.BooleanLiteral(false));
             }
-            case INT_LITERAL -> {
-                advance();
-                long value;
-                boolean parseOverflow = false;
-                try {
-                    value = Long.parseLong(previous().lexeme());
-                } catch (NumberFormatException e) {
-                    parseOverflow = true;
-                    value = 0;
-                }
-                // Any value above the signed32 maximum raises E1036 at
-                // the token with the existing template and error-recovery
-                // shape (record the diagnostic, continue with value 0);
-                // a value beyond Long.parseLong's range raises the same
-                // diagnostic.
-                if (parseOverflow || value > 2147483647L) {
-                    error(DiagnosticCode.E1036,
-                        "Integer literal out of range: " + previous().lexeme(),
-                        previous());
-                    value = 0;
-                }
-                return new LiteralExpr(spanOf(previous()), new LiteralValue.IntLiteral(value));
-            }
             case NUMBER_LITERAL -> {
                 advance();
                 double value;
                 try {
                     value = Double.parseDouble(previous().lexeme());
                 } catch (NumberFormatException e) {
-                    error(DiagnosticCode.E1036, "Invalid number literal: " + previous().lexeme(), previous());
+                    error(DiagnosticCode.E1002, "Invalid number literal: " + previous().lexeme(), previous());
                     value = 0.0;
                 }
                 return new LiteralExpr(spanOf(previous()),
@@ -1567,10 +1528,8 @@ public final class Parser {
             return placeholderLiteral(map);
         }
 
-        // 5. Parse expression with a sub-parser under the same parse
-        //    contract: the int32 E1036 gate and the -2147483648
-        //    immediate-token rule apply inside template interpolations
-        //    exactly as everywhere else.
+        // 5. Parse interpolated expressions under the same binary64
+        //    literal and ordinary unary-expression rules as outer source.
         //    parseExpression() is private but accessible — Java JLS section 6.6.1
         //    D10.7: the sub-parser is constructed with NO directive
         //    events — sub-events hoist to the enclosing parser instead of
@@ -2088,7 +2047,7 @@ public final class Parser {
 
     private boolean canStartExpression(TokenType type) {
         return switch (type) {
-            case NULL, TRUE, FALSE, INT_LITERAL, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
+            case NULL, TRUE, FALSE, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
                  IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
                  FUNCTION, HAS, AWAIT, ASYNC -> true;
             default -> false;

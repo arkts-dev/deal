@@ -11,6 +11,6 @@ import java.util.concurrent.CompletableFuture;
 // Host<Name>.java (test/JvmConformanceTest.java HOST_JAVA pattern).
 final class HostAsync_bad {
   public static Object fetchValue() {
-    return CompletableFuture.completedFuture(Long.valueOf(42L));
+    return CompletableFuture.completedFuture(Double.valueOf(42L));
   }
 }

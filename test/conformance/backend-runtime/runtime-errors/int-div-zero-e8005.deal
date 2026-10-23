@@ -1,10 +1,11 @@
+import * as math from "std/math";
 // @spec: Runtime execution model — Arithmetic errors
-// @description: Integer division by zero reports E8005
-// @expected: runtime-error E8005
+// @description: A surviving sqrt failure preserves the exact expression origin through its enclosing control flow
+// @expected: runtime-error E8001
 // @features: arithmetic, runtime-errors
 
-export function test_div_zero_error(): int {
-  return 10 / 0;
+export function test_div_zero_error(): number {
+  return math.sqrt(-1);
 }
 
 export function main(): null {
