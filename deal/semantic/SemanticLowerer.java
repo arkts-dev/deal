@@ -9484,6 +9484,19 @@ public final class SemanticLowerer {
          * descriptor with input = the checked RHS value, and the commit
          * appends exactly when the normalize computed
          * {@code index == length} (the append idiom's standard shape).
+         * A function-typed element position whose RHS is assignable but
+         * not exact commits the arity-extension adapter instead: the
+         * materialized RHS keeps its own child position (evaluated after
+         * the receiver and the key) and the adapter follows it
+         * ({@code [containerOp, keyOp, rhsOp, FUNCTION_ADAPT adapterOp,
+         * lengthOp, normalizeOp, boundaryOp, commitOp]}), so the boundary
+         * input and the commit's stored value are the adapter's result; a
+         * binding source adapts over its cell instead (zero evaluation at
+         * the position) and the adapter is the value child itself
+         * ({@code [containerOp, keyOp, FUNCTION_ADAPT adapterOp,
+         * lengthOp, normalizeOp, boundaryOp, commitOp]}). Every child is
+         * named through {@link #chainChildOp(ValueId)}, so a child
+         * produced inside a selected block stays under its structure op.
          */
         private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
                                               Type.Array arrayType) {
