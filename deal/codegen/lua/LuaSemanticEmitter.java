@@ -14157,7 +14157,15 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         else out[#out + 1] = tostring(v) end
         return
       end
-      if t == "string" then out[#out + 1] = __jsonEscape(v); return end
+      if t == "string" then
+        -- RFC 8259 output must be UTF-8: an invalid scalar sequence is
+        -- still a string carrier, so it rejects through the closed arm
+        -- with the string actual token (the shipped std/json and the JS
+        -- and JVM projections), never as escaped invalid bytes that the
+        -- STDLIB_RETURN cell would reject after the walk.
+        if not __jsonValidUtf8(v) then sfFail(v) end
+        out[#out + 1] = __jsonEscape(v); return
+      end
       if t == "table" then
         if v[__dealCarrierKeys.jn] then
           if v.k == "int" then out[#out + 1] = tostring(v.d)
@@ -14347,8 +14355,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           else
             local i = frame.index
             frame.index = i + 1
-            if i > 1 then out[#out + 1] = "," end
             local k = frame.order[i]
+            if not __jsonValidUtf8(k) then sfFail(k) end
+            if i > 1 then out[#out + 1] = "," end
             out[#out + 1] = __jsonEscape(k)
             out[#out + 1] = ":"
             -- A module namespace surface's entry is projected through
@@ -14365,8 +14374,9 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           else
             local i = frame.index
             frame.index = i + 1
-            if i > 1 then out[#out + 1] = "," end
             local k = frame.order[i]
+            if not __jsonValidUtf8(k) then sfFail(k) end
+            if i > 1 then out[#out + 1] = "," end
             out[#out + 1] = __jsonEscape(k)
             out[#out + 1] = ":"
             local element = frame.value[k]

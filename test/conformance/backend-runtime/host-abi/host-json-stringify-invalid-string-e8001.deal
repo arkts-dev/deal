@@ -1,0 +1,16 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: json.stringify rejects an object value that is not a Unicode scalar sequence through the closed JSON_STRINGIFY_UNSUPPORTED arm (v1.3)
+// @expected: runtime-error E8001
+// @features: stdlib, json, host-abi, unicode, runtime-errors, v1.3
+
+import * as host from "host/jsonabletable";
+import * as json from "std/json";
+
+export function test_json_stringify_invalid_string(): string {
+  let t: table = host.makeBadString();
+  return json.stringify(t);
+}
+
+export function main(): null {
+  return null;
+}

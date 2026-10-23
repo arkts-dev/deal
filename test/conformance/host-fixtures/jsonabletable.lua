@@ -3,9 +3,9 @@
 -- is a plain Lua table carrying the JSON-shaped data the class helper's
 -- toJson walk accepts: an object, an object with a nested object and an
 -- array member, and a self-referential table for the closed cycle arm.
--- The closed arms' returns carry a non-finite numeric leaf and an invalid
--- UTF-8 object key, the two content shapes the finite acyclic JSON domain
--- excludes.
+-- The closed arms' returns carry a non-finite numeric leaf, an invalid
+-- UTF-8 object value and an invalid UTF-8 object key, the content shapes
+-- the finite acyclic JSON domain excludes.
 
 local M = {}
 
@@ -45,6 +45,10 @@ end
 
 function M.makeNestedBadKey()
   return { inner = { [string.char(0xFF)] = 1 } }
+end
+
+function M.makeBadString()
+  return { a = string.char(0xFF) }
 end
 
 return M

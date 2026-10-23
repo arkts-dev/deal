@@ -3,9 +3,10 @@
 // is the JVM runtime table carrier carrying the JSON-shaped data the class
 // helper's toJson walk accepts: an object, an object with a nested object
 // and an array member, and a self-referential table for the closed cycle
-// arm. The closed arms' returns carry a non-finite numeric leaf and an
-// invalid (unpaired-surrogate) object key, the two content shapes the
-// finite acyclic JSON domain excludes.
+// arm. The closed arms' returns carry a non-finite numeric leaf, an
+// invalid (unpaired-surrogate) object value and an invalid
+// (unpaired-surrogate) object key, the content shapes the finite acyclic
+// JSON domain excludes.
 
 final class HostJsonabletable {
   public static Object makeTable() {
@@ -72,6 +73,12 @@ final class HostJsonabletable {
     inner.write("\uD800", Long.valueOf(1L));
     deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
     t.write("inner", inner);
+    return t;
+  }
+
+  public static Object makeBadString() {
+    deal.codegen.jvm.JvmRuntime.Table t = new deal.codegen.jvm.JvmRuntime.Table();
+    t.write("a", "\uD800");
     return t;
   }
 }
