@@ -2350,13 +2350,18 @@ public class HostModuleLoadEmissionTest {
      * The declared table positions of the host-crossed table value: a
      * {@code table} return, a {@code table} parameter (the host observes
      * the DEAL value it was handed), a declared function position whose
-     * host-driven invocation passes a plain Lua table back into DEAL, and
-     * a self-referential host table (the walk's closed cycle arm).
+     * host-driven invocation passes a plain Lua table back into DEAL, a
+     * self-referential host table (the walk's closed cycle arm), and the
+     * three table forms {@code json.stringify} classifies — the pure
+     * string-keyed object, the pure positive-integer-keyed array, and the
+     * mixed-key table only a non-DEAL host table can carry.
      */
     private static final String HOST_TABLE_DECLARATION_SOURCE = """
         export function makeTable(): table;
         export function makeNested(): table;
         export function makeCycle(): table;
+        export function makeArray(): table;
+        export function makeMixed(): table;
         export function describe(t: table): string;
         export function withTable(f: (t: table) => string): string;
         """;
@@ -2366,8 +2371,11 @@ public class HostModuleLoadEmissionTest {
      * and {@code json.stringify} consume the plain table a host hands
      * over — the return value, the callback argument, a nested member and
      * a table the DEAL side wrote after the crossing (the first write's
-     * recorded order beside the host's own keys) — and a
-     * self-referential host table renders the closed cycle arm.
+     * recorded order beside the host's own keys) — a self-referential
+     * host table renders the closed cycle arm, and the shared table-form
+     * rule admits the pure array form while a mixed-key host table renders
+     * the closed {@code JSON_STRINGIFY_UNSUPPORTED} tuple instead of
+     * coerced or duplicated member names (JsonEncodeV13).
      */
     private static final String HOST_TABLE_APP_SOURCE = """
         import * as host from "host/table_probe";
@@ -2389,6 +2397,16 @@ public class HostModuleLoadEmissionTest {
 
         function accept(t: table): string {
           return "cb:" + joined(tables.keys(t)) + ":" + json.stringify(t);
+        }
+
+        function closedOutcome(t: table): string {
+          let outcome: string = "no-failure";
+          try {
+            outcome = "OK:" + json.stringify(t);
+          } catch (e) {
+            outcome = e.code + "|" + e.message;
+          }
+          return outcome;
         }
 
         export function run(): string {
@@ -2420,7 +2438,15 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "host table cycle arm" };
           }
 
-          return first + "\\n" + second + "\\n" + third + "\\n" + fourth;
+          let fifth: string = "array=" + closedOutcome(host.makeArray());
+          // The shared table-form rule: a mixed-key host table is not
+          // JSON-shaped content, so the walk renders the closed
+          // JSON_STRINGIFY_UNSUPPORTED tuple instead of a coerced numeric
+          // member name (and never the duplicate name [1] beside "1").
+          let sixth: string = "mixed=" + closedOutcome(host.makeMixed());
+
+          return first + "\\n" + second + "\\n" + third + "\\n" + fourth
+            + "\\n" + fifth + "\\n" + sixth;
         }
 
         export function main(): null {
@@ -2443,6 +2469,10 @@ public class HostModuleLoadEmissionTest {
             t.self = t
             return t
           end,
+          makeArray = function() return { "a", "b" } end,
+          makeMixed = function()
+            return { [1] = "a", ["1"] = "b", name = "test" }
+          end,
           describe = function(t)
             return "a=" .. tostring(t.a) .. " extra=" .. tostring(t.extra)
           end,
@@ -2457,6 +2487,8 @@ public class HostModuleLoadEmissionTest {
         "nested={\"inner\":\"x\"} keys=inner",
         "written=extra,a:{\"extra\":9,\"a\":1} host=a=1 extra=9",
         "callback=cb:cb:{\"cb\":2}",
+        "array=OK:[\"a\",\"b\"]",
+        "mixed=E8001|unsupported type for JSON encoding: table",
         "TRANSCRIPT-END",
         "");
 
@@ -2468,7 +2500,11 @@ public class HostModuleLoadEmissionTest {
      * host built, and {@code std/table.keys} and {@code std/json.stringify}
      * consume it — no raw Lua length-of-nil failure and no false
      * {@code JSON_STRINGIFY_UNSUPPORTED} — on the published production
-     * artifact under real luajit.
+     * artifact under real luajit. The same walk admits a host table's pure
+     * array form and rejects its mixed-key form with the closed
+     * {@code JSON_STRINGIFY_UNSUPPORTED} tuple — the shared table-form rule
+     * the shipped std/json realization applies too — so no member name is
+     * ever coerced from a key the DEAL table grammar cannot carry.
      */
     private static void testLuaHostTableValue() throws Exception {
         System.out.println("-- the host-crossed table value: the published "

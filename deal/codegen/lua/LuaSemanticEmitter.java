@@ -14256,23 +14256,37 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
           sfFail(v); return
         end
         -- A plain Lua table (the LuaJIT table representation the host
-        -- side and the shipped std/json realization produce) is the JSON
-        -- object/array shape of its keys, exactly the shipped encoder's
-        -- inference: the dense positive-integer form is the array (a
-        -- missing slot is the closed missing arm at its own index), every
-        -- other table the string-keyed object with the recorded per-slot
-        -- number marks. This keeps the two realizations agreeing on a
-        -- host table the ordinary DEAL boundaries already admitted.
-        local plainArray = true
+        -- side and the shipped std/json realization produce) takes the
+        -- shared table-form rule of docs/spec-v1.3.md:728 and of the
+        -- shipped encoder: the pure positive-integer-keyed form is the
+        -- array (a missing slot is the closed missing arm at its own
+        -- index), the pure string-keyed form the object with the
+        -- recorded per-slot number marks, and every other key form is
+        -- not JSON-shaped content. A DEAL table has string keys, so a
+        -- numeric key outside the array form, a non-scalar key, and the
+        -- mixed form only a host table can carry all render the closed
+        -- JSON_STRINGIFY_UNSUPPORTED arm — never a coerced member name
+        -- and never a duplicate JSON member ([1] beside "1"). This keeps
+        -- the two realizations agreeing on a host table the ordinary
+        -- DEAL boundaries already admitted.
         local maxIdx = 0
+        local objectKey = false
         for k, _ in pairs(v) do
-          if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
-            plainArray = false
-            break
+          if type(k) == "number" then
+            if k < 1 or k ~= math.floor(k) then
+              sfFail(v)
+              return
+            end
+            if k > maxIdx then maxIdx = k end
+          elseif type(k) == "string" then
+            objectKey = true
+          else
+            sfFail(v)
+            return
           end
-          if k > maxIdx then maxIdx = k end
         end
-        if plainArray and maxIdx > 0 then
+        if objectKey and maxIdx > 0 then sfFail(v); return end
+        if maxIdx > 0 then
           if path[v] then sfCycle(); return end
           path[v] = true
           out[#out + 1] = "["
@@ -14286,20 +14300,15 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
         path[v] = true
         out[#out + 1] = "{"
         local keys = {}
-        local texts = {}
         for k, _ in pairs(v) do
           if type(k) == "string" then
             keys[#keys + 1] = k
-            texts[#texts + 1] = k
-          elseif type(k) == "number" then
-            keys[#keys + 1] = k
-            texts[#texts + 1] = string.format("%.17g", k)
           end
         end
         local marks = v[__dealCarrierKeys.nK]
         if type(marks) ~= "table" then marks = nil end
         frames[#frames + 1] = {kind = "table", value = v, order = keys,
-          texts = texts, index = 1, marks = marks}
+          index = 1, marks = marks}
         return
       end
       if t == "function" then sfFail(v); return end
@@ -14358,8 +14367,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             frame.index = i + 1
             if i > 1 then out[#out + 1] = "," end
             local k = frame.order[i]
-            local text = frame.texts ~= nil and frame.texts[i] or k
-            out[#out + 1] = __jsonEscape(text)
+            out[#out + 1] = __jsonEscape(k)
             out[#out + 1] = ":"
             local element = frame.value[k]
             if element == nil and frame.presence ~= nil
