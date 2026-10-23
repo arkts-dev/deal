@@ -1,6 +1,13 @@
 #!/bin/bash
 
 # Complete suite selection used by both test and coverage runners.
+#
+# Records are "<class>|<banner>|<command>" with one command per line. The
+# luajit/node records execute the real LuaJIT and Node runtime scripts, one
+# process per line, and the runner preflights those tools before any build
+# work: an absent tool fails the run with the named TOOL_MISSING outcome. A
+# record therefore carries no warning, skip or fallback line: a missing tool
+# never removes a supported case from the selection.
 TEST_MAINS=(
   'bg|=== Launching Production Corpus Conformance (JS/LuaJIT/JVM) ===|java -ea -cp build deal.test.CorpusConformanceTest test/conformance/'
   'fg|=== Running Diagnostic Range Tests ===|java -ea -cp build deal.test.DiagnosticRangeTest'
@@ -47,16 +54,11 @@ TEST_MAINS=(
   'fg|=== Running JS Semantic-IR Emitter Tests (ISSUE-0798/0800) ===|java -ea -cp build deal.test.JsSemanticEmitterTest'
   'fg|=== Running Source Module Resolver Tests (ISSUE-0267 T6) ===|java -ea -cp build deal.module.SourceModuleResolverTest'
   'luajit|=== Running Runtime Library Tests ===|luajit test_runtime.lua
-luajit test_runtime_int32.lua
-WARNING: luajit not found, skipping runtime library tests'
-  'luajit|=== Running Jsonable Runtime Tests ===|luajit test_runtime_jsonable.lua
-WARNING: luajit not found, skipping jsonable runtime tests'
-  'node|=== Running Jsonable Runtime JS Tests ===|node test_jsonable_js.js
-WARNING: node not found, skipping jsonable runtime JS tests'
-  'luajit|=== Running Standard Library Tests ===|luajit test_stdlib.lua
-WARNING: luajit not found, skipping standard library tests'
-  'node|=== Running Standard Library JS Tests ===|node test_stdlib_js.js
-WARNING: node not found, skipping standard library JS tests'
+luajit test_runtime_int32.lua'
+  'luajit|=== Running Jsonable Runtime Tests ===|luajit test_runtime_jsonable.lua'
+  'node|=== Running Jsonable Runtime JS Tests ===|node test_jsonable_js.js'
+  'luajit|=== Running Standard Library Tests ===|luajit test_stdlib.lua'
+  'node|=== Running Standard Library JS Tests ===|node test_stdlib_js.js'
   'fg|=== Running Distribution Home Tier-Selection Tests (ISSUE-0457) ===|java -ea -cp build deal.test.DistributionHomeTest'
   'fg|=== Running Publication Stager Tests (ISSUE-0458) ===|java -ea -cp build deal.test.PublicationStagerTest'
   'fg|=== Running Stdlib STDLIB_CALL Lowering Tests (ISSUE-0494) ===|java -ea -cp build deal.test.StdlibCallLoweringTest'
@@ -98,4 +100,20 @@ WARNING: node not found, skipping standard library JS tests'
   'fg|=== Running Declared-Body Carrier Production Tests (ISSUE-0757, ISSUE-0758) ===|java -ea -cp build deal.test.DeclaredBodyCarrierProductionTest'
   'fg|=== Running Fail-Closed Guard Retargeting Tests (ISSUE-0702) ===|java -ea -cp build deal.test.FailClosedGuardRetargetingTest'
   'fg|=== Running Intrinsic Shadowing Production Tests (ISSUE-0878) ===|java -ea -cp build deal.test.IntrinsicShadowingProductionTest'
+  'fg|=== Running Required-Tool Fail-Closed Preflight Tests (ISSUE-0874) ===|java -ea -cp build deal.test.ToolchainPreflightTest'
 )
+
+# No record may carry a warning, skip or fallback line: a missing required tool
+# is the runner's TOOL_MISSING preflight failure, never a downgraded record. This
+# validation refuses a reintroduced skip line instead of letting it silently
+# remove a supported case from the selection.
+for _manifest_record in "${TEST_MAINS[@]}"; do
+  case "$_manifest_record" in
+    *WARNING:*|*"not found, skipping"*|*SKIP:*)
+      echo "INTERNAL ERROR: gate-manifest record carries a skip/warning line:" >&2
+      echo "$_manifest_record" >&2
+      return 1 2>/dev/null || exit 1
+      ;;
+  esac
+done
+unset _manifest_record

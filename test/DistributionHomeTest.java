@@ -19,7 +19,6 @@ public class DistributionHomeTest {
 
     private static int passed = 0;
     private static int failed = 0;
-    private static int skipped = 0;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -46,8 +45,7 @@ public class DistributionHomeTest {
         testAllSixModulesResolverDriven();
         testFileAtStdIsNotASurface();
 
-        System.out.println("\nPassed: " + passed + ", Failed: " + failed
-            + ", Skipped: " + skipped);
+        System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
         }

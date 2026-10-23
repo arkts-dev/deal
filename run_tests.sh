@@ -21,6 +21,15 @@ esac
 
 echo "=== DEAL test parallelism: jobs=$JOBS ==="
 source tools/gate-manifest.sh
+
+# Fail-closed required-tool preflight: the selection below executes the real
+# LuaJIT and Node runtime records and the production corpus under these
+# toolchains. A missing tool is the named TOOL_MISSING outcome and stops the
+# gate here, before any build output is touched and before any suite could
+# drop a supported case: never a warning or a skip.
+REQUIRED_TOOLS=(javac java luajit node gcc)
+tools/tool-preflight.sh "${REQUIRED_TOOLS[@]}"
+
 rm -rf build
 mkdir -p build/test-classes
 
@@ -53,9 +62,18 @@ for record in "${TEST_MAINS[@]}"; do
     luajit|node)
       while IFS= read -r record_line; do
         case "$record_line" in
-          WARNING:*) ;;
-          *) read -r -a record_args <<< "$record_line"; "${record_args[@]}" ;;
+          '') continue ;;
+          WARNING:*|SKIP:*)
+            # The selection never omits a supported case: a skip or warning
+            # line in one of these records is a manifest defect, not a
+            # downgrade of the run.
+            echo "INTERNAL ERROR: the '$record_class' manifest record contains" \
+              "a skip/warning line: $record_line" >&2
+            exit 1
+            ;;
         esac
+        read -r -a record_args <<< "$record_line"
+        "${record_args[@]}"
       done <<< "$record_command"
       ;;
     *) echo "INTERNAL ERROR: unknown TEST_MAINS record class '$record_class'" >&2; exit 1 ;;

@@ -1130,7 +1130,7 @@ public class ProductionProjectEmissionTest {
      * artifacts execute under Node — the entry's direct-run main and the
      * exported async worker over the cross-module and host boundaries.
      */
-    private static void testJsProjectEmission(Fixture fixture, boolean node)
+    private static void testJsProjectEmission(Fixture fixture)
             throws Exception {
         System.out.println("-- the JS arm: one lowering and one rendering return"
             + " every implementation artifact; the complete set stages and"
@@ -1274,11 +1274,6 @@ public class ProductionProjectEmissionTest {
         checkEq(firstSet, snapshotTree(out),
             "the published live set equals the staged set byte-for-byte");
 
-        if (!node) {
-            System.out.println("  SKIP: the JS production drive needs node");
-            return;
-        }
-
         // The host implementation is host-owned: the compile copies no host
         // file, and the published artifact requires the deployed relative
         // specifier (never an ambient NODE_PATH/node_modules resolution).
@@ -1350,7 +1345,7 @@ public class ProductionProjectEmissionTest {
      * stderr and exit status 1 (the entry/failure ABI the renderer emits),
      * with an empty stdout and no trace protocol.
      */
-    private static void testJsEntryFailureStatus(boolean node) throws Exception {
+    private static void testJsEntryFailureStatus() throws Exception {
         System.out.println("-- the published JS entry keeps the located"
             + " DEAL_ERROR_CODE stderr line and status 1 on an uncaught"
             + " failure --");
@@ -1372,10 +1367,6 @@ public class ProductionProjectEmissionTest {
                 stager.publish();
             } finally {
                 stager.discard();
-            }
-            if (!node) {
-                System.out.println("  SKIP: the JS entry-status drive needs node");
-                return;
             }
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
             checkEq(1, run.exitCode(),
@@ -1405,7 +1396,7 @@ public class ProductionProjectEmissionTest {
      * declaration facts, and the published CommonJS artifact executes the
      * real behavior under Node.
      */
-    private static void testDeclarationOrderAndCallResultAdapter(boolean node)
+    private static void testDeclarationOrderAndCallResultAdapter()
             throws Exception {
         System.out.println("-- the JS arm compiles a later-declared class"
             + " literal in an earlier body and a call-result arity-extension"
@@ -1516,11 +1507,6 @@ public class ProductionProjectEmissionTest {
                 "every recorded mapping is one emitted source comment of the"
                     + " published entry artifact");
 
-            if (!node) {
-                System.out.println("  SKIP: the declaration-order Node drive"
-                    + " needs node");
-                return;
-            }
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
             checkEq(0, run.exitCode(),
                 "the published artifact runs: " + run.output());
@@ -1538,7 +1524,7 @@ public class ProductionProjectEmissionTest {
     // 3b. The call-result arity-extension adapter through the production arm
     // =========================================================================
 
-    private static void testJsCallResultAdapter(Fixture fixture, boolean node)
+    private static void testJsCallResultAdapter(Fixture fixture)
             throws Exception {
         System.out.println("-- the call-result arity-extension adapter: the"
             + " production lowering builds the adapter from the call result and"
@@ -1621,10 +1607,6 @@ public class ProductionProjectEmissionTest {
             stager.discard();
         }
 
-        if (!node) {
-            System.out.println("  SKIP: the adapted-call drive needs node");
-            return;
-        }
         ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
         assertEmitterRun("the published adapter main ignores the extra argument",
             entry, 0, "ARITY_ADAPTER|OK\n");
@@ -1672,7 +1654,7 @@ public class ProductionProjectEmissionTest {
      * declaration facts; the complete set stages and publishes, and the
      * published CommonJS artifact executes both constructions under Node.
      */
-    private static void testJsForwardClassLiteral(Fixture fixture, boolean node)
+    private static void testJsForwardClassLiteral(Fixture fixture)
             throws Exception {
         System.out.println("-- a later-declared class literal in an earlier"
             + " function body (with a per-construction default) emits through"
@@ -1720,17 +1702,13 @@ public class ProductionProjectEmissionTest {
             stager.discard();
         }
 
-        if (!node) {
-            System.out.println("  SKIP: the forward-class drive needs node");
-            return;
-        }
         ProcessOutcome entry = runProcess(List.of("node", "app.js"), out);
         assertEmitterRun("the earlier body constructs the later class with its default",
             entry, 0, "FORWARD_CLASS|OK\n");
     }
 
     /** The awaited call-result adapter: a declaration-site VALUE source. */
-    private static void testAwaitAdapterSource(boolean node) throws Exception {
+    private static void testAwaitAdapterSource() throws Exception {
         Path root = Files.createTempDirectory("js-await-adapter-");
         try {
             writeFileIn(root, "src/app.deal", AWAIT_ADAPTER_APP_SOURCE);
@@ -1797,10 +1775,6 @@ public class ProductionProjectEmissionTest {
                     + " synchronous re-executor cannot await)");
             checkEq(2, countOccurrences(artifact, "const $av"),
                 "each awaited adapter retains the materialized source value");
-            if (!node) {
-                System.out.println("  SKIP: the awaited adapter Node drive needs node");
-                return;
-            }
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
             ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
                 out);
@@ -1821,7 +1795,7 @@ public class ProductionProjectEmissionTest {
      * identity, whose D15 resolution runs the re-evaluated source, and the
      * single caller-side DEAL-body task cell checks the resolved completion.
      */
-    private static void testAsyncCallResultAdapterShape(boolean node) throws Exception {
+    private static void testAsyncCallResultAdapterShape() throws Exception {
         Path root = Files.createTempDirectory("js-async-adapter-");
         try {
             writeFileIn(root, "src/app.deal", ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE);
@@ -1882,10 +1856,6 @@ public class ProductionProjectEmissionTest {
             checkEq(2, adapterStarts,
                 "each awaited arity-extended call site is one closed dynamic"
                     + " async start over the adapter carrier");
-            if (!node) {
-                System.out.println("  SKIP: the async adapter Node drive needs node");
-                return;
-            }
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
             ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "int"),
                 out);
@@ -1973,7 +1943,7 @@ public class ProductionProjectEmissionTest {
     }
 
     /** Mutual and self-referential function-valued class defaults. */
-    private static void testDeferredClassDefaults(boolean node) throws Exception {
+    private static void testDeferredClassDefaults() throws Exception {
         Path root = Files.createTempDirectory("js-deferred-defaults-");
         try {
             writeFileIn(root, "src/app.deal", DEFERRED_DEFAULT_APP_SOURCE);
@@ -2045,10 +2015,6 @@ public class ProductionProjectEmissionTest {
             check(constructions >= 5,
                 "the entry body and the deferred defaults construct the"
                     + " module-level classes: " + constructions);
-            if (!node) {
-                System.out.println("  SKIP: the deferred-default Node drive needs node");
-                return;
-            }
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
             assertEmitterRun("mutual and self defaults construct only at the deferred call",
                 run, 0, "PROBE|JS|DEFERRED-DEFAULTS\n");
@@ -2062,7 +2028,7 @@ public class ProductionProjectEmissionTest {
      * the construction skips the provided field's default, so neither the
      * self-referential nor the mutual variant re-enters its own default.
      */
-    private static void testProvidedFieldDefaultTermination(boolean node)
+    private static void testProvidedFieldDefaultTermination()
             throws Exception {
         Path root = Files.createTempDirectory("js-provided-defaults-");
         try {
@@ -2074,11 +2040,6 @@ public class ProductionProjectEmissionTest {
                 "the provided-field class defaults compile through the public"
                     + " JS arm (a supplied field adds no construction edge): "
                     + orchestrator.diagnostics());
-            if (!node) {
-                System.out.println("  SKIP: the provided-field default Node"
-                    + " drive needs node");
-                return;
-            }
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
             assertEmitterRun("self and mutual provided-field defaults terminate",
                 run, 0, "PROBE|JS|PROVIDED-DEFAULTS\n");
@@ -2113,7 +2074,7 @@ public class ProductionProjectEmissionTest {
      * distinguishable. The mutual pair covers the two-declaration form on the
      * same construction sites.
      */
-    private static void testSuppressedRecursiveDefaultDemand(boolean node)
+    private static void testSuppressedRecursiveDefaultDemand()
             throws Exception {
         System.out.println("-- a suppressed recursive class default admits the finite "
             + "construction and a demanded one stays fail-closed --");
@@ -2128,14 +2089,9 @@ public class ProductionProjectEmissionTest {
                     + " construction: " + orchestrator.diagnostics());
             check(Files.exists(out.resolve("app.js")),
                 "the admitted compile publishes the entry artifact");
-            if (!node) {
-                System.out.println("  SKIP: the suppressed-default Node drive"
-                    + " needs node");
-            } else {
-                ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
-                assertEmitterRun("the supplied recursive fields keep their values",
-                    run, 0, "PROBE|JS|SUPPRESSED-DEFAULTS\n");
-            }
+            ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
+            assertEmitterRun("the supplied recursive fields keep their values",
+                run, 0, "PROBE|JS|SUPPRESSED-DEFAULTS\n");
 
             writeFileIn(root, "src/demanded.deal",
                 DEMANDED_RECURSIVE_DEFAULT_APP_SOURCE);
@@ -2487,18 +2443,6 @@ public class ProductionProjectEmissionTest {
         check(!armSource.contains("CheckResult")
                 && !armSource.contains("ProgramNode"),
             "the production arm holds no checker or program object");
-    }
-
-    /** Whether the real Node binary is available for the artifact drives. */
-    private static boolean nodeAvailable() {
-        try {
-            Process node = new ProcessBuilder("node", "--version")
-                .redirectErrorStream(true).start();
-            node.getInputStream().readAllBytes();
-            return node.waitFor() == 0;
-        } catch (java.io.IOException | InterruptedException ignored) {
-            return false;
-        }
     }
 
     /**
@@ -5127,6 +5071,8 @@ public class ProductionProjectEmissionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Project Emission Tests (ISSUE-0642) ===\n");
+        ToolchainPreflight.require("node", "--version",
+            "the real JS artifact drives");
         try (Fixture fixture = twoModuleFixture(APP_SOURCE);
                 Fixture js = jsFixture();
                 Fixture failing = corruptedSignatureFixture();
@@ -5136,26 +5082,21 @@ public class ProductionProjectEmissionTest {
                 Fixture externC = externCFixture();
                 Fixture cross = asyncFixture(ASYNC_LIB_SOURCE, CROSS_ASYNC_APP_SOURCE);
                 Fixture same = asyncFixture(ASYNC_LIB_SOURCE, SAME_ASYNC_APP_SOURCE)) {
-            boolean node = nodeAvailable();
-            System.out.println(node
-                ? "-- node available: the real JS artifact drives run --"
-                : "-- node NOT available: the real JS artifact drives are"
-                    + " skipped --");
-            testJsProjectEmission(js, node);
-            testJsEntryFailureStatus(node);
-            testDeclarationOrderAndCallResultAdapter(node);
-            testAwaitAdapterSource(node);
-            testAsyncCallResultAdapterShape(node);
-            testDeferredClassDefaults(node);
+            testJsProjectEmission(js);
+            testJsEntryFailureStatus();
+            testDeclarationOrderAndCallResultAdapter();
+            testAwaitAdapterSource();
+            testAsyncCallResultAdapterShape();
+            testDeferredClassDefaults();
             testDirectDefaultConstructionCycleFailsClosed();
-            testProvidedFieldDefaultTermination(node);
-            testSuppressedRecursiveDefaultDemand(node);
+            testProvidedFieldDefaultTermination();
+            testSuppressedRecursiveDefaultDemand();
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);
             testAtomicFailures(failing);
-            testJsCallResultAdapter(adapter, node);
-            testJsForwardClassLiteral(forward, node);
+            testJsCallResultAdapter(adapter);
+            testJsForwardClassLiteral(forward);
             SemanticLowerer.ProjectLoweringResult hostLowering = lower(host);
             SemanticLowerer.ProjectLoweringResult externLowering = lower(externC);
             SemanticLowerer.ProjectLoweringResult asyncLowering = lower(cross);

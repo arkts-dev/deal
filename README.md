@@ -13,9 +13,15 @@ the Visitor interface.
 
 Compiles all production and remaining test sources with `javac --release 25`
 and executes the complete selection in `tools/gate-manifest.sh` with
-assertions enabled: 84 Java suites and five Lua/JS runtime records. Java
+assertions enabled: 85 Java suites and five Lua/JS runtime records. Java
 suites run sequentially; `--jobs` controls parallel work inside suites.
 There is no alternate full-suite profile.
+
+`run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,
+`node`, `gcc`). A missing required tool fails the run with the named
+`TOOL_MISSING` outcome before any build work, and the LuaJIT/Node records and
+JS production suites have no skip path: a run that omits a supported lane is
+a failure, never a pass.
 
 ## Distribution
 
