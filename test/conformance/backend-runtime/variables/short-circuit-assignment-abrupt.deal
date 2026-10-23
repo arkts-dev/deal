@@ -1,0 +1,30 @@
+// @spec: Runtime execution model — Operational semantics summary (rules 1-4)
+// @description: A &&/|| assignment whose right operand the short-circuit selects executes exactly that operand and propagates its error value unchanged; the skipped right operands of both operators never run, so the pinned SC_SELECTED snapshot (never SC_SKIPPED and never a shifted origin) is the whole evaluation-order proof.
+// @expected: runtime-error SC_SELECTED
+// @features: short-circuit, assignment, evaluation-order, runtime-errors
+
+// The skipped right operand of both operators: if a lane flattened a
+// conditional operand out of its branch, the process would abort with
+// SC_SKIPPED at this origin instead of the pinned snapshot.
+function skippedOperand(): boolean {
+  throw { code: "SC_SKIPPED", message: "a skipped right operand executed" };
+}
+
+// The selected right operand: the short-circuit decides the result from
+// the left operand only for the two skipped assignments above, so this
+// throw is the fixture's single terminal.
+function selectedOperand(): boolean {
+  throw { code: "SC_SELECTED", message: "the selected right operand executed" };
+}
+
+export function selectedRightOperandAbrupt(): null {
+  let flag: boolean = false;
+  flag = true || skippedOperand();
+  flag = false && skippedOperand();
+  flag = false || selectedOperand();
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

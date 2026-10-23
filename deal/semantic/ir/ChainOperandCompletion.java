@@ -42,12 +42,27 @@ import java.util.Set;
  * <li>{@link #operandProducersOf(SemanticOp, LoweredModuleUnit, Set)} —
  * the transitive operand-producing closure of one chain child, in unit
  * list order, excluding structurally-owned ops (those execute under
- * their own owner).</li>
+ * their own owner) and keeping every selected-block producer under the
+ * structure op that owns its block.</li>
  * <li>{@link #registerChainOperandOwners(LoweredModuleUnit, Set, Set)} —
  * adds every chain child's operand closure to the consumer's skip set,
  * so the block walk never executes those ops and the chain arm executes
  * them at their consuming child's position.</li>
  * </ul>
+ *
+ * <p><b>Selected-block producers keep their branch ownership.</b> An
+ * {@code &&}/{@code ||} right operand is lowered into its branch's
+ * selected block, so its value is published by an op that is a member of
+ * that block, not of the enclosing block the chain executes in. The
+ * branch op is the member of the enclosing block. Executing the
+ * block-internal producer at the child's position would flatten the
+ * conditional operand out of its block and run it even when the
+ * short-circuit skips it (the skipped operand's exception and effects
+ * would execute). The closure therefore substitutes the outermost
+ * structure op that owns the producer's block whenever that block is not
+ * the child's own block: the structure op (and its block) then execute at
+ * the child's position, and the conditional operand executes only when the
+ * short-circuit selects it.</p>
  *
  * <p>Trace-visible: the closure ops record the chain op as their
  * {@code parentOpId} (the lowerer pushes the chain parent while
@@ -185,6 +200,13 @@ public final class ChainOperandCompletion {
      * under their own owner arm (e.g. a nested chain child, a boundary
      * child) and must never be re-executed here.
      *
+     * <p>A producer that is a member of a block other than the child's own
+     * block is replaced by the outermost structure op that owns that block
+     * (the {@code BRANCH} of a short-circuit right operand), so the
+     * conditional operand executes with its block at the child's position
+     * instead of being flattened out of the block the short-circuit guards.
+     * The structure op's own condition value (the branch payload's
+     * condition, which is not an operand) joins the closure too.</p>
      */
     public static List<SemanticOp> operandProducersOf(SemanticOp child,
                                                       LoweredModuleUnit unit,
@@ -195,6 +217,9 @@ public final class ChainOperandCompletion {
                 producers.put(valueId, op);
             }
         }
+        Map<OpId, BlockId> opBlocks = opBlocksOf(unit);
+        Map<BlockId, SemanticOp> blockOwners = blockOwnersOf(unit);
+        BlockId childBlock = opBlocks.get(child.opId());
         List<SemanticOp> closure = new ArrayList<>();
         Set<ValueId> done = new HashSet<>();
         Deque<ValueId> work = new ArrayDeque<>();
@@ -215,7 +240,7 @@ public final class ChainOperandCompletion {
                 }
             }
         }
-        for (ValueId operand : child.operands()) {
+        for (ValueId operand : operandsIncludingCondition(child)) {
             if (done.add(operand)) {
                 work.add(operand);
             }
@@ -223,11 +248,16 @@ public final class ChainOperandCompletion {
         while (!work.isEmpty()) {
             ValueId value = work.poll();
             SemanticOp producer = producers.get(value);
-            if (producer == null || structuralOwned.contains(producer.opId())) {
+            if (producer == null) {
                 continue;
             }
-            closure.add(producer);
-            for (ValueId operand : producer.operands()) {
+            SemanticOp execution = executedAt(producer, childBlock, opBlocks,
+                blockOwners);
+            if (structuralOwned.contains(execution.opId())) {
+                continue;
+            }
+            closure.add(execution);
+            for (ValueId operand : operandsIncludingCondition(execution)) {
                 if (done.add(operand)) {
                     work.add(operand);
                 }
@@ -245,6 +275,94 @@ public final class ChainOperandCompletion {
             index.getOrDefault(a.opId(), Integer.MAX_VALUE),
             index.getOrDefault(b.opId(), Integer.MAX_VALUE)));
         return closure;
+    }
+
+    /**
+     * The values one closure op consumes: its operands plus, for a
+     * structure op, the branch condition the payload carries (a
+     * {@code BRANCH}'s condition is a payload field, never an operand, so
+     * the condition's producers must still complete at the structure op's
+     * position).
+     */
+    private static List<ValueId> operandsIncludingCondition(SemanticOp op) {
+        if (op.payload() instanceof KindPayload.BranchPayload branch) {
+            List<ValueId> values = new ArrayList<>(op.operands());
+            values.add(branch.condition());
+            return values;
+        }
+        return op.operands();
+    }
+
+    /**
+     * The op that executes one discovered producer at the child's own
+     * position: the producer itself when it is a member of the child's
+     * block, otherwise the outermost structure op that owns the producing
+     * block (see the class comment). A producer whose block chain reaches
+     * no structure op inside the child's block keeps itself — no
+     * structure owns it, so nothing can be re-parented.
+     */
+    private static SemanticOp executedAt(SemanticOp producer, BlockId childBlock,
+                                        Map<OpId, BlockId> opBlocks,
+                                        Map<BlockId, SemanticOp> blockOwners) {
+        SemanticOp current = producer;
+        for (int steps = 0; steps <= blockOwners.size(); steps++) {
+            BlockId block = opBlocks.get(current.opId());
+            if (block == null || childBlock == null || block.equals(childBlock)) {
+                return current;
+            }
+            SemanticOp owner = blockOwners.get(block);
+            if (owner == null) {
+                return producer;
+            }
+            current = owner;
+        }
+        return producer;
+    }
+
+    /** The block membership of every op in one unit's own table. */
+    private static Map<OpId, BlockId> opBlocksOf(LoweredModuleUnit unit) {
+        Map<OpId, BlockId> opBlocks = new HashMap<>();
+        if (unit.bodyTable() == null || unit.bodyTable().opBlocks() == null) {
+            return opBlocks;
+        }
+        opBlocks.putAll(unit.bodyTable().opBlocks());
+        return opBlocks;
+    }
+
+    /**
+     * The structure op that owns each child block: {@code BRANCH}'s
+     * selected/alternate blocks, {@code LOOP}'s init/body/update blocks,
+     * {@code FOR_EACH}'s body and {@code TRY_CATCH}'s try/catch blocks.
+     */
+    private static Map<BlockId, SemanticOp> blockOwnersOf(LoweredModuleUnit unit) {
+        Map<BlockId, SemanticOp> owners = new HashMap<>();
+        for (SemanticOp op : unit.ops()) {
+            switch (op.payload()) {
+                case KindPayload.BranchPayload branch -> {
+                    owners.put(branch.selectedBlock(), op);
+                    if (branch.alternateBlock() != null) {
+                        owners.put(branch.alternateBlock(), op);
+                    }
+                }
+                case KindPayload.LoopPayload loop -> {
+                    if (loop.initBlock() != null) {
+                        owners.put(loop.initBlock(), op);
+                    }
+                    owners.put(loop.bodyBlock(), op);
+                    if (loop.updateBlock() != null) {
+                        owners.put(loop.updateBlock(), op);
+                    }
+                }
+                case KindPayload.ForEachPayload forEach -> owners.put(forEach.body(), op);
+                case KindPayload.TryCatchPayload tryCatch -> {
+                    owners.put(tryCatch.tryBlock(), op);
+                    owners.put(tryCatch.catchBlock(), op);
+                }
+                default -> {
+                }
+            }
+        }
+        return owners;
     }
 
     /**

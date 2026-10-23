@@ -2676,6 +2676,15 @@ public final class SemanticLowerer {
         private final java.util.LinkedHashMap<OpId, BlockId> opBlocks =
             new java.util.LinkedHashMap<>();
         /**
+         * The payload block → owning structure op inverse (C-D1..C-D6):
+         * every block a structure op's payload references belongs to
+         * exactly that op, recorded at the op's emission. The
+         * address-chain production reads it to keep a value produced in a
+         * selected block under its structure op (A-D2).
+         */
+        private final java.util.LinkedHashMap<BlockId, OpId> blockOwners =
+            new java.util.LinkedHashMap<>();
+        /**
          * The enclosing structure-op parents (C-D3..C-D6): the innermost
          * structure op whose block is currently being lowered. Every op
          * emitted inside a structure's child block records that
@@ -3708,6 +3717,37 @@ public final class SemanticLowerer {
                 blockOps.get(block).add(op.opId());
                 opBlocks.put(op.opId(), block);
             }
+            for (BlockId owned : ownedBlocksOf(op)) {
+                if (owned != null) {
+                    blockOwners.put(owned, op.opId());
+                }
+            }
+        }
+
+        /**
+         * The child blocks one structure op's payload owns — the closed
+         * structure set ({@code BRANCH}, {@code LOOP}, {@code FOR_EACH},
+         * {@code TRY_CATCH}); every other op owns none.
+         */
+        private static List<BlockId> ownedBlocksOf(SemanticOp op) {
+            return switch (op.payload()) {
+                case KindPayload.BranchPayload branch -> branch.alternateBlock() == null
+                    ? List.of(branch.selectedBlock())
+                    : List.of(branch.selectedBlock(), branch.alternateBlock());
+                case KindPayload.LoopPayload loop -> {
+                    List<BlockId> blocks = new ArrayList<>();
+                    blocks.add(loop.initBlock());
+                    blocks.add(loop.bodyBlock());
+                    if (loop.updateBlock() != null) {
+                        blocks.add(loop.updateBlock());
+                    }
+                    yield List.copyOf(blocks);
+                }
+                case KindPayload.ForEachPayload forEach -> List.of(forEach.body());
+                case KindPayload.TryCatchPayload tryCatch ->
+                    List.of(tryCatch.tryBlock(), tryCatch.catchBlock());
+                default -> List.of();
+            };
         }
 
         /**
@@ -8883,7 +8923,7 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 value = lowerExpression(assignment.value(), slot);
-                valueOp = producerOpId(value);
+                valueOp = chainChildOp(value);
                 FailurePolicyId boundaryPolicy = targetDescriptor instanceof RuntimeDescriptor.Func
                     ? FailurePolicyId.FUNCTION_SIGNATURE : FailurePolicyId.TYPE_DESCRIPTOR;
                 boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
@@ -9064,9 +9104,9 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(access.object());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 value = lowerExpression(assignment.value(), slot);
-                valueOp = producerOpId(value);
+                valueOp = chainChildOp(value);
                 commitOp = emitNullOp(SemanticOpKind.MEMBER_WRITE,
                     new KindPayload.MemberWritePayload(container, access.field(), value),
                     access.span(), FailurePolicyId.NO_DEAL_FAILURE,
@@ -9117,11 +9157,11 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(index.array());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
-                keyOp = producerOpId(key);
+                keyOp = chainChildOp(key);
                 value = lowerExpression(assignment.value(), slot);
-                valueOp = producerOpId(value);
+                valueOp = chainChildOp(value);
                 ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
                     index.span(),
@@ -9177,11 +9217,11 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(index.array());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
-                keyOp = producerOpId(key);
+                keyOp = chainChildOp(key);
                 value = lowerExpression(assignment.value(), slot);
-                valueOp = producerOpId(value);
+                valueOp = chainChildOp(value);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
@@ -9261,11 +9301,11 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(index.array());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
-                keyOp = producerOpId(key);
+                keyOp = chainChildOp(key);
                 value = lowerExpression(assignment.value(), slot);
-                valueOp = producerOpId(value);
+                valueOp = chainChildOp(value);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
                     elementDescriptor, FailurePolicyId.INT32_RESULT);
@@ -9367,9 +9407,9 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerExpression(access.object());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 value = lowerExpression(assignment.value(), slot);
-                valueOp = producerOpId(value);
+                valueOp = chainChildOp(value);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_WRITE,
                     new KindPayload.FieldWritePayload(container, classId, access.field(),
                         value, providerRef),
@@ -9422,7 +9462,7 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(access.object());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 commitOp = emitNullOp(SemanticOpKind.MEMBER_DELETE,
                     new KindPayload.MemberDeletePayload(container, access.field()),
                     access.span(), FailurePolicyId.NO_DEAL_FAILURE,
@@ -9461,9 +9501,9 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(index.array());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
-                keyOp = producerOpId(key);
+                keyOp = chainChildOp(key);
                 ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
                     new KindPayload.IndexNormalizePayload(IndexMode.TABLE_WRITE, key, key),
                     index.span(),
@@ -9510,9 +9550,9 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerOperand(index.array());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
-                keyOp = producerOpId(key);
+                keyOp = chainChildOp(key);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
                     ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE),
@@ -9574,7 +9614,7 @@ public final class SemanticLowerer {
             OpId commitOp;
             try {
                 ValueId container = lowerExpression(access.object());
-                containerOp = producerOpId(container);
+                containerOp = chainChildOp(container);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_DELETE,
                     new KindPayload.FieldDeletePayload(container, classId,
                         access.field(), providerRef),
@@ -9617,6 +9657,45 @@ public final class SemanticLowerer {
                 }
             }
             throw new IllegalStateException("no produced op publishes value " + value
+                + " (producer defect)");
+        }
+
+        /**
+         * The producer of one chain child's operand value at the chain's
+         * own position (A-D2): the producing op when it is a member of
+         * the emitting block, otherwise the outermost structure op whose
+         * selected block contains it.
+         *
+         * <p>An {@code &&}/{@code ||} right operand is lowered into its
+         * branch's selected block, so its value is published inside that
+         * block while the branch op itself is a member of the enclosing
+         * block. A chain executes its children in the enclosing block:
+         * naming the block-internal producer as the child would flatten
+         * the conditionally executed operand out of its block and execute
+         * it unconditionally, skipping no exception and no effect. Naming
+         * the owning branch instead keeps the operand inside the block the
+         * chain reproduces ({@code BRANCH} and its selected block execute
+         * together), so the short-circuit decision still guards the
+         * operand's effects.</p>
+         */
+        private OpId chainChildOp(ValueId value) {
+            OpId opId = producerOpId(value);
+            BlockId enclosing = blockStack.peek();
+            for (int steps = 0; steps < opBlocks.size(); steps++) {
+                BlockId block = opBlocks.get(opId);
+                if (block == null || block.equals(enclosing)) {
+                    return opId;
+                }
+                OpId owner = blockOwners.get(block);
+                if (owner == null) {
+                    // A block no structure op owns (a function/module body)
+                    // is never a selected block: keep the producer.
+                    return opId;
+                }
+                opId = owner;
+            }
+            throw new IllegalStateException("the chain child value " + value
+                + " has no enclosing structure op inside the emitting block"
                 + " (producer defect)");
         }
 
