@@ -5,9 +5,9 @@
 // is the runtime table Map carrying the JSON-shaped data the class helper's
 // toJson walk accepts: an object, an object with a nested object and an
 // array member, and a self-referential table for the closed cycle arm. The
-// closed arms' returns carry a non-finite numeric leaf and an invalid
-// (unpaired-surrogate) object key, the two content shapes the finite
-// acyclic JSON domain excludes.
+// closed arms' returns carry a non-finite numeric leaf, an invalid
+// (unpaired-surrogate) object value and an invalid (unpaired-surrogate)
+// object key, the content shapes the finite acyclic JSON domain excludes.
 
 const $rt = require("../deal/runtime");
 
@@ -55,5 +55,9 @@ module.exports = {
     const inner = $rt.makeTable({});
     inner.set("\uD800", 1);
     return $rt.makeTable({ inner: inner });
+  },
+
+  makeBadString: function () {
+    return $rt.makeTable({ a: "\uD800" });
   },
 };

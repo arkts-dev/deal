@@ -10,8 +10,9 @@
 // member, and a self-referential table for the closed cycle arm. The
 // closed arms' returns carry content the finite acyclic JSON domain
 // excludes: a non-finite numeric leaf (an object member, a nested plain
-// table's member and an array element) and an object key that is not a
-// Unicode scalar sequence (at the root object and inside a nested one).
+// table's member and an array element), an object value and an object key
+// that are not Unicode scalar sequences (at the root object and inside a
+// nested one).
 
 export function makeTable(): table;
 export function makeNested(): table;
@@ -22,3 +23,4 @@ export function makeNestedInfinite(): table;
 export function makeInfiniteElements(): table;
 export function makeBadKey(): table;
 export function makeNestedBadKey(): table;
+export function makeBadString(): table;

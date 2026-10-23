@@ -3420,6 +3420,14 @@ public final class JvmRuntime {
             if (frame.index < frame.keys.size()) {
                 int i = frame.index++;
                 String key = frame.keys.get(i);
+                // RFC 8259 output must be UTF-8: an invalid scalar
+                // sequence is still a string carrier, so an invalid key
+                // rejects through the closed JSON_STRINGIFY_UNSUPPORTED
+                // arm (actual string) before any text is appended,
+                // exactly like the shipped std/json and JS walks.
+                if (!JvmJson.validScalars(key)) {
+                    throw jsonEncodingFailure(key);
+                }
                 if (i > 0) {
                     out.append(',');
                 }
@@ -3456,6 +3464,13 @@ public final class JvmRuntime {
             }
             out.append(Double.toString(d));
         } else if (value instanceof String string) {
+            // An invalid scalar sequence is still a string carrier: it
+            // rejects through the closed JSON_STRINGIFY_UNSUPPORTED arm
+            // (actual string), never as escaped invalid bytes that the
+            // STDLIB_RETURN cell would reject after the walk.
+            if (!JvmJson.validScalars(string)) {
+                throw jsonEncodingFailure(string);
+            }
             appendJsonString(out, string);
         } else if (value instanceof Table table) {
             if (!path.add(table)) {
