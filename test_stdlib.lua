@@ -609,10 +609,75 @@ test("json.stringify boolean values", function()
   assert(string.find(result, "false") ~= nil)
 end)
 
-test("json.stringify includes numeric keys in object mode", function()
-  local result = json.stringify.f({ [1] = "a", name = "test" })
-  assert(string.find(result, '"1"') ~= nil, "numeric key 1 should be included as string")
-  assert(string.find(result, '"name"') ~= nil)
+-- The shared table-form rule (JsonEncodeV13): a plain table is JSON-shaped
+-- only as the pure positive-integer-keyed array or the pure string-keyed
+-- object. A DEAL table has string keys, so a numeric or other key — and the
+-- mixed form only a non-DEAL host table can carry — is not JSON-shaped
+-- content: it renders the closed JSON_STRINGIFY_UNSUPPORTED tuple (E8001
+-- "unsupported type for JSON encoding: table", expected "string, number,
+-- boolean, or table", actual "table"), exactly the emitted LuaJIT chunk's
+-- walk, the JS runtime's Map-key row and the JVM runtime's table/array
+-- split. Never a coerced member name and never a duplicate JSON member
+-- ([1] beside "1").
+local function assert_table_form_stringify_error(fn, label, file, line, column)
+  local err = assert_error_code(fn, "E8001")
+  assert(err.message == "unsupported type for JSON encoding: table",
+    label .. ": message " .. tostring(err.message))
+  assert(err.expected == "string, number, boolean, or table",
+    label .. ": expected " .. tostring(err.expected))
+  assert(err.actual == "table", label .. ": actual " .. tostring(err.actual))
+  if file ~= nil then
+    assert(err.file == file and err.line == line and err.column == column,
+      label .. ": the tuple carries the call-site triplet, got "
+        .. tostring(err.file) .. ":" .. tostring(err.line) .. ":" .. tostring(err.column))
+  end
+  return err
+end
+
+test("json.stringify rejects a mixed-key table instead of coercing member names", function()
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ [1] = "a", name = "test" })
+  end, "numeric key beside a string key")
+  -- The collision hazard: [1] and "1" are distinct Lua keys but one JSON
+  -- member name, so the coercion would emit the duplicate name twice.
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ [1] = "a", ["1"] = "b" })
+  end, "colliding numeric and string key")
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ data = { [2] = "a", name = "test" } })
+  end, "nested mixed-key table")
+end)
+
+test("json.stringify rejects every key form outside the two JSON table forms", function()
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ [0] = "a" })
+  end, "zero key")
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ [-1] = "a" })
+  end, "negative key")
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ [1.5] = "a" })
+  end, "fractional key")
+  assert_table_form_stringify_error(function()
+    json.stringify.f({ [true] = "a" })
+  end, "boolean key")
+end)
+
+test("json.stringify keeps the pure integer-keyed array and string-keyed object forms", function()
+  local array = json.stringify.f({ "a", "b" })
+  assert(array == '["a","b"]', "the pure integer-keyed table is the array: " .. tostring(array))
+  -- A hole in an admitted array form is the internal missing slot, never a
+  -- fabricated JSON null and never an object member.
+  local hole = assert_error_code(function()
+    json.stringify.f({ [2] = "b" })
+  end, "E8001")
+  assert(hole.message == "unsupported type for JSON encoding: nil",
+    "the missing slot token: " .. tostring(hole.message))
+  assert(hole.actual == "nil", "the missing slot actual token: " .. tostring(hole.actual))
+  local object = json.stringify.f({ name = "test" })
+  assert(object == '{"name":"test"}', "the pure string-keyed table is the object: " .. tostring(object))
+  local numericString = json.stringify.f({ ["1"] = "a" })
+  assert(numericString == '{"1":"a"}', "a numeric string key is a string key: " .. tostring(numericString))
 end)
 
 test("json.stringify escapes all control characters", function()

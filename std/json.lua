@@ -438,8 +438,11 @@ end
 -- the array carrier ([__K.a]/[__K.n]) renders its elements; and the
 -- per-slot number marks ([__K.nK]) select the number-variant spelling for
 -- the marked slot. No private table-object key is ever enumerated as an
--- object member. Unmarked tables keep the numeric-key inference and the
--- existing object encoding; the unsupported/cycle behavior is unchanged.
+-- object member. An unmarked table takes the shared table-form rule: the
+-- pure positive-integer-keyed array or the pure string-keyed object, in
+-- that order; a table with any other key — a numeric key outside that
+-- form, a non-scalar key, or the mixed form only a non-DEAL host table
+-- can carry — is not JSON-shaped and takes the closed unsupported arm.
 -- Only the language-null carrier __rt.__NULL renders 'null': a raw nil is
 -- the missing value in every frame and takes the closed unsupported arm.
 local function encode_value(v, file, line, column, path)
@@ -610,17 +613,31 @@ local function encode_value(v, file, line, column, path)
           presence = presence, index = 1, marks = marks}
         return
       end
-      -- Check if it's an array (sequential integer keys starting at 1)
-      local isArray = true
+      -- The shared table-form rule (JsonEncodeV13, the emitted chunk's
+      -- own classifier): a plain table is JSON-shaped only as the pure
+      -- positive-integer-keyed array or the pure string-keyed object. A
+      -- DEAL table has string keys, so a numeric or other key — and the
+      -- mixed form a host table can carry — is not JSON-shaped content:
+      -- the closed unsupported-carrier arm renders it, never a coerced
+      -- member name and never a duplicate JSON member ([1] beside "1").
       local maxIdx = 0
+      local objectKey = false
       for k, _ in pairs(val) do
-        if type(k) ~= 'number' or k < 1 or k ~= math.floor(k) then
-          isArray = false
-          break
+        if type(k) == 'number' then
+          if k < 1 or k ~= math.floor(k) then
+            unsupported(val, file, line, column)
+          end
+          if k > maxIdx then maxIdx = k end
+        elseif type(k) == 'string' then
+          objectKey = true
+        else
+          unsupported(val, file, line, column)
         end
-        if k > maxIdx then maxIdx = k end
       end
-      if isArray and maxIdx > 0 then
+      if objectKey and maxIdx > 0 then
+        unsupported(val, file, line, column)
+      end
+      if maxIdx > 0 then
         out[#out + 1] = '['
         frames[#frames + 1] = {kind = 'array', value = val, index = 1, maxIdx = maxIdx}
         return
@@ -657,17 +674,11 @@ local function encode_value(v, file, line, column, path)
         local k = frame.keys[frame.index]
         frame.index = frame.index + 1
         if frame.index > 2 then out[#out + 1] = ',' end
-        -- Include both string and numeric keys; numeric keys are
-        -- converted to strings via tostring / JSON-compatible formatting.
-        local key_str
-        if type(k) == 'string' then
-          key_str = '"' .. escape(k, file, line, column) .. '"'
-        elseif type(k) == 'number' then
-          key_str = '"' .. string.format('%.17g', k) .. '"'
-        else
-          key_str = '"' .. escape(tostring(k), file, line, column) .. '"'
-        end
-        out[#out + 1] = key_str .. ':'
+        -- Every object member key is a user string key: the inference
+        -- admits no other key form, so no member text is composed from a
+        -- numeric or arbitrary carrier.
+        out[#out + 1] = '"' .. escape(k, file, line, column) .. '"'
+        out[#out + 1] = ':'
         local element = frame.value[k]
         if element == nil and frame.presence ~= nil
             and frame.presence[k] == true then
