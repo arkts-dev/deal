@@ -70,10 +70,9 @@ public record BoundaryValueView(
                 }
             }
             default -> {
-                // NULL, MISSING, BOOLEAN, STRING, BYTES, TABLE,
-                // ASYNC_OPERATION, NOTHING: no payload field (a BYTES view
-                // is classification-only: it carries no contents, K6 item
-                // 11). An INVALID_UNICODE view carries its closed encoding
+                // NULL, MISSING, BOOLEAN, STRING, TABLE,
+                // ASYNC_OPERATION, NOTHING: no payload field.
+                // An INVALID_UNICODE view carries its closed encoding
                 // defect class in unicodeDefect instead.
             }
         }
@@ -175,7 +174,7 @@ public record BoundaryValueView(
     }
 
     /** A payload-free view for {@code NULL}, {@code MISSING}, {@code BOOLEAN},
-     *  {@code INT}, {@code STRING}, {@code BYTES}, {@code TABLE},
+     *  {@code INT}, {@code STRING}, {@code TABLE},
      *  {@code ASYNC_OPERATION}, and {@code NOTHING}. An
      *  {@code INVALID_UNICODE} view always names its defect; use
      *  {@link #ofInvalidUnicode(UnicodeScalars.Defect)} — or this factory,
@@ -183,7 +182,7 @@ public record BoundaryValueView(
     public static BoundaryValueView of(ActualKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case NULL, MISSING, BOOLEAN, INT, STRING, BYTES, TABLE, ASYNC_OPERATION,
+            case NULL, MISSING, BOOLEAN, INT, STRING, TABLE, ASYNC_OPERATION,
                  NOTHING, INVALID_UNICODE ->
                 new BoundaryValueView(kind, null, null, null, null, false);
             case CLASS, NUMBER, FUNCTION, ARRAY ->

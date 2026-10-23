@@ -49,7 +49,7 @@ import javax.tools.ToolProvider;
  * present-null slots (a deleted array element is a value-representation
  * failure, an explicit null element stays JSON {@code null}); shared
  * references that encode at every position and cyclic completions that
- * are value-representation failures; a bytes completion and a
+ * are value-representation failures; a
  * non-finite number classified as representation failures; class,
  * function, and builtin Error completions that pass the matcher and are
  * rejected by the shared encoder (top-level, nullable, nested in an
@@ -154,21 +154,6 @@ public class AsyncExportInvokerProductionTest {
     private static final String NESTED_COMPLETION_SOURCE = """
         export async function run(): table {
           return { a: 7, xs: [7, 8], n: null };
-        }
-
-        export function main(): null {
-          return null;
-        }
-        """;
-
-    /**
-     * The preserved representation-failure surface: a bytes completion is
-     * admitted by the canonical matcher and refused by the encoding step.
-     */
-    private static final String BYTES_COMPLETION_SOURCE = """
-        export async function run(): bytes {
-          let b: bytes = bytes(0);
-          return b;
         }
 
         export function main(): null {
@@ -1338,19 +1323,14 @@ public class AsyncExportInvokerProductionTest {
 
     /**
      * The preserved representation-failure classification
-     * (ISSUE-0749 review cycle 1, finding 2): a bytes completion passes
-     * the canonical matcher (the declared bytes surface) and the encoding
-     * step rejects it on both targets — a hard failure, never a DEAL code
-     * and never a value. The non-finite number boundary is the same
-     * status through the encoder's own finite check.
+     * Non-finite numbers pass the declared number matcher, then fail the
+     * encoder's finite check: a hard representation failure, never a DEAL
+     * code or a value.
      */
     private static void testRepresentationFailureBothTargets() throws Exception {
-        System.out.println("-- bytes and non-finite completions are representation"
+        System.out.println("-- non-finite completions are representation"
             + " failures on both targets");
         for (String backend : List.of("luajit", "jvm")) {
-            assertRepresentationFailure(backend, "bytes-completion",
-                BYTES_COMPLETION_SOURCE, "bytes",
-                "unsupported type for JSON encoding: bytes");
             assertRepresentationFailure(backend, "infinite-number",
                 INFINITE_NUMBER_SOURCE, "number",
                 "unsupported type for JSON encoding: number");

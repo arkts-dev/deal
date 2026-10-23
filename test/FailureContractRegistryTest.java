@@ -174,7 +174,6 @@ public class FailureContractRegistryTest {
         tokens.put(ActualKind.INT, "int");
         tokens.put(ActualKind.NUMBER, "number");
         tokens.put(ActualKind.STRING, "string");
-        tokens.put(ActualKind.BYTES, "bytes");
         tokens.put(ActualKind.TABLE, "table");
         tokens.put(ActualKind.ARRAY, "array");
         tokens.put(ActualKind.FUNCTION, "function");

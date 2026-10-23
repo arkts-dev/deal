@@ -72,15 +72,6 @@ public final class ComparisonExecutor {
                 boolean eq = referenceEquals(left, right);
                 yield selector == BinarySelector.REFERENCE_EQ ? eq : !eq;
             }
-            case BYTES_EQ, BYTES_NE -> {
-                requireBytesDescriptor(innerDescriptor);
-                if (isNullish(left) || isNullish(right)) {
-                    boolean bothNullish = isNullish(left) && isNullish(right);
-                    yield selector == BinarySelector.BYTES_EQ ? bothNullish : !bothNullish;
-                }
-                boolean eq = referenceEquals(left, right);
-                yield selector == BinarySelector.BYTES_EQ ? eq : !eq;
-            }
             case INT32_EQ, INT32_NE, INT32_LT, INT32_LE, INT32_GT, INT32_GE,
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
@@ -158,14 +149,6 @@ public final class ComparisonExecutor {
         }
     }
 
-    /** {@code BYTES_*}: the one equal checked descriptor is the bytes descriptor. */
-    private static void requireBytesDescriptor(RuntimeDescriptor descriptor) {
-        if (!(descriptor instanceof RuntimeDescriptor.Bytes)) {
-            throw new Defect("BYTES_* requires the one equal checked bytes descriptor "
-                + "(RuntimeDescriptor.Bytes); got "
-                + (descriptor == null ? "null" : descriptor.canonicalSpecText()));
-        }
-    }
 
     // =========================================================================
     // The B-D2 value rules
@@ -213,7 +196,6 @@ public final class ComparisonExecutor {
             case RuntimeDescriptor.Table ignored -> referenceEquals(left, right);
             case RuntimeDescriptor.Class ignored -> referenceEquals(left, right);
             case RuntimeDescriptor.Func ignored -> referenceEquals(left, right);
-            case RuntimeDescriptor.Bytes ignored -> referenceEquals(left, right);
             case RuntimeDescriptor.Null ignored -> throw new Defect(
                 "unreachable nullable-inner dispatch: the inner descriptor must not be null; "
                     + "got " + inner.canonicalSpecText());
@@ -263,7 +245,7 @@ public final class ComparisonExecutor {
         if (view instanceof ComparisonOperandView.Ref value) {
             return value;
         }
-        throw new Defect("expected a Ref operand view for a reference/bytes comparison, got "
+        throw new Defect("expected a Ref operand view for a reference comparison, got "
             + variant(view));
     }
 

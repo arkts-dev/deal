@@ -228,8 +228,7 @@ public class FailClosedGuardRetargetingTest {
             index, manifests, fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 project.modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
     }
 
@@ -457,18 +456,18 @@ public class FailClosedGuardRetargetingTest {
             + "the release-owned production invocation and execute under both "
             + "real toolchains with their oracle-agreed transcripts and no "
             + "guard outcome --");
-        probe("bytes value semantics", """
+        probe("array value semantics", """
             import * as console from "std/console";
             export function main(): null {
-              let b: bytes = bytes(4);
+              let b: int[] = [0, 0, 0, 0];
               b[0] = 7;
               b[3] = 250;
               let n: int = b[0] + b[3] + b.length;
-              if (n === 261) { console.log("PROBE|BYTES|ok"); }
-              else { console.log("PROBE|BYTES|bad"); }
+              if (n === 261) { console.log("PROBE|ARRAY|ok"); }
+              else { console.log("PROBE|ARRAY|bad"); }
               return null;
             }
-            """, "PROBE|BYTES|ok");
+            """, "PROBE|ARRAY|ok");
         probe("same-module @jsonable public CLI", """
             import * as console from "std/console";
             // @jsonable
@@ -652,8 +651,7 @@ public class FailClosedGuardRetargetingTest {
             productionInvocation(), built.input(), built.index(),
             manifests.manifests(), surface, Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(lowered.project() != null,
             label + ": the oracle closure lowers with zero diagnostics: "
@@ -859,7 +857,7 @@ public class FailClosedGuardRetargetingTest {
         // clean EOF is refused by name even when the retained prefix already
         // matches the expected probe transcript. Both stream positions are
         // controlled, plus the clean-EOF control.
-        String probePrefixText = "PROBE|BYTES|ok\n";
+        String probePrefixText = "PROBE|ARRAY|ok\n";
         byte[] probePrefix = probePrefixText.getBytes(StandardCharsets.UTF_8);
         BoundedProcess.Drain failedBeforeOutput = new BoundedProcess.Drain(
             new FailingStream(new byte[0], "reader-failed-before-output"));

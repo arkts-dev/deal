@@ -44,9 +44,6 @@ public final class SemanticEmitterShared {
         if (descriptor instanceof RuntimeDescriptor.Array) {
             return "array";
         }
-        if (descriptor instanceof RuntimeDescriptor.Bytes) {
-            return "bytes";
-        }
         if (descriptor instanceof RuntimeDescriptor.Func) {
             return "function";
         }
@@ -94,9 +91,6 @@ public final class SemanticEmitterShared {
         }
         if (descriptor instanceof RuntimeDescriptor.Array array) {
             return "array(" + descriptorText(array.element()) + ")";
-        }
-        if (descriptor instanceof RuntimeDescriptor.Bytes) {
-            return "bytes";
         }
         if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
             return "nullable(" + descriptorText(nullable.inner()) + ")";

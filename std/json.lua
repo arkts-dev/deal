@@ -22,9 +22,7 @@
 -- member key whose decoded scalar text equals an earlier key of the same
 -- object is a parse failure ("duplicate key" at the second key's opening
 -- quote). stringify raises Error on non-JSON-shaped values through the
--- closed unsupported-carrier arm: the bytes carrier keeps its pinned
--- bytes token (the same explicit bytes arm the JS runtime landed,
--- js-v12-int32-bytes D3), and every other unsupported carrier — the
+-- closed unsupported-carrier arm: every unsupported carrier — the
 -- reference runtime's __kind-tagged function wrapper (function), class
 -- or Error instance and decoded async handle (table), the emitted
 -- chunk's own __c/__d class and Error marks (table) and __fn/__f/__csig
@@ -130,7 +128,6 @@ local function json_carrier_kind(v)
     -- same token the emitted prelude's __stdJsonKind publishes.
     if v[__K.jn] then return 'number' end
     local kind = v[__K.kind]
-    if kind == 'bytes' then return 'bytes' end
     -- A class or Error carrier is table even when it also carries the
     -- function markers: an emitted class instance holds both the class
     -- mark and its field map, and the emitted prelude's projection reads
@@ -147,7 +144,7 @@ end
 
 -- The closed unsupported-carrier rejection: the JSON_STRINGIFY_UNSUPPORTED
 -- arm's own text with the failing value's carrier-kind token. Every
--- non-JSON carrier — the absent marker, the bytes carrier, a function
+-- non-JSON carrier — the absent marker, a function
 -- wrapper, a class or Error instance, a decoded async handle, a raw
 -- function, and every other non-table value — renders this one
 -- projection, never a silent private-field encode.
@@ -518,7 +515,7 @@ local function encode_value(v, file, line, column, path)
         return
       end
       -- The closed carrier rejection (the emitted chunk's sfValue arm order):
-      -- a bytes carrier, a function wrapper, a class instance, the builtin
+      -- a function wrapper, a class instance, the builtin
       -- Error instance, and a decoded async handle are never JSON-shaped
       -- table contents — each renders the JSON_STRINGIFY_UNSUPPORTED arm
       -- with its own closed token instead of encoding private carrier
@@ -526,7 +523,7 @@ local function encode_value(v, file, line, column, path)
       -- plain table is JSON-shaped whatever string keys it carries, so no
       -- user table key can select a carrier arm.
       local carrierKind = type(val) == 'table' and val[__K.kind] or nil
-      if carrierKind == "bytes" or carrierKind == "function"
+      if carrierKind == "function"
           or carrierKind == "class" or carrierKind == "async"
           or val[__K.c] or val[__K.d]
           or val[__K.fn] ~= nil or val[__K.f] or val[__K.csig] ~= nil then

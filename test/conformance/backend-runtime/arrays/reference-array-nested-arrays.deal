@@ -1,0 +1,106 @@
+// @spec: Arrays — Byte indexing and buffer semantics
+// @description: Nested int[] closure (ISSUE-0160 container step): int[][][] reads and writes at depth through the shared nested-array carriers, append growth with alias visibility at the outer level, the int[][] | null outer null and value, the ((int[] | null)[])[] deep composition with null and real innermost elements, and the strict v1.3 array-read bounds E8002 for the nested past-end and negative-index shapes
+// @expected: runtime-ok
+// @features: int[], arrays, nullable, runtime, v1.2
+
+export function test_array_nested_arrays(): null {
+  // int[][][] construction and depth reads/writes: every element
+  // crosses the per-element-shape nested carriers with the int[]
+  // wrapper reference preserved.
+  let m: int[][][] = [[[0]], [[0, 0]]];
+  if (m.length !== 2 || m[0].length !== 1 || m[1].length !== 1) {
+    throw { code: "TEST_FAIL", message: "int[][][] literal shape mismatch" };
+  }
+  m[0][0][0] = 9;
+  m[1][0][0] = 8;
+  if (m[0][0][0] !== 9 || m[1][0][0] !== 8) {
+    throw { code: "TEST_FAIL", message: "int[][][] depth mutation mismatch" };
+  }
+  // Append inside a nested array: the outer wrapper identity is stable
+  // and every alias observes the grown element plus later writes.
+  let alias: int[][][] = m;
+  m[0][m[0].length] = [0, 0, 0];
+  if (m[0].length !== 2 || alias[0].length !== 2) {
+    throw { code: "TEST_FAIL", message: "int[][][] append-growth length mismatch" };
+  }
+  alias[0][1][0] = 44;
+  if (m[0][1][0] !== 44) {
+    throw { code: "TEST_FAIL", message: "int[][][] alias must observe the write" };
+  }
+  // int[][] | null: the outer null is the DEAL null and a real array
+  // assignment flows through the same wrapper reference.
+  let outer: int[][] | null = null;
+  if (outer !== null) {
+    throw { code: "TEST_FAIL", message: "int[][] | null outer null mismatch" };
+  }
+  outer = m[0];
+  if (outer !== null) {
+    if (outer.length !== 2) {
+      throw { code: "TEST_FAIL", message: "int[][] | null value length mismatch" };
+    }
+    if (outer[0][0] !== 9) {
+      throw { code: "TEST_FAIL", message: "int[][] | null value reference mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "int[][] | null assignment lost" };
+  }
+  // (((int[] | null)[])[])[] — three array levels over the nullable
+  // int[] element (the [[[?int[]]]] canonical-descriptor composition):
+  // null and real innermost elements, append under the OrNull policy,
+  // and depth mutation through the reference.
+  let bottom: (int[] | null)[] = [];
+  bottom[0] = null;
+  let middle: ((int[] | null)[])[] = [bottom];
+  let deep: (((int[] | null)[])[])[] = [middle];
+  let innermost: int[] | null = deep[0][0][0];
+  if (innermost !== null) {
+    throw { code: "TEST_FAIL", message: "deep composition innermost null mismatch" };
+  }
+  deep[0][0][deep[0][0].length] = null;
+  if (deep[0][0].length !== 2) {
+    throw { code: "TEST_FAIL", message: "deep composition null append length mismatch" };
+  }
+  deep[0][0][deep[0][0].length] = [0, 0];
+  if (deep[0][0].length !== 3) {
+    throw { code: "TEST_FAIL", message: "deep composition value append length mismatch" };
+  }
+  let tail: int[] | null = deep[0][0][2];
+  if (tail !== null) {
+    tail[0] = 5;
+  } else {
+    throw { code: "TEST_FAIL", message: "deep composition real element lost" };
+  }
+  let again: int[] | null = deep[0][0][2];
+  if (again !== null) {
+    if (again[0] !== 5) {
+      throw { code: "TEST_FAIL", message: "deep composition depth mutation mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "deep composition value element lost" };
+  }
+  // Nested past-end read: the strict v1.3 array bounds failure E8002 at
+  // the read expression, never a null flowing into the element-typed
+  // boundary.
+  try {
+    let bad: int[][] = m[9];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+  } catch (e) {
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    }
+  }
+  // Nested negative index raises E8002 at the read.
+  try {
+    let bad: int[][] = m[-1];
+    throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
+  } catch (e) {
+    if (e.code !== "E8002") {
+      throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
+    }
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

@@ -2386,8 +2386,7 @@ public final class SemanticIrValidator {
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
                  BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
-                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE,
-                 BYTES_EQ, BYTES_NE ->
+                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
                 FailurePolicyId.NO_DEAL_FAILURE;
         };
     }
@@ -2396,7 +2395,7 @@ public final class SemanticIrValidator {
      * The closed intrinsic→policy rule for {@code INTRINSIC_CALL} (parent
      * operation table; K6 item 1): {@code INT_CONVERT} →
      * {@code INT_CONVERSION}; {@code NUMBER_CONVERT} →
-     * {@code NUMBER_CONVERSION}; {@code BYTES_NEW} → {@code BYTES_ALLOCATE}.
+     * {@code NUMBER_CONVERSION}.
      * This method is the single source of the assignment: the lowerer's
      * policy stamping reads it (never a copy).
      */
@@ -2405,7 +2404,6 @@ public final class SemanticIrValidator {
         return switch (intrinsic) {
             case INT_CONVERT -> FailurePolicyId.INT_CONVERSION;
             case NUMBER_CONVERT -> FailurePolicyId.NUMBER_CONVERSION;
-            case BYTES_NEW -> FailurePolicyId.BYTES_ALLOCATE;
         };
     }
 
@@ -2541,32 +2539,6 @@ public final class SemanticIrValidator {
                 if (parent == null
                         || enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.INDEX_READ) {
                     return Optional.of("ARRAY_ELEMENT_READ boundary outside an INDEX_READ");
-                }
-                return Optional.empty();
-            }
-            case BYTE_ELEMENT_READ -> {
-                if (policy != FailurePolicyId.BYTES_READ) {
-                    return Optional.of("BYTE_ELEMENT_READ boundary must carry "
-                        + "BYTES_READ, got " + policy.name());
-                }
-                RawOp parent = resolveParent(boundary, unit, closure);
-                if (parent == null
-                        || enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.INDEX_READ) {
-                    return Optional.of("BYTE_ELEMENT_READ boundary outside an INDEX_READ");
-                }
-                return Optional.empty();
-            }
-            case BYTE_ELEMENT_ASSIGNMENT -> {
-                if (policy != FailurePolicyId.BYTES_WRITE) {
-                    return Optional.of("BYTE_ELEMENT_ASSIGNMENT boundary must carry "
-                        + "BYTES_WRITE, got " + policy.name());
-                }
-                RawOp parent = resolveParent(boundary, unit, closure);
-                if (parent == null
-                        || enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.ASSIGN
-                        || !"BYTES_SLOT".equals(optionalString(parent.payload(), "targetKind"))) {
-                    return Optional.of("BYTE_ELEMENT_ASSIGNMENT boundary outside an ASSIGN"
-                        + " BYTES_SLOT chain");
                 }
                 return Optional.empty();
             }

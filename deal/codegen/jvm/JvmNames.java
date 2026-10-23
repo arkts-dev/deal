@@ -220,7 +220,6 @@ public final class JvmNames {
             case Type.Number ignored -> 'N';
             case Type.String ignored -> 'S';
             case Type.Null ignored -> 'V';
-            case Type.Bytes ignored -> 'Y';
             default -> null;
         };
     }

@@ -176,7 +176,7 @@ public final class IrDumper implements Visitor<String> {
      * {@code RuntimeTypeDescriptor} string by delegating to the one
      * {@link CanonicalRuntimeTypeDescriptor#encode(Type)} service
      * (descriptor-identity-propagation D2): {@code [D]} arrays,
-     * {@code ?D} nullables, {@code bytes}, exact
+     * {@code ?D} nullables, exact
      * {@code async? (...) -> D} functions, and class atoms
      * byte-for-byte from the identity index.  The local per-producer
      * emitter is retired; the {@code Type.Error} sentinel arm is

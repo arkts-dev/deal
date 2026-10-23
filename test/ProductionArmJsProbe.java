@@ -77,7 +77,7 @@ public final class ProductionArmJsProbe {
                     fixture.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                         built.input().modules().get(0).ast().span()),
                     List.of(IntrinsicKind.INT_CONVERT,
-                        IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
+                        IntrinsicKind.NUMBER_CONVERT),
                     java.util.Set.of(), Backend.JS, false,
                     DistributionHome.forManifestDirectory(projectRoot.toString()),
                     stager);

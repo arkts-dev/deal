@@ -1,5 +1,5 @@
 // @spec: Tables — Table values
-// @description: A DEAL table may carry any string key, including every name of the runtime's private carrier vocabulary, and stays the table value: the keys survive std/json round-trips and std/table.keys as data, no key selects a class/array/function/bytes arm, and class fields may be named after them (v1.3)
+// @description: A DEAL table may carry any string key, including every name of the runtime's private carrier vocabulary, and stays the table value: the keys survive std/json round-trips and std/table.keys as data, no key selects a class/array/function arm, and class fields may be named after them (v1.3)
 // @expected: runtime-ok
 // @features: tables, classes, stdlib, v1.3
 

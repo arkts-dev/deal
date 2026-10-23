@@ -96,7 +96,7 @@ public record DefaultIrNode(
 
         /**
          * The intrinsic marker factory ({@code int}/{@code number}/
-         * {@code bytes}/{@code has}/{@code Error}).
+         * {@code has}/{@code Error}).
          */
         public static Target intrinsic(String name) {
             return new Target(TargetKind.INTRINSIC, name, null);

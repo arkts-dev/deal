@@ -917,7 +917,7 @@ public final class Parser {
             return new NamedType(spanOf(t), "null");
         }
 
-        // Builtin type names (identifiers): boolean, int, number, string, table, bytes, Error
+        // Builtin type names (identifiers): boolean, int, number, string, table, Error
         // Also a single-qualifier type like ModuleAlias.ClassName
         if (tt == TokenType.IDENTIFIER) {
             Token first = advance();

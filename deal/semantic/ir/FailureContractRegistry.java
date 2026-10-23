@@ -105,40 +105,6 @@ public final class FailureContractRegistry {
                 "index < 0 or > length fails; otherwise no failure and the commit's nil write "
                     + "runs after the boundary"));
 
-        // The bytes rows (K6; the pinned v1.2 texts): allocation
-        // (E8012, the bytes(...) call expression), the element read
-        // (E8012, the index expression), and the element write (E8012
-        // bounds first at the index expression, then E8013 range at the
-        // assignment expression; the mutation runs only after both pass
-        // and a failed write changes no storage).
-        rows.put(FailurePolicyId.BYTES_ALLOCATE,
-            makeRow(FailurePolicyId.BYTES_ALLOCATE, DiagnosticCode.E8012,
-                List.of("bytes length must be non-negative"), List.of(),
-                "the bytes(...) call expression", CAUSE_NONE, FRAMES_ACTIVE,
-                "single check: the allocation length value is non-negative and its "
-                    + "allocation succeeds"));
-
-        rows.put(FailurePolicyId.BYTES_READ,
-            makeRow(FailurePolicyId.BYTES_READ, DiagnosticCode.E8012,
-                List.of("bytes index out of bounds"), List.of(),
-                "the index expression", CAUSE_NONE, FRAMES_ACTIVE,
-                "single bounds check: index < 0 or index >= b.length fails; otherwise the "
-                    + "unsigned byte is read"));
-
-        // Two projections share the row: template 0 is the bounds check
-        // (the row's own E8012 at the index expression), template 1 is
-        // the value-range check committed by the write (E8013 at the
-        // assignment expression; the mutation runs last and a failed
-        // write changes no storage).
-        rows.put(FailurePolicyId.BYTES_WRITE,
-            makeRow(FailurePolicyId.BYTES_WRITE, DiagnosticCode.E8012,
-                List.of("bytes index out of bounds", "bytes value out of range"),
-                List.of(),
-                "the index expression for the bounds check, the assignment expression for "
-                    + "the value-range check", CAUSE_NONE, FRAMES_ACTIVE,
-                "bounds first (index < 0 or index >= b.length), then the value range "
-                    + "(0..255), then the single mutation"));
-
         rows.put(FailurePolicyId.FUNCTION_SIGNATURE,
             makeRow(FailurePolicyId.FUNCTION_SIGNATURE, DiagnosticCode.E8010,
                 List.of("function signature mismatch: expected {expected}, got {actual}"),
@@ -383,21 +349,6 @@ public final class FailureContractRegistry {
             FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
             FailureArm.OriginConvention.DELETE_TARGET, FailureArm.RenderScope.TOP_LEVEL));
 
-        declared.add(arm(FailureArmId.BYTES_ALLOCATE, FailurePolicyId.BYTES_ALLOCATE, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.CALL_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.BYTES_READ, FailurePolicyId.BYTES_READ, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.INDEX_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(arm(FailureArmId.BYTES_WRITE_BOUNDS, FailurePolicyId.BYTES_WRITE, 0,
-            FailureArm.ExpectedSource.NONE, null, FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.INDEX_EXPRESSION, FailureArm.RenderScope.TOP_LEVEL));
-        declared.add(armWithCode(FailureArmId.BYTES_WRITE_RANGE, FailurePolicyId.BYTES_WRITE, 1,
-            DiagnosticCode.E8013, FailureArm.ExpectedSource.NONE, null,
-            FailureArm.ActualProjection.NONE,
-            FailureArm.OriginConvention.ASSIGNMENT_EXPRESSION,
-            FailureArm.RenderScope.TOP_LEVEL));
-
         declared.add(arm(FailureArmId.FUNCTION_SIGNATURE_MISMATCH,
             FailurePolicyId.FUNCTION_SIGNATURE, 0,
             FailureArm.ExpectedSource.SIGNATURE, null,
@@ -548,7 +499,7 @@ public final class FailureContractRegistry {
 
     /**
      * Builds one declared arm that pins its own DEAL-visible code beside its
-     * row's ({@code BYTES_WRITE}'s value-range arm is the one multi-code arm).
+     * row's.
      */
     private static FailureArm armWithCode(FailureArmId id, FailurePolicyId policy,
                                           int templateIndex, DiagnosticCode code,
@@ -676,7 +627,7 @@ public final class FailureContractRegistry {
 
     /**
      * The DEAL-visible code text of one arm: the arm's own pinned code when it
-     * carries one (the multi-code {@code BYTES_WRITE} row's value-range arm),
+     * carries one,
      * else its row's code; the empty text when the row pins no code.
      */
     public static String codeOf(FailureArm arm) {
@@ -877,7 +828,7 @@ public final class FailureContractRegistry {
 
     /** The closed typed-boundary kind tokens (P2 item 1). */
     private static final Set<String> KIND_TOKENS = Set.of("null", "boolean", "int",
-        "number", "string", "table", "bytes", "array", "function", "class");
+        "number", "string", "table", "array", "function", "class");
 
     /**
      * The closed typed-boundary kind <em>texts</em> (P2 item 3): the
@@ -887,13 +838,13 @@ public final class FailureContractRegistry {
      * token.
      */
     private static final Set<String> KIND_TEXTS = Set.of("null", "boolean", "int",
-        "number", "string", "table", "bytes", "array", "function",
+        "number", "string", "table", "array", "function",
         "class instance");
 
     /** The closed typed-boundary actual tokens (P2 item 1). */
     private static final Set<String> TYPED_BOUNDARY_TOKENS = Set.of("nil", "null",
         "boolean", "int", "number", "string", "invalid-unicode", "table", "array",
-        "bytes", "function", "async-operation", "nothing", "NaN", "infinity");
+        "function", "async-operation", "nothing", "NaN", "infinity");
 
     /**
      * The closed completion-variant tokens (P2 item 4): the typed-boundary
@@ -901,12 +852,12 @@ public final class FailureContractRegistry {
      * {@code number} kind, so no bare {@code int} token exists.
      */
     private static final Set<String> COMPLETION_TOKENS = Set.of("nil", "null", "boolean",
-        "number", "string", "invalid-unicode", "table", "array", "bytes",
+        "number", "string", "invalid-unicode", "table", "array",
         "function", "async-operation", "nothing", "NaN", "infinity");
 
     /** The closed carrier-kind tokens (P2 item 2). */
     private static final Set<String> CARRIER_KIND_TOKENS = Set.of("nil", "table",
-        "boolean", "number", "string", "bytes", "function");
+        "boolean", "number", "string", "function");
 
     /**
      * The closed JS diagnostic-kind tokens (the raw host-shape guard's
@@ -1165,7 +1116,7 @@ public final class FailureContractRegistry {
 
     /** The closed scalar spellings shared by both descriptor dialects. */
     private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "boolean",
-        "int", "number", "string", "table", "bytes");
+        "int", "number", "string", "table");
 
     /**
      * The closed kind-only spellings the emitted host ABI's kind rows carry

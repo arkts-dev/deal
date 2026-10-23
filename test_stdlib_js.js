@@ -570,19 +570,6 @@ test("json.stringify rejects a standalone MISSING with the unsupported-type E800
     "unsupported type for JSON encoding");
 });
 
-test("json.stringify rejects a bytes value with the explicit bytes E8001 arm", function() {
-  const b = rt.bytes(2, "f.js", 1, 1);
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ data: b }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: bytes");
-  // The arm is the pinned message through every reachable nesting
-  // depth (table field, array element, nested table).
-  const nested = rt.makeTable({ inner: rt.makeTable({ deep: b }) });
-  assertErrorMessage(function() { json.stringify.$f(nested, "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: bytes");
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ arr: [b] }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: bytes");
-});
-
 test("json.stringify rejects unpaired-surrogate string values with the closed unsupported tuple", function() {
   assertUnsupportedStringifyTuple(function() {
     json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1);
@@ -664,15 +651,15 @@ test("json round-trip: stringify of the array-marked decode carrier is the expec
 // renders the reference value model's `table` kind — never the `array`
 // token its table-descriptor projection carries — while a real array
 // carrier keeps `array`. This is the pinned production tuple of the
-// bytes-dynamic-nested-first-element-e8003 fixture (expected "[bytes]",
+// nested-element fixture (expected "[table]",
 // actual "table") and mirrors JvmRuntime.elementActualOf, the emitted
 // LuaJIT prelude's __elemRefKind and BoundaryExecutor's elementReferenceToken.
 test("an array-element failure reports a decoded-array element as table", function() {
   const doc = json.parse.$f('{"values":[["x"],["y"]]}', "f.js", 1, 1);
   const err = assertErrorMessage(function() {
-    rt.checkType("[[bytes]]", doc.get("values"), "f.js", 10, 11);
+    rt.checkType("[[table]]", doc.get("values"), "f.js", 10, 11);
   }, "E8003", "array element 1 type mismatch");
-  assertEqual(err.expected, "[bytes]", "the failing element's descriptor");
+  assertEqual(err.expected, "[table]", "the failing element's descriptor");
   assertEqual(err.actual, "table", "the decoded-array element's reference kind");
   assertSpan(err, "f.js", 10, 11);
 });
@@ -680,9 +667,9 @@ test("an array-element failure reports a decoded-array element as table", functi
 test("the element-arm projection also covers a decoded-array element of a native array", function() {
   const doc = json.parse.$f('{"a":["x"]}', "f.js", 1, 1);
   const err = assertErrorMessage(function() {
-    rt.checkType("[[bytes]]", [doc.get("a")], "f.js", 2, 5);
+    rt.checkType("[[table]]", [doc.get("a")], "f.js", 2, 5);
   }, "E8003", "array element 1 type mismatch");
-  assertEqual(err.expected, "[bytes]", "the failing element's descriptor");
+  assertEqual(err.expected, "[table]", "the failing element's descriptor");
   assertEqual(err.actual, "table", "the decoded-array element's reference kind");
 });
 

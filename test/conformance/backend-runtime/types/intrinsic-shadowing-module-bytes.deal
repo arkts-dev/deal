@@ -1,5 +1,5 @@
 // @spec: Variables — Scope
-// @description: A module-level declaration named bytes shadows the allocation intrinsic (v1.3 name resolution: module-level declarations precede compiler intrinsics), so the module's bytes(...) call is the user function and never the zero-filled allocation.
+// @description: A module-level function named bytes resolves and executes as an ordinary user function.
 // @expected: runtime-ok
 // @features: variables, name-resolution, shadowing, intrinsics
 

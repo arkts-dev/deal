@@ -1259,8 +1259,7 @@ public class BodyInvocationIdentityTest {
         return SemanticLowerer.lowerProject(invocation(), project.checkedProject(),
             project.index(), project.manifests(), project.surface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 project.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 

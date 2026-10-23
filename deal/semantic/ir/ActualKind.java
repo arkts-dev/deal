@@ -8,7 +8,7 @@ import java.util.Objects;
  * contract registry (schema S5): exactly the 14 pinned values
  *
  * <pre>{@code
- * null, missing, boolean, int, number, string, bytes, table, array, function,
+ * null, missing, boolean, int, number, string, table, array, function,
  * class:<ClassId>, async-operation, nothing, invalid-unicode
  * }</pre>
  *
@@ -38,8 +38,6 @@ public enum ActualKind {
     NUMBER("number"),
     /** Unicode scalar string. */
     STRING("string"),
-    /** Bytes buffer (the v1.2 fixed-length byte sequence). */
-    BYTES("bytes"),
     /** Table. */
     TABLE("table"),
     /** Array. */

@@ -196,14 +196,10 @@ public final class SharedStdlibSemantics {
         /**
          * A value outside the JSON-shaped set: exactly the actual kinds
          * {@code missing}, {@code function}, {@code async-operation},
-         * {@code class} (with the canonical class-id atom text), and
-         * {@code bytes} (the K6 item 12 stdlib projection of a bytes
-         * buffer: JSON_STRINGIFY rejects it with the corpus-pinned
-         * {@code unsupported type for JSON encoding: bytes}, so no other
-         * algorithm may receive it as a serializable value).
+         * {@code class} (with the canonical class-id atom text).
          * {@code JSON_STRINGIFY} rejects it through the
          * {@code JSON_STRINGIFY_UNSUPPORTED} arm's carrier-kind projection
-         * ({@code nil}, {@code table}, {@code bytes}, {@code function}),
+         * ({@code nil}, {@code table}, {@code function}),
          * never the {@code class:} IR/trace spelling; no other algorithm
          * consumes an {@code Other} value.
          */
@@ -220,7 +216,7 @@ public final class SharedStdlibSemantics {
                                     + "non-null and non-empty");
                         }
                     }
-                    case MISSING, FUNCTION, ASYNC_OPERATION, BYTES -> {
+                    case MISSING, FUNCTION, ASYNC_OPERATION -> {
                         if (classId != null) {
                             throw new IllegalArgumentException(
                                 "only a CLASS Other view carries a class id");
@@ -228,7 +224,7 @@ public final class SharedStdlibSemantics {
                     }
                     default -> throw new IllegalArgumentException(
                         "an Other view carries a value outside the JSON-shaped set "
-                            + "(missing, function, async-operation, class, bytes); got "
+                            + "(missing, function, async-operation, class); got "
                             + kind);
                 }
             }
@@ -636,7 +632,7 @@ public final class SharedStdlibSemantics {
      * The std/json rejection arm's carrier classification of one semantic
      * value (P2 item 2 with the arm's two pinned members): the absent
      * marker is {@code nil}, a DEAL function value is {@code function},
-     * the bytes view is {@code bytes}, and every other table-carried value
+     * and every other table-carried value
      * — tables, arrays, class instances, Error values, async-operation
      * handles — is {@code table}. The token table itself is
      * {@link FailureProjections#carrierKindToken(FailureProjections.CarrierKind)}.
@@ -653,7 +649,6 @@ public final class SharedStdlibSemantics {
             case Value.Other other -> switch (other.kind()) {
                 case MISSING -> FailureProjections.CarrierKind.ABSENT;
                 case FUNCTION -> FailureProjections.CarrierKind.DEAL_FUNCTION;
-                case BYTES -> FailureProjections.CarrierKind.BYTES;
                 case CLASS, ASYNC_OPERATION -> FailureProjections.CarrierKind.TABLE;
                 default -> throw new Defect("the std/json rejection arm carries no "
                     + "carrier kind for the actual kind " + other.kind()
@@ -1127,7 +1122,7 @@ public final class SharedStdlibSemantics {
      * {@code unsupported type for JSON encoding: {actual}} with the
      * arm's own pinned expected text and actual = the failing value's
      * carrier-kind projection ({@code nil}, {@code table},
-     * {@code bytes}, {@code function}, {@code number}, {@code string}),
+     * {@code function}, {@code number}, {@code string}),
      * origin = the call origin. The walker's field path stays internal
      * and never surfaces. Unsupported values and nonfinite numbers fail
      * through that arm; a path-local container re-entry (a true cycle)

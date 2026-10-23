@@ -1945,8 +1945,7 @@ public final class CompilationOrchestrator {
             requirementManifests.manifests(), hostDeclarationSurface,
             declarationModuleIdentities(),
             builtinErrorDeclaration(checked.input()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;

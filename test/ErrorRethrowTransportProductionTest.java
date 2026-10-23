@@ -192,8 +192,7 @@ public class ErrorRethrowTransportProductionTest {
             new LinkedHashMap<>(), BuiltinErrorDeclaration.synthesized(
                 fixture.built().input().modules().get(0).ast().span()),
             List.of(deal.semantic.ir.IntrinsicKind.INT_CONVERT,
-                deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT,
-                deal.semantic.ir.IntrinsicKind.BYTES_NEW),
+                deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 

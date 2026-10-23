@@ -259,9 +259,7 @@ public class CheckerTest {
         testUnaryOperators();
         testOperatorTypeErrors();
 
-        testBytesEqualityAdmission();
-        testBytesComparisonNonAdmittedUnchanged();
-        testBytesComparisonAdmissionNegatives();
+        testReferenceComparisonAdmission();
 
         // -- Type Checking: Assignments --
         testAssignment_exact();
@@ -279,9 +277,6 @@ public class CheckerTest {
         testArrayLengthAssignmentRejected();
         testArrayLengthDeleteRejected();
         testArrayAppendIdiomCompiles();
-        // D4 (deal-v1.2-int32-and-bytes-architecture): bytes .length too
-        testBytesLengthAssignmentRejected();
-        testBytesLengthDeleteRejected();
         testTableLengthWriteUnaffected();
         testClassFieldLengthWriteUnaffected();
 
@@ -463,7 +458,7 @@ public class CheckerTest {
         testForOfTypeCheck_nonIterable();
         testV12StringTypeFacingChecks();
         testV12FunctionTypeRestRejected();
-        testV12BytesClassSymbolFirstResolution();
+        testOrdinaryBytesNameResolution();
         testForOfTypeCheck_tableIterable();
         testForOfTypeCheck_arrayWrongVarType();
         testForOfTypeCheck_stringWrongVarType();
@@ -769,81 +764,6 @@ public class CheckerTest {
         assertError(out, "E3006", "int === bool error");
     }
 
-    /**
-     * Equal bytes-containing types and nullable-bytes-vs-null pairs are
-     * checker-admitted as {@code boolean} — bytes compare by reference
-     * identity (docs/spec-v1.3.md §Runtime type descriptor format,
-     * Equality semantics). The frontend resolves
-     * the {@code bytes} type name and the {@code bytes(n)} intrinsic, so
-     * the admission path is driven from real source. The former E3019
-     * bytes-comparison gate is lifted; the closed BYTES_EQ/BYTES_NE
-     * comparison row and the bytes descriptor carry the pair through
-     * lowering.
-     */
-    static void testBytesEqualityAdmission() {
-        System.out.println("-- Bytes Equality Admission (ISSUE-0158 gate lift) --");
-
-        // bytes === bytes / bytes !== bytes: boolean-typed, no diagnostics.
-        CheckerOutput out = checkProgram(
-            "function f(): null {\n"
-            + "  let a: bytes = bytes(2);\n"
-            + "  let b: bytes = a;\n"
-            + "  let c: boolean = a === b;\n"
-            + "  let d: boolean = a !== bytes(2);\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertNoErrors(out, "bytes ===/!== bytes admitted");
-        Type comparisonType = out.result.typeMap().get(firstComparisonExpr(out.program()));
-        check(comparisonType == Type.Boolean.INSTANCE,
-            "bytes === bytes is typed boolean, got " + comparisonType);
-
-        // bytes[] === bytes[] (equal reference shapes containing bytes).
-        out = checkProgram(
-            "function f(): null {\n"
-            + "  let xs: bytes[] = [bytes(1)];\n"
-            + "  let ys: bytes[] = xs;\n"
-            + "  let c: boolean = xs === ys;\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertNoErrors(out, "bytes[] === bytes[] admitted");
-
-        // bytes|null === bytes|null (equal nullable bytes pairs).
-        out = checkProgram(
-            "function f(): null {\n"
-            + "  let a: bytes | null = bytes(1);\n"
-            + "  let b: bytes | null = a;\n"
-            + "  let c: boolean = a === b;\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertNoErrors(out, "bytes|null === bytes|null admitted");
-
-        // bytes|null === null / null === bytes|null (both directions).
-        out = checkProgram(
-            "function f(): null {\n"
-            + "  let a: bytes | null = bytes(1);\n"
-            + "  let b: bytes | null = null;\n"
-            + "  let c: boolean = a === null;\n"
-            + "  let d: boolean = b === null;\n"
-            + "  let e: boolean = null === a;\n"
-            + "  let g: boolean = a !== null;\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertNoErrors(out, "bytes|null vs null admitted in both directions");
-
-        // Functions whose signatures contain bytes compare by identity.
-        out = checkProgram(
-            "function id(b: bytes): bytes { return b; }\n"
-            + "function f(): null {\n"
-            + "  let c: boolean = id === id;\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertNoErrors(out, "bytes-bearing function identity admitted");
-    }
 
     /** Finds the first {@link BinaryExpr} comparison in a function body (test fixture). */
     private static BinaryExpr firstComparisonExpr(ProgramNode program) {
@@ -861,37 +781,12 @@ public class CheckerTest {
         return null;
     }
 
-    static void testBytesComparisonNonAdmittedUnchanged() {
-        System.out.println("-- Bytes comparisons: non-admitted pairs keep E3006/E3007 --");
 
-        // bytes === number — not admitted by the equality rules → E3006.
-        CheckerOutput out = checkProgram(
-            "function f(): null {\n"
-            + "  let b: bytes = bytes(1);\n"
-            + "  let c: boolean = b === 1;\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertError(out, "E3006", "bytes === number keeps E3006");
+    static void testReferenceComparisonAdmission() {
+        System.out.println("-- nullable and reference comparison admission --");
 
-        // bytes relational — relationals stay E3007 (spec pins relationals
-        // to int/number/string).
-        out = checkProgram(
-            "function f(): null {\n"
-            + "  let b: bytes = bytes(1);\n"
-            + "  let c: boolean = b < b;\n"
-            + "  return null;\n"
-            + "}"
-        );
-        assertError(out, "E3007", "bytes relational keeps E3007");
-    }
-
-    static void testBytesComparisonAdmissionNegatives() {
-        System.out.println("-- Bytes equality admission: non-bytes pairs are unaffected --");
-
-        // null === null, nullable-vs-null, equal nullable pairs, array and
-        // function reference identity — every non-bytes admitted pair
-        // stays admitted (no E3019 exists anymore).
+        // Null, nullable pairs, arrays, functions and tables keep their
+        // respective comparison rules.
         CheckerOutput out = checkProgram(
             "function f(): null {\n"
             + "  let a: boolean = null === null;\n"
@@ -1204,35 +1099,7 @@ public class CheckerTest {
     // D4 (deal-v1.2-int32-and-bytes-architecture): bytes .length is
     // compiler-resolved and read-only exactly like array .length —
     // assignment and deletion are E3017 at the member target.
-    static void testBytesLengthAssignmentRejected() {
-        System.out.println("-- Bytes Length Assignment Rejected (E3017) --");
-        CheckerOutput out = checkProgram(
-            "let b: bytes = bytes(4);\n" +
-            "b.length = 9;"
-        );
-        assertError(out, "E3017", "assignment to bytes .length");
-        // E3017 is reported at the target span (line 2, column 1 — the
-        // start of `b.length`), not the value span.
-        boolean atTarget = out.result.diagnostics().stream()
-            .filter(d -> d.code().equals("E3017"))
-            .anyMatch(d -> d.line() == 2 && d.column() == 1);
-        check(atTarget, "bytes E3017 must be reported at the target span");
-    }
 
-    static void testBytesLengthDeleteRejected() {
-        System.out.println("-- Bytes Length Delete Rejected (E3017) --");
-        CheckerOutput out = checkProgram(
-            "let b: bytes = bytes(4);\n" +
-            "delete b.length;"
-        );
-        assertError(out, "E3017", "delete of bytes .length");
-        // E3017 is reported at the target span (line 2, column 8 — the
-        // start of `b.length` after `delete `).
-        boolean atTarget = out.result.diagnostics().stream()
-            .filter(d -> d.code().equals("E3017"))
-            .anyMatch(d -> d.line() == 2 && d.column() == 8);
-        check(atTarget, "bytes E3017 must be reported at the target span");
-    }
 
     // The append idiom's target is an IndexExpr whose index is the
     // MemberAccessExpr — E3017 must not fire.
@@ -3879,7 +3746,7 @@ public class CheckerTest {
     /**
      * v1.2 string semantics in type-facing checks: a `string` is a
      * Unicode scalar-value sequence, so `.length` is not a
-     * compiler-resolved intrinsic on strings (only arrays/bytes have it —
+     * compiler-resolved intrinsic on strings (only arrays have it —
      * string lengths come from stdlib string.length), for-of over a
      * string yields one `string` per scalar value per iteration, and
      * template interpolation still requires string.
@@ -3913,31 +3780,21 @@ public class CheckerTest {
         assertError(out, "E3016", "template interpolation of int is not string");
     }
 
-    /**
-     * The bytes intrinsic sits at the bottom of the spec's name
-     * resolution order (docs/spec-v1.3.md §Name resolution: module-level
-     * declarations resolve at step 3, compiler intrinsics only at
-     * step 5). A user class/function/let named `bytes` is legal and
-     * shadows the intrinsic; the `bytes` TYPE annotation keeps its
-     * class-symbol-first guard — a checker-accepted user class named
-     * `bytes` resolves to its ClassSymbol type and wins over the
-     * primitive at any nesting depth.
-     */
-    static void testV12BytesClassSymbolFirstResolution() {
-        System.out.println("-- v1.2 bytes: user declarations named bytes shadow the intrinsic --");
+    /** Ordinary user declarations named bytes follow lexical resolution. */
+    static void testOrdinaryBytesNameResolution() {
+        System.out.println("-- ordinary declarations named bytes --");
 
-        // The intrinsic stays available when unshadowed.
-        CheckerOutput out = checkProgram(
-            "let b: bytes = bytes(4); let n: int = b.length;");
-        assertNoErrors(out, "unshadowed bytes(4)/b.length resolves to the intrinsic");
+        CheckerOutput out = checkProgram("let b: bytes = null;");
+        assertError(out, "E3004", "an undeclared bytes type is an unknown name");
+        out = checkProgram("let b: table = bytes(4);");
+        assertError(out, "E2001", "an undeclared bytes value is an unknown name");
 
-        // A module-level user CLASS named bytes is legal (no E2002) and
-        // wins over the primitive in type annotations.
+        // A module-level class supplies the ordinary named type.
         out = checkProgram(
             "class bytes { x: int; }\n" +
             "let b: bytes = { x: 2 };\n" +
             "let n: int = b.x;");
-        assertNoErrors(out, "module-level user class named bytes shadows the intrinsic");
+        assertNoErrors(out, "module-level user class named bytes resolves normally");
 
         // In expression position the class wins too: a class is not
         // callable, so bytes(3) is E3008 — never the intrinsic call.
@@ -3945,27 +3802,24 @@ public class CheckerTest {
             "class bytes { x: int; }\n" +
             "let y: int = bytes(3);");
         assertError(out, "E3008",
-            "user class named bytes is not callable (class wins over the intrinsic)");
+            "user class named bytes is not callable");
 
         // A module-level user FUNCTION named bytes is legal (no E2002)
         // and calls resolve to the user function.
         out = checkProgram(
             "function bytes(x: int): int { return x + 1; }\n" +
             "let y: int = bytes(3);");
-        assertNoErrors(out, "module-level user function named bytes shadows the intrinsic");
+        assertNoErrors(out, "module-level user function named bytes resolves normally");
 
-        // A module-level LET named bytes is legal and shadows the
-        // intrinsic value; the bytes TYPE keeps its primitive meaning
-        // (only a ClassSymbol shadows the type).
+        // A module-level let supplies the ordinary value binding.
         out = checkProgram(
             "let bytes: int = 5;\n" +
             "let y: int = bytes;");
-        assertNoErrors(out, "module-level let named bytes shadows the intrinsic value");
+        assertNoErrors(out, "module-level let named bytes resolves normally");
         out = checkProgram(
             "let bytes: int = 5;\n" +
-            "let b: bytes = bytes(2);");
-        assertError(out, "E3008",
-            "the shadowing let is not callable while the bytes type stays the primitive");
+            "let b: int = bytes(2);");
+        assertError(out, "E3008", "an ordinary int binding is not callable");
 
         out = checkProgram(
             "class bytes { x: int; }\n" +
@@ -3981,12 +3835,11 @@ public class CheckerTest {
             "function bytes(x: int): int { return x; }");
         assertError(out, "E2002", "two user declarations named bytes still redeclare");
 
-        // The first-class bytes value keeps its seeded signature when
-        // unshadowed.
         out = checkProgram(
-            "let f: (x: int) => bytes = bytes;\n" +
-            "let b: bytes = f(2);");
-        assertNoErrors(out, "first-class bytes value keeps its (int)->bytes signature");
+            "function bytes(x: int): int { return x + 1; }\n" +
+            "let f: (x: int) => int = bytes;\n" +
+            "let b: int = f(2);");
+        assertNoErrors(out, "an ordinary function named bytes is a first-class value");
     }
 
     static void testV12FunctionTypeRestRejected() {
@@ -4621,17 +4474,6 @@ public class CheckerTest {
     }
 
     static void testJsonableNonJsonableType_nonJsonableClass() {
-        System.out.println("-- @jsonable: bytes field → E4007 --");
-        // v1.2 bytes is not jsonable: a bytes-typed @jsonable field is
-        // E4007 (deal-v1.2-int32-and-bytes-architecture D3).
-        CheckerOutput bytesField = checkProgram(
-            "// @jsonable\n" +
-            "export class Holder {\n" +
-            "  payload: bytes = bytes(2);\n" +
-            "}\n"
-        );
-        assertError(bytesField, "E4007", "bytes field is not jsonable");
-
         System.out.println("-- @jsonable: non-@jsonable class field → E4007 --");
         CheckerOutput out = checkProgram(
             "class Plain { x: int; }\n" +

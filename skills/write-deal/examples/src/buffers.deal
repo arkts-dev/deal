@@ -8,29 +8,20 @@ function sum(values: int[]): int {
   return total;
 }
 
-function rangeWriteRejected(buffer: bytes): boolean {
+function boundsWriteRejected(values: int[]): boolean {
   try {
-    buffer[0] = 256;
+    values[values.length + 1] = 1;
   } catch (e) {
-    return e.code === "E8013";
+    return e.code === "E8002";
   }
   return false;
 }
 
-function boundsWriteRejected(buffer: bytes): boolean {
-  try {
-    buffer[buffer.length] = 1;
-  } catch (e) {
-    return e.code === "E8012";
+function copyValues(source: int[]): int[] {
+  let copy: int[] = [];
+  for (let value: int of source) {
+    copy[copy.length] = value;
   }
-  return false;
-}
-
-function copyBytes(source: bytes): bytes {
-  let copy: bytes = bytes(source.length);
-  { let v14Loop0: int = 0; while (v14Loop0 < source.length) { let i: int = v14Loop0; {
-    copy[i] = source[i];
-  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   return copy;
 }
 
@@ -38,17 +29,14 @@ export function exercise(): null {
   let values: int[] = [2, 3];
   values[values.length] = 5;
   check.require(sum(values) === 10, "array append and sum");
-  let buffer: bytes = bytes(2);
-  check.require(buffer[0] === 0 && buffer[1] === 0, "byte zero fill");
-  let alias: bytes = buffer;
+  let alias: int[] = values;
   alias[0] = 255;
-  check.require(buffer[0] === 255, "byte alias mutation");
-  check.require(rangeWriteRejected(buffer), "byte range rejection");
-  check.require(boundsWriteRejected(buffer), "byte bounds rejection");
-  check.require(buffer[0] === 255 && buffer[1] === 0 && buffer.length === 2,
-    "failed byte write mutated buffer");
-  let copy: bytes = copyBytes(buffer);
+  check.require(values[0] === 255, "array alias mutation");
+  check.require(boundsWriteRejected(values), "array bounds rejection");
+  check.require(values[0] === 255 && values[1] === 3 && values.length === 3,
+    "failed array write mutated storage");
+  let copy: int[] = copyValues(values);
   copy[0] = 7;
-  check.require(buffer[0] === 255 && copy[0] === 7, "independent byte copy");
+  check.require(values[0] === 255 && copy[0] === 7, "independent array copy");
   return null;
 }

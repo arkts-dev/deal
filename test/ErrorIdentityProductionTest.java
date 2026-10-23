@@ -404,8 +404,7 @@ public final class ErrorIdentityProductionTest {
             new LinkedHashMap<>(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
             List.of(deal.semantic.ir.IntrinsicKind.INT_CONVERT,
-                deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT,
-                deal.semantic.ir.IntrinsicKind.BYTES_NEW),
+                deal.semantic.ir.IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(result.project() != null && result.diagnostics().isEmpty(),
             "the fixture lowers with zero diagnostics: " + result.diagnostics());

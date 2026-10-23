@@ -4128,7 +4128,7 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Seeds the {@code int}/{@code number}/{@code bytes} intrinsic
+         * Seeds the {@code int}/{@code number} intrinsic
          * bindings at module-init top (B1): exactly the root
          * {@code Symbol.IntrinsicSymbol} bindings of those three names
          * (shadowed-by-declaration names resolve to the user declaration,
@@ -4165,7 +4165,7 @@ public final class SemanticLowerer {
 
             List<IntrinsicKind> declared = declaredConversionIntrinsics.isEmpty()
                 ? List.of(IntrinsicKind.values()) : declaredConversionIntrinsics;
-            for (String name : List.of("int", "number", "bytes")) {
+            for (String name : List.of("int", "number")) {
                 if (!(checks.symbolTable().resolve(name)
                         instanceof Symbol.IntrinsicSymbol intrinsic)) {
                     continue;
@@ -4190,7 +4190,7 @@ public final class SemanticLowerer {
                 registerBinding(name, binding, incarnation);
                 seededIntrinsicBindings.put(name, binding);
                 if (proofAnalysis) {
-                    // B7: intrinsic bindings (int/number/bytes) always carry
+                    // B7: intrinsic bindings (int/number) always carry
                     // the proof — builtin, unassignable — regardless of
                     // any assignment fact.
                     assignmentAnalysis.markIntrinsic(binding);
@@ -6083,16 +6083,6 @@ public final class SemanticLowerer {
                 case "table" -> Type.Table.INSTANCE;
                 case "Error" -> deal.types.Types.classType("Error",
                     deal.checker.NameResolver.intrinsicErrorIdentity());
-                case "bytes" -> {
-                    Symbol symbol = resolveScopeName(name);
-                    if (symbol instanceof Symbol.ClassSymbol classSymbol) {
-                        yield deal.types.Types.classType(classSymbol.name(),
-                            classSymbol.identity(),
-                            deal.types.Types.providerModule(
-                                classSymbol.modulePath()));
-                    }
-                    yield Type.Bytes.INSTANCE;
-                }
                 default -> {
                     Symbol symbol = resolveScopeName(name);
                     if (symbol instanceof Symbol.ClassSymbol classSymbol) {
@@ -8418,22 +8408,14 @@ public final class SemanticLowerer {
          * initial generation) and the body block executes.
          * {@code BREAK}/{@code CONTINUE} target this op's {@code OpId}.
          * The element type is derived fail-closed through the descriptor
-         * bridge — an unrepresentable element ({@code bytes}) is a
-         * producer defect, never an invented descriptor.
+         * bridge; an unrepresentable element is a producer defect.
          */
         /**
-         * The element descriptor of one container position (K6 item 8):
-         * the single {@link ContainerPayloadDescriptors} bridge over the
-         * checked element type, bytes included at every depth.
+         * The element descriptor of one container position, through the
+         * single {@link ContainerPayloadDescriptors} checked-type bridge.
          */
         private RuntimeDescriptor containerElementDescriptor(Type element, Span offending) {
-            // K6 item 8: a container element position whose checked type
-            // contains bytes derives its descriptor through the single
-            // DescriptorService bridge (the bytes descriptor member is
-            // representable at every depth); the lowered bytes value is
-            // carried by the target runtime's bytes representation. A
-            // corrupted checked fact fails closed with the offending
-            // container position's own range attached (D2).
+            // A corrupted checked fact fails closed at the container position.
             try {
                 return ContainerPayloadDescriptors.elementDescriptorOf(element);
             } catch (ContainerPayloadDescriptors.Defect defect) {
@@ -8532,7 +8514,7 @@ public final class SemanticLowerer {
                 }
                 throw new ConstructUnlowered("assignment target '" + access.field()
                     + "' on " + typeName(objectType) + " (no closed A-D9 chain shape for "
-                    + "this receiver: module members are E10's, array/bytes members carry "
+                    + "this receiver: module members are E10's, array members carry "
                     + "no write shape)", access.span());
             }
             if (target instanceof IndexExpr index) {
@@ -8542,9 +8524,6 @@ public final class SemanticLowerer {
                 }
                 if (containerType instanceof Type.Array arrayType) {
                     return lowerArrayIndexAssign(assignment, index, arrayType, slot);
-                }
-                if (containerType instanceof Type.Bytes) {
-                    return lowerBytesIndexAssign(assignment, index, slot);
                 }
                 throw new ConstructUnlowered("assignment target index on "
                     + typeName(containerType) + " (no closed A-D9 chain shape for this "
@@ -8578,7 +8557,7 @@ public final class SemanticLowerer {
                 }
                 throw new ConstructUnlowered("delete target '" + access.field() + "' on "
                     + typeName(objectType) + " (no closed A-D9 delete shape for this "
-                    + "receiver: module members are E10's, array/bytes members carry no "
+                    + "receiver: module members are E10's, array members carry no "
                     + "delete shape)", access.span());
             }
             if (target instanceof IndexExpr index) {
@@ -8592,8 +8571,7 @@ public final class SemanticLowerer {
                     return;
                 }
                 throw new ConstructUnlowered("delete target index on " + typeName(containerType)
-                    + " (no closed A-D9 delete shape for this container: bytes indexing is "
-                    + "ISSUE-0158's)", index.span());
+                    + " (no closed A-D9 delete shape for this container)", index.span());
             }
             throw new ConstructUnlowered("delete target " + target.getClass().getSimpleName()
                 + " (no closed A-D9 delete shape)", target.span());
@@ -9113,80 +9091,6 @@ public final class SemanticLowerer {
             return value;
         }
 
-        /**
-         * ASSIGN BYTES_SLOT write (K6 item 4): the array chain's exact
-         * mirror — {@code [containerOp, keyOp, valueOp,
-         * lengthOp(ARRAY_LENGTH over the byte receiver),
-         * normalizeOp(INDEX_NORMALIZE BYTES_WRITE, rawKey = the key child's
-         * result, currentLength = the length child's result),
-         * boundaryOp(BYTE_ELEMENT_ASSIGNMENT + BYTES_WRITE, input = the
-         * checked RHS value),
-         * commitOp(INDEX_WRITE)]}. The boundary enforces the pinned E8012
-         * bounds at the index expression ({@code index < 0} or
-         * {@code index >= b.length}); the commit enforces the E8013 value
-         * range (0..255) at the assignment expression and runs the single
-         * mutation — a failed write changes no storage. There is no bytes
-         * delete shape ({@code delete b[i]} is the checker's E3007
-         * rejection).
-         */
-        private ValueId lowerBytesIndexAssign(AssignmentExpr assignment, IndexExpr index,
-                                              ValueId slot) {
-            RuntimeDescriptor elementDescriptor =
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
-            OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
-            chainParents.push(chainOpId);
-            ValueId value;
-            OpId containerOp;
-            OpId keyOp;
-            OpId valueOp;
-            OpId lengthOp;
-            OpId normalizeOp;
-            OpId boundaryOp;
-            OpId commitOp;
-            try {
-                ValueId container = lowerOperand(index.array());
-                containerOp = chainChildOp(container);
-                ValueId key = lowerOperand(index.index());
-                keyOp = chainChildOp(key);
-                value = lowerExpression(assignment.value(), slot);
-                valueOp = chainChildOp(value);
-                ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
-                    new KindPayload.ArrayLengthPayload(container), index.span(),
-                    elementDescriptor, FailurePolicyId.INT32_RESULT);
-                lengthOp = producerOpId(length);
-                ValueId normalizedSlot = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
-                    new KindPayload.IndexNormalizePayload(IndexMode.BYTES_WRITE, key,
-                        length),
-                    index.span(), elementDescriptor,
-                    FailurePolicyId.NO_DEAL_FAILURE);
-                normalizeOp = producerOpId(normalizedSlot);
-                boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
-                    new KindPayload.BoundaryPayload(BoundaryKind.BYTE_ELEMENT_ASSIGNMENT,
-                        elementDescriptor, value,
-                        new BoundaryRealization.RuntimeValidation(
-                            CANONICAL_RUNTIME_VALIDATION_ID)),
-                    index.span(), FailurePolicyId.BYTES_WRITE,
-                    SourceOriginKind.SYNTHETIC, chainOpId);
-                // The commit carries the assignment expression's origin:
-                // its E8013 value-range projection is the commit's own
-                // (K6 item 4).
-                commitOp = emitNullOp(SemanticOpKind.INDEX_WRITE,
-                    new KindPayload.IndexWritePayload(container, normalizedSlot, value),
-                    assignment.span(), FailurePolicyId.NO_DEAL_FAILURE,
-                    SourceOriginKind.SYNTHETIC, chainOpId);
-            } finally {
-                chainParents.pop();
-            }
-            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
-                SourceOriginKind.USER, anchor, currentParent());
-            emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
-                new KindPayload.AssignPayload(AssignTargetKind.BYTES_SLOT,
-                    List.of(containerOp, keyOp, valueOp, lengthOp, normalizeOp, boundaryOp,
-                        commitOp)),
-                value, elementDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
-            return value;
-        }
 
         private ValueId lowerClassFieldAssign(AssignmentExpr assignment,
                                               MemberAccessExpr access, Type.Class classType) {
@@ -14015,70 +13919,9 @@ public final class SemanticLowerer {
         }
 
         /** {@code ARRAY_LENGTH}/{@code MEMBER_READ} — the member-access dispatch. */
-        /**
-         * {@code INDEX_READ} (array targets) — the carrier's read arm:
-         * the container and the key complete as prior steps (receiver
-         * then index, each once); {@code INDEX_NORMALIZE(ARRAY_READ)}
-         * computes the slot from the normalize-time {@code ARRAY_LENGTH}
-         * read; the {@code ARRAY_ELEMENT_READ} boundary child (policy
-         * {@code ARRAY_READ_INDEX_THEN_DESCRIPTOR}) enforces the strict
-         * E8002 bounds check ({@code index < 0} or
-         * {@code index >= currentLength}) before any storage access or
-         * element/result validation, at the read expression. An in-range
-         * read passes a missing (deleted) slot through to the consuming
-         * contextual boundary/operand — the comparison operands'
-         * missing≡null rule and the declaration boundary's E8001
-         * projection decide. Table index reads stay E2's (the carrier
-         * slice lowers array index reads only).
-         */
-
-        private ValueId lowerBytesIndexRead(IndexExpr index, ValueId slot) {
-            RuntimeDescriptor intDescriptor =
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
-            RuntimeDescriptor resultType = intDescriptor;
-            ValueId container = lowerOperand(index.array());
-            ValueId key = lowerOperand(index.index());
-            ValueId length = emitValueOp(SemanticOpKind.ARRAY_LENGTH,
-                new KindPayload.ArrayLengthPayload(container), index.span(),
-                intDescriptor, FailurePolicyId.INT32_RESULT);
-            ValueId normalize = emitOperandOp(SemanticOpKind.INDEX_NORMALIZE,
-                new KindPayload.IndexNormalizePayload(IndexMode.BYTES_READ, key, length),
-                List.of(key, length), List.of(intDescriptor, intDescriptor),
-                index.span(), intDescriptor,
-                FailurePolicyId.NO_DEAL_FAILURE);
-            ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
-            AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            AnchorId boundaryAnchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            OpId boundaryOpId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(index.span()),
-                SourceOriginKind.USER, anchor, currentParent());
-            emit(buildOp(opId, SemanticOpKind.INDEX_READ,
-                new KindPayload.IndexReadPayload(container, normalize, boundaryOpId),
-                result, resultType, List.of(container, normalize), List.of(
-                    RuntimeDescriptor.Bytes.INSTANCE, intDescriptor),
-                FailurePolicyId.NO_DEAL_FAILURE, origin));
-            SourceOrigin boundaryOrigin = new SourceOrigin(sourceId,
-                toSourceSpan(index.span()), SourceOriginKind.SYNTHETIC, boundaryAnchor,
-                opId);
-            emit(buildOp(boundaryOpId, SemanticOpKind.BOUNDARY,
-                new KindPayload.BoundaryPayload(BoundaryKind.BYTE_ELEMENT_READ,
-                    resultType, result,
-                    new BoundaryRealization.RuntimeValidation(
-                        CANONICAL_RUNTIME_VALIDATION_ID)),
-                null, null, FailurePolicyId.BYTES_READ,
-                boundaryOrigin));
-            // The producer rule's index-read arm: a function-typed element
-            // read registers exactly one dynamic materialization; a bytes
-            // element read is an int, so the registration never applies.
-            return result;
-        }
 
         private ValueId lowerIndexRead(IndexExpr index, ValueId slot) {
             Type objectType = checkedType(index.array());
-            if (objectType instanceof Type.Bytes) {
-                return lowerBytesIndexRead(index, slot);
-            }
             if (objectType instanceof Type.Table) {
                 return lowerTableIndexRead(index, slot);
             }
@@ -14173,17 +14016,6 @@ public final class SemanticLowerer {
                     && nullable.inner() instanceof Type.Class innerClassType) {
 
                 return lowerFieldRead(access, innerClassType, slot);
-            }
-            if (objectType instanceof Type.Bytes) {
-                if ("length".equals(access.field())) {
-                    // K6 item 7: b.length reads the fixed logical length
-                    // through the existing ARRAY_LENGTH op with an int
-                    // result and the INT32_RESULT terminal.
-                    return lowerArrayLength(access, slot);
-                }
-                throw new ConstructUnlowered("member access '" + access.field()
-                    + "' on bytes (the checker admits .length only; a bytes member "
-                    + "access reaching an E5 arm fails hard)", access.span());
             }
             throw new ConstructUnlowered("member access '" + access.field() + "' on "
                 + typeName(objectType) + " (no member-access arm for this receiver shape "
@@ -14287,8 +14119,7 @@ public final class SemanticLowerer {
          * like an operator operand or an index chain's receiver/key, so it
          * lowers through the one operand admission
          * ({@link #lowerOperand(ExpressionNode)}): a null-narrowing-refined
-         * identifier read ({@code T[] | null} read as {@code T[]}, or the
-         * bytes counterpart) is admitted against the {@code NARROWED_READ}
+         * identifier read ({@code T[] | null} read as {@code T[]}) is admitted against the {@code NARROWED_READ}
          * cell, and the length read consumes the admitted value. A binding
          * a capturing closure cleared between the refinement and this read
          * therefore reports the typed-boundary tuple (E8001, expected
@@ -14540,7 +14371,7 @@ public final class SemanticLowerer {
         private static boolean consumingCellOwnsKindCheck(RuntimeDescriptor descriptor) {
             return !(descriptor instanceof RuntimeDescriptor.Func)
                 && !(descriptor instanceof RuntimeDescriptor.Array)
-                && !(descriptor instanceof RuntimeDescriptor.Bytes);
+;
         }
 
         /**
@@ -14578,7 +14409,7 @@ public final class SemanticLowerer {
          * unadmitted read — the receiver is a consumed value like any
          * other, not a typed-boundary position. A {@code .length} receiver
          * lowers through this helper too, so the {@code ARRAY_LENGTH} op
-         * (array or bytes) reads the admitted value and never the
+         * (array) reads the admitted value and never the
          * unadmitted read. A for-of iterable lowers through this helper
          * too, in both the array and the string arm: the {@code FOR_EACH}
          * consumes the admitted value, so a capturing closure that cleared
@@ -14921,8 +14752,7 @@ public final class SemanticLowerer {
          * children, the single input as one prior step, and the conversion
          * policy ({@code INT_CONVERSION}/{@code NUMBER_CONVERSION} — the
          * single closed intrinsic rule) as the terminal check. Every other
-         * call is a foreign construct ({@code CALL} is E7's); {@code
-         * bytes(...)} is the bytes exclusion.
+         * call is a foreign construct ({@code CALL} is E7's).
          */
         private ValueId lowerIntrinsicCall(CallExpr call) {
             return lowerIntrinsicCall(call, null);
@@ -14933,18 +14763,6 @@ public final class SemanticLowerer {
             ExpressionNode argument = call.args().get(0);
             Type argumentType = checkedType(argument);
             ValueId input = lowerExpression(argument);
-            if (kind == IntrinsicKind.BYTES_NEW) {
-                // K6 item 1: the allocation intrinsic's pinned int input
-                // descriptor and bytes result descriptor, with the
-                // BYTES_ALLOCATE terminal policy at the call expression.
-                RuntimeDescriptor intDescriptor =
-                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Int.INSTANCE);
-                return emitOperandOp(SemanticOpKind.INTRINSIC_CALL,
-                    new KindPayload.IntrinsicCallPayload(kind, input),
-                    List.of(input), List.of(intDescriptor),
-                    call.span(), RuntimeDescriptor.Bytes.INSTANCE,
-                    SemanticIrValidator.intrinsicPolicy(kind), slot);
-            }
             return emitOperandOp(SemanticOpKind.INTRINSIC_CALL,
                 new KindPayload.IntrinsicCallPayload(kind, input),
                 List.of(input), List.of(valueDescriptorOf(argumentType)),
@@ -14954,7 +14772,7 @@ public final class SemanticLowerer {
 
         /**
          * The intrinsic-call classifier (I3): exactly {@code int(...)},
-         * {@code number(...)}, and {@code bytes(...)} calls of the root
+         * and {@code number(...)} calls of the root
          * {@code Symbol.IntrinsicSymbol} bindings lower; every other call
          * shape — including {@code has(...)} call fallbacks and ordinary
          * user calls — fails closed. The callee is classified at its own
@@ -14973,7 +14791,7 @@ public final class SemanticLowerer {
                 }
             }
             throw new ConstructUnlowered("call expression (only the int()/number() "
-                + "conversion and bytes() allocation intrinsic calls lower to "
+                + "conversion intrinsic calls lower to "
                 + "INTRINSIC_CALL; the CALL machinery is the calls slice's)", call.span());
         }
 
@@ -15043,11 +14861,10 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The conversion/allocation intrinsics' name-to-kind map (the
+         * The conversion intrinsics' name-to-kind map (the
          * seed's and the intrinsic-call classifier's single authority):
          * {@code int} is {@code INT_CONVERT}, {@code number} is
-         * {@code NUMBER_CONVERT}, and {@code bytes} is
-         * {@code BYTES_NEW}; every other name — including the
+         * {@code NUMBER_CONVERT}; every other name — including the
          * {@code has} intrinsic — maps to no intrinsic kind.
          *
          */
@@ -15055,7 +14872,6 @@ public final class SemanticLowerer {
             return switch (name) {
                 case "int" -> IntrinsicKind.INT_CONVERT;
                 case "number" -> IntrinsicKind.NUMBER_CONVERT;
-                case "bytes" -> IntrinsicKind.BYTES_NEW;
                 default -> null;
             };
         }
@@ -15362,8 +15178,8 @@ public final class SemanticLowerer {
         private String describeExpression(ExpressionNode expr) {
             return switch (expr) {
                 case deal.ast.CallExpr ignored ->
-                    "call expression (only the int()/number() conversion and bytes() "
-                        + "allocation intrinsic calls lower in this slice — "
+                    "call expression (only the int()/number() conversion "
+                        + "intrinsic calls lower in this slice — "
                         + "INTRINSIC_CALL is the I3 terminal-check arm; the CALL "
                         + "machinery is E7's)";
                 case deal.ast.IndexExpr ignored ->

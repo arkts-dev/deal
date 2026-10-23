@@ -1555,13 +1555,14 @@ public class ClassConstructionValidatorTest {
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
 
-        // (d) A bytes-typed jsonable field (hand-rebuilt layout): the
-        // payload layout and the unit layout both carry the bytes field.
+        // (d) A function-typed jsonable field (hand-rebuilt layout): both
+        // the payload layout and the unit layout carry the unsupported field.
         ClassId holderId = new ClassId(MODULE.path(), "Holder");
         ClassLayout holderLayout = unit.classLayouts().get(holderId);
         if (holderLayout != null) {
             List<ClassLayout.FieldLayout> fields = new ArrayList<>(holderLayout.fields());
-            fields.add(new ClassLayout.FieldLayout("raw", RuntimeDescriptor.Bytes.INSTANCE,
+            fields.add(new ClassLayout.FieldLayout("raw",
+                RuntimeDescriptor.parseCanonicalText("()->null"),
                 true, DefaultOwner.LOCAL));
             ClassLayout tamperedLayout = new ClassLayout(holderId, fields);
             Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(unit.classLayouts());
@@ -2439,7 +2440,6 @@ public class ClassConstructionValidatorTest {
             Type.Boolean.INSTANCE,
             Type.Number.INSTANCE,
             Type.String.INSTANCE,
-            Type.Bytes.INSTANCE,
             Type.Table.INSTANCE,
             Type.Null.INSTANCE,
             Types.nullable(Type.String.INSTANCE),
@@ -2451,7 +2451,7 @@ public class ClassConstructionValidatorTest {
                 Type.String.INSTANCE), Type.Int.INSTANCE), Type.String.INSTANCE),
             Types.func(List.of(Types.nullable(Type.Int.INSTANCE)),
                 Type.String.INSTANCE),
-            Types.func(List.of(Type.Int.INSTANCE), Types.array(Type.Bytes.INSTANCE),
+            Types.func(List.of(Type.Int.INSTANCE), Types.array(Type.Table.INSTANCE),
                 true),
             Types.array(Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE)),
             Types.nullable(Types.func(List.of(Type.Int.INSTANCE), Type.String.INSTANCE)),

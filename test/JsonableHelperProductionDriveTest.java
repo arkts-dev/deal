@@ -458,8 +458,7 @@ public class JsonableHelperProductionDriveTest {
                 preparation.manifests().manifests(), preparation.surface(), Map.of(),
                 BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW), java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
                 DistributionHome.forManifestDirectory(project.root().toString()), stager);
             if (result.emitted()) {
                 stager.publish();
@@ -1097,8 +1096,7 @@ public class JsonableHelperProductionDriveTest {
             productionInvocation(), built.input(), built.index(),
             manifests.manifests(), surface, Map.of(), BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(result.project() != null, label + ": the oracle closure lowers with "
             + "zero diagnostics: " + result.diagnostics());
@@ -1782,7 +1780,7 @@ public class JsonableHelperProductionDriveTest {
                         Map.of(), BuiltinErrorDeclaration.synthesized(
                             built.input().modules().get(0).ast().span()),
                         List.of(IntrinsicKind.INT_CONVERT,
-                            IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW),
+                            IntrinsicKind.NUMBER_CONVERT),
                         java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
                         DistributionHome.forManifestDirectory(
                             project.root().toString()), stager);

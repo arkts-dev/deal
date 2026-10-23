@@ -1,0 +1,42 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Canonical int[] rows at dynamic boundaries (ISSUE-0550): a table-held int[] value crossing the `int[]` row passes with reference identity, the `?int[]` row passes the DEAL null and a real buffer, and a (int[])->int[] wrapper crossing the function row passes with its byte-equal carried descriptor.
+// @expected: runtime-ok
+// @features: descriptors, int[], functions, dynamic-boundaries
+
+export function test_array_dynamic_boundary_ok(): string {
+  // Accepted int[]: the shared int[] carrier crosses the `int[]` row
+  // unchanged; reads observe the stored buffer's contents.
+  let holder: table = { b: [0, 0] };
+  let b: int[] = holder.b;
+  if (b.length !== 2 || b[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "accepted int[] boundary mismatch" };
+  }
+  // Nullable pass-through: the `?int[]` row passes the DEAL null and a
+  // real buffer with the same reference identity.
+  let holderNull: table = { n: null };
+  let nb: int[] | null = holderNull.n;
+  if (nb !== null) {
+    throw { code: "TEST_FAIL", message: "nullable null pass-through mismatch" };
+  }
+  let nb2: int[] | null = holder.b;
+  if (nb2 !== null) {
+    if (nb2.length !== 2) {
+      throw { code: "TEST_FAIL", message: "nullable int[] pass-through mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable int[] value lost" };
+  }
+  // Accepted function wrapper: a (int[])->int[] value crosses the
+  // function row and stays callable with the same buffer reference.
+  let id: (x: int[]) => int[] = function(x: int[]): int[] { return x; };
+  let holderFn: table = { f: id };
+  let f: (x: int[]) => int[] = holderFn.f;
+  if (f(b) !== b) {
+    throw { code: "TEST_FAIL", message: "function row identity mismatch" };
+  }
+  return "dynamic int[] boundary ok";
+}
+
+export function main(): null {
+  return null;
+}

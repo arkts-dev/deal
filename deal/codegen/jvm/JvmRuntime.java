@@ -344,13 +344,6 @@ public final class JvmRuntime {
         if ("INT_CONVERT".equals(kind)) {
             return intConv(value, evKind, staticKind, opKey, digest, parent, origin);
         }
-        if ("BYTES_NEW".equals(kind)) {
-            // The allocation ladder with the generic caller's context and
-            // no call-site span: the runtime entry's own coordinates stay
-            // the diagnostic origin. The generic caller owns no call
-            // expression, so no pinned call origin is invented.
-            return bytesNew(value, evKind, opKey, digest, parent, origin);
-        }
         return numConv(value, evKind, staticKind, opKey, digest, parent, origin);
     }
 
@@ -740,7 +733,7 @@ public final class JvmRuntime {
                     return atom(v, kind.substring("nullable:".length()));
                 }
                 if (kind.equals("ref") || kind.equals("table") || kind.equals("array")
-                        || kind.equals("bytes") || kind.equals("function")
+                        || kind.equals("function")
                         || kind.equals("class")) {
                     return "ref:" + allocId(v);
                 }
@@ -787,7 +780,7 @@ public final class JvmRuntime {
         if (v instanceof ErrorValue error) {
             return "err:" + error.code + ":" + esc(error.message);
         }
-        if (v instanceof Table || v instanceof Array || v instanceof BytesValue
+        if (v instanceof Table || v instanceof Array
                 || v instanceof FunctionValue
                 || v instanceof Intrinsic || v instanceof ClassInstance) {
             return "ref:" + allocId(v);
@@ -1189,9 +1182,6 @@ public final class JvmRuntime {
         }
         if (v instanceof Array) {
             return "array";
-        }
-        if (v instanceof BytesValue) {
-            return "bytes";
         }
         if (v instanceof FunctionValue || v instanceof Intrinsic) {
             return "function";
@@ -1612,18 +1602,6 @@ public final class JvmRuntime {
                 return v;
             }
             throw kindFailure("table", actual, completion);
-        }
-        if ("bytes".equals(desc)) {
-            // The bytes view (K6 item 11): the carrier passes unchanged
-            // (classification only — the view carries no contents); every
-            // other value projects the closed typed-boundary kind arm's own
-            // render (the arm table is the text source, never a composed
-            // literal).
-            if (v instanceof BytesValue) {
-                return v;
-            }
-            throw arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
-                java.util.Map.of("kind", "bytes"), "-", "bytes", actual);
         }
         if (deal.semantic.ir.ClassId.ERROR.text().equals(desc)) {
             // The builtin Error class (the err carrier): an Error value
@@ -2477,14 +2455,6 @@ public final class JvmRuntime {
             case "REFERENCE_NE" -> {
                 return l != r;
             }
-            case "BYTES_EQ" -> {
-                // Bytes compare by allocation identity (K6 item 12): an
-                // alias compares equal, two distinct buffers unequal.
-                return l == r;
-            }
-            case "BYTES_NE" -> {
-                return l != r;
-            }
             default -> {
                 return false;
             }
@@ -3313,7 +3283,7 @@ public final class JvmRuntime {
      * The carrier-kind classification of one stringify-walk value (the
      * std/json member of the closed carrier-kind projection): the absent
      * marker is {@code nil}, the DEAL function-shaped carriers are
-     * {@code function}, the bytes carrier is {@code bytes}, and every
+     * {@code function}, and every
      * other table-carried value — tables, arrays, class instances (the
      * builtin Error value included) — is {@code table}. The token table
      * itself is the shared {@code FailureProjections} helper.
@@ -3334,9 +3304,6 @@ public final class JvmRuntime {
         }
         if (value instanceof String) {
             return deal.semantic.ir.FailureProjections.CarrierKind.STRING;
-        }
-        if (value instanceof BytesValue) {
-            return deal.semantic.ir.FailureProjections.CarrierKind.BYTES;
         }
         if (value instanceof FunctionValue) {
             return deal.semantic.ir.FailureProjections.CarrierKind.DEAL_FUNCTION;
@@ -3478,10 +3445,6 @@ public final class JvmRuntime {
         } else if (value == MISSING) {
             throw jsonEncodingFailure(value);
         } else if (value instanceof FunctionValue) {
-            throw jsonEncodingFailure(value);
-        } else if (value instanceof BytesValue) {
-            // Bytes are not JSON serializable: the pinned rejection
-            // carries the bytes actual token (K6/K8).
             throw jsonEncodingFailure(value);
         } else if (value instanceof ClassInstance) {
             // A class instance (the builtin Error value included) is a
@@ -3791,165 +3754,14 @@ public final class JvmRuntime {
         return module;
     }
 
-    // =========================================================================
-    // The shared bytes surface (K6)
-    // =========================================================================
 
-    /** A bytes buffer (K6 item 13): a zero-filled fixed-length byte[] with reference identity. */
-    public static final class BytesValue {
 
-        public final byte[] data;
-        public final int length;
 
-        public BytesValue(int length) {
-            this.data = new byte[length];
-            this.length = length;
-        }
 
-        /**
-         * Wraps one existing storage (the host boundary's projection of the
-         * deployed host's own bytes carrier): the logical length is the
-         * storage's length, exactly the host carrier's contract.
-         *
-         */
-        public BytesValue(byte[] data) {
-            this.data = java.util.Objects.requireNonNull(data, "data must not be null");
-            this.length = data.length;
-        }
-    }
 
-    /**
-     * The bytes allocation intrinsic (K6 item 1): the pinned E8012
-     * non-negative gate at the {@code bytes(...)} call expression, then the
-     * zero-filled carrier.
-     */
-    public static Object bytesNew(Object length, String evKind, String opKey, String digest,
-                                  String parent, String origin) {
-        long n = indexOf(length);
-        if (n < 0) {
-            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_ALLOCATE,
-                java.util.Map.of(), origin, null, null);
-            ev(currentModule(), opKey, "FAILURE", evKind, digest, parent, List.of(), null,
-                errtext(e));
-            throw e;
-        }
-        return new BytesValue((int) n);
-    }
 
-    /** The {@code b.length} read (K6 item 7): the fixed logical length. */
-    public static Object bytesLength(Object v, String opKey, String digest, String parent,
-                                     String origin) {
-        if (!(v instanceof BytesValue bytes)) {
-            DealError e = bytesKindFailure(v, origin);
-            ev(currentModule(), opKey, "FAILURE", "ARRAY_LENGTH", digest, parent, List.of(),
-                null, errtext(e));
-            throw e;
-        }
-        return Long.valueOf(bytes.length);
-    }
 
-    /**
-     * The bytes carrier's kind-mismatch projection: the pinned v1.2
-     * {@code expected bytes} text with the expected {@code bytes} and the
-     * value's own canonical actual kind.
-     */
-    public static DealError bytesKindFailure(Object v, String origin) {
-        String actual = actualOf("bytes", v);
-        return arm(deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND,
-            java.util.Map.of("kind", "bytes"), origin, "bytes", actual);
-    }
 
-    /** The bytes receiver of one element site, or the fail-closed kind failure. */
-    private static BytesValue bytesReceiver(Object v, String origin) {
-        if (v instanceof BytesValue bytes) {
-            return bytes;
-        }
-        throw bytesKindFailure(v, origin);
-    }
-
-    /**
-     * The {@code BYTE_ELEMENT_READ} cell (K6 items 2/3): the pinned E8012
-     * bounds check ({@code index < 0} or {@code index >= b.length}), the
-     * read's own length operand supplying the bound, then the unsigned
-     * byte. The boundary START/terminal events are emitted here.
-     */
-    public static Object bytesRead(String opKey, String digest, String parent, String bKey,
-                                   String bDigest, String bParent, Object container,
-                                   long index, long length, String origin) {
-        BytesValue bytes = bytesReceiver(container, origin);
-        Object elem = (index >= 0 && index < length)
-            ? Long.valueOf(bytes.data[(int) index] & 0xFF)
-            : MISSING;
-        String elemAtom = elem == MISSING ? atom(MISSING, "missing") : atom(elem, "int");
-        ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
-            List.of(elemAtom), null, null);
-        if (elem == MISSING) {
-            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_READ,
-                java.util.Map.of(), origin, null, null);
-            ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
-                null, errtext(e));
-            ev(currentModule(), opKey, "FAILURE", "INDEX_READ", digest, parent, List.of(),
-                null, errtext(e));
-            throw e;
-        }
-        ev(currentModule(), bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, List.of(),
-            elemAtom, null);
-        return elem;
-    }
-
-    /**
-     * The {@code BYTE_ELEMENT_ASSIGNMENT} cell (K6 item 4): the pinned
-     * E8012 bounds check first, then the element descriptor check; the
-     * enclosing commit owns the E8013 range check and the single mutation.
-     * The cell's own origin is the lowerer-selected byte-boundary origin
-     * (the index expression), so a descriptor-check failure of an in-bounds
-     * write re-renders at that origin, never at the matcher's internal
-     * placeholder — exactly like the array assignment cell and the
-     * oracle's boundary-origin attachment.
-     */
-    public static void bytesBounds(String bKey, String bDigest, String bParent, Object input,
-                                   long index, long length, String desc, String staticKind,
-                                   String origin) {
-        String inputAtom = atom(input, staticKind);
-        ev(currentModule(), bKey, "START", "BOUNDARY", bDigest, bParent,
-            List.of(inputAtom), null, null);
-        if (index < 0 || index >= length) {
-            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_WRITE_BOUNDS,
-                java.util.Map.of(), origin, null, null);
-            ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
-                null, errtext(e));
-            throw e;
-        }
-        try {
-            bcheck(desc, staticKind, input);
-        } catch (DealError e) {
-            DealError failure = new DealError(e.code, e.msg, origin, e.expected, e.actual,
-                e.frames, e.cause);
-            ev(currentModule(), bKey, "FAILURE", "BOUNDARY", bDigest, bParent, List.of(),
-                null, errtext(failure));
-            throw failure;
-        }
-        ev(currentModule(), bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, List.of(),
-            inputAtom, null);
-    }
-
-    /**
-     * The bytes write's commit (K6 item 4): the E8013 value-range check
-     * (0..255) at the assignment-expression origin and the single in-place
-     * mutation. A failed write changes no storage.
-     */
-    public static void bytesCommit(String opKey, String digest, String parent, Object container,
-                                   long index, Object value, String origin) {
-        long written = indexOf(value);
-        if (written < 0 || written > 255) {
-            DealError e = arm(deal.semantic.ir.FailureArmId.BYTES_WRITE_RANGE,
-                java.util.Map.of(), origin, null, null);
-            ev(currentModule(), opKey, "FAILURE", "INDEX_WRITE", digest, parent, List.of(),
-                null, errtext(e));
-            throw e;
-        }
-        bytesReceiver(container, origin).data[(int) index] = (byte) written;
-    }
 
     // =========================================================================
     // The reserved async-export host surface
@@ -4177,7 +3989,7 @@ public final class JvmRuntime {
      * JSON-encodable surface: the same production value walk the
      * {@code JSON_STRINGIFY} stdlib row uses, so the host surface encodes
      * with the artifact's one JSON algorithm. An unsupported value
-     * (bytes, a function carrier, an absent slot, a class instance, a
+     * (a function carrier, an absent slot, a class instance, a
      * cycle, a non-finite number) raises — the emitted host surface
      * classifies that raise as a representation failure.
      */

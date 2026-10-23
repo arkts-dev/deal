@@ -335,8 +335,8 @@ public class ClosureLoweringTest {
         check(unit.functionBindings().containsKey(
                 new FunctionAllocationIdentity(((ValueId) hClosure.result()).id())),
             "h's binding is keyed by the allocation identity equal to the result value id");
-        check(unit.functionBindings().size() == closureNews.size() + 3,
-            "one functionBinding per closure (registry one-to-one) plus the three "
+        check(unit.functionBindings().size() == closureNews.size() + 2,
+            "one functionBinding per closure (registry one-to-one) plus the two "
                 + "producer-less intrinsic seed registrations (ISSUE-0632): "
                 + unit.functionBindings().size() + " bindings for " + closureNews.size()
                 + " closures");
@@ -346,7 +346,7 @@ public class ClosureLoweringTest {
                 intrinsicSeeds++;
             }
         }
-        check(intrinsicSeeds == 3, "the three intrinsic seeds are registered "
+        check(intrinsicSeeds == 2, "the int and number intrinsic seeds are registered "
             + "(ISSUE-0632); got " + intrinsicSeeds);
 
         // Cell kinds: captured x/y SHARED_CELL; uncaptured a, b, h DIRECT.

@@ -46,19 +46,6 @@ public record BoundaryContext(
         return new BoundaryContext(null, index, length, null, null);
     }
 
-    /**
-     * The bytes cells' context (K6 item 3): the bytes index and the
-     * receiver's length at check time — the read's own length read for
-     * {@code BYTES_READ}, the chain's length child for
-     * {@code BYTES_WRITE}.
-     */
-    public static BoundaryContext bytesBounds(int index, int length) {
-        if (length < 0) {
-            throw new IllegalArgumentException("length must be >= 0, got " + length);
-        }
-        return new BoundaryContext(null, index, length, null, null);
-    }
-
     /** The {@code ARRAY_ELEMENT_DESCRIPTOR} context: one-based element position. */
     public static BoundaryContext element(int oneBasedElementIndex) {
         if (oneBasedElementIndex < 1) {

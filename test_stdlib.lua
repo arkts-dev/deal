@@ -126,10 +126,7 @@ test("string.length publishes the shared typed-boundary token for a carrier", fu
   assert(err.message == "expected string", tostring(err.message))
   assert(err.expected == "string", tostring(err.expected))
   assert(err.actual == "Error", tostring(err.actual))
-  -- Every other carrier keeps its own closed token (the bytes buffer and the
-  -- language null are not the table spelling either).
-  err = assert_error_code(function() strings.length.f(rt.bytes_new(1)) end, "E8001")
-  assert(err.actual == "bytes", tostring(err.actual))
+  -- Language null keeps its own closed token, not the table spelling.
   err = assert_error_code(function() strings.length.f(rt.__NULL) end, "E8001")
   assert(err.actual == "null", tostring(err.actual))
   -- The same class atom crosses a second shipped check (substring's own
@@ -1454,15 +1451,6 @@ test("json.parse normalizes -0 to 0", function()
   assert(1 / z == math.huge, "normalized zero divides to +Infinity")
 end)
 
-test("json.stringify rejects bytes-kind values with E8001", function()
-  local __rt = require("deal.runtime")
-  local b = __rt.bytes_new(2)
-  b.__data[0] = 65  -- exercise the bytes runtime write path first
-  local err = assert_error_code(function() json.stringify.f({ payload = b }) end, "E8001")
-  assert(string.find(err.message, "bytes", 1, true) ~= nil,
-    "error message should mention bytes, got: " .. tostring(err.message))
-end)
-
 -- The closed unsupported-carrier rejection (v1.3): every produced carrier
 -- renders the JSON_STRINGIFY_UNSUPPORTED arm's own text with the closed
 -- carrier-kind token instead of encoding private carrier fields. A carrier
@@ -1495,7 +1483,6 @@ test("json.stringify rejects a carrier at the declared table parameter cell", fu
         [__rt.__keys.csig] = "()->null",
         [__rt.__keys.fid] = "m#f" },
       actual = "function" },
-    { name = "bytes", value = __rt.bytes_new(1), actual = "bytes" },
     { name = "async handle", value = __rt.async_start(function() end),
       actual = "async-operation" },
     { name = "language null", value = __rt.__NULL, actual = "null" },

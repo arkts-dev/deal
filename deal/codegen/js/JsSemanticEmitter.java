@@ -1289,12 +1289,10 @@ public final class JsSemanticEmitter {
                 // comparable and computable by value on every carrier.
                 case INT32_EQ, NUMBER_EQ -> "(" + numeric(left) + " === "
                     + numeric(right) + ")";
-                case BOOLEAN_EQ, REFERENCE_EQ, STRING_EQ,
-                     BYTES_EQ -> "(" + left + " === " + right + ")";
+                case BOOLEAN_EQ, REFERENCE_EQ, STRING_EQ -> "(" + left + " === " + right + ")";
                 case INT32_NE, NUMBER_NE -> "(" + numeric(left) + " !== "
                     + numeric(right) + ")";
-                case BOOLEAN_NE, REFERENCE_NE, STRING_NE,
-                     BYTES_NE -> "(" + left + " !== " + right + ")";
+                case BOOLEAN_NE, REFERENCE_NE, STRING_NE -> "(" + left + " !== " + right + ")";
                 case INT32_LT, NUMBER_LT -> "(" + numeric(left) + " < "
                     + numeric(right) + ")";
                 case INT32_LE, NUMBER_LE -> "(" + numeric(left) + " <= "
@@ -1397,8 +1395,6 @@ public final class JsSemanticEmitter {
                     + location + ")";
                 case NUMBER_CONVERT -> "$rt.numberConvert(" + argument + ", "
                     + location + ")";
-                case BYTES_NEW -> "$rt.bytes(" + argument + ", " + location
-                    + ")";
             };
         }
 
@@ -1460,17 +1456,8 @@ public final class JsSemanticEmitter {
             KindPayload.ArrayLengthPayload payload =
                 (KindPayload.ArrayLengthPayload) op.payload();
             String array = slot(payload.arrayValue());
-            String expression = isBytesValue(payload.arrayValue())
-                ? "$rt.bytesLength(" + array + ", " + spanArgs(op) + ")"
-                : "$rt.arrayLength(" + array + ")";
+            String expression = "$rt.arrayLength(" + array + ")";
             emit(slotOf(op) + " = " + expression + ";");
-        }
-
-        /** Whether one value's producing op publishes a bytes value. */
-        private boolean isBytesValue(ValueId value) {
-            SemanticOp producer = producerByValue.get(value.id());
-            return producer != null
-                && producer.resultType() instanceof RuntimeDescriptor.Bytes;
         }
 
         private void emitMemberRead(SemanticOp op) {
@@ -1516,10 +1503,7 @@ public final class JsSemanticEmitter {
             String index = slot(payload.slot());
             String target = slotOf(op);
             IndexMode mode = normalizeMode(payload.slot());
-            if (mode == IndexMode.BYTES_READ) {
-                emit(target + " = $rt.bytesGet(" + container + ", " + index
-                    + ", " + spanArgs(op) + ");");
-            } else if (mode == IndexMode.TABLE_READ) {
+            if (mode == IndexMode.TABLE_READ) {
                 emit(target + " = $rt.tableGet(" + container + ", " + index
                     + ");");
             } else {
@@ -1554,7 +1538,7 @@ public final class JsSemanticEmitter {
         /**
          * Whether one boundary cell is the deferred contextual read: a
          * {@code CONTEXTUAL_TABLE_READ} over a composite carrier (a
-         * function, an array or the bytes carrier) passes the raw read
+         * function or an array) passes the raw read
          * through unvalidated, exactly like the shared oracle and the
          * LuaJIT/JVM emitters — the consuming declared cell (a parameter
          * or declaration crossing) owns the projection at its own origin,
@@ -1573,8 +1557,7 @@ public final class JsSemanticEmitter {
                 instanceof RuntimeDescriptor.Nullable nullable
                     ? nullable.inner() : descriptor;
             return inner instanceof RuntimeDescriptor.Func
-                || inner instanceof RuntimeDescriptor.Array
-                || inner instanceof RuntimeDescriptor.Bytes;
+                || inner instanceof RuntimeDescriptor.Array;
         }
 
         /** Whether one element boundary is the array read's bounds-only cell. */
@@ -1592,10 +1575,7 @@ public final class JsSemanticEmitter {
             String index = slot(payload.slot());
             String value = slot(payload.value());
             IndexMode mode = normalizeMode(payload.slot());
-            if (mode == IndexMode.BYTES_WRITE) {
-                emit("$rt.bytesSet(" + container + ", " + index + ", " + value
-                    + ", " + spanArgs(op) + ");");
-            } else if (mode == IndexMode.TABLE_WRITE) {
+            if (mode == IndexMode.TABLE_WRITE) {
                 emit("$rt.tableSet(" + container + ", " + index + ", " + value
                     + ");");
             } else {
@@ -1630,7 +1610,7 @@ public final class JsSemanticEmitter {
 
         /**
          * The recorded normalize mode of one index slot: the closed
-         * {@code ARRAY_*}/{@code BYTES_*}/{@code TABLE_*} selector of the
+         * {@code ARRAY_*}/{@code TABLE_*} selector of the
          * slot's INDEX_NORMALIZE producer — the recorded fact that selects
          * the carrier's read/write/delete arm (never a value shape or a
          * generated name).
@@ -1743,8 +1723,7 @@ public final class JsSemanticEmitter {
             }
             switch (((KindPayload.BoundaryPayload) boundary.payload()).kind()) {
                 case ARRAY_ELEMENT_READ, ARRAY_ELEMENT_ASSIGNMENT,
-                     ARRAY_ELEMENT_DELETE, ARRAY_LITERAL_ELEMENT,
-                     BYTE_ELEMENT_READ, BYTE_ELEMENT_ASSIGNMENT -> {
+                     ARRAY_ELEMENT_DELETE, ARRAY_LITERAL_ELEMENT -> {
                     if (ownedByElement == null
                             || !ownedByElement.equals(boundary.opId())) {
                         throw unsupported(boundary, "the boundary kind "
@@ -1869,8 +1848,6 @@ public final class JsSemanticEmitter {
                     + " $c) => $rt.intConvert(v, $f, $l, $c), \"HOST\")";
                 case NUMBER_CONVERT -> "$rt.function(\"(int)->number\", (v, $f,"
                     + " $l, $c) => $rt.numberConvert(v, $f, $l, $c), \"HOST\")";
-                case BYTES_NEW -> "$rt.function(\"(int)->bytes\", (v, $f, $l,"
-                    + " $c) => $rt.bytes(v, $f, $l, $c), \"HOST\")";
             };
         }
 
@@ -2259,16 +2236,6 @@ public final class JsSemanticEmitter {
                     String length = chainLengthSlot(chain);
                     emit("if (" + index + " < 0 || " + index + " > " + length
                         + ") { $rt.fail(\"E8002\", \"array index out of"
-                        + " bounds\", " + spanArgs(boundary) + "); }");
-                    emit(input + " = $rt.checkType("
-                        + jsString(payload.descriptor().canonicalSpecText()) + ", "
-                        + input + ", " + spanArgs(boundary) + ");");
-                }
-                case BYTE_ELEMENT_ASSIGNMENT -> {
-                    String index = chainIndexSlot(chain);
-                    String length = chainLengthSlot(chain);
-                    emit("if (" + index + " < 0 || " + index + " >= " + length
-                        + ") { $rt.fail(\"E8012\", \"bytes index out of"
                         + " bounds\", " + spanArgs(boundary) + "); }");
                     emit(input + " = $rt.checkType("
                         + jsString(payload.descriptor().canonicalSpecText()) + ", "

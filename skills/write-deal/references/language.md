@@ -13,7 +13,7 @@ Assignments use `x = x + 1`. Write callbacks as function expressions; `=>` descr
 
 ## Types
 
-Built-ins: `null`, `boolean`, `int`, `number`, `string`, `bytes`, `table`, `Error`. Compose nominal classes, homogeneous `T[]`, nullable `T | null`, and function types.
+Built-ins: `null`, `boolean`, `int`, `number`, `string`, `table`, `Error`. Compose nominal classes, homogeneous `T[]`, nullable `T | null`, and function types.
 
 Types are invariant. Integer literals are int; decimal/exponent literals are number. Int is signed 32-bit; number is IEEE 754 double. Integer arithmetic checks overflow; division truncates toward zero and rejects zero divisors. There are no exponentiation or remainder operators.
 
@@ -48,10 +48,6 @@ Dynamic indexes are strings. Writes may store heterogeneous values; select each 
 ## Arrays
 
 Arrays are zero-based. Annotate empty literals. Append at length and iterate with `i < values.length` or `for-of`. Reads check their result type; a read outside `0..length-1` raises an index-out-of-bounds error. Strings in `for-of` yield Unicode scalars. Transform collections with explicit loops.
-
-## Bytes
-
-`bytes(length)` zero-fills fixed storage; use a nonnegative length. Keep indexes below length and writes within `0..255`. Reads return int. Failed writes leave storage unchanged. Assignment aliases storage; copy explicitly for independence.
 
 ## JSON serialization (`@jsonable`)
 

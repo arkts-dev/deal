@@ -1,0 +1,31 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A declared nullable array host parameter/return round-trips both DEAL null and array content through the nullable boundary.
+// @expected: runtime-ok
+// @features: modules, host-abi, arrays, nullable
+
+import * as host from "host/array_roundtrip";
+
+export function test_host_array_nullable_roundtrip(): string {
+  let none: int[] | null = host.nullableArray(null);
+  if (none !== null) {
+    throw { code: "TEST_FAIL", message: "nullable int[] null roundtrip mismatch" };
+  }
+  let b: int[] = [0, 0];
+  b[1] = 7;
+  let some: int[] | null = host.nullableArray(b);
+  if (some !== null) {
+    if (some.length !== 2) {
+      throw { code: "TEST_FAIL", message: "nullable array value roundtrip length mismatch" };
+    }
+    if (some[1] !== 7) {
+      throw { code: "TEST_FAIL", message: "nullable int[] value roundtrip content mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable int[] value roundtrip returned null" };
+  }
+  return "host-array-nullable-ok";
+}
+
+export function main(): null {
+  return null;
+}

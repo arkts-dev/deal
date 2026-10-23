@@ -10,7 +10,7 @@ import java.util.Objects;
  *
  * <ul>
  *   <li>{@link PrimitiveAtom} — one of {@code null}, {@code boolean},
- *       {@code int}, {@code number}, {@code string}, {@code bytes},
+ *       {@code int}, {@code number}, {@code string},
  *       {@code table}.  The builtin {@code Error} class atom is
  *       deliberately <em>not</em> a primitive: {@code Error} is a
  *       nominal class identity and is carried as a
@@ -42,8 +42,7 @@ public sealed interface DescriptorAst extends DescriptorParseResult
     /**
      * A primitive descriptor atom.  The canonical names are
      * {@code null}, {@code boolean}, {@code int}, {@code number},
-     * {@code string}, {@code bytes}, and {@code table}; the pinned
-     * {@code bytes} name is {@link CanonicalRuntimeTypeDescriptor#BYTES_DESCRIPTOR}.
+     * {@code string}, and {@code table}.
      */
     record PrimitiveAtom(String name) implements DescriptorAst {
         public PrimitiveAtom {

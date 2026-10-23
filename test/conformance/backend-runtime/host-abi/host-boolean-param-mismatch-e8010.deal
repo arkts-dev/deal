@@ -1,0 +1,15 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A wrong-kind value crossing a declared boolean host parameter raises E8010 at the call boundary — never a masking read-site E8001.
+// @expected: runtime-error E8010
+// @features: modules, host-abi, boolean, runtime-errors
+
+import * as host from "host/boundary";
+
+export function test_host_boolean_param_mismatch(): boolean {
+  let holder: table = { item: 5 };
+  return host.echoBoolean(holder.item);
+}
+
+export function main(): null {
+  return null;
+}

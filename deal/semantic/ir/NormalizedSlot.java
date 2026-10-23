@@ -34,12 +34,6 @@ import java.util.Objects;
  *       payload's required {@code currentLength} operand references the raw
  *       key identity and is unused by the computation — no length read
  *       occurs for table targets.</li>
- *   <li>Bytes modes → {@link BytesSlot} — {@code {index: signed32,
- *       present: index < currentLength}} (K6 item 5). There is no append
- *       decision: a bytes buffer is fixed-length and an index equal to the
- *       length is the boundary's pinned E8012, never an append. Negative
- *       and out-of-range indices are represented exactly — the computation
- *       never fails and never enforces bounds.</li>
  * </ul>
  *
  * <p><b>Purity.</b> {@code INDEX_NORMALIZE} remains pure: policy
@@ -56,7 +50,7 @@ import java.util.Objects;
  * <p><b>Result type (A-D3).</b> The normalize op's result {@code ValueId}
  * carries the slot's index/key value with
  * {@link ArraySlot#resultType()} = {@code int},
- * {@link BytesSlot#resultType()} = {@code int}, and
+ * and
  * {@link TableSlot#resultType()} = {@code string}.</p>
  *
  * <p>This record is computation-only: the {@code INDEX_NORMALIZE} op's
@@ -64,7 +58,7 @@ import java.util.Objects;
  * payload shapes and the schema-owned records are unchanged.</p>
  */
 public sealed interface NormalizedSlot
-    permits NormalizedSlot.ArraySlot, NormalizedSlot.BytesSlot, NormalizedSlot.TableSlot {
+    permits NormalizedSlot.ArraySlot, NormalizedSlot.TableSlot {
 
     /**
      * The closed array slot: the signed32 index plus the {@code present}
@@ -74,23 +68,6 @@ public sealed interface NormalizedSlot
      *
      */
     record ArraySlot(int index, boolean present, boolean append) implements NormalizedSlot {
-
-        @Override
-        public RuntimeDescriptor resultType() {
-            return RuntimeDescriptor.Int.INSTANCE;
-        }
-    }
-
-    /**
-     * The closed bytes slot ({@code BYTES_READ}/{@code BYTES_WRITE}): the
-     * signed32 index plus the {@code present} decision
-     * ({@code present = index < currentLength}). No append decision exists
-     * — a bytes buffer is fixed-length and {@code index == currentLength}
-     * is the boundary's pinned E8012; negative and out-of-range indices
-     * are represented exactly (the computation never enforces bounds).
-     *
-     */
-    record BytesSlot(int index, boolean present) implements NormalizedSlot {
 
         @Override
         public RuntimeDescriptor resultType() {
@@ -149,25 +126,6 @@ public sealed interface NormalizedSlot
             default -> throw new IllegalArgumentException(
                 "arraySlot computes ARRAY_READ/ARRAY_WRITE slots only, got " + mode
                     + " (the closed table-mode computation is tableSlot)");
-        };
-    }
-
-    /**
-     * Computes the closed bytes slot from the raw index and the current
-     * length (K6 item 5): {@code present = index < currentLength} for both
-     * bytes modes; no append decision exists. Pure, total, deterministic:
-     * no bounds enforcement, no failure, and negative/out-of-range indices
-     * are represented exactly — enforcement happens only in the named
-     * boundary policies ({@code BYTES_READ}/{@code BYTES_WRITE}).
-     *
-     */
-    static BytesSlot bytesSlot(IndexMode mode, int index, int currentLength) {
-        Objects.requireNonNull(mode, "mode must not be null");
-        return switch (mode) {
-            case BYTES_READ, BYTES_WRITE -> new BytesSlot(index, index < currentLength);
-            default -> throw new IllegalArgumentException(
-                "bytesSlot computes BYTES_READ/BYTES_WRITE slots only, got " + mode
-                    + " (the closed array/table computations are arraySlot/tableSlot)");
         };
     }
 

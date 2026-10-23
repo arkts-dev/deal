@@ -1,0 +1,44 @@
+// @spec: Arrays — Modules
+// @description: Imports/exports preserve int[] carriers, canonical descriptors, and reference identity: a closure factory exported from a library keeps one captured buffer identity across repeated calls, mutation is visible through every import-path alias, and a int[]-bearing function value created in the library round-trips through import, invocation, and a dynamic table read that byte-checks its canonical descriptor.
+// @expected: runtime-ok
+// @features: int[], modules, functions, tables
+
+import * as Lib from "./reference-array_module_lib";
+
+export function test_array_module_identity(): string {
+  let getShared: () => int[] = Lib.makeShared();
+  let a: int[] = getShared();
+  let b: int[] = getShared();
+  if (!(a === b)) {
+    throw { code: "TEST_FAIL", message: "imported closure lost the captured int[] identity across calls" };
+  }
+  a[1] = 99;
+  if (getShared()[1] !== 99) {
+    throw { code: "TEST_FAIL", message: "mutation invisible through the imported closure" };
+  }
+  let echoed: int[] = Lib.echo(a);
+  if (!(echoed === a)) {
+    throw { code: "TEST_FAIL", message: "imported echo lost reference identity" };
+  }
+  let f: (x: int[]) => int[] = Lib.makeTransform();
+  let c: int[] = [0, 0];
+  let ret: int[] = f(c);
+  if (!(ret === c)) {
+    throw { code: "TEST_FAIL", message: "imported transform lost reference identity" };
+  }
+  if (c[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "imported transform content mismatch" };
+  }
+  let holder: table = { f: f };
+  let g: (x: int[]) => int[] = holder.f;
+  let d: int[] = [0];
+  let ret2: int[] = g(d);
+  if (!(ret2 === d) || d[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "imported function value failed after the dynamic descriptor-checked round trip" };
+  }
+  return "module-identity-ok";
+}
+
+export function main(): null {
+  return null;
+}

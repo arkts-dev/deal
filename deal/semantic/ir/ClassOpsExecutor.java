@@ -47,7 +47,7 @@ public final class ClassOpsExecutor {
 
     public sealed interface Value
         permits Value.Null, Value.Bool, Value.Int, Value.Number, Value.String,
-                Value.Table, Value.Array, Value.Bytes, Value.Class, Value.Function,
+                Value.Table, Value.Array, Value.Class, Value.Function,
                 Value.Missing {
 
         /** The canonical actual kind this value renders as. */
@@ -127,29 +127,6 @@ public final class ClassOpsExecutor {
             }
         }
 
-        /**
-         * A bytes buffer view (K6 item 10): the same mutable storage as the
-         * oracle's bytes value, shared by every alias, so an element write
-         * through one view is observed through every other. The logical
-         * length is fixed at allocation and never changes; the view is
-         * classification-only for boundary projection (K6 item 11).
-         */
-        record Bytes(byte[] storage, int length) implements Value {
-
-            public Bytes {
-                Objects.requireNonNull(storage, "storage must not be null");
-                if (length < 0 || length > storage.length) {
-                    throw new Defect("a bytes view's logical length " + length
-                        + " is outside its storage of " + storage.length
-                        + " byte(s)");
-                }
-            }
-
-            @Override
-            public ActualKind actualKind() {
-                return ActualKind.BYTES;
-            }
-        }
 
         /** An array value carrying its ordered element list. */
         record Array(SemanticArray<Value> array) implements Value {
@@ -1965,10 +1942,6 @@ public final class ClassOpsExecutor {
                 throw new JsonFromFailure("expected "
                     + classDescriptor.canonicalSpecText() + ", got " + raw.actualKind());
             }
-            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
-                "a @jsonable field never carries a bytes descriptor (the checker's "
-                    + "E4007 allowlist) — a bytes-typed JSON field is a producer "
-                    + "defect, never executed");
             case RuntimeDescriptor.Func ignored -> throw new Defect(
                 "a @jsonable field never carries a function descriptor (the checker's "
                     + "E4007 allowlist) — a function-typed JSON field is a producer "
@@ -2127,10 +2100,6 @@ public final class ClassOpsExecutor {
                 yield encodeToJson(op, nestedLayout, nested, layouts, stringifier,
                     entered, fieldPath);
             }
-            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
-                "a @jsonable field never carries a bytes descriptor (the checker's "
-                    + "E4007 allowlist) — a bytes-typed JSON field is a producer "
-                    + "defect, never executed");
             case RuntimeDescriptor.Func ignored -> throw new Defect(
                 "a @jsonable field never carries a function descriptor (the checker's "
                     + "E4007 allowlist) — a function-typed JSON field is a producer "
@@ -2270,10 +2239,6 @@ public final class ClassOpsExecutor {
                     return;
                 }
             }
-            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
-                "a @jsonable field never carries a bytes descriptor (the checker's "
-                    + "E4007 allowlist) — a bytes-typed JSON field is a producer "
-                    + "defect, never executed");
             case RuntimeDescriptor.Func ignored -> throw new Defect(
                 "a @jsonable field never carries a function descriptor (the checker's "
                     + "E4007 allowlist) — a function-typed JSON field is a producer "

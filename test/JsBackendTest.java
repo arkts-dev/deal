@@ -137,15 +137,13 @@ public class JsBackendTest {
             testInt32RuntimeGateEmission();
             testInt32OrchestratorPlumb();
             testInt32MatrixNode();
-            testBytesEmissionPins();
-            testBytesNodeSemantics();
-            testBytesUserNameShadowing();
-            testBytesClosureFunctionArrayNode();
-            testBytesClosureAsyncContainerNode();
-            testBytesClosureClassDefaultsNode();
-            testBytesClosureDeepCompositionsNode();
-            testBytesClosureModuleBoundary();
-            testBytesClosureNoE6000Pins();
+            testOrdinaryBytesNames();
+            testArrayClosureFunctionArrayNode();
+            testArrayClosureAsyncContainerNode();
+            testArrayClosureClassDefaultsNode();
+            testArrayClosureDeepCompositionsNode();
+            testArrayClosureModuleBoundary();
+            testArrayClosureNoE6000Pins();
             testNumModFloored();
             testScalarStringOps();
             testOptionalThreeState();
@@ -2497,7 +2495,7 @@ public class JsBackendTest {
         check(js.contains("throw $rt.throwValue(")
                 && js.contains("\"jstest-errpins.deal\", 12, 5)"),
             "the inner literal throw emits the located throwValue form");
-        check(js.contains("$rt.reifyError($c131)"),
+        check(js.contains("$rt.reifyError($c125)"),
             "the catch binding reifies through $rt.reifyError");
         check(js.contains("\"jstest-errpins.deal\", 14, 5)"),
             "a non-literal rethrow routes through throwValue with its own "
@@ -2523,16 +2521,16 @@ public class JsBackendTest {
         String js = res.source();
         check(js.contains("\"jstest-delemit.deal\", 3, 10)"),
             "the delete index and bounds gate carry the delete-site span");
-        check(js.contains("if ($s63 < 0 || $s63 > $n65) { "
+        check(js.contains("if ($s57 < 0 || $s57 > $n59) { "
             + "$rt.fail(\"E8002\", \"array index out of bounds\", "
             + "\"jstest-delemit.deal\", 3, 10); }"),
             "the E8002 bounds gate precedes the write (the upper bound is "
                 + "the array length)");
-        check(js.contains("if ($s63 < $n65) { $rt.arrayDelete($s54, $s63); }"),
+        check(js.contains("if ($s57 < $n59) { $rt.arrayDelete($s48, $s57); }"),
             "the nil-out commit is guarded by index < length (no write "
                 + "emitted at i === length) and routes through the "
                 + "carrier-agnostic delete member");
-        check(js.contains("$rt.arrayLength($s71)"),
+        check(js.contains("$rt.arrayLength($s65)"),
             "the array .length read routes through the carrier-agnostic "
                 + "length member");
         check(!js.replace("$rt.undefined", "").contains("undefined"),
@@ -2564,16 +2562,16 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        int receiverPos = js.indexOf("$s24 = $g19;");
-        int indexPos = js.indexOf("$s83 = 1;");
+        int receiverPos = js.indexOf("$s18 = $g13;");
+        int indexPos = js.indexOf("$s77 = 1;");
         check(receiverPos >= 0 && indexPos > receiverPos,
             "the read evaluates the receiver before the index");
-        check(js.contains("$s86 = $rt.arrayLength($s79);"),
+        check(js.contains("$s80 = $rt.arrayLength($s73);"),
             "the bounds gate reads the receiver's carrier-agnostic length");
-        check(js.contains("if ($s89 < 0 || $s89 >= $n91) { "
+        check(js.contains("if ($s83 < 0 || $s83 >= $n85) { "
                 + "$rt.fail(\"E8002\", \"array index out of bounds\", "),
             "the read gates both bounds with E8002 'array index out of bounds'");
-        check(js.contains("$s92 = $rt.arrayAt($s79, $s89, false);"),
+        check(js.contains("$s86 = $rt.arrayAt($s73, $s83, false);"),
             "the read returns the carrier-agnostic position only after the "
                 + "bounds gate (the declared int element reads the decoded "
                 + "slot's own variant)");
@@ -2700,22 +2698,18 @@ public class JsBackendTest {
         check(!externCompiled.artifacts().containsKey("Main.js"),
             "the rejected extern-C compile publishes no artifact");
 
-        // The defensive bytes E6000 arms retired with the v1.2 bytes lane
-        // (js-v12-int32-bytes D3/D4): a bytes-spelled type and a bytes(n)
-        // call now compile clean and lower to the $rt.bytes* members — the
-        // passing pins live in testBytesEmissionPins/testBytesNodeSemantics.
-        JsEmission bytesClean = generate("""
-            export function test(): null {
-              let b: bytes = bytes(3);
-              if (b.length !== 3) {
-                throw { code: "TEST_FAIL", message: "length" };
-              }
-              return null;
-            }
-            """, "rej-bytes-retired");
-        check(bytesClean != null && !bytesClean.hasErrors(),
-            "the retired defensive bytes rejection never fires: "
-                + (bytesClean == null ? "<null>" : bytesClean.diagnostics()));
+        Frontend unknownType = compileFrontend(
+            "export function test(): null { let b: bytes = null; return null; }",
+            "unknown-bytes-type.deal");
+        check(unknownType.errors().stream().anyMatch(d -> d.code().equals("E3004")
+                && d.message().equals("Unknown type 'bytes'")),
+            "an undeclared bytes type fails before emission: " + unknownType.errors());
+        Frontend unknownValue = compileFrontend(
+            "export function test(): null { bytes(3); return null; }",
+            "unknown-bytes-value.deal");
+        check(unknownValue.errors().stream().anyMatch(d -> d.code().equals("E2001")),
+            "an undeclared bytes value fails before emission: " + unknownValue.errors());
+
     }
 
     private static void testHostAbiEmissionPins() throws Exception {
@@ -3800,297 +3794,15 @@ public class JsBackendTest {
 
     }
 
-    private static void testBytesEmissionPins() {
-        System.out.println("-- Bytes emission pins: $rt.bytes* sites and canonical bytes descriptors --");
 
-        JsEmission res = generate("""
-            function id(b: bytes): bytes { return b; }
-            export function test(): int {
-              let b: bytes = bytes(4);
-              let n: int = b.length;
-              let v: int = b[0];
-              b[0] = 255;
-              let t: table = {};
-              let x: bytes = t.b;
-              let m: bytes | null = t.m;
-              let ys: bytes[] = t.arr;
-              let g: (b: bytes) => bytes = t.g;
-              let f: (x: int) => bytes = bytes;
-              let z: int = f(2)[0];
-              let c: bytes = id(b);
-              return n + v + z;
-            }
-            """, "bytesemit");
-        check(res != null && !res.hasErrors(), "bytes emission clean: "
-            + (res == null ? "<null>" : res.diagnostics()));
-        if (res == null || res.hasErrors()) return;
 
-        String js = res.source();
-        check(js.contains("$rt.bytes((")
-                && js.contains("\"jstest-bytesemit.deal\", 3, 18)"),
-            "bytes(4) lowers to $rt.bytes(4, <file>, <line>, <column>)");
-        check(js.contains("$rt.bytesLength(")
-                && js.contains("\"jstest-bytesemit.deal\", 4, 16)"),
-            "b.length lowers to $rt.bytesLength(b, <span>) "
-                + "(compiler-resolved, not a member lookup)");
-        check(js.contains("$rt.bytesGet(")
-                && js.contains("\"jstest-bytesemit.deal\", 5, 16)"),
-            "b[0] read lowers to $rt.bytesGet(b, 0, <span>)");
-        check(js.contains("$rt.bytesSet(")
-                && js.contains("\"jstest-bytesemit.deal\", 6, 3)"),
-            "b[0] = 255 lowers to $rt.bytesSet(b, 0, 255, <span>) with "
-                + "the receiver, index, and RHS in argument order (the "
-                + "pinned evaluation order: receiver/index side effects "
-                + "before the RHS, RHS before validation)");
-        check(js.contains("\"E8012\", \"bytes index out of bounds\", "
-                + "\"jstest-bytesemit.deal\", 6, 3)"),
-            "the bytes write gates the index with the recorded E8012 arm");
-        check(js.contains("$rt.checkType(\"bytes\", $s39")
-                || js.contains("$rt.checkType(\"bytes\","),
-            "bytes-typed declaration boundaries emit the canonical bytes "
-                + "check");
-        check(js.contains("$rt.checkType(\"?bytes\",")
-                && js.contains("\"jstest-bytesemit.deal\", 9, 10)"),
-            "nullable bytes table read checks with the canonical ?bytes "
-                + "descriptor");
-        check(js.contains("$rt.checkType(\"[bytes]\",")
-                && js.contains("\"jstest-bytesemit.deal\", 10, 11)"),
-            "bytes[] table read checks with the canonical [bytes] descriptor");
-        check(js.contains("$rt.checkType(\"(bytes)->bytes\",")
-                && js.contains("\"jstest-bytesemit.deal\", 11, 10)"),
-            "function-typed table read checks with the canonical "
-                + "(bytes)->bytes descriptor");
-        check(js.contains("$rt.function(\"(int)->bytes\", (v, $f, $l, $c) => "
-                + "$rt.bytes(v, $f, $l, $c), \"HOST\")"),
-            "the module seeds the first-class bytes wrapper with the "
-                + "canonical (int)->bytes signature");
-        check(js.contains("$rt.checkType(\"(int)->bytes\",")
-                && js.contains("\"jstest-bytesemit.deal\", 12, 10)"),
-            "a first-class bytes reference crosses the canonical "
-                + "(int)->bytes boundary check");
-        check(!js.contains("bytes is not supported"),
-            "no defensive bytes E6000 text remains in the artifact");
-    }
-
-    private static void testBytesNodeSemantics() throws Exception {
-        System.out.println("-- Node: bytes semantics over the real pipeline --");
-
-        // The exact bytes-buffer-ops.deal program body (zero-fill,
-        // unsigned 0..255 roundtrip, immutable length, reference-copy
-        // aliasing) through frontend → public compilation → node.
-        NodeResult ops = runDealNode("""
-            export function main(): null {
-              let b: bytes = bytes(4);
-              if (b.length !== 4) {
-                throw { code: "TEST_FAIL", message: "bytes: initial length mismatch" };
-              }
-              if (b[0] !== 0) {
-                throw { code: "TEST_FAIL", message: "bytes: zero-fill mismatch" };
-              }
-              b[0] = 255;
-              b[1] = 128;
-              let hi: int = b[0];
-              let lo: int = b[1];
-              if (hi !== 255 || lo !== 128) {
-                throw { code: "TEST_FAIL", message: "bytes: byte value roundtrip mismatch" };
-              }
-              let alias: bytes = b;
-              alias[2] = 7;
-              if (b[2] !== 7) {
-                throw { code: "TEST_FAIL", message: "bytes: reference copy mismatch" };
-              }
-              return null;
-            }
-            """, "bytes-buffer-ops");
-        check(ops.exitCode() == 0,
-            "bytes-buffer-ops body runs under node (real $Uint8Array "
-                + "storage, zero-fill, 0..255 roundtrip, length, aliasing), "
-                + "exit 0: " + ops.output());
-
-        // Empty buffer: bytes(0) has length 0 and its first read is E8012.
-        checkDealFailure("export function test(): int { let b: bytes = bytes(0); "
-                + "if (b.length !== 0) { return 0; } let v: int = b[0]; return v; }",
-            "bytes-empty-oob", "E8012", "bytes index out of bounds",
-            "bytes(0) has length 0 and b[0] reads raise E8012 'bytes index out of bounds': ");
-
-        for (String[] row : new String[][] {
-                {"neg-read", "return b[-1];", "negative byte read raises E8012"},
-                {"end-read", "return b[2];",
-                    "read at index === length raises E8012 (bytes never append)"},
-                {"neg-write", "b[-1] = 1; return 0;", "negative byte write raises E8012"},
-                {"end-write", "b[2] = 7; return 0;",
-                    "write at index === length raises E8012 (bytes never append)"}}) {
-            checkDealFailure("export function test(): int { let b: bytes = bytes(2); "
-                    + row[1] + " }", "bytes-" + row[0], "E8012", null, row[2] + ": ");
-        }
-
-        // Value range: writes outside 0..255 raise E8013 and change no
-        // storage — the RHS (with its side effect) completes before the
-        // write validation, pinned through the try/catch log.
-        checkDealFailure("export function test(): int { let b: bytes = bytes(2); "
-                + "b[1] = 256; return 0; }", "bytes-e8013", "E8013", "bytes value out of range",
-            "writing 256 raises E8013 'bytes value out of range': ");
-
-        // The pinned write-side order, observed through a caught E8013:
-        // the RHS (with its side effect) completes before write
-        // validation, and a failed write changes no storage.
-        NodeResult val256Caught = runDealNode("""
-            function tooBig(t: table): int {
-              let log: string = t.log;
-              log = log + "v";
-              t.log = log;
-              return 256;
-            }
-            export function test(): int {
-              let t: table = {};
-              t.log = "";
-              let b: bytes = bytes(2);
-              try {
-                b[1] = tooBig(t);
-              } catch (e) {
-                let log: string = t.log;
-                if (log !== "v") {
-                  throw { code: "TEST_FAIL", message: "RHS side effect missing: " + log };
-                }
-                if (b[1] !== 0) {
-                  throw { code: "TEST_FAIL", message: "failed write changed storage" };
-                }
-                return 1;
-              }
-              return 0;
-            }
-            """, "bytes-e8013-caught");
-        check(val256Caught.exitCode() == 0
-                && val256Caught.output().equals("1"),
-            "a caught E8013 write proves the RHS side effect ran before "
-                + "write validation and the failed write changed no "
-                + "storage (returns 1): " + val256Caught.output());
-
-        checkDealFailure("export function test(): int { let b: bytes = bytes(2); "
-                + "b[0] = -1; return 0; }", "bytes-neg-value", "E8013", null,
-            "writing -1 raises E8013: ");
-
-        // Evaluation order: the receiver, the index, and the RHS side
-        // effects complete in order before validation — a valid write
-        // logs "riv".
-        NodeResult order = runDealNode("""
-            function record(t: table, tag: string): int {
-              let log: string = t.log;
-              log = log + tag;
-              t.log = log;
-              return 1;
-            }
-            function getb(t: table): bytes {
-              let log: string = t.log;
-              log = log + "r";
-              t.log = log;
-              return bytes(3);
-            }
-            export function test(): null {
-              let t: table = {};
-              t.log = "";
-              getb(t)[record(t, "i")] = record(t, "v");
-              let order: string = t.log;
-              if (order !== "riv") {
-                throw { code: "TEST_FAIL", message: "evaluation order: " + order };
-              }
-              return null;
-            }
-            """, "bytes-eval-order");
-        check(order.exitCode() == 0,
-            "byte write evaluates receiver, index, then RHS in order "
-                + "(log 'riv'), exit 0: " + order.output());
-
-        // An allocation length above the signed-int32 logical-length
-        // bound is unrepresentable under the sole profile: the literal
-        // rejects at admission (E1036) before any allocation.
-        Frontend tooLong = compileFrontend(
-            "export function test(): int { let b: bytes = bytes(2147483648); "
-                + "return 0; }", "bytes-too-long.deal");
-        check(tooLong.errors().stream().anyMatch(d -> d.code().equals("E1036")),
-            "bytes(2147483648) rejects before emission: " + tooLong.errors());
-
-        checkDealFailure("export function test(): int { let b: bytes = bytes(-1); return 0; }",
-            "bytes-neg-length", "E8012", "bytes length must be non-negative",
-            "bytes(-1) raises E8012 'bytes length must be non-negative': ");
-
-        // checkType("bytes") acceptance and rejection through the table
-        // boundary (the matcher table's bytes row).
-        NodeResult accept = runDealNode(
-            "export function test(): int { let t: table = {}; "
-                + "t.b = bytes(1); let x: bytes = t.b; return 1; }",
-            "bytes-checktype-ok");
-        check(accept.exitCode() == 0 && accept.output().equals("1"),
-            "checkType(\"bytes\") accepts the $Uint8Array carrier: "
-                + accept.output());
-
-        NodeResult reject = runDealNode(
-            "export function test(): int { let t: table = {}; "
-                + "t.bad = 42; let x: bytes = t.bad; return 0; }",
-            "bytes-checktype-reject");
-        check(reject.exitCode() == 1
-                && reject.output().contains("DEAL_ERROR_CODE: E8001")
-                && reject.output().contains("expected bytes"),
-            "checkType(\"bytes\") rejects a non-bytes value with E8001 "
-                + "'expected bytes': " + reject.output());
-
-        // Reference identity across function boundaries (sync and async)
-        // and bytes values inside arrays (the recursive closure smoke).
-        NodeResult identity = runDealNode("""
-            function id(b: bytes): bytes { return b; }
-            async function dup(b: bytes): bytes { return b; }
-            export async function test(): int {
-              let b: bytes = bytes(2);
-              let sync: bytes = id(b);
-              sync[0] = 9;
-              if (b[0] !== 9) { return 0; }
-              let c: bytes = await dup(b);
-              c[1] = 8;
-              if (b[1] !== 8) { return 0; }
-              let xs: bytes[] = [bytes(1), bytes(2)];
-              xs[0][0] = 7;
-              if (xs[0][0] !== 7 || xs[1][0] !== 0) { return 0; }
-              return 1;
-            }
-            """, "bytes-identity-closure");
-        check(identity.exitCode() == 0 && identity.output().equals("1"),
-            "reference identity across sync/async boundaries and "
-                + "mutation through [bytes] arrays: " + identity.output());
-
-        // JSON rejection: a bytes value reaching std/json.stringify via
-        // a table raises the pinned unsupported-type E8001.
-        NodeResult jsonReject = runDealNode("""
-            import * as json from "std/json";
-            export function test(): string {
-              let t: table = { b: bytes(2) };
-              return json.stringify(t);
-            }
-            """, "bytes-json-reject");
-        check(jsonReject.exitCode() == 1
-                && jsonReject.output().contains("DEAL_ERROR_CODE: E8001")
-                && jsonReject.output().contains(
-                    "unsupported type for JSON encoding: bytes"),
-            "a bytes value through std/json.stringify raises E8001 "
-                + "'unsupported type for JSON encoding: bytes': "
-                + jsonReject.output());
-    }
-
-    /**
-     * The class-symbol-first bytes guard (js-v12-int32-bytes D3/D4,
-     * docs/spec-v1.3.md §Name resolution): `bytes` is not a DEAL keyword and
-     * module-level declarations resolve at step 3 (imports at step 4)
-     * before the compiler intrinsics at step 5, so a module-level user
-     * class/function named `bytes` must stay legal and shadow the
-     * intrinsic — with no redeclaration diagnostic (E2002), no header
-     * `const bytes` seed collision, and working artifacts under node.
-     */
-    private static void testBytesUserNameShadowing() throws Exception {
-        System.out.println("-- Bytes: user class/function named bytes shadows the intrinsic --");
+    /** Ordinary classes and functions named bytes retain identity and execution. */
+    private static void testOrdinaryBytesNames() throws Exception {
+        System.out.println("-- Ordinary user class/function named bytes --");
 
         // (a) A module-level user CLASS named bytes: checker-accepted,
         // no E2002, the annotation resolves to the user ClassSymbol, and
-        // the artifact omits the intrinsic header seed (the class binds
-        // only bytes$new/bytes$meta).
+        // the artifact preserves the user class's generated members.
         PreparedJs clsPrepared = prepareJs("""
             class bytes { x: int = 0; }
             export function test(): int {
@@ -4105,8 +3817,7 @@ public class JsBackendTest {
         if (clsRes != null && !clsRes.hasErrors()) {
             String js = clsRes.source();
             check(!js.contains("$rt.function(\"(int)->bytes\""),
-                "no intrinsic bytes seed when a user class named "
-                    + "bytes occupies the module binding");
+                "the user class descriptor is not the retired primitive bytes");
             check(js.contains("\"$classname\", \"@Main/Main.deal/bytes\""),
                 "the user class named bytes keeps its own canonical identity");
             check(js.contains("// Class default @Main/Main.deal/bytes.x"),
@@ -4115,9 +3826,8 @@ public class JsBackendTest {
         }
 
         // (b) A module-level user FUNCTION named bytes: checker-accepted,
-        // no E2002, calls resolve to the user function, and the
-        // artifact's predeclared `let bytes;` assignment replaces the
-        // skipped intrinsic header seed.
+        // no E2002, and calls resolve to the user function through its
+        // generated predeclare-then-assign binding.
         PreparedJs fnPrepared = prepareJs("""
             function bytes(x: int): int { return x + 1; }
             export function test(): int { return bytes(3); }
@@ -4129,16 +3839,15 @@ public class JsBackendTest {
         if (fnRes != null && !fnRes.hasErrors()) {
             String js = fnRes.source();
             check(!js.contains("$rt.function(\"(int)->bytes\""),
-                "no intrinsic bytes seed when a user function "
-                    + "named bytes occupies the module binding");
+                "an ordinary function name creates no retired bytes intrinsic");
             check(!js.contains("let bytes;")
                     && js.contains("= $rt.undefined;"),
                 "the user function named bytes keeps a generated "
                     + "predeclare-then-assign binding");
             check(!js.contains("$rt.bytes(3"),
-                "bytes(3) calls the user function (the $rt.bytes call "
-                    + "form never fires for the shadowed binding)");
+                "bytes(3) calls the user function, not a retired runtime helper");
         }
+
 
         NodeResult clsRun = runDealArtifact(clsPrepared);
         check(clsRun.exitCode() == 0 && clsRun.output().equals("2"),
@@ -4179,38 +3888,29 @@ public class JsBackendTest {
                 + nestedRun.output());
     }
 
-    /**
-     * The closure surface of the first-class sync bytes value: a
-     * {@code ((bytes)->bytes)[]} array built from a real
-     * bytes-transforming function, stored, invoked through the array
-     * index, element-reassigned, and content-asserted through buffer
-     * mutation — plus the arity-extension adapter over a bytes
-     * signature, a nested function declaration, and the E8013/E8012/
-     * E8001 failure propagation through the closure chain (the "no
-     * depth limit, no E6000" surface — every legal position executes
-     * real generated code).
-     */
-    private static void testBytesClosureFunctionArrayNode() throws Exception {
-        System.out.println("-- Node: bytes closure ((bytes)->bytes)[] and arity adapters --");
+    /** Function arrays preserve mutation, aliasing, arity adapters and failures. */
+    private static void testArrayClosureFunctionArrayNode() throws Exception {
+        System.out.println("-- Node: [int] closure (([int])->[int])[] and arity adapters --");
+
 
         NodeResult run = runDealNode("""
-            function step(b: bytes): bytes {
+            function step(b: int[]): int[] {
               b[0] = b[0] + 1;
               return b;
             }
             export function test(): int {
-              function localStep(b: bytes): bytes {
+              function localStep(b: int[]): int[] {
                 b[0] = b[0] + 2;
                 return b;
               }
-              let b: bytes = bytes(2);
-              let f: (b: bytes) => bytes = step;
-              let fs: ((b: bytes) => bytes)[] = [step, f, localStep];
+              let b: int[] = [0, 0];
+              let f: (b: int[]) => int[] = step;
+              let fs: ((b: int[]) => int[])[] = [step, f, localStep];
               if (fs.length !== 3) { return 0; }
               fs[0](b);
-              let out: bytes = fs[1](b);
+              let out: int[] = fs[1](b);
               if (b[0] !== 2 || out[0] !== 2) { return 0; }
-              let alias: bytes = b;
+              let alias: int[] = b;
               alias[1] = 5;
               if (b[1] !== 5) { return 0; }
               fs[2](b);
@@ -4218,57 +3918,37 @@ public class JsBackendTest {
               fs[1] = step;
               fs[1](b);
               if (b[0] !== 5) { return 0; }
-              let wide: (b: bytes, extra: int) => bytes = step;
+              let wide: (b: int[], extra: int) => int[] = step;
               wide(b, 41);
               if (b[0] !== 6) { return 0; }
               return 1;
             }
-            """, "bytes-closure-fn-array");
+            """, "array-closure-fn-array");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "((bytes)->bytes)[] value built from real bytes-transforming "
+            "(([int])->[int])[] value built from real [int]-transforming "
                 + "functions (module-level and nested declarations), stored, "
                 + "invoked through the index, element-reassigned, aliased, "
                 + "and content-asserted through mutation — plus the "
-                + "(bytes,int)->bytes arity adapter dropping the extra "
+                + "([int],int)->[int] arity adapter dropping the extra "
                 + "parameter (returns 1): " + run.output());
 
-        // The E8013/E8012 propagation through the closure chain: the
-        // failure raised inside a function-array member crosses the
-        // wrapper, the array index, and the caller unchanged.
-        NodeResult poison = runDealNode("""
-            function poison(b: bytes): bytes {
-              b[0] = 256;
-              return b;
-            }
-            export function test(): int {
-              let fs: ((b: bytes) => bytes)[] = [poison];
-              let b: bytes = bytes(1);
-              fs[0](b);
-              return 0;
-            }
-            """, "bytes-closure-fn-array-poison");
-        check(poison.exitCode() == 1
-                && poison.output().contains("DEAL_ERROR_CODE: E8013"),
-            "an E8013 write through the ((bytes)->bytes)[] closure chain "
-                + "propagates the pinned bytesSet failure unchanged: "
-                + poison.output());
-
+        // An array bounds failure crosses the function wrapper unchanged.
         NodeResult oob = runDealNode("""
-            function outOfBounds(b: bytes): bytes {
+            function outOfBounds(b: int[]): int[] {
               let v: int = b[9];
               return b;
             }
             export function test(): int {
-              let fs: ((b: bytes) => bytes)[] = [outOfBounds];
-              let b: bytes = bytes(1);
+              let fs: ((b: int[]) => int[])[] = [outOfBounds];
+              let b: int[] = [0];
               fs[0](b);
               return 0;
             }
-            """, "bytes-closure-fn-array-oob");
+            """, "array-closure-fn-array-oob");
         check(oob.exitCode() == 1
-                && oob.output().contains("DEAL_ERROR_CODE: E8012"),
-            "an E8012 read through the ((bytes)->bytes)[] closure chain "
-                + "propagates the pinned bytesGet failure unchanged: "
+                && oob.output().contains("DEAL_ERROR_CODE: E8002"),
+            "an E8002 read through the (([int])->[int])[] closure chain "
+                + "propagates the pinned arrayGet failure unchanged: "
                 + oob.output());
 
         // The adapter's extended-parameter checkInt boundary is real
@@ -4276,19 +3956,19 @@ public class JsBackendTest {
         // from a table read into the extra parameter raises E8001 at
         // the adapter entry.
         NodeResult adapterCheck = runDealNode("""
-            function step(b: bytes): bytes {
+            function step(b: int[]): int[] {
               b[0] = b[0] + 1;
               return b;
             }
             export function test(): int {
               let t: table = {};
               t.extra = 3.5;
-              let b: bytes = bytes(1);
-              let wide: (b: bytes, extra: int) => bytes = step;
+              let b: int[] = [0];
+              let wide: (b: int[], extra: int) => int[] = step;
               wide(b, t.extra);
               return 0;
             }
-            """, "bytes-closure-adapter-checkint");
+            """, "array-closure-adapter-checkint");
         check(adapterCheck.exitCode() == 1
                 && adapterCheck.output().contains("DEAL_ERROR_CODE: E8001")
                 && adapterCheck.output().contains("expected int"),
@@ -4298,113 +3978,111 @@ public class JsBackendTest {
     }
 
     /**
-     * Containerized async bytes function values awaited end-to-end: the
-     * async wrapper carries the canonical {@code async(bytes)->bytes}
+     * Containerized async [int] function values awaited end-to-end: the
+     * async wrapper carries the canonical {@code async([int])->[int]}
      * signature byte-for-byte across an array container, a class-field
      * container, and a dynamic table boundary, and every awaited
-     * completion mutates the same buffer (content asserted, never a
+     * completion mutates the same array (content asserted, never a
      * shape-only check).
      */
-    private static void testBytesClosureAsyncContainerNode() throws Exception {
-        System.out.println("-- Node: containerized async bytes function values awaited end-to-end --");
+    private static void testArrayClosureAsyncContainerNode() throws Exception {
+        System.out.println("-- Node: containerized async [int] function values awaited end-to-end --");
+
 
         NodeResult run = runDealNode("""
-            async function bump(b: bytes): bytes {
+            async function bump(b: int[]): int[] {
               b[0] = b[0] + 1;
               return b;
             }
-            class Box { f: async (b: bytes) => bytes = bump; }
+            class Box { f: async (b: int[]) => int[] = bump; }
             export async function test(): int {
-              let b: bytes = bytes(1);
-              let afs: (async (b: bytes) => bytes)[] = [bump, bump];
-              let out: bytes = await afs[1](b);
+              let b: int[] = [0];
+              let afs: (async (b: int[]) => int[])[] = [bump, bump];
+              let out: int[] = await afs[1](b);
               if (out[0] !== 1 || b[0] !== 1) { return 0; }
               let box: Box = { f: bump };
-              let out2: bytes = await box.f(b);
+              let out2: int[] = await box.f(b);
               if (out2[0] !== 2 || b[0] !== 2) { return 0; }
               let t: table = {};
               t.f = bump;
-              let g: async (b: bytes) => bytes = t.f;
-              let out3: bytes = await g(b);
+              let g: async (b: int[]) => int[] = t.f;
+              let out3: int[] = await g(b);
               if (out3[0] !== 3 || b[0] !== 3) { return 0; }
               return 1;
             }
-            """, "bytes-closure-async-container");
+            """, "array-closure-async-container");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "containerized async bytes function values — an "
-                + "[async(bytes)->bytes] array element, a class-field "
+            "containerized async [int] function values — an "
+                + "[async([int])->[int]] array element, a class-field "
                 + "container, and a dynamic table boundary — awaited "
-                + "end-to-end with content-asserted buffer mutation "
+                + "end-to-end with content-asserted array mutation "
                 + "(returns 1): " + run.output());
     }
 
-    /**
-     * Class-field bytes defaults: a bytes-typed default expression
-     * evaluates fresh per construction (zero-filled, never shared),
-     * a provided literal overrides it, and the compiler-resolved
-     * .length/reads/writes hold on the field positions.
-     */
-    private static void testBytesClosureClassDefaultsNode() throws Exception {
-        System.out.println("-- Node: bytes class fields and per-construction defaults --");
+    /** Array field defaults stay fresh per construction and accept overrides. */
+    private static void testArrayClosureClassDefaultsNode() throws Exception {
+        System.out.println("-- Node: [int] class fields and per-construction defaults --");
+
 
         NodeResult run = runDealNode("""
-            class Buffer { buf: bytes = bytes(2); }
+            class ArrayBox { buf: int[] = [0, 0]; }
             export function test(): int {
-              let h: Buffer = {};
+              let h: ArrayBox = {};
               if (h.buf.length !== 2) { return 0; }
               h.buf[0] = 6;
               if (h.buf[0] !== 6) { return 0; }
-              let h2: Buffer = {};
+              let h2: ArrayBox = {};
               if (h2.buf[0] !== 0 || h2.buf.length !== 2) { return 0; }
               h.buf[0] = 8;
               if (h2.buf[0] !== 0) { return 0; }
-              let h3: Buffer = { buf: bytes(1) };
+              let h3: ArrayBox = { buf: [0] };
               if (h3.buf.length !== 1 || h3.buf[0] !== 0) { return 0; }
               return 1;
             }
-            """, "bytes-closure-class-defaults");
+            """, "array-closure-class-defaults");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "bytes class fields: fresh zero-filled per-construction "
+            "[int] class fields: fresh zero-filled per-construction "
                 + "defaults (no aliasing between instances), provided-"
                 + "literal override, and compiler-resolved .length/"
                 + "read/write positions (returns 1): " + run.output());
     }
 
-    private static void testBytesClosureDeepCompositionsNode() throws Exception {
-        System.out.println("-- Node: arbitrary-depth Array/Nullable bytes compositions through boundaries --");
+    private static void testArrayClosureDeepCompositionsNode() throws Exception {
+        System.out.println("-- Node: arbitrary-depth Array/Nullable [int] compositions through boundaries --");
+
 
         NodeResult run = runDealNode("""
-            function passDeep(x: (bytes[] | null)[]): (bytes[] | null)[] {
+            function passDeep(x: (int[][] | null)[]): (int[][] | null)[] {
               return x;
             }
-            function idTop(x: (bytes[])[] | null): (bytes[])[] | null {
+            function idTop(x: (int[][])[] | null): (int[][])[] | null {
               return x;
             }
             export function test(): int {
-              let b0: bytes = bytes(2);
-              let inner: bytes[] = [b0];
-              let xs: (bytes[] | null)[] = [];
+              let b0: int[] = [0, 0];
+              let inner: int[][] = [b0];
+              let xs: (int[][] | null)[] = [];
               xs[0] = inner;
               xs[1] = null;
-              let deep: (bytes[])[] | null = [inner];
+              let deep: (int[][])[] | null = [inner];
               let t: table = {};
               t.xs = xs;
               t.deep = deep;
-              let back: (bytes[] | null)[] = t.xs;
-              let again: (bytes[] | null)[] = passDeep(back);
-              let backTop: (bytes[])[] | null = t.deep;
-              let againTop: (bytes[])[] | null = idTop(backTop);
+              let back: (int[][] | null)[] = t.xs;
+              let again: (int[][] | null)[] = passDeep(back);
+              let backTop: (int[][])[] | null = t.deep;
+              let againTop: (int[][])[] | null = idTop(backTop);
               if (again.length !== 2) { return 0; }
               inner[0][0] = 9;
               if (b0[0] !== 9) { return 0; }
               return 1;
             }
-            """, "bytes-closure-deep-composition");
+            """, "array-closure-deep-composition");
         check(run.exitCode() == 0 && run.output().equals("1"),
-            "(bytes[] | null)[] and (bytes[])[] | null compositions "
+            "([int][] | null)[] and ([int][])[] | null compositions "
                 + "roundtrip through table and function boundaries at "
-                + "depth with the canonical [?[bytes]]/[[bytes]] walks, "
-                + "and the mutated buffer stays observable through the "
+                + "depth with the canonical [?[[int]]]/[[[int]]] walks, "
+                + "and the mutated array stays observable through the "
                 + "parallel non-null view (returns 1): " + run.output());
 
         // The depth walk is real: a wrong inner shape surfacing from a
@@ -4414,10 +4092,10 @@ public class JsBackendTest {
             export function test(): int {
               let t: table = {};
               t.bad = [[7]];
-              let back: (bytes[] | null)[] = t.bad;
+              let back: (int[][] | null)[] = t.bad;
               return 0;
             }
-            """, "bytes-closure-deep-negative-d2");
+            """, "array-closure-deep-negative-d2");
         check(badDepth2.exitCode() == 1
                 && badDepth2.output().contains("DEAL_ERROR_CODE: E8003")
                 && badDepth2.output().contains(
@@ -4431,10 +4109,10 @@ public class JsBackendTest {
             export function test(): int {
               let t: table = {};
               t.bad = [42];
-              let back: (bytes[])[] | null = t.bad;
+              let back: (int[][])[] | null = t.bad;
               return 0;
             }
-            """, "bytes-closure-deep-negative-d3");
+            """, "array-closure-deep-negative-d3");
         check(badDepth3.exitCode() == 1
                 && badDepth3.output().contains("DEAL_ERROR_CODE: E8003")
                 && badDepth3.output().contains(
@@ -4446,52 +4124,52 @@ public class JsBackendTest {
     }
 
     /**
-     * The module boundary: an {@code async(bytes)->bytes} export
+     * The module boundary: an {@code async([int])->[int]} export
      * crosses the import/export surface with the canonical signature
      * byte-exact in the artifact, and the real node chain awaits the
      * imported wrapper whose entry parameter check and declared-return
-     * check validate the bytes carrier — plus the sync cross-module
+     * check validate the [int] carrier — plus the sync cross-module
      * roundtrip.
      */
-    private static void testBytesClosureModuleBoundary() throws Exception {
-        System.out.println("-- Orchestrator: async(bytes)->bytes across a module boundary --");
+    private static void testArrayClosureModuleBoundary() throws Exception {
+        System.out.println("-- Orchestrator: async([int])->[int] across a module boundary --");
 
-        writeFile("bytesx_proj/deal.json",
+        writeFile("arrayx_proj/deal.json",
             "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
-        writeFile("bytesx_proj/src/bytes_closure_lib.deal", """
-            export function syncId(b: bytes): bytes {
+        writeFile("arrayx_proj/src/array_closure_lib.deal", """
+            export function syncId(b: int[]): int[] {
               return b;
             }
-            export async function tx(b: bytes): bytes {
+            export async function tx(b: int[]): int[] {
               b[0] = b[0] + 5;
               return b;
             }
             """);
-        writeFile("bytesx_proj/src/bytes_closure_main.deal", """
-            import * as lib from "./bytes_closure_lib";
+        writeFile("arrayx_proj/src/array_closure_main.deal", """
+            import * as lib from "./array_closure_lib";
             export function main(): null { return null; }
             export function syncBridge(): int {
-              let b: bytes = bytes(2);
+              let b: int[] = [0, 0];
               b[1] = 3;
-              let out: bytes = lib.syncId(b);
+              let out: int[] = lib.syncId(b);
               if (out[0] !== 0 || out[1] !== 3 || b[1] !== 3) {
-                throw { code: "TEST_FAIL", message: "sync cross-module bytes mismatch" };
+                throw { code: "TEST_FAIL", message: "sync cross-module int[] mismatch" };
               }
               return 1;
             }
             export async function asyncBridge(): int {
-              let b: bytes = bytes(2);
-              let out: bytes = await lib.tx(b);
+              let b: int[] = [0, 0];
+              let out: int[] = await lib.tx(b);
               if (out[0] !== 5 || b[0] !== 5) {
-                throw { code: "TEST_FAIL", message: "async cross-module bytes mismatch" };
+                throw { code: "TEST_FAIL", message: "async cross-module int[] mismatch" };
               }
               return 1;
             }
             """);
 
-        Path entryFile = tmpDir.resolve("bytesx_proj/src/bytes_closure_main.deal").toAbsolutePath();
-        Path outputDir = tmpDir.resolve("bytesx_proj/build/js");
-        List<Path> roots = List.of(tmpDir.resolve("bytesx_proj/src").toAbsolutePath());
+        Path entryFile = tmpDir.resolve("arrayx_proj/src/array_closure_main.deal").toAbsolutePath();
+        Path outputDir = tmpDir.resolve("arrayx_proj/build/js");
+        List<Path> roots = List.of(tmpDir.resolve("arrayx_proj/src").toAbsolutePath());
 
         // Test-only isolated-phase orchestrator path (the production
         // manifest/CLI path is pinned separately by the
@@ -4501,114 +4179,118 @@ public class JsBackendTest {
             (Map<String, String>) null, roots,
             Path.of(".").toAbsolutePath().normalize());
         boolean success = orchestrator.compile();
-        check(success, "bytes closure cross-module project compiles: "
+        check(success, "[int] closure cross-module project compiles: "
             + orchestrator.diagnostics());
         if (!success) return;
 
-        Path libArtifact = outputDir.resolve("bytes_closure_lib.js");
-        Path mainArtifact = outputDir.resolve("bytes_closure_main.js");
-        check(Files.exists(libArtifact), "orchestrator wrote bytes_closure_lib.js");
-        check(Files.exists(mainArtifact), "orchestrator wrote bytes_closure_main.js");
+        Path libArtifact = outputDir.resolve("array_closure_lib.js");
+        Path mainArtifact = outputDir.resolve("array_closure_main.js");
+        check(Files.exists(libArtifact), "orchestrator wrote array_closure_lib.js");
+        check(Files.exists(mainArtifact), "orchestrator wrote array_closure_main.js");
         if (Files.exists(libArtifact)) {
             String js = Files.readString(libArtifact);
-            check(js.contains("$rt.function(\"async(bytes)->bytes\", "
+            check(js.contains("$rt.function(\"async([int])->[int]\", "
                     + "async function tx$f("),
                 "the exported async wrapper carries the canonical "
-                    + "async(bytes)->bytes signature byte-for-byte");
-            check(js.contains("$rt.function(\"(bytes)->bytes\", "
+                    + "async([int])->[int] signature byte-for-byte");
+            check(js.contains("$rt.function(\"([int])->[int]\", "
                     + "function syncId$f("),
                 "the exported sync wrapper carries the canonical "
-                    + "(bytes)->bytes signature byte-for-byte");
-            check(js.contains("$rt.checkType(\"bytes\","),
+                    + "([int])->[int] signature byte-for-byte");
+            check(js.contains("$rt.checkType(\"[int]\","),
                 "the imported-wrapper entry parameter check validates "
-                    + "the bytes carrier at the module boundary");
-            check(js.contains("$rt.publishModule(\"bytes_closure_lib\", \"tx\",")
-                    && js.contains("$rt.publishModule(\"bytes_closure_lib\", "
+                    + "the [int] carrier at the module boundary");
+            check(js.contains("$rt.publishModule(\"array_closure_lib\", \"tx\",")
+                    && js.contains("$rt.publishModule(\"array_closure_lib\", "
                         + "\"syncId\","),
-                "both bytes-bearing functions export under their raw keys");
+                "both [int]-bearing functions export under their raw keys");
         }
         if (Files.exists(mainArtifact)) {
             String js = Files.readString(mainArtifact);
-            check(js.contains("$rt.callExport(\"bytes_closure_lib\", \"tx\", [")
+            check(js.contains("$rt.callExport(\"array_closure_lib\", \"tx\", [")
                     && js.contains("await "),
                 "the importing module awaits the imported async wrapper "
                     + "through the recorded export call");
-            check(js.contains("$rt.callExport(\"bytes_closure_lib\", "
+            check(js.contains("$rt.callExport(\"array_closure_lib\", "
                     + "\"syncId\", ["),
                 "the importing module calls the imported sync wrapper "
                     + "through the recorded export call");
         }
 
-        // The driver exercises the production module surface: it
-        // requires the compiled entry and runs the two exported
-        // bridges (sync and async) through their wrappers — the
-        // async bridge awaits the imported async(bytes)->bytes
-        // export across the real module boundary.
-        Files.writeString(outputDir.resolve("bytes_closure_driver.js"), """
-            "use strict";
-            const $main = require("./bytes_closure_main");
-            (async () => {
-              const $sync = $main.syncBridge.$f();
-              if ($sync !== 1) { throw new Error("syncBridge returned " + $sync); }
-              const $async = await $main.asyncBridge.$f();
-              if ($async !== 1) { throw new Error("asyncBridge returned " + $async); }
-              console.log("bytes-module-boundary-ok");
-            })().catch((e) => { console.error(e && e.stack || String(e)); process.exit(1); });
-            """);
-        ProcessBuilder node = new ProcessBuilder("node", "bytes_closure_driver.js");
-        node.directory(outputDir.toFile());
-        node.redirectErrorStream(true);
-        Process np = node.start();
-        String nout = new String(np.getInputStream().readAllBytes(),
-            StandardCharsets.UTF_8).trim();
-        int nrc = np.waitFor();
-        check(nrc == 0 && nout.equals("bytes-module-boundary-ok"),
-            "the driver awaits the imported async(bytes)->bytes export "
-                + "across the real module boundary with content-"
-                + "asserted buffer mutation: exit " + nrc
-                + ", output '" + nout + "'");
+        if (nodeAvailable) {
+            // The driver exercises the production module surface: it
+            // requires the compiled entry and runs the two exported
+            // bridges (sync and async) through their wrappers — the
+            // async bridge awaits the imported async([int])->[int]
+            // export across the real module boundary.
+            Files.writeString(outputDir.resolve("array_closure_driver.js"), """
+                "use strict";
+                const $main = require("./array_closure_main");
+                (async () => {
+                  const $sync = $main.syncBridge.$f();
+                  if ($sync !== 1) { throw new Error("syncBridge returned " + $sync); }
+                  const $async = await $main.asyncBridge.$f();
+                  if ($async !== 1) { throw new Error("asyncBridge returned " + $async); }
+                  console.log("array-module-boundary-ok");
+                })().catch((e) => { console.error(e && e.stack || String(e)); process.exit(1); });
+                """);
+            ProcessBuilder node = new ProcessBuilder("node", "array_closure_driver.js");
+            node.directory(outputDir.toFile());
+            node.redirectErrorStream(true);
+            Process np = node.start();
+            String nout = new String(np.getInputStream().readAllBytes(),
+                StandardCharsets.UTF_8).trim();
+            int nrc = np.waitFor();
+            check(nrc == 0 && nout.equals("array-module-boundary-ok"),
+                "the driver awaits the imported async([int])->[int] export "
+                    + "across the real module boundary with content-"
+                    + "asserted array mutation: exit " + nrc
+                    + ", output '" + nout + "'");
+        } else {
+            skipNode("[int] closure module-boundary node run");
+        }
     }
 
-    private static void testBytesClosureNoE6000Pins() throws Exception {
+    private static void testArrayClosureNoE6000Pins() throws Exception {
         System.out.println("-- Bytes closure: no-E6000 generation pins and canonical descriptor texts --");
 
         String[][] closurePrograms = {
             {"closure-pin-fn-array", """
-            function step(b: bytes): bytes { b[0] = b[0] + 1; return b; }
+            function step(b: int[]): int[] { b[0] = b[0] + 1; return b; }
             export function test(): int {
-              let fs: ((b: bytes) => bytes)[] = [step];
-              let wide: (b: bytes, extra: int) => bytes = step;
-              let b: bytes = bytes(1);
+              let fs: ((b: int[]) => int[])[] = [step];
+              let wide: (b: int[], extra: int) => int[] = step;
+              let b: int[] = [0];
               fs[0](b);
               wide(b, 1);
               return b[0];
             }
             """},
             {"closure-pin-async-container", """
-            async function bump(b: bytes): bytes { b[0] = b[0] + 1; return b; }
-            class Box { f: async (b: bytes) => bytes = bump; }
+            async function bump(b: int[]): int[] { b[0] = b[0] + 1; return b; }
+            class Box { f: async (b: int[]) => int[] = bump; }
             export async function test(): int {
-              let afs: (async (b: bytes) => bytes)[] = [bump];
+              let afs: (async (b: int[]) => int[])[] = [bump];
               let box: Box = { f: bump };
-              let b: bytes = bytes(1);
-              let x: bytes = await afs[0](b);
-              let y: bytes = await box.f(b);
+              let b: int[] = [0];
+              let x: int[] = await afs[0](b);
+              let y: int[] = await box.f(b);
               return x[0] + y[0];
             }
             """},
             {"closure-pin-deep-composition", """
-            function passDeep(x: (bytes[] | null)[]): (bytes[] | null)[] {
+            function passDeep(x: (int[][] | null)[]): (int[][] | null)[] {
               return x;
             }
             export function test(): int {
-              let xs: (bytes[] | null)[] = [];
-              let deep: (bytes[])[] | null = [[bytes(1)]];
+              let xs: (int[][] | null)[] = [];
+              let deep: (int[][])[] | null = [[[0]]];
               let t: table = {};
               t.xs = xs;
               t.deep = deep;
-              let back: (bytes[] | null)[] = t.xs;
-              let again: (bytes[] | null)[] = passDeep(back);
-              let backTop: (bytes[])[] | null = t.deep;
+              let back: (int[][] | null)[] = t.xs;
+              let again: (int[][] | null)[] = passDeep(back);
+              let backTop: (int[][])[] | null = t.deep;
               return again.length;
             }
             """}
@@ -4627,7 +4309,7 @@ public class JsBackendTest {
             check(!res.diagnostics().contains("E6000")
                     && !res.source().contains("is not supported"),
                 "closure program '" + row[0] + "' emits no E6000 text "
-                    + "for bytes nesting or function shape alone");
+                    + "for [int] nesting or function shape alone");
         }
 
         // Canonical descriptor texts byte-exact at the emitted boundary
@@ -4636,49 +4318,49 @@ public class JsBackendTest {
         JsEmission fnArray = emissions.get(closurePrograms[0][0]);
         if (fnArray != null && !fnArray.hasErrors()) {
             String js = fnArray.source();
-            check(js.contains("$rt.checkType(\"[(bytes)->bytes]\","),
-                "the ((bytes)->bytes)[] declaration boundary emits the "
-                    + "canonical [(bytes)->bytes] descriptor byte-exact");
-            check(js.contains("$rt.function(\"(bytes,int)->bytes\", "),
+            check(js.contains("$rt.checkType(\"[([int])->[int]]\","),
+                "the (([int])->[int])[] declaration boundary emits the "
+                    + "canonical [([int])->[int]] descriptor byte-exact");
+            check(js.contains("$rt.function(\"([int],int)->[int]\", "),
                 "the arity adapter carries the canonical "
-                    + "(bytes,int)->bytes target descriptor byte-exact");
+                    + "([int],int)->[int] target descriptor byte-exact");
         }
         JsEmission asyncContainer = emissions.get(closurePrograms[1][0]);
         if (asyncContainer != null && !asyncContainer.hasErrors()) {
             String js = asyncContainer.source();
-            check(js.contains("$rt.checkType(\"[async(bytes)->bytes]\","),
+            check(js.contains("$rt.checkType(\"[async([int])->[int]]\","),
                 "the async function-value array boundary emits the "
-                    + "canonical [async(bytes)->bytes] descriptor byte-exact");
-            check(js.contains("$rt.function(\"async(bytes)->bytes\", "
+                    + "canonical [async([int])->[int]] descriptor byte-exact");
+            check(js.contains("$rt.function(\"async([int])->[int]\", "
                     + "async function bump$f("),
                 "the async wrapper carries the canonical "
-                    + "async(bytes)->bytes signature byte-for-byte");
+                    + "async([int])->[int] signature byte-for-byte");
         }
         JsEmission deep = emissions.get(closurePrograms[2][0]);
         if (deep != null && !deep.hasErrors()) {
             String js = deep.source();
-            check(js.contains("$rt.checkType(\"[?[bytes]]\","),
-                "the (bytes[] | null)[] boundary emits the canonical "
-                    + "[?[bytes]] descriptor byte-exact");
-            check(js.contains("$rt.checkType(\"?[[bytes]]\","),
-                "the (bytes[])[] | null boundary emits the canonical "
-                    + "[[bytes]] inner descriptor byte-exact");
+            check(js.contains("$rt.checkType(\"[?[[int]]]\","),
+                "the ([int][] | null)[] boundary emits the canonical "
+                    + "[?[[int]]] descriptor byte-exact");
+            check(js.contains("$rt.checkType(\"?[[[int]]]\","),
+                "the ([int][])[] | null boundary emits the canonical "
+                    + "[[[int]]] inner descriptor byte-exact");
         }
 
         PreparedJs eqPrepared = prepareJs("""
             export function test(): int {
-              let a: bytes = bytes(1);
-              let b: bytes = a;
-              let c: bytes = bytes(1);
+              let a: int[] = [0];
+              let b: int[] = a;
+              let c: int[] = [0];
               if (!(a === b)) { return 0; }
               if (a === c) { return 0; }
               if (a !== c) { return 1; }
               return 0;
             }
-            """, "bytes-closure-eq");
+            """, "array-closure-eq");
         Frontend eq = eqPrepared.frontend();
         check(eq.errors().isEmpty(),
-            "bytes identity equality is checker-admitted with zero "
+            "[int] identity equality is checker-admitted with zero "
                 + "diagnostics (frontend, ISSUE-0158 lift): " + eq.errors());
         if (eq.errors().isEmpty()) {
             JsEmission eqRes = eqPrepared.emission();
@@ -4691,14 +4373,16 @@ public class JsBackendTest {
                             "(?s).*\\$s\\d+ === \\$s\\d+.*")
                         && eqRes.source().matches(
                             "(?s).*\\$s\\d+ !== \\$s\\d+.*"),
-                    "bytes equality emits native identity comparison");
+                    "[int] equality emits native identity comparison");
             }
         }
-        NodeResult eqRun = runDealArtifact(eqPrepared);
-        check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
-            "bytes identity equality executes real reference identity "
-                + "on Node (alias true, distinct buffers false; "
-                + "returns 1): " + eqRun.output());
+        if (nodeAvailable) {
+            NodeResult eqRun = runDealArtifact(eqPrepared);
+            check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
+                "[int] identity equality executes real reference identity "
+                    + "on Node (alias true, distinct arrays false; "
+                    + "returns 1): " + eqRun.output());
+        }
     }
 
     private static void testNumModFloored() throws Exception {
@@ -5135,9 +4819,9 @@ public class JsBackendTest {
                     CanonicalModuleIdentity.BuiltinModule.INSTANCE,
                     "Error")))),
             "encode(Type) emits the bare Error atom for the builtin Error type");
-        check("async(bytes)->bytes".equals(service.encode(
-                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE, true))),
-            "encode(Type) emits async(bytes)->bytes");
+        check("async(table)->table".equals(service.encode(
+                new Type.Func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE, true))),
+            "encode(Type) emits async(table)->table");
 
         boolean absentIdentityThrows = false;
         try {
@@ -5459,8 +5143,8 @@ public class JsBackendTest {
     /**
      * The array-element arm's reference-kind projection (the decoded-array
      * mark, B3) through the production JS lane: the
-     * bytes-dynamic-nested-first-element-e8003 fixture shape — a decoded
-     * JSON array crossing the recursive {@code [[bytes]]} descriptor —
+     * nested array fixture shape — a decoded
+     * JSON array crossing the recursive {@code [[table]]} descriptor —
      * reports the reference value model's {@code table} element token,
      * never the {@code array} token its table-descriptor projection
      * carries. The direct suite pins the runtime surface; this pin
@@ -5475,7 +5159,7 @@ public class JsBackendTest {
 
             export function test(): int {
               let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
-              let xs: bytes[][] = t.values;
+              let xs: table[][] = t.values;
               return xs[0].length;
             }
             """, "json-element-kind"));
@@ -5493,7 +5177,7 @@ public class JsBackendTest {
             "}",
             ""));
         check(result.exitCode() == 0 && result.output().equals(
-                "ELEMENT: E8003|array element 1 type mismatch|[bytes]|table"),
+                "ELEMENT: E8003|array element 1 type mismatch|[table]|table"),
             "the emitted artifact reports the failing decoded-array element"
                 + " as the reference `table` kind (the fixture's pinned"
                 + " tuple): " + result.output());
@@ -6564,28 +6248,28 @@ public class JsBackendTest {
         // Positive: the production oracle scenario (parent D9
         // Verification 11) — init via the host's require, main once, the
         // exact async()->null selection, one native await, the byte-exact
-        // completion check, and the bytes closure exercised end to end
-        // inside the oracle (js-v12-int32-bytes D5).
+        // completion check, and the int[] closure exercised end to end
+        // inside the oracle (js-v12-int32-int[] D5).
         NodeResult ok = runInvokerNode("""
-            async function bump(b: bytes): bytes {
+            async function bump(b: int[]): int[] {
               b[0] = b[0] + 1;
               return b;
             }
-            class Holder { f: async (b: bytes) => bytes = bump; }
+            class Holder { f: async (b: int[]) => int[] = bump; }
             export function main(): null { return null; }
             export async function oracle(): null {
-              let b: bytes = bytes(2);
+              let b: int[] = [0, 0];
               b[0] = 1;
               b[1] = 41;
-              let f: async (b: bytes) => bytes = bump;
+              let f: async (b: int[]) => int[] = bump;
               let h: Holder = { f: f };
-              let out: bytes = await h.f(b);
+              let out: int[] = await h.f(b);
               if (out[0] !== 2 || b[0] !== 2 || b[1] !== 41) {
-                throw { code: "ORACLE_FAIL", message: "bytes closure content" };
+                throw { code: "ORACLE_FAIL", message: "int[] closure content" };
               }
               out[0] = 9;
               if (b[0] !== 9) {
-                throw { code: "ORACLE_FAIL", message: "bytes closure identity" };
+                throw { code: "ORACLE_FAIL", message: "int[] closure identity" };
               }
               return null;
             }
@@ -6593,7 +6277,7 @@ public class JsBackendTest {
         check(ok.exitCode() == 0 && ok.output().equals("INVOKE_OK: null"),
             "invokeAsyncExport(entry, \"oracle\", \"null\") over the "
                 + "production oracle yields { $ok: true, $value: null } "
-                + "with the bytes closure content/identity assertions "
+                + "with the int[] closure content/identity assertions "
                 + "green inside the oracle: " + ok.output());
 
         // ISSUE-0756 subject async-extended-argument-order: its faithful

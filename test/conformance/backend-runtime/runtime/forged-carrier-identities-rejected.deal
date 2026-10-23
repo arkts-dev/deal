@@ -1,7 +1,7 @@
 // @spec: Type system — Class identity and array values
-// @description: Carrier identity is nominal and cannot be forged by table keys: a table carrying the internal class/array/bytes/function mark names is rejected at every declared carrier boundary, while the real carriers and a table with the same keys at a table boundary are admitted (v1.3)
+// @description: Carrier identity is nominal and cannot be forged by table keys: a table carrying the internal class/array/function mark names is rejected at every declared carrier boundary, while the real carriers and a table with the same keys at a table boundary are admitted (v1.3)
 // @expected: runtime-ok
-// @features: tables, classes, arrays, bytes, functions, runtime-errors, v1.3
+// @features: tables, classes, arrays, functions, runtime-errors, v1.3
 
 import * as json from "std/json";
 
@@ -18,7 +18,6 @@ export function test_forged_carrier_identities(): null {
     classLike: { __c: true, __id: "@conformance/forged/Item", __f: { label: "x" }, __p: { label: true } },
     kindClass: { __kind: "class", __classname: "@conformance/forged/Item" },
     arrayLike: { __a: true, __n: 1 },
-    bytesLike: { __kind: "bytes", __data: 0, __len: 4 },
     functionLike: { __fn: "not a callable", __csig: "()->int" },
     plainLike: { __c: true, __a: true, __kind: "class", label: "kept" },
   };
@@ -53,18 +52,6 @@ export function test_forged_carrier_identities(): null {
   }
   if (arrayCode !== "E8001") {
     throw { code: "TEST_FAIL", message: "the forged array carrier was not rejected" };
-  }
-  let bytesCode: string = "";
-  try {
-    let b: bytes = holder.bytesLike;
-    if (b.length >= 0) {
-      bytesCode = "admitted";
-    }
-  } catch (e) {
-    bytesCode = e.code;
-  }
-  if (bytesCode !== "E8001") {
-    throw { code: "TEST_FAIL", message: "the forged bytes carrier was not rejected" };
   }
   // The same key names at the declared table parameter are data, never a
   // carrier: the table is encoded with its own keys.

@@ -237,23 +237,6 @@ public final class NameResolver {
         root.define("number", new Symbol.IntrinsicSymbol("number",
             numFuncType, IntrinsicResolvers.NUMBER));
 
-        // bytes intrinsic (DEAL v1.2, js-v12-int32-bytes D3/D4):
-        // bytes(int) => bytes — the zero-filled buffer allocation site.
-        // The intrinsic resolver enforces exactly one int argument
-        // (IntrinsicResolvers.BYTES); the backend lowers the call site.
-        // `bytes` is not a DEAL keyword, and compiler intrinsics sit at
-        // the bottom of the spec's name-resolution order
-        // (docs/spec-v1.3.md §Name resolution: module-level declarations
-        // resolve at step 3, compiler intrinsics only at step 5), so a module-level user
-        // declaration named `bytes` (class, function, let, or import)
-        // shadows this root binding — the declaration sites remove the
-        // intrinsic binding before defining their own symbol
-        // (see {@link #isShadowableIntrinsic}).
-        Type.Func bytesFuncType = new Type.Func(
-            List.of(Type.Int.INSTANCE), Type.Bytes.INSTANCE);
-        root.define("bytes", new Symbol.IntrinsicSymbol("bytes",
-            bytesFuncType, IntrinsicResolvers.BYTES));
-
         // F7: The `has` intrinsic is handled by HasExpr in the type checker,
         // not via call-intrinsic path.  Store it with a boolean type for
         // symbol-table correctness; the intrinsic resolver is dead code
@@ -271,31 +254,6 @@ public final class NameResolver {
         }
         root.define("Error", new Symbol.ClassSymbol("Error", errorFields, "",
             builtinError.identity()));
-    }
-
-    /**
-     * True when the root-local binding with the given name is the
-     * {@code bytes} compiler intrinsic and a user module-level
-     * declaration may shadow it.
-     *
-     * <p>DEAL v1.3 resolution order (docs/spec-v1.3.md §Name resolution):
-     * module-level declarations resolve at step 3 and imported module
-     * bindings at step 4, before the compiler intrinsics
-     * ({@code int}/{@code number}/{@code bytes}/{@code has}) at step 5.
-     * {@code bytes} is the only one of those four a user identifier can
-     * spell (the others are keywords or are shadow-rejected as before),
-     * so it is the only intrinsic a module-level declaration may
-     * shadow: the declaration sites remove the intrinsic root binding
-     * and define the user symbol in its place. The {@code bytes} type
-     * annotation keeps its class-symbol-first guard
-     * ({@link #resolveNamedType}): a checker-accepted user class named
-     * {@code bytes} resolves to its {@link Symbol.ClassSymbol} type and
-     * wins over the primitive, exactly like the retired JS-backend
-     * defensive arm's guard.</p>
-     */
-    private boolean isShadowableIntrinsic(String name) {
-        return name.equals("bytes")
-            && root.resolveLocal(name) instanceof Symbol.IntrinsicSymbol;
     }
 
     // =======================================================================
@@ -340,13 +298,6 @@ public final class NameResolver {
             Map<String, Symbol.FunctionSymbol> importedFunctions =
                 moduleResolver.resolveModuleFunctionSymbols(
                     path, modulePath, modulesInProgress);
-            // An import binding named `bytes` shadows the lowest-tier
-            // bytes intrinsic (imports resolve at step 4, intrinsics at
-            // step 5); the intrinsic root binding must be removed before
-            // the ModuleSymbol defines, or the define would collide.
-            if (isShadowableIntrinsic(alias)) {
-                root.remove(alias);
-            }
             root.define(alias, new Symbol.ModuleSymbol(alias, exports, imp.span(),
                 importedClasses, importedFunctions));
         } catch (ModuleResolver.ModuleNotFoundException e) {
@@ -384,14 +335,7 @@ public final class NameResolver {
         }
 
         if (root.containsLocally(name)) {
-            if (isShadowableIntrinsic(name)) {
-                // A user module-level class named `bytes` shadows the
-                // lowest-tier bytes intrinsic (step 3 before step 5):
-                // drop the intrinsic binding and let the ClassSymbol
-                // define below — the class then wins over the primitive
-                // in every later resolution.
-                root.remove(name);
-            } else if (shadowsImport(name, cd.span())) {
+            if (shadowsImport(name, cd.span())) {
                 return;
             } else {
                 error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", cd.span());
@@ -452,13 +396,7 @@ public final class NameResolver {
         }
 
         if (root.containsLocally(name)) {
-            if (isShadowableIntrinsic(name)) {
-                // A user module-level function named `bytes` shadows the
-                // lowest-tier bytes intrinsic (step 3 before step 5):
-                // drop the intrinsic binding and let the FunctionSymbol
-                // define below — calls then resolve to the user function.
-                root.remove(name);
-            } else if (shadowsImport(name, fd.span())) {
+            if (shadowsImport(name, fd.span())) {
                 return;
             } else {
                 error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", fd.span());
@@ -621,13 +559,7 @@ public final class NameResolver {
         Symbol.ClassSymbol declaredClass =
             vd.typeAnnotation().map(this::declaredClassSymbolOf).orElse(null);
         if (currentScope.containsLocally(name)) {
-            if (currentScope == root && isShadowableIntrinsic(name)) {
-                // A module-level let named `bytes` shadows the
-                // lowest-tier bytes intrinsic (step 3 before step 5):
-                // drop the intrinsic binding and let the variable
-                // define below.
-                root.remove(name);
-            } else if (currentScope == root && shadowsImport(name, vd.span())) {
+            if (currentScope == root && shadowsImport(name, vd.span())) {
                 return;
             } else {
                 error(DiagnosticCode.E2002, "Redeclaration of '" + name + "'", vd.span());
@@ -997,14 +929,6 @@ public final class NameResolver {
             case "table"     -> Type.Table.INSTANCE;
             case "Error"     -> errorClassType();
 
-            case "bytes" -> {
-                Symbol sym = currentScope.resolve(name);
-                if (sym instanceof Symbol.ClassSymbol cs) {
-                    yield Types.classType(cs.name(), cs.identity(),
-                        Types.providerModule(cs.modulePath()));
-                }
-                yield Type.Bytes.INSTANCE;
-            }
             default -> {
                 Symbol sym = currentScope.resolve(name);
                 if (sym instanceof Symbol.ClassSymbol cs) {

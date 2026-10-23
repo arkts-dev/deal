@@ -1,7 +1,7 @@
 // @spec: Variables — Scope
-// @description: A direct call of a lexically shadowed int/number/bytes name dispatches the local, parameter, enclosing-block or catch binding the position resolves, never the compiler intrinsic (v1.3 name resolution: locals, parameters and enclosing scopes precede module bindings and compiler intrinsics). Each case pins its exact expected value, the shadow's current-value dispatch, once-only callee/argument effects, the captured callee, and the genuinely unshadowed conversions and allocation beside the shadowed and intrinsic arity-adapted alias controls.
+// @description: A direct call of a lexically shadowed int/number name dispatches the local, parameter, enclosing-block or catch binding the position resolves, never the compiler intrinsic (v1.3 name resolution: locals, parameters and enclosing scopes precede module bindings and compiler intrinsics). Each case pins its exact expected value, the shadow's current-value dispatch, once-only callee/argument effects, the captured callee, and the genuinely unshadowed conversions beside the shadowed and intrinsic arity-adapted alias controls.
 // @expected: runtime-ok
-// @features: variables, name-resolution, shadowing, intrinsics, bytes, side-effects
+// @features: variables, name-resolution, shadowing, intrinsics, side-effects
 
 // The user callees the shadowed names hold. Each expected value below
 // is the callee's own result: a backend that dispatched the intrinsic
@@ -41,12 +41,12 @@ function numberShadow(): number {
   return number(1.5);
 }
 
-// 4. A local bytes shadow whose checked call type is int dispatches its
+// 4. A local bytes binding whose checked call type is int dispatches its
 // own callee: no allocation value reaches the int-typed call position.
 function bytesShadow(): int {
   let bytes: (x: int) => int = allocate;
   if (bytes(2) !== 7) {
-    throw { code: "TEST_FAIL", message: "local bytes shadow allocated a buffer" };
+    throw { code: "TEST_FAIL", message: "local bytes binding called the wrong function" };
   }
   return bytes(3);
 }
@@ -175,16 +175,16 @@ function intrinsicAlias(): int {
 function intrinsicResults(): int {
   let converted: int = int(2.0);
   let widened: number = number(7);
-  let buffer: bytes = bytes(4);
+
   if (converted !== 2) {
     throw { code: "TEST_FAIL", message: "int(2.0) did not convert" };
   }
   if (widened !== 7.0) {
     throw { code: "TEST_FAIL", message: "number(7) did not widen" };
   }
-  if (buffer.length !== 4) {
-    throw { code: "TEST_FAIL", message: "bytes(4) allocated the wrong length" };
-  }
+
+
+
   return converted;
 }
 

@@ -1,16 +1,16 @@
 // @spec: Bytes — Recursive array/nullable closure
-// @description: A closure captures a bytes buffer and writes through it; the write is visible through the captured reference (v1.2 defect snippet 68)
+// @description: A closure captures a int[] buffer and writes through it; the write is visible through the captured reference (v1.2 defect snippet 68)
 // @expected: runtime-ok
-// @features: bytes, closures, capture, v1.2
+// @features: int[], closures, capture, v1.2
 
 export function test_bytes_captured_closure(): null {
-  let b: bytes = bytes(1);
+  let b: int[] = [0];
   let set: (n: int) => null = function(n: int): null {
     b[0] = n;
     return null;
   };
   set(255);
-  if (b[0] !== 255) { throw { code: "TEST_FAIL", message: "bytes capture" }; }
+  if (b[0] !== 255) { throw { code: "TEST_FAIL", message: "int[] capture" }; }
   return null;
 }
 

@@ -31,8 +31,7 @@ public record BoundaryFailure(
      * {@code BoundaryFailure} — the arm-addressed entry point the executor
      * uses. The render resolves the arm bound to the retained template
      * position and enforces the arm's declaration: the arm's own template and
-     * code (the multi-code {@code BYTES_WRITE} row's value-range arm pins
-     * E8013), its parameter set, its declared expected/actual shapes, and its
+     * code, its parameter set, its declared expected/actual shapes, and its
      * render scope (an {@code INNER_ONLY} arm addressed by its retained
      * template position fails closed exactly like the arm-addressed render).
      * A retained template instantiated behind its arm's back is a fail-closed

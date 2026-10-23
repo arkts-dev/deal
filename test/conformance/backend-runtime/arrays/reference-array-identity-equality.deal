@@ -1,0 +1,52 @@
+// @spec: Arrays — value equality
+// @description: int[] === int[] / int[] !== int[] compare wrapper reference identity: shared aliases equal, distinct buffers do not, nullable and null values keep the pinned semantics (v1.2)
+// @expected: runtime-ok
+// @features: int[], equality
+
+function alias(a: int[]): int[] { return a; }
+
+export function test_array_identity_equality(): int {
+  let a: int[] = [0, 0];
+  let b: int[] = a;
+  let c: int[] = [0, 0];
+  if (!(a === b)) {
+    throw { code: "TEST_FAIL", message: "shared identity failed" };
+  }
+  if (a !== b) {
+    throw { code: "TEST_FAIL", message: "shared identity neg failed" };
+  }
+  if (a === c) {
+    throw { code: "TEST_FAIL", message: "distinct identity failed" };
+  }
+  if (!(a !== c)) {
+    throw { code: "TEST_FAIL", message: "distinct identity neg failed" };
+  }
+  let via: int[] = alias(a);
+  if (!(via === a)) {
+    throw { code: "TEST_FAIL", message: "returned identity failed" };
+  }
+  let n1: int[] | null = null;
+  let n2: int[] | null = null;
+  if (!(n1 === null)) {
+    throw { code: "TEST_FAIL", message: "nullable null eq failed" };
+  }
+  if (n1 === n2 && !(n1 === null)) {
+    throw { code: "TEST_FAIL", message: "nullable pair failed" };
+  }
+  let v: int[] | null = [0];
+  let w: int[] | null = v;
+  if (!(v === w)) {
+    throw { code: "TEST_FAIL", message: "nullable value identity failed" };
+  }
+  if (v === null) {
+    throw { code: "TEST_FAIL", message: "nullable value vs null failed" };
+  }
+  if (v !== w || v === null || !(n1 === n2)) {
+    throw { code: "TEST_FAIL", message: "nullable matrix failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

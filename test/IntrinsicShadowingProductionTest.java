@@ -23,7 +23,7 @@ import java.util.stream.Stream;
 
 /**
  * The intrinsic-shadowing regression (ISSUE-0878): a direct call of a
- * lexically shadowed {@code int}/{@code number}/{@code bytes} name
+ * lexically shadowed {@code int}/{@code number} name
  * dispatches the binding the call position resolves — the local, the
  * parameter, the enclosing-block or the catch binding — on every
  * backend, and only the genuinely unshadowed name lowers to the
@@ -40,7 +40,7 @@ import java.util.stream.Stream;
  *
  * <p>Each published artifact is inspected beside its execution: exactly
  * the fixture's genuine intrinsic operations carry a static
- * {@code INT_CONVERT}/{@code NUMBER_CONVERT}/{@code BYTES_NEW}
+ * {@code INT_CONVERT}/{@code NUMBER_CONVERT}
  * emission, no shadowed call position carries one, a shadowed position
  * carries the call origin of the value's own dispatch, and a genuine
  * intrinsic position carries exactly one emission of its own kind.</p>
@@ -81,8 +81,7 @@ public final class IntrinsicShadowingProductionTest {
         new IntrinsicSite("INT_CONVERT", 95, 21),    // declarationOrder: int(2.0)
         new IntrinsicSite("INT_CONVERT", 110, 25),   // forHeadCounter: int(3.0)
         new IntrinsicSite("INT_CONVERT", 172, 24),   // intrinsicResults: int(2.0)
-        new IntrinsicSite("NUMBER_CONVERT", 173, 25), // intrinsicResults: number(7)
-        new IntrinsicSite("BYTES_NEW", 174, 23));     // intrinsicResults: bytes(4)
+        new IntrinsicSite("NUMBER_CONVERT", 173, 25)); // intrinsicResults: number(7)
 
     /** One shadowed direct call of the controls fixture. */
     private record ShadowedCall(int line, int column, String message) {
@@ -100,8 +99,8 @@ public final class IntrinsicShadowingProductionTest {
         new ShadowedCall(28, 10, "parameter int shadow result"),
         new ShadowedCall(34, 7, "local number shadow"),
         new ShadowedCall(37, 10, "local number shadow result"),
-        new ShadowedCall(44, 7, "local bytes shadow"),
-        new ShadowedCall(47, 10, "local bytes shadow result"),
+        new ShadowedCall(44, 7, "local bytes binding"),
+        new ShadowedCall(47, 10, "local bytes binding result"),
         new ShadowedCall(57, 11, "enclosing shadow in a nested block"),
         new ShadowedCall(67, 9, "sibling block shadow"),
         new ShadowedCall(84, 9, "catch-block shadow"),
@@ -117,12 +116,11 @@ public final class IntrinsicShadowingProductionTest {
 
     /** The static conversion/allocation emission helpers, per backend. */
     private static final List<String> LUAJIT_CONVERSION_HELPERS =
-        List.of("__intConv(", "__numConv(", "__bytesNew(");
+        List.of("__intConv(", "__numConv(");
     private static final List<String> JVM_CONVERSION_HELPERS =
-        List.of("JvmRuntime.intConv(", "JvmRuntime.numConv(",
-            "JvmRuntime.bytesNew(");
+        List.of("JvmRuntime.intConv(", "JvmRuntime.numConv(");
     private static final List<String> JS_CONVERSION_HELPERS =
-        List.of("$rt.intConvert((", "$rt.numberConvert((", "$rt.bytes((");
+        List.of("$rt.intConvert((", "$rt.numberConvert((");
 
     /**
      * The JavaScript renderer's call surfaces that carry a call origin:
@@ -318,8 +316,8 @@ public final class IntrinsicShadowingProductionTest {
     // =========================================================================
 
     /**
-     * The artifact's static conversion/allocation emissions: one entry per
-     * emitted {@code INT_CONVERT}/{@code NUMBER_CONVERT}/{@code BYTES_NEW}
+     * The artifact's static conversion emissions: one entry per
+     * emitted {@code INT_CONVERT}/{@code NUMBER_CONVERT}
      * operation that is a direct intrinsic call (never the runtime's
      * value-carried dispatch arm, which reports the {@code CALL} event
      * kind and is not a static classification).
@@ -365,7 +363,7 @@ public final class IntrinsicShadowingProductionTest {
         if (emission.contains("numConv") || emission.contains("numberConvert")) {
             return "NUMBER_CONVERT";
         }
-        return "BYTES_NEW";
+        throw new AssertionError("unknown conversion emission: " + emission);
     }
 
     /**
@@ -428,7 +426,7 @@ public final class IntrinsicShadowingProductionTest {
 
     /**
      * The module-level declaration fixture calls its own {@code bytes}
-     * function: the module admits no static allocation emission at all,
+     * function: the module admits no static conversion emission at all,
      * and the call at 5:7 dispatches the declared body.
      */
     private static final ArtifactExpectation MODULE_EXPECTATION =

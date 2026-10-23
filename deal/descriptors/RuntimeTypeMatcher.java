@@ -35,10 +35,6 @@ import java.util.Objects;
  *       range}</td></tr>
  *   <tr><td>{@code table}</td><td>backend table representation</td>
  *       <td>E8001 {@code expected table, got {actual}}</td></tr>
- *   <tr><td>{@code bytes}</td><td>the E6-pinned {@code check_bytes(value,
- *       range)} hook ({@code bytes | E8001}); no other predicate is
- *       consulted</td><td>the hook's own E8001 outcome, propagated
- *       unchanged</td></tr>
  *   <tr><td>{@code @...} and the builtin {@code Error} atom</td>
  *       <td>tagged class identity byte-equal to the parsed
  *       {@link DescriptorAst.ClassAtom} full text (the builtin
@@ -160,7 +156,7 @@ public final class RuntimeTypeMatcher {
     // =========================================================================
 
     /** The primitive rows: {@code null}, {@code boolean}, {@code string},
-     * {@code number}, {@code int}, {@code bytes}, {@code table}. */
+     * {@code number}, {@code int}, {@code table}. */
     private Object checkPrimitive(String name, Object value, RuntimeSourceLocation range) {
         switch (name) {
             case "null" -> {
@@ -197,17 +193,6 @@ public final class RuntimeTypeMatcher {
             case "int" -> {
                 return checkInt(value, range);
             }
-            case "bytes" -> {
-                // The E6-pinned seam: this row routes ONLY through the pinned
-                // check_bytes(value, range) hook (bytes | E8001).  No other
-                // predicate is consulted, and the hook's outcome — the checked
-                // value or its own E8001 failure — drives the row.
-                Object hookOutcome = model.checkBytes(value, range);
-                if (hookOutcome instanceof RuntimeCheckFailure hookFailure) {
-                    return hookFailure;
-                }
-                return value;
-            }
             case "table" -> {
                 if (model.isTable(value)) {
                     return value;
@@ -216,7 +201,7 @@ public final class RuntimeTypeMatcher {
             }
             default -> {
                 // Unreachable through the strict parser, which yields only the
-                // seven canonical primitive keywords.  Defensive only.
+                // canonical primitive keywords.  Defensive only.
                 return failure("E8001", "unknown primitive type: " + name, range);
             }
         }

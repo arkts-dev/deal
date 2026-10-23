@@ -53,8 +53,5 @@ public enum BinarySelector implements ClosedSelector {
 
     // Reference identity equality/inequality.
     REFERENCE_EQ,
-    REFERENCE_NE,
-
-    BYTES_EQ,
-    BYTES_NE
+    REFERENCE_NE
 }

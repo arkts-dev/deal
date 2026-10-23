@@ -391,7 +391,7 @@ public final class FunctionBindingRegistry {
 
     /**
      * Registers the {@code IntrinsicFunction} binding of one producer-less
-     * seeded intrinsic ({@code int}/{@code number}/{@code bytes}): the
+     * seeded intrinsic ({@code int}/{@code number}): the
      * closed intrinsic kind and the intrinsic's declared signature, keyed
      * by the seeded function-value identity the intrinsic binding's single
      * {@code BINDING_INIT} carries as its init operand. No closed op

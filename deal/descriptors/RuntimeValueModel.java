@@ -49,26 +49,6 @@ public interface RuntimeValueModel {
     boolean isTable(Object value);
 
     /**
-     * The E6-pinned bytes hook {@code check_bytes(value, range)} with
-     * the parent D4 helper-set contract {@code -> bytes | E8001}.
-     *
-     * <p>The matcher's bytes row routes exclusively through this hook
-     * and consults no other predicate; the hook receives
-     * {@code (value, range)} unchanged and its outcome drives the row.
-     * E6 owns the representation and predicate; until E6 lands, the
-     * seam implementer supplies the hook implementation.</p>
-     *
-     * <p>The hook is also the seam's only bytes fact, so the typed-boundary
-     * {@code {actual}} projection of a rejected value classifies the E6
-     * bytes carrier through it: an admitted outcome (the value itself, not
-     * a {@link RuntimeCheckFailure}) publishes the closed {@code bytes}
-     * token before any generic table fallback. A rejected value's row never
-     * consults another predicate, and this classification never changes the
-     * row's own outcome.</p>
-     */
-    Object checkBytes(Object value, RuntimeSourceLocation range);
-
-    /**
      * The tagged class identity text of the {@code @...} row: the
      * runtime tag the value carries, or {@code null} when the value is
      * not a tagged class instance.  The matcher compares the returned

@@ -1,0 +1,106 @@
+// @spec: Arrays
+// @description: ISSUE-0552 integrated verification: int[]-bearing class fields/defaults through the production plan machinery — nested int[][] and int[][][] defaults, sync/async first-class function defaults, once-per-attempt evaluation with zero load-time runs, fresh isolated mutable buffers, retained identity of a host-returned int[] default, no partial instance on default-evaluation or provided-value validation failure (no defaults run after the failure), and json.stringify rejection.
+// @expected: runtime-ok
+// @features: int[], classes, defaults, arrays, functions, async-await, host-abi, json
+
+import * as host from "host/array_roundtrip";
+import * as json from "std/json";
+
+function identity(b: int[]): int[] { return b; }
+
+async function echoAsync(b: int[]): int[] { return b; }
+
+function badBytes(): int[] {
+  let holder: table = { b: "not-int[]" };
+  return holder.b;
+}
+
+class PlanBox {
+  buf: int[] = [0, 0];
+  nested: int[][] = [[0]];
+  deep: int[][][] = [[[0]]];
+  made: int[] = host.makeArray(2);
+  shared: int[] = host.sharedArray();
+  syncFn: (b: int[]) => int[] = identity;
+  asyncFn: async (b: int[]) => int[] = echoAsync;
+}
+
+class BadBox {
+  payload: int[] = badBytes();
+}
+
+export async function test_array_class_default_integration(): int {
+  if (host.callCount() !== 0) {
+    throw { code: "TEST_FAIL", message: "default ran at module load" };
+  }
+  let a: PlanBox = {};
+  let b: PlanBox = {};
+  if (host.callCount() !== 2) {
+    throw { code: "TEST_FAIL", message: "defaults did not run once per attempt" };
+  }
+  a.buf[0] = 200;
+  if (b.buf[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "buf default shared across instances" };
+  }
+  a.nested[0][0] = 9;
+  if (b.nested[0][0] !== 0) {
+    throw { code: "TEST_FAIL", message: "nested default shared across instances" };
+  }
+  a.deep[0][0][0] = 7;
+  if (b.deep[0][0][0] !== 0) {
+    throw { code: "TEST_FAIL", message: "deep default shared across instances" };
+  }
+  a.shared[0] = 55;
+  if (b.shared[0] !== 55) {
+    throw { code: "TEST_FAIL", message: "host-returned default was deep-copied" };
+  }
+  let viaSync: int[] = a.syncFn([0]);
+  if (viaSync.length !== 1) {
+    throw { code: "TEST_FAIL", message: "sync fn default failed" };
+  }
+  let viaAsync: int[] = await a.asyncFn([0, 0]);
+  if (viaAsync.length !== 2) {
+    throw { code: "TEST_FAIL", message: "async fn default failed" };
+  }
+  let caught: boolean = false;
+  try {
+    let bad: BadBox = {};
+  } catch (e) {
+    caught = e.code === "E8001";
+  }
+  if (!caught) {
+    throw { code: "TEST_FAIL", message: "validation failure did not raise E8001" };
+  }
+  // A provided-value validation failure (a dynamic string crossing the
+  // int[] field boundary at phase 3) raises E8001 and publishes no
+  // instance; the D5 phase order still ran the omitted defaults once
+  // (the count moves 2 -> 3), and the clean attempt after it runs them
+  // once more (3 -> 4).
+  let holderBad: table = { b: "not-int[]" };
+  let providedCaught: boolean = false;
+  try {
+    let provided: bytes = holderBad.b;
+  } catch (e) {
+    providedCaught = e.code === "E8001";
+  }
+  if (!providedCaught) {
+    throw { code: "TEST_FAIL", message: "dynamic provided-value read did not raise E8001" };
+  }
+  if (host.callCount() !== 2) {
+    throw { code: "TEST_FAIL", message: "the failed provided-value read ran a default" };
+  }
+  // A clean attempt after the failures still constructs correctly.
+  let c2: PlanBox = {};
+  if (c2.buf.length !== 2 || host.callCount() !== 3) {
+    throw { code: "TEST_FAIL", message: "post-failure attempt did not construct cleanly" };
+  }
+  let encoded: string = json.stringify({ box: a.buf });
+  if (encoded !== "{\"box\":[200,0]}") {
+    throw { code: "TEST_FAIL", message: "array JSON encoding mismatch" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

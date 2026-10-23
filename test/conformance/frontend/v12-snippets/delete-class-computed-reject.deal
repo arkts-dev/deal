@@ -1,5 +1,5 @@
 // @spec: Classes
-// @description: Corner-case subject delete-class-computed-reject — Optional deletion legal only through class member syntax, not table-style indexing. (basis: Class fields use declared member names; Indexing only arrays/bytes/tables)
+// @description: Corner-case subject delete-class-computed-reject — Optional deletion legal only through class member syntax, not table-style indexing. (basis: Class fields use declared member names; Indexing only arrays/tables)
 // @expected: compile-error E3007
 // @features: v1.2, frontend, reject
 

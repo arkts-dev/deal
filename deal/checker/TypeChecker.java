@@ -422,7 +422,6 @@ public final class TypeChecker {
             case Type.Number ignored     -> true;
             case Type.String ignored     -> true;
             case Type.Table ignored      -> true;
-            case Type.Bytes ignored      -> false;
             case Type.Array arr          -> isJsonableType(arr.element());
             case Type.Nullable n         -> isJsonableType(n.inner());
             case Type.Class cls          -> isJsonableClass(cls);
@@ -760,7 +759,6 @@ public final class TypeChecker {
                 collectJsonableClassDeps(arr.element(), deps);
             case Type.Nullable n ->
                 collectJsonableClassDeps(n.inner(), deps);
-            case Type.Bytes ignored -> { /* stop: no class references possible */ }
             default -> { /* stop: no deeper class references possible */ }
         }
     }
@@ -1476,17 +1474,6 @@ public final class TypeChecker {
 
         if (targetType instanceof Type.Error) return;
 
-        if (ds.target() instanceof IndexExpr idx
-                && typeOf(idx.array()) instanceof Type.Bytes) {
-            // v1.2 bytes element delete: byte slots are write-only through
-            // bytes_set and never deletable — the write value contract
-            // (int 0..255) has no delete counterpart, so the delete target
-            // rejects before any backend.
-            error(DiagnosticCode.E3007,
-                "Cannot delete element of type bytes", ds.target().span());
-            return;
-        }
-
         if (ds.target() instanceof MemberAccessExpr mae) {
             Type objType = typeOf(mae.object());
             // D3 (typed-boundary-enforcement): array .length is read-only.
@@ -1494,13 +1481,6 @@ public final class TypeChecker {
             // `#xs = nil` Lua for a program the checker had accepted.
             if (objType instanceof Type.Array && mae.field().equals("length")) {
                 error(DiagnosticCode.E3017, "Array length is read-only",
-                    ds.target().span());
-                return;
-            }
-            // v1.2 bytes .length is read-only exactly like array .length
-            // (deal-v1.2-int32-and-bytes-architecture D4).
-            if (objType instanceof Type.Bytes && mae.field().equals("length")) {
-                error(DiagnosticCode.E3017, "Bytes length is read-only",
                     ds.target().span());
                 return;
             }
@@ -2094,20 +2074,11 @@ public final class TypeChecker {
 
         String field = mae.field();
 
-        // `length` intrinsic property (v1.2: arrays and bytes only — a
+        // `length` intrinsic property (arrays only — a
         // `string` is a Unicode scalar-value sequence and has no `.length`;
         // string lengths are stdlib `string.length(s)` measured in scalar
         // values).
         if (objType instanceof Type.Array && field.equals("length")) {
-            return Type.Int.INSTANCE;
-        }
-
-        // v1.2 bytes length intrinsic (js-v12-int32-bytes D3/D4):
-        // b.length is compiler-resolved to the immutable logical
-        // allocation length of static type int — not a member lookup,
-        // not dispatchable. Every other bytes member falls through to
-        // the E3003 cannot-access arm below.
-        if (objType instanceof Type.Bytes && field.equals("length")) {
             return Type.Int.INSTANCE;
         }
 
@@ -2256,14 +2227,6 @@ public final class TypeChecker {
             // provider through the binding's own annotation.
             recordExactClassDecl(idx, arr.element(), exactClassDecls.get(idx.array()));
             return arr.element();
-        }
-
-        // v1.2 bytes indexing (js-v12-int32-bytes D4): b[i] reads and
-        // writes unsigned byte values (static type int; the runtime
-        // bounds/value gates raise E8012/E8013). The index must be int
-        // like every array read.
-        if (arrayType instanceof Type.Bytes) {
-            return Type.Int.INSTANCE;
         }
 
         error(DiagnosticCode.E3007, "Cannot index type " + typeName(arrayType), idx.array().span());
@@ -2766,18 +2729,6 @@ public final class TypeChecker {
             readOnlyArrayLength = true;
         }
 
-        // v1.2 bytes .length is read-only exactly like array .length
-        // (deal-v1.2-int32-and-bytes-architecture D4: assignment to
-        // `.length` on arrays or bytes is E3017 at the member target
-        // before any backend).
-        if (assign.target() instanceof MemberAccessExpr mae
-                && mae.field().equals("length")
-                && typeOf(mae.object()) instanceof Type.Bytes) {
-            error(DiagnosticCode.E3017, "Bytes length is read-only",
-                assign.target().span());
-            readOnlyArrayLength = true;
-        }
-
         // F3: Use the target type as contextual expected type for the value
         Type savedExpected = expectedType;
         Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
@@ -3165,7 +3116,6 @@ public final class TypeChecker {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
-            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
             case Type.Nullable n -> typeName(n.inner()) + " | null";

@@ -22,20 +22,17 @@
 // ===== Host-global capture (js-backend-runtime-artifact D10) =====
 // The only module-scope bindings of the host globals the runtime owns.
 // Every later runtime use of process, console, Math, Map, Array,
-// Uint8Array, Infinity, or undefined is confined to these captures;
+// Infinity or undefined is confined to these captures;
 // generated code spells none of them bare (js-backend-architecture D2). Object and
 // String are not in the capture list and may be spelled bare inside this
 // trusted file. The native JSON object is not captured: the conforming
 // scanner and the canonical text encoder are the runtime's own (DEAL v1.3
-// exact JSON). $Uint8Array joins the list with the v1.3 bytes carrier
-// (js-v12-int32-bytes D3): the constructor is captured at runtime load,
-// so no generated module ever spells the host-global Uint8Array.
+// exact JSON).
 const $process = process;
 const $console = console;
 const $Math = Math;
 const $Map = Map;
 const $Array = Array;
-const $Uint8Array = Uint8Array;
 const $Infinity = Infinity;
 const $undefined = void 0;
 
@@ -114,8 +111,7 @@ const $jsonNullTables = new WeakSet();
 // atom, the shared typed-boundary token of ActualKind.CLASS, so the
 // "class" spelling stays the expected token of a class descriptor and
 // never becomes an actual; Maps (the T1 $Map capture) are tables; Arrays
-// (the T1 $Array capture) are arrays; Uint8Arrays (the v1.3 bytes
-// carrier, js-v12-int32-bytes D3) are bytes; everything else reports the
+// (the T1 $Array capture) are arrays; everything else reports the
 // JS typeof name.
 function $kindOf($v) {
   if ($v === $undefined) return "nil";
@@ -129,7 +125,6 @@ function $kindOf($v) {
   }
   if ($v instanceof $Map) return "table";
   if ($Array.isArray($v)) return "array";
-  if ($v instanceof $Uint8Array) return "bytes";
   if (typeof $v === "number") {
     // The value-derived numeric classification (the Lua emitted prelude's
     // __typedBoundaryKind and the shared JVM runtime's Integer/in-range
@@ -188,7 +183,7 @@ function $elemKindOf($v) {
 // boundary's parameter/return arms, deal/runtime.lua:983/1025): every
 // table-carried value is a Lua table — the DEAL-null sentinel (the
 // canonical carrier-kind projection maps language null to the table
-// token, never the JS "null" spelling), Maps, Arrays, the bytes carrier,
+// token, never the JS "null" spelling), Maps, Arrays,
 // class instances, and the function/class wrappers included — a raw JS
 // function stays "function", and primitives keep their names.
 function $luaKindOf($v) {
@@ -219,7 +214,7 @@ function $rawShapeKind($v) {
 // realization of CanonicalRuntimeTypeDescriptor.parse (the strict
 // recursive-descent grammar over Unicode scalars with complete-input
 // consumption). Only canonical spellings parse: primitive names
-// null|boolean|int|number|string|bytes|table; "[D]" arrays; "?D"
+// null|boolean|int|number|string|table; "[D]" arrays; "?D"
 // nullables ("?D" and "[D]" accept ANY descriptor D, function
 // descriptors included — "?(int)->int" and "[(int)->int]" parse);
 // "async"? "(params)" "->" D functions; the builtin "Error" atom
@@ -305,9 +300,8 @@ function $parseOne($d, $cps, $st) {
   if ($cp === 0x40) { // '@'
     return $parseClass($d, $cps, $st);
   }
-  // Primitive keywords (disjoint, so order does not matter) — bytes
-  // included so its dispatch reaches the Uint8Array matcher row.
-  const $keywords = ["null", "boolean", "int", "number", "string", "bytes", "table"];
+  // Primitive keywords (disjoint, so order does not matter).
+  const $keywords = ["null", "boolean", "int", "number", "string", "table"];
   for (let $k = 0; $k < $keywords.length; $k++) {
     if ($matchKeyword($cps, $st.$pos, $keywords[$k])) {
       const $name = $keywords[$k];
@@ -835,7 +829,7 @@ function $isNumericDescriptor($desc) {
 //     through the runtime members, exactly like the JVM/JVM-lane table
 //     crossing), so effects the host performs on a table parameter stay
 //     observable to its caller;
-//   - every other value (scalars, null, strings, bytes carriers,
+//   - every other value (scalars, null, strings,
 //     function wrappers, host objects) crosses unchanged.
 //
 // The projection runs after the declared-cell check, so an admitted
@@ -879,7 +873,7 @@ function $hostProjectArg($desc, $v, $memo) {
 //   - a class instance is copied with every own property projected (the
 //     declared fields and the $kind/$classname tag pair), so no numeric
 //     or decode carrier survives inside a class-typed completion;
-//   - every other value (scalars, null, strings, bytes carriers,
+//   - every other value (scalars, null, strings,
 //     function wrappers, the $MISSING sentinel, host objects) crosses
 //     unchanged.
 //
@@ -931,7 +925,7 @@ function $hostProjectCompletion($v) {
 //     the completion mode (a completion is published to the host, so the
 //     host-visible graph holds no DEAL carrier and no shared mutable
 //     table is handed out);
-//   - every other value (scalars, null, strings, bytes carriers,
+//   - every other value (scalars, null, strings,
 //     function wrappers, the $MISSING sentinel, host objects) crosses
 //     unchanged.
 //
@@ -1770,7 +1764,6 @@ function $carrierToken($v) {
   // variant it records.
   if (typeof $v === "number" || $isNumCarrier($v)) return "number";
   if (typeof $v === "string") return "string";
-  if ($rt.isBytes($v)) return "bytes";
   if (typeof $v === "function" || $v.$kind === "function") return "function";
   return "table";
 }
@@ -1795,7 +1788,6 @@ function $walkToken($v) {
   if (typeof $v === "string") {
     return $isValidScalars($v) ? "string" : "invalid-unicode";
   }
-  if ($rt.isBytes($v)) return "bytes";
   if (typeof $v === "function" || $v.$kind === "function") return "function";
   if ($Array.isArray($v)) return "array";
   if ($v.$kind === "class") {
@@ -1897,7 +1889,7 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
       $out.push($jsonEscapeText($value));
       return;
     }
-    if ($rt.isBytes($value) || $type === "function"
+    if ($type === "function"
         || ($type === "object" && $value.$kind === "function")) {
       $unsupported($value, $valuePath);
     }
@@ -2421,7 +2413,7 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       return $numText($value);
     case "table":
       // The declared table row walks the JSON-shaped content only: a
-      // class instance, a stored function, bytes, an absent marker, an
+      // class instance, a stored function, an absent marker, an
       // invalid scalar, or a nonfinite leaf fails the walk arm at its
       // position.
       return $encodeJsonText($value, $path, $file, $line, $column, true,
@@ -3043,14 +3035,6 @@ const $rt = {
       if ($parsed.$name === "table") {
         return $rt.checkTable(v, file, line, column);
       }
-      // bytes: the matcher table's bytes row (js-v12-int32-bytes D3) —
-      // $rt.checkBytes accepts the runtime-captured $Uint8Array carrier
-      // and rejects every other value with E8001 "expected bytes"
-      // (expected "bytes", actual $kindOf(v)). The retired defensive
-      // E6000 gate no longer exists.
-      if ($parsed.$name === "bytes") {
-        return $rt.checkBytes(v, file, line, column);
-      }
       $rt.fail("E8001", "unknown primitive type: " + $parsed.$name, file, line, column);
     }
     if ($parsed.$t === "nullable") {
@@ -3326,98 +3310,6 @@ const $rt = {
       $rt.fail("E8005", "integer division by zero", file, line, column);
     }
     return $rt.checkInt($Math.trunc(a / b), file, line, column);
-  },
-
-  // ===== Bytes carrier and the five helpers (js-v12-int32-bytes D3/D4) =====
-  // Bytes on JS are the runtime-captured $Uint8Array — contiguous
-  // uint8_t-equivalent owned storage with unsigned reads, fresh
-  // zero-filled, reference-aliased on assignment/parameters/returns/
-  // fields/arrays, identity-compared, and non-jsonable (D3). The five
-  // helper signatures below are the D4 contract; every error goes
-  // through the fail spine with the caller's (file, line, column)
-  // forwarded. E8012 denotes a negative or above-int32-max allocation
-  // length (bytes) or a byte-index bounds failure (bytesGet/bytesSet —
-  // bytes never append); E8013 denotes a write value outside 0..255.
-  // A failed validation changes no storage; a successful write mutates
-  // exactly one byte and returns the written unsigned value.
-
-  // checkBytes: fail-closed bytes object validation — the matcher
-  // table's bytes row (D3): v instanceof $Uint8Array passes, everything
-  // else raises E8001 "expected bytes" (expected "bytes", actual
-  // $kindOf(v)). Success returns v (identity, no mutation).
-  checkBytes: function $checkBytes(v, file, line, column) {
-    if (!(v instanceof $Uint8Array)) {
-      $rt.fail("E8001", "expected bytes", file, line, column, "bytes", $kindOf(v));
-    }
-    return v;
-  },
-
-  // bytes: the intrinsic allocation site (D3). checkInt(length) runs the
-  // full int contract (E8001 kind/NaN/infinity/non-integer, E8004
-  // profile range); a negative length or a length above 2147483647 (the
-  // signed-int32 logical-length bound) raises E8012; otherwise a fresh
-  // zero-filled new $Uint8Array(length) is returned. A native allocation
-  // failure (RangeError) propagates as an infrastructure failure and is
-  // NEVER mislabeled E8012.
-  bytes: function $bytes(length, file, line, column) {
-    const $n = $rt.checkInt(length, file, line, column);
-    if ($n < 0) {
-      $rt.fail("E8012", "bytes length must be non-negative", file, line, column);
-    }
-    if ($n > 2147483647) {
-      $rt.fail("E8012", "bytes length out of bounds", file, line, column);
-    }
-    return new $Uint8Array($n);
-  },
-
-  // bytesLength: the immutable logical allocation length — the
-  // compiler-resolved b.length read (D3/D4): checkBytes then the native
-  // Uint8Array length (never a member lookup, never dispatchable — the
-  // emitter calls this member directly with the static int type).
-  bytesLength: function $bytesLength(b, file, line, column) {
-    $rt.checkBytes(b, file, line, column);
-    return b.length;
-  },
-
-  // bytesGet: read the unsigned byte (int 0..255) at index i,
-  // 0 <= i < b.length (D4). checkBytes, then checkInt(i), then the
-  // bounds gate — i < 0 || i >= b.length raises E8012 (bytes never
-  // append); the returned element is the unsigned read.
-  bytesGet: function $bytesGet(b, i, file, line, column) {
-    $rt.checkBytes(b, file, line, column);
-    const $idx = $rt.checkInt(i, file, line, column);
-    if ($idx < 0 || $idx >= b.length) {
-      $rt.fail("E8012", "bytes index out of bounds", file, line, column);
-    }
-    return b[$idx];
-  },
-
-  // bytesSet: write the byte value v (int 0..255) at index i and return
-  // the written unsigned value (D4). checkBytes, then checkInt(i) with
-  // the same bounds gate E8012, then checkInt(v), then the value gate —
-  // v < 0 || v > 255 raises E8013. A failed validation changes no
-  // storage; a successful write mutates exactly one byte.
-  bytesSet: function $bytesSet(b, i, v, file, line, column) {
-    $rt.checkBytes(b, file, line, column);
-    const $idx = $rt.checkInt(i, file, line, column);
-    if ($idx < 0 || $idx >= b.length) {
-      $rt.fail("E8012", "bytes index out of bounds", file, line, column);
-    }
-    const $val = $rt.checkInt(v, file, line, column);
-    if ($val < 0 || $val > 255) {
-      $rt.fail("E8013", "bytes value out of range", file, line, column);
-    }
-    b[$idx] = $val;
-    return $val;
-  },
-
-  // isBytes: the boolean bytes predicate — total, pure, mutates
-  // nothing. The single detection seam std/json's explicit bytes
-  // rejection arm consults (js-v12-int32-bytes D3: a bytes value
-  // reaching std/json.stringify raises E8001 through the unsupported
-  // type arm); no other member exposes the carrier constructor.
-  isBytes: function $isBytes(v) {
-    return v instanceof $Uint8Array;
   },
 
   // ===== Class construction (js-backend-runtime-artifact D6) =====

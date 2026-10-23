@@ -23,7 +23,6 @@ public class ComparisonExecutorTest {
     private static final RuntimeDescriptor ARRAY = new RuntimeDescriptor.Array(INT);
     private static final RuntimeDescriptor CLASS = new RuntimeDescriptor.Class(new deal.semantic.ir.ClassId("src/app", "User"));
     private static final RuntimeDescriptor FUNC = new RuntimeDescriptor.Func(List.of(INT), NUMBER);
-    private static final RuntimeDescriptor BYTES = RuntimeDescriptor.Bytes.INSTANCE;
 
     private static void check(boolean condition, String message) {
         if (condition) { passed++; }
@@ -105,11 +104,11 @@ public class ComparisonExecutorTest {
             }
         }
         Object a = new Object(), other = new Object();
-        for (RuntimeDescriptor descriptor : List.of(ARRAY, TABLE, CLASS, FUNC, BYTES)) {
+        for (RuntimeDescriptor descriptor : List.of(ARRAY, TABLE, CLASS, FUNC)) {
             ComparisonOperandView sameA = descriptor == FUNC ? ref(new FunctionAllocationIdentity(7)) : ref(a);
             ComparisonOperandView sameB = descriptor == FUNC ? ref(new FunctionAllocationIdentity(7)) : ref(a);
             ComparisonOperandView different = descriptor == FUNC ? ref(new FunctionAllocationIdentity(8)) : ref(other);
-            String family = descriptor == BYTES ? "BYTES" : "REFERENCE";
+            String family = "REFERENCE";
             for (boolean equal : List.of(true, false)) {
                 ComparisonOperandView right = equal ? sameB : different;
                 exact(new ComparisonRow(BinarySelector.valueOf(family + "_EQ"), sameA, right, descriptor, null, equal));
@@ -149,7 +148,7 @@ public class ComparisonExecutorTest {
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
                  BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
-                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE, BYTES_EQ, BYTES_NE -> true;
+                 NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE -> true;
             case INT32_ADD, INT32_SUB, INT32_MUL, INT32_DIV_TRUNC,
                  NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE -> false;
         };
@@ -160,13 +159,13 @@ public class ComparisonExecutorTest {
             if (!isComparisonSelector(selector)) { continue; }
             String name = selector.name();
             boolean nullable = name.startsWith("NULLABLE"), namedSide = name.startsWith("NULLABLE_NULL");
-            List<RuntimeDescriptor> descriptors = nullable ? List.of(INT, NUMBER, STRING, BOOLEAN, ARRAY, TABLE, CLASS, FUNC, BYTES)
+            List<RuntimeDescriptor> descriptors = nullable ? List.of(INT, NUMBER, STRING, BOOLEAN, ARRAY, TABLE, CLASS, FUNC)
                 : name.startsWith("REFERENCE") ? List.of(ARRAY, TABLE, CLASS, FUNC)
                 : List.of(name.startsWith("INT32") ? INT : name.startsWith("NUMBER") ? NUMBER
                     : name.startsWith("STRING") ? STRING : name.startsWith("BOOLEAN") ? BOOLEAN
-                    : name.startsWith("BYTES") ? BYTES : RuntimeDescriptor.Null.INSTANCE);
+                    : RuntimeDescriptor.Null.INSTANCE);
             for (RuntimeDescriptor descriptor : descriptors) {
-                RuntimeDescriptor inner = nullable || name.startsWith("REFERENCE") || name.startsWith("BYTES") ? descriptor : null;
+                RuntimeDescriptor inner = nullable || name.startsWith("REFERENCE") ? descriptor : null;
                 List<NullableSide> sides = namedSide ? List.of(NullableSide.LEFT, NullableSide.RIGHT)
                     : nullable ? List.of(NullableSide.LEFT, NullableSide.RIGHT, NullableSide.BOTH) : java.util.Collections.singletonList(null);
                 for (NullableSide side : sides) {
@@ -267,12 +266,7 @@ public class ComparisonExecutorTest {
             new ComparisonRow(BinarySelector.REFERENCE_EQ, ref(new Object()), ref(new Object()), BOOLEAN, null, false),
             new ComparisonRow(BinarySelector.REFERENCE_EQ, ref(new Object()), ref(new Object()), new RuntimeDescriptor.Nullable(INT), null, false),
             new ComparisonRow(BinarySelector.REFERENCE_EQ, i(1), i(1), ARRAY, null, false),
-            new ComparisonRow(BinarySelector.REFERENCE_NE, s("a"), s("a"), ARRAY, null, false),
-            new ComparisonRow(BinarySelector.BYTES_EQ, ref(new Object()), ref(new Object()), null, null, false),
-            new ComparisonRow(BinarySelector.BYTES_EQ, ref(new Object()), ref(new Object()), INT, null, false),
-            new ComparisonRow(BinarySelector.BYTES_EQ, ref(new Object()), ref(new Object()), ARRAY, null, false),
-            new ComparisonRow(BinarySelector.BYTES_EQ, i(1), i(1), BYTES, null, false),
-            new ComparisonRow(BinarySelector.BYTES_NE, s("a"), s("a"), BYTES, null, false));
+            new ComparisonRow(BinarySelector.REFERENCE_NE, s("a"), s("a"), ARRAY, null, false));
         rows.forEach(row -> expectException(ComparisonExecutor.Defect.class,
             () -> ComparisonExecutor.compare(row.selector(), row.left(), row.right(), row.inner(), row.side())));
         expectException(NullPointerException.class, () -> ComparisonExecutor.compare(null, i(1), i(1), null, null));

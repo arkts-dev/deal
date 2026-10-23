@@ -1,7 +1,7 @@
 // @spec: Type system — Nullable semantics (narrowing invalidation across calls)
-// @description: The .length controls of the call-preserved narrowing refinement: while the value is valid the refined array and bytes receivers read their live length unchanged (the empty array included, with the array identity, contents and append behavior preserved), a call preserves the refinement, a call receiver is evaluated exactly once, and after a capturing closure clears the binding every .length position — direct and composed — raises its own catchable E8001 whose caught flag is asserted after the try.
+// @description: The .length controls of the call-preserved narrowing refinement: while the value is valid the refined array receivers read their live length unchanged (the empty array included, with the array identity, contents and append behavior preserved), a call preserves the refinement, a call receiver is evaluated exactly once, and after a capturing closure clears the binding every .length position — direct and composed — raises its own catchable E8001 whose caught flag is asserted after the try.
 // @expected: runtime-ok
-// @features: type-system, nullable, narrowing, arrays, bytes, runtime-errors
+// @features: type-system, nullable, narrowing, arrays, runtime-errors
 
 function expectNoError(what: string): null {
   throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
@@ -28,7 +28,7 @@ function preserveCall(): null {
 
 export function main(): null {
   // A live refinement reads the live length: the valid non-null binding, the
-  // empty array and the bytes buffer keep their normal length behavior.
+  // empty array keep their normal length behavior.
   let xs: int[] | null = [3, 4];
   let alias: int[] = [];
   if (xs !== null) {
@@ -44,10 +44,7 @@ export function main(): null {
   if (empty !== null) {
     expectEqual("empty array length", empty.length, 0);
   }
-  let buffer: bytes | null = bytes(3);
-  if (buffer !== null) {
-    expectEqual("bytes length", buffer.length, 3);
-  }
+
 
   // The receiver expression completes exactly once per length read.
   let calls: int = 0;
@@ -64,10 +61,7 @@ export function main(): null {
     xs = null;
     return null;
   };
-  let clearBuffer: () => null = function(): null {
-    buffer = null;
-    return null;
-  };
+
   if (xs !== null) {
     clear();
 
@@ -146,20 +140,6 @@ export function main(): null {
     }
     // The failed append wrote nothing.
     expectEqual("alias length after failed append", alias.length, 3);
-  }
-  if (buffer !== null) {
-    clearBuffer();
-    let bytesCaught: boolean = false;
-    try {
-      let size: int = buffer.length;
-      expectNoError("bytes length after clear");
-    } catch (e) {
-      expectCaught(e, "bytes length after clear", "E8001", "expected bytes");
-      bytesCaught = true;
-    }
-    if (!bytesCaught) {
-      throw { code: "CONTROL_FAIL", message: "bytes length after clear: the caught flag stayed false" };
-    }
   }
   return null;
 }

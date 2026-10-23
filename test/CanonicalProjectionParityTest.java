@@ -490,11 +490,9 @@ public class CanonicalProjectionParityTest {
         // receiver on the oracle and both production artifacts instead of a
         // raw length read, a coerced length or a reified host TypeError. The
         // composed-expression fixture proves the same admission through an
-        // arithmetic operand, and the bytes fixture proves the shared cell at
-        // the bytes .length spelling.
+        // arithmetic operand.
         mainEntry("types/narrowed-capture-array-length-e8001"),
         mainEntry("types/narrowed-capture-array-length-composed-e8001"),
-        mainEntry("types/narrowed-capture-bytes-length-e8001"),
         // The has() receiver is the presence consumer (ISSUE-0880): the
         // admission publishes the read and the HAS_FIELD presence op consumes
         // that admitted value, so a cleared binding reports the refined class
@@ -548,7 +546,7 @@ public class CanonicalProjectionParityTest {
         // backends).
         mainEntry("types/narrowed-capture-for-of-string-controls"),
         // The index-position controls: the refined receiver/key flows
-        // through array, table and bytes reads and writes unchanged, and a
+        // through array and table reads and writes unchanged, and a
         // cleared binding raises its own catchable E8001 at each position.
         mainEntry("types/narrowed-capture-index-controls"),
         // The member-position controls (ISSUE-0871): the refined receiver
@@ -558,7 +556,7 @@ public class CanonicalProjectionParityTest {
         // raises its own catchable E8001 at each member position with the
         // aliased table left unmutated.
         mainEntry("types/narrowed-capture-member-controls"),
-        // The .length controls: the valid non-null, empty-array and bytes
+        // The .length controls: the valid non-null and empty-array
         // receivers read their live length unchanged (the array identity,
         // contents and append behavior included), a call preserves the
         // refinement, a call receiver is evaluated exactly once, and every
@@ -622,8 +620,8 @@ public class CanonicalProjectionParityTest {
 
     /** The host-boundary families with a corpus pin. */
     private static final List<Case> HOST_FAMILIES = List.of(
-        host("host-abi/host-bytes-param-mismatch-e8010",
-            "test_host_bytes_param_mismatch", "bytes_roundtrip"),
+        host("host-abi/host-boolean-param-mismatch-e8010",
+            "test_host_boolean_param_mismatch", "boundary"),
         host("host-abi/host-empty-return-bad", "test_host_empty_return_bad",
             "empty_return"),
         host("host-abi/host-nullable-return-bad", "test_host_nullable_return_bad",
@@ -903,8 +901,7 @@ public class CanonicalProjectionParityTest {
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
                     .findFirst().orElseThrow().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         if (lowering.hasErrors() || lowering.project() == null) {
             throw new IllegalStateException(spec.what() + ": the production "
@@ -1563,7 +1560,7 @@ public class CanonicalProjectionParityTest {
                 }
             }
             switch (spec.corpusPath()) {
-                case "host-abi/host-bytes-param-mismatch-e8010",
+                case "host-abi/host-boolean-param-mismatch-e8010",
                      "host-abi/host-nullable-function-param-bad",
                      "host-abi/host-rest-bad",
                      "host-abi/host-async-bad",
@@ -5347,7 +5344,7 @@ public class CanonicalProjectionParityTest {
         System.out.println("-- the production wrappers' parameter, sync-return, and "
             + "nothing cells render through the artifact's closed arm table --");
         Compiled compiled = compile(mainEntry(
-            "host-abi/host-bytes-param-mismatch-e8010"));
+            "host-abi/host-boolean-param-mismatch-e8010"));
         try {
             wrapperParameterSite(compiled);
             wrapperInnerTemplateAuthority(compiled);
@@ -5362,19 +5359,19 @@ public class CanonicalProjectionParityTest {
      * artifact-side projection of the same call is the loaded wrapper's).
      */
     private static void wrapperParameterSite(Compiled compiled) throws Exception {
-        String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
+        String drive = "local surface = __exportSurfaces[\"host.boundary\"]\n"
             + "if surface == nil then fail(\"no host surface\") end\n"
-            + "local entry = surface.echoBytes\n"
-            + "if entry == nil then fail(\"no echoBytes export\") end\n"
+            + "local entry = surface.echoBoolean\n"
+            + "if entry == nil then fail(\"no echoBoolean export\") end\n"
             + "return pcall(entry.f, 5, \"probe.deal\", 3, 4)\n";
         WrapperPin valid = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
             Map.of("index", "1", "inner", FailureProjections.kindReason(
-                RuntimeDescriptor.Bytes.INSTANCE)),
-            "bytes", "number", "probe.deal:3:4", "5", true,
-            FailureArmId.TYPED_BOUNDARY_KIND, "bytes");
+                RuntimeDescriptor.Boolean.INSTANCE)),
+            "boolean", "number", "probe.deal:3:4", "5", true,
+            FailureArmId.TYPED_BOUNDARY_KIND, "boolean");
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
             wrapperRecorder(), drive, wrapperTuple(valid)),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the loaded "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the loaded "
             + "wrapper's parameter cell publishes the registry's tuple with the "
             + "matcher-selected inner arm and the declared projections");
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
@@ -5385,20 +5382,20 @@ public class CanonicalProjectionParityTest {
                 + "    return realArm(id, mutated, file, line, column, expected, "
                 + "subject)\n"), drive,
             wrapperDefect("HOST_PARAMETER_CELL", "supplied 1")),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the parameter "
             + "cell rejects a missing named parameter");
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
             wrapperRecorder(null, "  realInner(id, values)\n"
                 + "  return \"a composed reason\"\n"), drive,
             wrapperDefect("HOST_PARAMETER_CELL",
                 "closed inner-reason vocabulary")),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the parameter "
             + "cell rejects a composed inner reason");
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
             wrapperRecorder("    return realArm(id, values, file, line, column, "
                 + "\"not a descriptor\", subject)\n"), drive,
             wrapperDefect("HOST_PARAMETER_CELL", "canonical descriptor")),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the parameter "
             + "cell rejects an expected projection outside its declared shape");
         String mutated = "wanted {kind} instead";
         Path patched = patchedArtifact(compiled,
@@ -5406,8 +5403,8 @@ public class CanonicalProjectionParityTest {
             mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
         checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
             wrapperRecorder(), drive, wrapperTuple(valid.withMessage(
-                "parameter 1 type mismatch: wanted bytes instead"))),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the parameter "
+                "parameter 1 type mismatch: wanted boolean instead"))),
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the parameter "
             + "cell's inner reason follows the artifact's serialized kind template");
     }
 
@@ -5524,42 +5521,42 @@ public class CanonicalProjectionParityTest {
     /**
      * The inner-template authority control at the mapped kind site: with the
      * artifact's serialized {@code TYPED_BOUNDARY_KIND} template replaced,
-     * the deployed matcher's own composed text ("expected bytes") is outside
+     * the deployed matcher's own composed text ("expected boolean") is outside
      * the replaced closed vocabulary, so a consumer forwarding that text
      * would fail closed instead of publishing the tuple — the produced
      * message can only come from the serialized template.
      */
     private static void wrapperInnerTemplateAuthority(Compiled compiled) throws Exception {
-        String drive = "local surface = __exportSurfaces[\"host.bytes_roundtrip\"]\n"
+        String drive = "local surface = __exportSurfaces[\"host.boundary\"]\n"
             + "if surface == nil then fail(\"no host surface\") end\n"
-            + "return pcall(surface.echoBytes.f, 5, \"probe.deal\", 3, 4)\n";
+            + "return pcall(surface.echoBoolean.f, 5, \"probe.deal\", 3, 4)\n";
         String mutated = "the declared kind is {kind}";
         Path patched = patchedArtifact(compiled,
             armEntry(FailureArmId.TYPED_BOUNDARY_KIND),
             mutatedEntry(FailureArmId.TYPED_BOUNDARY_KIND, mutated));
         WrapperPin replaced = wrapperPin(FailureArmId.HOST_PARAMETER_CELL,
             Map.of("index", "1", "inner", FailureProjections.kindReason(
-                RuntimeDescriptor.Bytes.INSTANCE)),
-            "bytes", "number", "probe.deal:3:4", "5", true,
-            FailureArmId.TYPED_BOUNDARY_KIND, "bytes")
-            .withMessage("parameter 1 type mismatch: the declared kind is bytes");
+                RuntimeDescriptor.Boolean.INSTANCE)),
+            "boolean", "number", "probe.deal:3:4", "5", true,
+            FailureArmId.TYPED_BOUNDARY_KIND, "boolean")
+            .withMessage("parameter 1 type mismatch: the declared kind is boolean");
         checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
             wrapperRecorder(), drive, wrapperTuple(replaced)),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the inner "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the inner "
             + "template is the text authority — the replaced serialized template "
             + "renders the published message");
         checkOutput(runWrapperProbe(compiled, Map.of(), patched.toString(),
-            wrapperRecorder(null, "  return \"expected bytes\"\n"), drive,
+            wrapperRecorder(null, "  return \"expected boolean\"\n"), drive,
             wrapperDefect("HOST_PARAMETER_CELL",
                 "closed inner-reason vocabulary")),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the stale matcher "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the stale matcher "
             + "text no longer passes once the serialized template is replaced "
             + "(no copied literal can stand in for the arm)");
         checkOutput(runWrapperProbe(compiled, Map.of(), artifactPath(compiled),
-            wrapperRecorder(null, "  return \"the declared kind is bytes\"\n"),
+            wrapperRecorder(null, "  return \"the declared kind is boolean\"\n"),
             drive, wrapperDefect("HOST_PARAMETER_CELL",
                 "closed inner-reason vocabulary")),
-            "host-abi/host-bytes-param-mismatch-e8010 (luajit): the replaced "
+            "host-abi/host-boolean-param-mismatch-e8010 (luajit): the replaced "
             + "template's text is rejected against the unmodified artifact's "
             + "serialized vocabulary");
     }
@@ -5827,10 +5824,10 @@ public class CanonicalProjectionParityTest {
      * carrier the corpus host returns ({@code Long.valueOf(42L)} on the JVM
      * host surface), and these drives pin the classification of the integer
      * and of every nonnumeric table-carried carrier against the arm's own
-     * render: a plain table, an array, a bytes buffer and the DEAL
+     * render: a plain table, an array and the DEAL
      * language-null sentinel all project the single {@code table} token the
      * two target host classifiers project (never the typed-boundary
-     * {@code table}/{@code array}/{@code bytes}/{@code null} refinement).
+     * {@code table}/{@code array}/{@code null} refinement).
      */
     private static void assertAsyncHandleCarriers(Compiled compiled,
             SidecarExpectations.ErrorExpectation pin) {
@@ -5843,8 +5840,6 @@ public class CanonicalProjectionParityTest {
                 new ArrayList<>(), RuntimeDescriptor.parseCanonicalText("[string]"),
                 false),
             "table", "array carrier");
-        assertScriptedAsyncHandle(compiled, pin, new SemanticOracle.Value.BytesValue(0),
-            "table", "bytes carrier");
         assertScriptedAsyncHandle(compiled, pin, SemanticOracle.Value.NullValue.INSTANCE,
             "table", "language-null carrier");
     }
@@ -6265,8 +6260,7 @@ public class CanonicalProjectionParityTest {
         return SemanticLowerer.lowerProject(invocation, built.input(), built.index(),
             manifests.manifests(), new HostDeclarationSurface(Map.of()), Map.of(),
             BuiltinErrorDeclaration.synthesized(program.span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -6320,8 +6314,7 @@ public class CanonicalProjectionParityTest {
             seed.manifests().manifests(), new HostDeclarationSurface(Map.of()),
             Map.of(), BuiltinErrorDeclaration.synthesized(
                 seed.input().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             callbackExports);
         if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
             fail(what + ": the production project lowering fails: "
@@ -7109,8 +7102,7 @@ public class CanonicalProjectionParityTest {
                         .filter(module -> module.moduleId()
                             .equals(compiled.checkedProject().entryModule()))
                         .findFirst().orElseThrow().ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 java.util.Set.of(), backend, false,
                 deal.distribution.DistributionHome.forManifestDirectory(
                     compiled.mirror().toString()), stager);
@@ -7827,7 +7819,7 @@ public class CanonicalProjectionParityTest {
                   print("CELL|" .. label .. "|" .. (ok and "PASS"
                     or tostring(err.message or err.m)))
                 end
-                row("kind", "bytes", 3)
+                row("kind", "boolean", 3)
                 row("range", "int", 1e10)
                 row("utf8", "string", "a" .. string.char(128) .. "b")
                 row("surrogate", "string", string.char(237, 160, 128))
@@ -7845,7 +7837,7 @@ public class CanonicalProjectionParityTest {
             List<String> rows = captured.stdout().lines()
                 .filter(line -> line.startsWith("CELL|")).toList();
             checkEq(List.of(
-                "CELL|kind|expected bytes",
+                "CELL|kind|expected boolean",
                 "CELL|range|int out of safe range",
                 "CELL|utf8|expected string, got invalid UTF-8 encoding",
                 "CELL|surrogate|expected string, got UTF-16 surrogate code point",
@@ -9374,8 +9366,7 @@ public class CanonicalProjectionParityTest {
                     .filter(module -> module.moduleId()
                         .equals(built.input().entryModule()))
                     .findFirst().orElseThrow().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(lowering != null && !lowering.hasErrors() && lowering.project() != null,
             what + ": the two-module namespace project lowers through the one "
@@ -9489,8 +9480,8 @@ public class CanonicalProjectionParityTest {
             "the superseded FOR_EACH absent-element text is caught by field name "
                 + "message");
         checkEq("message", firstDifferingField(reference, tuple("E8001",
-            "parameter 1 type mismatch: expected bytes, got number", reference.span(),
-            "bytes", "number")),
+            "parameter 1 type mismatch: expected boolean, got number", reference.span(),
+            "boolean", "number")),
             "the superseded host composite is caught by field name message");
         checkEq("span", firstDifferingField(reference, tuple("E8001",
             "expected int", "type-mismatch-e8001.deal:9:10", "int", "string")),

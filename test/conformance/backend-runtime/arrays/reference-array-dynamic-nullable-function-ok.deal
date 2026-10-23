@@ -1,0 +1,27 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: The nullable ?(int[])->int[] row passes the DEAL null and a real (int[])->int[] wrapper crossing a dynamic boundary (ISSUE-0550).
+// @expected: runtime-ok
+// @features: descriptors, int[], functions, dynamic-boundaries
+
+export function test_array_dynamic_nullable_function_ok(): string {
+  let id: (b: int[]) => int[] = function(b: int[]): int[] { return b; };
+  let holderNull: table = { f: null };
+  let f: ((b: int[]) => int[]) | null = holderNull.f;
+  if (f !== null) {
+    throw { code: "TEST_FAIL", message: "nullable function null pass-through mismatch" };
+  }
+  let holderFn: table = { g: id };
+  let g: ((b: int[]) => int[]) | null = holderFn.g;
+  if (g !== null) {
+    if (g([0]).length !== 1) {
+      throw { code: "TEST_FAIL", message: "nullable function call mismatch" };
+    }
+  } else {
+    throw { code: "TEST_FAIL", message: "nullable function value lost" };
+  }
+  return "dynamic ?(int[])->int[] ok";
+}
+
+export function main(): null {
+  return null;
+}

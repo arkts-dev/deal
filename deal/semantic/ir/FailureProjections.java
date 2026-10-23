@@ -40,11 +40,6 @@ public final class FailureProjections {
         STRING,
         /** Every numeric carrier. */
         NUMBER,
-        /**
-         * The bytes carrier at the {@code std/json} rejection arm's pinned
-         * member (the corpus pins {@code bytes}).
-         */
-        BYTES,
         /** A raw host-facing function. */
         HOST_FUNCTION,
         /**
@@ -77,7 +72,6 @@ public final class FailureProjections {
             case INVALID_UNICODE -> "invalid-unicode";
             case TABLE -> "table";
             case ARRAY -> "array";
-            case BYTES -> "bytes";
             case FUNCTION -> "function";
             case ASYNC_OPERATION -> "async-operation";
             case NOTHING -> "nothing";
@@ -109,10 +103,7 @@ public final class FailureProjections {
      * the DEAL-null sentinel is {@code table}, a string carrier (a valid or
      * invalid Unicode scalar sequence) is {@code string}, and every other
      * table-carried value is {@code table} while a raw host-facing function
-     * stays {@code function}. The {@code std/json} rejection arm's two
-     * pinned members ({@link CarrierKind#BYTES},
-     * {@link CarrierKind#DEAL_FUNCTION}) project their own tokens; the host
-     * arms never classify a value as either member.
+     * stays {@code function}. A DEAL function also projects {@code function}.
      */
     public static String carrierKindToken(CarrierKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
@@ -122,7 +113,6 @@ public final class FailureProjections {
             case BOOLEAN -> "boolean";
             case STRING -> "string";
             case NUMBER -> "number";
-            case BYTES -> "bytes";
             case HOST_FUNCTION, DEAL_FUNCTION -> "function";
             case TABLE -> "table";
         };
@@ -143,7 +133,6 @@ public final class FailureProjections {
             case RuntimeDescriptor.Number ignored -> "number";
             case RuntimeDescriptor.String ignored -> "string";
             case RuntimeDescriptor.Table ignored -> "table";
-            case RuntimeDescriptor.Bytes ignored -> "bytes";
             case RuntimeDescriptor.Array ignored -> "array";
             case RuntimeDescriptor.Func ignored -> "function";
             case RuntimeDescriptor.Class ignored -> "class instance";

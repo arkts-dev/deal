@@ -35,7 +35,7 @@ public class TypeDescriptorTest {
         testIrZeroParamDescriptor();
         testIrFixedParamsDescriptor();
         testIrArrayParamDescriptor();
-        testIrBytesRows();
+        testIrTableRows();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
@@ -279,17 +279,17 @@ public class TypeDescriptorTest {
         System.out.println("OK");
     }
 
-    static void testIrBytesRows() {
-        System.out.print("  testIrBytesRows... ");
+    static void testIrTableRows() {
+        System.out.print("  testIrTableRows... ");
         CompileResult cr = compile("""
-            function f(b: bytes): bytes { return b; }
-            function g(a: bytes[], m: bytes | null): null { return; }
+            function f(b: table): table { return b; }
+            function g(a: table[], m: table | null): null { return; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "param b: bytes", "bytes param uses the bytes primitive");
-        assertContains(ir, "function f: bytes", "bytes return row uses the bytes primitive");
-        assertContains(ir, "[bytes]", "bytes array uses [bytes]");
-        assertContains(ir, "?bytes", "nullable bytes uses ?bytes");
+        assertContains(ir, "param b: table", "table param uses the table primitive");
+        assertContains(ir, "function f: table", "table return row uses the table primitive");
+        assertContains(ir, "[table]", "table array uses [table]");
+        assertContains(ir, "?table", "nullable table uses ?table");
         System.out.println("OK");
     }
 

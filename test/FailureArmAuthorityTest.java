@@ -112,14 +112,13 @@ public class FailureArmAuthorityTest {
         testCompletionFamilyDrive();
         testCompletionSignatureDrive();
         testCompletionNullCarrierDrive();
-        testTypedBoundaryBytesCarrier();
         testTypedBoundaryClassAtomCarrier();
         testForgedCarrierTableKeys();
         testTypedBoundaryInvalidUnicode();
         testStdJsonArmDrive();
         testInt32AndSqrtArmFamily();
         testIntLadderWrongKindCell();
-        testBoundsAndBytesArms();
+        testArrayBoundsArms();
         testDeclaredFieldShapeNegatives();
         testTypedBoundaryClassSpellingNegatives();
         testFieldParameterBindingNegatives();
@@ -245,14 +244,8 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.ActualKind.STRING, null).equals("string"),
             "the completion variant maps every numeric carrier to number");
         check(FailureProjections.carrierKindToken(
-                FailureProjections.CarrierKind.BYTES).equals("bytes")
-                && FailureProjections.carrierKindToken(
-                    FailureProjections.CarrierKind.DEAL_FUNCTION).equals("function"),
-            "the carrier-kind projection carries the std/json arm's two pinned members "
-                + "(bytes, function)");
-        check(FailureProjections.typedBoundaryToken(
-                deal.semantic.ir.ActualKind.BYTES, null).equals("bytes"),
-            "the typed-boundary projection projects the bytes carrier");
+                FailureProjections.CarrierKind.DEAL_FUNCTION).equals("function"),
+            "the carrier-kind projection carries the std/json function token");
         check(FailureProjections.carrierKindToken(
                 FailureProjections.CarrierKind.ABSENT).equals("nil")
                 && FailureProjections.carrierKindToken(
@@ -416,7 +409,7 @@ public class FailureArmAuthorityTest {
      * carrier — a valid Unicode scalar sequence and an invalid one alike —
      * projects the closed {@code string} token at the host cells, exactly as
      * the unchanged runtimes and both production artifacts do. The pinned
-     * host fixtures are {@code host-abi/host-bytes-return-mismatch-e8010},
+     * host fixtures are {@code host-abi/host-array-return-mismatch-e8010},
      * {@code host-bad-return}, {@code host-null-return-bad},
      * {@code host-prewrapped-bad}, {@code host-invalid-utf8-e8010}, and
      * {@code host-surrogate-utf8-e8010} (all pinned {@code actual: string});
@@ -511,17 +504,17 @@ public class FailureArmAuthorityTest {
         checkEq("string", FailureProjections.carrierKindToken(
             FailureProjections.CarrierKind.STRING),
             "the carrier-kind projection has the closed string token");
-        // host-bytes-return-mismatch-e8010: the declared bytes return cell
+        // host-table-return-mismatch-e8010: the declared table return cell
         // with a string value (pinned actual "string").
-        BoundaryFailure bytesReturn = oracleFailure(BoundaryExecutor.check(
-            FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Bytes.INSTANCE,
+        BoundaryFailure tableReturn = oracleFailure(BoundaryExecutor.check(
+            FailurePolicyId.HOST_SYNC_RETURN, RuntimeDescriptor.Table.INSTANCE,
             BoundaryValueView.of(ActualKind.STRING), BoundaryContext.none()),
-            "the host bytes return cell");
-        checkEq("E8010", bytesReturn.code().name(), "the pinned host return code");
-        checkEq("return value 1 type mismatch: expected bytes", bytesReturn.message(),
+            "the host table return cell");
+        checkEq("E8010", tableReturn.code().name(), "the pinned host return code");
+        checkEq("return value 1 type mismatch: expected table", tableReturn.message(),
             "the pinned host return message");
-        checkEq("bytes", bytesReturn.expected(), "the declared cell descriptor");
-        checkEq("string", bytesReturn.actual(),
+        checkEq("table", tableReturn.expected(), "the declared cell descriptor");
+        checkEq("string", tableReturn.actual(),
             "the oracle projects the carrier-kind string actual");
         // host-bad-return / host-null-return-bad / host-prewrapped-bad: the
         // same string actual at the declared int/null return cells.
@@ -579,7 +572,7 @@ public class FailureArmAuthorityTest {
                 + "arm's own text");
         checkEq("string", malformed.actual(),
             "the malformed carrier cell projects the string actual");
-        // The host parameter cell of the same shape (host-bytes-param-mismatch's
+        // The host parameter cell of the same shape (host-boolean-param-mismatch's
         // sibling int cell with a string value).
         BoundaryFailure parameter = oracleFailure(BoundaryExecutor.check(
             FailurePolicyId.HOST_PARAMETER, RuntimeDescriptor.Int.INSTANCE,
@@ -1186,8 +1179,7 @@ public class FailureArmAuthorityTest {
         SemanticLowerer.ProjectLoweringResult lowering = SemanticLowerer.lowerProject(
             invocation, built.input(), built.index(), manifests.manifests(),
             lua.hostDeclarationSurface(), identities, BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
         check(lowering.project() != null && lowering.project().modules()
                 .containsKey(lowering.project().entryModule()),
@@ -1227,8 +1219,7 @@ public class FailureArmAuthorityTest {
             jvm = deal.module.ProductionProjectEmission.run(invocation, built.input(),
                 built.index(), manifests.manifests(), lua.hostDeclarationSurface(),
                 identities, BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 java.util.Set.of(), Backend.JVM, false,
                 deal.distribution.DistributionHome.forManifestDirectory(src.toString()),
                 stager);
@@ -1556,8 +1547,7 @@ public class FailureArmAuthorityTest {
      * the artifact: a probe that drives a runtime-produced carrier (the
      * async handle, the runtime class representation) loads
      * {@code deal/runtime.lua} through {@code require("deal.runtime")},
-     * exactly like the emitted artifacts of a chunk that binds the host or
-     * bytes surface.
+     * exactly like the emitted artifacts of a chunk that binds the host surface.
      */
     private static List<String> runProbe(String chunk, String modulePath, String body,
                                          String probeName, int minRows, boolean bindRuntime)
@@ -1627,84 +1617,7 @@ public class FailureArmAuthorityTest {
         }
     }
 
-    // =========================================================================
-    // 9. The typed-boundary bytes carrier (the non-bytes cell admission)
-    // =========================================================================
 
-    /**
-     * The typed-boundary projection's bytes member at the kind arm: a
-     * bytes carrier projects {@code bytes}, so a non-bytes typed boundary
-     * rejects it on every consumer. The cell is the reachable bytes value
-     * crossing a {@code table} (and an {@code int}) typed boundary; before
-     * the closed bytes case the emitted Lua prelude projected the table
-     * spelling and admitted the value while the oracle and the JVM
-     * artifact rejected it. One identical tuple from the oracle, the JVM
-     * runtime, and the emitted prelude under {@code luajit}, with the
-     * table-at-table and bytes-at-bytes admissions as the controls.
-     */
-    static void testTypedBoundaryBytesCarrier() throws Exception {
-        System.out.println("-- the typed-boundary bytes carrier (the table/int cells) --");
-        String span = FailureContractRegistry.arm(FailureArmId.TYPED_BOUNDARY_KIND)
-            .origin().name();
-        Tuple oracleTable = tupleOf(oracleFailure(BoundaryExecutor.check(
-            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Table.INSTANCE,
-            BoundaryValueView.of(ActualKind.BYTES), BoundaryContext.none()),
-            "the bytes-at-table cell"), span);
-        checkEq(new Tuple("E8001", "expected table", span, "table", "bytes"),
-            oracleTable, "the oracle rejects a bytes carrier at a table boundary");
-        Tuple oracleInt = tupleOf(oracleFailure(BoundaryExecutor.check(
-            FailurePolicyId.TYPE_DESCRIPTOR, RuntimeDescriptor.Int.INSTANCE,
-            BoundaryValueView.of(ActualKind.BYTES), BoundaryContext.none()),
-            "the bytes-at-int cell"), span);
-        checkEq(new Tuple("E8001", "expected int", span, "int", "bytes"),
-            oracleInt, "the oracle rejects a bytes carrier at an int boundary");
-        // The JVM runtime leg (a real bytes carrier).
-        deal.codegen.jvm.JvmRuntime.BytesValue bytesValue =
-            new deal.codegen.jvm.JvmRuntime.BytesValue(2);
-        deal.codegen.jvm.JvmRuntime.DealError jvmTable = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheck("table", "table", bytesValue));
-        check(jvmTable != null, "the JVM table boundary rejects the bytes carrier");
-        if (jvmTable != null) {
-            checkEq(null, firstDifferingField(oracleTable,
-                new Tuple(jvmTable.code, jvmTable.msg, span, jvmTable.expected,
-                    jvmTable.actual)),
-                "the JVM runtime renders the oracle's identical bytes-at-table tuple");
-        }
-        deal.codegen.jvm.JvmRuntime.DealError jvmInt = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.bcheck("int", "int", bytesValue));
-        check(jvmInt != null, "the JVM int boundary rejects the bytes carrier");
-        if (jvmInt != null) {
-            checkEq(null, firstDifferingField(oracleInt,
-                new Tuple(jvmInt.code, jvmInt.msg, span, jvmInt.expected, jvmInt.actual)),
-                "the JVM runtime renders the oracle's identical bytes-at-int tuple");
-        }
-        // The emitted prelude leg, under real luajit: the failures and the
-        // two admissions.
-        List<String> rows = runPreludeProbe("""
-            local bytes = {[__dealCarrierKeys.kind] = "bytes", __len = 0}
-            local ok, value = pcall(__bcheck, "table", "table", bytes, nil)
-            row("bytes-at-table", ok, value)
-            ok, value = pcall(__bcheck, "int", "int", bytes, nil)
-            row("bytes-at-int", ok, value)
-            ok, value = pcall(__bcheck, "table", "table", {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {}}, nil)
-            row("table-at-table", ok, value)
-            ok, value = pcall(__bcheck, "bytes", "bytes", bytes, nil)
-            row("bytes-at-bytes", ok, value)
-            """, "bytes-boundary-probe", 4);
-        checkEq("bytes-at-table|E8001|table|bytes|expected table", rows.get(0),
-            "the emitted prelude rejects the bytes carrier at a table boundary with the "
-                + "closed kind tuple");
-        checkEq("bytes-at-int|E8001|int|bytes|expected int", rows.get(1),
-            "the emitted prelude rejects the bytes carrier at an int boundary");
-        checkEq("table-at-table|OK|", rows.get(2),
-            "the emitted prelude admits a table carrier at a table boundary");
-        checkEq("bytes-at-bytes|OK|", rows.get(3),
-            "the emitted prelude admits the bytes carrier at a bytes boundary");
-        checkEq(null, firstDifferingField(oracleTable, luaTuple(rows.get(0), span)),
-            "the Lua artifact renders the oracle's identical bytes-at-table tuple");
-        checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(1), span)),
-            "the Lua artifact renders the oracle's identical bytes-at-int tuple");
-    }
 
     // =========================================================================
     // 9a-1b. The typed-boundary class atom and the builtin Error
@@ -1719,7 +1632,7 @@ public class FailureArmAuthorityTest {
      * the emitted Lua prelude's {@code __typedBoundaryKind}, and the shipped
      * {@code deal/runtime.lua} matcher's own rows agree byte-for-byte. Before
      * the fix the shipped runtime published the raw Lua {@code type()} of the
-     * carrier ({@code table}) on its primitive, bytes and wrong-kind rows, so
+     * carrier ({@code table}) on its primitive and wrong-kind rows, so
      * the shipped stdlib and completion consumers diverged from the
      * prelude/JVM/JS lanes. The class-identity and signature arms are
      * unchanged and are pinned as controls.
@@ -1801,15 +1714,13 @@ public class FailureArmAuthorityTest {
               return rt.check_type("@src/app/Admin", user) end)
             runtimeRow("runtime-class-at-function", function()
               return rt.check_type("()->null", user) end)
-            runtimeRow("runtime-bytes-at-class", function()
-              return rt.check_type("@src/app/User", rt.bytes_new(1)) end)
             local ok, value = pcall(__bcheck, "string", "string", user, nil)
             row("prelude-class-at-string", ok, value)
             ok, value = pcall(__bcheck, "int", "int", user, nil)
             row("prelude-class-at-int", ok, value)
             ok, value = pcall(__bcheck, "string", "string", errv, nil)
             row("prelude-error-at-string", ok, value)
-            """, "typed-boundary-class-probe", 9, true);
+            """, "typed-boundary-class-probe", 8, true);
 
         checkEq(null, firstDifferingField(oracleString, luaTuple(rows.get(0), span)),
             "the shipped runtime renders the oracle's identical class-at-string tuple: "
@@ -1829,21 +1740,19 @@ public class FailureArmAuthorityTest {
         checkEq("runtime-class-at-function|E8001|function|" + atom
                 + "|expected function",
             rows.get(4), "the function row projects the class atom");
-        checkEq("runtime-bytes-at-class|E8001|class|bytes|expected class instance",
-            rows.get(5), "the class row's kind arm projects the bytes carrier");
         // The emitted prelude's own projection of the same values.
-        checkEq(null, firstDifferingField(oracleString, luaTuple(rows.get(6), span)),
+        checkEq(null, firstDifferingField(oracleString, luaTuple(rows.get(5), span)),
             "the emitted prelude renders the oracle's identical class-at-string tuple: "
-                + rows.get(6));
-        checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(7), span)),
+                + rows.get(5));
+        checkEq(null, firstDifferingField(oracleInt, luaTuple(rows.get(6), span)),
             "the emitted prelude renders the oracle's identical class-at-int tuple: "
-                + rows.get(7));
-        checkEq(null, firstDifferingField(oracleError, luaTuple(rows.get(8), span)),
+                + rows.get(6));
+        checkEq(null, firstDifferingField(oracleError, luaTuple(rows.get(7), span)),
             "the emitted prelude publishes the canonical bare Error atom: "
-                + rows.get(8));
+                + rows.get(7));
         // The two Lua consumers agree field-for-field (the shipped runtime is
         // not a second authority).
-        checkEq(null, firstDifferingField(luaTuple(rows.get(6), span),
+        checkEq(null, firstDifferingField(luaTuple(rows.get(5), span),
                 luaTuple(rows.get(0), span)),
             "the shipped runtime and the emitted prelude publish one tuple");
     }
@@ -1856,10 +1765,9 @@ public class FailureArmAuthorityTest {
      * ISSUE-0830: a DEAL table may carry any string key. On the emitted
      * prelude under real luajit a table whose keys spell the internal
      * carrier vocabulary is the table value at the table cell and is
-     * rejected at the class, array, bytes, function and int cells with the
+     * rejected at the class, array, function and int cells with the
      * value's own table token — never admitted as a carrier of the arm its
-     * keys name. A real carrier (the runtime class representation and the
-     * bytes carrier) keeps its own token, so the two vocabularies stay
+     * keys name. A real carrier (the runtime class representation) keeps its own token, so the two vocabularies stay
      * distinguishable in one process.
      */
     static void testForgedCarrierTableKeys() throws Exception {
@@ -1881,8 +1789,6 @@ public class FailureArmAuthorityTest {
             row("forged-at-class", ok, value)
             ok, value = pcall(__bcheck, "array(int)", "table", forged, nil)
             row("forged-at-array", ok, value)
-            ok, value = pcall(__bcheck, "bytes", "bytes", forged, nil)
-            row("forged-at-bytes", ok, value)
             ok, value = pcall(__bcheck, "function(;null)", "table", forged,
               "()->null")
             row("forged-at-function", ok, value)
@@ -1896,24 +1802,22 @@ public class FailureArmAuthorityTest {
               "[int]")
             row("real-array-carrier", ok, value)
             print("forged-kind|" .. __typedBoundaryKind("", forged))
-            """, "forged-carrier-probe", 9);
+            """, "forged-carrier-probe", 8);
         checkEq("forged-at-table|OK|", rows.get(0),
             "a table with carrier-like keys is the table value");
         checkEq("forged-at-class|E8001|class|table|expected class instance",
             rows.get(1), "the forged class carrier is rejected");
         checkEq("forged-at-array|E8001|array|table|expected array",
             rows.get(2), "the forged array carrier is rejected");
-        checkEq("forged-at-bytes|E8001|bytes|table|expected bytes",
-            rows.get(3), "the forged bytes carrier is rejected");
         checkEq("forged-at-function|E8001|function|table|expected function",
-            rows.get(4), "the forged function carrier is rejected");
-        checkEq("forged-at-int|E8001|int|table|expected int", rows.get(5),
+            rows.get(3), "the forged function carrier is rejected");
+        checkEq("forged-at-int|E8001|int|table|expected int", rows.get(4),
             "a table with carrier-like keys is not an int carrier");
-        checkEq("real-table-carrier|OK|", rows.get(6),
+        checkEq("real-table-carrier|OK|", rows.get(5),
             "the emitted table carrier is the table value");
-        checkEq("real-array-carrier|OK|", rows.get(7),
+        checkEq("real-array-carrier|OK|", rows.get(6),
             "the emitted array carrier is the array value");
-        checkEq("forged-kind|table", rows.get(8),
+        checkEq("forged-kind|table", rows.get(7),
             "the typed-boundary projection of a carrier-like table is table");
     }
 
@@ -2115,8 +2019,7 @@ public class FailureArmAuthorityTest {
      * runtime's stdlib realization, and the emitted prelude under
      * {@code luajit}. The cells are the reachable carrier kinds — the
      * absent marker ({@code nil}), a class instance ({@code table}), a
-     * DEAL function value ({@code function}), the bytes carrier
-     * ({@code bytes}), and a nonfinite number ({@code number}); the
+     * DEAL function value ({@code function}), and a nonfinite number ({@code number}); the
      * expected field is the arm's own pinned text on every consumer.
      */
     static void testStdJsonArmDrive() throws Exception {
@@ -2145,10 +2048,6 @@ public class FailureArmAuthorityTest {
             new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null),
             span, expectedText, "function",
             "the oracle projects a DEAL function value as the function member");
-        Tuple oracleBytes = checkStdJsonOracle(origin,
-            new deal.semantic.SharedStdlibSemantics.Value.Other(ActualKind.BYTES, null),
-            span, expectedText, "bytes",
-            "the oracle projects the bytes carrier as the bytes member");
         Tuple oracleNumber = checkStdJsonOracle(origin,
             new deal.semantic.SharedStdlibSemantics.Value.Number(Double.NaN),
             span, expectedText, "number",
@@ -2164,10 +2063,6 @@ public class FailureArmAuthorityTest {
                 new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> null, "() -> null")),
             span, expectedText, "function",
             "the JVM runtime projects a DEAL function value as the function member");
-        Tuple jvmBytes = checkStdJsonJvm(tableWith("b",
-                new deal.codegen.jvm.JvmRuntime.BytesValue(2)),
-            span, expectedText, "bytes",
-            "the JVM runtime projects the bytes carrier as the bytes member");
         Tuple jvmNumber = checkStdJsonJvm(tableWith("n", Double.valueOf(Double.NaN)),
             span, expectedText, "number",
             "the JVM runtime projects a nonfinite number as number");
@@ -2177,8 +2072,6 @@ public class FailureArmAuthorityTest {
             "the JVM runtime renders the oracle's identical class tuple");
         checkEq(null, firstDifferingField(oracleFunction, jvmFunction),
             "the JVM runtime renders the oracle's identical function tuple");
-        checkEq(null, firstDifferingField(oracleBytes, jvmBytes),
-            "the JVM runtime renders the oracle's identical bytes tuple");
         checkEq(null, firstDifferingField(oracleNumber, jvmNumber),
             "the JVM runtime renders the oracle's identical number tuple");
         // The emitted prelude leg, under real luajit: the arm's own render
@@ -2195,12 +2088,9 @@ public class FailureArmAuthorityTest {
             row("class", ok, value)
             ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"f"}, f = function() end})
             row("function", ok, value)
-            ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"b"},
-              b = {[__dealCarrierKeys.kind] = "bytes", __len = 0}})
-            row("bytes", ok, value)
             ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"n"}, n = 0 / 0})
             row("nan", ok, value)
-            """, "std-json-probe", 5);
+            """, "std-json-probe", 4);
         checkEq("missing|E8001|" + expectedText
                 + "|nil|unsupported type for JSON encoding: nil",
             rows.get(0), "the emitted prelude renders the arm's nil cell");
@@ -2210,12 +2100,9 @@ public class FailureArmAuthorityTest {
         checkEq("function|E8001|" + expectedText
                 + "|function|unsupported type for JSON encoding: function",
             rows.get(2), "the emitted prelude renders the arm's function member");
-        checkEq("bytes|E8001|" + expectedText
-                + "|bytes|unsupported type for JSON encoding: bytes",
-            rows.get(3), "the emitted prelude renders the arm's bytes member");
         checkEq("nan|E8001|" + expectedText
                 + "|number|unsupported type for JSON encoding: number",
-            rows.get(4), "the emitted prelude renders the arm's number cell");
+            rows.get(3), "the emitted prelude renders the arm's number cell");
         checkEq(null, firstDifferingField(oracleMissing,
             luaTuple(rows.get(0), span)),
             "the Lua artifact renders the oracle's identical absent-marker tuple");
@@ -2223,9 +2110,7 @@ public class FailureArmAuthorityTest {
             "the Lua artifact renders the oracle's identical class tuple");
         checkEq(null, firstDifferingField(oracleFunction, luaTuple(rows.get(2), span)),
             "the Lua artifact renders the oracle's identical function tuple");
-        checkEq(null, firstDifferingField(oracleBytes, luaTuple(rows.get(3), span)),
-            "the Lua artifact renders the oracle's identical bytes tuple");
-        checkEq(null, firstDifferingField(oracleNumber, luaTuple(rows.get(4), span)),
+        checkEq(null, firstDifferingField(oracleNumber, luaTuple(rows.get(3), span)),
             "the Lua artifact renders the oracle's identical number tuple");
     }
 
@@ -2488,27 +2373,13 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
-    // 11c. The reachable bounds/bytes arms render through the arm table
+    // 11c. The reachable array bounds arms render through the arm table
     // =========================================================================
 
-    /**
-     * Every reachable array/bytes bounds arm and the multi-code
-     * {@code BYTES_WRITE} value-range arm renders through the closed arm
-     * table — the oracle's shared executor, the row-position entry point
-     * ({@code fromRow}, which resolves the bound arm and can never
-     * instantiate a retained template behind its arm's back), and the JVM
-     * runtime's bytes sites. The emitted Lua prelude's bytes gates render the
-     * same arms and hold no failure text of their own.
-     */
-    static void testBoundsAndBytesArms() throws Exception {
-        System.out.println("-- the array/bytes bounds arms and the multi-code range arm --");
+    /** Array read/write/delete bounds render through the shared arm table. */
+    static void testArrayBoundsArms() throws Exception {
+        System.out.println("-- array bounds arms --");
         String span = "bounds-arms.deal:1:1";
-        checkEq("E8012", FailureContractRegistry.codeOf(
-                FailureContractRegistry.arm(FailureArmId.BYTES_WRITE_BOUNDS)),
-            "the bytes bounds arm keeps its row's E8012");
-        checkEq("E8013", FailureContractRegistry.codeOf(
-                FailureContractRegistry.arm(FailureArmId.BYTES_WRITE_RANGE)),
-            "the multi-code row's value-range arm pins its own E8013");
         // The oracle's shared executor renders each reachable bounds arm.
         checkEq(null, firstDifferingField(
             tupleOf(FailureContractRegistry.render(FailureArmId.ARRAY_READ_BOUNDS,
@@ -2534,66 +2405,6 @@ public class FailureArmAuthorityTest {
                 BoundaryValueView.ofInt(0), BoundaryContext.writeBounds(-1, 1)),
                 "the delete bounds"), span)),
             "the oracle renders ARRAY_DELETE_BOUNDS");
-        checkEq(null, firstDifferingField(
-            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_READ,
-                Map.of(), null, null, null), span),
-            tupleOf(oracleFailure(BoundaryExecutor.check(FailurePolicyId.BYTES_READ,
-                RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
-                BoundaryContext.bytesBounds(2, 2)), "the bytes read bounds"), span)),
-            "the oracle renders BYTES_READ");
-        checkEq(null, firstDifferingField(
-            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_WRITE_BOUNDS,
-                Map.of(), null, null, null), span),
-            tupleOf(oracleFailure(BoundaryExecutor.check(FailurePolicyId.BYTES_WRITE,
-                RuntimeDescriptor.Int.INSTANCE, BoundaryValueView.ofInt(0),
-                BoundaryContext.bytesBounds(-1, 2)), "the bytes write bounds"), span)),
-            "the oracle renders BYTES_WRITE_BOUNDS");
-        checkEq(null, firstDifferingField(
-            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_WRITE_RANGE,
-                Map.of(), null, null, null), span),
-            tupleOf(BoundaryExecutor.bytesWriteRangeFailure(), span)),
-            "the oracle's value-range projection renders the multi-code arm");
-        // The row-position entry point resolves the bound arm: the same
-        // template and the arm's own code, never a caller-selected code.
-        checkEq(null, firstDifferingField(
-            tupleOf(FailureContractRegistry.render(FailureArmId.BYTES_WRITE_RANGE,
-                Map.of(), null, null, null), span),
-            tupleOf(BoundaryFailure.fromRow(FailureContractRegistry.row(
-                FailurePolicyId.BYTES_WRITE), 1, null, null, new LinkedHashMap<>(), null),
-                span)),
-            "the row-position entry point renders the arm's own code and template");
-        // The JVM runtime's bytes sites render the same arms.
-        checkJvmArm(FailureArmId.BYTES_ALLOCATE, Map.of(), null, null, span,
-            "the bytes allocation cell",
-            () -> deal.codegen.jvm.JvmRuntime.bytesNew(-1L, "INTRINSIC_CALL", "op",
-                "digest", "parent", span));
-        checkJvmArm(FailureArmId.BYTES_READ, Map.of(), null, null, span,
-            "the bytes read bounds cell",
-            () -> deal.codegen.jvm.JvmRuntime.bytesRead("op", "digest", "parent",
-                "bkey", "bdigest", "bparent",
-                new deal.codegen.jvm.JvmRuntime.BytesValue(2), 2L, 2L, span));
-        checkJvmArm(FailureArmId.BYTES_WRITE_BOUNDS, Map.of(), null, null, span,
-            "the bytes write bounds cell",
-            () -> deal.codegen.jvm.JvmRuntime.bytesBounds("bkey", "bdigest", "bparent",
-                Long.valueOf(0), -1L, 2L, "int", "int", span));
-        checkJvmArm(FailureArmId.BYTES_WRITE_RANGE, Map.of(), null, null, span,
-            "the bytes value-range cell",
-            () -> deal.codegen.jvm.JvmRuntime.bytesCommit("op", "digest", "parent",
-                new deal.codegen.jvm.JvmRuntime.BytesValue(1), 0L, Long.valueOf(256),
-                span));
-        checkJvmArm(FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "bytes"), "bytes",
-            "string", span, "the bytes-descriptor kind cell",
-            () -> { throw deal.codegen.jvm.JvmRuntime.bytesKindFailure("not-bytes", span); });
-        // The emitted Lua bytes gates render the same arms (a source control
-        // over the emitter: no composed bytes failure text remains).
-        String luaSource = Files.readString(Path.of("deal", "codegen", "lua",
-            "LuaSemanticEmitter.java"), StandardCharsets.UTF_8);
-        check(!luaSource.contains("__failExpr(\"E8012\""),
-            "the Lua emitter holds no composed E8012 failure text at a failure site");
-        check(luaSource.contains("__arm(\"BYTES_ALLOCATE\"")
-                && luaSource.contains("__arm(\"BYTES_READ\"")
-                && luaSource.contains("__arm(\"BYTES_WRITE_BOUNDS\""),
-            "the emitted bytes gates render the closed bytes arms");
     }
 
     // =========================================================================
@@ -2675,7 +2486,7 @@ public class FailureArmAuthorityTest {
             Map.of("kind", "int"), "int", "WRONG", null),
             "an actual token outside the closed typed-boundary vocabulary fails closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.HOST_PARAMETER_CELL,
-            Map.of("index", "1", "inner", "expected bytes"), "WRONG", "number", null),
+            Map.of("index", "1", "inner", "expected boolean"), "WRONG", "number", null),
             "a host cell's expected field outside the descriptor grammar fails closed");
         expectDefect(() -> FailureContractRegistry.render(FailureArmId.INT32_RANGE,
             Map.of(), null, "WRONG", null),
@@ -2810,7 +2621,7 @@ public class FailureArmAuthorityTest {
         // contradictory pairs fail closed and the matching pairs render.
         renderProbes("field-binding-probe",
             armProbe("walk-actual", "\"JSON_TO_WALK\", {fieldPath = \"data.k\", actual = \"function\"}, \"-\", nil, \"number\"", "false|"),
-            armProbe("stdjson-actual", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"string, number, boolean, or table\", \"bytes\"", "false|"),
+            armProbe("stdjson-actual", "\"JSON_STRINGIFY_UNSUPPORTED\", {actual = \"function\"}, \"-\", \"string, number, boolean, or table\", \"boolean\"", "false|"),
             armProbe("identity-expected", "\"CLASS_IDENTITY\", {expected = \"@corpus/a/A\", actual = \"@corpus/b/B\"}, \"-\", \"@corpus/c/C\", \"@corpus/b/B\"", "false|"),
             armProbe("identity-actual", "\"CLASS_IDENTITY\", {expected = \"@corpus/a/A\", actual = \"@corpus/b/B\"}, \"-\", \"@corpus/a/A\", \"@corpus/c/C\"", "false|"),
             armProbe("signature-expected", "\"FUNCTION_SIGNATURE_MISMATCH\", {expected = \"(int)->int\", actual = \"(int)->string\"}, \"-\", \"(int)->number\", \"(int)->string\"", "false|"),
@@ -2877,7 +2688,7 @@ public class FailureArmAuthorityTest {
                 + "code units"), "string", "string", null),
             "the registry rejects the JVM matcher's unpaired-surrogate sub-message");
         for (String[] values : List.of(
-                new String[] {"expected bytes", "bytes", "number", "parameter"},
+                new String[] {"expected boolean", "boolean", "number", "parameter"},
                 new String[] {"expected int, got NaN", "int", "number", "parameter"},
                 new String[] {"int out of safe range", "int", "number", "return"},
                 new String[] {"expected string, got UTF-16 surrogate code point", "string", "string", "return"},
@@ -2892,14 +2703,14 @@ public class FailureArmAuthorityTest {
                     values[1], values[2], null).message(),
                 "the declared inner reason passes through: " + values[0]);
         }
-        checkEq("parameter 1 type mismatch: expected bytes",
+        checkEq("parameter 1 type mismatch: expected boolean",
             BoundaryFailure.fromRow(FailureContractRegistry.row(FailurePolicyId.HOST_PARAMETER),
-                0, "bytes", "number", new LinkedHashMap<>(Map.of("index", "1",
-                    "inner", "expected bytes")), null).message(),
+                0, "boolean", "number", new LinkedHashMap<>(Map.of("index", "1",
+                    "inner", "expected boolean")), null).message(),
             "the row-addressed host render stays green");
-        checkEq("parameter 1 type mismatch: expected bytes",
+        checkEq("parameter 1 type mismatch: expected boolean",
             deal.codegen.jvm.JvmRuntime.arm(FailureArmId.HOST_PARAMETER_CELL,
-                Map.of("index", "1", "inner", "expected bytes"), "-", "bytes", "number").msg,
+                Map.of("index", "1", "inner", "expected boolean"), "-", "boolean", "number").msg,
             "the JVM host render stays green");
 
         // The emitted Lua prelude, under real luajit: the same negatives on
@@ -2908,8 +2719,8 @@ public class FailureArmAuthorityTest {
             innerProbe("arm", "invented", "invented reason", false),
             armProbe("suffixed", "\"HOST_SYNC_RETURN_CELL\", {inner = \"expected int, got string\"}, \"-\", \"string\", \"string\"", "false|"),
             innerProbe("template", "template-invented", "invented reason", false),
-            armProbe("kind-control", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"expected bytes\"}, \"-\", \"bytes\", \"number\"",
-                "true|parameter 1 type mismatch: expected bytes"),
+            armProbe("kind-control", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"expected boolean\"}, \"-\", \"boolean\", \"number\"",
+                "true|parameter 1 type mismatch: expected boolean"),
             armProbe("signature-control", "\"HOST_PARAMETER_CELL\", {index = \"1\", inner = \"function signature mismatch: expected (int)->int, got (string)->int\"}, \"-\", \"?(int)->int\", \"table\"",
                 "true|parameter 1 type mismatch: function signature mismatch: expected (int)->int, got (string)->int"),
             armProbe("range-control", "\"HOST_SYNC_RETURN_CELL\", {inner = \"int out of safe range\"}, \"-\", \"int\", \"number\"",

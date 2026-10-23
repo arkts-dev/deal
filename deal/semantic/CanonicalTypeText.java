@@ -74,7 +74,6 @@ public final class CanonicalTypeText {
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
             case Type.Table ignored -> "table";
-            case Type.Bytes ignored -> "bytes";
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a declared-type position: the internal checker "
                     + "sentinel has no canonical rendering and is excluded from the index");
@@ -199,8 +198,7 @@ public final class CanonicalTypeText {
 
     private static String renderNamed(String name, Context context) {
         return switch (name) {
-            case "null", "boolean", "int", "number", "string", "table",
-                    "bytes" -> name;
+            case "null", "boolean", "int", "number", "string", "table" -> name;
             case "Error" -> "Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {

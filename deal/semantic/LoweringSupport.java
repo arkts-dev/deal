@@ -209,13 +209,8 @@ public final class LoweringSupport {
                 || scan.storedFunctionExpression) {
             capabilities.add(SemanticCapability.CALLS);
         }
-        if (scan.bytesInContainer || scan.bytesValue) {
-            capabilities.add(SemanticCapability.CONTAINERS_AND_STRINGS);
-        }
-
-        boolean bytesBearing = scan.bytesInContainer || scan.bytesValue;
         return new SemanticRequirementManifest(module.moduleId(), capabilities,
-            scan.coverage, bytesBearing);
+            scan.coverage);
     }
 
     // =========================================================================
@@ -254,10 +249,6 @@ public final class LoweringSupport {
         boolean declaresAsyncFunction;
 
         boolean functionContainer;
-
-        boolean bytesInContainer;
-
-        boolean bytesValue;
 
         boolean dynamicCall;
 
@@ -428,9 +419,6 @@ public final class LoweringSupport {
             case ForOfStatement forOfStatement -> {
                 scan.cover(ConstructKind.IF_WHILE_FOR_FOR_OF);
                 Type iterableType = checkedType(module, forOfStatement.iterable());
-                if (Types.containsBytes(iterableType)) {
-                    scan.bytesInContainer = true;
-                }
                 if (containsFunction(iterableType)) {
                     scan.functionContainer = true;
                 }
@@ -482,9 +470,6 @@ public final class LoweringSupport {
                                        ModuleScan scan, SymbolTable checkerScope)
             throws FactDefect {
 
-        if (Types.containsBytes(checkedType(module, expression))) {
-            scan.bytesValue = true;
-        }
         switch (expression) {
             case LiteralExpr literalExpr -> {
                 scan.cover(ConstructKind.SCALAR_LITERAL);
@@ -768,11 +753,7 @@ public final class LoweringSupport {
      * the {@code ASSIGNMENT} row), never a {@code BINDING_LOAD}, so the
      * {@code IDENTIFIER} read row must not claim it — a module whose only
      * identifier occurrence is an assignment target has no identifier read
-     * to cover. Suppressing the read row does not suppress the checked-type
-     * mark the ordinary expression walk performs: a bytes-typed target
-     * still sets {@code bytesValue}, so the manifest keeps
-     * {@code bytesBearing} and the {@code CONTAINERS_AND_STRINGS} claim for
-     * a module whose only bytes occurrence is a store target.
+     * to cover.
      */
     private static void walkWriteTarget(ExpressionNode target, CheckedModuleInput module,
                                         ModuleScan scan, SymbolTable checkerScope)
@@ -793,12 +774,6 @@ public final class LoweringSupport {
             case IdentifierExpr identifier -> {
                 // The ASSIGNMENT/DELETE row owns the identifier write
                 // position; no IDENTIFIER read row is produced for it.
-                // The write position still carries its checked type, so
-                // the walkExpression type mark applies: a bytes-typed
-                // target bears bytes even though it records no read row.
-                if (Types.containsBytes(checkedType(module, identifier))) {
-                    scan.bytesValue = true;
-                }
             }
             default -> walkExpression(target, module, scan, checkerScope);
         }

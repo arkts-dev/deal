@@ -1,0 +1,27 @@
+// @spec: Functions — cross-module int[]-bearing function values
+// @description: int[]-bearing function values imported and exported across module boundaries keep one shared wrapper, complete canonical descriptors, and reference identity (v1.2)
+// @expected: runtime-ok
+// @features: int[], functions, modules
+
+import * as Lib from "./reference-array-fn-xmod-lib";
+
+export function test_array_fn_xmod(): int {
+  let f: (b: int[]) => int[] = Lib.makeId();
+  let g: (b: int[]) => int[] = Lib.makeId();
+  if (f([0, 0]).length !== 2) {
+    throw { code: "TEST_FAIL", message: "imported fn invoke failed" };
+  }
+  if (!Lib.sameId(f, g)) {
+    throw { code: "TEST_FAIL", message: "imported fn identity failed" };
+  }
+  let m: (b: int[]) => int[] = Lib.makeId();
+  let h: (b: int[], v: int) => int[] = m;
+  if (h([0], 5)[0] !== 0) {
+    throw { code: "TEST_FAIL", message: "imported fn adapter failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

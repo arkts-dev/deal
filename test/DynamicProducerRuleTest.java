@@ -345,8 +345,7 @@ public class DynamicProducerRuleTest {
     private static SemanticLowerer.ProjectLoweringResult lower(Fixture fixture) {
         return SemanticLowerer.lowerProject(invocation(), fixture.input(), fixture.index(),
             fixture.manifests(), new HostDeclarationSurface(Map.of()), Map.of(), BuiltinErrorDeclaration.synthesized(fixture.module().ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
     }
 
     /** The direct per-module project walk (the produced, pre-gate unit). */
@@ -364,8 +363,7 @@ public class DynamicProducerRuleTest {
         lowerer.setModuleImports(fixture.module().imports());
         lowerer.setRegistrationSeeds(ClassRegistrationSeeds.builtinErrorOnly());
         lowerer.setDeclaredConversionIntrinsics(
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW));
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT));
         lowerer.setE7Facts(fixture.module().exports(), Map.of(), Set.of());
         try {
             lowerer.lowerProjectModule(fixture.module().ast().statements());
@@ -966,8 +964,7 @@ public class DynamicProducerRuleTest {
             invocation(), built.input(), built.index(), manifests.manifests(),
             orchestrator.hostDeclarationSurface(),
             Map.<ModuleId, CanonicalModuleIdentity>of(), builtinError,
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
         deleteRecursively(root);
         return new ProjectFixture(lowered);
     }

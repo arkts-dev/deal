@@ -200,8 +200,7 @@ public final class JvmSemanticEmitter {
             return "java.lang.Boolean.valueOf(((java.lang.Boolean) "
                 + expression + ").booleanValue())";
         }
-        if (inner instanceof Type.Array || inner instanceof Type.Func
-                || inner instanceof Type.Bytes) {
+        if (inner instanceof Type.Array || inner instanceof Type.Func) {
             return "__hostToDeal("
                 + Session.javaString(JvmHostAbiEmission.descriptorText(
                     declaredReturn))
@@ -1092,7 +1091,6 @@ public final class JvmSemanticEmitter {
                 case RuntimeDescriptor.Number ignored -> "number";
                 case RuntimeDescriptor.String ignored -> "string";
                 case RuntimeDescriptor.Table ignored -> "table";
-                case RuntimeDescriptor.Bytes ignored -> "bytes";
                 case RuntimeDescriptor.Func ignored -> "function";
                 case RuntimeDescriptor.Array ignored -> "array";
                 case RuntimeDescriptor.Nullable ignored -> "nullable";
@@ -1617,26 +1615,6 @@ public final class JvmSemanticEmitter {
                 .append(", List.of(").append(inputs).append("), null, null);\n");
         }
 
-        /** The INDEX_READ START of a bytes read: the container atom plus the bytes slot atom. */
-        private void emitBytesSlotOperandStart(SemanticOp op, int indent) {
-            if (!trace) {
-                return;
-            }
-            StringBuilder inputs = new StringBuilder();
-            inputs.append("JvmRuntime.atom(").append(slot(op.operands().get(0)))
-                .append(", ").append(javaString(staticKind(op.operandTypes().get(0))))
-                .append("), ");
-            inputs.append("\"byteslot:\" + ((Object[]) ").append(slot(op.operands().get(1)))
-                .append(")[1] + \"/\" + (((Long) ((Object[]) ")
-                .append(slot(op.operands().get(1))).append(")[1]) < ((Long) ((Object[]) ")
-                .append(slot(op.operands().get(1))).append(")[2]))");
-            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                .append(javaString(opKey(op.opId()))).append(", \"START\", ")
-                .append(javaString(op.kind().name())).append(", ")
-                .append(javaString(op.contract().canonicalDigest())).append(", ")
-                .append(javaString(parentKey(op.origin().parentOpId())))
-                .append(", List.of(").append(inputs).append("), null, null);\n");
-        }
 
         private void emitBoundaryStart(SemanticOp boundary, String inputExpr,
                                        RuntimeDescriptor inputDescriptor, int indent) {
@@ -1996,17 +1974,7 @@ public final class JvmSemanticEmitter {
                 (KindPayload.ArrayLengthPayload) op.payload();
             emitStart(op, indent);
             String target = slot((ValueId) op.result());
-            if (isBytesValue(payload.arrayValue())) {
-                // K6 item 7: b.length reads the bytes buffer's fixed
-                // logical length at the read's own origin.
-                out.append(indent(indent)).append(target)
-                    .append(" = JvmRuntime.bytesLength(")
-                    .append(slot(payload.arrayValue())).append(", ")
-                    .append(javaString(opKey(op.opId()))).append(", ")
-                    .append(javaString(op.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(javaString(originOf(op))).append(");\n");
-            } else {
+            {
                 out.append(indent(indent)).append(target)
                     .append(" = Long.valueOf(((").append("JvmRuntime.Array) ")
                     .append(slot(payload.arrayValue())).append(").length);\n");
@@ -2014,22 +1982,6 @@ public final class JvmSemanticEmitter {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * Whether one value identity's producing op publishes a bytes
-         * value (the {@code b.length} receiver selector, K6 item 7): an
-         * {@code ARRAY_LENGTH} op carries no operands, so the receiver
-         * producer's own result descriptor is the classification
-         * authority.
-         */
-        private boolean isBytesValue(deal.semantic.ir.ValueId value) {
-            for (SemanticOp candidate : opsById.values()) {
-                if (value.equals(candidate.result())
-                        && candidate.resultType() instanceof RuntimeDescriptor.Bytes) {
-                    return true;
-                }
-            }
-            return false;
-        }
 
         /**
          * The contextual-read boundary tail of a table read (the static
@@ -2251,20 +2203,10 @@ public final class JvmSemanticEmitter {
         }
 
         private boolean defersContextualCheck(RuntimeDescriptor descriptor) {
-            // The composite carriers (functions, arrays, and bytes — a bytes
-            // contextual read defers its shape check to the consuming
-            // declared cell, whose bytes projection carries the pinned
-            // "expected bytes" text at the declaration's own origin).
-            return isFunctionDescriptor(descriptor) || isArrayDescriptor(descriptor)
-                || isBytesDescriptor(descriptor);
+            // Composite reads defer their shape check to the consuming declared cell.
+            return isFunctionDescriptor(descriptor) || isArrayDescriptor(descriptor);
         }
 
-        /** Whether one boundary descriptor is the bytes carrier (nullable unwrapped). */
-        private boolean isBytesDescriptor(RuntimeDescriptor descriptor) {
-            RuntimeDescriptor inner = descriptor instanceof RuntimeDescriptor.Nullable nullable
-                ? nullable.inner() : descriptor;
-            return inner instanceof RuntimeDescriptor.Bytes;
-        }
 
         /**
          * HAS_FIELD: the presence boolean over one checked receiver key —
@@ -2439,14 +2381,6 @@ public final class JvmSemanticEmitter {
                         .append(slot(payload.currentLength())).append("), ")
                         .append(write ? "1L" : "0L").append("};\n");
                 }
-                case BYTES_READ, BYTES_WRITE ->
-                    // The bytes slot (K6 item 5): the index against the
-                    // receiver's length read; no append decision exists.
-                    out.append(indent(indent)).append(target)
-                        .append(" = new Object[]{\"b\", Long.valueOf(JvmRuntime.indexOf(")
-                        .append(slot(payload.rawKey()))
-                        .append(")), Long.valueOf(JvmRuntime.indexOf(")
-                        .append(slot(payload.currentLength())).append("))};\n");
                 case TABLE_READ, TABLE_WRITE ->
                     out.append(indent(indent)).append(target).append(" = new Object[]{")
                         .append("\"t\", ").append(slot(payload.rawKey())).append("};\n");
@@ -2463,17 +2397,6 @@ public final class JvmSemanticEmitter {
                 .append(javaString(parentKey(op.origin().parentOpId())))
                 .append(", List.of(), \"slot:\" + __s[0] + \"/\" + (__s[0] < __s[1]) "
                     + "+ \"/\" + (__s[2] == 1 && __s[0] == __s[1]), null);\n");
-            out.append(indent(indent)).append("} else if (\"b\".equals(((Object[]) ")
-                .append(target).append(")[0])) {\n");
-            out.append(indent(indent)).append("  Object[] __s = (Object[]) ").append(target)
-                .append(";\n");
-            out.append(indent(indent)).append(
-                "  JvmRuntime.ev(MODULE, ").append(javaString(opKey(op.opId())))
-                .append(", \"SUCCESS\", \"INDEX_NORMALIZE\", ")
-                .append(javaString(op.contract().canonicalDigest())).append(", ")
-                .append(javaString(parentKey(op.origin().parentOpId())))
-                .append(", List.of(), \"byteslot:\" + __s[1] + \"/\" + (((Long) __s[1]) "
-                    + "< ((Long) __s[2])), null);\n");
             out.append(indent(indent)).append("} else {\n");
             out.append(indent(indent)).append("  Object[] __s = (Object[]) ").append(target)
                 .append(";\n");
@@ -2495,31 +2418,6 @@ public final class JvmSemanticEmitter {
             boolean nullable = descriptor instanceof RuntimeDescriptor.Nullable;
             RuntimeDescriptor inner = nullable
                 ? ((RuntimeDescriptor.Nullable) descriptor).inner() : descriptor;
-            if (!op.operandTypes().isEmpty()
-                    && op.operandTypes().get(0) instanceof RuntimeDescriptor.Bytes) {
-                // K6 item 2: the bytes element read — the length read's
-                // result is the normalize's currentLength and the
-                // BYTE_ELEMENT_READ cell consumes {index, length} from the
-                // same slot.
-                emitBytesSlotOperandStart(op, indent);
-                String bytesTarget = slot((ValueId) op.result());
-                out.append(indent(indent)).append(bytesTarget)
-                    .append(" = JvmRuntime.bytesRead(")
-                    .append(javaString(opKey(op.opId()))).append(", ")
-                    .append(javaString(op.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(javaString(opKey(boundary.opId()))).append(", ")
-                    .append(javaString(boundary.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(boundary.origin().parentOpId())))
-                    .append(", ").append(slot(payload.container())).append(", ((Long) ")
-                    .append("((Object[]) ").append(slot(payload.slot()))
-                    .append(")[1]).longValue(), ((Long) ((Object[]) ")
-                    .append(slot(payload.slot())).append(")[2]).longValue(), ")
-                    .append(javaString(originOf(boundary))).append(");\n");
-                emitResultSuccess(op, bytesTarget, (RuntimeDescriptor) op.resultType(),
-                    indent);
-                return;
-            }
             emitSlotOperandStart(op, indent);
             String target = slot((ValueId) op.result());
             if (!op.operandTypes().isEmpty()
@@ -2577,20 +2475,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("  ((")
                 .append("JvmRuntime.Array) ").append(container)
                 .append(").elements.set(__wi, ").append(value).append(");\n");
-            out.append(indent(indent)).append("} else if (\"b\".equals(((Object[]) ")
-                .append(slotName).append(")[0])) {\n");
-            // The bytes commit (K6 item 4): the E8013 value-range check at
-            // the assignment expression and the single in-place mutation;
-            // the bounds already passed at the chain's
-            // BYTE_ELEMENT_ASSIGNMENT boundary.
-            out.append(indent(indent)).append("  Object[] __s = (Object[]) ").append(slotName)
-                .append(";\n");
-            out.append(indent(indent)).append("  JvmRuntime.bytesCommit(")
-                .append(javaString(opKey(op.opId()))).append(", ")
-                .append(javaString(op.contract().canonicalDigest())).append(", ")
-                .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                .append(container).append(", ((Long) __s[1]).longValue(), ").append(value)
-                .append(", ").append(javaString(originOf(op))).append(");\n");
             out.append(indent(indent)).append("} else {\n");
             out.append(indent(indent)).append("  Object[] __s = (Object[]) ").append(slotName)
                 .append(";\n");
@@ -3131,24 +3015,6 @@ public final class JvmSemanticEmitter {
                                        SemanticOp chain, int indent) {
             String input = slot(payload.input());
             switch (payload.kind()) {
-                case BYTE_ELEMENT_ASSIGNMENT -> {
-                    // K6 item 4: the E8012 bounds cell (index-expression
-                    // origin), then the element descriptor check; the
-                    // commit owns the E8013 range check.
-                    out.append(indent(indent)).append("JvmRuntime.bytesBounds(")
-                        .append(javaString(opKey(boundary.opId()))).append(", ")
-                        .append(javaString(boundary.contract().canonicalDigest()))
-                        .append(", ")
-                        .append(javaString(parentKey(boundary.origin().parentOpId())))
-                        .append(", ").append(input).append(", ((Long) ((Object[]) ")
-                        .append(chainSlotExpr(chain)).append(")[1]).longValue(), ((Long) ")
-                        .append("((Object[]) ").append(chainSlotExpr(chain))
-                        .append(")[2]).longValue(), ")
-                        .append(javaString(descriptorText(payload.descriptor())))
-                        .append(", ").append(javaString(staticKind(payload.descriptor())))
-                        .append(", ").append(javaString(originOf(boundary)))
-                        .append(");\n");
-                }
                 case ARRAY_ELEMENT_ASSIGNMENT, ARRAY_ELEMENT_DELETE -> {
                     // JvmRuntime.arrayBounds emits the boundary START/terminal
                     // events (the bounds check runs only from this projection);
@@ -3878,11 +3744,7 @@ public final class JvmSemanticEmitter {
                     .append(intrinsicInvocationArgs(op, IntrinsicKind.NUMBER_CONVERT))
                     .append(");\n");
                 out.append(indent(indent + 2)).append("} else {\n");
-                out.append(indent(indent + 3)).append(converted).append(" = ")
-                    .append(intrinsicHelper(IntrinsicKind.BYTES_NEW)).append("(")
-                    .append(dynamicArg).append(", ")
-                    .append(intrinsicInvocationArgs(op, IntrinsicKind.BYTES_NEW))
-                    .append(");\n");
+                out.append(indent(indent + 3)).append("throw new IllegalStateException(\"unknown intrinsic\");\n");
                 out.append(indent(indent + 2)).append("}\n");
                 String dynamicAdmitted = emitHostCellRun(op, hostCell, converted,
                     indent + 2);
@@ -4062,11 +3924,7 @@ public final class JvmSemanticEmitter {
                     .append(intrinsicInvocationArgs(op, IntrinsicKind.NUMBER_CONVERT))
                     .append(");\n");
                 out.append(indent(indent + 1)).append("} else {\n");
-                out.append(indent(indent + 2)).append(hostValue).append(" = ")
-                    .append(intrinsicHelper(IntrinsicKind.BYTES_NEW)).append("(")
-                    .append(args).append(", ")
-                    .append(intrinsicInvocationArgs(op, IntrinsicKind.BYTES_NEW))
-                    .append(");\n");
+                out.append(indent(indent + 2)).append("throw new IllegalStateException(\"unknown intrinsic\");\n");
                 out.append(indent(indent + 1)).append("}\n");
                 out.append(indent(indent)).append("} else if (").append(carrier)
                     .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
@@ -4561,7 +4419,6 @@ public final class JvmSemanticEmitter {
             return switch (kind) {
                 case INT_CONVERT -> "JvmRuntime.intConv";
                 case NUMBER_CONVERT -> "JvmRuntime.numConv";
-                case BYTES_NEW -> "JvmRuntime.bytesNew";
             };
         }
 
@@ -4576,10 +4433,8 @@ public final class JvmSemanticEmitter {
         private String intrinsicInvocationArgs(SemanticOp op, IntrinsicKind kind) {
             StringBuilder args = new StringBuilder();
             args.append(javaString(op.kind().name())).append(", ");
-            if (kind != IntrinsicKind.BYTES_NEW) {
-                args.append(javaString(staticKind(
-                    kind.declaredSignature().paramTypes().get(0)))).append(", ");
-            }
+            args.append(javaString(staticKind(
+                kind.declaredSignature().paramTypes().get(0)))).append(", ");
             args.append(javaString(opKey(op.opId()))).append(", ")
                 .append(javaString(op.contract().canonicalDigest())).append(", ")
                 .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
@@ -4641,19 +4496,11 @@ public final class JvmSemanticEmitter {
         }
 
         /**
-         * The recorded host return cell's check expression: the production
-         * typed-boundary check ({@code JvmRuntime.bcheck}) for the bytes
-         * carrier — the bytes value the allocation ladder publishes is the
-         * runtime's own carrier, never the emitted host ABI's
-         * {@code $DealRt.Bytes} — and the emitted host check for every
-         * other descriptor (whose declared texts and policy stay the
-         * recorded cell's).
+         * The recorded host return cell's check expression, retaining the
+         * cell's declared descriptor and policy.
          */
         private String hostCellCheck(RuntimeDescriptor descriptor, String valueExpr,
                                      SemanticOp op) {
-            if (descriptor instanceof RuntimeDescriptor.Bytes) {
-                return bcheckArgs(descriptor, valueExpr);
-            }
             return "__hostCheck(" + javaString(descriptorText(descriptor)) + ", "
                 + valueExpr + ", false, " + originArgs(op) + ")";
         }
@@ -5572,13 +5419,6 @@ public final class JvmSemanticEmitter {
                     .append(" = JvmRuntime.numConv(").append(input).append(", ")
                     .append(javaString(op.kind().name())).append(", ")
                     .append(javaString(kind)).append(", ")
-                    .append(javaString(opKey(op.opId()))).append(", ")
-                    .append(javaString(op.contract().canonicalDigest())).append(", ")
-                    .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
-                    .append(javaString(origin)).append(");\n");
-                case BYTES_NEW -> out.append(indent(indent)).append(target)
-                    .append(" = JvmRuntime.bytesNew(").append(input).append(", ")
-                    .append(javaString(op.kind().name())).append(", ")
                     .append(javaString(opKey(op.opId()))).append(", ")
                     .append(javaString(op.contract().canonicalDigest())).append(", ")
                     .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")

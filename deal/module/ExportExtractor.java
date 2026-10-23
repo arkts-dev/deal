@@ -284,7 +284,6 @@ public final class ExportExtractor {
             case "number" -> Type.Number.INSTANCE;
             case "string" -> Type.String.INSTANCE;
             case "table" -> Type.Table.INSTANCE;
-            case "bytes" -> Type.Bytes.INSTANCE;
             case "Error" -> errorClassType();
             default -> {
                 if (classMap.containsKey(name)) {

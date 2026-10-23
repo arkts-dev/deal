@@ -769,8 +769,7 @@ public final class CatchBindingProductionTest {
             orchestrator.requirementManifests().manifests(),
             orchestrator.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                 checked.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
     }
 
     /**

@@ -1,5 +1,5 @@
 // @spec: Type system
-// @description: Corner-case subject string-length-member-accept — String length requires std/string, not backend-native .length. (basis: Length intrinsic available only arrays and bytes)
+// @description: Corner-case subject string-length-member-accept — String length requires std/string, not backend-native .length. (basis: Length intrinsic available only arrays)
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 

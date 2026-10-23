@@ -6,7 +6,7 @@ import java.util.List;
  * The closed failure-policy set of {@code deal.semantic-ir/2} (parent
  * "Closed failure policies and canonical visible errors"; schema S3).
  *
- * <p>Closed set — exactly the 26 values below in the pinned order; no open
+ * <p>Closed set — the values below in the pinned order; no open
  * or unknown fallback member and no external extension point exist. The
  * {@code FailureContractRegistry} maps every policy to exactly one row
  * (code, template, metadata, origin, cause, frame, precedence); consumers
@@ -35,9 +35,6 @@ public enum FailurePolicyId {
     ARRAY_READ_INDEX_THEN_DESCRIPTOR,
     ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
     ARRAY_DELETE_BOUNDS,
-    BYTES_ALLOCATE,
-    BYTES_READ,
-    BYTES_WRITE,
     FUNCTION_SIGNATURE,
     HOST_PARAMETER,
     HOST_SYNC_RETURN,

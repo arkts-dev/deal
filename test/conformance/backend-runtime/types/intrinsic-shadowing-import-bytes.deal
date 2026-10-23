@@ -1,5 +1,5 @@
 // @spec: Variables — Scope
-// @description: An import alias named bytes shadows the allocation intrinsic (v1.3 name resolution: imported module bindings precede compiler intrinsics), so the alias's member call is the imported function and the name is never the intrinsic.
+// @description: An import alias named bytes resolves to the module; its member call executes the imported function.
 // @expected: runtime-ok
 // @features: variables, modules, name-resolution, shadowing, intrinsics
 
@@ -7,7 +7,7 @@ import * as bytes from "./intrinsic-shadowing-bytes-lib";
 
 export function main(): null {
   if (bytes.convert(2) !== 3) {
-    throw { code: "TEST_FAIL", message: "import alias named bytes did not shadow the intrinsic" };
+    throw { code: "TEST_FAIL", message: "import alias named bytes did not call the imported function" };
   }
   return null;
 }

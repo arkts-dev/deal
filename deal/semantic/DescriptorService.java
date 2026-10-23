@@ -66,7 +66,6 @@ public final class DescriptorService {
             case Type.Number ignored -> RuntimeDescriptor.Number.INSTANCE;
             case Type.String ignored -> RuntimeDescriptor.String.INSTANCE;
             case Type.Table ignored -> RuntimeDescriptor.Table.INSTANCE;
-            case Type.Bytes ignored -> RuntimeDescriptor.Bytes.INSTANCE;
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a descriptor-production position: the internal checker "
                     + "sentinel has no RuntimeDescriptor member in deal.semantic-ir/2 and is "

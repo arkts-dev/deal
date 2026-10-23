@@ -26,7 +26,7 @@ import java.util.Objects;
  *   <li>{@link ExternalFunction} — an imported external function whose
  *       execution owner is {@code SHARED_BODY} or {@code RETAINED_ABI}.</li>
  *   <li>{@link IntrinsicFunction} — a producer-less seeded intrinsic
- *       ({@code int}/{@code number}/{@code bytes}) registered by the
+ *       ({@code int}/{@code number}) registered by the
  *       lowering's intrinsic seed.</li>
  *   <li>{@link DynamicFunctionValue} — a function-typed materialization
  *       whose execution class is resolved from the materialized carrier
@@ -128,8 +128,7 @@ public sealed interface FunctionExecutionBinding
     }
 
     /**
-     * A producer-less seeded intrinsic ({@code int}/{@code number}/
-     * {@code bytes}) materialized as a first-class function value: the
+     * A producer-less seeded intrinsic ({@code int}/{@code number}) materialized as a first-class function value: the
      * closed intrinsic kind and the intrinsic's declared signature. The
      * registration is keyed by the seeded function-value identity (no
      * closed op produces

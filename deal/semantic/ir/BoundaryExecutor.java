@@ -39,8 +39,6 @@ public final class BoundaryExecutor {
         FailurePolicyId.ARRAY_READ_INDEX_THEN_DESCRIPTOR,
         FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
         FailurePolicyId.ARRAY_DELETE_BOUNDS,
-        FailurePolicyId.BYTES_READ,
-        FailurePolicyId.BYTES_WRITE,
         FailurePolicyId.JSON_FROM_NULL,
         FailurePolicyId.JSON_TO_ERROR
     );
@@ -78,8 +76,6 @@ public final class BoundaryExecutor {
             case ARRAY_WRITE_BOUNDS_THEN_ELEMENT ->
                 checkArrayWrite(descriptor, view, context);
             case ARRAY_DELETE_BOUNDS -> checkArrayDelete(view, context);
-            case BYTES_READ -> checkBytesRead(descriptor, view, context);
-            case BYTES_WRITE -> checkBytesWrite(descriptor, view, context);
             case JSON_FROM_NULL -> checkJsonFromNull(descriptor, view);
             case JSON_TO_ERROR -> checkJsonToError(descriptor, view, context);
             default -> throw new Defect(
@@ -401,59 +397,8 @@ public final class BoundaryExecutor {
         return descriptorKindOutcome(tdProjection(), core(descriptor, view));
     }
 
-    /**
-     * BYTES_READ: the pinned E8012 bounds check first
-     * ({@code index < 0} or {@code index >= b.length}), then the element
-     * descriptor-kind check on the already-read byte (K6 item 3). The
-     * context carries {@code {index, length}}.
-     */
-    private static BoundaryOutcome checkBytesRead(RuntimeDescriptor descriptor,
-                                                  BoundaryValueView view,
-                                                  BoundaryContext context) {
-        Integer index = requireContextField(context.index(), "index", "BYTES_READ");
-        Integer length = requireContextField(context.length(), "length", "BYTES_READ");
-        if (length < 0) {
-            throw new Defect("BYTES_READ names a non-negative bytes length; got " + length);
-        }
-        if (index < 0 || index >= length) {
-            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
-                FailureArmId.BYTES_READ, new LinkedHashMap<>(), null, null, null));
-        }
-        return descriptorKindOutcome(tdProjection(), core(descriptor, view));
-    }
 
-    /**
-     * BYTES_WRITE: the pinned E8012 bounds check first
-     * ({@code index < 0} or {@code index >= b.length}), then the element
-     * descriptor-kind check on the checked RHS value; the value-range
-     * check (E8013, {@code 0..255}) and the single mutation are the
-     * enclosing commit's, after this boundary (K6 items 3/4).
-     */
-    private static BoundaryOutcome checkBytesWrite(RuntimeDescriptor descriptor,
-                                                   BoundaryValueView view,
-                                                   BoundaryContext context) {
-        Integer index = requireContextField(context.index(), "index", "BYTES_WRITE");
-        Integer length = requireContextField(context.length(), "length", "BYTES_WRITE");
-        if (length < 0) {
-            throw new Defect("BYTES_WRITE names a non-negative bytes length; got " + length);
-        }
-        if (index < 0 || index >= length) {
-            return new BoundaryOutcome.Fail(FailureContractRegistry.render(
-                FailureArmId.BYTES_WRITE_BOUNDS, new LinkedHashMap<>(), null, null, null));
-        }
-        return descriptorKindOutcome(tdProjection(), core(descriptor, view));
-    }
 
-    /**
-     * The write's value-range projection (E8013
-     * {@code bytes value out of range}): the pinned second template of the
-     * {@code BYTES_WRITE} row, committed by the chain's
-     * {@code INDEX_WRITE} child at the assignment-expression origin.
-     */
-    public static BoundaryFailure bytesWriteRangeFailure() {
-        return FailureContractRegistry.render(FailureArmId.BYTES_WRITE_RANGE,
-            new LinkedHashMap<>(), null, null, null);
-    }
 
     /** ARRAY_DELETE_BOUNDS: index < 0 or > length; otherwise pass. */
     private static BoundaryOutcome checkArrayDelete(BoundaryValueView view,
@@ -598,10 +543,6 @@ public final class BoundaryExecutor {
                         : kindFail(descriptor, view);
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE ? pass(view) : kindFail(descriptor, view);
-            case RuntimeDescriptor.Bytes ignored ->
-
-                view.kind() == ActualKind.BYTES ? pass(view)
-                    : kindFail(descriptor, view);
             case RuntimeDescriptor.Class cls -> coreClass(cls, view);
             case RuntimeDescriptor.Array array -> coreArray(array, view);
             case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view);
@@ -980,11 +921,6 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE
                     ? null : jsonToken(view);
-            case RuntimeDescriptor.Bytes ignored -> throw new Defect(
-                "a bytes descriptor reached the closed JSON-serializability projection: "
-                    + "the closed boundary-assignment table has no bytes-descriptor JSON "
-                    + "cell (bytes are non-jsonable and a bytes-typed @jsonable field is "
-                    + "the checker's E4007 rejection) — never a BOUNDARY op");
             case RuntimeDescriptor.Func ignored -> jsonToken(view);
         };
     }

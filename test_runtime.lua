@@ -274,7 +274,7 @@ end)
 -- ==================== private carrier identity (ISSUE-0830) ====================
 -- Carrier identity is nominal and unforgeable: the marks live under
 -- process-wide private table keys, so a table may carry every mark name as
--- a string key, stays the table value, and never satisfies a class, bytes,
+-- a string key, stays the table value, and never satisfies a class,
 -- function, array or table-shape row it merely names.
 
 -- The exact closed tuple of one typed-boundary rejection.
@@ -316,13 +316,7 @@ test("forged class carriers are rejected at a class descriptor (v1.3)", function
     "the produced class instance is admitted")
 end)
 
-test("forged bytes carriers are rejected at the bytes descriptor (v1.3)", function()
-  local forged = carrier_key_table()
-  assert_boundary_error(function() __rt.check_type("bytes", forged) end,
-    "E8001", "expected bytes", "bytes", "table")
-  assert(__rt.check_type("bytes", __rt.bytes_new(1)) ~= nil,
-    "the produced bytes carrier is admitted")
-end)
+
 
 test("forged function carriers are rejected at a function descriptor (v1.3)", function()
   local forged = carrier_key_table()
@@ -375,8 +369,6 @@ test("carriers are rejected at a table descriptor (v1.3)", function()
   assert_boundary_error(function()
     __rt.check_table(__rt.class_("@m/C", {}, {}))
   end, "E8001", "expected table", "table", "@m/C")
-  assert_boundary_error(function() __rt.check_table(__rt.bytes_new(1)) end,
-    "E8001", "expected table", "table", "bytes")
   assert_boundary_error(function()
     __rt.check_table(__rt.function_("()->null", function() return nil end))
   end, "E8001", "expected table", "table", "function")
@@ -452,9 +444,7 @@ test("a class instance publishes its carried class atom at every boundary (v1.3)
     "E8001", "expected boolean", "boolean", "@m/C")
   assert_boundary_error(function() __rt.check_null(instance) end,
     "E8001", "expected null", "null", "@m/C")
-  -- The bytes and function rows replace their raw type() projection too.
-  assert_boundary_error(function() __rt.check_type("bytes", instance) end,
-    "E8001", "expected bytes", "bytes", "@m/C")
+  -- The function row replace their raw type() projection too.
   assert_boundary_error(function() __rt.check_type("()->null", instance) end,
     "E8001", "expected function", "function", "@m/C")
   -- A same-kind class crossing keeps the identity arm and its carried atom.
@@ -476,8 +466,6 @@ test("the builtin Error publishes the canonical Error atom at every boundary (v1
     "E8001", "expected boolean", "boolean", "Error")
   assert_boundary_error(function() __rt.check_null(err_value) end,
     "E8001", "expected null", "null", "Error")
-  assert_boundary_error(function() __rt.check_type("bytes", err_value) end,
-    "E8001", "expected bytes", "bytes", "Error")
   assert_boundary_error(function() __rt.check_type("()->null", err_value) end,
     "E8001", "expected function", "function", "Error")
   -- The Error descriptor's own cell still admits the Error value and still
@@ -490,11 +478,10 @@ test("the builtin Error publishes the canonical Error atom at every boundary (v1
 end)
 
 test("every other carrier keeps its own closed token at a boundary (v1.3)", function()
-  -- The array, bytes, function, async, null and absent carriers never
+  -- The array, function, async, null and absent carriers never
   -- project the raw table spelling of a primitive row, and each of them is
   -- rejected at the class and function rows by its own token.
   local array = { [__K.a] = true, [__K.n] = 0 }
-  local bytes = __rt.bytes_new(1)
   local wrapper = __rt.function_("()->null", function() return __rt.__NULL end)
   local handle = __rt.async_create(function() return __rt.__NULL end)
   local function rejects(value, token, descriptor, message, expected)
@@ -502,7 +489,7 @@ test("every other carrier keeps its own closed token at a boundary (v1.3)", func
       "E8001", message, expected, token)
   end
   for _, carrier in ipairs({
-    { "array", array }, { "bytes", bytes }, { "function", wrapper },
+    { "array", array }, { "function", wrapper },
     { "async-operation", handle }, { "null", __rt.__NULL },
     { "nil", __rt.__MISSING },
   }) do
@@ -525,12 +512,6 @@ test("every other carrier keeps its own closed token at a boundary (v1.3)", func
       assert(mismatch.expected == "(int)->null"
         and mismatch.actual == "()->null",
         "the signature arm keeps the two canonical texts")
-    end
-    if token ~= "bytes" then
-      rejects(value, token, "bytes", "expected bytes", "bytes")
-    else
-      assert(__rt.check_type("bytes", value) == value,
-        "the bytes row admits the bytes carrier")
     end
   end
   -- A set member is still rejected at the table row by its own token.
@@ -980,161 +961,6 @@ test("int_add(-0, 0) returns 0 (normalization)", function()
   local r = __rt.int_add(-0, 0)
   assert(r == 0)
   assert(1 / r == math.huge)
-end)
-
--- ==================== bytes tests ====================
-
-test("bytes_new(4) returns tagged bytes with length 4", function()
-  local b = __rt.bytes_new(4)
-  assert(type(b) == "table")
-  assert(b[__K.kind] == "bytes")
-  assert(b.__len == 4)
-end)
-
-test("bytes_new zero-fills storage", function()
-  local b = __rt.bytes_new(4)
-  assert(b.__data[0] == 0 and b.__data[1] == 0 and b.__data[2] == 0 and b.__data[3] == 0)
-end)
-
-test("bytes_length returns the immutable length", function()
-  local b = __rt.bytes_new(3)
-  assert(__rt.bytes_length(b) == 3)
-end)
-
-test("bytes_get returns unsigned bytes in 0..255", function()
-  local b = __rt.bytes_new(2)
-  __rt.bytes_set(b, 0, 0)
-  __rt.bytes_set(b, 1, 255)
-  assert(__rt.bytes_get(b, 0) == 0)
-  assert(__rt.bytes_get(b, 1) == 255)
-end)
-
-test("bytes_set returns the written value", function()
-  local b = __rt.bytes_new(1)
-  assert(__rt.bytes_set(b, 0, 128) == 128)
-end)
-
-test("bytes_set roundtrips 0..255", function()
-  local b = __rt.bytes_new(256)
-  for i = 0, 255 do
-    __rt.bytes_set(b, i, i)
-  end
-  for i = 0, 255 do
-    assert(__rt.bytes_get(b, i) == i, "byte " .. i .. " mismatch")
-  end
-end)
-
-test("bytes_new(-1) errors with E8012", function()
-  assert_error(function() __rt.bytes_new(-1) end, "E8012")
-end)
-
-test("bytes_new(0.5) errors with E8001 (non-int length)", function()
-  assert_error(function() __rt.bytes_new(0.5) end, "E8001")
-end)
-
-test("bytes_get index -1 errors with E8012", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_get(b, -1) end, "E8012")
-end)
-
-test("bytes_get index == length errors with E8012", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_get(b, 2) end, "E8012")
-end)
-
-test("bytes_get non-int index errors with E8001", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_get(b, 0.5) end, "E8001")
-end)
-
-test("bytes_set index -1 errors with E8012", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_set(b, -1, 1) end, "E8012")
-end)
-
-test("bytes_set index == length errors with E8012", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_set(b, 2, 1) end, "E8012")
-end)
-
-test("bytes_set value 256 errors with E8013", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_set(b, 0, 256) end, "E8013")
-end)
-
-test("bytes_set value -1 errors with E8013", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_set(b, 0, -1) end, "E8013")
-end)
-
-test("bytes_set non-int value errors with E8001", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_set(b, 0, 0.5) end, "E8001")
-end)
-
-test("bytes_set non-int index errors with E8001", function()
-  local b = __rt.bytes_new(2)
-  assert_error(function() __rt.bytes_set(b, 0.5, 1) end, "E8001")
-end)
-
-test("failed bytes writes change no storage", function()
-  local b = __rt.bytes_new(2)
-  __rt.bytes_set(b, 0, 42)
-  assert_error(function() __rt.bytes_set(b, 2, 7) end, "E8012")
-  assert_error(function() __rt.bytes_set(b, 0, 256) end, "E8013")
-  assert(__rt.bytes_get(b, 0) == 42)
-  assert(__rt.bytes_get(b, 1) == 0)
-end)
-
-test("bytes reference aliasing: writes are visible through aliases", function()
-  local b = __rt.bytes_new(2)
-  local alias = b
-  __rt.bytes_set(alias, 1, 7)
-  assert(__rt.bytes_get(b, 1) == 7)
-end)
-
-test("bytes reference identity: the same allocation compares equal", function()
-  local b = __rt.bytes_new(2)
-  local alias = b
-  assert(b == alias, "an alias is the same allocation")
-  assert(not (b ~= alias), "the same allocation is never unequal")
-end)
-
-test("bytes reference identity: distinct buffers compare unequal", function()
-  local a = __rt.bytes_new(2)
-  local c = __rt.bytes_new(2)
-  assert(not (a == c), "distinct zero-filled buffers are distinct allocations")
-  assert(a ~= c, "distinct allocations are never equal")
-end)
-
-test("zero-length buffer keeps stable storage", function()
-  local b = __rt.bytes_new(0)
-  assert(__rt.bytes_length(b) == 0)
-  assert(b.__data ~= nil)
-  assert_error(function() __rt.bytes_get(b, 0) end, "E8012")
-  assert_error(function() __rt.bytes_set(b, 0, 1) end, "E8012")
-end)
-
-test("bytes_new(2147483648) errors with E8004 (length out of int32)", function()
-  assert_error(function() __rt.bytes_new(2147483648) end, "E8004")
-end)
-
-test("bytes_new allocation failure raises E8001 'bytes allocation failed'", function()
-  local ffi = require("ffi")
-  local orig_new = ffi.new
-  ffi.new = function(...) error("simulated allocator failure") end
-  local ok, err = pcall(function() __rt.bytes_new(4) end)
-  ffi.new = orig_new
-  assert(ok == false)
-  assert(type(err) == "table")
-  assert(err.code == "E8001", "expected E8001, got " .. tostring(err.code))
-  assert(err.message == "bytes allocation failed")
-end)
-
-test("bytes_new on non-bytes kind errors with E8001", function()
-  assert_error(function() __rt.bytes_length({}) end, "E8001")
-  assert_error(function() __rt.bytes_get(42, 0) end, "E8001")
-  assert_error(function() __rt.bytes_set("x", 0, 1) end, "E8001")
 end)
 
 -- ==================== function_ tests ====================
@@ -1943,8 +1769,6 @@ test("the canonical matcher selects its closed arm on every mapped cell", functi
   end
   local kind = selection(function() __rt.check_type("int", "x") end, "E8001")
   assert(kind.id == "TYPED_BOUNDARY_KIND" and kind.values.kind == "int")
-  local bytes = selection(function() __rt.check_type("bytes", 5) end, "E8001")
-  assert(bytes.id == "TYPED_BOUNDARY_KIND" and bytes.values.kind == "bytes")
   local klass = selection(function()
     __rt.check_type("Error", {[__K.kind] = "class", [__K.classname] = "@src/A"})
   end, "E8001")
@@ -3178,7 +3002,7 @@ local function assert_parse_rejected(text)
 end
 
 test("canonical parser accepts every primitive keyword", function()
-  local keywords = { "null", "boolean", "int", "number", "string", "bytes", "table" }
+  local keywords = { "null", "boolean", "int", "number", "string", "table" }
   for _, kw in ipairs(keywords) do
     local ast = assert_parse_ok(kw)
     assert(ast.kind == "primitive", kw .. " parsed with kind " .. tostring(ast.kind))
@@ -3188,10 +3012,10 @@ end)
 
 test("canonical parser accepts composite shapes with byte-exact text", function()
   local shapes = {
-    "[int]", "[[bytes]]", "?int", "?[?bytes]", "()->null", "(int)->int",
+    "[int]", "[[table]]", "?int", "?[?table]", "()->null", "(int)->int",
     "(int,string)->boolean", "async()->int", "async(int)->?string",
-    "?(int)->int", "[?(bytes)->bytes]", "async()->async()->int",
-    "(bytes)->bytes", "?bytes", "[bytes]",
+    "?(int)->int", "[?(table)->table]", "async()->async()->int",
+    "(table)->table", "?table", "[table]",
   }
   for _, t in ipairs(shapes) do
     assert_parse_ok(t)
@@ -3199,14 +3023,14 @@ test("canonical parser accepts composite shapes with byte-exact text", function(
 end)
 
 test("canonical parser builds nested atom structure", function()
-  local ast = assert_parse_ok("[?(bytes)->bytes]")
+  local ast = assert_parse_ok("[?(table)->table]")
   assert(ast.kind == "array")
   assert(ast.element.kind == "nullable")
   assert(ast.element.inner.kind == "function")
   assert(ast.element.inner.isAsync == false)
   assert(#ast.element.inner.params == 1)
-  assert(ast.element.inner.params[1].name == "bytes")
-  assert(ast.element.inner.ret.name == "bytes")
+  assert(ast.element.inner.params[1].name == "table")
+  assert(ast.element.inner.ret.name == "table")
   local fn = assert_parse_ok("async()->int")
   assert(fn.kind == "function" and fn.isAsync == true)
   assert(#fn.params == 0 and fn.ret.name == "int")
@@ -3314,24 +3138,9 @@ test("check_canonical_type accepts every primitive row", function()
   assert(__rt.check_canonical_type("table", {}) ~= nil)
 end)
 
-test("check_canonical_type bytes row accepts real bytes values", function()
-  local b = __rt.bytes_new(2)
-  __rt.bytes_set(b, 1, 255)
-  assert(__rt.check_canonical_type("bytes", b) == b)
-  -- Recursive bytes descriptors at depth, exercised on RV's bytes runtime.
-  assert(__rt.check_canonical_type("[bytes]", { __rt.bytes_new(1) }) ~= nil)
-  assert(__rt.check_canonical_type("?bytes", b) == b)
-  local w = __rt.function_("(bytes)->bytes", function(x) return x end)
-  assert(__rt.check_canonical_type("(bytes)->bytes", w) == w)
-  assert(__rt.check_canonical_type("[?(bytes)->bytes]", { w }) ~= nil)
-end)
 
-test("check_canonical_type bytes row rejects non-bytes values with E8001", function()
-  local err = assert_error(function() __rt.check_canonical_type("bytes", {}) end, "E8001")
-  assert(err.expected == "bytes")
-  assert_error(function() __rt.check_canonical_type("bytes", 42) end, "E8001")
-  assert_error(function() __rt.check_canonical_type("bytes", "x") end, "E8001")
-end)
+
+
 
 test("check_canonical_type int row shares the int32 gate", function()
   assert_error(function() __rt.check_canonical_type("int", "x") end, "E8001")
@@ -3367,7 +3176,6 @@ test("check_canonical_type nullable row", function()
   assert(__rt.check_canonical_type("?int", __rt.__NULL) == __rt.__NULL)
   assert(__rt.check_canonical_type("?int", nil) == __rt.__NULL)
   assert(__rt.check_canonical_type("?int", 42) == 42)
-  assert(__rt.check_canonical_type("?bytes", __rt.bytes_new(1)) ~= nil)
   assert_error(function() __rt.check_canonical_type("?int", "x") end, "E8001")
 end)
 
@@ -3561,16 +3369,6 @@ test("invoke_async_export propagates awaited DEAL errors unchanged", function()
 end)
 
 test("invoke_async_export completion validation uses the canonical matcher", function()
-  -- "bytes" is a canonical-only primitive: a broken or legacy-only
-  -- matcher cannot accept this completion.
-  local b = __rt.bytes_new(2)
-  local exportsBytes = {
-    oracle = __rt.function_("async()->bytes", function()
-      return __rt.async_start(function() return b end)
-    end),
-  }
-  assert(__rt.invoke_async_export(exportsBytes, "oracle", "bytes") == b)
-
   local exportsArr = {
     oracle = __rt.function_("async()->[int]", function()
       return __rt.async_start(function() return { 1, 2, 3 } end)

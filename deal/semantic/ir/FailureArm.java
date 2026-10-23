@@ -181,8 +181,6 @@ public record FailureArm(
         RETURNED_EXPRESSION,
         /** The read expression. */
         READ_EXPRESSION,
-        /** The index expression (the bytes cells' bounds check). */
-        INDEX_EXPRESSION,
         /** The assignment expression. */
         ASSIGNMENT_EXPRESSION,
         /** The delete-target expression. */

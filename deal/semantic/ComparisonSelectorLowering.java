@@ -101,7 +101,7 @@ public final class ComparisonSelectorLowering {
      * Selects exactly one closed comparison selector from the checked
      * operand types and the operator (B-D3), producing the exact
      * {@code BinaryPayload}: {@code innerDescriptor} carries the shared
-     * checked descriptor for {@code REFERENCE_*} and {@code BYTES_*} and
+     * checked descriptor for {@code REFERENCE_*} and
      * the inner descriptor for {@code NULLABLE_*}/{@code
      * NULLABLE_NULL_*}; {@code side} is carried only for the nullable
      * selectors and is {@code null} for every other selector.
@@ -191,8 +191,6 @@ public final class ComparisonSelectorLowering {
                     negated ? BinarySelector.REFERENCE_NE : BinarySelector.REFERENCE_EQ;
                 case Type.Func f ->
                     negated ? BinarySelector.REFERENCE_NE : BinarySelector.REFERENCE_EQ;
-                case Type.Bytes b -> negated ? BinarySelector.BYTES_NE
-                    : BinarySelector.BYTES_EQ;
                 case Type.Error e ->
                     throw new Defect("unreachable: Error pairs are rejected before "
                         + "the selector map");
@@ -244,7 +242,7 @@ public final class ComparisonSelectorLowering {
     /**
      * Assembles the exact {@code BinaryPayload} of the selected row:
      * {@code innerDescriptor} carries the shared checked descriptor for
-     * {@code REFERENCE_*} and {@code BYTES_*} (the equal checked type —
+     * {@code REFERENCE_*} (the equal checked type —
      * same structural descriptor on both sides) and the inner descriptor
      * for {@code NULLABLE_*} (side {@code BOTH}) and {@code NULLABLE_NULL_*}
      * (side {@code LEFT}/{@code RIGHT}); {@code side} and
@@ -268,7 +266,7 @@ public final class ComparisonSelectorLowering {
                 innerDescriptor = describeInner(inner);
                 effectiveSide = side;
             }
-            case REFERENCE_EQ, REFERENCE_NE, BYTES_EQ, BYTES_NE -> {
+            case REFERENCE_EQ, REFERENCE_NE -> {
                 // One equal checked descriptor (B-D3): the shared
                 // structural descriptor of the equal checked types.
                 innerDescriptor = describeShared(leftType);
@@ -291,12 +289,12 @@ public final class ComparisonSelectorLowering {
         }
     }
 
-    /** Derives the shared checked descriptor of a {@code REFERENCE_*}/{@code BYTES_*} row. */
+    /** Derives the shared checked descriptor of a {@code REFERENCE_*} row. */
     private static RuntimeDescriptor describeShared(Type shared) {
         try {
             return DescriptorService.describe(shared);
         } catch (DescriptorService.Defect defect) {
-            throw new Defect("the REFERENCE_*/BYTES_* checked type is not descriptor-representable: "
+            throw new Defect("the REFERENCE_* checked type is not descriptor-representable: "
                 + defect.getMessage(), defect);
         }
     }

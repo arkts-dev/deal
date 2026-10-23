@@ -1,0 +1,51 @@
+// @spec: Runtime execution model — Runtime type descriptor format
+// @description: Canonical int[]-bearing descriptors cross typed boundaries end to end: [int[]] arrays, ?int[] nullables, (int[])->int[] function values, and [?(int[])->int[]] arrays of nullable functions all pass through the canonical boundary matcher byte-for-byte with real int[] values (int[] equality is reference identity since the ISSUE-0158 E3019 gate lift).
+// @expected: runtime-ok
+// @features: descriptors, int[], functions
+
+function firstByte(xs: int[][]): int {
+  return xs[0][0];
+}
+
+function fillByte(b: int[], v: int): int[] {
+  b[0] = v;
+  return b;
+}
+
+function passNullable(b: int[] | null): int[] | null {
+  return b;
+}
+
+function applyAll(fs: (((b: int[]) => int[]) | null)[], b: int[]): int[] {
+  return b;
+}
+
+export function test_array_descriptor_boundary(): string {
+  let xs: int[][] = [[0], [0, 0]];
+  if (firstByte(xs) !== 0) {
+    throw { code: "TEST_FAIL", message: "int[] array boundary mismatch" };
+  }
+  let filled: int[] = fillByte([0, 0, 0], 200);
+  if (filled[0] !== 200) {
+    throw { code: "TEST_FAIL", message: "int[] function boundary mismatch" };
+  }
+  let through: int[] | null = passNullable([0, 0]);
+  let nothing: int[] | null = passNullable(null);
+  let id: (b: int[]) => int[] = function(b: int[]): int[] { return b; };
+  let tagged: int[] = id([0, 0]);
+  if (tagged.length !== 2) {
+    throw { code: "TEST_FAIL", message: "function int[] boundary mismatch" };
+  }
+  let fs: (((b: int[]) => int[]) | null)[] = [];
+  fs[fs.length] = id;
+  fs[fs.length] = null;
+  let acc: int[] = applyAll(fs, [0, 0, 0]);
+  if (acc.length !== 3) {
+    throw { code: "TEST_FAIL", message: "nullable function array boundary mismatch" };
+  }
+  return "canonical int[] descriptor boundary ok";
+}
+
+export function main(): null {
+  return null;
+}

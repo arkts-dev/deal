@@ -1,0 +1,83 @@
+// @spec: Functions — nested sync int[]-bearing function signatures
+// @description: a first-class function value returning another int[]-bearing function, nested wrapper shapes, class fields holding int[]-bearing function values — plain, nullable, and nullable-parameter slots with a default-provided function reference — and the callee-first evaluation pin for a call through a class field whose argument side effect reassigns the called field (spec Operational semantics rule 1; v1.2)
+// @expected: runtime-ok
+// @features: int[], functions, classes
+
+function id(b: int[]): int[] { return b; }
+
+function picker(): (b: int[]) => int[] { return id; }
+
+function combine(f: (b: int[]) => int[]): (b: int[]) => int[] {
+  return f;
+}
+
+function idMaybe(b: int[] | null): int[] {
+  if (b !== null) { b[0] = 1; return b; }
+  return [];
+}
+
+function markTwo(b: int[] | null): int[] {
+  if (b !== null) { b[0] = 2; return b; }
+  return [];
+}
+
+class Holder {
+  cb: (b: int[]) => int[] = id;
+  maybe: ((b: int[]) => int[]) | null = null;
+  cbMaybe: (b: int[] | null) => int[] = idMaybe;
+}
+
+// The reassignment lives INSIDE the call argument: the callee field
+// read must happen first (spec Operational semantics rule 1 — LuaJIT
+// reads box.cbMaybe before evaluating any argument), so the call
+// invokes the pre-reassignment binding.
+function retarget(box: Holder): table {
+  box.cbMaybe = markTwo;
+  return { x: [0] };
+}
+
+export function test_array_nested_fn_shapes(): int {
+  let f: () => (b: int[]) => int[] = picker;
+  let g: (b: int[]) => int[] = f();
+  if (g([0, 0]).length !== 2) {
+    throw { code: "TEST_FAIL", message: "nested fn return failed" };
+  }
+  let h: (b: int[]) => int[] = combine(id);
+  if (h([0, 0, 0]).length !== 3) {
+    throw { code: "TEST_FAIL", message: "fn-of-fn failed" };
+  }
+  let box: Holder = {};
+  if (box.cb([0]).length !== 1) {
+    throw { code: "TEST_FAIL", message: "class field fn failed" };
+  }
+  let stored: ((b: int[]) => int[]) | null = box.maybe;
+  if (stored !== null) {
+    throw { code: "TEST_FAIL", message: "nullable fn field default failed" };
+  }
+  box.cb = picker();
+  if (box.cb([0, 0, 0, 0]).length !== 4) {
+    throw { code: "TEST_FAIL", message: "class field fn write failed" };
+  }
+  box.maybe = id;
+  let via: ((b: int[]) => int[]) | null = box.maybe;
+  if (via !== null) {
+    let out: int[] = via([0, 0, 0, 0, 0]);
+    if (out.length !== 5) {
+      throw { code: "TEST_FAIL", message: "nullable fn field write failed" };
+    }
+  }
+  let ordered: int[] = box.cbMaybe(retarget(box).x);
+  if (ordered[0] !== 1) {
+    throw { code: "TEST_FAIL", message: "callee-first field read failed" };
+  }
+  let list: (() => (b: int[]) => int[])[] = [picker];
+  let again: (b: int[]) => int[] = list[0]();
+  if (again([0, 0, 0, 0]).length !== 4) {
+    throw { code: "TEST_FAIL", message: "nested fn array failed" };
+  }
+  return 0;
+}
+
+export function main(): null {
+  return null;
+}

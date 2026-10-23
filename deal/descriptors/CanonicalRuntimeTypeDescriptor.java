@@ -22,7 +22,7 @@ import java.util.Objects;
  *
  * <pre>
  * descriptor := primitive | error | class | array | nullable | function
- * primitive  := "null" | "boolean" | "int" | "number" | "string" | "bytes" | "table"
+ * primitive  := "null" | "boolean" | "int" | "number" | "string" | "table"
  * error      := "Error"
  * class      := "@" component ("/" component)+
  * array      := "[" descriptor "]"
@@ -79,7 +79,7 @@ import java.util.Objects;
  * D2/D3/D5, {@code js-v12-completion-architecture} D3).</p>
  *
  * <p>{@link #encode(Type)} is the one {@code Type}&rarr;text producer:
- * {@code [D]} arrays, {@code ?D} nullables, {@code bytes}, exact
+ * {@code [D]} arrays, {@code ?D} nullables, exact
  * {@code async? (...) -&gt; D} functions, and class atoms from
  * {@code index.descriptorTextFor(identity)} byte-for-byte
  * ({@code @&lt;configuredRootText&gt;/&lt;relativeModuleComponents&gt;/&lt;ClassName&gt;},
@@ -100,16 +100,6 @@ import java.util.Objects;
 public final class CanonicalRuntimeTypeDescriptor {
 
     /**
-     * The pinned canonical descriptor text of
-     * {@code deal.types.Type.Bytes.INSTANCE} (parent D3: "its descriptor
-     * is {@code bytes}").  Parsing this constant yields a
-     * {@link DescriptorAst.PrimitiveAtom} whose name is this constant,
-     * and encoding {@code Type.Bytes.INSTANCE} returns exactly this
-     * constant.
-     */
-    public static final String BYTES_DESCRIPTOR = "bytes";
-
-    /**
      * The canonical descriptor text of the builtin {@code Error} class:
      * exactly {@code Error} (the spec's {@code PrimitiveDescriptor}
      * {@code "Error"} token).  This is the one class identity whose atom
@@ -127,7 +117,7 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /** The canonical primitive keywords, in grammar order. */
     private static final List<String> PRIMITIVE_KEYWORDS =
-        List.of("null", "boolean", "int", "number", "string", BYTES_DESCRIPTOR, "table");
+        List.of("null", "boolean", "int", "number", "string", "table");
 
     // =========================================================================
     // Per-compilation encode service
@@ -155,7 +145,7 @@ public final class CanonicalRuntimeTypeDescriptor {
      * Encodes a checked {@link Type} into canonical descriptor text —
      * the one {@code Type}&rarr;text producer of the compilation.
      *
-     * <p>Total for legal types: primitives (including {@code bytes})
+     * <p>Total for legal types: primitives
      * render their names; {@link Type.Array} renders {@code [D]};
      * {@link Type.Nullable} renders {@code ?D}; {@link Type.Func}
      * renders the exact {@code async? (p1,p2) -&gt; R} form;
@@ -174,7 +164,6 @@ public final class CanonicalRuntimeTypeDescriptor {
             case Type.Int ignored -> "int";
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Bytes ignored -> BYTES_DESCRIPTOR;
             case Type.Table ignored -> "table";
             case Type.Error ignored -> throw new IllegalStateException(
                 "Type.Error reached a descriptor production site: the internal "

@@ -1,5 +1,5 @@
 // @spec: Variables — Scope
-// @description: An import alias named bytes precedes the bytes intrinsic in the v1.3 name-resolution order, so calling the alias is a call of the imported module binding — not the allocation intrinsic — and the module value is not callable
+// @description: An import alias named bytes resolves to the imported module binding, which is not callable
 // @expected: compile-error E3008
 // @features: modules, name-resolution, shadowing, intrinsics, diagnostics
 

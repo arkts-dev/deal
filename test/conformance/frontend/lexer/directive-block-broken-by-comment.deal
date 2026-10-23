@@ -6,7 +6,7 @@
 // @jsonable
 // ordinary documentation
 export class Packet {
-  payload: bytes = bytes(0);
+  payload: () => null = function(): null { return null; };
 }
 
 export function main(): null {

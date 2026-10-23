@@ -33,7 +33,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
     public static void main(String[] args) {
         System.out.println("=== Running Canonical Runtime Type Descriptor Tests (ISSUE-0310/0311/0314) ===");
 
-        testBytesAtomTie();
+        testRetiredBuiltinDescriptor();
         testPrimitiveRoundTrips();
         testValidShapeCorpus();
         testClassAtomShapes();
@@ -185,28 +185,23 @@ public class CanonicalRuntimeTypeDescriptorTest {
     }
 
     // =========================================================================
-    // Pinned bytes atom tie with Type.Bytes.INSTANCE (combined check with T1)
+    // Canonical builtin grammar and ordinary class names
     // =========================================================================
 
-    static void testBytesAtomTie() {
-        System.out.println("-- bytes atom tie with Type.Bytes.INSTANCE --");
-
-        check(Type.Bytes.INSTANCE != null && Type.Bytes.INSTANCE instanceof Type.Bytes,
-            "Type.Bytes.INSTANCE is the bytes singleton");
-        check(Type.Bytes.INSTANCE == Type.Bytes.INSTANCE,
-            "Type.Bytes.INSTANCE reference identity");
-        check("bytes".equals(CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR),
-            "pinned BYTES_DESCRIPTOR constant equals \"bytes\"");
-
-        DescriptorParseResult result = parseResult(CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR);
-        check(result instanceof DescriptorAst.PrimitiveAtom p
-                && p.name().equals(CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR),
-            "parse(BYTES_DESCRIPTOR) yields PrimitiveAtom whose name is the pinned constant");
-        String rendered = result instanceof DescriptorAst ast
-            ? CanonicalRuntimeTypeDescriptor.render(ast) : null;
-        check("bytes".equals(rendered), "bytes atom renders back byte-identically");
-        check(new DescriptorAst.PrimitiveAtom("bytes").equals(result),
-            "bytes atom equals PrimitiveAtom(\"bytes\")");
+    static void testRetiredBuiltinDescriptor() {
+        System.out.println("-- descriptor grammar and ordinary class names --");
+        for (String text : List.of("bytes", "?bytes", "[bytes]", "(bytes)->null",
+                "async()->bytes")) {
+            check(parseResult(text) instanceof DescriptorSyntaxError,
+                "the canonical descriptor parser rejects " + text);
+            try {
+                RuntimeDescriptor.parseCanonicalText(text);
+                fail("IR descriptor rejection", "accepted " + text);
+            } catch (SemanticIrTextDecodeException expected) {
+                check(true, "the IR descriptor parser rejects " + text);
+            }
+        }
+        assertAtom("@src/model/bytes", "bytes remains an ordinary class name");
     }
 
     // =========================================================================
@@ -217,7 +212,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- primitive round trips --");
 
         String[] primitives = {
-            "null", "boolean", "int", "number", "string", "bytes", "table"
+            "null", "boolean", "int", "number", "string", "table"
         };
         for (String primitive : primitives) {
             assertAtom(primitive, "primitive " + primitive);
@@ -237,15 +232,15 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         String[] valid = {
             // Arrays / nullables, nested.
-            "[int]", "?int", "[?int]", "?[int]", "[[int]]", "[?[?[?[bytes]]]]",
-            "[bytes]", "?bytes", "[?bytes]", "?[bytes]",
+            "[int]", "?int", "[?int]", "?[int]", "[[int]]", "[?[?[?[table]]]]",
+            "[table]", "?table", "[?table]", "?[table]",
             // Spec examples (docs/spec-v1.3.md §Runtime type descriptor format).
             "?[@src/app/User]", "[?@src/app/User]", "(int,string)->boolean",
             "()->null", "async(int)->string",
-            // Exact sync/async functions over bytes at depth.
-            "(bytes)->bytes", "async(bytes)->bytes",
-            "(int,string,?[bytes])->table", "async(?int)->[bytes]",
-            "((bytes)->bytes)->null", "async((bytes)->bytes)->[bytes]",
+            // Exact sync/async functions over table at depth.
+            "(table)->table", "async(table)->table",
+            "(int,string,?[table])->table", "async(?int)->[table]",
+            "((table)->table)->null", "async((table)->table)->[table]",
             // Class atoms in every position.
             "(@lib/utils/User)->null", "()->@lib/utils/User",
             "[@lib/utils/User]", "?@lib/utils/User",
@@ -463,7 +458,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         assertAtom("[?@a/b]", "nullable class atom inside an array");
         assertAtom("[(@a/b)->null]", "function with class param inside an array");
         assertAtom("(?@a/b)->null", "nullable class atom as a function parameter");
-        assertAtom("(@lib/utils/User,Error)->[bytes]",
+        assertAtom("(@lib/utils/User,Error)->[table]",
             "multi-component and builtin atoms in one parameter list");
     }
 
@@ -500,11 +495,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
         DescriptorAst fn = new DescriptorAst.FunctionAtom(
             true,
             List.of(new DescriptorAst.PrimitiveAtom("int"),
-                    new DescriptorAst.ArrayAtom(new DescriptorAst.PrimitiveAtom("bytes"))),
+                    new DescriptorAst.ArrayAtom(new DescriptorAst.PrimitiveAtom("table"))),
             new DescriptorAst.ClassAtom("@lib/utils/User"));
-        check("async(int,[bytes])->@lib/utils/User".equals(
+        check("async(int,[table])->@lib/utils/User".equals(
                 CanonicalRuntimeTypeDescriptor.render(fn)),
-            "render rebuilds async(int,[bytes])->@lib/utils/User verbatim");
+            "render rebuilds async(int,[table])->@lib/utils/User verbatim");
         DescriptorParseResult reparsed = parseResult(CanonicalRuntimeTypeDescriptor.render(fn));
         check(reparsed.equals(fn), "parse(render(hand-built atom)) equals the atom");
 
@@ -566,8 +561,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
         // Nested nullables and null inners.
         assertError("??int", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
             "nested nullable ??int rejected");
-        assertError("??bytes", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
-            "nested nullable ??bytes rejected");
+        assertError("??table", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
+            "nested nullable ??table rejected");
         assertError("?null", DescriptorSyntaxError.Kind.NULL_INNER, 1,
             "nullable of null rejected");
         assertError("[??int]", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 2,
@@ -780,11 +775,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
     };
 
     private static final String[] LEAVES = {
-        "null", "boolean", "int", "number", "string", "bytes", "table"
+        "null", "boolean", "int", "number", "string", "table"
     };
 
     private static final String[] NON_NULL_LEAVES = {
-        "boolean", "int", "number", "string", "bytes", "table"
+        "boolean", "int", "number", "string", "table"
     };
 
     private static String leaf(Random rnd) {
@@ -864,14 +859,14 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         final int depth = 60;
 
-        // Pure array nesting around bytes.
-        String arrayText = "[".repeat(depth) + "bytes" + "]".repeat(depth);
+        // Pure array nesting around table.
+        String arrayText = "[".repeat(depth) + "table" + "]".repeat(depth);
         assertAtom(arrayText, "array nesting at depth " + depth);
         check(maxDepth(atomOf(arrayText)) >= depth,
             "array atom tree reaches depth " + depth);
 
-        // Alternating array/nullable nesting around bytes.
-        String alternated = "bytes";
+        // Alternating array/nullable nesting around table.
+        String alternated = "table";
         for (int i = 0; i < depth; i++) {
             alternated = (i % 2 == 0) ? "[" + alternated + "]" : "?" + alternated;
         }
@@ -879,21 +874,21 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check(maxDepth(atomOf(alternated)) >= depth,
             "alternated atom tree reaches depth " + depth);
 
-        // Exact sync/async function nesting with bytes through params/returns.
-        String functions = "bytes";
+        // Exact sync/async function nesting with table through params/returns.
+        String functions = "table";
         for (int i = 0; i < depth; i++) {
-            functions = (i % 2 == 0 ? "async(" : "(") + functions + ")->bytes";
+            functions = (i % 2 == 0 ? "async(" : "(") + functions + ")->table";
         }
         assertAtom(functions, "sync/async function nesting at depth " + depth);
         check(maxDepth(atomOf(functions)) >= depth,
             "function atom tree reaches depth " + depth);
 
-        // Mixed array/nullable/function nesting around bytes.
-        String mixed = "bytes";
+        // Mixed array/nullable/function nesting around table.
+        String mixed = "table";
         for (int i = 0; i < depth; i++) {
             mixed = (i % 3 == 0) ? "[" + mixed + "]"
                 : (i % 3 == 1) ? "?" + mixed
-                : "async(" + mixed + ")->bytes";
+                : "async(" + mixed + ")->table";
         }
         assertAtom(mixed, "mixed nesting at depth " + depth);
         check(maxDepth(atomOf(mixed)) >= depth,
@@ -934,7 +929,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
     /** The canonical primitive keyword set (encode never emits a bare name). */
     private static final Set<String> PRIMITIVE_KEYWORDS_SET =
-        Set.of("null", "boolean", "int", "number", "string", "bytes", "table");
+        Set.of("null", "boolean", "int", "number", "string", "table");
 
     private static final Type[] PRIMITIVE_TYPES = {
         Type.Null.INSTANCE,
@@ -942,7 +937,6 @@ public class CanonicalRuntimeTypeDescriptorTest {
         Type.Int.INSTANCE,
         Type.Number.INSTANCE,
         Type.String.INSTANCE,
-        Type.Bytes.INSTANCE,
         Type.Table.INSTANCE,
     };
 
@@ -951,16 +945,10 @@ public class CanonicalRuntimeTypeDescriptorTest {
         Type.Int.INSTANCE,
         Type.Number.INSTANCE,
         Type.String.INSTANCE,
-        Type.Bytes.INSTANCE,
         Type.Table.INSTANCE,
     };
 
     private static Type genLeafTypeTree(Random rnd) {
-        // Bytes bias: every third leaf is bytes so the corpus covers bytes
-        // in every structural position.
-        if (rnd.nextInt(3) == 0) {
-            return Type.Bytes.INSTANCE;
-        }
         return PRIMITIVE_TYPES[rnd.nextInt(PRIMITIVE_TYPES.length)];
     }
 
@@ -1105,11 +1093,10 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         Type[] types = {
             Type.Null.INSTANCE, Type.Boolean.INSTANCE, Type.Int.INSTANCE,
-            Type.Number.INSTANCE, Type.String.INSTANCE, Type.Bytes.INSTANCE,
-            Type.Table.INSTANCE,
+            Type.Number.INSTANCE, Type.String.INSTANCE, Type.Table.INSTANCE,
         };
         String[] texts = {
-            "null", "boolean", "int", "number", "string", "bytes", "table",
+            "null", "boolean", "int", "number", "string", "table",
         };
         for (int i = 0; i < types.length; i++) {
             DescriptorAst ast = assertEncodeMember(types[i], "primitive " + texts[i]);
@@ -1117,9 +1104,6 @@ public class CanonicalRuntimeTypeDescriptorTest {
                     && p.name().equals(texts[i]),
                 "primitive " + texts[i] + " encodes to the exact keyword");
         }
-        check(CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR.equals(
-                ENCODER.encode(Type.Bytes.INSTANCE)),
-            "bytes encodes to the pinned BYTES_DESCRIPTOR constant");
     }
 
     static void testEncodePinnedShapes() {
@@ -1127,12 +1111,12 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         check("[int]".equals(ENCODER.encode(new Type.Array(Type.Int.INSTANCE))),
             "Array(int) encodes to [int]");
-        check("[?bytes]".equals(ENCODER.encode(
-                new Type.Array(new Type.Nullable(Type.Bytes.INSTANCE)))),
-            "Array(Nullable(bytes)) encodes to [?bytes]");
-        check("?[bytes]".equals(ENCODER.encode(
-                new Type.Nullable(new Type.Array(Type.Bytes.INSTANCE)))),
-            "Nullable(Array(bytes)) encodes to ?[bytes]");
+        check("[?table]".equals(ENCODER.encode(
+                new Type.Array(new Type.Nullable(Type.Table.INSTANCE)))),
+            "Array(Nullable(table)) encodes to [?table]");
+        check("?[table]".equals(ENCODER.encode(
+                new Type.Nullable(new Type.Array(Type.Table.INSTANCE)))),
+            "Nullable(Array(table)) encodes to ?[table]");
         check("(int,string)->boolean".equals(ENCODER.encode(
                 new Type.Func(List.of(Type.Int.INSTANCE, Type.String.INSTANCE),
                     Type.Boolean.INSTANCE))),
@@ -1140,22 +1124,22 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check("()->null".equals(ENCODER.encode(
                 new Type.Func(List.of(), Type.Null.INSTANCE))),
             "zero-parameter sync function encodes to ()->null");
-        check("async(bytes)->bytes".equals(ENCODER.encode(
-                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE,
+        check("async(table)->table".equals(ENCODER.encode(
+                new Type.Func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE,
                     true))),
-            "async bytes function encodes to async(bytes)->bytes");
-        check("async(?int)->[bytes]".equals(ENCODER.encode(
+            "async table function encodes to async(table)->table");
+        check("async(?int)->[table]".equals(ENCODER.encode(
                 new Type.Func(List.of(new Type.Nullable(Type.Int.INSTANCE)),
-                    new Type.Array(Type.Bytes.INSTANCE), true))),
+                    new Type.Array(Type.Table.INSTANCE), true))),
             "async function params/return encode recursively");
 
         assertEncodeMember(new Type.Array(Type.Int.INSTANCE), "pinned shape [int]");
-        assertEncodeMember(new Type.Nullable(new Type.Array(Type.Bytes.INSTANCE)),
-            "pinned shape ?[bytes]");
+        assertEncodeMember(new Type.Nullable(new Type.Array(Type.Table.INSTANCE)),
+            "pinned shape ?[table]");
         assertEncodeMember(new Type.Func(
-                List.of(Type.Bytes.INSTANCE, new Type.Nullable(Type.Int.INSTANCE)),
-                new Type.Array(Type.Bytes.INSTANCE), true),
-            "pinned shape async(bytes,?int)->[bytes]");
+                List.of(Type.Table.INSTANCE, new Type.Nullable(Type.Int.INSTANCE)),
+                new Type.Array(Type.Table.INSTANCE), true),
+            "pinned shape async(table,?int)->[table]");
     }
 
     static void testEncodeInvariantViolations() {
@@ -1290,19 +1274,18 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         final int depth = 60;
 
-        // Pure array nesting around bytes.
-        Type arrayDeep = Type.Bytes.INSTANCE;
+        // Pure array nesting around table.
+        Type arrayDeep = Type.Table.INSTANCE;
         for (int i = 0; i < depth; i++) {
             arrayDeep = new Type.Array(arrayDeep);
         }
         DescriptorAst arrayAst = assertEncodeMember(arrayDeep,
             "encode: array nesting at depth " + depth);
-        check(Types.containsBytes(arrayDeep), "arrayDeep structurally contains bytes");
         check(arrayAst != null && maxDepth(arrayAst) >= depth,
             "encode: array atom tree reaches depth " + depth);
 
-        // Alternating array/nullable nesting around bytes.
-        Type alternated = Type.Bytes.INSTANCE;
+        // Alternating array/nullable nesting around table.
+        Type alternated = Type.Table.INSTANCE;
         for (int i = 0; i < depth; i++) {
             alternated = (i % 2 == 0)
                 ? new Type.Array(alternated)
@@ -1310,41 +1293,36 @@ public class CanonicalRuntimeTypeDescriptorTest {
         }
         DescriptorAst altAst = assertEncodeMember(alternated,
             "encode: array/nullable alternation at depth " + depth);
-        check(Types.containsBytes(alternated),
-            "alternated type structurally contains bytes");
         check(altAst != null && maxDepth(altAst) >= depth,
             "encode: alternated atom tree reaches depth " + depth);
 
-        // Bytes through sync and async function parameter/return positions,
-        // nested to depth >= 50: every level carries bytes in the parameter
+        // Tables through sync and async function parameter/return positions,
+        // nested to depth >= 50: every level carries table in the parameter
         // and in the return position, alternating the exact marker.
-        Type funcs = Type.Bytes.INSTANCE;
+        Type funcs = Type.Table.INSTANCE;
         for (int i = 0; i < depth; i++) {
             boolean async = (i % 2 == 0);
-            funcs = new Type.Func(List.of(funcs), Type.Bytes.INSTANCE, async);
+            funcs = new Type.Func(List.of(funcs), Type.Table.INSTANCE, async);
         }
         DescriptorAst funcAst = assertEncodeMember(funcs,
             "encode: sync/async function nesting at depth " + depth);
-        check(Types.containsBytes(funcs),
-            "function-nested type structurally contains bytes");
         check(funcAst != null && maxDepth(funcAst) >= depth,
             "encode: function atom tree reaches depth " + depth);
 
-        // Mixed array/nullable/function nesting around bytes with a bytes
-        // parameter and a bytes return at every function level.
-        Type mixed = Type.Bytes.INSTANCE;
+        // Mixed array/nullable/function nesting around table with a table
+        // parameter and a table return at every function level.
+        Type mixed = Type.Table.INSTANCE;
         for (int i = 0; i < depth; i++) {
             switch (i % 3) {
                 case 0 -> mixed = new Type.Array(mixed);
                 case 1 -> mixed = new Type.Nullable(mixed);
                 default -> mixed = new Type.Func(
-                    List.of(mixed, Type.Bytes.INSTANCE),
-                    Type.Bytes.INSTANCE, i % 2 == 0);
+                    List.of(mixed, Type.Table.INSTANCE),
+                    Type.Table.INSTANCE, i % 2 == 0);
             }
         }
         DescriptorAst mixedAst = assertEncodeMember(mixed,
             "encode: mixed nesting at depth " + depth);
-        check(Types.containsBytes(mixed), "mixed type structurally contains bytes");
         check(mixedAst != null && maxDepth(mixedAst) >= depth,
             "encode: mixed atom tree reaches depth " + depth);
     }
@@ -1620,9 +1598,6 @@ public class CanonicalRuntimeTypeDescriptorTest {
         }
         if (type == Type.String.INSTANCE) {
             return "string";
-        }
-        if (type == Type.Bytes.INSTANCE) {
-            return CanonicalRuntimeTypeDescriptor.BYTES_DESCRIPTOR;
         }
         if (type == Type.Table.INSTANCE) {
             return "table";
@@ -2173,7 +2148,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
                 case 0 -> mixed = new Type.Array(mixed);
                 case 1 -> mixed = new Type.Nullable(mixed);
                 default -> mixed = new Type.Func(
-                    List.of(mixed, Type.Bytes.INSTANCE), user, i % 2 == 0);
+                    List.of(mixed, Type.Table.INSTANCE), user, i % 2 == 0);
             }
         }
         DescriptorAst mixedAst = assertClassBearingEncodeMember(mixed,

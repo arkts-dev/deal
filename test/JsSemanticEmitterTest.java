@@ -334,8 +334,7 @@ public class JsSemanticEmitterTest {
                 built.index(), manifests.manifests(),
                 orchestrator.hostDeclarationSurface(), identities, BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW), callbackExports);
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), callbackExports);
         }
         if (lowering.hasErrors() || lowering.project() == null) {
             throw new IllegalStateException("the fixture project did not"
@@ -1420,11 +1419,6 @@ public class JsSemanticEmitterTest {
               if (joined !== "ab") { throw { code: "TEST_FAIL", message: "str" }; }
               let ordered: string = "n";
               if ("b" < "c") { ordered = "y"; }
-              let buf: bytes = bytes(3);
-              buf[0] = 7;
-              let byte0: int = buf[0];
-              if (byte0 !== 7) { throw { code: "TEST_FAIL", message: "byte" }; }
-              if (buf.length !== 3) { throw { code: "TEST_FAIL", message: "blen" }; }
               let t: table = {a: 1, b: "x", __proto__: 1};
               t.__proto__ = 5;
               let proto: int = t.__proto__;
@@ -1462,11 +1456,6 @@ public class JsSemanticEmitterTest {
             "recorded int arithmetic routes through the signed32 member");
         check(artifact.contains("($s") && artifact.contains(" + $s"),
             "recorded number arithmetic stays native IEEE");
-        check(artifact.contains("$rt.bytes(3") || artifact.contains("$rt.bytes("),
-            "the bytes allocation routes through the captured Uint8Array"
-                + " carrier");
-        check(artifact.contains("$rt.bytesGet(") && artifact.contains("$rt.bytesSet("),
-            "bytes reads and writes route through the bounds-checked members");
         check(!artifact.contains("typeof"),
             "no emitted decision reads typeof: recorded facts select every"
                 + " shape");
@@ -3405,7 +3394,7 @@ public class JsSemanticEmitterTest {
         String appSource = Files.readString(out.resolve("app.js"),
             StandardCharsets.UTF_8);
         check(appSource.contains(
-                "$g36 = $rt.checkType(\"int\", $g36, "),
+                "$g30 = $rt.checkType(\"int\", $g30, "),
             "the published callback wrapper runs the recorded HOST_TO_DEAL"
                 + " cell in its prologue");
         Files.writeString(out.resolve("driver.js"), """
@@ -3792,8 +3781,8 @@ public class JsSemanticEmitterTest {
               return f(v);
             }
 
-            export function bytesFrom(t: table): bytes {
-              let b: bytes = t.v;
+            export function booleanFrom(t: table): boolean {
+              let b: boolean = t.v;
               return b;
             }
 
@@ -3833,16 +3822,16 @@ public class JsSemanticEmitterTest {
             out.nullAdmitted = $rt.hostParam(1, "?int", null, "p.deal", 2, 1)
               === null;
             try {
-              $rt.hostParam(1, "bytes", 5, "p.deal", 10, 10);
+              $rt.hostParam(1, "boolean", 5, "p.deal", 10, 10);
             } catch (e) {
               out.cell = { code: e.code, message: e.message,
                 expected: e.expected, actual: e.actual, file: e.file,
                 line: e.line, column: e.column };
             }
             try {
-              app.bytesFrom.$f(new Map([["v", 5]]));
+              app.booleanFrom.$f(new Map([["v", 5]]));
             } catch (e) {
-              out.bytes = { code: e.code, message: e.message, file: e.file,
+              out.boolean = { code: e.code, message: e.message, file: e.file,
                 line: e.line, column: e.column };
             }
             try {
@@ -3961,15 +3950,15 @@ public class JsSemanticEmitterTest {
                 + run.output());
         check(run.output().contains("\"cell\":{\"code\":\"E8010\","
                 + "\"message\":\"parameter 1 type mismatch: expected"
-                + " bytes\",\"expected\":\"bytes\",\"actual\":"
+                + " boolean\",\"expected\":\"boolean\",\"actual\":"
                 + "\"number\",\"file\":\"p.deal\",\"line\":10,"
                 + "\"column\":10}"),
             "the recorded HOST_PARAMETER cell composes the pinned E8010"
-                + " tuple at the call origin (the host-bytes-param-mismatch"
+                + " tuple at the call origin (the host-boolean-param-mismatch"
                 + " corpus expectation): " + run.output());
-        check(run.output().contains("\"bytes\":{\"code\":\"E8001\","
-                + "\"message\":\"expected bytes\""),
-            "the deferred bytes contextual read passes the raw value to"
+        check(run.output().contains("\"boolean\":{\"code\":\"E8001\","
+                + "\"message\":\"expected boolean\""),
+            "the deferred boolean contextual read passes the raw value to"
                 + " the consuming declaration cell's own E8001 projection: "
                 + run.output());
         check(run.output().contains("\"fn\":{\"code\":\"E8001\","
@@ -3981,20 +3970,20 @@ public class JsSemanticEmitterTest {
         // The deferred reads' authoritative origin: the shared authority
         // and the emitted artifact both report the consuming declaration
         // cell's own annotation span, never the read site.
-        Fixture bytesFailure = compileFixture(
-            Files.createTempDirectory(tmpRoot, "host-cell-bytes"), """
-            export function bytesFrom(t: table): bytes {
-              let b: bytes = t.v;
+        Fixture booleanFailure = compileFixture(
+            Files.createTempDirectory(tmpRoot, "host-cell-boolean"), """
+            export function booleanFrom(t: table): boolean {
+              let b: boolean = t.v;
               return b;
             }
 
             export function main(): null {
               let t: table = { v: 5 };
-              let b: bytes = bytesFrom(t);
+              let b: boolean = booleanFrom(t);
               return null;
             }
             """);
-        checkDeferredReadOrigin(bytesFailure, "bytes");
+        checkDeferredReadOrigin(booleanFailure, "boolean");
         Fixture functionFailure = compileFixture(
             Files.createTempDirectory(tmpRoot, "host-cell-fn"), """
             export function functionFrom(t: table): (x: int) => int {

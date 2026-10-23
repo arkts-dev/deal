@@ -1016,11 +1016,7 @@ public class LoweringSupportTest {
      * must not claim it. A module whose only identifier occurrence is an
      * assignment target therefore records {@code ASSIGNMENT} without
      * {@code IDENTIFIER}, and the production compile passes R-COVERAGE;
-     * an identifier read still records the row. Suppressing the read row
-     * suppresses only the coverage row: the write position still carries
-     * its checked type, so a bytes-typed target keeps the {@code bytesValue}
-     * mark and therefore the module's {@code bytesBearing} marker and
-     * {@code CONTAINERS_AND_STRINGS} claim.
+     * an identifier read still records the row.
      */
     static void testIdentifierWriteTargetClaimsAssignmentOnly() throws Exception {
         System.out.println("-- constructCoverage: a bare identifier write target "
@@ -1076,42 +1072,6 @@ public class LoweringSupportTest {
                     "an identifier read records the IDENTIFIER row");
             }
 
-            // The type mark survives the suppressed read row: a bytes-typed
-            // bare identifier write target (RHS null) must keep the
-            // plan-time bytes fact even when it is the module's only bytes
-            // occurrence — and that module compiles too.
-            CompiledFixture bytesStoreFixture = compileFixture(
-                tmp.resolve("bytes-store"), Map.of(
-                    "main.deal", """
-                        export function main(): null {
-                          let a: bytes | null = null;
-                          a = null;
-                          return null;
-                        }
-                        """), "main.deal");
-            check(bytesStoreFixture.ok(), "the bytes store-only module compiles "
-                + "with zero diagnostics (R-COVERAGE): "
-                + bytesStoreFixture.orchestrator().diagnostics());
-            SemanticRequirementManifest bytesStoreManifest =
-                manifestOf(bytesStoreFixture.manifests(), "main");
-            check(bytesStoreManifest != null,
-                "the bytes store-only module produces a manifest");
-            if (bytesStoreManifest != null) {
-                check(bytesStoreManifest.constructCoverage()
-                        .containsKey(ConstructKind.ASSIGNMENT),
-                    "the bytes store-only module records the ASSIGNMENT row");
-                check(!bytesStoreManifest.constructCoverage()
-                        .containsKey(ConstructKind.IDENTIFIER),
-                    "a bytes-typed bare identifier write target records no "
-                        + "IDENTIFIER read row");
-                check(bytesStoreManifest.bytesBearing(),
-                    "a bytes-typed bare identifier write target still sets the "
-                        + "bytesBearing marker");
-                check(bytesStoreManifest.capabilities()
-                        .contains(SemanticCapability.CONTAINERS_AND_STRINGS),
-                    "a bytes-typed bare identifier write target still claims "
-                        + "CONTAINERS_AND_STRINGS: " + bytesStoreManifest.capabilities());
-            }
         } finally {
             deleteRecursively(tmp);
         }
@@ -1288,7 +1248,7 @@ public class LoweringSupportTest {
         // implementation-module manifest (F3).
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
-                EnumSet.of(SemanticCapability.SIGNED_INT32), Map.of(), false);
+                EnumSet.of(SemanticCapability.SIGNED_INT32), Map.of());
             fail("a manifest without FOUNDATION_VALUES must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "a manifest without FOUNDATION_VALUES is rejected at construction");
@@ -1296,7 +1256,7 @@ public class LoweringSupportTest {
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
                 EnumSet.of(SemanticCapability.FOUNDATION_VALUES),
-                Map.of(ConstructKind.STDLIB_TIME_NOW_MILLIS, List.of()), false);
+                Map.of(ConstructKind.STDLIB_TIME_NOW_MILLIS, List.of()));
             fail("a std/time.nowMillis coverage row diverging from its mapped op kinds "
                 + "must be rejected");
         } catch (IllegalArgumentException expected) {
@@ -1309,7 +1269,7 @@ public class LoweringSupportTest {
             new SemanticRequirementManifest(new ModuleId("m"),
                 EnumSet.of(SemanticCapability.FOUNDATION_VALUES),
                 Map.of(ConstructKind.CALL,
-                    List.of(deal.semantic.ir.SemanticOpKind.BINARY)), false);
+                    List.of(deal.semantic.ir.SemanticOpKind.BINARY)));
             fail("a constructCoverage row diverging from T2's mapped op kinds must be "
                 + "rejected");
         } catch (IllegalArgumentException expected) {
@@ -1318,7 +1278,7 @@ public class LoweringSupportTest {
         }
         try {
             new SemanticRequirementManifest(new ModuleId("m"),
-                EnumSet.noneOf(SemanticCapability.class), Map.of(), false);
+                EnumSet.noneOf(SemanticCapability.class), Map.of());
             fail("an empty-capability manifest must be rejected");
         } catch (IllegalArgumentException expected) {
             check(true, "an empty capability set is rejected at construction");
@@ -1462,20 +1422,6 @@ public class LoweringSupportTest {
                 && (manifestOf(manifests, "main") != null),
             "the wrapper scenario carries no time-conflict routing-marker claim in either "
                 + "module (the retired access/propagation arms never fire)");
-    }
-
-    static void testE10BytesValueArm(RequirementManifestResult result) {
-        System.out.println("-- ISSUE-0239 E10 arm: bytes-typed values claim "
-            + "CONTAINERS_AND_STRINGS --");
-
-        if (result == null) {
-            return;
-        }
-        check(manifestOf(result, "main").capabilities().contains(
-                SemanticCapability.CONTAINERS_AND_STRINGS),
-            "the bytes(...) call and the bytes .length read claim "
-                + "CONTAINERS_AND_STRINGS (ISSUE-0158 boundary, never E6005): "
-                + manifestOf(result, "main").capabilities());
     }
 
     static void testE10ClassLiteralArm() throws Exception {
@@ -1726,91 +1672,57 @@ public class LoweringSupportTest {
         }
     }
 
-    static void testBytesBearingMarkerDeterminism() throws Exception {
-        System.out.println("-- ISSUE-0574 bytes guard: bytesBearing is a fixed "
-            + "per-module boolean with a byte-identical canonical JSON key --");
-
-        Path tmp = Files.createTempDirectory("deal-manifest-bytesmarker");
+    static void testManifestDeterminism() throws Exception {
+        System.out.println("-- deterministic manifest serialization --");
+        Path tmp = Files.createTempDirectory("deal-manifest-determinism");
         try {
-            String bytesSource = """
-                export function test_bytes_length(): null {
-                  let n: int = 3;
-                  let b: bytes = bytes(n);
-                  if (b.length !== 3) {
-                    throw { code: "TEST_FAIL", message: "bytes: length mismatch" };
+            String source = """
+                export function main(): null {
+                  let xs: int[] = [1, 2, 3];
+                  if (xs.length !== 3) {
+                    throw { code: "TEST_FAIL", message: "array length mismatch" };
                   }
                   return null;
                 }
-
-                export function main(): null {
-                  return null;
-                }
                 """;
-
             ProductionObservation production = productionAccept(tmp.resolve("production"),
-                Map.of("main.deal", bytesSource), "main.deal",
-                "the bytes-bearing marker arm", null);
-            verifyProduction(production, "the bytes-bearing E10 arm", null);
+                Map.of("main.deal", source), "main.deal", "the array capability arm", null);
+            verifyProduction(production, "the array capability arm", null);
             RequirementManifestResult first = compileAndCompute(tmp.resolve("first"),
-                Map.of("main.deal", bytesSource), "main.deal");
-            testE10BytesValueArm(first);
+                Map.of("main.deal", source), "main.deal");
             RequirementManifestResult second = compileAndCompute(tmp.resolve("second"),
-                Map.of("main.deal", bytesSource), "main.deal");
+                Map.of("main.deal", source), "main.deal");
             if (first == null || second == null) {
                 return;
             }
-            SemanticRequirementManifest bytesManifest = manifestOf(first, "main");
-            check(bytesManifest != null && bytesManifest.bytesBearing(),
-                "the bytes-bearing module's manifest carries bytesBearing=true "
-                    + "(exactly scan.bytesInContainer || scan.bytesValue)");
-            check(bytesManifest != null && bytesManifest.capabilities().contains(
-                    SemanticCapability.CONTAINERS_AND_STRINGS),
-                "the unchanged claim arm still claims CONTAINERS_AND_STRINGS "
-                    + "(the construct-ownership fact): "
-                    + bytesManifest.capabilities());
-            if (bytesManifest == null) {
+            SemanticRequirementManifest manifest = manifestOf(first, "main");
+            check(manifest != null, "the array module produces a manifest");
+            if (manifest == null) {
                 return;
             }
-            String textA = bytesManifest.canonicalText();
-            String textB = bytesManifest.canonicalText();
-            String textC = bytesManifest.canonicalText();
-            check(textA.equals(textB) && textA.equals(textC),
-                "repeated canonicalText() over the same bytes manifest is "
-                    + "byte-identical");
-            check(countOccurrences(textA, "\"bytesBearing\"") == 1
-                    && textA.contains("\"bytesBearing\":true"),
-                "the canonical JSON carries exactly one bytesBearing key with "
-                    + "the fixed true value: " + textA);
-            check(manifestOf(second, "main").canonicalText().equals(textA),
-                "two builds of the same bytes project serialize the manifest "
-                    + "byte-identically (a fixed per-module boolean, never a "
-                    + "build-dependent value)");
+            String text = manifest.canonicalText();
+            check(text.equals(manifest.canonicalText()),
+                "repeated serialization is byte-identical");
+            check(manifestOf(second, "main").canonicalText().equals(text),
+                "independently built projects serialize byte-identically");
+            check(!text.contains("\"bytesBearing\""),
+                "the manifest schema carries no retired bytes metadata");
 
-            // Non-bytes control: the same triggers absent -> the fixed
-            // false value, one key, byte-identical across repeats.
             RequirementManifestResult plain = compileAndCompute(tmp.resolve("plain"),
-                Map.of("main.deal", """
-                    export function main(): null {
-                      return null;
-                    }
-                    """), "main.deal");
+                Map.of("main.deal", "export function main(): null { return null; }"),
+                "main.deal");
             if (plain == null) {
                 return;
             }
             SemanticRequirementManifest plainManifest = manifestOf(plain, "main");
-            check(plainManifest != null && !plainManifest.bytesBearing(),
-                "a non-bytes module's manifest carries bytesBearing=false");
-            if (plainManifest == null) {
-                return;
+            check(plainManifest != null, "the scalar module produces a manifest");
+            if (plainManifest != null) {
+                String plainText = plainManifest.canonicalText();
+                check(!plainText.contains("\"bytesBearing\""),
+                    "the scalar manifest uses the same schema");
+                check(plainText.equals(plainManifest.canonicalText()),
+                    "scalar manifest serialization is byte-identical");
             }
-            String plainTextA = plainManifest.canonicalText();
-            check(countOccurrences(plainTextA, "\"bytesBearing\"") == 1
-                    && plainTextA.contains("\"bytesBearing\":false"),
-                "the non-bytes canonical JSON carries exactly one bytesBearing "
-                    + "key with the fixed false value: " + plainTextA);
-            check(plainManifest.canonicalText().equals(plainTextA),
-                "the non-bytes manifest's canonical text is byte-identical "
-                    + "across repeated computation");
         } finally {
             deleteRecursively(tmp);
         }
@@ -1860,7 +1772,7 @@ public class LoweringSupportTest {
         testE10AdapterCreationArm();
         testE10UncalledDeclarationArm();
         testE10StoredFunctionExpressionArm();
-        testBytesBearingMarkerDeterminism();
+        testManifestDeterminism();
 
         System.out.println("\nPassed: " + passed + ", Failed: " + failed);
         if (failed > 0) {

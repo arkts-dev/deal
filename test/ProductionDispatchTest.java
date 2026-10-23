@@ -690,11 +690,11 @@ public class ProductionDispatchTest {
         }
         """;
 
-    /** The bytes-bearing fixture: the lowering fails CONSTRUCT_UNLOWERED. */
-    private static final String BYTES_SOURCE = """
+    /** The array fixture exercises production container lowering. */
+    private static final String ARRAY_SOURCE = """
         export function main(): null {
           let n: int = 3;
-          let b: bytes = bytes(n);
+          let b: int[] = [n];
           return null;
         }
         """;
@@ -2454,7 +2454,7 @@ public class ProductionDispatchTest {
 
     private static void testFailClosedFamilies() throws Exception {
         System.out.println("-- accept-and-emit families: HOST import, "
-            + "cross-module async, bytes, Error, time, function values --");
+            + "cross-module async, arrays, Error, time, function values --");
 
         Path host = Files.createTempDirectory("production-dispatch-host-");
         try {
@@ -2614,7 +2614,7 @@ public class ProductionDispatchTest {
             deleteRecursively(same);
         }
 
-        checkBytesProductionCoverage();
+        checkArrayProductionCoverage();
         checkTimeNowMillisCoverage();
         checkLaterSliceConstruct("invalid typed declaration",
             Map.of("src/main.deal", UNREALIZED_CONSTRUCT_SOURCE),
@@ -2921,26 +2921,26 @@ public class ProductionDispatchTest {
     }
 
     /**
-     * The K6 bytes coverage through the release-owned production invocation
+     * The container coverage through the release-owned production invocation
      * (the fixture this battery pinned fail-closed): the closure emits
      * exactly one project artifact and the artifact executes under the real
      * {@code luajit} toolchain.
      */
-    private static void checkBytesProductionCoverage() throws Exception {
-        Path project = Files.createTempDirectory("production-dispatch-bytes-");
+    private static void checkArrayProductionCoverage() throws Exception {
+        Path project = Files.createTempDirectory("production-dispatch-array-");
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
-            write(project, "src/main.deal", BYTES_SOURCE);
+            write(project, "src/main.deal", ARRAY_SOURCE);
             ProjectOutcome compile = productionCompile(project, "src/main.deal",
                 "out");
             check(compile.exitCode() == 0,
-                "the bytes closure emits one project artifact: "
+                "the array closure emits one project artifact: "
                     + compile.stderr());
             if (compile.exitCode() == 0) {
                 ProcessOutcome run = runProcess(project.resolve("out"),
                     "luajit", "main.lua");
                 check(run.exitCode() == 0,
-                    "the bytes production artifact runs: exit=" + run.exitCode()
+                    "the array production artifact runs: exit=" + run.exitCode()
                         + " output=" + run.output());
             }
         } finally {
@@ -5122,7 +5122,7 @@ public class ProductionDispatchTest {
             // ISSUE-0830: private carrier identity on the published
             // artifacts. A table may carry any string key: the
             // carrier-vocabulary table keeps its keys end to end, the
-            // forged class/array/bytes/function carriers are rejected at
+            // forged class/array/function carriers are rejected at
             // every declared carrier boundary, the language null is never
             // a table or an array, and std/json.parse's declared
             // (string)->table exit refuses a scalar root with the shared

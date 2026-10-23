@@ -27,7 +27,7 @@ public final class AdapterShapeMap {
         FUNCTION_EXPRESSION,
 
         /**
-         * A first-class {@code int}/{@code number}/{@code bytes}
+         * A first-class {@code int}/{@code number}
          * intrinsic function value.
          */
         INTRINSIC_FUNCTION_VALUE,
@@ -62,7 +62,7 @@ public final class AdapterShapeMap {
     /**
      * The source-shape classification of one adapted source expression
      * (B7): a {@code FunctionExpr} → {@link SourceShape#FUNCTION_EXPRESSION};
-     * an identifier resolving to the root {@code int}/{@code number}/{@code bytes}
+     * an identifier resolving to the root {@code int}/{@code number}
      * intrinsic binding → {@link SourceShape#INTRINSIC_FUNCTION_VALUE}
      * (the checker removes the root intrinsic binding before a user
      * shadow, so the symbol fact decides — a shadowed name is a user
@@ -89,7 +89,7 @@ public final class AdapterShapeMap {
      * The source-shape classification of one adapted source expression
      * under a per-position intrinsic predicate: the caller's own
      * per-occurrence resolution decides whether an identifier denotes a
-     * {@code int}/{@code number}/{@code bytes} intrinsic at its position
+     * {@code int}/{@code number} intrinsic at its position
      * (docs/spec-v1.3.md §Name resolution — a lexically shadowing local,
      * parameter, enclosing-block or module-level binding precedes the
      * compiler intrinsics), so a shadowed name classifies as the
@@ -117,14 +117,13 @@ public final class AdapterShapeMap {
     }
 
     /**
-     * True iff the resolved symbol is one of the conversion/allocation
-     * intrinsics ({@code int}, {@code number}, {@code bytes}).
+     * True iff the resolved symbol is one of the conversion
+     * intrinsics ({@code int}, {@code number}).
      */
     private static boolean isConversionIntrinsic(Symbol symbol) {
         return symbol instanceof Symbol.IntrinsicSymbol intrinsic
             && ("int".equals(intrinsic.name())
-                || "number".equals(intrinsic.name())
-                || "bytes".equals(intrinsic.name()));
+                || "number".equals(intrinsic.name()));
     }
 
     // =========================================================================

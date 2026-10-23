@@ -1,0 +1,12 @@
+// @spec: Arrays
+// @description: A class field may use int[] and receive a int[] default value.
+// @expected: runtime-ok
+// @features: int[], classes, defaults
+
+class Packet { payload: int[] = [0, 0]; }
+
+export function main(): null {
+  let packet: Packet = {};
+  if (packet.payload.length !== 2) { throw { code: "TEST_FAIL", message: "int[] class default mismatch" }; }
+  return null;
+}

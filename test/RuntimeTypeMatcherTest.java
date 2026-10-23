@@ -43,16 +43,10 @@ public class RuntimeTypeMatcherTest {
     /** A table double. */
     static final class TableValue { }
 
-    /** A bytes double standing in for the E6-owned representation. */
-    static final class BytesValue { }
-
     /**
      * The conformant full-corpus seam double: every accessor is exactly
      * one of the table's named backend-representation predicates,
-     * honestly backed by the value shapes above.  Its bytes hook obeys
-     * the pinned {@code check_bytes(value, range) -> bytes | E8001}
-     * contract with its own failure text; the matcher must propagate the
-     * hook's outcome unchanged.
+     * honestly backed by the value shapes above.
      */
     static class TestModel implements RuntimeValueModel {
         @Override public boolean isNull(Object value) {
@@ -74,13 +68,6 @@ public class RuntimeTypeMatcherTest {
         }
         @Override public String functionDescriptorText(Object value) {
             return value instanceof FnValue f ? f.descriptor : null;
-        }
-        @Override public Object checkBytes(Object value, RuntimeSourceLocation range) {
-            if (value instanceof BytesValue) {
-                return value;
-            }
-            return new RuntimeCheckFailure("E8001",
-                "expected bytes, got " + kindOf(value), range);
         }
         private String kindOf(Object value) {
             if (value == null || value == NULL_VALUE) return "null";
@@ -106,45 +93,7 @@ public class RuntimeTypeMatcherTest {
     static final class LuaShapedModel extends TestModel {
         @Override public boolean isTable(Object value) {
             return value instanceof TableValue || value instanceof ClassValue
-                || value instanceof ArrayValue || value instanceof FnValue
-                || value instanceof BytesValue;
-        }
-    }
-
-    /**
-     * The bytes-routing-proof double: every accessor other than the
-     * pinned {@code check_bytes(value, range)} hook throws, so any
-     * consultation of another predicate on the bytes row fails the test
-     * loudly.
-     */
-    static final class BytesRoutingModel implements RuntimeValueModel {
-        final Object hookOutcome;
-        boolean hookCalled;
-        Object receivedValue;
-        RuntimeSourceLocation receivedRange;
-
-        BytesRoutingModel(Object hookOutcome) { this.hookOutcome = hookOutcome; }
-
-        private AssertionError forbidden(String accessor) {
-            return new AssertionError("non-bytes accessor consulted on the bytes row: " + accessor);
-        }
-        @Override public boolean isNull(Object value) { throw forbidden("isNull"); }
-        @Override public boolean isBoolean(Object value) { throw forbidden("isBoolean"); }
-        @Override public boolean isString(Object value) { throw forbidden("isString"); }
-        @Override public String stringPayload(Object value) { throw forbidden("stringPayload"); }
-        @Override public boolean isNumber(Object value) { throw forbidden("isNumber"); }
-        @Override public double numberPayload(Object value) { throw forbidden("numberPayload"); }
-        @Override public boolean isTable(Object value) { throw forbidden("isTable"); }
-        @Override public boolean isArray(Object value) { throw forbidden("isArray"); }
-        @Override public int arrayLength(Object value) { throw forbidden("arrayLength"); }
-        @Override public Object arrayElementAt(Object value, int index) { throw forbidden("arrayElementAt"); }
-        @Override public String classIdentityText(Object value) { throw forbidden("classIdentityText"); }
-        @Override public String functionDescriptorText(Object value) { throw forbidden("functionDescriptorText"); }
-        @Override public Object checkBytes(Object value, RuntimeSourceLocation range) {
-            hookCalled = true;
-            receivedValue = value;
-            receivedRange = range;
-            return hookOutcome;
+                || value instanceof ArrayValue || value instanceof FnValue;
         }
     }
 
@@ -245,7 +194,6 @@ public class RuntimeTypeMatcherTest {
         testArrayRow();
         testNullableRow();
         testFunctionRow();
-        testBytesRow();
         testActualProjectionPrecedence();
         testUnparsableRow();
         testRangePropagation();
@@ -594,49 +542,6 @@ public class RuntimeTypeMatcherTest {
     }
 
     // =========================================================================
-    // bytes row: hook delegation only; the hook receives (value, range)
-    // =========================================================================
-
-    static void testBytesRow() {
-        System.out.println("-- bytes row --");
-
-        BytesValue bytes = new BytesValue();
-        assertPass("bytes", bytes, "bytes row delegates to the hook and passes");
-
-        // Hook failure propagates byte-for-byte with the supplied range.
-        RuntimeSourceLocation loc = new RuntimeSourceLocation("main.deal", 1, 1);
-        Object r = MATCHER.check("bytes", new TableValue(), loc);
-        RuntimeCheckFailure f = failure(r);
-        check(f != null && "E8001".equals(f.code())
-                && "expected bytes, got table".equals(f.message())
-                && f.range() == loc,
-            "bytes hook failure (E8001 'expected bytes, got table') propagated with the range");
-
-        // Code-level routing pin: only checkBytes is consulted; the hook
-        // receives (value, range); its outcome drives the row.
-        BytesRoutingModel routing = new BytesRoutingModel(bytes);
-        RuntimeTypeMatcher routingMatcher = new RuntimeTypeMatcher(routing);
-        Object r2 = routingMatcher.check("bytes", bytes, loc);
-        check(r2 == bytes, "bytes-routing: success outcome returns the unchanged value");
-        check(routing.hookCalled, "bytes-routing: the hook was called");
-        check(routing.receivedValue == bytes, "bytes-routing: hook received the value");
-        check(routing.receivedRange == loc, "bytes-routing: hook received the range");
-
-        RuntimeCheckFailure hookFailure =
-            new RuntimeCheckFailure("E8001", "expected bytes, got unknown", loc);
-        BytesRoutingModel routing2 = new BytesRoutingModel(hookFailure);
-        Object r3 = new RuntimeTypeMatcher(routing2).check("bytes", bytes, loc);
-        check(r3 == hookFailure, "bytes-routing: hook failure outcome propagated unchanged");
-        check(routing2.hookCalled && routing2.receivedValue == bytes && routing2.receivedRange == loc,
-            "bytes-routing: the failing hook still received (value, range)");
-
-        // Nested delegation: the hook drives the row inside arrays too.
-        assertPass("[bytes]", new ArrayValue(new BytesValue(), new BytesValue()),
-            "bytes elements pass via the hook");
-        assertFailure("[bytes]", new ArrayValue(new BytesValue(), new TableValue()), "E8003",
-            "array element 2 type mismatch", "bytes hook failure becomes the element failure");
-    }
-
     // =========================================================================
     // typed-boundary actual projection: carrier identity precedes the generic
     // table fallback (the Lua value mapping is table-shaped)
@@ -647,15 +552,15 @@ public class RuntimeTypeMatcherTest {
 
         LuaShapedModel model = new LuaShapedModel();
         RuntimeTypeMatcher lua = new RuntimeTypeMatcher(model);
-        check(model.isTable(new ClassValue("@x/y")) && model.isTable(new BytesValue())
+        check(model.isTable(new ClassValue("@x/y"))
                 && model.isTable(new ArrayValue()) && model.isTable(new FnValue("()->null")),
             "the Lua-shaped seam maps every carrier to a table (type(v) == table)");
 
         Object[] values = {
-            new ClassValue("Error"), new ClassValue("@x/y"), new BytesValue(),
+            new ClassValue("Error"), new ClassValue("@x/y"),
             new ArrayValue(), new FnValue("()->null"), new TableValue()
         };
-        String[] tokens = { "Error", "@x/y", "bytes", "array", "function", "table" };
+        String[] tokens = { "Error", "@x/y", "array", "function", "table" };
         for (int i = 0; i < values.length; i++) {
             Object result = lua.check("null", values[i], null);
             RuntimeCheckFailure f = failure(result);
@@ -664,16 +569,6 @@ public class RuntimeTypeMatcherTest {
                 "table-shaped seam: " + tokens[i] + " publishes its own closed actual token");
         }
 
-        // The bytes row itself keeps its hook-only route on the table-shaped
-        // seam: a real bytes carrier passes and a plain table keeps the
-        // hook's own failure outcome.
-        Object bytes = new BytesValue();
-        check(lua.check("bytes", bytes, null) == bytes,
-            "table-shaped seam: the bytes row still delegates to the hook alone");
-        RuntimeCheckFailure tableFailure = failure(lua.check("bytes", new TableValue(), null));
-        check(tableFailure != null
-                && "expected bytes, got table".equals(tableFailure.message()),
-            "table-shaped seam: the bytes row propagates the hook's own failure");
     }
 
     // =========================================================================

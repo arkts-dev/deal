@@ -1,7 +1,7 @@
 // @spec: Type system — Nullable semantics (narrowing invalidation across calls)
-// @description: The index-position controls of the call-preserved narrowing refinement: while the value is valid the refined receiver and key flow through array, table and bytes reads and writes unchanged, and after a capturing closure clears the binding every index position raises its own catchable E8001 — never a silently accepted write and never a raw backend index or arithmetic error.
+// @description: The index-position controls of the call-preserved narrowing refinement: while the value is valid the refined receiver and key flow through array and table reads and writes unchanged, and after a capturing closure clears the binding every index position raises its own catchable E8001 — never a silently accepted write and never a raw backend index or arithmetic error.
 // @expected: runtime-ok
-// @features: type-system, nullable, narrowing, runtime-errors, arrays, bytes
+// @features: type-system, nullable, narrowing, runtime-errors, arrays
 
 function expectNoError(what: string): null {
   throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
@@ -48,12 +48,7 @@ export function main(): null {
     let stored: int = config["a"];
     expectEqual("table receiver write", stored, 2);
   }
-  let buffer: bytes | null = bytes(2);
-  if (buffer !== null) {
-    buffer[0] = 5;
-    let element: int = buffer[0];
-    expectEqual("bytes receiver write", element, 5);
-  }
+
 
   // After the capturing closure clears each binding, every index position
   // raises its own catchable typed-boundary error.
@@ -69,10 +64,7 @@ export function main(): null {
     config = null;
     return null;
   };
-  let clearBuffer: () => null = function(): null {
-    buffer = null;
-    return null;
-  };
+
   if (row !== null) {
     clearRow();
     try {
@@ -117,21 +109,6 @@ export function main(): null {
       expectNoError("table receiver read");
     } catch (e) {
       expectCaught(e, "table receiver read", "E8001");
-    }
-  }
-  if (buffer !== null) {
-    clearBuffer();
-    try {
-      buffer[0] = 6;
-      expectNoError("bytes receiver write");
-    } catch (e) {
-      expectCaught(e, "bytes receiver write", "E8001");
-    }
-    try {
-      let element: int = buffer[0];
-      expectNoError("bytes receiver read");
-    } catch (e) {
-      expectCaught(e, "bytes receiver read", "E8001");
     }
   }
   return null;

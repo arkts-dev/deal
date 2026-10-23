@@ -432,8 +432,8 @@ public class CheckedProjectBuilderTest {
             "NamedType string renders as string");
         check("table".equals(CanonicalTypeText.render(nt("table"), context)),
             "NamedType table renders as table");
-        check("bytes".equals(CanonicalTypeText.render(nt("bytes"), context)),
-            "NamedType bytes renders as bytes (the v1.2 primitive joins "
+        check("table".equals(CanonicalTypeText.render(nt("table"), context)),
+            "NamedType table renders as table (the primitive joins "
                 + "the declared-variant grammar)");
 
         // Builtin Error and module classes.
@@ -524,24 +524,22 @@ public class CheckedProjectBuilderTest {
         check("int[] | null".equals(CanonicalTypeText.render(
                 Types.nullable(Types.array(Type.Int.INSTANCE)))),
             "checked int[] | null parity");
-        check("bytes".equals(CanonicalTypeText.render(Type.Bytes.INSTANCE)),
-            "checked bytes renders as bytes (parity with the TypeNode arm)");
-        check("bytes[]".equals(CanonicalTypeText.render(
-                Types.array(Type.Bytes.INSTANCE))),
-            "checked bytes[] renders unwrapped (primitive element)");
-        check("bytes[] | null".equals(CanonicalTypeText.render(
-                Types.nullable(Types.array(Type.Bytes.INSTANCE)))),
-            "checked bytes[] | null renders the array unwrapped");
-        check("(bytes) => bytes".equals(CanonicalTypeText.render(
-                Types.func(List.of(Type.Bytes.INSTANCE), Type.Bytes.INSTANCE))),
-            "checked sync bytes function form parity");
-        check("async (bytes) => bytes".equals(CanonicalTypeText.render(
-                new Type.Func(List.of(Type.Bytes.INSTANCE),
-                    Type.Bytes.INSTANCE, true))),
-            "checked async bytes function form parity");
-        check("(bytes) => null".equals(CanonicalTypeText.render(
-                new Type.Func(List.of(Type.Bytes.INSTANCE), Type.Null.INSTANCE))),
-            "bytes at function-parameter depth renders recursively");
+        check("table[]".equals(CanonicalTypeText.render(
+                Types.array(Type.Table.INSTANCE))),
+            "checked table[] renders unwrapped (primitive element)");
+        check("table[] | null".equals(CanonicalTypeText.render(
+                Types.nullable(Types.array(Type.Table.INSTANCE)))),
+            "checked table[] | null renders the array unwrapped");
+        check("(table) => table".equals(CanonicalTypeText.render(
+                Types.func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE))),
+            "checked sync table function form parity");
+        check("async (table) => table".equals(CanonicalTypeText.render(
+                new Type.Func(List.of(Type.Table.INSTANCE),
+                    Type.Table.INSTANCE, true))),
+            "checked async table function form parity");
+        check("(table) => null".equals(CanonicalTypeText.render(
+                new Type.Func(List.of(Type.Table.INSTANCE), Type.Null.INSTANCE))),
+            "table at function-parameter depth renders recursively");
         check("((int) => int) | null".equals(CanonicalTypeText.render(
                 Types.nullable(new Type.Func(List.of(Type.Int.INSTANCE), Type.Int.INSTANCE)))),
             "checked ((int) => int) | null parity");
@@ -605,25 +603,25 @@ public class CheckedProjectBuilderTest {
             new SymbolTable(), emptyChecks());
         assertE6005(typeErrorFact, new ModuleId("main"), "Type.Error in a declared-type position");
 
-        Map<String, Type> bytesExports = new LinkedHashMap<>();
-        bytesExports.put("main", Types.func(List.of(), Type.Null.INSTANCE));
-        bytesExports.put("bad", Type.Bytes.INSTANCE);
-        ModuleFact bytesFact = implFact("main", programOf(), bytesExports,
+        Map<String, Type> tableExports = new LinkedHashMap<>();
+        tableExports.put("main", Types.func(List.of(), Type.Null.INSTANCE));
+        tableExports.put("bad", Type.Table.INSTANCE);
+        ModuleFact tableFact = implFact("main", programOf(), tableExports,
             new SymbolTable(), emptyChecks());
-        CheckedProjectBuildResult bytesBuild = CheckedProjectBuilder.build(
-            invocation(), new ModuleId("main"), List.of(bytesFact));
-        check(!bytesBuild.hasErrors() && bytesBuild.index() != null,
-            "a bytes-bearing export map builds the index cleanly: "
-                + bytesBuild.diagnostics());
-        if (bytesBuild.index() != null) {
-            ExternalModuleInterface bytesEntry =
-                bytesBuild.index().modules().get(new ModuleId("main"));
-            check(bytesEntry != null && bytesEntry.exports().equals(List.of(
+        CheckedProjectBuildResult tableBuild = CheckedProjectBuilder.build(
+            invocation(), new ModuleId("main"), List.of(tableFact));
+        check(!tableBuild.hasErrors() && tableBuild.index() != null,
+            "a table export map builds the index cleanly: "
+                + tableBuild.diagnostics());
+        if (tableBuild.index() != null) {
+            ExternalModuleInterface tableEntry =
+                tableBuild.index().modules().get(new ModuleId("main"));
+            check(tableEntry != null && tableEntry.exports().equals(List.of(
                     new ExportInterface("main", "() => null"),
-                    new ExportInterface("bad", "bytes"))),
-                "the implementation entry renders the bytes export as the "
+                    new ExportInterface("bad", "table"))),
+                "the implementation entry renders the table export as the "
                     + "primitive name; got "
-                    + (bytesEntry == null ? "<null>" : bytesEntry.exports()));
+                    + (tableEntry == null ? "<null>" : tableEntry.exports()));
         }
 
         // (b) An unresolvable qualified-type alias in a declaration entry.

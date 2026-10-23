@@ -10,7 +10,6 @@ public sealed interface Type
            Type.Int,
            Type.Number,
            Type.String,
-           Type.Bytes,
            Type.Table,
            Type.Error,
            Type.Array,
@@ -27,14 +26,6 @@ public sealed interface Type
     enum Int implements Type { INSTANCE }
     enum Number implements Type { INSTANCE }
     enum String implements Type { INSTANCE }
-
-    /**
-     * The canonical {@code bytes} primitive type (DEAL v1.2).  Invariant
-     * and identity-compared; legal inside every Array/Nullable/Function/
-     * Class construction at arbitrary depth.  The runtime value
-     * representation and operations are not part of the type layer.
-     */
-    enum Bytes implements Type { INSTANCE }
 
     enum Table implements Type { INSTANCE }
 

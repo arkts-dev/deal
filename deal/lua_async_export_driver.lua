@@ -42,7 +42,7 @@
 --     the async-export wrapper: array carriers keep their JSON array
 --     shape at every depth (an empty array included), table carriers
 --     keep their insertion order, the language null renders null, and
---     the walker's closed rejections (bytes, function carriers, class
+--     the walker's closed rejections (function carriers, class
 --     instances, cycles, non-finite numbers) are the representation
 --     failures. The committed std/json remains the envelope emitter, so
 --     the artifact's value algorithm never diverges from its own JSON

@@ -658,7 +658,6 @@ public final class ClassConstructionValidator {
             case RuntimeDescriptor.Number ignored -> "number";
             case RuntimeDescriptor.String ignored -> "string";
             case RuntimeDescriptor.Table ignored -> "table";
-            case RuntimeDescriptor.Bytes ignored -> "bytes";
             case RuntimeDescriptor.Class classDescriptor ->
                 classReferenceText(classDescriptor.classId(), index, seeds);
             case RuntimeDescriptor.Array array -> {
@@ -2516,10 +2515,6 @@ public final class ClassConstructionValidator {
                     }
                     yield checkNestedJsonable(nestedLayout, visited);
                 }
-                case RuntimeDescriptor.Bytes ignored -> fail(JSON_LAYOUT_COHERENCE,
-                    "jsonable class " + owner + " field '" + field + "' carries a "
-                        + "bytes descriptor: the checker's E4007 allowlist excludes "
-                        + "bytes-typed jsonable fields");
                 case RuntimeDescriptor.Func ignored -> fail(JSON_LAYOUT_COHERENCE,
                     "jsonable class " + owner + " field '" + field + "' carries a "
                         + "function descriptor: the checker's E4007 allowlist excludes "

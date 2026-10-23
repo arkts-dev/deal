@@ -21,7 +21,7 @@ __rt.__NULL = setmetatable({}, {__tostring = function() return "null" end})
 __rt.__MISSING = {}
 
 -- ===== Private carrier keys (ISSUE-0830) =====
--- Carrier identity (the class/Error/bytes/function/array/async/numeric-variant
+-- Carrier identity (the class/Error/function/array/async/numeric-variant
 -- mark), the array length, the table presence/insertion order and the
 -- per-slot numeric-variant marks live under table-object keys, never under
 -- strings: a DEAL table may carry any string key (a class instance may
@@ -150,7 +150,7 @@ end
 -- Every primitive row's wrong-kind actual is the closed typed-boundary
 -- token (__rt.typed_kind below), never the raw Lua type(): a produced
 -- carrier — a class instance (its carried canonical class atom, exactly
--- Error for the builtin), a bytes buffer, a function wrapper, an array,
+-- Error for the builtin), a function wrapper, an array,
 -- an async handle — a language null and the absent marker project the
 -- same tokens here as the emitted prelude's __typedBoundaryKind, the JVM
 -- runtime's actualOf and the JS $kindOf. A raw type() projection would
@@ -457,7 +457,6 @@ function __rt.typed_kind(v)
   if t == "string" then return "string" end
   if t ~= "table" then return t end
   local kind = v[__K.kind]
-  if kind == "bytes" then return "bytes" end
   if kind == "async" then return "async-operation" end
   if kind == "function" then return "function" end
   if kind == "class" then
@@ -484,7 +483,7 @@ end
 function __rt.check_table(v, file, line, column)
   -- The strict table split: the language-null sentinel is not a table, the
   -- internal absent marker is not a table, and a produced carrier of
-  -- another kind (a class instance, a bytes buffer, a function wrapper,
+  -- another kind (a class instance, a function wrapper,
   -- the emitted chunk's own function carrier, an async handle, an array,
   -- a numeric-variant carrier) keeps its own kind and never passes a
   -- table descriptor. A plain table — and the emitted chunk's shared
@@ -564,69 +563,6 @@ function __rt.int_neg(a, file, line, column)
   return __rt.check_int(-a, file, line, column)
 end
 
--- ===== Bytes runtime =====
-
-local ffi = require("ffi")
-
---- Fail-closed bytes object validation shared by the bytes entries.
-local function check_bytes(b, file, line, column)
-  if type(b) ~= "table" or b[__K.kind] ~= "bytes" then
-    error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "bytes" }, "E8001",
-      "expected bytes", file, line, column, "bytes", __rt.typed_kind(b)))
-  end
-  return b
-end
-
---- Allocate a fresh zero-filled DEAL bytes buffer of `length` bytes.
--- ffi.new zero-fills uint8_t storage. A zero-length buffer still allocates
--- one byte so its storage is stable for borrowed native calls (runtime
--- page D2). Allocation failure raises E8001 "bytes allocation failed" and
--- publishes no object.
-function __rt.bytes_new(length, file, line, column)
-  local n = __rt.check_int(length, file, line, column)
-  if n < 0 then
-    error(__rt._err("E8012", "bytes length must be non-negative", file, line, column, nil, nil))
-  end
-  local ok, data = pcall(ffi.new, "uint8_t[?]", math.max(n, 1))
-  if not ok then
-    error(__rt._err("E8001", "bytes allocation failed", file, line, column, nil, nil))
-  end
-  return { [__K.kind] = "bytes", __data = data, __len = n }
-end
-
---- The immutable signed-int32 logical length of a bytes buffer.
-function __rt.bytes_length(b, file, line, column)
-  check_bytes(b, file, line, column)
-  return b.__len
-end
-
---- Read the unsigned byte (0..255) at index i, 0 <= i < b.length.
-function __rt.bytes_get(b, i, file, line, column)
-  check_bytes(b, file, line, column)
-  local idx = __rt.check_int(i, file, line, column)
-  if idx < 0 or idx >= b.__len then
-    error(__rt._err("E8012", "bytes index out of bounds", file, line, column, nil, nil))
-  end
-  return b.__data[idx]
-end
-
---- Write the byte value v (0..255) at index i and return the written value.
--- A failed write (E8012 index, E8013 value range, E8001 non-int index or
--- value) changes no storage.
-function __rt.bytes_set(b, i, v, file, line, column)
-  check_bytes(b, file, line, column)
-  local idx = __rt.check_int(i, file, line, column)
-  if idx < 0 or idx >= b.__len then
-    error(__rt._err("E8012", "bytes index out of bounds", file, line, column, nil, nil))
-  end
-  local val = __rt.check_int(v, file, line, column)
-  if val < 0 or val > 255 then
-    error(__rt._err("E8013", "bytes value out of range", file, line, column, nil, nil))
-  end
-  b.__data[idx] = val
-  return val
-end
-
 -- ===== Canonical descriptor parser and matcher (v1.3) =====
 --
 -- The canonical cutover (runtime page D3): the legacy dialect parser and
@@ -641,7 +577,7 @@ end
 -- Canonical grammar (canonical-type-system-and-runtime-descriptors D2):
 --
 --   descriptor := primitive | error | class | array | nullable | function
---   primitive  := "null" | "boolean" | "int" | "number" | "string" | "bytes" | "table"
+--   primitive  := "null" | "boolean" | "int" | "number" | "string" | "table"
 --   error      := "Error"
 --   class      := "@" component ("/" component)+
 --   array      := "[" descriptor "]"
@@ -663,7 +599,7 @@ end
 -- the canonical parser accepts no legacy spelling at any point.
 
 local CANONICAL_PRIMITIVES = {
-  "null", "boolean", "int", "number", "string", "bytes", "table",
+  "null", "boolean", "int", "number", "string", "table",
 }
 
 --- Strict canonical recursive-descent parser (total; never throws).
@@ -952,8 +888,6 @@ local function check_canonical_ast(ast, v, file, line, column)
       return __rt.check_number(v, file, line, column)
     elseif name == "string" then
       return __rt.check_string(v, file, line, column)
-    elseif name == "bytes" then
-      return check_bytes(v, file, line, column)
     elseif name == "table" then
       return __rt.check_table(v, file, line, column)
     end
@@ -986,7 +920,7 @@ local function check_canonical_ast(ast, v, file, line, column)
     -- The array value only: a produced array carrier (the emitted chunk's
     -- array mark) and the reference runtime's own dense-indexed array form
     -- are arrays; the language null sentinel, the absent marker, every
-    -- other carrier kind (a class instance, a table, a bytes buffer, a
+    -- other carrier kind (a class instance, a table, a
     -- function wrapper, an async handle) and any non-dense table are not.
     -- The null check runs before the shape check: an empty sentinel table
     -- is never the empty array.
@@ -1066,8 +1000,7 @@ end
 
 --- The canonical type checker — the one runtime boundary matcher
 -- (parent matcher table D4; runtime page D3): one row per primitive
--- (the bytes row is the RV bytes predicate — a table with
--- [__K.kind] == "bytes"), [D] arrays via 1-based contiguous iteration with
+-- and [D] arrays via 1-based contiguous iteration with
 -- E8003 wrapping at the first failing index, ?D nullables, function
 -- descriptors with byte-for-byte signature comparison (E8010 on
 -- mismatch), and class atoms matched byte-for-byte as complete text

@@ -247,12 +247,12 @@ public class ProductionProjectEmissionTest {
     private static final String FOR_LET_COUNTER_APP_SOURCE = "export function main(): null {\n  { let v14Loop2: int = 0; while (v14Loop2 < 2) { let i: int = v14Loop2; { } v14Loop2 = i; v14Loop2 = v14Loop2 + 1; } }\n  return null;\n}\n";
 
     /**
-     * The bytes-bearing fixture: the lowering fails CONSTRUCT_UNLOWERED.
+     * The ordinary array fixture stages through the container arm.
      */
-    private static final String BYTES_APP_SOURCE = """
+    private static final String ARRAY_APP_SOURCE = """
         export function main(): null {
           let n: int = 3;
-          let b: bytes = bytes(n);
+          let b: int[] = [n];
           return null;
         }
         """;
@@ -480,9 +480,9 @@ public class ProductionProjectEmissionTest {
                 "src/app.deal", appSource)), Map.of());
     }
 
-    private static Fixture bytesFixture() throws Exception {
+    private static Fixture arrayFixture() throws Exception {
         return compileProject(new LinkedHashMap<>(Map.of(
-                "src/app.deal", BYTES_APP_SOURCE)), Map.of());
+                "src/app.deal", ARRAY_APP_SOURCE)), Map.of());
     }
 
     /** The fail-closed source: a nested function declaration (CALLS family). */
@@ -982,8 +982,7 @@ public class ProductionProjectEmissionTest {
             fixture.checkedProject(), fixture.index(), fixture.manifests(),
             fixture.surface(), fixture.declarationIdentities(), BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -995,8 +994,7 @@ public class ProductionProjectEmissionTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             java.util.Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
     }
 
@@ -2246,8 +2244,7 @@ public class ProductionProjectEmissionTest {
                 fixture.surface(), Map.of(),
                 BuiltinErrorDeclaration.synthesized(
                     fixture.checkedProject().modules().get(0).ast().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 java.util.Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
             check(!result.emitted(),
                 "the incomplete structural companion fails the JS arm closed");
@@ -2708,8 +2705,8 @@ public class ProductionProjectEmissionTest {
             + "previous artifact set; the cross-module sync call emits and "
             + "stages --");
 
-        for (String label : List.of("bytes", "nested-declaration")) {
-            Fixture fixture = label.equals("bytes") ? bytesFixture() : nestedDeclarationFixture();
+        for (String label : List.of("array", "nested-declaration")) {
+            Fixture fixture = label.equals("array") ? arrayFixture() : nestedDeclarationFixture();
             try {
                 stagedLua(fixture, fixture.root().resolve("out-arm"), label);
             } finally {

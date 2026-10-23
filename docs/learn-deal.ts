@@ -179,7 +179,7 @@ for (let i: int = 0; i < ks.length; i = i + 1) {
 }
 
 // -----------------------------------------------------
-// 4. Arrays and bytes.
+// 4. Arrays.
 // -----------------------------------------------------
 
 // T[] is a 0-based array.
@@ -202,12 +202,6 @@ nums[0] = 99;           // ok
 // Nullable arrays:
 let mixed: (int | null)[] = [1, null, 3];
 let m: int | null = mixed[1];  // null
-
-// bytes is a DEAL-owned mutable byte buffer (v1.3):
-// let buf: bytes = bytes(16);   // zero-filled, length 16
-// buf[0] = 255;                 // writes require int values in 0..255
-// let hi: int = buf[0];         // reads yield int values in 0..255
-// let nbytes: int = buf.length; // compiler-resolved length intrinsic
 
 // -----------------------------------------------------
 // 5. Classes.
@@ -336,7 +330,6 @@ let ms: number = time.nowMillis();
 // conversion intrinsics — built-in, no import:
 let i: int = int(3.0);    // number → int
 let d: number = number(5); // int → number
-// let buf: bytes = bytes(8); // int → bytes (v1.3)
 
 // -----------------------------------------------------
 // This file demonstrates DEAL v1.3 syntax.

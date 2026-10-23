@@ -11,7 +11,6 @@ public sealed interface RuntimeDescriptor extends OpResultType
             RuntimeDescriptor.Number,
             RuntimeDescriptor.String,
             RuntimeDescriptor.Table,
-            RuntimeDescriptor.Bytes,
             RuntimeDescriptor.Class,
             RuntimeDescriptor.Array,
             RuntimeDescriptor.Nullable,
@@ -25,7 +24,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * variants — the exact inverse of {@link #canonicalSpecText()}. The
      * whole text must be consumed: {@code null}, {@code boolean},
      * {@code int}, {@code number}, {@code string}, {@code table},
-     * {@code bytes}, the builtin {@code Error} atom, the
+     * the builtin {@code Error} atom, the
      * {@code @modulePath/ClassName} class atom, {@code [element]},
      * {@code ?inner}, {@code (p1,p2)->r}, {@code async(p1,p2)->r}.
      *
@@ -124,10 +123,9 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return parseFunc(text, pos, false);
         }
         // Fixed scalar spellings.
-        java.lang.String[] fixed = {"null", "boolean", "int", "number", "string", "bytes",
-            "table"};
+        java.lang.String[] fixed = {"null", "boolean", "int", "number", "string", "table"};
         RuntimeDescriptor[] mapped = {Null.INSTANCE, Boolean.INSTANCE, Int.INSTANCE,
-            Number.INSTANCE, String.INSTANCE, Bytes.INSTANCE, Table.INSTANCE};
+            Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
         for (int i = 0; i < fixed.length; i++) {
             if (text.startsWith(fixed[i], pos[0])) {
                 int end = pos[0] + fixed[i].length();
@@ -278,15 +276,6 @@ public sealed interface RuntimeDescriptor extends OpResultType
         @Override
         public java.lang.String canonicalSpecText() {
             return "table";
-        }
-    }
-
-    enum Bytes implements RuntimeDescriptor {
-        INSTANCE;
-
-        @Override
-        public java.lang.String canonicalSpecText() {
-            return "bytes";
         }
     }
 

@@ -16,7 +16,7 @@ Read the relevant rules and example before writing:
 | Closures, callbacks | [functions](references/language.md#functions) | [functions](examples/src/functions.deal) |
 | Missing versus null | [fields](references/language.md#field-access) | [profiles](examples/src/profiles.deal) |
 | Dynamic data | [tables](references/language.md#tables) | [data](examples/src/data.deal) |
-| Mutation | [arrays](references/language.md#arrays), [bytes](references/language.md#bytes) | [buffers](examples/src/buffers.deal) |
+| Mutation | [arrays](references/language.md#arrays) | [buffers](examples/src/buffers.deal) |
 | Serialization | [JSON](references/language.md#json-serialization-jsonable) | [settings](examples/serialization/settings.deal), [caller](examples/serialization/main.deal) |
 | String processing | [stdlib](references/language.md#standard-library-declarations) | [strings](examples/src/strings.deal) |
 | Project wiring | [modules](references/language.md#modules) | [manifest](examples/deal.json), [entry](examples/src/main.deal) |

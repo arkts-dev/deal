@@ -1232,14 +1232,6 @@ public class ContainerLoweringArmsTest {
               return null;
             }
             """, "xs", new RuntimeDescriptor.Array(RuntimeDescriptor.Int.INSTANCE));
-        checkNarrowedLengthAdmission("""
-            function f(buffer: bytes | null): null {
-              if (buffer !== null) {
-                let size: int = buffer.length;
-              }
-              return null;
-            }
-            """, "buffer", RuntimeDescriptor.Bytes.INSTANCE);
     }
 
     private static void checkNarrowedLengthAdmission(String source, String receiver,
@@ -1783,32 +1775,6 @@ public class ContainerLoweringArmsTest {
             }
         }
 
-        {
-            IdentifierExpr bytesObject = new IdentifierExpr(
-                new Span(SOURCE_ID, 1, 1, 1, 2), "b");
-            MemberAccessExpr access = new MemberAccessExpr(
-                new Span(SOURCE_ID, 1, 1, 1, 9), bytesObject, "length");
-            CheckResult checks = new CheckResult(
-                Map.of(bytesObject, Type.Bytes.INSTANCE, access, Type.Error.INSTANCE),
-                new SymbolTable(), List.of());
-            SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
-            RuntimeException defect = null;
-            try {
-                lowerer.lowerExpression(access);
-            } catch (SemanticLowerer.ConstructUnlowered unlowered) {
-                defect = unlowered;
-            }
-            check(defect == null
-                    || !defect.getMessage().contains("bytes"),
-                "the bytes .length arm is admitted (its receiver's binding-load arm is "
-                    + "the synthetic fixture's only defect): "
-                    + (defect == null ? "lowered" : defect.getMessage()));
-            check(defect != null
-                    && defect.getMessage().contains("identifier 'b' is not a load of an "
-                        + "enclosing for-of loop binding"),
-                "the bytes .length arm proceeds to the receiver's binding-load arm: "
-                    + (defect == null ? "<lowered>" : defect.getMessage()));
-        }
     }
 
     /**
@@ -1913,7 +1879,7 @@ public class ContainerLoweringArmsTest {
             Span span = new Span(SOURCE_ID, 1, 1, 1, 5);
             ArrayLiteralExpr literal = new ArrayLiteralExpr(span, List.of());
             CheckResult checks = new CheckResult(
-                Map.of(literal, new Type.Array(Type.Bytes.INSTANCE)),
+                Map.of(literal, new Type.Array(Type.Table.INSTANCE)),
                 new SymbolTable(), List.of());
             SemanticLowerer.ModuleLowerer lowerer = lowerer(checks);
             SemanticLowerer.ConstructUnlowered defect = null;
@@ -1923,8 +1889,8 @@ public class ContainerLoweringArmsTest {
                 defect = raised;
             }
             check(defect == null,
-                "the bytes element position lowers through the shared container "
-                    + "pipeline (the bytes descriptor is representable): "
+                "the table element position lowers through the shared container "
+                    + "pipeline: "
                     + (defect == null ? "lowered" : defect.getMessage()));
         }
 

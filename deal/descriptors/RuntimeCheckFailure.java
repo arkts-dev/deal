@@ -8,9 +8,7 @@ import java.util.Set;
  * D4): one of the pinned E8xxx codes with the byte-exact pinned message
  * and the optional source location supplied to the failing check.
  *
- * <p>Failure production is confined to the matcher (and, for the bytes
- * row only, the E6-pinned {@code check_bytes(value, range)} hook whose
- * contract is {@code bytes | E8001}): {@link RuntimeTypeMatcher#check}
+ * <p>Failure production is confined to the matcher: {@link RuntimeTypeMatcher#check}
  * never throws a raw exception and never yields a partial result — every
  * failure is a {@code RuntimeCheckFailure} value.  The accepted codes are
  * exactly the table's failure codes:</p>

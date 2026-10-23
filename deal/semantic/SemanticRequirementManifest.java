@@ -19,8 +19,7 @@ import java.util.Set;
 public record SemanticRequirementManifest(
     ModuleId moduleId,
     Set<SemanticCapability> capabilities,
-    Map<ConstructKind, List<SemanticOpKind>> constructCoverage,
-    boolean bytesBearing
+    Map<ConstructKind, List<SemanticOpKind>> constructCoverage
 ) {
 
     public SemanticRequirementManifest {
@@ -78,7 +77,6 @@ public record SemanticRequirementManifest(
                 CanonicalJson.arr(kinds)));
         }
         return CanonicalJson.obj(
-            CanonicalJson.e("bytesBearing", CanonicalJson.bool(bytesBearing)),
             CanonicalJson.e("capabilities", CanonicalJson.arr(caps)),
             CanonicalJson.e("constructCoverage", CanonicalJson.obj(coverageEntries)),
             CanonicalJson.e("moduleId",

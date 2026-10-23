@@ -1,0 +1,14 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: A host function returning a wrong-kind value for its declared int[] return raises E8010 at the call boundary (the int[] carrier check, never wrapped).
+// @expected: runtime-error E8010
+// @features: modules, host-abi, int[], runtime-errors
+
+import * as host from "host/array_roundtrip";
+
+export function test_host_array_return_mismatch(): int[] {
+  return host.badArrayReturn();
+}
+
+export function main(): null {
+  return null;
+}

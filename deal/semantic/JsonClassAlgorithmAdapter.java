@@ -232,7 +232,7 @@ public final class JsonClassAlgorithmAdapter {
      * to the same carriers, and the closed scalar classification is preserved
      * (never cast to Valid). Called only after the pre-walk selected no
      * failure, so every container is entered at most once on its path: the
-     * mapping terminates and the unsupported carriers (functions, bytes,
+     * mapping terminates and the unsupported carriers (functions,
      * classes, the internal missing view, invalid scalars, nonfinite numbers)
      * cannot occur.
      */
@@ -273,11 +273,6 @@ public final class JsonClassAlgorithmAdapter {
             }
             case ClassOpsExecutor.Value.Function ignored ->
                 new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
-            case ClassOpsExecutor.Value.Bytes ignored ->
-                // Bytes are not JSON serializable: the pinned rejection
-                // projection carries the canonical bytes actual token
-                // (K6/K8).
-                new SharedStdlibSemantics.Value.Other(ActualKind.BYTES, null);
             case ClassOpsExecutor.Value.Class instance ->
                 new SharedStdlibSemantics.Value.Other(ActualKind.CLASS,
                     instance.classId().text());
@@ -431,9 +426,6 @@ public final class JsonClassAlgorithmAdapter {
             case ClassOpsExecutor.Value.Function ignored -> throw new FirstFailure(
                 pinnedPath,
                 FailureProjections.typedBoundaryToken(ActualKind.FUNCTION, null), false);
-            case ClassOpsExecutor.Value.Bytes ignored -> throw new FirstFailure(
-                pinnedPath,
-                FailureProjections.typedBoundaryToken(ActualKind.BYTES, null), false);
             case ClassOpsExecutor.Value.Class instance -> throw new FirstFailure(
                 pinnedPath,
                 FailureProjections.typedBoundaryToken(ActualKind.CLASS,

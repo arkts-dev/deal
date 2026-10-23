@@ -127,7 +127,7 @@ public class HostModuleLoadEmissionTest {
     private static final String ARRAY_SPECIFIER = "host/array_probe";
     private static final String ERROR_SPECIFIER = "host/error_probe";
 
-    /** The host ABI declaration: scalar, array, function, bytes, and async positions. */
+    /** The host ABI declaration: scalar, array, function, and async positions. */
     private static final String ABI_DECLARATION_SOURCE = """
         export function ping(): string;
         export function echoInt(v: int): int;
@@ -135,7 +135,6 @@ public class HostModuleLoadEmissionTest {
         export function join(sep: string, parts: string[]): string;
         export function apply(f: (x: int) => int, v: int): int;
         export async function fetchValue(): string;
-        export function echoBytes(b: bytes): bytes;
         export function nullable(v: string | null): string | null;
         """;
 
@@ -294,7 +293,6 @@ public class HostModuleLoadEmissionTest {
             local rt = require("deal.runtime")
             return rt.async_start(function() return "fetched" end)
           end,
-          echoBytes = function(b) return b end,
           nullable = function(v) return v end,
         }
         """;
@@ -796,8 +794,7 @@ public class HostModuleLoadEmissionTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW),
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
             Set.of());
     }
 
@@ -6378,7 +6375,6 @@ public class HostModuleLoadEmissionTest {
           public static Object fetchValue() {
             return CompletableFuture.completedFuture("fetched");
           }
-          public static Object echoBytes($DealRt.Bytes b) { return b; }
           public static Object nullable(String v) { return v; }
         }
         """;
@@ -6421,7 +6417,6 @@ public class HostModuleLoadEmissionTest {
                 check(App.__hostM$$PROBE$$join != null, "the join binding exists");
                 check(App.__hostM$$PROBE$$apply != null, "the apply binding exists");
                 check(App.__hostM$$PROBE$$fetchValue != null, "the async binding exists");
-                check(App.__hostM$$PROBE$$echoBytes != null, "the bytes binding exists");
                 check(App.__hostD$$CFG$$ServerConfig != null,
                     "the defaults capture exists");
                 java.lang.reflect.Method before = App.__hostM$$PROBE$$ping;
@@ -6440,22 +6435,6 @@ public class HostModuleLoadEmissionTest {
                     new $DealRt.__StringArray(new String[] {"a", "b"}),
                     "probe.deal", 4, 1);
                 check("a-b".equals(joined), "the array carrier roundtrip: " + joined);
-                // The production-carrier bytes admission (K6 item 13 / H7):
-                // the DEAL-side call passes the production
-                // JvmRuntime.BytesValue before the host-facing projection, so
-                // the emitted parameter cell admits it, the host-facing
-                // crossing projects it onto the deployed $DealRt.Bytes view,
-                // and the out-and-back buffer stays one buffer.
-                deal.codegen.jvm.JvmRuntime.BytesValue buffer =
-                    new deal.codegen.jvm.JvmRuntime.BytesValue(
-                        new byte[] {1, 2, 3});
-                Object bytesEcho = App.__host$$PROBE$$echoBytes(buffer,
-                    "probe.deal", 6, 1);
-                check(bytesEcho == buffer,
-                    "the production bytes carrier roundtrips as one buffer: "
-                        + bytesEcho);
-                check(java.util.Arrays.equals(buffer.data, new byte[] {1, 2, 3}),
-                    "the bytes roundtrip leaves the buffer contents intact");
                 Object applied = App.__host$$PROBE$$apply(new $DealRt.Fn1_I_R_I() {
                     int invoke(int p0) { return p0 + 1; }
                   }, Integer.valueOf(7), "probe.deal", 5, 1);
@@ -6463,9 +6442,6 @@ public class HostModuleLoadEmissionTest {
                     "the function carrier reaches the host bridge: " + applied);
 
                 // The pinned E8010 parameter cells.
-                expect("E8010", "parameter 1 type mismatch: expected bytes",
-                    () -> App.__host$$PROBE$$echoBytes(Double.valueOf(1.0),
-                        "probe.deal", 6, 1));
                 expect("E8010", "parameter 2 type mismatch: expected array",
                     () -> App.__host$$PROBE$$join("x", Double.valueOf(1.0),
                         "probe.deal", 7, 1));

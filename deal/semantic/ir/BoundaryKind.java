@@ -9,11 +9,7 @@ public enum BoundaryKind {
     VARIABLE_ASSIGNMENT,
     CLASS_FIELD_ASSIGNMENT,
     ARRAY_ELEMENT_ASSIGNMENT,
-    /** The bytes element write's bounds cell ({@code BYTES_WRITE}). */
-    BYTE_ELEMENT_ASSIGNMENT,
     ARRAY_ELEMENT_READ,
-    /** The bytes element read's bounds cell ({@code BYTES_READ}). */
-    BYTE_ELEMENT_READ,
     ARRAY_ELEMENT_DELETE,
     ARRAY_LITERAL_ELEMENT,
     FUNCTION_PARAMETER,

@@ -317,8 +317,7 @@ public class CompositeTerminatorAnalysisTest {
                 built.index(), manifests.manifests(),
                 new deal.semantic.HostDeclarationSurface(Map.of()),
                 Map.of(), BuiltinErrorDeclaration.synthesized(parse.program().span()),
-                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                    IntrinsicKind.BYTES_NEW),
+                List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT),
                 Set.of());
         if (result.hasErrors() || result.project() == null) {
             fail(name + ": the one project lowering reports zero diagnostics: "
@@ -364,8 +363,7 @@ public class CompositeTerminatorAnalysisTest {
             manifests.manifests(), orchestrator.hostDeclarationSurface(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
                 built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), Set.of());
+            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT), Set.of());
         check(!result.hasErrors() && result.project() != null,
             "the one project lowering reports zero diagnostics: "
                 + result.diagnostics());
