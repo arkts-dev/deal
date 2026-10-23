@@ -92,12 +92,16 @@ import java.util.stream.Stream;
  * the owner's {@code SourceMapPaths} live-root projection, single-source
  * bounds, the supplementary-Unicode path roundtrip, the empty list and the
  * internal map-off rendering, and the independent byte-identical rebuild).
+ *
+ * <p>The real Node binary is a required tool: an absent node fails this
+ * suite with the named {@code TOOL_MISSING} outcome before any drive is
+ * recorded, so the real-artifact drives are never skipped and a passing run
+ * always executed them.</p>
  */
 public class JsSemanticEmitterTest {
 
     private static int passed = 0;
     private static int failed = 0;
-    private static int skipped = 0;
 
     private static void check(boolean condition, String message) {
         if (condition) {
@@ -113,62 +117,43 @@ public class JsSemanticEmitterTest {
             message + " (expected " + expected + ", got " + actual + ")");
     }
 
-    private static void skip(String reason) {
-        skipped++;
-        System.out.println("  SKIP: " + reason);
-    }
-
-    private static boolean nodeAvailable() {
-        try {
-            Process node = new ProcessBuilder("node", "--version")
-                .redirectErrorStream(true).start();
-            node.getInputStream().readAllBytes();
-            return node.waitFor() == 0;
-        } catch (IOException | InterruptedException ignored) {
-            return false;
-        }
-    }
-
     public static void main(String[] args) throws Exception {
-        boolean node = nodeAvailable();
-        System.out.println(node
-            ? "-- node available: the real-artifact drives run --"
-            : "-- node NOT available: the real-artifact drives are skipped --");
+        ToolchainPreflight.require("node", "--version",
+            "the JS semantic-IR artifact drives");
         Path tmpRoot = Files.createTempDirectory("js-semantic-emitter");
         try {
             testArtifactSetAndDeterminism(tmpRoot);
             testSourceMapCoordinates(tmpRoot);
             testSourceMapSidecars(tmpRoot);
-            testSourceMapForeignPlacement(tmpRoot, node);
-            testValuesContainersAndControl(tmpRoot, node);
-            testNullableEqualityNilEquivalence(tmpRoot, node);
-            testCellsClosuresAndAdapters(tmpRoot, node);
-            testIntrinsicValueCarriers(tmpRoot, node);
-            testArrayHoleReadDecision(tmpRoot, node);
-            testAdapterCallOrigin(tmpRoot, node);
-            testModuleNamespaceIndexCarrier(tmpRoot, node);
-            testFailureTuples(tmpRoot, node);
-            testClassConstructionAndJson(tmpRoot, node);
-            testFieldJsonExecutionAndCreationSites(tmpRoot, node);
-            testModuleRegistry(tmpRoot, node);
-            testAsyncCallsAndCompletion(tmpRoot, node);
-            testAwaitedFailureTransport(tmpRoot, node);
-            testAsyncExportAbiAndEntryLegs(tmpRoot, node);
-            testCallbackCrossing(tmpRoot, node);
-            testDynamicCalleeDispatch(tmpRoot, node);
-            testAdapterPerExecutionSource(tmpRoot, node);
-            testHostParameterCellAndDeferredReads(tmpRoot, node);
-            testHostOccurrenceSurfaces(tmpRoot, node);
-            testHostDeclaredOrderAndRawShape(tmpRoot, node);
-            testStdlibSurfaceAndCalls(tmpRoot, node);
+            testSourceMapForeignPlacement(tmpRoot);
+            testValuesContainersAndControl(tmpRoot);
+            testNullableEqualityNilEquivalence(tmpRoot);
+            testCellsClosuresAndAdapters(tmpRoot);
+            testIntrinsicValueCarriers(tmpRoot);
+            testArrayHoleReadDecision(tmpRoot);
+            testAdapterCallOrigin(tmpRoot);
+            testModuleNamespaceIndexCarrier(tmpRoot);
+            testFailureTuples(tmpRoot);
+            testClassConstructionAndJson(tmpRoot);
+            testFieldJsonExecutionAndCreationSites(tmpRoot);
+            testModuleRegistry(tmpRoot);
+            testAsyncCallsAndCompletion(tmpRoot);
+            testAwaitedFailureTransport(tmpRoot);
+            testAsyncExportAbiAndEntryLegs(tmpRoot);
+            testCallbackCrossing(tmpRoot);
+            testDynamicCalleeDispatch(tmpRoot);
+            testAdapterPerExecutionSource(tmpRoot);
+            testHostParameterCellAndDeferredReads(tmpRoot);
+            testHostOccurrenceSurfaces(tmpRoot);
+            testHostDeclaredOrderAndRawShape(tmpRoot);
+            testStdlibSurfaceAndCalls(tmpRoot);
             testDeclarationProjection(tmpRoot);
             testFailClosedAndSeamPurity(tmpRoot);
         } finally {
             deleteRecursively(tmpRoot);
         }
         System.out.println();
-        System.out.println("Passed: " + passed + ", Failed: " + failed
-            + ", Skipped: " + skipped);
+        System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
         }
@@ -867,8 +852,7 @@ public class JsSemanticEmitterTest {
      * real Node invocation keeps the authoritative provider tuple with one
      * check and one retained caller effect per attempt.
      */
-    private static void testSourceMapForeignPlacement(Path tmpRoot,
-                                                      boolean node)
+    private static void testSourceMapForeignPlacement(Path tmpRoot)
             throws Exception {
         System.out.println("-- foreign-origin boundary children stay at their"
             + " execution position and map through the local initiating call;"
@@ -1028,10 +1012,6 @@ public class JsSemanticEmitterTest {
             "the provider artifact's own comment spells the provider"
                 + " annotation");
 
-        if (!node) {
-            skip("the foreign-placement drive needs the real Node binary");
-            return;
-        }
         Path out = stage(fixture, "maps-foreign", true);
         Files.writeString(out.resolve("driver.js"), """
             const app = require("./app.js");
@@ -1431,8 +1411,8 @@ public class JsSemanticEmitterTest {
     // 2. Local values, containers and control flow under Node
     // =========================================================================
 
-    private static void testValuesContainersAndControl(Path tmpRoot,
-            boolean node) throws Exception {
+    private static void testValuesContainersAndControl(Path tmpRoot)
+            throws Exception {
         System.out.println("-- values, containers and control flow under the"
             + " real Node binary --");
         Path root = Files.createTempDirectory(tmpRoot, "values");
@@ -1507,10 +1487,6 @@ public class JsSemanticEmitterTest {
         check(!artifact.contains("typeof"),
             "no emitted decision reads typeof: recorded facts select every"
                 + " shape");
-        if (!node) {
-            skip("values/containers drive needs node");
-            return;
-        }
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the values/containers program exits 0: "
             + run.output());
@@ -1520,8 +1496,8 @@ public class JsSemanticEmitterTest {
     // 2b. The nullable equality pair and the shared nil-equivalence rule
     // =========================================================================
 
-    private static void testNullableEqualityNilEquivalence(Path tmpRoot,
-            boolean node) throws Exception {
+    private static void testNullableEqualityNilEquivalence(Path tmpRoot)
+            throws Exception {
         System.out.println("-- the nullable equality pair applies the shared"
             + " nil-equivalence rule (null vs absent) --");
         Path root = Files.createTempDirectory(tmpRoot, "nullable-eq");
@@ -1552,10 +1528,6 @@ public class JsSemanticEmitterTest {
         check(equalityForm.matcher(artifact).find(),
             "the nullable equality arm carries the shared nil-equivalence"
                 + " clause; the emitted arm was: " + equalityLineOf(artifact));
-        if (!node) {
-            skip("nullable nil-equivalence drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
@@ -1617,7 +1589,7 @@ public class JsSemanticEmitterTest {
         return null;
     }
 
-    private static void testCellsClosuresAndAdapters(Path tmpRoot, boolean node)
+    private static void testCellsClosuresAndAdapters(Path tmpRoot)
             throws Exception {
         System.out.println("-- live captures, fresh cells, recursion,"
             + " adapters and scalar iteration under Node --");
@@ -1694,10 +1666,6 @@ public class JsSemanticEmitterTest {
             }
             """);
         Path out = stage(fixture, "cells", false);
-        if (!node) {
-            skip("cells/closures drive needs node");
-            return;
-        }
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the cells/closures program exits 0: "
             + run.output());
@@ -1717,7 +1685,7 @@ public class JsSemanticEmitterTest {
      * a slot that only exists inside another body. Reference identity
      * follows from the single cell the seed fills.
      */
-    private static void testIntrinsicValueCarriers(Path tmpRoot, boolean node)
+    private static void testIntrinsicValueCarriers(Path tmpRoot)
             throws Exception {
         System.out.println("-- the seeded intrinsic carrier: one materialized"
             + " value, identity-preserving loads read its cell --");
@@ -1772,10 +1740,6 @@ public class JsSemanticEmitterTest {
             "the adapter's VALUE operand reads the seed's binding cell"
                 + " instead of emitting a fresh wrapper");
         Path out = stage(fixture, "intrinsic", emission);
-        if (!node) {
-            skip("the intrinsic value drive needs node");
-            return;
-        }
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the intrinsic-value program loads and runs"
             + " (no undeclared seed slot): " + run.output());
@@ -1788,7 +1752,7 @@ public class JsSemanticEmitterTest {
      * element flows to the contextual boundary — null for a nullable
      * descriptor, the E8001 arm at the contextual origin otherwise.
      */
-    private static void testArrayHoleReadDecision(Path tmpRoot, boolean node)
+    private static void testArrayHoleReadDecision(Path tmpRoot)
             throws Exception {
         System.out.println("-- an in-range missing array element flows to"
             + " the contextual boundary --");
@@ -1827,13 +1791,9 @@ public class JsSemanticEmitterTest {
                 + " between: " + (read >= 0 && read + 1 < lines.length
                     ? lines[read + 1].trim() : "no read line"));
         Path out = stage(nullable, "hole", emission);
-        if (node) {
-            NodeRun run = runNode(out, entryPath(out));
-            checkEq(0, run.status(), "the nullable hole read returns null: "
-                + run.output());
-        } else {
-            skip("the nullable hole drive needs node");
-        }
+        NodeRun run = runNode(out, entryPath(out));
+        checkEq(0, run.status(), "the nullable hole read returns null: "
+            + run.output());
 
         Fixture strict = compileFixture(root, """
             export function strictHole(): int {
@@ -1875,10 +1835,6 @@ public class JsSemanticEmitterTest {
                 + (strictRead >= 0 && strictRead + 1 < strictLines.length
                     ? strictLines[strictRead + 1].trim() : "no read line"));
         Path strictOut = stage(strict, "hole-strict", false);
-        if (!node) {
-            skip("the strict hole drive needs node");
-            return;
-        }
         NodeRun strictRun = runNode(strictOut, entryPath(strictOut));
         checkEq(1, strictRun.status(), "the strict hole read exits 1");
         check(strictRun.output().contains("DEAL_ERROR_CODE: "
@@ -1894,7 +1850,7 @@ public class JsSemanticEmitterTest {
      * to its source wrapper, so a conversion failure behind an
      * arity-extension adapter keeps the authoritative call origin.
      */
-    private static void testAdapterCallOrigin(Path tmpRoot, boolean node)
+    private static void testAdapterCallOrigin(Path tmpRoot)
             throws Exception {
         System.out.println("-- the adapter forwards the call-site span to its"
             + " source wrapper --");
@@ -1934,10 +1890,6 @@ public class JsSemanticEmitterTest {
             "the adapter forwards the received span triple to the source"
                 + " wrapper");
         Path out = stage(fixture, "adapter-origin", emission);
-        if (!node) {
-            skip("the adapter origin drive needs node");
-            return;
-        }
         NodeRun run = runNode(out, entryPath(out));
         checkEq(1, run.status(), "the adapter-mediated conversion exits 1");
         check(run.output().contains("DEAL_ERROR_CODE: " + snapshot.code()
@@ -1952,8 +1904,7 @@ public class JsSemanticEmitterTest {
      * carrier-neutral table members (own-property-safe), never a Map
      * member call on a plain object.
      */
-    private static void testModuleNamespaceIndexCarrier(Path tmpRoot,
-                                                        boolean node)
+    private static void testModuleNamespaceIndexCarrier(Path tmpRoot)
             throws Exception {
         System.out.println("-- the module-namespace index carrier is the"
             + " own-property-safe surface --");
@@ -1996,10 +1947,6 @@ public class JsSemanticEmitterTest {
                     .filter(l -> l.contains(".set(") || l.contains(".get("))
                     .findFirst().orElse(""));
         Path out = stage(fixture, "namespace", emission);
-        if (!node) {
-            skip("the namespace index drive needs node");
-            return;
-        }
         NodeRun run = runNode(out, entryPath(out));
         checkEq(0, run.status(), "the namespace index program exits 0: "
             + run.output());
@@ -2074,7 +2021,7 @@ public class JsSemanticEmitterTest {
      * with its specified null failures and optional-null three states. Both
      * the driver (require-only) and the entry artifact itself execute.
      */
-    private static void testClassConstructionAndJson(Path tmpRoot, boolean node)
+    private static void testClassConstructionAndJson(Path tmpRoot)
             throws Exception {
         System.out.println("-- classes under Node: per-attempt defaults, imported"
             + " providers, field commits, the public helper ABI and JSON --");
@@ -2319,10 +2266,6 @@ public class JsSemanticEmitterTest {
                     + " calls");
         }
 
-        if (!node) {
-            skip("the class drive needs the real Node binary");
-            return;
-        }
         Path out = stage(fixture, "classes", emission);
         Files.writeString(out.resolve("driver.js"), """
             const rt = require("./deal/runtime.js");
@@ -2598,7 +2541,7 @@ public class JsSemanticEmitterTest {
     // 3b. Failure tuples, throw transport, and the entry presentation
     // =========================================================================
 
-    private static void testFailureTuples(Path tmpRoot, boolean node)
+    private static void testFailureTuples(Path tmpRoot)
             throws Exception {
         System.out.println("-- complete failure tuples, throw transport and"
             + " the entry presentation --");
@@ -2611,10 +2554,6 @@ public class JsSemanticEmitterTest {
             }
             """);
         Path out = stage(fixture, "failure-read", false);
-        if (!node) {
-            skip("failure tuple drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const app = require("./app.js");
             try {
@@ -2726,8 +2665,7 @@ public class JsSemanticEmitterTest {
      * function-typed alias of it, and a local alias that is later reassigned
      * changes no direct call of the aliased declaration.</p>
      */
-    private static void testFieldJsonExecutionAndCreationSites(Path tmpRoot,
-                                                                boolean node)
+    private static void testFieldJsonExecutionAndCreationSites(Path tmpRoot)
             throws Exception {
         System.out.println("-- fields and generated JSON over the resolved"
             + " declaration sites, under Node --");
@@ -2980,10 +2918,6 @@ public class JsSemanticEmitterTest {
                 }
                 """));
         Path out = stage(fixture, "fields-json", false);
-        if (!node) {
-            skip("the field/JSON drive needs the real Node binary");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const app = require("./app.js");
             const out = {};
@@ -3096,7 +3030,7 @@ public class JsSemanticEmitterTest {
     // 4. The private module registry: repeat identity and sticky failure
     // =========================================================================
 
-    private static void testModuleRegistry(Path tmpRoot, boolean node)
+    private static void testModuleRegistry(Path tmpRoot)
             throws Exception {
         System.out.println("-- repeat identity, sticky failure, no partial"
             + " exports, and the identical published surface --");
@@ -3115,10 +3049,6 @@ public class JsSemanticEmitterTest {
                 }
                 """));
         Path out = stage(fixture, "registry", false);
-        if (!node) {
-            skip("module registry drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const first = require("./util.js");
@@ -3207,7 +3137,7 @@ public class JsSemanticEmitterTest {
      * awaited error caught and rethrown — driven through the production
      * async-export ABI under the real Node binary.
      */
-    private static void testAsyncCallsAndCompletion(Path tmpRoot, boolean node)
+    private static void testAsyncCallsAndCompletion(Path tmpRoot)
             throws Exception {
         System.out.println("-- native async start/await, the async adapter and"
             + " the cross-module stored async value under Node --");
@@ -3264,10 +3194,6 @@ public class JsSemanticEmitterTest {
                 }
                 """));
         Path out = stage(fixture, "async-calls", true);
-        if (!node) {
-            skip("async call drive needs node");
-            return;
-        }
         String appSource = Files.readString(out.resolve("app.js"),
             StandardCharsets.UTF_8);
         check(appSource.contains(
@@ -3343,7 +3269,7 @@ public class JsSemanticEmitterTest {
      * with its companion origin, expected/actual pair and frames intact,
      * and an absent cause stays absent.
      */
-    private static void testAwaitedFailureTransport(Path tmpRoot, boolean node)
+    private static void testAwaitedFailureTransport(Path tmpRoot)
             throws Exception {
         System.out.println("-- the awaited failure transport keeps the"
             + " companion's origin, tuple and frames --");
@@ -3369,10 +3295,6 @@ public class JsSemanticEmitterTest {
                 }
                 """));
         Path out = stage(fixture, "async-failure", false);
-        if (!node) {
-            skip("awaited failure drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
@@ -3421,8 +3343,7 @@ public class JsSemanticEmitterTest {
      * and distinguishes DEAL errors from the pinned host-selection
      * failures.
      */
-    private static void testAsyncExportAbiAndEntryLegs(Path tmpRoot,
-                                                       boolean node)
+    private static void testAsyncExportAbiAndEntryLegs(Path tmpRoot)
             throws Exception {
         System.out.println("-- direct-run/require entry legs and the explicit"
             + " invokeAsyncExport selection legs --");
@@ -3434,10 +3355,6 @@ public class JsSemanticEmitterTest {
             export function main(): null { return null; }
             """);
         Path out = stage(fixture, "async-abi", false);
-        if (!node) {
-            skip("async-export ABI drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
@@ -3605,7 +3522,7 @@ public class JsSemanticEmitterTest {
      * their own origins while DEAL-internal calls keep reaching the same
      * lowered body.
      */
-    private static void testCallbackCrossing(Path tmpRoot, boolean node)
+    private static void testCallbackCrossing(Path tmpRoot)
             throws Exception {
         System.out.println("-- the host-driven callback crossing checks the"
             + " HOST_TO_DEAL parameter cells at their own origins --");
@@ -3618,10 +3535,6 @@ public class JsSemanticEmitterTest {
             export function main(): null { return null; }
             """, Map.of(), Map.of(), Set.of("cb"));
         Path out = stage(fixture, "callback", false);
-        if (!node) {
-            skip("callback crossing drive needs node");
-            return;
-        }
         String appSource = Files.readString(out.resolve("app.js"),
             StandardCharsets.UTF_8);
         check(appSource.contains(
@@ -3673,7 +3586,7 @@ public class JsSemanticEmitterTest {
      * through function-typed parameters, and the same carriers through
      * awaited dynamic starts, all under the real Node binary.
      */
-    private static void testDynamicCalleeDispatch(Path tmpRoot, boolean node)
+    private static void testDynamicCalleeDispatch(Path tmpRoot)
             throws Exception {
         System.out.println("-- the dynamic callee dispatches on the carrier's"
             + " private class tag; the intrinsic-as-callback corpus shape"
@@ -3782,10 +3695,6 @@ public class JsSemanticEmitterTest {
             "a carrier without a resolvable class fails closed at the call"
                 + " origin");
         Path out = stage(fixture, "dynamic", emission);
-        if (!node) {
-            skip("the dynamic callee drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
@@ -3823,21 +3732,17 @@ public class JsSemanticEmitterTest {
         check(corpusEmission.modules().size() == 1,
             "the corpus program renders one artifact");
         Path corpusOut = stage(corpus, "corpus-callback", corpusEmission);
-        if (node) {
-            Files.writeString(corpusOut.resolve("driver.js"), """
-                const app = require("./app.js");
-                console.log(JSON.stringify({
-                  value: app.test_intrinsic_as_callback.$f()}));
-                """, StandardCharsets.UTF_8);
-            NodeRun corpusRun = runNode(corpusOut, "driver.js");
-            checkEq(0, corpusRun.status(), "the intrinsic-as-callback corpus"
-                + " program exits 0: " + corpusRun.output());
-            check(corpusRun.output().contains("\"value\":7"),
-                "the corpus program's passed-and-called conversion intrinsic"
-                    + " returns its converted value: " + corpusRun.output());
-        } else {
-            skip("the intrinsic-as-callback corpus drive needs node");
-        }
+        Files.writeString(corpusOut.resolve("driver.js"), """
+            const app = require("./app.js");
+            console.log(JSON.stringify({
+              value: app.test_intrinsic_as_callback.$f()}));
+            """, StandardCharsets.UTF_8);
+        NodeRun corpusRun = runNode(corpusOut, "driver.js");
+        checkEq(0, corpusRun.status(), "the intrinsic-as-callback corpus"
+            + " program exits 0: " + corpusRun.output());
+        check(corpusRun.output().contains("\"value\":7"),
+            "the corpus program's passed-and-called conversion intrinsic"
+                + " returns its converted value: " + corpusRun.output());
     }
 
     /**
@@ -3850,8 +3755,7 @@ public class JsSemanticEmitterTest {
      * execution overwrite the earlier carrier's record and fail the
      * retained wrapper closed with a spurious E8001.
      */
-    private static void testAdapterPerExecutionSource(Path tmpRoot,
-                                                      boolean node)
+    private static void testAdapterPerExecutionSource(Path tmpRoot)
             throws Exception {
         System.out.println("-- one adapt site executed twice records the"
             + " resolved source on each created wrapper instance --");
@@ -3916,10 +3820,6 @@ public class JsSemanticEmitterTest {
             "no adapter invocation writes the source through the adapt op's"
                 + " result slot");
         Path out = stage(fixture, "adapter-fresh", emission);
-        if (!node) {
-            skip("the retained-adapter drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
@@ -3952,8 +3852,7 @@ public class JsSemanticEmitterTest {
      * the consuming declared cell, whose own origin the artifact reports
      * (the shared oracle's rule and origin) instead of the read site.
      */
-    private static void testHostParameterCellAndDeferredReads(Path tmpRoot,
-                                                              boolean node)
+    private static void testHostParameterCellAndDeferredReads(Path tmpRoot)
             throws Exception {
         System.out.println("-- the HOST_PARAMETER cell and the deferred"
             + " contextual read realize the recorded family/origin --");
@@ -3992,10 +3891,6 @@ public class JsSemanticEmitterTest {
         check(!artifact.contains("checkType(\"number\""),
             "no generic descriptor check masks the recorded host family");
         Path out = stage(fixture, "host-cell", emission);
-        if (!node) {
-            skip("the host-cell drive needs node");
-            return;
-        }
         Files.writeString(out.resolve("driver.js"), """
             const $rt = require("./deal/runtime.js");
             const app = require("./app.js");
@@ -4170,7 +4065,7 @@ public class JsSemanticEmitterTest {
               return null;
             }
             """);
-        checkDeferredReadOrigin(bytesFailure, "bytes", node);
+        checkDeferredReadOrigin(bytesFailure, "bytes");
         Fixture functionFailure = compileFixture(
             Files.createTempDirectory(tmpRoot, "host-cell-fn"), """
             export function functionFrom(t: table): (x: int) => int {
@@ -4184,7 +4079,7 @@ public class JsSemanticEmitterTest {
               return null;
             }
             """);
-        checkDeferredReadOrigin(functionFailure, "function", node);
+        checkDeferredReadOrigin(functionFailure, "function");
     }
 
     /**
@@ -4192,8 +4087,7 @@ public class JsSemanticEmitterTest {
      * message and origin for one deferred contextual read's consuming
      * declaration crossing.
      */
-    private static void checkDeferredReadOrigin(Fixture fixture, String what,
-                                                boolean node)
+    private static void checkDeferredReadOrigin(Fixture fixture, String what)
             throws Exception {
         var oracle = deal.semantic.SemanticOracle.executeProjectInits(
             fixture.project(), fixture.tables(), fixture.registries(), null);
@@ -4210,10 +4104,6 @@ public class JsSemanticEmitterTest {
         }
         deal.semantic.SemanticRuntimeModel.ErrorSnapshot snapshot =
             failure.error();
-        if (!node) {
-            skip("the deferred " + what + " origin drive needs node");
-            return;
-        }
         Path out = stage(fixture, "deferred-" + what, false);
         NodeRun run = runNode(out, entryPath(out));
         checkEq(1, run.status(), "the deferred " + what + " read exits 1: "
@@ -4263,7 +4153,7 @@ public class JsSemanticEmitterTest {
      * construction runs through the recorded occurrence's synthesized
      * {@code C$new} over the host's own defaults.
      */
-    private static void testHostOccurrenceSurfaces(Path tmpRoot, boolean node)
+    private static void testHostOccurrenceSurfaces(Path tmpRoot)
             throws Exception {
         System.out.println("-- HOST imports: one raw init, per-import typed"
             + " surfaces, name-sorted declared reads and the host class"
@@ -4445,10 +4335,6 @@ public class JsSemanticEmitterTest {
               label: function () { return Promise.resolve("labelled"); },
             };
             """.formatted(endpointId, serverConfigId));
-        if (!node) {
-            skip("the HOST import drive needs node");
-            return;
-        }
         writeFileIn(out, "driver.js", """
             const app = require("./app.js");
             (async () => {
@@ -4553,8 +4439,7 @@ public class JsSemanticEmitterTest {
      * under require and the actual initialization-failure presentation under
      * direct execution.
      */
-    private static void testHostDeclaredOrderAndRawShape(Path tmpRoot,
-                                                        boolean node)
+    private static void testHostDeclaredOrderAndRawShape(Path tmpRoot)
             throws Exception {
         System.out.println("-- the ascending declared-read order, the"
             + " first-failure stop and the unlocated raw-shape guard --");
@@ -4584,10 +4469,6 @@ public class JsSemanticEmitterTest {
                 + " load: " + app);
 
         Path out = stage(fixture, "host-order", emission);
-        if (!node) {
-            skip("the declared-read order drive needs node");
-            return;
-        }
         writeFileIn(out, "driver.js", """
             const $rt = require("./deal/runtime.js");
             const out = {};
@@ -4754,7 +4635,7 @@ public class JsSemanticEmitterTest {
      * across direct/stored/namespace calls, the separate console streams,
      * the number-returning clock and the canonical JSON projections.
      */
-    private static void testStdlibSurfaceAndCalls(Path tmpRoot, boolean node)
+    private static void testStdlibSurfaceAndCalls(Path tmpRoot)
             throws Exception {
         System.out.println("-- STDLIB: the once-only deployed surface, the"
             + " cataloged calls, separate streams, number time and canonical"
@@ -4819,10 +4700,6 @@ public class JsSemanticEmitterTest {
                 + " entry: " + app);
 
         Path out = stage(fixture, "stdlib", emission);
-        if (!node) {
-            skip("the STDLIB drive needs node");
-            return;
-        }
         writeFileIn(out, "driver.js", """
             const app = require("./app.js");
             const out = { checks: app.checks.$f() };

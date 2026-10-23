@@ -72,23 +72,21 @@ import java.util.stream.Stream;
  * shared {@code DEAL_ERROR_CODE: <code>} stderr + exit-1 contract.
  * Direct-runtime probes execute the {@code $rt} surface under the real
  * node binary for the defensive arms no checker-accepted DEAL source
- * reaches (the E8007 extra-field arm, js-backend-runtime D5). Node
- * unavailability skips the node cases (never fails them); every other
- * case runs unconditionally.
+ * reaches (the E8007 extra-field arm, js-backend-runtime D5). The real
+ * Node binary is a required tool: an absent node fails this suite with the
+ * named {@code TOOL_MISSING} outcome before any case is recorded, so the
+ * node drives are never skipped and a passing run always exercised them.
  */
 public class JsBackendTest {
 
     private static int passed = 0;
     private static int failed = 0;
-    private static int skipped = 0;
     private static Path tmpDir;
-    private static boolean nodeAvailable;
 
     public static void main(String[] args) throws Exception {
+        ToolchainPreflight.require("node", "--version",
+            "the JS production-artifact drives");
         tmpDir = Files.createTempDirectory("js_backend_test_");
-        nodeAvailable = probeNode();
-        System.out.println("Node.js: " + (nodeAvailable ? "available"
-            : "NOT available (node semantic cases will be skipped)"));
         try {
             testBackendNamesJs();
             testDealConfigBackendJs();
@@ -195,8 +193,7 @@ public class JsBackendTest {
 
         System.out.println();
         System.out.println("=== JS Backend Test Summary ===");
-        System.out.println("Passed: " + passed + ", Failed: " + failed
-            + ", Skipped: " + skipped);
+        System.out.println("Passed: " + passed + ", Failed: " + failed);
         if (failed > 0) {
             System.exit(1);
         }
@@ -221,23 +218,6 @@ public class JsBackendTest {
             index = text.indexOf(needle, index + needle.length());
         }
         return count;
-    }
-
-    /** Counts one toolchain skip (node unavailable) — a skip, never a
-     * failure (js-backend-conformance-e2e D1/D2 toolchain rule). */
-    private static void skipNode(String reason) {
-        skipped++;
-        System.out.println("  SKIP (node unavailable): " + reason);
-    }
-
-    private static boolean probeNode() {
-        try {
-            Process node = new ProcessBuilder("node", "--version")
-                .redirectErrorStream(true).start();
-            return node.waitFor() == 0;
-        } catch (IOException | InterruptedException e) {
-            return false;
-        }
     }
 
     // =========================================================================
@@ -795,10 +775,6 @@ public class JsBackendTest {
             throws Exception {
         System.out.println("-- Node: the v1.2 published arity-extension"
             + " subject through $rt.invokeAsyncExport --");
-        if (!nodeAvailable) {
-            skipNode("production arity-extension order");
-            return;
-        }
         ProductionNodeRun run = runProductionInvokerNode("""
             import * as c from "std/console";
 
@@ -842,10 +818,6 @@ public class JsBackendTest {
     private static void testAsyncErrorDetailTransportNode() throws Exception {
         System.out.println("-- Node: the async $error result carries the"
             + " complete ErrorDetail --");
-        if (!nodeAvailable) {
-            skipNode("async error detail transport");
-            return;
-        }
         JsEmission res = checkedEmission(prepareJs("""
             async function fail(): int {
               let t: table = {value: "bad"};
@@ -894,11 +866,6 @@ public class JsBackendTest {
     private static void testCornerCasePublicErrorsNode() throws Exception {
         System.out.println("-- Node: the retained corner-case public errors"
             + " (sync/async, direct/rethrow) --");
-        if (!nodeAvailable) {
-            skipNode("corner-case public errors");
-            skipNode("production public-companion-direct");
-            return;
-        }
         for (boolean rethrow : List.of(false, true)) {
             for (boolean async : List.of(false, true)) {
                 String mode = async ? "async" : "sync";
@@ -1047,10 +1014,6 @@ public class JsBackendTest {
             throws Exception {
         System.out.println("-- Node: the await-capable array write keeps the"
             + " receiver/index/RHS order before the bounds gate --");
-        if (!nodeAvailable) {
-            skipNode("await-capable array write");
-            return;
-        }
         NodeResult run = runInvokerNode("""
             export function main(): null { return null; }
             export async function oracle(): int {
@@ -1144,10 +1107,6 @@ public class JsBackendTest {
     private static void testProductionNodeCaptureBoundary() throws Exception {
         System.out.println("-- Node: the public-host capture boundary (the"
             + " shared 1 MiB per-stream cap) --");
-        if (!nodeAvailable) {
-            skipNode("public-host capture boundary");
-            return;
-        }
         Path dir = Files.createTempDirectory(
             "jstest_node_capture_boundary_");
         try {
@@ -1950,7 +1909,6 @@ public class JsBackendTest {
      */
     private static void testJsonableRoundTripNode() {
         System.out.println("-- Node: @jsonable C$fromJson/C$toJson roundtrip --");
-        if (!nodeAvailable) { skipNode("jsonable roundtrip"); return; }
         try {
             NodeResult run = runDealNode("""
                 // @jsonable
@@ -2081,21 +2039,17 @@ public class JsBackendTest {
                     + "canonical class identity text");
         }
 
-        if (nodeAvailable) {
-            ProcessBuilder node = new ProcessBuilder("node", "xjson_main.js");
-            node.directory(outputDir.toFile());
-            node.redirectErrorStream(true);
-            Process np = node.start();
-            String nout = new String(np.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8).trim();
-            int nrc = np.waitFor();
-            check(nrc == 0 && nout.equals("xmod-jsonable-ok"),
-                "node xjson_main.js roundtrips the cross-module jsonable "
-                    + "graph and reads the class-field array: exit " + nrc
-                    + ", output '" + nout + "'");
-        } else {
-            skipNode("orchestrator cross-module jsonable node run");
-        }
+        ProcessBuilder node = new ProcessBuilder("node", "xjson_main.js");
+        node.directory(outputDir.toFile());
+        node.redirectErrorStream(true);
+        Process np = node.start();
+        String nout = new String(np.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8).trim();
+        int nrc = np.waitFor();
+        check(nrc == 0 && nout.equals("xmod-jsonable-ok"),
+            "node xjson_main.js roundtrips the cross-module jsonable "
+                + "graph and reads the class-field array: exit " + nrc
+                + ", output '" + nout + "'");
     }
 
     private static String nestedClassShadowSubject() {
@@ -2255,7 +2209,6 @@ public class JsBackendTest {
                                                     PreparedJs nestedShadow)
             throws Exception {
         System.out.println("-- Node: module defaults, ordinary captures and per-construction evaluation --");
-        if (!nodeAvailable) { skipNode("nested-class defaults scope"); return; }
 
         // Keep the original local-class subject as a negative. The legal
         // module default creates a fresh ordinary captured binding each time:
@@ -2691,17 +2644,13 @@ public class JsBackendTest {
             check(!js.contains("= undefined;") && !js.contains("=== undefined")
                     && !js.contains("!== undefined"),
                 "no write/compare site spells the bare host-global");
-            if (nodeAvailable) {
-                try {
-                    NodeResult run = runDealArtifact(shadowPrepared);
-                    check(run.exitCode() == 0 && run.output().equals("11"),
-                        "the shadowed program runs under node: 7 + 3 + 1 = 11, got "
-                            + run.output() + " (exit " + run.exitCode() + ")");
-                } catch (Exception e) {
-                    fail("hygiene node run: " + e.getMessage());
-                }
-            } else {
-                skipNode("host-global hygiene node run");
+            try {
+                NodeResult run = runDealArtifact(shadowPrepared);
+                check(run.exitCode() == 0 && run.output().equals("11"),
+                    "the shadowed program runs under node: 7 + 3 + 1 = 11, got "
+                        + run.output() + " (exit " + run.exitCode() + ")");
+            } catch (Exception e) {
+                fail("hygiene node run: " + e.getMessage());
             }
         }
     }
@@ -2854,34 +2803,30 @@ public class JsBackendTest {
             check(!js.contains("checkType(" + q + "int" + q
                     + ", holder"),
                 "no read-site checkType wraps the host-call argument");
-            if (nodeAvailable) {
-                try {
-                    Path dir = deployArtifacts(defer, "Main.js");
-                    Files.writeString(dir.resolve("hostmod.js"),
-                        "\"use strict\";\n"
-                        + "module.exports = { hostFn: function (x) {\n"
-                        + "  return x + 1;\n"
-                        + "} };\n");
-                    Files.writeString(dir.resolve("JsConformanceRunner.js"),
-                        StubModuleResolver.buildJsRunner(
-                            compileFrontend("""
-                                export function test(): int { return 0; }
-                                """, "jstest-host-abi-defer.deal").program()));
-                    NodeResult run = runNodeScript(dir,
-                        "JsConformanceRunner.js");
-                    check(run.exitCode() == 1
-                            && run.output().contains("DEAL_ERROR_CODE: E8010")
-                            && run.output().contains(
-                                "jstest-host-abi-defer.deal"),
-                        "the host parameter boundary raises the recorded "
-                            + "E8010 at the call site: exit " + run.exitCode()
-                            + ", output '" + run.output() + "'");
-                    deleteDir(dir);
-                } catch (Exception e) {
-                    fail("host-abi deferral node run: " + e.getMessage());
-                }
-            } else {
-                skipNode("host-abi deferral node run");
+            try {
+                Path dir = deployArtifacts(defer, "Main.js");
+                Files.writeString(dir.resolve("hostmod.js"),
+                    "\"use strict\";\n"
+                    + "module.exports = { hostFn: function (x) {\n"
+                    + "  return x + 1;\n"
+                    + "} };\n");
+                Files.writeString(dir.resolve("JsConformanceRunner.js"),
+                    StubModuleResolver.buildJsRunner(
+                        compileFrontend("""
+                            export function test(): int { return 0; }
+                            """, "jstest-host-abi-defer.deal").program()));
+                NodeResult run = runNodeScript(dir,
+                    "JsConformanceRunner.js");
+                check(run.exitCode() == 1
+                        && run.output().contains("DEAL_ERROR_CODE: E8010")
+                        && run.output().contains(
+                            "jstest-host-abi-defer.deal"),
+                    "the host parameter boundary raises the recorded "
+                        + "E8010 at the call site: exit " + run.exitCode()
+                        + ", output '" + run.output() + "'");
+                deleteDir(dir);
+            } catch (Exception e) {
+                fail("host-abi deferral node run: " + e.getMessage());
             }
         }
 
@@ -3015,33 +2960,29 @@ public class JsBackendTest {
                     + "identity: " + js);
         }
 
-        if (nodeAvailable) {
-            writeFile("hostjs_proj/build/js/host/cfg.js", """
-                "use strict";
-                const $rt = require("../deal/runtime");
-                module.exports = {
-                  Endpoint: { $kind: "class", $classname: "@$external/host/cfg/Endpoint" },
-                  Endpoint_defaults: { path: "/" },
-                  ServerConfig: { $kind: "class", $classname: "@$external/host/cfg/ServerConfig" },
-                  ServerConfig_defaults: { port: 8080, endpoint: $rt.MISSING, tags: $rt.MISSING, note: $rt.MISSING },
-                  describe: function (s) { return s.endpoint.path + ":" + s.port; },
-                };
-                """);
-            ProcessBuilder node = new ProcessBuilder("node",
-                "hostjs_main.js");
-            node.directory(outputDir.toFile());
-            node.redirectErrorStream(true);
-            Process np = node.start();
-            String nout = new String(np.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8).trim();
-            int nrc = np.waitFor();
-            check(nrc == 0 && nout.isEmpty(),
-                "node hostjs_main.js constructs the declared host class, "
-                    + "crosses the boundary, and reads the described "
-                    + "value: exit " + nrc + ", output '" + nout + "'");
-        } else {
-            skipNode("orchestrator host-ABI node run");
-        }
+        writeFile("hostjs_proj/build/js/host/cfg.js", """
+            "use strict";
+            const $rt = require("../deal/runtime");
+            module.exports = {
+              Endpoint: { $kind: "class", $classname: "@$external/host/cfg/Endpoint" },
+              Endpoint_defaults: { path: "/" },
+              ServerConfig: { $kind: "class", $classname: "@$external/host/cfg/ServerConfig" },
+              ServerConfig_defaults: { port: 8080, endpoint: $rt.MISSING, tags: $rt.MISSING, note: $rt.MISSING },
+              describe: function (s) { return s.endpoint.path + ":" + s.port; },
+            };
+            """);
+        ProcessBuilder node = new ProcessBuilder("node",
+            "hostjs_main.js");
+        node.directory(outputDir.toFile());
+        node.redirectErrorStream(true);
+        Process np = node.start();
+        String nout = new String(np.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8).trim();
+        int nrc = np.waitFor();
+        check(nrc == 0 && nout.isEmpty(),
+            "node hostjs_main.js constructs the declared host class, "
+                + "crosses the boundary, and reads the described "
+                + "value: exit " + nrc + ", output '" + nout + "'");
     }
 
     /** The quote character as a string (emission-pin assertions). */
@@ -3073,11 +3014,6 @@ public class JsBackendTest {
         System.out.println("-- ISSUE-0797: occurrence-owned host imports, name-sorted "
             + "declared reads, the unlocated raw-shape guard, and the live-position "
             + "array traversal --");
-
-        if (!nodeAvailable) {
-            skipNode("ISSUE-0797 host-occurrence and traversal node drive");
-            return;
-        }
 
         // (0) The shared ascending-name declared-export selection: the
         // declaration-ordered provider map stays untouched while the
@@ -3621,7 +3557,6 @@ public class JsBackendTest {
 
     private static void testIntArithmeticEdgeCodes() throws Exception {
         System.out.println("-- Node: int arithmetic edge codes --");
-        if (!nodeAvailable) { skipNode("int arithmetic edge codes"); return; }
 
         Frontend removedPower = compileFrontend(
             "export function test(): int { return 2 ** 10000; }", "int-pow-overflow.deal");
@@ -3763,7 +3698,6 @@ public class JsBackendTest {
 
     private static void testInt32MatrixNode() throws Exception {
         System.out.println("-- Node: signed-int32 matrix under DEAL_V1_3_INT32 --");
-        if (!nodeAvailable) { skipNode("signed-int32 matrix"); return; }
 
         String[][] rows = {
             {"max-ok", "return 2147483647;", "2147483647"},
@@ -3940,7 +3874,6 @@ public class JsBackendTest {
 
     private static void testBytesNodeSemantics() throws Exception {
         System.out.println("-- Node: bytes semantics over the real pipeline --");
-        if (!nodeAvailable) { skipNode("bytes semantics"); return; }
 
         // The exact bytes-buffer-ops.deal program body (zero-fill,
         // unsigned 0..255 roundtrip, immutable length, reference-copy
@@ -4207,8 +4140,6 @@ public class JsBackendTest {
                     + "form never fires for the shadowed binding)");
         }
 
-        if (!nodeAvailable) { skipNode("bytes user-name shadowing"); return; }
-
         NodeResult clsRun = runDealArtifact(clsPrepared);
         check(clsRun.exitCode() == 0 && clsRun.output().equals("2"),
             "module-level user class named bytes runs under node (b.x "
@@ -4261,7 +4192,6 @@ public class JsBackendTest {
      */
     private static void testBytesClosureFunctionArrayNode() throws Exception {
         System.out.println("-- Node: bytes closure ((bytes)->bytes)[] and arity adapters --");
-        if (!nodeAvailable) { skipNode("bytes closure function array"); return; }
 
         NodeResult run = runDealNode("""
             function step(b: bytes): bytes {
@@ -4377,7 +4307,6 @@ public class JsBackendTest {
      */
     private static void testBytesClosureAsyncContainerNode() throws Exception {
         System.out.println("-- Node: containerized async bytes function values awaited end-to-end --");
-        if (!nodeAvailable) { skipNode("bytes closure async containers"); return; }
 
         NodeResult run = runDealNode("""
             async function bump(b: bytes): bytes {
@@ -4417,7 +4346,6 @@ public class JsBackendTest {
      */
     private static void testBytesClosureClassDefaultsNode() throws Exception {
         System.out.println("-- Node: bytes class fields and per-construction defaults --");
-        if (!nodeAvailable) { skipNode("bytes closure class defaults"); return; }
 
         NodeResult run = runDealNode("""
             class Buffer { buf: bytes = bytes(2); }
@@ -4444,7 +4372,6 @@ public class JsBackendTest {
 
     private static void testBytesClosureDeepCompositionsNode() throws Exception {
         System.out.println("-- Node: arbitrary-depth Array/Nullable bytes compositions through boundaries --");
-        if (!nodeAvailable) { skipNode("bytes closure deep compositions"); return; }
 
         NodeResult run = runDealNode("""
             function passDeep(x: (bytes[] | null)[]): (bytes[] | null)[] {
@@ -4612,38 +4539,34 @@ public class JsBackendTest {
                     + "through the recorded export call");
         }
 
-        if (nodeAvailable) {
-            // The driver exercises the production module surface: it
-            // requires the compiled entry and runs the two exported
-            // bridges (sync and async) through their wrappers — the
-            // async bridge awaits the imported async(bytes)->bytes
-            // export across the real module boundary.
-            Files.writeString(outputDir.resolve("bytes_closure_driver.js"), """
-                "use strict";
-                const $main = require("./bytes_closure_main");
-                (async () => {
-                  const $sync = $main.syncBridge.$f();
-                  if ($sync !== 1) { throw new Error("syncBridge returned " + $sync); }
-                  const $async = await $main.asyncBridge.$f();
-                  if ($async !== 1) { throw new Error("asyncBridge returned " + $async); }
-                  console.log("bytes-module-boundary-ok");
-                })().catch((e) => { console.error(e && e.stack || String(e)); process.exit(1); });
-                """);
-            ProcessBuilder node = new ProcessBuilder("node", "bytes_closure_driver.js");
-            node.directory(outputDir.toFile());
-            node.redirectErrorStream(true);
-            Process np = node.start();
-            String nout = new String(np.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8).trim();
-            int nrc = np.waitFor();
-            check(nrc == 0 && nout.equals("bytes-module-boundary-ok"),
-                "the driver awaits the imported async(bytes)->bytes export "
-                    + "across the real module boundary with content-"
-                    + "asserted buffer mutation: exit " + nrc
-                    + ", output '" + nout + "'");
-        } else {
-            skipNode("bytes closure module-boundary node run");
-        }
+        // The driver exercises the production module surface: it
+        // requires the compiled entry and runs the two exported
+        // bridges (sync and async) through their wrappers — the
+        // async bridge awaits the imported async(bytes)->bytes
+        // export across the real module boundary.
+        Files.writeString(outputDir.resolve("bytes_closure_driver.js"), """
+            "use strict";
+            const $main = require("./bytes_closure_main");
+            (async () => {
+              const $sync = $main.syncBridge.$f();
+              if ($sync !== 1) { throw new Error("syncBridge returned " + $sync); }
+              const $async = await $main.asyncBridge.$f();
+              if ($async !== 1) { throw new Error("asyncBridge returned " + $async); }
+              console.log("bytes-module-boundary-ok");
+            })().catch((e) => { console.error(e && e.stack || String(e)); process.exit(1); });
+            """);
+        ProcessBuilder node = new ProcessBuilder("node", "bytes_closure_driver.js");
+        node.directory(outputDir.toFile());
+        node.redirectErrorStream(true);
+        Process np = node.start();
+        String nout = new String(np.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8).trim();
+        int nrc = np.waitFor();
+        check(nrc == 0 && nout.equals("bytes-module-boundary-ok"),
+            "the driver awaits the imported async(bytes)->bytes export "
+                + "across the real module boundary with content-"
+                + "asserted buffer mutation: exit " + nrc
+                + ", output '" + nout + "'");
     }
 
     private static void testBytesClosureNoE6000Pins() throws Exception {
@@ -4771,13 +4694,11 @@ public class JsBackendTest {
                     "bytes equality emits native identity comparison");
             }
         }
-        if (nodeAvailable) {
-            NodeResult eqRun = runDealArtifact(eqPrepared);
-            check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
-                "bytes identity equality executes real reference identity "
-                    + "on Node (alias true, distinct buffers false; "
-                    + "returns 1): " + eqRun.output());
-        }
+        NodeResult eqRun = runDealArtifact(eqPrepared);
+        check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
+            "bytes identity equality executes real reference identity "
+                + "on Node (alias true, distinct buffers false; "
+                + "returns 1): " + eqRun.output());
     }
 
     private static void testNumModFloored() throws Exception {
@@ -4794,7 +4715,6 @@ public class JsBackendTest {
 
     private static void testScalarStringOps() throws Exception {
         System.out.println("-- Node: scalar-value string ops --");
-        if (!nodeAvailable) { skipNode("scalar string ops"); return; }
 
         NodeResult run = runDealNode("""
             import * as strings from "std/string";
@@ -4818,7 +4738,6 @@ public class JsBackendTest {
 
     private static void testOptionalThreeState() throws Exception {
         System.out.println("-- Node: optional three-state --");
-        if (!nodeAvailable) { skipNode("optional three-state"); return; }
 
         NodeResult run = runDealNode("""
             class Tri { field?: int | null; }
@@ -4848,7 +4767,6 @@ public class JsBackendTest {
 
     private static void testNilEquivalentNullableReads() throws Exception {
         System.out.println("-- Node: nil-equivalent nullable reads --");
-        if (!nodeAvailable) { skipNode("nil-equivalent nullable reads"); return; }
 
         NodeResult table = runDealNode("""
             export function test(): int {
@@ -4905,7 +4823,6 @@ public class JsBackendTest {
 
     private static void testE8010SignatureMismatch() throws Exception {
         System.out.println("-- Node: E8010 signature mismatch --");
-        if (!nodeAvailable) { skipNode("E8010 signature mismatch"); return; }
 
         NodeResult run = runDealNode("""
             function add(a: int, b: int): int { return a + b; }
@@ -4925,7 +4842,6 @@ public class JsBackendTest {
 
     private static void testE8007ExtraClassFieldRuntime() throws Exception {
         System.out.println("-- Node: E8007 extra class field (runtime arm) --");
-        if (!nodeAvailable) { skipNode("E8007 extra class field"); return; }
 
         NodeResult run = runRuntimeProbe("e8007", """
             "use strict";
@@ -4944,7 +4860,6 @@ public class JsBackendTest {
 
     private static void testClassIdentityTagPair() throws Exception {
         System.out.println("-- Node: class identity tag pair --");
-        if (!nodeAvailable) { skipNode("class identity"); return; }
 
         NodeResult ok = runDealNode("""
             class User { name: string = ""; }
@@ -5000,7 +4915,6 @@ public class JsBackendTest {
 
     private static void testCanonicalDescriptorMatcherPins() throws Exception {
         System.out.println("-- Node: canonical descriptor matcher pins --");
-        if (!nodeAvailable) { skipNode("canonical matcher pins"); return; }
 
         // The canonical grammar accepts ?D and [D] over ANY descriptor D —
         // function descriptors included — and compares class atoms and
@@ -5111,7 +5025,6 @@ public class JsBackendTest {
 
     private static void testLegacyDescriptorRejectionPins() throws Exception {
         System.out.println("-- Node: legacy descriptor spellings rejected (cannot-parse arm) --");
-        if (!nodeAvailable) { skipNode("legacy descriptor rejection"); return; }
 
         NodeResult run = runRuntimeProbe("legacy-reject", """
             "use strict";
@@ -5261,7 +5174,6 @@ public class JsBackendTest {
 
     private static void testErrorDefaultFilling() throws Exception {
         System.out.println("-- Node: Error-literal default filling --");
-        if (!nodeAvailable) { skipNode("Error default filling"); return; }
 
         NodeResult run = runDealNode("""
             function checkMsg(): int {
@@ -5292,7 +5204,6 @@ public class JsBackendTest {
 
     private static void testContextualErrorConstruction() throws Exception {
         System.out.println("-- Node: contextual Error construction --");
-        if (!nodeAvailable) { skipNode("contextual Error construction"); return; }
 
         NodeResult run = runDealNode("""
             function produce(): Error { return { message: "ret" }; }
@@ -5312,7 +5223,6 @@ public class JsBackendTest {
 
     private static void testRethrowPreservesCode() throws Exception {
         System.out.println("-- Node: non-literal throw / rethrow --");
-        if (!nodeAvailable) { skipNode("rethrow"); return; }
 
         NodeResult caught = runDealNode("""
             function inner(): null {
@@ -5360,7 +5270,6 @@ public class JsBackendTest {
 
     private static void testArrayElementDeleteSemantics() throws Exception {
         System.out.println("-- Node: array-element delete semantics --");
-        if (!nodeAvailable) { skipNode("array-element delete"); return; }
 
         NodeResult valid = runDealNode("""
             export function test(): int {
@@ -5424,7 +5333,6 @@ public class JsBackendTest {
 
     private static void testSpanParameterCollisionExecution() throws Exception {
         System.out.println("-- Node: span-parameter collision safety --");
-        if (!nodeAvailable) { skipNode("span-parameter collision execution"); return; }
 
         NodeResult ok = runDealNode("""
             function f(file: string, line: int, column: string): int { return line; }
@@ -5455,7 +5363,6 @@ public class JsBackendTest {
 
     private static void testStdJsonRoundTrips() throws Exception {
         System.out.println("-- Node: std/json round-trips --");
-        if (!nodeAvailable) { skipNode("std/json round-trips"); return; }
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
@@ -5562,7 +5469,6 @@ public class JsBackendTest {
     private static void testJsonDecodedArrayElementKindNode() throws Exception {
         System.out.println("-- Node: the decoded-array element reference-kind"
             + " projection --");
-        if (!nodeAvailable) { skipNode("decoded-array element kind"); return; }
 
         JsEmission res = checkedEmission(prepareJs("""
             import * as json from "std/json";
@@ -5610,7 +5516,6 @@ public class JsBackendTest {
     private static void testJsonDecodedArrayReadLengthNode() throws Exception {
         System.out.println("-- Node: decoded-array element read and length"
             + " through the production artifact --");
-        if (!nodeAvailable) { skipNode("decoded-array read and length"); return; }
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
@@ -5677,7 +5582,6 @@ public class JsBackendTest {
     private static void testJsonableDecodedArrayFieldNode() throws Exception {
         System.out.println("-- Node: @jsonable declared array field holding a"
             + " decoded JSON array --");
-        if (!nodeAvailable) { skipNode("jsonable decoded-array field"); return; }
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
@@ -5786,7 +5690,6 @@ public class JsBackendTest {
     private static void testJsonDecodedArrayVariantNode() throws Exception {
         System.out.println("-- Node: decoded-array variant through the"
             + " committed write, the element read and the deleted slot --");
-        if (!nodeAvailable) { skipNode("decoded-array variant"); return; }
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
@@ -5970,7 +5873,6 @@ public class JsBackendTest {
     private static void testHostBoundaryNumericCarrierNode() throws Exception {
         System.out.println("-- Node: host numeric parameters and async-export"
             + " completions project read carriers --");
-        if (!nodeAvailable) { skipNode("host numeric carrier projection"); return; }
 
         writeFile("carrier_proj/deal.json", """
             {"languageVersion": "1.3", "backend": "js",
@@ -6126,7 +6028,6 @@ public class JsBackendTest {
     private static void testHostDecodedArrayParamNode() throws Exception {
         System.out.println("-- Node: the host-parameter projection is"
             + " carrier-complete --");
-        if (!nodeAvailable) { skipNode("host decoded-array parameter projection"); return; }
 
         writeFile("hostparam_proj/deal.json", """
             {"languageVersion": "1.3", "backend": "js",
@@ -6356,7 +6257,6 @@ public class JsBackendTest {
     private static void testHostCompletionCarrierNode() throws Exception {
         System.out.println("-- Node: the async-export completion projection keeps"
             + " the decoded carriers --");
-        if (!nodeAvailable) { skipNode("host completion carrier projection"); return; }
 
         writeFile("completion_proj/deal.json", """
             {"languageVersion": "1.3", "backend": "js",
@@ -6511,7 +6411,6 @@ public class JsBackendTest {
 
     private static void testJsonStoredFunctionE8001() throws Exception {
         System.out.println("-- Node: std/json stringify of a stored function → E8001 --");
-        if (!nodeAvailable) { skipNode("json stored function"); return; }
 
         NodeResult run = runDealNode("""
             import * as json from "std/json";
@@ -6530,7 +6429,6 @@ public class JsBackendTest {
 
     private static void testJsonableRuntimeWalkers() throws Exception {
         System.out.println("-- Node: @jsonable runtime walkers (jsonFromJson/jsonToJson) --");
-        if (!nodeAvailable) { skipNode("jsonable runtime walkers"); return; }
 
         // Direct $rt-surface probes of the pinned walker contract
         // (js-v12-jsonable-completion D2-D5): the top-level object gate
@@ -6609,7 +6507,6 @@ public class JsBackendTest {
 
     private static void testIntrinsicFunctionValues() throws Exception {
         System.out.println("-- Node: intrinsics as function values --");
-        if (!nodeAvailable) { skipNode("intrinsic function values"); return; }
 
         NodeResult run = runDealNode("""
             import * as console from "std/console";
@@ -6636,7 +6533,6 @@ public class JsBackendTest {
 
     private static void testAsyncCompletionAndErrors() throws Exception {
         System.out.println("-- Node: async completion and error propagation --");
-        if (!nodeAvailable) { skipNode("async completion"); return; }
 
         NodeResult ok = runDealNode("""
             async function g(): int { return 42; }
@@ -6664,7 +6560,6 @@ public class JsBackendTest {
 
     private static void testAsyncExportInvokerNode() throws Exception {
         System.out.println("-- Node: $rt.invokeAsyncExport — production async-export invocation --");
-        if (!nodeAvailable) { skipNode("async-export invoker"); return; }
 
         // Positive: the production oracle scenario (parent D9
         // Verification 11) — init via the host's require, main once, the
@@ -6907,20 +6802,16 @@ public class JsBackendTest {
         // shim invokes main, prints, and exits 0 — a node-dependent
         // sub-check guarded like every node semantic case: node
         // unavailability skips it, never fails it.
-        if (nodeAvailable) {
-            ProcessBuilder node = new ProcessBuilder("node", "orch_main.js");
-            node.directory(outputDir.toFile());
-            node.redirectErrorStream(true);
-            Process np = node.start();
-            String nout = new String(np.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8).trim();
-            int nrc = np.waitFor();
-            check(nrc == 0 && nout.equals("js-orchestrator-main"),
-                "node <output>/orch_main.js runs the entry shim: exit " + nrc
-                    + ", output '" + nout + "'");
-        } else {
-            skipNode("orchestrator Backend.JS node run");
-        }
+        ProcessBuilder node = new ProcessBuilder("node", "orch_main.js");
+        node.directory(outputDir.toFile());
+        node.redirectErrorStream(true);
+        Process np = node.start();
+        String nout = new String(np.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8).trim();
+        int nrc = np.waitFor();
+        check(nrc == 0 && nout.equals("js-orchestrator-main"),
+            "node <output>/orch_main.js runs the entry shim: exit " + nrc
+                + ", output '" + nout + "'");
     }
 
     private static void testOrchestratorJsNestedModule() throws Exception {
@@ -6973,20 +6864,16 @@ public class JsBackendTest {
         // The deployed nested entry runs under the real node binary — a
         // node-dependent sub-check guarded like every node semantic case:
         // node unavailability skips it, never fails it.
-        if (nodeAvailable) {
-            ProcessBuilder node = new ProcessBuilder("node", "app/main.js");
-            node.directory(outputDir.toFile());
-            node.redirectErrorStream(true);
-            Process np = node.start();
-            String nout = new String(np.getInputStream().readAllBytes(),
-                StandardCharsets.UTF_8).trim();
-            int nrc = np.waitFor();
-            check(nrc == 0 && nout.equals("nested-module-ok"),
-                "node app/main.js runs the nested entry chain: exit " + nrc
-                    + ", output '" + nout + "'");
-        } else {
-            skipNode("orchestrator nested-module node run");
-        }
+        ProcessBuilder node = new ProcessBuilder("node", "app/main.js");
+        node.directory(outputDir.toFile());
+        node.redirectErrorStream(true);
+        Process np = node.start();
+        String nout = new String(np.getInputStream().readAllBytes(),
+            StandardCharsets.UTF_8).trim();
+        int nrc = np.waitFor();
+        check(nrc == 0 && nout.equals("nested-module-ok"),
+            "node app/main.js runs the nested entry chain: exit " + nrc
+                + ", output '" + nout + "'");
     }
 
     private static void testOrchestratorJsRejectsUnsupported() throws Exception {
@@ -7204,28 +7091,24 @@ public class JsBackendTest {
         System.out.println("-- Node: else-if chains with an absent terminal else"
             + " (GitHub #7) --");
 
-        if (nodeAvailable) {
-            NodeResult noTerminalElse = runDealNode(elseIfChainSubject(false),
-                "else-if-no-final-else");
-            check(noTerminalElse.exitCode() == 0
-                    && noTerminalElse.output().equals("10\n20\n0"),
-                "the absent-terminal-else chain returns the first branch"
-                    + " (10), the later branch (20) and the unchanged value"
-                    + " (0) when no branch matches: exit "
-                    + noTerminalElse.exitCode() + ", output '"
-                    + noTerminalElse.output() + "'");
+        NodeResult noTerminalElse = runDealNode(elseIfChainSubject(false),
+            "else-if-no-final-else");
+        check(noTerminalElse.exitCode() == 0
+                && noTerminalElse.output().equals("10\n20\n0"),
+            "the absent-terminal-else chain returns the first branch"
+                + " (10), the later branch (20) and the unchanged value"
+                + " (0) when no branch matches: exit "
+                + noTerminalElse.exitCode() + ", output '"
+                + noTerminalElse.output() + "'");
 
-            NodeResult terminalElse = runDealNode(elseIfChainSubject(true),
-                "else-if-final-else-control");
-            check(terminalElse.exitCode() == 0
-                    && terminalElse.output().equals("10\n20\n30"),
-                "the final-else control keeps first 10, later 20 and the"
-                    + " terminal-else unmatched result 30: exit "
-                    + terminalElse.exitCode() + ", output '"
-                    + terminalElse.output() + "'");
-        } else {
-            skipNode("else-if chain branch matrix");
-        }
+        NodeResult terminalElse = runDealNode(elseIfChainSubject(true),
+            "else-if-final-else-control");
+        check(terminalElse.exitCode() == 0
+                && terminalElse.output().equals("10\n20\n30"),
+            "the final-else control keeps first 10, later 20 and the"
+                + " terminal-else unmatched result 30: exit "
+                + terminalElse.exitCode() + ", output '"
+                + terminalElse.output() + "'");
 
         Path projectDir = Files.createTempDirectory("deal_js_elseif_test_");
         try {
@@ -7304,7 +7187,7 @@ public class JsBackendTest {
                         + json);
             }
 
-            if (nodeAvailable && Files.isRegularFile(artifact)) {
+            if (Files.isRegularFile(artifact)) {
                 NodeResult run = runNodeScript(outputRoot, "main.js");
                 check(run.exitCode() == 0 && run.output().equals("pick ok"),
                     "the published CommonJS artifact runs under the real"
@@ -7312,7 +7195,7 @@ public class JsBackendTest {
                         + " exit " + run.exitCode() + ", output '"
                         + run.output() + "'");
             } else {
-                skipNode("GitHub #7 published artifact");
+                fail("the published CommonJS artifact is missing");
             }
         } finally {
             deleteDir(projectDir);
