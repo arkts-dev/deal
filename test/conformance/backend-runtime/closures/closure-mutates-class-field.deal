@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: closures, classes, mutation
 
-class Box { value: number = 0; }
+class Box { value: number; }
 
 export function test_closure_mutates_class_field(): number {
   let b: Box = { value: 1 };

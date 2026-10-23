@@ -530,13 +530,7 @@ public final class JsSemanticEmitter {
                     : units.entrySet()) {
                 for (SemanticOp op : moduleEntry.getValue().ops()) {
                     switch (op.payload()) {
-                        case KindPayload.ClassDefaultPayload payload ->
-                            classDefaultOps
-                                .computeIfAbsent(moduleEntry.getKey(),
-                                    key -> new LinkedHashMap<>())
-                                .computeIfAbsent(payload.classId(),
-                                    key -> new LinkedHashMap<>())
-                                .putIfAbsent(payload.field(), op);
+
                         case KindPayload.JsonFromClassPayload payload ->
                             indexJsonableDeclaration(moduleEntry.getKey(),
                                 payload.layout().classId());
@@ -1194,7 +1188,7 @@ public final class JsSemanticEmitter {
                 case FIELD_DELETE -> emitFieldDelete(op);
                 case JSON_FROM_CLASS -> emitJsonFromClass(op);
                 case JSON_TO_CLASS -> emitJsonToClass(op);
-                case CLASS_DEFAULT, CLASS_FACTORY -> throw unsupported(op, "the"
+                case CLASS_FACTORY -> throw unsupported(op, "the"
                     + " detached " + op.kind() + " " + op.opId() + " executes"
                     + " only under its triggering constructor or factory arm —"
                     + " the block walk never runs it (producer defect)");
@@ -3372,7 +3366,6 @@ private void emitBindingLoad(SemanticOp op) {
                     .append(", nullable: ")
                     .append(field.descriptor()
                         instanceof RuntimeDescriptor.Nullable)
-                    .append(", hasDefault: ").append(field.hasDefault())
                     .append(" }");
             }
             return fields.append("]").toString();
@@ -3464,19 +3457,19 @@ private void emitBindingLoad(SemanticOp op) {
                     .append("]: ").append(slot(field.valueOpId()));
             }
             provided.append("}");
-            StringBuilder defaults = new StringBuilder("() => ({");
+            StringBuilder plan = new StringBuilder("[");
             List<ClassLayout.FieldLayout> fields = payload.layout().fields();
             for (int i = 0; i < fields.size(); i++) {
-                if (i > 0) {
-                    defaults.append(", ");
-                }
-                defaults.append("[").append(jsString(fields.get(i).name()))
-                    .append("]: \"\"");
+                if (i > 0) plan.append(", ");
+                ClassLayout.FieldLayout field = fields.get(i);
+                plan.append("{name: ").append(jsString(field.name()))
+                    .append(", descriptor: ")
+                    .append(jsString(field.descriptor().canonicalSpecText()))
+                    .append(", optional: ").append(!field.required()).append("}");
             }
-            defaults.append("})");
-            emit(slotOf(op) + " = $rt.makeClass("
-                + jsString(payload.classId().name()) + ", "
-                + jsString(payload.classId().text()) + ", " + defaults + ", "
+            plan.append("]");
+            emit(slotOf(op) + " = $rt.classPlan("
+                + jsString(payload.classId().text()) + ", " + plan + ", "
                 + provided + ", " + spanArgs(op) + ");");
         }
 
@@ -3509,10 +3502,7 @@ private void emitBindingLoad(SemanticOp op) {
         private void emitClassMachinery(LoweredModuleUnit unit) {
             boolean emitted = false;
             for (SemanticOp op : unit.ops()) {
-                if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                    emitClassDefaultThunk(unit, op);
-                    emitted = true;
-                }
+
             }
             ClassFactoryRegistry registry = registries.get(unit.moduleId());
             if (registry != null) {
@@ -3629,31 +3619,7 @@ private void emitBindingLoad(SemanticOp op) {
          * constructor's {@code CLASS_DEFAULT_FIELD} child admits the value at
          * its recorded origin).
          */
-        private void emitClassDefaultThunk(LoweredModuleUnit unit, SemanticOp op) {
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) op.payload();
-            if (!(op.result() instanceof ValueId result)) {
-                throw rejected(op, "the CLASS_DEFAULT " + op.opId()
-                    + " publishes no ValueId result (producer defect)");
-            }
-            // The thunk's own group maps to the recorded default
-            // expression's local site; the descriptive line follows.
-            beginMappedGroup(op);
-            emit("// Class default " + payload.classId().text() + "."
-                + payload.field());
-            emit("const " + defaultThunkName(op) + " = () => {");
-            indent++;
-            OpId previous = currentDefaultOp;
-            currentDefaultOp = op.opId();
-            try {
-                emitFunctionBody(unit, payload.defaultBlock());
-            } finally {
-                currentDefaultOp = previous;
-            }
-            emit("return " + slot(result) + ";");
-            indent--;
-            emit("};");
-        }
+
 
         /**
          * One private class-factory entry: the owner module's defaults-only
@@ -3680,47 +3646,7 @@ private void emitBindingLoad(SemanticOp op) {
                 + factoryId.id() + ", ($provided) => {");
             indent++;
             emit("const " + transfer + " = {};");
-            for (OpId defaultOpId : payload.classDefaultOpIds()) {
-                SemanticOp defaultOp = opsById.get(defaultOpId);
-                if (defaultOp == null
-                        || defaultOp.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                    throw rejected(factoryOp, "the CLASS_FACTORY "
-                        + factoryOp.opId() + " names the CLASS_DEFAULT child "
-                        + defaultOpId + ", which is not a recorded"
-                        + " CLASS_DEFAULT (producer defect)");
-                }
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                if (!defaultPayload.classId().equals(payload.classId())) {
-                    throw rejected(factoryOp, "the CLASS_FACTORY "
-                        + factoryOp.opId() + " names the CLASS_DEFAULT child "
-                        + defaultOpId + " of " + defaultPayload.classId()
-                        + ", not of " + payload.classId()
-                        + " (producer defect)");
-                }
-                if (!(defaultOp.result() instanceof ValueId result)) {
-                    throw rejected(defaultOp, "the CLASS_DEFAULT " + defaultOpId
-                        + " publishes no ValueId result (producer defect)");
-                }
-                if (fieldOf(layout, defaultPayload.field()) == null) {
-                    throw rejected(factoryOp, "the CLASS_FACTORY "
-                        + factoryOp.opId() + " names the CLASS_DEFAULT child "
-                        + defaultOpId + " of the undeclared field '"
-                        + defaultPayload.field() + "' (producer defect)");
-                }
-                emit("if ($provided.indexOf("
-                    + jsString(defaultPayload.field()) + ") < 0) {");
-                indent++;
-                String attempt = "$v" + factoryOp.opId().id() + "_"
-                    + defaultOp.opId().id();
-                emit("const " + attempt + " = " + defaultThunkName(defaultOp)
-                    + "();");
-                emit("$rt.setProp(" + transfer + ", "
-                    + jsString(defaultPayload.field()) + ", " + attempt
-                    + ");");
-                indent--;
-                emit("}");
-            }
+
             emit("return " + transfer + ";");
             indent--;
             emit("});");
@@ -3745,11 +3671,6 @@ private void emitBindingLoad(SemanticOp op) {
                     .append(", descriptor: ")
                     .append(jsString(field.descriptor().canonicalSpecText()))
                     .append(", optional: ").append(!field.required());
-                SemanticOp defaultOp = defaultOpOf(classId, field.name());
-                if (defaultOp != null && field.required()) {
-                    expression.append(", evaluator: ")
-                        .append(defaultThunkName(defaultOp));
-                }
                 expression.append(" }");
             }
             expression.append("]");
@@ -3817,13 +3738,8 @@ private void emitBindingLoad(SemanticOp op) {
                 default -> {
                 }
             }
-            SemanticOp defaultOp = defaultOpOf(classId, field.name());
             entry.append(", optional: ").append(!field.required())
-                .append(", nullable: ").append(nullable)
-                .append(", hasDefault: ").append(defaultOp != null);
-            if (defaultOp != null && field.required()) {
-                entry.append(", evaluator: ").append(defaultThunkName(defaultOp));
-            }
+                .append(", nullable: ").append(nullable);
             return entry.append(" }").toString();
         }
 
@@ -3929,7 +3845,7 @@ private void emitBindingLoad(SemanticOp op) {
          * One {@code CLASS_NEW}: the shared construction phases over the
          * resolved module-level layout and default owner. {@code LOCAL}
          * constructs directly, {@code SHARED_FACTORY} transfers the owner
-         * module's defaults first, {@code HOST_DEFAULTS} runs the host
+         * module's defaults first, {@code HOST_DECLARATION} runs the host
          * occurrence's synthesized full construction over the loaded
          * defaults, and the builtin {@code Error} keeps its
          * compiler-constant defaults.
@@ -3937,11 +3853,11 @@ private void emitBindingLoad(SemanticOp op) {
         private void emitClassNew(SemanticOp op) {
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) op.payload();
-            switch (payload.defaultOwner()) {
+            switch (payload.constructionProvider()) {
                 case LOCAL -> emitClassNewLocal(op, payload);
                 case SHARED_FACTORY -> emitClassNewSharedFactory(op, payload);
-                case BUILTIN_DEFAULTS -> emitBuiltinErrorConstruction(op);
-                case HOST_DEFAULTS -> emitClassNewHostDefaults(op, payload);
+                case BUILTIN_ERROR -> emitBuiltinErrorConstruction(op);
+                case HOST_DECLARATION -> emitClassNewHost(op, payload);
 
             }
         }
@@ -3958,7 +3874,7 @@ private void emitBindingLoad(SemanticOp op) {
          * at its own origin. A failed construction publishes no instance
          * and the completed host/default effects stay.
          */
-        private void emitClassNewHostDefaults(SemanticOp op,
+        private void emitClassNewHost(SemanticOp op,
                                               KindPayload.ClassNewPayload payload) {
             ClassLayout layout = requirePayloadLayout(op, payload.classId(),
                 payload.layout());
@@ -3969,14 +3885,7 @@ private void emitBindingLoad(SemanticOp op) {
                     + payload.classId() + " that differs from the declaration"
                     + " module's registered layout (producer defect)");
             }
-            if (payload.classFactoryRef() != null
-                    || !payload.classDefaultOpIds().isEmpty()) {
-                throw rejected(op, "the CLASS_NEW " + op.opId() + " carries the"
-                    + " host-declaration default owner of " + payload.classId()
-                    + " with a factory ref or a default child list: the loaded"
-                    + " host defaults are data and run in the host's own"
-                    + " construction (producer defect)");
-            }
+
             DeclaredHostClass declared = requireDeclaredHostClass(op,
                 payload.classId());
             emitExtraFieldFailure(op, payload, layout);
@@ -4089,20 +3998,7 @@ private void emitBindingLoad(SemanticOp op) {
             // construction's own attempt slot (so a nested or reentrant
             // attempt never overwrites this attempt's operands).
             Map<Long, String> defaultAttempts = new LinkedHashMap<>();
-            for (OpId defaultOpId : payload.classDefaultOpIds()) {
-                SemanticOp defaultOp = requireDefaultChild(op, payload.classId(),
-                    defaultOpId);
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                if (providedNames.contains(defaultPayload.field())) {
-                    continue;
-                }
-                String attempt = "$v" + op.opId().id() + "_"
-                    + defaultOp.opId().id();
-                emit("let " + attempt + " = " + defaultThunkName(defaultOp)
-                    + "();");
-                defaultAttempts.put(((ValueId) defaultOp.result()).id(), attempt);
-            }
+
             // Phase 2: the extra-key scan (the first provided-source name
             // outside the layout), after the defaults and before any boundary.
             emitExtraFieldFailure(op, payload, layout);
@@ -4159,7 +4055,7 @@ private void emitBindingLoad(SemanticOp op) {
                     + " resolves a factory of " + factoryPayload.classId()
                     + " (producer defect)");
             }
-            if (!(factoryOp.result() instanceof ValueId factoryResult)) {
+            if (!(factoryOp.result() instanceof ValueId)) {
                 throw rejected(factoryOp, "the CLASS_FACTORY " + factoryOp.opId()
                     + " publishes no ValueId result (producer defect)");
             }
@@ -4172,42 +4068,23 @@ private void emitBindingLoad(SemanticOp op) {
                 }
                 names.append(jsString(field.name()));
             }
-            // Phase 1: the owner's defaults-only transfer (the owner's
-            // recorded default blocks run in their owning module).
-            String transfer = "$t" + op.opId().id();
-            emit("const " + transfer + " = $rt.callFactory("
+            // Resolve the exact declaring provider; no omitted values execute.
+            emit("$rt.callFactory("
                 + jsString(factoryOpId.module().path()) + ", "
                 + payload.classFactoryRef().id() + ", [" + names + "], "
                 + spanArgs(op) + ");");
-            // Phase 2: the extra-key scan.
+            // Extra keys fail before declaration-order provided boundaries.
             emitExtraFieldFailure(op, payload, layout);
-            // Phase 3: the declaration-order field boundaries; a defaulted
-            // field's value is read from the transferred instance (the
-            // cross-unit default input), a provided field's from its own
-            // operand slot.
             Map<String, String> fieldValues = new LinkedHashMap<>();
             for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                 SemanticOp boundary = requireBoundaryChild(op, entry.boundaryOpId());
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                String input;
-                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD) {
-                    if (!boundaryPayload.input().equals(factoryResult)) {
-                        throw rejected(op, "the CLASS_NEW " + op.opId()
-                            + " field boundary " + entry.boundaryOpId()
-                            + " carries input " + boundaryPayload.input()
-                            + ": the pinned SHARED_FACTORY default input is the"
-                            + " owner CLASS_FACTORY result " + factoryResult
-                            + " (producer defect)");
-                    }
-                    input = "$c" + boundary.opId().id();
-                    emit("let " + input + " = " + transfer + "["
-                        + jsString(entry.field()) + "];");
-                    emitBoundaryCheck(boundary, input, boundaryPayload.descriptor());
-                } else {
-                    input = slot(boundaryPayload.input());
-                    emitBoundaryCheck(boundary, input, boundaryPayload.descriptor());
+                if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
+                    throw rejected(op, "CLASS_NEW carries a non-provided field boundary (producer defect)");
                 }
+                String input = slot(boundaryPayload.input());
+                emitBoundaryCheck(boundary, input, boundaryPayload.descriptor());
                 fieldValues.put(entry.field(), input);
             }
             emitInstance(op, payload, layout, providedNames, fieldValues);
@@ -4216,9 +4093,8 @@ private void emitBindingLoad(SemanticOp op) {
         /**
          * The extra-key rejection of one construction: the first
          * provided-source name outside the resolved layout raises the pinned
-         * E8007 at the construction's own origin — after the defaults ran and
-         * before any provided/default boundary, so completed default effects
-         * remain and no partial instance publishes.
+         * E8007 at the construction's own origin before any field boundary;
+         * completed provided-expression effects remain, with no partial instance.
          */
         private void emitExtraFieldFailure(SemanticOp op,
                                            KindPayload.ClassNewPayload payload,
@@ -4348,8 +4224,8 @@ private void emitBindingLoad(SemanticOp op) {
         /**
          * {@code JSON_FROM_CLASS}: the canonical JS JSON walker over the
          * class's declaration-order descriptor array. Every parse, key,
-         * provided-value, default or validation failure returns the DEAL null
-         * with no partial instance; a provided-value failure runs no default.
+         * required-presence, supplied-value or validation failure returns
+         * DEAL null without publishing a partial instance.
          */
         private void emitJsonFromClass(SemanticOp op) {
             KindPayload.JsonFromClassPayload payload =
@@ -4357,7 +4233,7 @@ private void emitBindingLoad(SemanticOp op) {
             requireLocalJsonLayout(op, payload.layout());
             emit(slotOf(op) + " = $rt.jsonFromJson("
                 + jsString(payload.layout().classId().text()) + ", "
-                + classFieldsExpr(op, payload.layout().classId()) + ", null, "
+                + classFieldsExpr(op, payload.layout().classId()) + ", "
                 + slot(payload.jsonString()) + ", " + callSpanArgs(op) + ");");
         }
 
@@ -4468,29 +4344,7 @@ private void emitBindingLoad(SemanticOp op) {
 
         /** One construction's recorded {@code CLASS_DEFAULT} child. */
         private SemanticOp requireDefaultChild(SemanticOp op, ClassId classId,
-                                               OpId defaultOpId) {
-            SemanticOp defaultOp = opsById.get(defaultOpId);
-            if (defaultOp == null
-                    || defaultOp.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                throw rejected(op, "the " + op.kind() + " " + op.opId()
-                    + " names the CLASS_DEFAULT child " + defaultOpId
-                    + ", which is not a recorded CLASS_DEFAULT (producer"
-                    + " defect)");
-            }
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) defaultOp.payload();
-            if (!payload.classId().equals(classId)) {
-                throw rejected(op, "the " + op.kind() + " " + op.opId()
-                    + " names the CLASS_DEFAULT child " + defaultOpId
-                    + " of " + payload.classId() + ", not of " + classId
-                    + " (producer defect)");
-            }
-            if (!(defaultOp.result() instanceof ValueId)) {
-                throw rejected(defaultOp, "the CLASS_DEFAULT " + defaultOpId
-                    + " publishes no ValueId result (producer defect)");
-            }
-            return defaultOp;
-        }
+                                               OpId defaultOpId) { throw new IllegalArgumentException("class field initializers are not supported"); }
 
         /** One op's boundary child of the given kind, or a fail-closed defect. */
         private SemanticOp requireBoundaryChild(SemanticOp op, BoundaryKind kind) {
@@ -4530,11 +4384,6 @@ private void emitBindingLoad(SemanticOp op) {
                 }
             }
             return found;
-        }
-
-        /** The emitted name of one {@code CLASS_DEFAULT} thunk. */
-        private static String defaultThunkName(SemanticOp defaultOp) {
-            return "$d" + defaultOp.opId().id();
         }
 
         /** The shared rejection of one identified operation. */

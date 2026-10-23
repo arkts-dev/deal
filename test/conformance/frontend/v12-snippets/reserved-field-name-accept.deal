@@ -3,5 +3,5 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class C {waiting:number=0;}
+class C {waiting:number;}
 export function f(): null {return null;}

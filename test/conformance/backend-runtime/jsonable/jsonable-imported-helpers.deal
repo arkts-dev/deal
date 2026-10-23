@@ -6,7 +6,7 @@
 import * as models from "./jsonable_helper_lib";
 
 export function test_imported_helpers(): null {
-  let a: models.Model = {};
+  let a: models.Model = {name: ""};
   let text: string = models.Model$toJson(a);
   let b: models.Model | null = models.Model$fromJson(text);
   if (b === null) { throw { code: "TEST_FAIL", message: "imported JSON helpers" }; }

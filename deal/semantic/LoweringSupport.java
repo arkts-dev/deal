@@ -342,12 +342,6 @@ public final class LoweringSupport {
             case ClassDeclaration classDeclaration -> {
                 scan.cover(ConstructKind.CLASS_DECLARATION);
                 scan.classConstruct = true;
-                for (ClassField field : classDeclaration.fields()) {
-                    if (field.defaultExpr().isPresent()) {
-                        walkExpression(field.defaultExpr().get(), module, scan,
-                            checkerScope);
-                    }
-                }
             }
             case FunctionDeclaration functionDeclaration -> {
                 scan.cover(ConstructKind.FUNCTION_DECLARATION_EXPRESSION);

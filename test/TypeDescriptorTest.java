@@ -151,7 +151,7 @@ public class TypeDescriptorTest {
     static void testIrClassDescriptors() {
         System.out.print("  testIrClassDescriptors... ");
         CompileResult cr = compile("""
-            class User { name: string = ""; }
+            class User { name: string; }
             function makeUser(): User { return { name: "Ada" }; }
             let f: User = makeUser();
             """);

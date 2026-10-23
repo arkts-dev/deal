@@ -6,7 +6,7 @@
 import * as c from "std/console";
 export function main(): null {
  let x: number = 7; let t: table = {bad:"not-int"}; let caught: boolean = false;
- try {x = t.bad;} catch(e) {if(e.code !== "E8001") {throw {message:"wrong type code"};} caught = true;}
- if(!caught || x !== 7) {throw {message:"failed assignment overwrote old local"};}
+ try {x = t.bad;} catch(e) {if(e.code !== "E8001") {throw {code:"TEST_FAIL",message:"wrong type code"};} caught = true;}
+ if(!caught || x !== 7) {throw {code:"TEST_FAIL",message:"failed assignment overwrote old local"};}
  c.log("typed-local-failure-state"); return null;
 }

@@ -1384,7 +1384,7 @@ public class CheckerTest {
         // Legal control: a throw-only try does not trigger the rule, so a
         // fallthrough catch with a valid later return compiles.
         CheckerOutput throwOnly = checkProgram(
-            "export function f(): null {try {throw {message:\"x\"};}"
+            "export function f(): null {try {throw {code:\"TEST\",message:\"x\"};}"
                 + " catch(e) {} return null;}\n");
         assertNoErrors(throwOnly, "a throw-only try with a fallthrough catch"
             + " stays legal");
@@ -1590,48 +1590,35 @@ public class CheckerTest {
     // =========================================================================
 
     static void testClassDefaultValueTypeError() {
-        System.out.println("-- F9: Class default value type error --");
-        CheckerOutput out = checkProgram(
-            "class User { name: string = 42; }"
-        );
-        assertError(out, "E3001", "class default value type mismatch");
-
-        CheckerOutput arithmetic = checkProgram(
-            "class User { name: string = 1 + 2; }"
-        );
-        assertError(arithmetic, "E3001",
-            "non-literal class default value type mismatch");
+        System.out.println("-- F9: Class field initializers reject before typing --");
+        for (String expression : List.of("42", "1 + 2", "unknown()")) {
+            CheckerOutput out = checkProgram("class User { name: string = " + expression + "; }");
+            assertError(out, "E1007", "field initializer syntax");
+        }
+        CheckerOutput provided = checkProgram(
+            "class User { name: string; } let user: User = {name: 42};");
+        assertError(provided, "E4003", "provided field retains value type checking");
     }
 
     static void testClassDefaultExpressionsTyped() {
-        System.out.println("-- F9: Class default expressions type-checked --");
+        System.out.println("-- F9: Provided class expressions are type-checked --");
         CheckerOutput out = checkProgram(
-            "class Point { x: number = 1 + 2; }\nlet p: Point = {};"
+            "class Point { x: number; }\nlet p: Point = {x: 1 + 2};"
         );
-        assertNoErrors(out, "arithmetic default type-checks clean");
-        for (StatementNode stmt : out.program().statements()) {
-            if (stmt instanceof ClassDeclaration cd) {
-                for (ClassField cf : cd.fields()) {
-                    if (cf.defaultExpr().isPresent()) {
-                        Type t = out.result.typeMap()
-                            .get(cf.defaultExpr().get());
-                        check(t instanceof Type.Number,
-                            "default subexpression recorded as number, got " + t);
-                    }
-                }
-            }
-        }
+        assertNoErrors(out, "provided arithmetic type-checks");
+        ObjectLiteralExpr literal = (ObjectLiteralExpr) ((VariableDeclaration)
+            out.program().statements().get(1)).initializer();
+        ExpressionNode value = literal.properties().get(0).value();
+        check(out.result().typeMap().get(value) instanceof Type.Number,
+            "provided arithmetic records number type");
 
-        // A default containing a null-typed call type-checks: the inner
-        // call records Type.Null (the JVM backend hoists it into a
-        // pre-statement instead of emitting `wrap(noise())`).
         CheckerOutput call = checkProgram(
             "function noise(): null { return; }\n"
             + "function wrap(x: null): string { return \"w\"; }\n"
-            + "class P { x: string = wrap(noise()); }\n"
-            + "let p: P = {};"
+            + "class P { x: string; }\n"
+            + "let p: P = {x: wrap(noise())};"
         );
-        assertNoErrors(call, "null-typed call default type-checks clean");
+        assertNoErrors(call, "provided null-typed nested call type-checks");
     }
 
     // =========================================================================
@@ -1711,7 +1698,7 @@ public class CheckerTest {
     static void testClassOptionalField() {
         System.out.println("-- Class Optional Field --");
         CheckerOutput out = checkProgram(
-            "class User { name: string; age?: number = 0; }\n" +
+            "class User { name: string; age?: number; }\n" +
             "let u: User = { name: \"A\" };\n" +
             "let a: number | null = u.age;"
         );
@@ -1721,7 +1708,7 @@ public class CheckerTest {
     static void testLocalNullableClassMemberAccessRejected() {
         System.out.println("-- Local nullable class member access: unguarded -> E3003 --");
         CheckerOutput out = checkProgram(
-            "class User { name: string = \"a\"; }\n" +
+            "class User { name: string; }\n" +
             "export function f(u: User | null): string {\n" +
             "  return u.name;\n" +
             "}"
@@ -1733,7 +1720,7 @@ public class CheckerTest {
     static void testLocalNullableClassMemberAccessNarrowedOk() {
         System.out.println("-- Local nullable class member access: narrowed -> OK --");
         CheckerOutput out = checkProgram(
-            "class User { name: string = \"a\"; }\n" +
+            "class User { name: string; }\n" +
             "export function f(u: User | null): string {\n" +
             "  if (u !== null) { return u.name; }\n" +
             "  return \"none\";\n" +
@@ -1755,8 +1742,8 @@ public class CheckerTest {
             + "invalidates the binding's refinement --");
 
         CheckerOutput path = checkProgram(
-            "class Child { n: number = 0; }\n" +
-            "class Parent { child: Child | null = null; }\n" +
+            "class Child { n: number; }\n" +
+            "class Parent { child: Child | null; }\n" +
             "export function f(p: Parent): number {\n" +
             "  if (p.child !== null) {\n" +
             "    return p.child.n;\n" +
@@ -1769,9 +1756,9 @@ public class CheckerTest {
                 + "narrowing)");
 
         CheckerOutput assigned = checkProgram(
-            "class C { n: number = 0; }\n" +
+            "class C { n: number; }\n" +
             "export function f(): number {\n" +
-            "  let x: C | null = {};\n" +
+            "  let x: C | null = {n: 0};\n" +
             "  if (x !== null) {\n" +
             "    x = null;\n" +
             "    return x.n;\n" +
@@ -2530,11 +2517,11 @@ public class CheckerTest {
                 "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(crossing.resolve("src/a.deal"),
-                "export class Item { value: number = 1; }\n"
-                    + "export function make(): Item { return {}; }\n");
+                "export class Item { value: number; }\n"
+                    + "export function make(): Item { return {value: 1}; }\n");
             Files.writeString(crossing.resolve("src/b.deal"),
-                "export class Item { value: number = 2; }\n"
-                    + "export function make(): Item { return {}; }\n");
+                "export class Item { value: number; }\n"
+                    + "export function make(): Item { return {value: 2}; }\n");
             Path crossingEntry = crossing.resolve("src/main.deal");
             Files.writeString(crossingEntry,
                 "import * as a from \"./a\";\n"
@@ -2562,14 +2549,14 @@ public class CheckerTest {
                 "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(control.resolve("src/a.deal"),
-                "export class Item { value: number = 1; }\n"
-                    + "export function make(): Item { return {}; }\n"
+                "export class Item { value: number; }\n"
+                    + "export function make(): Item { return {value: 1}; }\n"
                     + "export function read(item: Item): number {\n"
                     + "  return item.value;\n"
                     + "}\n");
             Files.writeString(control.resolve("src/b.deal"),
-                "export class Item { value: number = 2; }\n"
-                    + "export function make(): Item { return {}; }\n"
+                "export class Item { value: number; }\n"
+                    + "export function make(): Item { return {value: 2}; }\n"
                     + "export function read(item: Item): number {\n"
                     + "  return item.value;\n"
                     + "}\n");
@@ -2619,11 +2606,11 @@ public class CheckerTest {
         System.out.println("-- class provenance is checked at initialization "
             + "and nullable targets --");
         CheckerOutput init = checkProgram(
-            "class A { n: number = 0; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 0};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
+            "    class A { n: string; }\n" +
             "    let b: A = a;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2634,12 +2621,12 @@ public class CheckerTest {
                 + "is E3019");
 
         CheckerOutput nullable = checkProgram(
-            "class A { n: number = 0; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A | null = {};\n" +
+            "  let a: A | null = {n: 0};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    let b: A = {};\n" +
+            "    class A { n: string; }\n" +
+            "    let b: A = {n: \"ok\"};\n" +
             "    a = b;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2650,9 +2637,9 @@ public class CheckerTest {
                 + "declarations is E3019");
 
         CheckerOutput control = checkProgram(
-            "class A { n: number = 0; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 0};\n" +
             "  let b: A = a;\n" +
             "  let c: A | null = a;\n" +
             "  c = b;\n" +
@@ -2664,12 +2651,12 @@ public class CheckerTest {
                 + "stay legal");
 
         CheckerOutput inferredAlias = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  let alias = a;\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
+            "    class A { n: string; }\n" +
             "    let b: A = alias;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2680,12 +2667,12 @@ public class CheckerTest {
                 + "provenance across the initialization boundary");
 
         CheckerOutput inferredNullable = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A | null = {};\n" +
+            "  let a: A | null = {n: 7};\n" +
             "  let alias = a;\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
+            "    class A { n: string; }\n" +
             "    let b: A | null = alias;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2696,13 +2683,13 @@ public class CheckerTest {
                 + "nullable initialization boundary");
 
         CheckerOutput inferredAssignment = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  let alias = a;\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    let b: A = {};\n" +
+            "    class A { n: string; }\n" +
+            "    let b: A = {n: \"ok\"};\n" +
             "    b = alias;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2713,9 +2700,9 @@ public class CheckerTest {
                 + "expression boundary");
 
         CheckerOutput aliasControl = checkProgram(
-            "class A { n: number = 0; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 0};\n" +
             "  let alias = a;\n" +
             "  let b: A = alias;\n" +
             "  let c: A | null = alias;\n" +
@@ -2740,11 +2727,11 @@ public class CheckerTest {
         System.out.println("-- class provenance is preserved through "
             + "assignment expressions --");
         CheckerOutput init = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
+            "    class A { n: string; }\n" +
             "    let b: A = (a = a);\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2755,11 +2742,11 @@ public class CheckerTest {
                 + "keeps its declaration provenance -> E3019");
 
         CheckerOutput nullable = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
+            "    class A { n: string; }\n" +
             "    let b: A | null = (a = a);\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2770,12 +2757,12 @@ public class CheckerTest {
                 + "boundary keeps its declaration provenance -> E3019");
 
         CheckerOutput assignment = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    let b: A = {};\n" +
+            "    class A { n: string; }\n" +
+            "    let b: A = {n: \"ok\"};\n" +
             "    b = (a = a);\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2786,12 +2773,12 @@ public class CheckerTest {
                 + "its declaration provenance -> E3019");
 
         CheckerOutput nested = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
-            "  let c: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
+            "  let c: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
+            "    class A { n: string; }\n" +
             "    let b: A = (c = (a = a));\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2802,9 +2789,9 @@ public class CheckerTest {
                 + "-> E3019");
 
         CheckerOutput control = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  let b: A = (a = a);\n" +
             "  let c: A | null = (a = a);\n" +
             "  c = (b = b);\n" +
@@ -2833,12 +2820,12 @@ public class CheckerTest {
         System.out.println("-- class provenance is preserved through "
             + "contextually constructed literals --");
         CheckerOutput init = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    let b: A = (a = {});\n" +
+            "    class A { n: string; }\n" +
+            "    let b: A = (a = {n: 7});\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2849,12 +2836,12 @@ public class CheckerTest {
                 + "provenance -> E3019");
 
         CheckerOutput nullable = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    let b: A | null = (a = {});\n" +
+            "    class A { n: string; }\n" +
+            "    let b: A | null = (a = {n: 7});\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2864,13 +2851,13 @@ public class CheckerTest {
                 + "boundary keeps its declaration provenance -> E3019");
 
         CheckerOutput assignment = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    let b: A = {};\n" +
-            "    a = (b = {});\n" +
+            "    class A { n: string; }\n" +
+            "    let b: A = {n: \"ok\"};\n" +
+            "    a = (b = {n: \"ok\"});\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2881,12 +2868,12 @@ public class CheckerTest {
                 + "-> E3019");
 
         CheckerOutput control = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
-            "  let b: A = (a = {});\n" +
-            "  let c: A | null = (a = {});\n" +
-            "  c = (b = {});\n" +
+            "  let a: A = {n: 7};\n" +
+            "  let b: A = (a = {n: 7});\n" +
+            "  let c: A | null = (a = {n: 7});\n" +
+            "  c = (b = {n: 7});\n" +
             "  return null;\n" +
             "}"
         );
@@ -2895,12 +2882,12 @@ public class CheckerTest {
                 + "declaration stay legal");
 
         CheckerOutput contextual = checkProgram(
-            "class A { n: number = 7; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 7};\n" +
             "  {\n" +
-            "    class A { n: string = \"ok\"; }\n" +
-            "    a = {};\n" +
+            "    class A { n: string; }\n" +
+            "    a = {n: 7};\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2933,36 +2920,36 @@ public class CheckerTest {
         try {
             String[] negatives = {
                 "{\n"
-                    + "    class A { n: string = \"ok\"; }\n"
-                    + "    let b: A = (a = {});\n"
+                    + "    class A { n: string; }\n"
+                    + "    let b: A = (a = {n: 7});\n"
                     + "  }",
                 "{\n"
-                    + "    class A { n: string = \"ok\"; }\n"
-                    + "    let b: A | null = (a = {});\n"
+                    + "    class A { n: string; }\n"
+                    + "    let b: A | null = (a = {n: 7});\n"
                     + "  }",
                 "{\n"
-                    + "    class A { n: string = \"ok\"; }\n"
-                    + "    let b: A = {};\n"
-                    + "    a = (b = {});\n"
+                    + "    class A { n: string; }\n"
+                    + "    let b: A = {n: \"ok\"};\n"
+                    + "    a = (b = {n: \"ok\"});\n"
                     + "  }"
             };
             String[] importedCrossings = {
-                "let b: foreign.A = (a = {});",
-                "let b: foreign.A | null = (a = {});",
-                "let b: foreign.A = {}; a = (b = {});"
+                "let b: foreign.A = (a = {n: 7});",
+                "let b: foreign.A | null = (a = {n: 7});",
+                "let b: foreign.A = {n: 7}; a = (b = {n: 7});"
             };
             StringBuilder crossingSource = new StringBuilder(
-                "import * as foreign from \"./foreign/types\";\nclass A { n: number = 7; }\n");
+                "import * as foreign from \"./foreign/types\";\nclass A { n: number; }\n");
             for (int i = 0; i < importedCrossings.length; i++) {
                 crossingSource.append("function crossing").append(i)
-                    .append("(): null { let a: A = {}; ").append(importedCrossings[i])
+                    .append("(): null { let a: A = {n: 7}; ").append(importedCrossings[i])
                     .append(" return null; }\n");
             }
             crossingSource.append("export function main(): null { return null; }");
             Path crossingEntry = cliProject(root, "module_crossings", crossingSource.toString());
             Files.createDirectories(crossingEntry.resolveSibling("foreign"));
             Files.writeString(crossingEntry.resolveSibling("foreign").resolve("types.deal"),
-                "export class A { n: number = 7; }");
+                "export class A { n: number; }");
             for (String backend : List.of("js", "jvm", "luajit")) {
                 Path out = root.resolve("module_crossings_out_" + backend);
                 CliResult result = cliCompile(crossingEntry, backend, out);
@@ -2975,9 +2962,9 @@ public class CheckerTest {
             String[] names = {"init", "nullable", "assignment"};
             for (int p = 0; p < negatives.length; p++) {
                 Path probeEntry = cliProject(root, "probe_" + names[p],
-                    "class A { n: number = 7; }\n"
+                    "class A { n: number; }\n"
                         + "export function main(): null {\n"
-                        + "  let a: A = {};\n"
+                        + "  let a: A = {n: 7};\n"
                         + "  " + negatives[p] + "\n"
                         + "  return null;\n"
                         + "}\n");
@@ -2989,12 +2976,12 @@ public class CheckerTest {
 
             Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: number = 7; }\n"
+                    + "class A { n: number; }\n"
                     + "export function main(): null {\n"
-                    + "  let a: A = {};\n"
-                    + "  let b: A = (a = {});\n"
-                    + "  let c: A | null = (a = {});\n"
-                    + "  c = (b = {});\n"
+                    + "  let a: A = {n: 7};\n"
+                    + "  let b: A = (a = {n: 7});\n"
+                    + "  let c: A | null = (a = {n: 7});\n"
+                    + "  c = (b = {n: 7});\n"
                     + "  if (c !== null) {\n"
                     + "    if (c.n !== 7) {\n"
                     + "      throw { code: \"PROVENANCE_FAIL\", message: "
@@ -3076,11 +3063,11 @@ public class CheckerTest {
             String[] probes = {
                 // explicit provided field, plain class target
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: number = 7; }\n"
+                    + "class A { n: number; }\n"
                     + "export function main(): null {\n"
-                    + "  let a: A = {};\n"
+                    + "  let a: A = {n: 7};\n"
                     + "  {\n"
-                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    class A { n: string; }\n"
                     + "    a = { n: 8 };\n"
                     + "  }\n"
                     + "  if (a.n !== 8) { throw { code: \"OUTER_LAYOUT\", "
@@ -3090,11 +3077,11 @@ public class CheckerTest {
                     + "}\n",
                 // nullable class target
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: number = 7; }\n"
+                    + "class A { n: number; }\n"
                     + "export function main(): null {\n"
-                    + "  let a: A | null = {};\n"
+                    + "  let a: A | null = {n: 7};\n"
                     + "  {\n"
-                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    class A { n: string; }\n"
                     + "    a = { n: 8 };\n"
                     + "  }\n"
                     + "  if (a !== null) {\n"
@@ -3111,9 +3098,9 @@ public class CheckerTest {
                 Path entry = cliProject(root, "probe_" + names[p], probes[p]);
                 Path out = root.resolve("out_" + names[p]);
                 cliReject(entry, out, "js", "original local-class construction " + names[p]);
-                String legal = probes[p].replace("class A { n: number = 7; }",
-                    "class A { n: number = 7; }\nclass B { n: string = \"ok\"; }")
-                    .replace("    class A { n: string = \"ok\"; }", "    let other: B = {};");
+                String legal = probes[p].replace("class A { n: number; }",
+                    "class A { n: number; }\nclass B { n: string; }")
+                    .replace("    class A { n: string; }", "    let other: B = {n: \"ok\"};");
                 Path legalEntry = cliProject(root, "legal_" + names[p], legal);
                 Path legalOut = root.resolve("legal_out_" + names[p]);
                 cliAccept(legalEntry, legalOut, "js", "module-class target-context construction " + names[p]);
@@ -3134,21 +3121,20 @@ public class CheckerTest {
 
             // Nearest legal controls: the shadowing declaration's own
             // construction (its field stays string) and a module-level
-            // construction after the shadowing block (the declared
-            // default stays int).
+            // construction after the shadowing block (provided number).
             Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: number = 7; }\nclass B { n: string = \"ok\"; }\n"
+                    + "class A { n: number; }\nclass B { n: string; }\n"
                     + "export function main(): null {\n"
-                    + "  let a: A = {};\n"
+                    + "  let a: A = {n: 7};\n"
                     + "  {\n"
-                    + "    let b: B = {};\n"
+                    + "    let b: B = {n: \"ok\"};\n"
                     + "    if (b.n !== \"ok\") { throw { code: \"INNER_LAYOUT\", "
                     + "message: \"inner\" }; }\n"
                     + "  }\n"
-                    + "  let c: A = {};\n"
-                    + "  if (c.n !== 7) { throw { code: \"DEFAULT_LAYOUT\", "
-                    + "message: \"default\" }; }\n"
+                    + "  let c: A = {n: 7};\n"
+                    + "  if (c.n !== 7) { throw { code: \"PROVIDED_LAYOUT\", "
+                    + "message: \"provided\" }; }\n"
                     + "  console.log(\"SHADOW_CONTROL_OK\");\n"
                     + "  return null;\n"
                     + "}\n");
@@ -3191,11 +3177,11 @@ public class CheckerTest {
         }
         try {
             Path probeEntry = cliProject(root, "probe",
-                "class A { n: number = 7; }\n"
+                "class A { n: number; }\n"
                     + "export function main(): null {\n"
-                    + "  let a: A = {};\n"
+                    + "  let a: A = {n: 7};\n"
                     + "  {\n"
-                    + "    class A { n: string = \"ok\"; }\n"
+                    + "    class A { n: string; }\n"
                     + "    let b: A = (a = a);\n"
                     + "    let s: string = b.n;\n"
                     + "  }\n"
@@ -3208,9 +3194,9 @@ public class CheckerTest {
 
             Path controlEntry = cliProject(root, "control",
                 "import * as console from \"std/console\";\n"
-                    + "class A { n: number = 7; }\n"
+                    + "class A { n: number; }\n"
                     + "export function main(): null {\n"
-                    + "  let a: A = {};\n"
+                    + "  let a: A = {n: 7};\n"
                     + "  let b: A = (a = a);\n"
                     + "  let c: A | null = (a = a);\n"
                     + "  c = (b = b);\n"
@@ -3258,11 +3244,11 @@ public class CheckerTest {
         System.out.println("-- Nested class shadowing: declaration legal, "
             + "cross-declaration assignment -> E3019 --");
         CheckerOutput shadow = checkProgram(
-            "class A { n: number = 0; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
             "  {\n" +
-            "    class A { n: number = 0; }\n" +
-            "    let b: A = {};\n" +
+            "    class A { n: number; }\n" +
+            "    let b: A = {n: 0};\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -3270,12 +3256,12 @@ public class CheckerTest {
         assertNoErrors(shadow,
             "a nested class shadowing an enclosing class declares cleanly");
         CheckerOutput out = checkProgram(
-            "class A { n: number = 0; }\n" +
+            "class A { n: number; }\n" +
             "export function f(): null {\n" +
-            "  let a: A = {};\n" +
+            "  let a: A = {n: 0};\n" +
             "  {\n" +
-            "    class A { n: number = 0; }\n" +
-            "    let b: A = {};\n" +
+            "    class A { n: number; }\n" +
+            "    let b: A = {n: 0};\n" +
             "    a = b;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3329,11 +3315,11 @@ public class CheckerTest {
     }
 
     static void testThrowMessageOnly() {
-        System.out.println("-- Throw: { message: \"x\" } → OK --");
+        System.out.println("-- Throw: missing Error.code → E4001 --");
         CheckerOutput out = checkProgram(
             "function f(): null { throw { message: \"x\" }; }"
         );
-        assertNoErrors(out, "throw { message: \"x\" } must compile");
+        assertError(out, "E4001", "throw requires Error.code independently of message");
     }
 
     static void testThrowFullError() {
@@ -3348,7 +3334,7 @@ public class CheckerTest {
         System.out.println("-- Throw: Error variable → OK --");
         CheckerOutput out = checkProgram(
             "function f(): null {\n" +
-            "  let e: Error = { message: \"x\" };\n" +
+            "  let e: Error = { code: \"TEST\", message: \"x\" };\n" +
             "  throw e;\n" +
             "}"
         );
@@ -3372,7 +3358,7 @@ public class CheckerTest {
     static void testHasOptionalField() {
         System.out.println("-- has() on Optional Field --");
         CheckerOutput out = checkProgram(
-            "class User { name: string; age?: number = 0; }\n" +
+            "class User { name: string; age?: number; }\n" +
             "let u: User = { name: \"A\" };\n" +
             "let b: boolean = has(u.age);"
         );
@@ -3382,7 +3368,7 @@ public class CheckerTest {
     static void testDeleteRequiredField() {
         System.out.println("-- Delete Required Field --");
         CheckerOutput out = checkProgram(
-            "class Point { x: number; y?: number = 0; }\n" +
+            "class Point { x: number; y?: number; }\n" +
             "let p: Point = { x: 1 };\n" +
             "delete p.x;"
         );
@@ -3392,7 +3378,7 @@ public class CheckerTest {
     static void testDeleteOptionalField() {
         System.out.println("-- Delete Optional Field --");
         CheckerOutput out = checkProgram(
-            "class Point { x: number; y?: number = 0; }\n" +
+            "class Point { x: number; y?: number; }\n" +
             "let p: Point = { x: 1 };\n" +
             "delete p.y;"
         );
@@ -3494,7 +3480,7 @@ public class CheckerTest {
         System.out.println("-- Definite Return: throw counts --");
         CheckerOutput out = checkProgram(
             "function f(): number {\n" +
-            "  throw { message: \"error\" };\n" +
+            "  throw { code: \"TEST\", message: \"error\" };\n" +
             "}"
         );
         assertNoErrors(out, "throw counts as return");
@@ -3695,11 +3681,11 @@ public class CheckerTest {
     // =========================================================================
 
     static void testClassFieldDefaultNull() {
-        System.out.println("-- F3: Null default for nullable field --");
+        System.out.println("-- F3: Provided null for required nullable field --");
         CheckerOutput out = checkProgram(
-            "class User { name: string | null = null; age?: number = 0; }"
+            "class User { name: string | null; age?: number; } let user: User = {name: null};"
         );
-        assertNoErrors(out, "null default for nullable field OK");
+        assertNoErrors(out, "provided null for required nullable field is legal");
     }
 
     static void testVoidTypeNameProducesE3004() {
@@ -4214,7 +4200,7 @@ public class CheckerTest {
         CheckerOutput normal = checkProgram(
             "export function main(): null {\n"
             + "  try {\n"
-            + "    try { throw {}; } catch (inner) {\n"
+            + "    try { throw {code: \"TEST\", message: \"test\"}; } catch (inner) {\n"
             + "      let msg: string = inner.message;\n"
             + "    }\n"
             + "  } catch (outer) {\n"
@@ -4227,7 +4213,7 @@ public class CheckerTest {
         // Generated names remain compiler-owned and source-visible.
         CheckerOutput helpers = checkProgram(
             "// @jsonable\n"
-            + "export class Payload { name: string = \"\"; }\n"
+            + "export class Payload { name: string; }\n"
             + "export function main(): null {\n"
             + "  let encoded: string = Payload$toJson({ name: \"x\" });\n"
             + "  let decoded: Payload | null = Payload$fromJson(encoded);\n"
@@ -4255,7 +4241,7 @@ public class CheckerTest {
             "table keys and string data may contain $");
 
         CheckerOutput classMember = checkProgram(
-            "class C { x: number = 0; }\n"
+            "class C { x: number; }\n"
             + "export function main(): null {\n"
             + "  let c: C = { x: 1 };\n"
             + "  let v: number = c.bad$key;\n"
@@ -4649,9 +4635,9 @@ public class CheckerTest {
         deal.ast.Span span = new deal.ast.Span("test.deal", 1, 1, 1, 5);
         Symbol.ClassSymbol foreign = new Symbol.ClassSymbol("Point",
             List.of(new ClassField(span, "x", false, false,
-                    new deal.ast.NamedType(span, "number"), java.util.Optional.empty()),
+                    new deal.ast.NamedType(span, "number")),
                 new ClassField(span, "tag", true, false,
-                    new deal.ast.NamedType(span, "string"), java.util.Optional.empty())),
+                    new deal.ast.NamedType(span, "string"))),
             "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point"));
         resolver.registerClassSymbol("./foreign", foreign);
         Map<String, Type> exports = new HashMap<>();
@@ -4662,7 +4648,7 @@ public class CheckerTest {
             "import * as Other from \"./foreign\";\n" +
             "\n" +
             "class Point {\n" +
-            "  y: string = \"\";\n" +
+            "  y: string;\n" +
             "}\n" +
             "\n" +
             "export function main(): null {\n" +
@@ -4705,7 +4691,7 @@ public class CheckerTest {
         requiredProvider.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
             "Point",
             List.of(new ClassField(span, "nick", false, false,
-                new deal.ast.NamedType(span, "number"), java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "number"))),
             "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point")));
         Map<String, Type> requiredExports = new HashMap<>();
         requiredExports.put("Point",
@@ -4736,8 +4722,7 @@ public class CheckerTest {
         optionalProvider.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
             "Point",
             List.of(new ClassField(span, "nick", true, false,
-                new deal.ast.NamedType(span, "string"),
-                java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "string"))),
             "./foreign", IdentityTestFixtures.identityOf("./foreign", "Point")));
         Map<String, Type> optionalExports = new HashMap<>();
         optionalExports.put("Point",
@@ -4747,7 +4732,7 @@ public class CheckerTest {
             "import * as Other from \"./foreign\";\n"
             + "\n"
             + "class Point {\n"
-            + "  nick: number = 1;\n"
+            + "  nick: number;\n"
             + "}\n"
             + "\n"
             + "export function main(): null {\n"
@@ -4789,7 +4774,7 @@ public class CheckerTest {
         resolver.registerClassSymbol("./foreign", new Symbol.ClassSymbol(
             "Point",
             List.of(new ClassField(span, "nick", true, false,
-                new deal.ast.NamedType(span, "number"), java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "number"))),
             "./foreign", sharedIdentity));
         Type foreignPoint = Types.classType("Point", sharedIdentity, "./foreign");
         Map<String, Type> exports = new HashMap<>();
@@ -4866,7 +4851,7 @@ public class CheckerTest {
             "an imported value as a same-identity array element is E3019");
 
         CheckerOutput literalField = checkProgramWithModule(local
-            + "class Holder { p: Point = {}; }\n"
+            + "class Holder { p: Point; }\n"
             + "export function main(): null {\n"
             + "  let y: Other.Point = {};\n"
             + "  let h: Holder = { p: y };\n"
@@ -4927,11 +4912,9 @@ public class CheckerTest {
             // member the local declaration does not carry.
             Symbol.ClassSymbol irPoint = new Symbol.ClassSymbol("Point",
                 List.of(new ClassField(span, "nick", true, false,
-                        new deal.ast.NamedType(span, "string"),
-                        java.util.Optional.empty()),
+                        new deal.ast.NamedType(span, "string")),
                     new ClassField(span, "a", false, false,
-                        new deal.ast.NamedType(span, "number"),
-                        java.util.Optional.empty())),
+                        new deal.ast.NamedType(span, "number"))),
                 "./ir", sharedIdentity);
             Map<String, Type> irExports = new HashMap<>();
             irExports.put("Point", Types.classType("Point", sharedIdentity,
@@ -4946,8 +4929,7 @@ public class CheckerTest {
             // required/optional decision).
             Symbol.ClassSymbol strictPoint = new Symbol.ClassSymbol("Point",
                 List.of(new ClassField(span, "nick", false, false,
-                    new deal.ast.NamedType(span, "number"),
-                    java.util.Optional.empty())),
+                    new deal.ast.NamedType(span, "number"))),
                 "./strict", sharedIdentity);
             Map<String, Type> strictExports = new HashMap<>();
             strictExports.put("Point", Types.classType("Point", sharedIdentity,
@@ -4972,7 +4954,7 @@ public class CheckerTest {
             // `nick` and no `a`: a name/identity-based fallback would own
             // the call-result receiver's field decisions.
             String local = "import * as Other from \"./ir\";\n"
-                + "class Point { nick: number = 1; }\n";
+                + "class Point { nick: number; }\n";
             CheckerOutput resolved = checkProgramWithModule(local
                 + "export function main(): null {\n"
                 + "  if (has(Other.make().nick)) { return null; }\n"
@@ -5033,12 +5015,12 @@ public class CheckerTest {
             "import * as Other from \"./foreign\";\n" +
             "// @jsonable\n" +
             "export class B {\n" +
-            "  local: number = 0;\n" +
+            "  local: number;\n" +
             "}\n" +
             "// @jsonable\n" +
             "export class A {\n" +
-            "  other: Other.B | null = null;\n" +
-            "  local: B = {};\n" +
+            "  other: Other.B | null;\n" +
+            "  local: B;\n" +
             "}\n",
             resolver
         );
@@ -5072,8 +5054,8 @@ public class CheckerTest {
             "import * as Other from \"./foreign\";\n" +
             "// @jsonable\n" +
             "export class Holder {\n" +
-            "  items: Other.Widget[] = [];\n" +
-            "  note: Other.Widget | null = null;\n" +
+            "  items: Other.Widget[];\n" +
+            "  note: Other.Widget | null;\n" +
             "}\n",
             resolver
         );
@@ -5103,7 +5085,7 @@ public class CheckerTest {
             "// @jsonable\n" +
             "export class A {\n" +
             "  b: B;\n" +
-            "  other: Other.B | null = null;\n" +
+            "  other: Other.B | null;\n" +
             "}\n" +
             "// @jsonable\n" +
             "export class B {\n" +

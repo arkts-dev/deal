@@ -467,12 +467,11 @@ public class FieldOpsLoweringTest {
         deal.ast.Span span = new deal.ast.Span(lib, 1, 1, 1, 5);
         deal.checker.Symbol.ClassSymbol child = new deal.checker.Symbol.ClassSymbol("Child",
             List.of(new deal.ast.ClassField(span, "value", false, false,
-                new deal.ast.NamedType(span, "number"), java.util.Optional.empty())),
+                new deal.ast.NamedType(span, "number"))),
             lib, IdentityTestFixtures.identityOf(lib, "Child"));
         deal.checker.Symbol.ClassSymbol parent = new deal.checker.Symbol.ClassSymbol("Parent",
             List.of(new deal.ast.ClassField(span, "children", false, false,
-                new deal.ast.ArrayType(span, new deal.ast.NamedType(span, "Child")),
-                java.util.Optional.empty())),
+                new deal.ast.ArrayType(span, new deal.ast.NamedType(span, "Child")))),
             lib, IdentityTestFixtures.identityOf(lib, "Parent"));
         resolver.registerClassSymbol(lib, child);
         resolver.registerClassSymbol(lib, parent);
@@ -482,8 +481,8 @@ public class FieldOpsLoweringTest {
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             import * as Lib from "./jsonable_batch2_lib";
             class Point { x: number; }
-            class Holder { parts: Lib.Parent[] = []; }
-            let h: Holder = {};
+            class Holder { parts: Lib.Parent[]; }
+            let h: Holder = {parts: []};
             let children: Lib.Child[] = h.parts[0].children;
             """, resolver);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -912,8 +911,8 @@ public class FieldOpsLoweringTest {
             + "same instance end-to-end --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
-            export class Point { x: number = 40 + 2; tag?: string; }
-            let p: Point = {tag: "t"};
+            export class Point { x: number; tag?: string; }
+            let p: Point = {tag: "t", x: 42};
             let xv: number = p.x;
             let hasTag: boolean = has(p.tag);
             delete p.tag;
@@ -949,17 +948,15 @@ public class FieldOpsLoweringTest {
             return;
         }
 
-        // The T1 tie: the literal's default application names the same
-        // CLASS_DEFAULT op as the exported factory (a broken T1 layout/
-        // default emission fails here).
+        // The exported provider and the literal resolve the same declaration.
         KindPayload.ClassNewPayload classNewPayload =
             (KindPayload.ClassNewPayload) classNews.get(0).payload();
         List<SemanticOp> factories = ofKind(unit.ops(), SemanticOpKind.CLASS_FACTORY);
         check(factories.size() == 1
-                && classNewPayload.classDefaultOpIds()
+                && classNewPayload.classId()
                     .equals(((KindPayload.ClassFactoryPayload) factories.get(0).payload())
-                        .classDefaultOpIds()),
-            "the CLASS_NEW's default op ids equal the factory's list (the T1 tie)");
+                        .classId()),
+            "the construction and exported provider name the exact class");
 
         // The fixture interpreter over the unit's ops in order.
         Map<OpId, SemanticOp> opLookup = new LinkedHashMap<>();
@@ -970,8 +967,6 @@ public class FieldOpsLoweringTest {
         Map<deal.semantic.ir.BindingId, Value> bindings = new LinkedHashMap<>();
         List<String> log = new ArrayList<>();
         BoundaryCheckRunner real = realDelegate(log);
-        ClassOpsExecutor.BodyRunner bodyRunner = defaultOp ->
-            new Value.Number(42);
         Map<ClassId, deal.semantic.ir.ClassLayout> layouts = unit.classLayouts();
 
         for (SemanticOp op : unit.ops()) {
@@ -981,9 +976,8 @@ public class FieldOpsLoweringTest {
                 }
                 case CLASS_NEW -> {
                     Outcome<Value> outcome = ClassOpsExecutor.executeClassNewLocal(op, heap,
-                        resolveDefaultOps(opLookup, classNewPayload.classDefaultOpIds()),
                         resolveBoundaryOps(opLookup, classNewPayload.fieldBoundaries()),
-                        layouts, real, bodyRunner);
+                        layouts, real);
                     check(outcome instanceof Outcome.Success<Value> success
                             && success.value() instanceof Value.Class,
                         "the CLASS_NEW drive constructs the instance; got " + outcome);
@@ -1206,14 +1200,14 @@ public class FieldOpsLoweringTest {
         System.out.println("-- determinism: two repetitions are byte-identical --");
 
         String source = """
-            export class Line { a: number = 1; b?: string; }
-            class Point { x: number = 2; y?: number = 0; }
+            export class Line { a: number; b?: string; }
+            class Point { x: number; y?: number; }
             let p: Point = {x: 1};
             let xv: number = p.x;
             p.y = 3;
             let b: boolean = has(p.y);
             delete p.y;
-            let l: Line = {};
+            let l: Line = {a: 1};
             """;
         SemanticLowerer.ClassDeclarationCoreResult first = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult second = lowerModule(source);
@@ -1342,7 +1336,7 @@ public class FieldOpsLoweringTest {
         testOptionalNullFieldReadArm();
         testCrossModuleNullableReadArm();
         SemanticLowerer.ClassDeclarationCoreResult fieldMutations = lowerModule("""
-            class Point { x: number; y?: number = 0; }
+            class Point { x: number; y?: number; }
             let p: Point = {x: 1};
             p.x = 9;
             p.y = 3;

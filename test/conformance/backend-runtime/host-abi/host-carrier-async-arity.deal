@@ -6,7 +6,7 @@
 import * as host from "host/carrierarity";
 
 class Marker {
-  count: number = 0;
+  count: number;
 }
 
 function check(condition: boolean, message: string): null {
@@ -28,7 +28,7 @@ function pick(): async (t: host.Target, g: (x: number) => number) => string {
 export async function test_arity_extended_adapter(): null {
   let target: host.Target = { name: "target" };
   let callback: (x: number) => number = bump;
-  let fixedMarker: Marker = {};
+  let fixedMarker: Marker = {count: 0};
   let fixedExtra = function(): number {
     fixedMarker.count = fixedMarker.count + 1;
     return 1;
@@ -41,7 +41,7 @@ export async function test_arity_extended_adapter(): null {
   let fixedText: string = await fixed(target, callback, fixedExtra());
   check(fixedText === "T|target|true:42|n=2", "the statically fixed arity-extended host async call");
   check(fixedMarker.count === 1, "the extra target parameter is evaluated exactly once at the statically fixed call");
-  let runtimeMarker: Marker = {};
+  let runtimeMarker: Marker = {count: 0};
   let runtimeExtra = function(): number {
     runtimeMarker.count = runtimeMarker.count + 1;
     return 1;

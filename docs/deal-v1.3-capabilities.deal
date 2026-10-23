@@ -11,23 +11,23 @@ import * as tables from "std/table";
 import * as time from "std/time";
 
 class Address {
-  city: string = "";
-  zip: number = 0;
+  city: string;
+  zip: number;
 }
 
 class Profile {
-  name: string = "";
+  name: string;
   nick?: string;
-  bio: string | null = null;
-  active: boolean = true;
-  address: Address = {};
-  tags: string[] = [];
-  meta: table = {};
+  bio: string | null;
+  active: boolean;
+  address: Address;
+  tags: string[];
+  meta: table;
 }
 
 class Point {
-  x: number = 0.0;
-  y: number = 0.0;
+  x: number;
+  y: number;
 }
 
 function fail(message: string): null {
@@ -144,12 +144,15 @@ function useClasses(): string {
   let p: Profile = {
     name: "Ada",
     nick: "countess",
+    bio: null,
+    active: true,
     address: { city: "London", zip: 1000 },
     tags: ["math", "code"],
     meta: { score: 99 },
   };
   assertBoolean(has(p.nick), "nick should be present");
-  let q: Profile = { name: "Grace", address: { city: "Arlington", zip: 2000 } };
+  let q: Profile = { name: "Grace", bio: null, active: true,
+    address: { city: "Arlington", zip: 2000 }, tags: [], meta: {} };
   assertBoolean(!has(q.nick), "nick should be missing");
   let score: number = p.meta.score;
   assertBoolean(score === 99, "table field in class mismatch");

@@ -1,15 +1,10 @@
 package deal.ast;
 
-import java.util.Optional;
-
-/**
- * A field declaration within a class body.
- */
+/** A structural class field declaration, with no initializer syntax. */
 public record ClassField(
     Span span,
     String name,
     boolean optional,
     boolean nullable,
-    TypeNode type,
-    Optional<ExpressionNode> defaultExpr
+    TypeNode type
 ) {}

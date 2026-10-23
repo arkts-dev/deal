@@ -7,8 +7,8 @@ import * as c from "std/console";
 export function main(): null {
  let t: table = {key:null}; let key: string = ""; t[key] = "";
  let empty: string = t[key]; let nil: string | null = t.key;
- if(empty !== "" || nil !== null) {throw {message:"empty string or null collapsed"};}
- delete t[key]; let gone: string | null = t[key]; if(gone !== null) {throw {message:"empty key deletion failed"};}
- t[key] = "x"; let restored: string = t[key]; if(restored !== "x") {throw {message:"empty key rewrite"};}
+ if(empty !== "" || nil !== null) {throw {code:"TEST_FAIL",message:"empty string or null collapsed"};}
+ delete t[key]; let gone: string | null = t[key]; if(gone !== null) {throw {code:"TEST_FAIL",message:"empty key deletion failed"};}
+ t[key] = "x"; let restored: string = t[key]; if(restored !== "x") {throw {code:"TEST_FAIL",message:"empty key rewrite"};}
  c.log("literal-null-vs-empty-string"); return null;
 }

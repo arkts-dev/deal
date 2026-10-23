@@ -5,14 +5,14 @@
 
 // @jsonable
 export class Profile {
-  nick?: string = "";
-  bio: string | null = null;
-  score: number = 0;
+  nick?: string;
+  bio: string | null;
+  score: number;
 }
 
 export function test_optional_nullable(): null {
   // Test 1: missing optional, null nullable — roundtrip with only required field
-  let p1: Profile = { score: 100 };
+  let p1: Profile = { bio: null, score: 100 };
   let s1: string = Profile$toJson(p1);
   let r1: Profile | null = Profile$fromJson(s1);
   if (r1 !== null) {

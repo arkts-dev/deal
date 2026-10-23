@@ -646,7 +646,7 @@ public final class SemanticIrValidator {
      *       (the resolved {@code EXTERNAL_ENTRY} op is the missing
      *       fact);</li>
      *   <li>a {@code CLASS_NEW} under {@code SHARED_FACTORY} (the owner's
-     *       factory facts), {@code HOST_DEFAULTS}
+     *       factory facts), {@code HOST_DECLARATION}
      *       (the declaration class registration seeds).</li>
      * </ul>
      *
@@ -693,9 +693,9 @@ public final class SemanticIrValidator {
                     != SemanticOpKind.CLASS_NEW) {
                 continue;
             }
-            String owner = stringPayloadField(op.payload(), "defaultOwner");
-            if (!DefaultOwner.SHARED_FACTORY.name().equals(owner)
-                    && !DefaultOwner.HOST_DEFAULTS.name().equals(owner)
+            String owner = stringPayloadField(op.payload(), "constructionProvider");
+            if (!ConstructionProvider.SHARED_FACTORY.name().equals(owner)
+                    && !ConstructionProvider.HOST_DECLARATION.name().equals(owner)
 ) {
                 continue;
             }
@@ -706,7 +706,7 @@ public final class SemanticIrValidator {
                 origin(ClassConstructionValidator.CONSTRUCTION_COHERENCE,
                     "CLASS_NEW " + op.opId() + " of "
                         + (classId == null ? "an imported class" : classId)
-                        + " carries defaultOwner " + owner + ": standalone admission"
+                        + " carries constructionProvider " + owner + ": standalone admission"
                         + " carries no provider context (the owner's factory facts and"
                         + " the declaration class registration seeds are supplied by"
                         + " the complete project closure)"));
@@ -834,7 +834,7 @@ public final class SemanticIrValidator {
             if (ownInterface != null) {
                 failure = ClassConstructionValidator.validate(typed,
                     typed.bodyTable(), typed.classFactories(),
-                    typed.jsonDefaults(), ownInterface, sharedFactories,
+                    ownInterface, sharedFactories,
                     declarationClasses, providerFactoryFacts,
                     ambiguousJsonPlanClassIds, jsonPlanOwners);
                 if (failure.isPresent()) {
@@ -1653,10 +1653,10 @@ public final class SemanticIrValidator {
         // positions (the complete /2 companions).
         for (RawUnit.RawClassLayout entry : unit.classLayouts()) {
             for (RawUnit.RawFieldLayout field : entry.layout().fields()) {
-                if (enumByName(DefaultOwner.class, field.defaultOwner()) == null) {
+                if (enumByName(ConstructionProvider.class, field.constructionProvider()) == null) {
                     return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
-                        origin(R_ENUM, "open value \"" + field.defaultOwner()
-                            + "\" in a closed DefaultOwner position"));
+                        origin(R_ENUM, "open value \"" + field.constructionProvider()
+                            + "\" in a closed ConstructionProvider position"));
                 }
                 if (parseDescriptorQuiet(field.descriptor()) == null) {
                     return fail(unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
@@ -2035,8 +2035,8 @@ public final class SemanticIrValidator {
                 }
             }
             case "CLASS_NEW" -> {
-                failure = checkSlotEnum(op, unit, facts, "defaultOwner",
-                    optionalString(payload, "defaultOwner"), DefaultOwner.class);
+                failure = checkSlotEnum(op, unit, facts, "constructionProvider",
+                    optionalString(payload, "constructionProvider"), ConstructionProvider.class);
                 if (failure.isPresent()) {
                     return failure;
                 }
@@ -2513,7 +2513,7 @@ public final class SemanticIrValidator {
                 }
                 return Optional.empty();
             }
-            case CLASS_LITERAL_FIELD, CLASS_DEFAULT_FIELD -> {
+            case CLASS_LITERAL_FIELD -> {
                 if (!matchesDescriptorKind(descriptor, policy)) {
                     return Optional.of(kind.name() + " boundary policy " + policy.name()
                         + " violates the descriptor-kind rule");
@@ -3230,7 +3230,7 @@ public final class SemanticIrValidator {
         }
         return matchesDescriptorKind(descriptor, policy)
             ? Optional.empty()
-            : Optional.of("CLASS_LITERAL_FIELD/CLASS_DEFAULT_FIELD boundaries use the "
+            : Optional.of("CLASS_LITERAL_FIELD boundaries use the "
                 + "descriptor-kind rule");
     }
 
@@ -3247,8 +3247,7 @@ public final class SemanticIrValidator {
             if (boundaryOpId.equals(id)) {
                 BoundaryKind kind = enumByName(BoundaryKind.class,
                     optionalString(boundary, "kind"));
-                if (kind == BoundaryKind.CLASS_LITERAL_FIELD
-                        || kind == BoundaryKind.CLASS_DEFAULT_FIELD) {
+                if (kind == BoundaryKind.CLASS_LITERAL_FIELD) {
                     return Optional.of(kind);
                 }
                 return Optional.empty();
@@ -3665,9 +3664,9 @@ public final class SemanticIrValidator {
                 return Optional.of("field boundary " + id + " does not resolve to a BOUNDARY op");
             }
             BoundaryKind kind = enumByName(BoundaryKind.class, optionalString(boundary, "kind"));
-            if (kind != BoundaryKind.CLASS_LITERAL_FIELD && kind != BoundaryKind.CLASS_DEFAULT_FIELD) {
+            if (kind != BoundaryKind.CLASS_LITERAL_FIELD) {
                 return Optional.of("a CLASS_NEW field boundary entry must carry "
-                    + "CLASS_LITERAL_FIELD or CLASS_DEFAULT_FIELD, got "
+                    + "CLASS_LITERAL_FIELD, got "
                     + optionalString(boundary, "kind"));
             }
         }

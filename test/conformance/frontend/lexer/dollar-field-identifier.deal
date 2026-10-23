@@ -4,7 +4,7 @@
 // @features: diagnostics, lua-abi
 
 class BadField {
-  bad$field: number = 0;
+  bad$field: number;
 }
 
 export function main(): null { return null; }

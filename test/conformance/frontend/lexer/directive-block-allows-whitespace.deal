@@ -7,7 +7,7 @@
 
 
 export class Packet {
-  payload: () => null = function(): null { return null; };
+  payload: () => null;
 }
 
 export function main(): null {

@@ -1,7 +1,7 @@
 // @spec: Classes
-// @description: Legal module-level default-call witness — class registration executes no default, each omitted required field calls its module-level provider once per construction in declaration order, a provided field skips its default, the returned array is retained (never copied) across the provider/default boundary and through an ordinary captured closure, mutation through one alias is visible through the others, and a failing default exposes its error once with prior provider effects retained and no retry. (basis: Classes §Default value evaluation; the v1.3 replacement witness for the rejected local-class subject)
+// @description: Structural registration runs no producer; provided host calls execute in source order, retain returned aliases through construction and closures, and propagate failure once with completed effects retained and no target publication.
 // @expected: runtime-ok
-// @features: v1.3, runtime, corner-case, defaults
+// @features: runtime, construction, aliasing, closures, host-abi
 
 import * as c from "std/console";
 import * as state from "host/retained_default";
@@ -11,8 +11,8 @@ function shared(xs: number[]): () => number[] {
 }
 
 class Box {
-  first: number[] = state.provideFirst();
-  second: number[] = state.provideSecond();
+  first: number[];
+  second: number[];
 }
 
 function failProvide(): number[] {
@@ -21,19 +21,19 @@ function failProvide(): number[] {
 }
 
 class FailingBox {
-  xs: number[] = failProvide();
+  xs: number[];
 }
 
 export function main(): null {
   if (state.calls() !== 0 || state.order() !== "") {
-    throw { code: "REGISTRATION_DEFAULT", message: "a default executed at class registration" };
+    throw { code: "REGISTRATION_DEFAULT", message: "a producer executed at class registration" };
   }
   let original: number[] = state.retained();
   let provider: () => number[] = shared(original);
-  let a: Box = {};
-  let b: Box = {};
+  let a: Box = {first: state.provideFirst(), second: state.provideSecond()};
+  let b: Box = {first: state.provideFirst(), second: state.provideSecond()};
   if (state.calls() !== 4 || state.order() !== "ABAB") {
-    throw { code: "CALL_ORDER", message: "per-omission declaration order: " + state.order() };
+    throw { code: "CALL_ORDER", message: "provided-expression source order: " + state.order() };
   }
   if (a.first !== original || a.second !== original || b.first !== original || b.second !== original) {
     throw { code: "REFERENCE_COPY", message: "the returned array was copied" };
@@ -44,7 +44,7 @@ export function main(): null {
   let supplied: number[] = [5];
   let explicit: Box = { first: supplied, second: supplied };
   if (state.calls() !== 4 || explicit.first !== supplied || explicit.second !== supplied) {
-    throw { code: "PROVIDED_SKIP", message: "a provided field ran its default" };
+    throw { code: "PROVIDED_SKIP", message: "plain references unexpectedly invoked a producer" };
   }
   a.first[0] = 9;
   if (b.first[0] !== 9 || original[0] !== 9 || provider()[0] !== 9) {
@@ -55,13 +55,15 @@ export function main(): null {
     throw { code: "EXPLICIT_ALIAS", message: "the provided alias mutation is not visible" };
   }
   let failed: boolean = false;
+  let target: FailingBox = {xs: supplied};
+  let originalTarget: FailingBox = target;
   try {
-    let bad: FailingBox = {};
+    target = {xs: failProvide()};
   } catch (e) {
     failed = e.code === "DEFAULT_FAIL";
   }
-  if (!failed || state.calls() !== 5) {
-    throw { code: "DEFAULT_FAILURE", message: "the failing default did not surface once without retry" };
+  if (!failed || state.calls() !== 5 || target !== originalTarget || target.xs !== supplied) {
+    throw { code: "DEFAULT_FAILURE", message: "the failing producer retried, lost effects or published a partial target" };
   }
   c.log("default-call-shared-reference");
   return null;

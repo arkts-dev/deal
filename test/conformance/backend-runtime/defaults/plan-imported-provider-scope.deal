@@ -1,15 +1,15 @@
 // @spec: Classes — Construction
-// @description: v1.2 default plans: defaults declared in module A run in A's declaring-module scope when module B imports and constructs the class — the provider's module-local default function executes through the imported plan (the consumer module has no binding for the provider-local name).
+// @description: An imported ordinary producer resolves its private helper in the declaring module and returns the exact exported class.
 // @expected: runtime-ok
-// @features: classes, defaults, modules
+// @features: classes, construction, modules
 
 import * as P from "./plan_provider_lib";
 
 export function test_plan_imported_provider_scope(): null {
-  let a: P.Provider = {};
-  let b: P.Provider = {};
+  let a: P.Provider = P.make();
+  let b: P.Provider = P.make();
   if (a.value !== 7 || b.value !== 7) {
-    throw { code: "TEST_FAIL", message: "provider-scope default result mismatch" };
+    throw { code: "TEST_FAIL", message: "declaring-scope producer result mismatch" };
   }
   return null;
 }

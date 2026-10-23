@@ -417,10 +417,6 @@ public final class BindingsProductionValidator {
                             thunk.capturedBindings());
                         model.detachingOfThunk.put(thunk.blockId(), op);
                     }
-                } else if (op.payload() instanceof KindPayload.ClassDefaultPayload def) {
-                    roots.add(def.defaultBlock());
-                    model.defaultRoots.add(def.defaultBlock());
-                    model.detachingOfDefault.put(def.defaultBlock(), op);
                 }
             }
             // Region assignment: every table block reaches a root through

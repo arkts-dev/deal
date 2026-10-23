@@ -1,4 +1,4 @@
 // @expected: companion
 // @description: Classified support module — jsonable helper declaration for the imported-helper fixture (v1.2 defect snippet 36)
 // @jsonable
-export class Model { name: string = ""; }
+export class Model { name: string; }

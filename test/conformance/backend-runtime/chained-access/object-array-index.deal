@@ -4,7 +4,7 @@
 // @features: classes, arrays, chained-access
 
 class Holder {
-  values: number[] = [];
+  values: number[];
 }
 
 export function test_object_array_index(): number {

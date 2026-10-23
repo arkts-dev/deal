@@ -6,7 +6,7 @@
 import * as json from "std/json";
 
 class Item {
-  label: string = "item";
+  label: string;
 }
 
 function needTable(t: table): string {

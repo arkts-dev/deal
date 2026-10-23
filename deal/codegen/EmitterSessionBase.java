@@ -690,32 +690,6 @@ public abstract class EmitterSessionBase {
         return false;
     }
 
-    /**
-     * The declaring unit's {@code CLASS_DEFAULT} op of one field of one
-     * canonical class identity, or null (no declared default). The lookup
-     * is scoped to the plan's declaring unit: the identity-keyed session
-     * scan could select a same-identity sibling's default op for a field
-     * of the emitted plan's own declaration.
-     */
-    protected final SemanticOp classDefaultOpOf(ModuleId owner, ClassId classId,
-                                                String field) {
-        LoweredModuleUnit owningUnit = units.get(owner);
-        if (owningUnit == null) {
-            return null;
-        }
-        for (SemanticOp candidate : owningUnit.ops()) {
-            if (candidate.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                continue;
-            }
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) candidate.payload();
-            if (payload.classId().equals(classId) && payload.field().equals(field)) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
     /** True iff the value slot is an op result in this unit. */
     protected final boolean hasProducer(ValueId valueId) {
         for (LoweredModuleUnit moduleUnit : units.values()) {
@@ -726,6 +700,22 @@ public abstract class EmitterSessionBase {
             }
         }
         return false;
+    }
+
+    /** A detached callable must retain its owning membership row. */
+    protected final List<OpId> requireFunctionBody(LoweredFunction function,
+                                                 StructuredBodyTable ownerTable) {
+        List<OpId> body = ownerTable.blockOps().get(function.body());
+        if (body != null) return body;
+        String message = "the function body block " + function.body()
+            + " has no membership row (producer defect)";
+        for (SemanticOp op : opsById.values()) {
+            if (op.payload() instanceof KindPayload.ClosureNewPayload closure
+                    && closure.function().equals(function.functionId())) {
+                throw rejectedOp(op, message);
+            }
+        }
+        throw new IllegalStateException(message);
     }
 
     protected final List<String> bodyStateKeys(FunctionId functionId) {
@@ -753,24 +743,6 @@ public abstract class EmitterSessionBase {
         List<String> result = List.copyOf(keys);
         bodyStateKeyCache.put(functionId, result);
         return result;
-    }
-
-    /**
-     * The private-state keys of one detached {@code CLASS_DEFAULT} block:
-     * every value slot its ops read or write and every cell they allocate,
-     * in first-reference order (the same collection the body-invocation
-     * save uses, over the default block). The construction arms restore
-     * exactly these keys around every default invocation, so a nested or
-     * re-entrant attempt inside a default never overwrites the enclosing
-     * attempt's operands. The default block carries no captures: a
-     * detached default allocates every cell it reads (its free references
-     * are module-level cells, restored like the rest of the block state).
-     */
-    protected final List<String> defaultBlockStateKeys(BlockId defaultBlock) {
-        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<>();
-        collectBodyStateKeys(defaultBlock, keys, new java.util.HashSet<>(),
-            java.util.Set.of());
-        return List.copyOf(keys);
     }
 
     /** True iff the boundary input value is the chain's normalize slot. */

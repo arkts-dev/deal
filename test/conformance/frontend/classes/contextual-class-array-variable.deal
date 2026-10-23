@@ -3,8 +3,8 @@
 // @expected: compile-ok
 // @features: classes, arrays, contextual-typing
 
-class Box { n: number = 0; }
+class Box { n: number; }
 export function main(): null {
-  let a: Box[] = [{ n: 2 }, {}];
+  let a: Box[] = [{ n: 2 }, {n: 0}];
   return null;
 }

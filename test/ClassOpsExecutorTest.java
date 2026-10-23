@@ -16,7 +16,6 @@ import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ClassOpsExecutor;
-import deal.semantic.ir.ClassOpsExecutor.BodyRunner;
 import deal.semantic.ir.ClassOpsExecutor.BoundaryCheckRunner;
 import deal.semantic.ir.ClassOpsExecutor.BoundaryResult;
 import deal.semantic.ir.ClassOpsExecutor.Defect;
@@ -25,7 +24,7 @@ import deal.semantic.ir.ClassOpsExecutor.Outcome;
 import deal.semantic.ir.ClassOpsExecutor.Value;
 import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.KindPayload;
@@ -157,18 +156,11 @@ public class ClassOpsExecutorTest {
 
     private static ClassLayout.FieldLayout field(String name, RuntimeDescriptor descriptor,
                                                  boolean required) {
-        return new ClassLayout.FieldLayout(name, descriptor, required, DefaultOwner.LOCAL);
+        return new ClassLayout.FieldLayout(name, descriptor, required, ConstructionProvider.LOCAL);
     }
 
     private static ClassLayout layout(ClassLayout.FieldLayout... fields) {
         return new ClassLayout(CLS, List.of(fields));
-    }
-
-    private static SemanticOp defaultOp(String field, SemanticValue result,
-                                        RuntimeDescriptor resultType, FailurePolicyId policy) {
-        return op(SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(CLS, field, new BlockId(1)),
-            result, resultType, policy, null);
     }
 
     private static SemanticOp boundaryChild(OpId parentId, BoundaryKind kind,
@@ -263,45 +255,7 @@ public class ClassOpsExecutorTest {
         }
     }
 
-    /**
-     * A recording body-runner fixture: every invocation of a
-     * {@code CLASS_DEFAULT} default block is recorded (the invocation
-     * log proves the declaration order and the skip-provided rule) and
-     * returns the scripted produced value of the op.
-     */
-    private static final class RecordingBodyRunner implements BodyRunner {
-
-        private final List<String> log;
-        private final Map<OpId, Value> produced;
-        private int calls = 0;
-
-        RecordingBodyRunner(List<String> log, Map<OpId, Value> produced) {
-            this.log = log;
-            this.produced = produced;
-        }
-
-        int calls() {
-            return calls;
-        }
-
-        @Override
-        public Value runDefault(SemanticOp defaultOp) {
-            calls++;
-            log.add("default " + defaultOp.opId());
-            return produced.get(defaultOp.opId());
-        }
-    }
-
-    /**
-     * The E4 production-delegate stand-in: every check runs through the
-     * real {@link BoundaryExecutor} (the closed projection engine),
-     * adapted from the executor's {@link Value} view to the boundary's
-     * {@link BoundaryValueView}. The child's policy is the
-     * descriptor-kind rule for the {@code CLASS_LITERAL_FIELD}/
-     * {@code CLASS_DEFAULT_FIELD} cells. This proves the delegate seam
-     * accepts the production executor and that the executor itself never
-     * performs a boundary projection.
-     */
+    /** Checks provided values through the production boundary projection. */
     private static BoundaryCheckRunner realProjectionDelegate(List<String> log) {
         return (boundary, input) -> {
             if (log != null) {
@@ -354,29 +308,17 @@ public class ClassOpsExecutorTest {
     private record BoundaryEntry(String field, BoundaryKind kind, SemanticOp child) {
     }
 
-    /**
-     * Builds a validated-shape CLASS_NEW op with the pinned children:
-     * {@code classDefaultOpIds} naming the given detached CLASS_DEFAULT
-     * ops; one field-boundary entry per {@code entries} record. The
-     * returned handle carries the op plus the child lookups.
-     */
-    private record ClassNewFixture(SemanticOp op, Map<OpId, SemanticOp> defaultOps,
-                                   Map<OpId, SemanticOp> boundaryOps) {
+    /** A structural construction and its provided-field boundary children. */
+    private record ClassNewFixture(SemanticOp op, Map<OpId, SemanticOp> boundaryOps) {
     }
 
     private static ClassNewFixture classNewFixture(ClassLayout layout,
-            List<ProvidedEntry> provided, List<SemanticOp> defaults,
+            List<ProvidedEntry> provided,
             List<BoundaryEntry> entries) {
         OpId opId = nextOpId();
         List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
         for (ProvidedEntry entry : provided) {
             providedFields.add(new KindPayload.ProvidedField(entry.name(), entry.valueId()));
-        }
-        List<OpId> defaultIds = new ArrayList<>();
-        Map<OpId, SemanticOp> defaultOps = new LinkedHashMap<>();
-        for (SemanticOp defaultOp : defaults) {
-            defaultIds.add(defaultOp.opId());
-            defaultOps.put(defaultOp.opId(), defaultOp);
         }
         List<KindPayload.FieldBoundary> boundaries = new ArrayList<>();
         Map<OpId, SemanticOp> boundaryOps = new LinkedHashMap<>();
@@ -386,11 +328,11 @@ public class ClassOpsExecutorTest {
             boundaryOps.put(entry.child().opId(), entry.child());
         }
         SemanticOp op = opWithId(opId, SemanticOpKind.CLASS_NEW,
-            new KindPayload.ClassNewPayload(CLS, layout, providedFields, DefaultOwner.LOCAL,
-                defaultIds, null, boundaries),
+            new KindPayload.ClassNewPayload(CLS, layout, providedFields, ConstructionProvider.LOCAL,
+                null, boundaries),
             nextValue(), new RuntimeDescriptor.Class(CLS),
             FailurePolicyId.CLASS_CONSTRUCTION, null);
-        return new ClassNewFixture(op, defaultOps, boundaryOps);
+        return new ClassNewFixture(op, boundaryOps);
     }
 
     private static Map<OpId, SemanticOp> reparent(ClassNewFixture fixture,
@@ -613,49 +555,6 @@ public class ClassOpsExecutorTest {
     // 2. CLASS_DEFAULT
     // =========================================================================
 
-    static void testClassDefaultExecution() {
-        System.out.println("-- CLASS_DEFAULT: the block runs exactly once per execution "
-            + "through the BodyRunner seam --");
-
-        ValueId result = nextValue();
-        SemanticOp defaultOp = defaultOp("a", result, INT, FailurePolicyId.NO_DEAL_FAILURE);
-        List<String> log = new ArrayList<>();
-        RecordingBodyRunner body = new RecordingBodyRunner(log,
-            Map.of(defaultOp.opId(), new Value.Number(41)));
-
-        Outcome<Value> outcome = ClassOpsExecutor.executeClassDefault(defaultOp, body);
-        check(outcome instanceof Outcome.Success<Value> success
-                && success.value().equals(new Value.Number(41)),
-            "the op publishes the block's produced default value");
-        check(body.calls() == 1 && log.equals(List.of("default " + defaultOp.opId())),
-            "the default block runs exactly once through the BodyRunner seam; got " + log);
-
-        // Per-construction re-execution: a second triggering attempt runs
-        // the block again (freshness is produced by re-execution).
-        ClassOpsExecutor.executeClassDefault(defaultOp, body);
-        check(body.calls() == 2,
-            "a second triggering attempt re-invokes the default block (per-construction "
-                + "re-execution, never a cached value)");
-
-        // Fail-closed defects.
-        expectDefect(() -> ClassOpsExecutor.executeClassDefault(
-                op(SemanticOpKind.CONST,
-                    new KindPayload.ConstPayload(new ScalarValue.Number(1)),
-                    nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null),
-                body),
-            "executing a CONST op as CLASS_DEFAULT (wrong kind)");
-        expectDefect(() -> ClassOpsExecutor.executeClassDefault(
-                defaultOp("a", nextValue(), INT, FailurePolicyId.CLASS_CONSTRUCTION), body),
-            "a CLASS_DEFAULT carrying a non-pinned policy");
-        expectDefect(() -> ClassOpsExecutor.executeClassDefault(defaultOp,
-                opArg -> Value.Missing.INSTANCE),
-            "a default block producing the internal Missing view (wrong-kind value)");
-        expectNpe(() -> ClassOpsExecutor.executeClassDefault(null, body),
-            "executeClassDefault with a null op");
-        expectNpe(() -> ClassOpsExecutor.executeClassDefault(defaultOp, null),
-            "executeClassDefault with a null body runner");
-    }
-
     static void testClassNewLocalSuccessReorderAndOverlay() {
         System.out.println("-- CLASS_NEW(LOCAL) success: literal-order resolution, "
             + "declaration-order application/validation, tag, fresh identity, zero "
@@ -684,15 +583,15 @@ public class ClassOpsExecutorTest {
         List<String> log = new ArrayList<>();
         RecordingValues recording = new RecordingValues(values, log);
         ScriptedDelegate delegate = new ScriptedDelegate(log, -1, null);
-        ClassNewFixture fixture = classNewFixture(layout, provided, List.of(), entries);
+        ClassNewFixture fixture = classNewFixture(layout, provided, entries);
         // The boundary children parent to the CLASS_NEW op (the builder
         // pins the payload; the parentage is pinned after the op id is
         // known).
         Map<OpId, SemanticOp> boundaryOps = reparent(fixture, entries);
 
         Outcome<Value> outcome = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            recording, fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            delegate, new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            recording, boundaryOps, Map.of(CLS, layout),
+            delegate);
 
         check(log.subList(0, 2).equals(List.of(
                 "resolve " + vTag, "resolve " + vX)),
@@ -723,8 +622,8 @@ public class ClassOpsExecutorTest {
 
         // Fresh identity per construction; equal contents.
         Outcome<Value> again = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            recording, fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            delegate, new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            recording, boundaryOps, Map.of(CLS, layout),
+            delegate);
         Value firstInstance = outcome instanceof Outcome.Success<Value> first
             ? first.value() : null;
         Value secondInstance = again instanceof Outcome.Success<Value> second
@@ -736,112 +635,42 @@ public class ClassOpsExecutorTest {
                 + "equal contents (the model's allocation rule)");
     }
 
-    static void testClassNewLocalDefaultsAndSkipProvided() {
-        System.out.println("-- default application runs only for omitted required-present "
-            + "fields; a provided field's default never runs --");
 
+    static void testRequiredPresence() {
         ClassLayout layout = layout(field("a", INT, true), field("b", INT, true),
             field("c", INT, false));
-        ValueId vB = nextValue();
-        Map<ValueId, Value> values = Map.of(vB, new Value.Number(20));
-
-        SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
-        SemanticOp defB = defaultOp("b", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
-        Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(defA.opId(), new Value.Number(10));
-        produced.put(defB.opId(), new Value.Number(99));
-
-        List<ProvidedEntry> provided = List.of(new ProvidedEntry("b", vB));
-        List<BoundaryEntry> entries = new ArrayList<>();
-        entries.add(new BoundaryEntry("a", BoundaryKind.CLASS_DEFAULT_FIELD,
-            boundaryChild(null, BoundaryKind.CLASS_DEFAULT_FIELD, INT,
-                (ValueId) defA.result(), FailurePolicyId.TYPE_DESCRIPTOR)));
-        entries.add(new BoundaryEntry("b", BoundaryKind.CLASS_LITERAL_FIELD,
-            boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, INT, vB,
-                FailurePolicyId.TYPE_DESCRIPTOR)));
-
-        List<String> log = new ArrayList<>();
-        RecordingBodyRunner body = new RecordingBodyRunner(log, produced);
-        ScriptedDelegate delegate = new ScriptedDelegate(log, -1, null);
-        ClassNewFixture fixture = classNewFixture(layout, provided,
-            List.of(defA, defB), entries);
-        Map<OpId, SemanticOp> boundaryOps = reparent(fixture, entries);
-
-        Outcome<Value> outcome = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            values, fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            delegate, body);
-
-        check(outcome instanceof Outcome.Success<Value> success
-                && success.value() instanceof Value.Class instance
-                && fieldValue(instance, layout, "a").equals(new Value.Number(10))
-                && fieldValue(instance, layout, "b").equals(new Value.Number(20))
-                && fieldState(instance, layout, "c") == FieldState.Missing.INSTANCE,
-            "the default-filled omitted field a, the provided field b, and the "
-                + "omitted optional c (missing) are preserved");
-        check(body.calls() == 1 && log.contains("default " + defA.opId())
-                && !log.contains("default " + defB.opId()),
-            "only the omitted field's default block runs — a provided field's default "
-                + "block is never executed by the BodyRunner fixture; got " + log);
-        int firstChildLine = -1;
-        for (int i = 0; i < log.size(); i++) {
-            if (log.get(i).startsWith("child[0]")) {
-                firstChildLine = i;
-                break;
-            }
-        }
-        check(log.indexOf("default " + defA.opId()) >= 0 && firstChildLine >= 0
-                && log.indexOf("default " + defA.opId()) < firstChildLine,
-            "default application completes before the first boundary run; got " + log);
-        check(log.contains("child[0] CLASS_DEFAULT_FIELD <- number")
-                && log.contains("child[1] CLASS_LITERAL_FIELD <- number"),
-            "the boundaries run in declaration order with the default-produced and "
-                + "provided inputs; got " + log);
+        ValueId b = nextValue();
+        ClassNewFixture missing = classNewFixture(layout,
+            List.of(new ProvidedEntry("b", b)), List.of());
+        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(missing.op(),
+            Map.of(b, new Value.Number(20)), Map.of(), Map.of(CLS, layout),
+            (boundary, input) -> { throw new AssertionError("missing required must precede checks"); }),
+            "missing required a is never filled");
+        ClassLayout nullable = layout(field("a", RuntimeDescriptor.nullable(INT), true));
+        ClassNewFixture absent = classNewFixture(nullable, List.of(), List.of());
+        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(absent.op(), Map.of(),
+            Map.of(), Map.of(CLS, nullable), (boundary, input) -> new BoundaryResult.Pass(input)),
+            "required nullable is still required-present");
     }
 
-    static void testExtraKeyRejectionAfterDefaults() {
-        System.out.println("-- the extra-key scan runs after default application and "
-            + "before any provided application or field validation --");
 
-        ClassLayout layout = layout(field("a", INT, true));
-        ValueId vX = nextValue();
-        ValueId vZz = nextValue();
-        Map<ValueId, Value> values = new LinkedHashMap<>();
-        values.put(vX, new Value.Number(1));
-        values.put(vZz, new Value.Number(2));
-
-        SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
-        Map<OpId, Value> produced = Map.of(defA.opId(), new Value.Number(10));
-
-        // Two extra keys in provided-source order: the scan must name the
-        // first one (x), never the second (zz).
-        List<ProvidedEntry> provided = List.of(new ProvidedEntry("x", vX),
-            new ProvidedEntry("zz", vZz));
-        ClassNewFixture fixture = classNewFixture(layout, provided, List.of(defA), List.of());
-
-        List<String> log = new ArrayList<>();
-        RecordingBodyRunner body = new RecordingBodyRunner(log, produced);
-        ScriptedDelegate delegate = new ScriptedDelegate(log, -1, null);
+    static void testExtraKeyRejectionBeforeBoundaries() {
+        ClassLayout layout = layout(field("a", INT, false));
+        ValueId x = nextValue(), z = nextValue();
+        ClassNewFixture fixture = classNewFixture(layout,
+            List.of(new ProvidedEntry("x", x), new ProvidedEntry("zz", z)), List.of());
+        ScriptedDelegate delegate = new ScriptedDelegate(new ArrayList<>(), -1, null);
         Outcome<Value> outcome = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            values, fixture.defaultOps(), fixture.boundaryOps(), Map.of(CLS, layout),
-            delegate, body);
-
+            Map.of(x, new Value.Number(1), z, new Value.Number(2)), Map.of(),
+            Map.of(CLS, layout), delegate);
         check(outcome instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().policy() == FailurePolicyId.CLASS_CONSTRUCTION
-                && failure.failure().failure().code() == DiagnosticCode.E8007,
-            "the first extra key fails CLASS_CONSTRUCTION with E8007");
-        if (outcome instanceof Outcome.Failure<Value> failure) {
-            check(failure.failure().failure().message()
-                    .equals("extra field 'x' in class '@corpus.classops/Point'"),
-                "the exact template extra field '{field}' in class '{classId}'; got "
-                    + failure.failure().failure().message());
-            check(failure.failure().origin().equals(fixture.op().origin()),
-                "the E8007 origin is the operation origin");
-        }
-        check(body.calls() == 1 && log.equals(List.of("default " + defA.opId())),
-            "the completed default-block effects are observable before the scan fails; "
-                + "got " + log);
-        check(delegate.calls() == 0,
-            "no provided application or field validation runs after the scan fails");
+                && failure.failure().failure().code() == DiagnosticCode.E8007
+                && failure.failure().failure().message().equals(
+                    "extra field 'x' in class '@corpus.classops/Point'")
+                && failure.failure().origin().equals(fixture.op().origin()),
+            "first source-order extra key has exact E8007 tuple and caller origin");
+        check(delegate.calls() == 0, "extra key stops all field boundaries");
     }
 
     static void testBoundaryFailureStopsValidationAndPublishesNothing() {
@@ -877,12 +706,12 @@ public class ClassOpsExecutorTest {
             .kindFailure("number", "string");
         List<String> log = new ArrayList<>();
         ScriptedDelegate delegate = new ScriptedDelegate(log, 1, scripted);
-        ClassNewFixture fixture = classNewFixture(layout, provided, List.of(), entries);
+        ClassNewFixture fixture = classNewFixture(layout, provided, entries);
         Map<OpId, SemanticOp> boundaryOps = reparent(fixture, entries);
 
         Outcome<Value> outcome = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            values, fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            delegate, new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            values, boundaryOps, Map.of(CLS, layout),
+            delegate);
 
         check(outcome instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message()
@@ -915,12 +744,12 @@ public class ClassOpsExecutorTest {
             BoundaryKind.CLASS_LITERAL_FIELD,
             boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, INT, vA,
                 FailurePolicyId.TYPE_DESCRIPTOR)));
-        ClassNewFixture fixture = classNewFixture(intLayout, provided, List.of(), entries);
+        ClassNewFixture fixture = classNewFixture(intLayout, provided, entries);
         Map<OpId, SemanticOp> boundaryOps = reparent(fixture, entries);
         List<String> log = new ArrayList<>();
         Outcome<Value> mismatch = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            values, fixture.defaultOps(), boundaryOps, Map.of(CLS, intLayout),
-            realProjectionDelegate(log), new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            values, boundaryOps, Map.of(CLS, intLayout),
+            realProjectionDelegate(log));
         check(mismatch instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR
@@ -941,11 +770,11 @@ public class ClassOpsExecutorTest {
             BoundaryKind.CLASS_LITERAL_FIELD,
             boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, FUNC_NULL, vF,
                 FailurePolicyId.FUNCTION_SIGNATURE)));
-        ClassNewFixture fnFixture = classNewFixture(fnLayout, fnProvided, List.of(), fnEntries);
+        ClassNewFixture fnFixture = classNewFixture(fnLayout, fnProvided, fnEntries);
         Map<OpId, SemanticOp> fnBoundaryOps = reparent(fnFixture, fnEntries);
         Outcome<Value> sigMismatch = ClassOpsExecutor.executeClassNewLocal(fnFixture.op(),
-            fnValues, fnFixture.defaultOps(), fnBoundaryOps, Map.of(CLS, fnLayout),
-            realProjectionDelegate(null), new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            fnValues, fnBoundaryOps, Map.of(CLS, fnLayout),
+            realProjectionDelegate(null));
         check(sigMismatch instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8010
                 && failure.failure().failure().policy() == FailurePolicyId.FUNCTION_SIGNATURE
@@ -962,11 +791,11 @@ public class ClassOpsExecutorTest {
             BoundaryKind.CLASS_LITERAL_FIELD,
             boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, FUNC_NULL, vOk,
                 FailurePolicyId.FUNCTION_SIGNATURE)));
-        ClassNewFixture okFixture = classNewFixture(fnLayout, okProvided, List.of(), okEntries);
+        ClassNewFixture okFixture = classNewFixture(fnLayout, okProvided, okEntries);
         Map<OpId, SemanticOp> okBoundaryOps = reparent(okFixture, okEntries);
         Outcome<Value> pass = ClassOpsExecutor.executeClassNewLocal(okFixture.op(),
-            okValues, okFixture.defaultOps(), okBoundaryOps, Map.of(CLS, fnLayout),
-            realProjectionDelegate(null), new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            okValues, okBoundaryOps, Map.of(CLS, fnLayout),
+            realProjectionDelegate(null));
         check(pass instanceof Outcome.Success<Value> success
                 && success.value() instanceof Value.Class instance
                 && fieldValue(instance, fnLayout, "f").equals(new Value.Function(FUNC_NULL)),
@@ -974,71 +803,30 @@ public class ClassOpsExecutorTest {
                 + "the instance carries it");
     }
 
-    static void testFreshDefaultsPerConstruction() {
-        System.out.println("-- repeated construction re-executes default blocks so "
-            + "mutable defaults allocate freshly per instance --");
 
+    static void testFreshInstancesPreserveProvidedAliases() {
         ClassLayout layout = layout(field("items", TABLE, true));
-        SemanticOp defItems = defaultOp("items", nextValue(), TABLE,
-            FailurePolicyId.NO_DEAL_FAILURE);
-        List<String> log = new ArrayList<>();
-        // A body runner producing a fresh table per invocation (the
-        // block-re-execution stand-in for a literal-typed default).
-        BodyRunner freshTables = defaultOp -> {
-            log.add("default " + defaultOp.opId());
-            SemanticTable<Value> table = new SemanticTable<>();
-            table.put("k", Value.string("v"));
-            return new Value.Table(table);
-        };
-        List<BoundaryEntry> entries = List.of(new BoundaryEntry("items",
-            BoundaryKind.CLASS_DEFAULT_FIELD,
-            boundaryChild(null, BoundaryKind.CLASS_DEFAULT_FIELD, TABLE,
-                (ValueId) defItems.result(), FailurePolicyId.TYPE_DESCRIPTOR)));
-        ClassNewFixture fixture = classNewFixture(layout, List.of(), List.of(defItems),
+        ValueId input = nextValue();
+        List<BoundaryEntry> entries = List.of(new BoundaryEntry("items", BoundaryKind.CLASS_LITERAL_FIELD,
+            boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, TABLE, input, FailurePolicyId.TYPE_DESCRIPTOR)));
+        ClassNewFixture fixture = classNewFixture(layout, List.of(new ProvidedEntry("items", input)),
             entries);
-        Map<OpId, SemanticOp> boundaryOps = reparent(fixture, entries);
-
-        Outcome<Value> first = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            Map.of(), fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            new ScriptedDelegate(new ArrayList<>(), -1, null), freshTables);
-        Outcome<Value> second = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            Map.of(), fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            new ScriptedDelegate(new ArrayList<>(), -1, null), freshTables);
-
-        check(first instanceof Outcome.Success<Value> s1
-                && second instanceof Outcome.Success<Value> s2
-                && s1.value() instanceof Value.Class i1
-                && s2.value() instanceof Value.Class i2,
-            "both constructions publish tagged instances");
-        if (first instanceof Outcome.Success<Value> s1
-                && second instanceof Outcome.Success<Value> s2
-                && s1.value() instanceof Value.Class i1
-                && s2.value() instanceof Value.Class i2) {
-            Value table1 = fieldValue(i1, layout, "items");
-            Value table2 = fieldValue(i2, layout, "items");
-            check(table1 instanceof Value.Table && table2 instanceof Value.Table
-                    && table1 != table2,
-                "the two attempts re-executed the default block, so the mutable table "
-                    + "defaults are freshly constructed per instance (distinct "
-                    + "identities)");
-            if (table1 instanceof Value.Table t1 && table2 instanceof Value.Table t2) {
-                check(switch (t1.table().get("k")) {
-                        case SemanticTable.Lookup.Present<Value> p ->
-                            p.value().equals(Value.string("v"));
-                        case SemanticTable.Lookup.Missing<Value> ignored -> false;
-                    }
-                    && switch (t2.table().get("k")) {
-                        case SemanticTable.Lookup.Present<Value> p ->
-                            p.value().equals(Value.string("v"));
-                        case SemanticTable.Lookup.Missing<Value> ignored -> false;
-                    },
-                    "both fresh tables carry the equal default contents");
-            }
-            check(s1.value() != s2.value(),
-                "each successful construction publishes a fresh instance identity");
-        }
-        check(log.size() == 2,
-            "the default block re-executed once per construction attempt; got " + log);
+        SemanticTable<Value> table = new SemanticTable<>();
+        Value.Table provided = new Value.Table(table);
+        Value.Class first = (Value.Class) ((Outcome.Success<Value>) ClassOpsExecutor.executeClassNewLocal(
+            fixture.op(), Map.of(input, provided), reparent(fixture, entries), Map.of(CLS, layout),
+            (boundary, value) -> new BoundaryResult.Pass(value))).value();
+        Value.Class second = (Value.Class) ((Outcome.Success<Value>) ClassOpsExecutor.executeClassNewLocal(
+            fixture.op(), Map.of(input, provided), reparent(fixture, entries), Map.of(CLS, layout),
+            (boundary, value) -> new BoundaryResult.Pass(value))).value();
+        check(first != second, "construction creates distinct instances");
+        check(fieldValue(first, layout, "items") == provided
+                && fieldValue(second, layout, "items") == provided,
+            "provided mutable values preserve reference identity, never deep-copy");
+        table.put("changed", new Value.Number(7));
+        check(((Value.Table) fieldValue(first, layout, "items")).table().keys().contains("changed")
+                && ((Value.Table) fieldValue(second, layout, "items")).table().keys().contains("changed"),
+            "provided alias mutation remains visible in both instances");
     }
 
     // =========================================================================
@@ -1052,9 +840,7 @@ public class ClassOpsExecutorTest {
         ClassLayout layout = layout(field("a", INT, true));
         ValueId vA = nextValue();
         Map<ValueId, Value> values = Map.of(vA, new Value.Number(1));
-        SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
         List<String> log = new ArrayList<>();
-        BodyRunner body = new RecordingBodyRunner(log, Map.of(defA.opId(), new Value.Number(10)));
         BoundaryCheckRunner pass = new ScriptedDelegate(new ArrayList<>(), -1, null);
 
         List<ProvidedEntry> provided = List.of(new ProvidedEntry("a", vA));
@@ -1062,7 +848,7 @@ public class ClassOpsExecutorTest {
             BoundaryKind.CLASS_LITERAL_FIELD,
             boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, INT, vA,
                 FailurePolicyId.TYPE_DESCRIPTOR)));
-        ClassNewFixture good = classNewFixture(layout, provided, List.of(), entries);
+        ClassNewFixture good = classNewFixture(layout, provided, entries);
         Map<OpId, SemanticOp> goodBoundaryOps = reparent(good, entries);
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, layout);
 
@@ -1071,186 +857,88 @@ public class ClassOpsExecutorTest {
                 op(SemanticOpKind.CONST,
                     new KindPayload.ConstPayload(new ScalarValue.Number(1)),
                     nextValue(), INT, FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(), Map.of(), Map.of(), pass, body),
+                Map.of(), Map.of(), Map.of(), pass),
             "executing a CONST op as CLASS_NEW (wrong kind)");
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL, List.of(), null, List.of()),
+                        ConstructionProvider.LOCAL, null, List.of()),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.NO_DEAL_FAILURE, null),
-                Map.of(), Map.of(), Map.of(), layouts, pass, body),
+                Map.of(), Map.of(), layouts, pass),
             "a CLASS_NEW carrying a non-pinned failure policy");
 
         // Non-LOCAL owners and factory refs.
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.SHARED_FACTORY, List.of(), null, List.of()),
+                        ConstructionProvider.SHARED_FACTORY, null, List.of()),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(), Map.of(), layouts, pass, body),
+                Map.of(), Map.of(), layouts, pass),
             "a SHARED_FACTORY owner (the later epic child's surface)");
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.RETAINED_ABI, List.of(), null, List.of()),
+                        ConstructionProvider.RETAINED_ABI, null, List.of()),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(), Map.of(), layouts, pass, body),
+                Map.of(), Map.of(), layouts, pass),
             "a RETAINED_ABI owner (E10's surface)");
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL, List.of(),
-                        new deal.semantic.ir.ClassFactoryId(1), List.of()),
+                        ConstructionProvider.LOCAL, new deal.semantic.ir.ClassFactoryId(1), List.of()),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(), Map.of(), layouts, pass, body),
+                Map.of(), Map.of(), layouts, pass),
             "a LOCAL CLASS_NEW carrying a non-null classFactoryRef");
 
         // Layout resolution failures.
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(good.op(),
-                values, good.defaultOps(), goodBoundaryOps, Map.of(), pass, body),
+                values, goodBoundaryOps, Map.of(), pass),
             "an unresolvable layout in the layout-resolution context");
         ClassLayout foreign = new ClassLayout(CLS, List.of(field("z", INT, true)));
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(good.op(),
-                values, good.defaultOps(), goodBoundaryOps, Map.of(CLS, foreign), pass, body),
+                values, goodBoundaryOps, Map.of(CLS, foreign), pass),
             "a payload layout differing from the resolved layout");
 
         // Unresolvable and wrong-kind provided values.
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(good.op(),
-                Map.of(), good.defaultOps(), goodBoundaryOps, layouts, pass, body),
+                Map.of(), goodBoundaryOps, layouts, pass),
             "an unresolvable provided-field prior step");
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(good.op(),
-                Map.of(vA, Value.Missing.INSTANCE), good.defaultOps(), goodBoundaryOps,
-                layouts, pass, body),
+                Map.of(vA, Value.Missing.INSTANCE), goodBoundaryOps,
+                layouts, pass),
             "a provided value resolving to the internal Missing view (wrong-kind value)");
-
-        // Default-child defects.
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                classNewFixture(layout, List.of(), List.of(
-                    opWithId(nextOpId(), SemanticOpKind.CLASS_DEFAULT,
-                        new KindPayload.ClassDefaultPayload(CLS, "a", new BlockId(1)),
-                        nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null)),
-                    List.of(new BoundaryEntry("a", BoundaryKind.CLASS_DEFAULT_FIELD,
-                        boundaryChild(null, BoundaryKind.CLASS_DEFAULT_FIELD, INT,
-                            nextValue(), FailurePolicyId.TYPE_DESCRIPTOR)))).op(),
-                Map.of(), Map.of(), Map.of(), layouts, pass, body),
-            "an unresolvable CLASS_DEFAULT child id");
-        // Wrong default child kind: a CONST op id listed in classDefaultOpIds.
-        SemanticOp constDefault = op(SemanticOpKind.CONST,
-            new KindPayload.ConstPayload(new ScalarValue.Number(1)),
-            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL, List.of(constDefault.opId()), null, List.of()),
-                    nextValue(), new RuntimeDescriptor.Class(CLS),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(constDefault.opId(), constDefault), Map.of(), layouts,
-                pass, body),
-            "a classDefaultOpIds entry naming a non-CLASS_DEFAULT op");
-        SemanticOp badPolicyDefault = defaultOp("a", nextValue(), INT,
-            FailurePolicyId.CLASS_CONSTRUCTION);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL, List.of(badPolicyDefault.opId()), null, List.of()),
-                    nextValue(), new RuntimeDescriptor.Class(CLS),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(badPolicyDefault.opId(), badPolicyDefault), Map.of(),
-                layouts, pass, body),
-            "a CLASS_DEFAULT child carrying a non-pinned policy");
-        SemanticOp foreignDefault = op(SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(new ClassId("other.mod", "C"), "a",
-                new BlockId(1)),
-            nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL, List.of(foreignDefault.opId()), null, List.of()),
-                    nextValue(), new RuntimeDescriptor.Class(CLS),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(foreignDefault.opId(), foreignDefault), Map.of(), layouts,
-                pass, body),
-            "a CLASS_DEFAULT child of a different class");
-        ClassLayout optionalLayout = layout(field("o", INT, false));
-        SemanticOp optionalDefault = defaultOp("o", nextValue(), INT,
-            FailurePolicyId.NO_DEAL_FAILURE);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(CLS, optionalLayout, List.of(),
-                        DefaultOwner.LOCAL, List.of(optionalDefault.opId()), null, List.of()),
-                    nextValue(), new RuntimeDescriptor.Class(CLS),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(optionalDefault.opId(), optionalDefault), Map.of(),
-                Map.of(CLS, optionalLayout), pass, body),
-            "a CLASS_DEFAULT child naming an optional field (defaults never run for "
-                + "optional fields at construction)");
-        SemanticOp dupA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL,
-                        List.of(defA.opId(), dupA.opId()), null, List.of()),
-                    nextValue(), new RuntimeDescriptor.Class(CLS),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(defA.opId(), defA, dupA.opId(), dupA), Map.of(), layouts,
-                pass, body),
-            "two CLASS_DEFAULT children for the same field");
-
-        // A CLASS_DEFAULT child publishing a non-ValueId result fails the
-        // CLASS_DEFAULT_FIELD input wiring fail-closed.
-        OpId tokenOpId = nextOpId();
-        SemanticOp tokenDefault = opWithId(nextOpId(), SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(CLS, "a", new BlockId(1)),
-            new AsyncTokenId.Canonical(7, AsyncTokenOwner.DEAL_BODY_TASK),
-            INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-        SemanticOp tokenBoundary = boundaryChild(tokenOpId, BoundaryKind.CLASS_DEFAULT_FIELD,
-            INT, nextValue(), FailurePolicyId.TYPE_DESCRIPTOR);
-        SemanticOp tokenClassNew = opWithId(tokenOpId, SemanticOpKind.CLASS_NEW,
-            new KindPayload.ClassNewPayload(CLS, layout, List.of(), DefaultOwner.LOCAL,
-                List.of(tokenDefault.opId()), null,
-                List.of(new KindPayload.FieldBoundary("a", BoundaryKind.CLASS_DEFAULT_FIELD,
-                    tokenBoundary.opId()))),
-            nextValue(), new RuntimeDescriptor.Class(CLS),
-            FailurePolicyId.CLASS_CONSTRUCTION, null);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(tokenClassNew, Map.of(),
-                Map.of(tokenDefault.opId(), tokenDefault),
-                Map.of(tokenBoundary.opId(), tokenBoundary), layouts, pass,
-                new RecordingBodyRunner(new ArrayList<>(),
-                    Map.of(tokenDefault.opId(), new Value.Number(9)))),
-            "a CLASS_DEFAULT child publishing a non-ValueId result");
 
         // Boundary-child defects (each child parented to the op that names
         // it, so the targeted check is the one that fires).
         OpId kindOpId = nextOpId();
-        SemanticOp wrongKindChild = boundaryChild(kindOpId, BoundaryKind.CLASS_DEFAULT_FIELD,
+        SemanticOp wrongKindChild = boundaryChild(kindOpId, BoundaryKind.VARIABLE_DECLARATION,
             INT, vA, FailurePolicyId.TYPE_DESCRIPTOR);
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(kindOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                             BoundaryKind.CLASS_LITERAL_FIELD, wrongKindChild.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(wrongKindChild.opId(), wrongKindChild), layouts,
-                pass, body),
+                values, Map.of(wrongKindChild.opId(), wrongKindChild), layouts,
+                pass),
             "a field-boundary entry whose child carries a different boundary kind");
         SemanticOp unparented = boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD,
             INT, vA, FailurePolicyId.TYPE_DESCRIPTOR);
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                             BoundaryKind.CLASS_LITERAL_FIELD, unparented.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(unparented.opId(), unparented), layouts, pass,
-                body),
+                values, Map.of(unparented.opId(), unparented), layouts, pass),
             "an unparented boundary child (parentOpId mismatch)");
         OpId constOpId = nextOpId();
         SemanticOp constChild = opWithId(nextOpId(), SemanticOpKind.CONST,
@@ -1259,13 +947,12 @@ public class ClassOpsExecutorTest {
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(constOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                             BoundaryKind.CLASS_LITERAL_FIELD, constChild.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(constChild.opId(), constChild), layouts, pass,
-                body),
+                values, Map.of(constChild.opId(), constChild), layouts, pass),
             "a field-boundary entry naming a non-BOUNDARY op");
         OpId policyOpId = nextOpId();
         SemanticOp badPolicy = boundaryChild(policyOpId, BoundaryKind.CLASS_LITERAL_FIELD,
@@ -1273,12 +960,12 @@ public class ClassOpsExecutorTest {
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(policyOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                             BoundaryKind.CLASS_LITERAL_FIELD, badPolicy.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(badPolicy.opId(), badPolicy), layouts, pass, body),
+                values, Map.of(badPolicy.opId(), badPolicy), layouts, pass),
             "a field boundary carrying a non-descriptor-kind policy");
         OpId descriptorOpId = nextOpId();
         SemanticOp badDescriptor = boundaryChild(descriptorOpId,
@@ -1286,13 +973,13 @@ public class ClassOpsExecutorTest {
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(descriptorOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                             BoundaryKind.CLASS_LITERAL_FIELD, badDescriptor.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(badDescriptor.opId(), badDescriptor), layouts,
-                pass, body),
+                values, Map.of(badDescriptor.opId(), badDescriptor), layouts,
+                pass),
             "a field boundary carrying a descriptor different from the field's "
                 + "declared descriptor");
         ValueId otherValue = nextValue();
@@ -1302,58 +989,39 @@ public class ClassOpsExecutorTest {
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(inputOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                             BoundaryKind.CLASS_LITERAL_FIELD, badInput.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(badInput.opId(), badInput), layouts, pass, body),
+                values, Map.of(badInput.opId(), badInput), layouts, pass),
             "a CLASS_LITERAL_FIELD boundary whose input is not the field's provided "
                 + "value op id (input-wiring mismatch)");
-        ValueId wrongDefaultInput = nextValue();
-        OpId defaultInputOpId = nextOpId();
-        SemanticOp badDefaultInput = boundaryChild(defaultInputOpId,
-            BoundaryKind.CLASS_DEFAULT_FIELD, INT, wrongDefaultInput,
-            FailurePolicyId.TYPE_DESCRIPTOR);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
-                opWithId(defaultInputOpId, SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(CLS, layout, List.of(),
-                        DefaultOwner.LOCAL, List.of(defA.opId()), null,
-                        List.of(new KindPayload.FieldBoundary("a",
-                            BoundaryKind.CLASS_DEFAULT_FIELD, badDefaultInput.opId()))),
-                    nextValue(), new RuntimeDescriptor.Class(CLS),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), Map.of(defA.opId(), defA),
-                Map.of(badDefaultInput.opId(), badDefaultInput), layouts, pass, body),
-            "a CLASS_DEFAULT_FIELD boundary whose input is not the field's "
-                + "CLASS_DEFAULT op result (input-wiring mismatch)");
-
         // Child-count/order/kind defects.
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(nextOpId(), SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, layout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null, List.of()),
+                        ConstructionProvider.LOCAL, null, List.of()),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(), Map.of(), layouts, pass, body),
+                values, Map.of(), layouts, pass),
             "a provided field without a field-boundary entry (child-count mismatch)");
         OpId optionalBoundaryOpId = nextOpId();
         SemanticOp optionalChild = boundaryChild(optionalBoundaryOpId,
-            BoundaryKind.CLASS_DEFAULT_FIELD, INT, vA, FailurePolicyId.TYPE_DESCRIPTOR);
+            BoundaryKind.CLASS_LITERAL_FIELD, INT, vA, FailurePolicyId.TYPE_DESCRIPTOR);
         ClassLayout optLayout = layout(field("a", INT, true), field("o", INT, false));
         expectDefect(() -> ClassOpsExecutor.executeClassNewLocal(
                 opWithId(optionalBoundaryOpId, SemanticOpKind.CLASS_NEW,
                     new KindPayload.ClassNewPayload(CLS, optLayout, providedList(vA),
-                        DefaultOwner.LOCAL, List.of(), null,
+                        ConstructionProvider.LOCAL, null,
                         List.of(new KindPayload.FieldBoundary("a",
                                 BoundaryKind.CLASS_LITERAL_FIELD, optionalChild.opId()),
                             new KindPayload.FieldBoundary("o",
-                                BoundaryKind.CLASS_DEFAULT_FIELD, optionalChild.opId()))),
+                                BoundaryKind.CLASS_LITERAL_FIELD, optionalChild.opId()))),
                     nextValue(), new RuntimeDescriptor.Class(CLS),
                     FailurePolicyId.CLASS_CONSTRUCTION, null),
-                values, Map.of(),
-                Map.of(optionalChild.opId(), optionalChild), Map.of(CLS, optLayout),
-                pass, body),
+                values, Map.of(optionalChild.opId(), optionalChild), Map.of(CLS, optLayout),
+                pass),
             "a boundary entry for an omitted optional field (child-count mismatch)");
     }
 
@@ -1377,17 +1045,15 @@ public class ClassOpsExecutorTest {
             BoundaryKind.CLASS_LITERAL_FIELD,
             boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, INT, vA,
                 FailurePolicyId.TYPE_DESCRIPTOR)));
-        ClassNewFixture fixture = classNewFixture(layout, provided, List.of(), entries);
+        ClassNewFixture fixture = classNewFixture(layout, provided, entries);
         Map<OpId, SemanticOp> boundaryOps = reparent(fixture, entries);
 
         Outcome<Value> first = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            values, fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            new ScriptedDelegate(new ArrayList<>(), -1, null),
-            new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            values, boundaryOps, Map.of(CLS, layout),
+            new ScriptedDelegate(new ArrayList<>(), -1, null));
         Outcome<Value> second = ClassOpsExecutor.executeClassNewLocal(fixture.op(),
-            values, fixture.defaultOps(), boundaryOps, Map.of(CLS, layout),
-            new ScriptedDelegate(new ArrayList<>(), -1, null),
-            new RecordingBodyRunner(new ArrayList<>(), Map.of()));
+            values, boundaryOps, Map.of(CLS, layout),
+            new ScriptedDelegate(new ArrayList<>(), -1, null));
         check(first instanceof Outcome.Success<Value> s1
                 && second instanceof Outcome.Success<Value> s2
                 && s1.value().equals(s2.value()),
@@ -1398,46 +1064,17 @@ public class ClassOpsExecutorTest {
     // 6. Null arguments fail closed
     // =========================================================================
 
+
     static void testNullArgumentsFailClosed() {
-        System.out.println("-- null arguments are producer defects (NPE), never projections --");
-
-        ClassLayout layout = layout(field("a", INT, true));
-        ValueId vA = nextValue();
-        Map<ValueId, Value> values = Map.of(vA, new Value.Number(1));
-        SemanticOp defA = defaultOp("a", nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE);
-        BodyRunner body = new RecordingBodyRunner(new ArrayList<>(),
-            Map.of(defA.opId(), new Value.Number(10)));
-        BoundaryCheckRunner pass = new ScriptedDelegate(new ArrayList<>(), -1, null);
-        List<ProvidedEntry> provided = List.of(new ProvidedEntry("a", vA));
-        List<BoundaryEntry> entries = List.of(new BoundaryEntry("a",
-            BoundaryKind.CLASS_LITERAL_FIELD,
-            boundaryChild(null, BoundaryKind.CLASS_LITERAL_FIELD, INT, vA,
-                FailurePolicyId.TYPE_DESCRIPTOR)));
-        ClassNewFixture good = classNewFixture(layout, provided, List.of(), entries);
-        Map<OpId, SemanticOp> goodBoundaryOps = reparent(good, entries);
+        ClassLayout layout = layout(field("a", INT, false));
+        ClassNewFixture fixture = classNewFixture(layout, List.of(), List.of());
+        BoundaryCheckRunner pass = (boundary, value) -> new BoundaryResult.Pass(value);
         Map<ClassId, ClassLayout> layouts = Map.of(CLS, layout);
-
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(null, values,
-                good.defaultOps(), goodBoundaryOps, layouts, pass, body),
-            "executeClassNewLocal with a null op");
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(good.op(), null,
-                good.defaultOps(), goodBoundaryOps, layouts, pass, body),
-            "executeClassNewLocal with a null value lookup");
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(good.op(), values,
-                null, goodBoundaryOps, layouts, pass, body),
-            "executeClassNewLocal with a null default-op lookup");
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(good.op(), values,
-                good.defaultOps(), null, layouts, pass, body),
-            "executeClassNewLocal with a null boundary lookup");
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(good.op(), values,
-                good.defaultOps(), goodBoundaryOps, null, pass, body),
-            "executeClassNewLocal with a null layout-resolution context");
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(good.op(), values,
-                good.defaultOps(), goodBoundaryOps, layouts, null, body),
-            "executeClassNewLocal with a null check runner");
-        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(good.op(), values,
-                good.defaultOps(), goodBoundaryOps, layouts, pass, null),
-            "executeClassNewLocal with a null body runner");
+        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(null, Map.of(), Map.of(), layouts, pass), "null op");
+        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(fixture.op(), null, Map.of(), layouts, pass), "null values");
+        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(fixture.op(), Map.of(), null, layouts, pass), "null boundaries");
+        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(fixture.op(), Map.of(), Map.of(), null, pass), "null layouts");
+        expectNpe(() -> ClassOpsExecutor.executeClassNewLocal(fixture.op(), Map.of(), Map.of(), layouts, null), "null delegate");
     }
 
     // =========================================================================
@@ -1461,7 +1098,7 @@ public class ClassOpsExecutorTest {
 
     private record SharedFixture(ClassLayout layout, SemanticOp factory, SemanticOp caller,
                                  Map<OpId, SemanticOp> ownerOps, Map<OpId, SemanticOp> boundaries,
-                                 Map<OpId, Value> produced, Map<ValueId, Value> provided) {
+                                 Map<ValueId, Value> provided) {
         deal.semantic.ir.ClassFactoryRegistry registry() {
             return new deal.semantic.ir.ClassFactoryRegistry(Map.of(FACTORY_ENTRY, factory.opId()));
         }
@@ -1471,17 +1108,8 @@ public class ClassOpsExecutorTest {
     private static SharedFixture sharedFixture(List<String> providedNames) {
         ClassLayout layout = new ClassLayout(SHARED_CLASS,
             List.of(field("a", INT, true), field("b", INT, true), field("c", INT, false)));
-        List<SemanticOp> defaults = new ArrayList<>();
-        Map<OpId, Value> produced = new LinkedHashMap<>();
-        for (String name : List.of("a", "b")) {
-            SemanticOp def = sharedOp(FACTORY_OWNER, SemanticOpKind.CLASS_DEFAULT,
-                new KindPayload.ClassDefaultPayload(SHARED_CLASS, name, new BlockId(1)),
-                nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-            defaults.add(def); produced.put(def.opId(), new Value.Number(name.equals("a") ? 10 : 99));
-        }
         SemanticOp factory = sharedOp(FACTORY_OWNER, SemanticOpKind.CLASS_FACTORY,
-            new KindPayload.ClassFactoryPayload(SHARED_CLASS, defaults.stream().map(SemanticOp::opId).toList(),
-                new OpId(FACTORY_CALLER, nextOpId++)), nextValue(), new RuntimeDescriptor.Class(SHARED_CLASS),
+            new KindPayload.ClassFactoryPayload(SHARED_CLASS, new OpId(FACTORY_CALLER, nextOpId++)), nextValue(), new RuntimeDescriptor.Class(SHARED_CLASS),
             FailurePolicyId.CLASS_CONSTRUCTION, null);
         List<KindPayload.ProvidedField> provided = new ArrayList<>();
         Map<ValueId, Value> values = new LinkedHashMap<>();
@@ -1493,15 +1121,16 @@ public class ClassOpsExecutorTest {
         Map<OpId, SemanticOp> boundaries = new LinkedHashMap<>();
         for (String name : List.of("a", "b")) {
             KindPayload.ProvidedField input = provided.stream().filter(p -> p.name().equals(name)).findFirst().orElse(null);
-            BoundaryKind kind = input == null ? BoundaryKind.CLASS_DEFAULT_FIELD : BoundaryKind.CLASS_LITERAL_FIELD;
+            if (input == null) continue;
+            BoundaryKind kind = BoundaryKind.CLASS_LITERAL_FIELD;
             SemanticOp boundary = sharedOp(FACTORY_CALLER, SemanticOpKind.BOUNDARY,
-                new KindPayload.BoundaryPayload(kind, INT, input == null ? (ValueId) factory.result() : input.valueOpId(),
+                new KindPayload.BoundaryPayload(kind, INT, input.valueOpId(),
                     new BoundaryRealization.RuntimeValidation("runtime-validation")), null, null,
                 FailurePolicyId.TYPE_DESCRIPTOR, callerId);
             boundaries.put(boundary.opId(), boundary); fields.add(new KindPayload.FieldBoundary(name, kind, boundary.opId()));
         }
         KindPayload payload = new KindPayload.ClassNewPayload(SHARED_CLASS, layout, provided,
-            DefaultOwner.SHARED_FACTORY, List.of(), FACTORY_ENTRY, fields);
+            ConstructionProvider.SHARED_FACTORY, FACTORY_ENTRY, fields);
         RuntimeDescriptor descriptor = new RuntimeDescriptor.Class(SHARED_CLASS);
         OperationContractSnapshot contract = contractFor(SemanticOpKind.CLASS_NEW, payload,
             descriptor, List.of(), FailurePolicyId.CLASS_CONSTRUCTION, "placeholder");
@@ -1510,8 +1139,7 @@ public class ClassOpsExecutorTest {
         SemanticOp caller = new SemanticOp(callerId, SemanticOpKind.CLASS_NEW, originAt(null, 8), nextValue(),
             descriptor, List.of(), List.of(), payload, FailurePolicyId.CLASS_CONSTRUCTION, contract);
         Map<OpId, SemanticOp> ownerOps = new LinkedHashMap<>(); ownerOps.put(factory.opId(), factory);
-        defaults.forEach(op -> ownerOps.put(op.opId(), op));
-        return new SharedFixture(layout, factory, caller, ownerOps, boundaries, produced, values);
+        return new SharedFixture(layout, factory, caller, ownerOps, boundaries, values);
     }
 
     private static SemanticOp sharedCopy(SemanticOp op, KindPayload payload, SemanticValue result, OpResultType type) {
@@ -1521,136 +1149,96 @@ public class ClassOpsExecutorTest {
             op.failurePolicy(), contract);
     }
 
-    private static Outcome<Value> executeShared(SharedFixture f, BoundaryCheckRunner boundary, BodyRunner body) {
+    private static Outcome<Value> executeShared(SharedFixture f, BoundaryCheckRunner boundary) {
         return ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(),
-            f.ownerOps(), f.boundaries(), f.layouts(), boundary, body);
+            f.ownerOps(), f.boundaries(), f.layouts(), boundary);
     }
 
+
     private static void testSharedFactoryExecution() {
-        SharedFixture f = sharedFixture(List.of("b"));
-        List<String> log = new ArrayList<>();
-        List<SemanticOp> invoked = new ArrayList<>();
-        BodyRunner body = op -> {
-            invoked.add(op); log.add("default " + op.opId()); return f.produced().get(op.opId());
-        };
-        Outcome<Value> transfer = ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(),
-            f.layouts(), Set.of("b"), body);
-        check(transfer instanceof Outcome.Success<Value> s && s.value() instanceof Value.Class instance
-                && instance.classId().equals(SHARED_CLASS) && instance.fields().size() == 3
-                && new Value.Number(10).equals(fieldValue(instance, f.layout(), "a"))
-                && fieldValue(instance, f.layout(), "b") == null && fieldValue(instance, f.layout(), "c") == null,
-            "direct factory API transfers omitted defaults and leaves provided/optional fields missing");
-        check(invoked.size() == 1 && invoked.getFirst() == f.ownerOps().get(invoked.getFirst().opId())
-                && invoked.getFirst().opId().module().equals(FACTORY_OWNER)
-                && f.caller().opId().module().equals(FACTORY_CALLER) && f.factory().origin().parentOpId() == null,
-            "factory dispatch passes exact owner op under cross-unit dynamic trigger");
+        SharedFixture f = sharedFixture(List.of("b", "a"));
+        Outcome<Value> transfer = ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.layouts());
+        check(transfer instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.Class value
+                && value.classId().equals(SHARED_CLASS)
+                && value.fields().stream().allMatch(state -> state instanceof FieldState.Missing),
+            "provider record carries identity and no initializer values");
         SemanticOp wrongTrigger = sharedOp(FACTORY_CALLER, SemanticOpKind.FIELD_READ,
-            new KindPayload.FieldReadPayload(nextValue(), SHARED_CLASS, "a"), nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
-        expectDefect(() -> ClassOpsExecutor.executeClassFactory(f.factory(), wrongTrigger, f.ownerOps(), f.layouts(), Set.of(), body),
-            "factory non-construction trigger");
-        expectDefect(() -> ClassOpsExecutor.executeClassFactory(f.factory(), f.factory(), f.ownerOps(), f.layouts(), Set.of(), body),
-            "factory self trigger");
+            new KindPayload.FieldReadPayload(nextValue(), SHARED_CLASS, "a"), nextValue(), INT,
+            FailurePolicyId.NO_DEAL_FAILURE, null);
+        expectDefect(() -> ClassOpsExecutor.executeClassFactory(f.factory(), wrongTrigger, f.layouts()), "wrong provider trigger");
+        expectDefect(() -> ClassOpsExecutor.executeClassFactory(f.factory(), f.factory(), f.layouts()), "provider self trigger");
         List<Value> instances = new ArrayList<>();
-        for (int run = 0; run < 2; run++) {
-            log.clear(); invoked.clear();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            List<String> log = new ArrayList<>();
             ScriptedDelegate delegate = new ScriptedDelegate(log, -1, null);
-            Outcome<Value> outcome = ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), new RecordingValues(f.provided(), log),
-                f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), delegate, body);
-            check(outcome instanceof Outcome.Success<Value> s && s.value() instanceof Value.Class instance
-                    && instance.classId().equals(SHARED_CLASS) && instance.fields().size() == 3
-                    && new Value.Number(10).equals(fieldValue(instance, f.layout(), "a"))
-                    && new Value.Number(20).equals(fieldValue(instance, f.layout(), "b"))
-                    && fieldValue(instance, f.layout(), "c") == null,
-                "shared full API overlays provided fields after transfer and publishes tag last");
-            check(log.equals(List.of("resolve " + f.provided().keySet().iterator().next(),
-                    "default " + invoked.getFirst().opId(), "child[0] CLASS_DEFAULT_FIELD <- number", "child[1] CLASS_LITERAL_FIELD <- number"))
-                    && invoked.size() == 1 && delegate.calls() == 2,
-                "shared source resolution precedes skip-provided defaults and declaration-order boundaries, zero return cells");
-            check(invoked.stream().allMatch(op -> op == f.ownerOps().get(op.opId())
-                    && op.opId().module().equals(FACTORY_OWNER)),
-                "full shared API executes exact owner-unit default operations");
-            if (outcome instanceof Outcome.Success<Value> s) { instances.add(s.value()); }
+            Outcome<Value> outcome = ClassOpsExecutor.executeClassNewSharedFactory(f.caller(),
+                new RecordingValues(f.provided(), log), f.registry(), f.ownerOps(), f.boundaries(),
+                f.layouts(), delegate);
+            check(outcome instanceof Outcome.Success<Value> success
+                    && success.value() instanceof Value.Class value
+                    && new Value.Number(20).equals(fieldValue(value, f.layout(), "a"))
+                    && new Value.Number(20).equals(fieldValue(value, f.layout(), "b"))
+                    && fieldState(value, f.layout(), "c") instanceof FieldState.Missing,
+                "shared construction publishes only provided values");
+            List<String> expected = new ArrayList<>();
+            for (ValueId id : f.provided().keySet()) expected.add("resolve " + id);
+            expected.add("child[0] CLASS_LITERAL_FIELD <- number");
+            expected.add("child[1] CLASS_LITERAL_FIELD <- number");
+            check(log.equals(expected) && delegate.calls() == 2,
+                "shared source-order resolution precedes declaration-order checks: " + log);
+            if (outcome instanceof Outcome.Success<Value> success) instances.add(success.value());
         }
-        SharedFixture omitted = sharedFixture(List.of());
-        List<Outcome<Value>> repeated = new ArrayList<>();
-        for (int run = 0; run < 2; run++) {
-            List<OpId> ordered = new ArrayList<>();
-            repeated.add(executeShared(omitted, (p, v) -> new BoundaryResult.Pass(v), op -> {
-                ordered.add(op.opId()); return omitted.produced().get(op.opId());
-            }));
-            check(ordered.equals(((KindPayload.ClassFactoryPayload) omitted.factory().payload()).classDefaultOpIds()),
-                "all omitted defaults execute in declaration order on each independent drive");
+        check(instances.size() == 2 && instances.get(0) != instances.get(1)
+                && instances.get(0).equals(instances.get(1)), "shared instances are fresh and deterministic");
+        for (List<String> names : List.of(List.<String>of(), List.of("a"), List.of("b"))) {
+            SharedFixture missing = sharedFixture(names);
+            expectDefect(() -> executeShared(missing, (boundary, value) -> new BoundaryResult.Pass(value)),
+                "shared required omission " + names);
         }
-        check(repeated.get(0).equals(repeated.get(1)) && repeated.get(0) instanceof Outcome.Success<Value> s
-                && s.value() instanceof Value.Class instance
-                && new Value.Number(10).equals(fieldValue(instance, omitted.layout(), "a"))
-                && new Value.Number(99).equals(fieldValue(instance, omitted.layout(), "b")),
-            "all-default shared constructions repeat with equal transferred contents");
-        check(instances.size() == 2 && instances.get(0) != instances.get(1) && instances.get(0).equals(instances.get(1)),
-            "fresh identity with deterministic equal contents on isolated drives");
-        SharedFixture extra = sharedFixture(List.of("zz", "x"));
-        List<SemanticOp> effects = new ArrayList<>();
+        SharedFixture extra = sharedFixture(List.of("a", "b", "zz", "x"));
         ScriptedDelegate noChecks = new ScriptedDelegate(new ArrayList<>(), -1, null);
-        Outcome<Value> failure = executeShared(extra, noChecks, op -> { effects.add(op); return extra.produced().get(op.opId()); });
+        Outcome<Value> failure = executeShared(extra, noChecks);
         check(failure instanceof Outcome.Failure<Value> failed
-                && failed.failure().failure().policy() == FailurePolicyId.CLASS_CONSTRUCTION
                 && failed.failure().failure().code() == DiagnosticCode.E8007
                 && failed.failure().failure().message().equals("extra field 'zz' in class '@owner.mod/Point'")
-                && failed.failure().origin().equals(extra.caller().origin())
-                && effects.size() == 2 && noChecks.calls() == 0,
-            "first source-order extra key rejects after defaults, before field application, with exact caller origin");
-        SharedFixture failing = sharedFixture(List.of()); effects.clear();
-        ScriptedDelegate stopped = new ScriptedDelegate(new ArrayList<>(), -1, null);
-        try {
-            executeShared(failing, stopped, op -> {
-                effects.add(op);
-                if (effects.size() == 2) { throw new IllegalStateException("default " + op.opId()); }
-                return failing.produced().get(op.opId());
-            });
-            fail("failing default must prevent caller publication");
-        } catch (IllegalStateException expected) {
-            check(expected.getMessage().equals("default " + effects.getLast().opId())
-                    && effects.size() == 2 && stopped.calls() == 0,
-                "default failure preserves prior effect, propagates unchanged, and stops boundaries/publication");
-        }
+                && failed.failure().origin().equals(extra.caller().origin()) && noChecks.calls() == 0,
+            "shared first extra key has exact caller origin and prevents checks");
         BoundaryFailure selected = deal.semantic.ir.FailureProjections.kindFailure("number", "string");
-        ScriptedDelegate firstFailure = new ScriptedDelegate(new ArrayList<>(), 0, selected);
-        Outcome<Value> boundaryFailure = executeShared(f, firstFailure, body);
+        ScriptedDelegate stopped = new ScriptedDelegate(new ArrayList<>(), 0, selected);
+        Outcome<Value> boundaryFailure = executeShared(f, stopped);
         check(boundaryFailure instanceof Outcome.Failure<Value> failed
-                && failed.failure().failure().equals(selected) && firstFailure.calls() == 1,
-            "shared lane stops at first boundary failure");
+                && failed.failure().failure().equals(selected) && stopped.calls() == 1,
+            "shared first failing boundary stops publication");
         testSharedFactoryDefects(f);
     }
 
     private static void testSharedFactoryDefects(SharedFixture f) {
         BoundaryCheckRunner pass = (p, v) -> new BoundaryResult.Pass(v);
-        BodyRunner body = op -> f.produced().get(op.opId());
         KindPayload.ClassNewPayload p = (KindPayload.ClassNewPayload) f.caller().payload();
         List<KindPayload> malformed = List.of(
-            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), DefaultOwner.LOCAL, List.of(), null, p.fieldBoundaries()),
-            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), DefaultOwner.SHARED_FACTORY, List.of(), null, p.fieldBoundaries()),
-            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), DefaultOwner.SHARED_FACTORY,
-                ((KindPayload.ClassFactoryPayload) f.factory().payload()).classDefaultOpIds(), FACTORY_ENTRY, p.fieldBoundaries()));
+            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), ConstructionProvider.LOCAL, null, p.fieldBoundaries()),
+            new KindPayload.ClassNewPayload(SHARED_CLASS, f.layout(), p.providedFields(), ConstructionProvider.SHARED_FACTORY, null, p.fieldBoundaries()));
         for (KindPayload broken : malformed) {
             SemanticOp caller = sharedCopy(f.caller(), broken, f.caller().result(), f.caller().resultType());
             expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(caller, f.provided(), f.registry(), f.ownerOps(),
-                f.boundaries(), f.layouts(), pass, body), "shared payload owner/ref/default-list mutation");
+                f.boundaries(), f.layouts(), pass), "shared payload owner/ref mutation");
         }
         expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(),
-            new deal.semantic.ir.ClassFactoryRegistry(Map.of()), f.ownerOps(), f.boundaries(), f.layouts(), pass, body), "missing registry binding");
+            new deal.semantic.ir.ClassFactoryRegistry(Map.of()), f.ownerOps(), f.boundaries(), f.layouts(), pass), "missing registry binding");
         expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(),
-            Map.of(), f.boundaries(), f.layouts(), pass, body), "factory absent from owner lookup");
+            Map.of(), f.boundaries(), f.layouts(), pass), "factory absent from owner lookup");
         SemanticOp notFactory = sharedOp(FACTORY_OWNER, SemanticOpKind.CONST, new KindPayload.ConstPayload(new ScalarValue.Number(1)),
             nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null);
         SemanticOp wrongClass = sharedCopy(f.factory(), new KindPayload.ClassFactoryPayload(new ClassId("owner.mod", "Other"),
-            ((KindPayload.ClassFactoryPayload) f.factory().payload()).classDefaultOpIds(), f.caller().opId()),
+            f.caller().opId()),
             f.factory().result(), f.factory().resultType());
         SemanticOp noResult = sharedCopy(f.factory(), f.factory().payload(), null, null);
         for (SemanticOp broken : List.of(notFactory, wrongClass, noResult)) {
             Map<OpId, SemanticOp> owner = new LinkedHashMap<>(f.ownerOps()); owner.put(broken.opId(), broken);
             deal.semantic.ir.ClassFactoryRegistry registry = new deal.semantic.ir.ClassFactoryRegistry(Map.of(FACTORY_ENTRY, broken.opId()));
             expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), registry, owner,
-                f.boundaries(), f.layouts(), pass, body), "factory kind/class/result mutation");
+                f.boundaries(), f.layouts(), pass), "factory kind/class/result mutation");
         }
         Map<OpId, SemanticOp> wrongInput = new LinkedHashMap<>(f.boundaries());
         SemanticOp boundary = wrongInput.values().iterator().next();
@@ -1658,28 +1246,18 @@ public class ClassOpsExecutorTest {
         wrongInput.put(boundary.opId(), sharedCopy(boundary, new KindPayload.BoundaryPayload(bp.kind(), bp.descriptor(),
             nextValue(), bp.realization()), null, null));
         expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(),
-            wrongInput, f.layouts(), pass, body), "default boundary must extract factory result");
-        KindPayload.ClassFactoryPayload factoryPayload = (KindPayload.ClassFactoryPayload) f.factory().payload();
-        SemanticOp missingField = sharedCopy(f.factory(), new KindPayload.ClassFactoryPayload(SHARED_CLASS,
-            List.of(factoryPayload.classDefaultOpIds().getLast()), f.caller().opId()), f.factory().result(), f.factory().resultType());
-        Map<OpId, SemanticOp> owner = new LinkedHashMap<>(f.ownerOps()); owner.put(missingField.opId(), missingField);
-        expectDefect(() -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), owner,
-            f.boundaries(), f.layouts(), pass, body), "transfer missing named default field");
+            wrongInput, f.layouts(), pass), "provided boundary must use its recorded input");
         List<Runnable> guards = List.of(
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(null, f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), null, f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), null, f.ownerOps(), f.boundaries(), f.layouts(), pass, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), null, f.boundaries(), f.layouts(), pass, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), null, f.layouts(), pass, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), null, pass, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), null, body),
-            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass, null),
-            () -> ClassOpsExecutor.executeClassFactory(null, f.caller(), f.ownerOps(), f.layouts(), Set.of(), body),
-            () -> ClassOpsExecutor.executeClassFactory(f.factory(), null, f.ownerOps(), f.layouts(), Set.of(), body),
-            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), null, f.layouts(), Set.of(), body),
-            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(), null, Set.of(), body),
-            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(), f.layouts(), null, body),
-            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), f.ownerOps(), f.layouts(), Set.of(), null));
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(null, f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), null, f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), pass),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), null, f.ownerOps(), f.boundaries(), f.layouts(), pass),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), null, f.boundaries(), f.layouts(), pass),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), null, f.layouts(), pass),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), null, pass),
+            () -> ClassOpsExecutor.executeClassNewSharedFactory(f.caller(), f.provided(), f.registry(), f.ownerOps(), f.boundaries(), f.layouts(), null),
+            () -> ClassOpsExecutor.executeClassFactory(null, f.caller(), f.layouts()),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), null, f.layouts()),
+            () -> ClassOpsExecutor.executeClassFactory(f.factory(), f.caller(), null));
         guards.forEach(action -> expectNpe(action, "shared factory API null argument"));
     }
 
@@ -1689,13 +1267,12 @@ public class ClassOpsExecutorTest {
 
         testValueViewClassification();
         testLiveContainerViews();
-        testClassDefaultExecution();
         testClassNewLocalSuccessReorderAndOverlay();
-        testClassNewLocalDefaultsAndSkipProvided();
-        testExtraKeyRejectionAfterDefaults();
+        testRequiredPresence();
+        testExtraKeyRejectionBeforeBoundaries();
         testBoundaryFailureStopsValidationAndPublishesNothing();
         testRealProjectionDelegate();
-        testFreshDefaultsPerConstruction();
+        testFreshInstancesPreserveProvidedAliases();
         testFailClosedDefects();
         testDeterminism();
         testNullArgumentsFailClosed();

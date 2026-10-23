@@ -179,9 +179,6 @@ final class DefaultIrRecorder {
      */
     private DefaultPlanImport enclosingReturnProvider = null;
 
-    private final List<CompilerDiagnostic> awaitDiagnostics =
-        new ArrayList<>();
-
     DefaultIrRecorder(
             Map<ExpressionNode, Type> typeMap,
             Map<StatementNode, SymbolTable> scopeMap,
@@ -293,14 +290,8 @@ final class DefaultIrRecorder {
         return Map.copyOf(classLiteralProviders);
     }
 
-    /** The E3020 evaluator-scope-await diagnostics. */
-    List<CompilerDiagnostic> awaitDiagnostics() {
-        return List.copyOf(awaitDiagnostics);
-    }
-
     /**
-     * Records the default expression: returns the IR root with the
-     * field type as the root's expected-type context.
+     * Records an expression with its declared expected-type context.
      */
     DefaultIrNode record(ExpressionNode root, SymbolTable scope,
                          Type fieldType) {
@@ -417,14 +408,6 @@ final class DefaultIrRecorder {
                     null, null, null, assign, assign.span());
             }
             case AwaitExpression await -> {
-                if (evaluatorScope) {
-                    // D2 sync gate: every planned default is a sync
-                    // evaluator; await at evaluator scope is E3020 at
-                    // the await range.
-                    awaitDiagnostics.add(CompilerDiagnostic.error(
-                        DiagnosticCode.E3020, "'await' in class default",
-                        await.span().range()));
-                }
                 return node(DefaultIrNode.NodeKind.AWAIT, null,
                     typeMap.get(await), contexts,
                     List.of(recordExpression(await.callee(), scope,

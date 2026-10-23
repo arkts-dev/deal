@@ -406,17 +406,17 @@ public final class Parser {
         boolean nullable = type instanceof NullableType;
 
         int diagCountBefore = diagnostics.size();
-        Optional<ExpressionNode> defaultExpr = Optional.empty();
         if (match(TokenType.EQ_SIGN)) {
-            ExpressionNode expr = parseExpression();
-            if (expr != null) defaultExpr = Optional.of(expr);
+            error(DiagnosticCode.E1007, "Class field initializers are not supported", previous());
+            // Recover at the field terminator without admitting an initializer AST.
+            parseExpression();
         }
         optionalSemicolon();
-        // v1.3 ClassField requires its ';' (Syntactic grammar).
+        // Class fields require their ';'.
         checkTerminator(diagCountBefore);
 
         Span sp = spanBetween(nameToken, previousOrCurrent());
-        return new ClassField(sp, nameToken.lexeme(), optional, nullable, type, defaultExpr);
+        return new ClassField(sp, nameToken.lexeme(), optional, nullable, type);
     }
 
     // -- FunctionDeclaration --

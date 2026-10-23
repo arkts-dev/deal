@@ -13,7 +13,7 @@ function expectTrue(what: string, condition: boolean): null {
 }
 
 function testCaptureAfterExit(): null {
-  let f: () => Error = function(): Error { return {}; };
+  let f: () => Error = function(): Error { return {code: "INITIAL", message: "initial"}; };
   try { throw { code: "E_CAP", message: "x" }; }
   catch (e) { f = function(): Error { return e; }; }
   expectTrue("the escaping closure reads the catch binding's message", f().message === "x");

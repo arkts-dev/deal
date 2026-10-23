@@ -3,5 +3,5 @@
 // @expected: compile-error E4002
 // @features: v1.2, frontend, reject
 
-class C {x:number=0;}
+class C {x:number;}
 export function f(): C[] {return [{x:1},{x:2,extra:3}];}

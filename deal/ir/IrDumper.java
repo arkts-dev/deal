@@ -389,12 +389,7 @@ public final class IrDumper implements Visitor<String> {
         if (field.optional()) sb.append("?");
         String typeDesc = typeNodeToSpecDescriptor(field.type());
         sb.append(": ").append(typeDesc).append(" ").append(spanStr(field.span())).append("\n");
-        if (field.defaultExpr().isPresent()) {
-            sb.append(indent()).append("  ").append(boundary("class-default")).append("\n");
-            pushIndent();
-            sb.append(dispatchExpr(field.defaultExpr().get()));
-            popIndent();
-        }
+
         return sb.toString();
     }
 

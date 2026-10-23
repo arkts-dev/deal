@@ -8,6 +8,6 @@ export function main(): null {
  let i:number=0; let updates:number=0;
  function update(x:number): number {updates=updates+1; return x+1;}
  {  while (true) { {if(i===2) {break;} { i=update(i); continue; }} i=update(i); } }
- if(i!==2 || updates!==2) {throw {message:"omitted test/update order"};}
+ if(i!==2 || updates!==2) {throw {code:"TEST_FAIL",message:"omitted test/update order"};}
  c.log("empty-for-update-break"); return null;
 }

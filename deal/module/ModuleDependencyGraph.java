@@ -188,8 +188,7 @@ public final class ModuleDependencyGraph {
 
     /**
      * Runs the digest-free SCC pass: collects the ordinary runtime-use
-     * occurrences (D7(a)), merges them with the planner's default
-     * occurrences (D7(b)) over the one carrier shape, classifies the
+     * occurrences over the ordinary resource carrier, classifies the
      * strongly connected components of the import-edge graph, and emits
      * one E2005 diagnostic per cyclic component (every multi-module SCC
      * and self-import) with a note for every runtime edge inside it. No
@@ -241,8 +240,6 @@ public final class ModuleDependencyGraph {
 
         private final Map<String, ModuleInput> modules =
             new LinkedHashMap<>();
-        private final Map<String, List<PlannedDefaultClass>>
-            plannedClasses = new LinkedHashMap<>();
         private final Map<String, Map<String, Span>> importEdgeSpans;
         private final Map<String, Span> programSpans;
 
@@ -290,7 +287,6 @@ public final class ModuleDependencyGraph {
                 Map<String, Span> programSpans,
                 Map<String, DefaultPlanImport> projectProviders) {
             this.modules.putAll(modules);
-            this.plannedClasses.putAll(plannedClasses);
             this.importEdgeSpans = importEdgeSpans;
             this.programSpans = programSpans;
             this.projectProviders = Map.copyOf(projectProviders);
@@ -311,7 +307,6 @@ public final class ModuleDependencyGraph {
 
         DigestFreeResult run() {
             collectOrdinaryOccurrences();
-            collectDefaultEdges();
             classifyCycles();
             if (failed) {
                 return new DigestFreeResult(diagnostics, List.of(),
@@ -327,8 +322,8 @@ public final class ModuleDependencyGraph {
          * The ordinary runtime-use occurrences (D7(a)): the complete
          * typed evaluator IR walk of every top-level function body of
          * every implementation module through the shared
-         * {@link DefaultIrRecorder}, with the E3020 gate inert (bodies
-         * walk at non-evaluator scope — await inside them is legal).
+         * {@link DefaultIrRecorder}. Ordinary async bodies retain their
+         * await operations and dependency occurrences.
          * One occurrence per imported resource identity per module,
          * first-occurrence order (the recorder's deduplication).
          */
@@ -361,10 +356,7 @@ public final class ModuleDependencyGraph {
                         recorder.recordFunctionBody(fd,
                             input.checkResult().symbolTable());
                     }
-                    // Class declarations publish no ordinary edge: their
-                    // defaults are the planner's DEFERRED_DEFAULT_BINDING
-                    // edges (D7(a) — "not type positions and not
-                    // defaults").
+                    // Structural class declarations execute nothing and own no edge.
                 }
                 for (DefaultResourceOccurrence occurrence
                         : recorder.occurrences()) {
@@ -382,25 +374,6 @@ public final class ModuleDependencyGraph {
                         .computeIfAbsent(input.sourcePath(),
                             key -> new LinkedHashMap<>())
                         .putAll(providers);
-                }
-            }
-        }
-
-        /** The planner's default edges (D7(b)), merged after the
-         * ordinary set in module/plan order. */
-        private void collectDefaultEdges() {
-            for (Map.Entry<String, List<PlannedDefaultClass>> entry
-                    : plannedClasses.entrySet()) {
-                for (PlannedDefaultClass planned : entry.getValue()) {
-                    for (DefaultResourceOccurrence occurrence
-                            : planned.occurrences()) {
-                        ProvisionalEdge edge = edgeOf(occurrence,
-                            RuntimeImportDependency.Reason
-                                .DEFERRED_DEFAULT_BINDING);
-                        if (mergedSeen.add(edge)) {
-                            mergedEdges.add(edge);
-                        }
-                    }
                 }
             }
         }
@@ -774,9 +747,7 @@ public final class ModuleDependencyGraph {
         }
         List<RuntimeImportDependency> merged = new ArrayList<>();
         Set<RuntimeImportDependency> seen = new LinkedHashSet<>();
-        // Ordinary records first (first-occurrence order), then the
-        // per-plan default records (module/plan order); structural
-        // deduplication keeps one record per exact carrier content.
+        // Ordinary records retain first-occurrence order and exact-content deduplication.
         for (ProvisionalEdge edge : free.provisionalEdges()) {
             if (edge.reason()
                     != RuntimeImportDependency.Reason.RUNTIME_USE) {
@@ -812,23 +783,12 @@ public final class ModuleDependencyGraph {
                 PlannedDefaultClass planned = plannedList.get(i);
                 DefaultSemanticSerializer.SerializedDefaultClass
                     serialized = serializedList.get(i);
-                Set<RuntimeImportDependency> planDependencies =
-                    new LinkedHashSet<>();
-                for (DefaultResourceOccurrence occurrence
-                        : planned.occurrences()) {
-                    RuntimeImportDependency record =
-                        recordOf(edgeOf(occurrence,
-                            RuntimeImportDependency.Reason
-                                .DEFERRED_DEFAULT_BINDING),
-                            providerDigests);
-                    if (planDependencies.add(record)
-                            && seen.add(record)) {
-                        merged.add(record);
-                    }
+                if (!planned.occurrences().isEmpty()) {
+                    throw new IllegalStateException(
+                        "a structural class owns executable initializer occurrences (producer defect)");
                 }
                 CompilerClassDefaultPlan completedPlan = serialized
-                    .completedPlan().withRuntimeDependencies(
-                        planDependencies);
+                    .completedPlan().withRuntimeDependencies(Set.of());
                 moduleCompleted.add(new PlannedDefaultClass(
                     completedPlan, planned.declaration(),
                     planned.occurrences(), planned.classLiteralProviders()));

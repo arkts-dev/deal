@@ -10,7 +10,7 @@
 // through an untyped table into companion B's check.
 
 export class Point {
-  x: number = 0;
+  x: number;
 }
 
 export function make(x: number): Point {

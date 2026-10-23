@@ -43,7 +43,6 @@ public enum SemanticOpKind {
     BREAK,
     CONTINUE,
     DISCARD,
-    CLASS_DEFAULT,
     CLASS_NEW,
     CLASS_FACTORY,
     FIELD_READ,
@@ -108,7 +107,7 @@ public enum SemanticOpKind {
             case BREAK -> KindPayload.BreakPayload.class;
             case CONTINUE -> KindPayload.ContinuePayload.class;
             case DISCARD -> KindPayload.DiscardPayload.class;
-            case CLASS_DEFAULT -> KindPayload.ClassDefaultPayload.class;
+
             case CLASS_NEW -> KindPayload.ClassNewPayload.class;
             case CLASS_FACTORY -> KindPayload.ClassFactoryPayload.class;
             case FIELD_READ -> KindPayload.FieldReadPayload.class;

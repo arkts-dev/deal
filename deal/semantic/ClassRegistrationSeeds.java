@@ -6,7 +6,7 @@ import deal.identity.CanonicalClassIdentity;
 import deal.identity.CanonicalModuleIdentity;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringFailureDetail;
@@ -84,22 +84,22 @@ public record ClassRegistrationSeeds(
 
     /**
      * One class registration seed: the class's {@link ClassLayout} (fields
-     * in declaration order, each carrying {@code defaultOwner} = the
+     * in declaration order, each carrying {@code constructionProvider} = the
      * class's owner member) and the class's closed
-     * {@link DefaultOwner} member. The class-level owner and every field's
+     * {@link ConstructionProvider} member. The class-level owner and every field's
      * owner must agree: a registration fact is one owner per class.
      *
      */
-    public record ClassRegistration(ClassLayout layout, DefaultOwner owner) {
+    public record ClassRegistration(ClassLayout layout, ConstructionProvider owner) {
 
         public ClassRegistration {
             Objects.requireNonNull(layout, "layout must not be null");
             Objects.requireNonNull(owner, "owner must not be null");
             for (ClassLayout.FieldLayout field : layout.fields()) {
-                if (field.defaultOwner() != owner) {
+                if (field.constructionProvider() != owner) {
                     throw new IllegalArgumentException(
                         "field '" + field.name() + "' of " + layout.classId()
-                            + " carries defaultOwner " + field.defaultOwner()
+                            + " carries constructionProvider " + field.constructionProvider()
                             + " but the registration's owner member is " + owner
                             + ": one owner per class registration");
                 }
@@ -121,7 +121,7 @@ public record ClassRegistrationSeeds(
     /**
      * The compiler-owned builtin {@code Error} registration: the
      * {@link ClassLayout#BUILTIN_ERROR} layout under
-     * {@link DefaultOwner#BUILTIN_DEFAULTS}. It is the one entry derived
+     * {@link ConstructionProvider#BUILTIN_ERROR}. It is the one entry derived
      * from the checker's synthesized builtin declaration by
      * {@link #produce}, and the same entry every session's layout context
      * carries by default — the builtin layout is identical in every unit's
@@ -130,7 +130,7 @@ public record ClassRegistrationSeeds(
      */
     public static ClassRegistration builtinErrorRegistration() {
         return new ClassRegistration(ClassLayout.BUILTIN_ERROR,
-            DefaultOwner.BUILTIN_DEFAULTS);
+            ConstructionProvider.BUILTIN_ERROR);
     }
 
     /**
@@ -169,7 +169,7 @@ public record ClassRegistrationSeeds(
         // The compiler-owned builtin `Error` entry first: it is a compiler
         // constant derived from the checker's synthesized builtin class
         // declaration, identical in every unit's layout context, with its
-        // constant empty-string defaults under the BUILTIN_DEFAULTS owner —
+        // constant empty-string defaults under the BUILTIN_ERROR owner —
         // never derived from source text, a host declaration, or an
         // interface-index entry.
         ClassId errorClassId = new ClassId(
@@ -191,11 +191,11 @@ public record ClassRegistrationSeeds(
             }
             errorFields.add(new ClassLayout.FieldLayout(field.name(),
                 descriptor, field.required(),
-                DefaultOwner.BUILTIN_DEFAULTS));
+                ConstructionProvider.BUILTIN_ERROR));
         }
         registrations.put(errorClassId, new ClassRegistration(
             new ClassLayout(errorClassId, errorFields),
-            DefaultOwner.BUILTIN_DEFAULTS));
+            ConstructionProvider.BUILTIN_ERROR));
 
         for (ModuleId moduleId : surface.moduleIds()) {
             HostDeclarationSurface.DeclarationFacts facts =
@@ -227,7 +227,7 @@ public record ClassRegistrationSeeds(
      * The host declaration classes of one module: fields in declaration
      * order with {@code DescriptorService.describe} of the resolved
      * declared type, {@code required = !optional}, and the owner member
-     * {@link DefaultOwner#HOST_DEFAULTS}.
+     * {@link ConstructionProvider#HOST_DECLARATION}.
      *
      */
     private static Production hostRegistrations(
@@ -250,11 +250,11 @@ public record ClassRegistrationSeeds(
                 fields.add(new ClassLayout.FieldLayout(
                     field.declaration().name(), descriptor,
                     !field.declaration().optional(),
-                    DefaultOwner.HOST_DEFAULTS));
+                    ConstructionProvider.HOST_DECLARATION));
             }
             Production duplicate = register(registrations, classId,
                 new ClassRegistration(new ClassLayout(classId, fields),
-                    DefaultOwner.HOST_DEFAULTS),
+                    ConstructionProvider.HOST_DECLARATION),
                 facts.moduleId(), declaredClass.name());
             if (duplicate != null) {
                 return duplicate;

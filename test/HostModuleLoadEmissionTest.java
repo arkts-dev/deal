@@ -26,7 +26,7 @@ import deal.semantic.ir.BoundaryOutcome;
 import deal.semantic.ir.BoundaryValueView;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
@@ -87,12 +87,7 @@ public class HostModuleLoadEmissionTest {
     private static final ClassId ORDER_CONFIG =
         new ClassId("$external/host/order", "Config");
 
-    /**
-     * The HOST construction's accepted-key ordering fixture: two declared
-     * optional fields ({@code fallback}, {@code peers}) are absent from
-     * the loaded {@code Config_defaults} map, so a literal providing both
-     * supplies two names outside the accepted-key authority.
-     */
+    /** Declared optional fields are accepted independently of any host defaults export. */
     private static final String ORDER_DECLARATION_SOURCE = """
         export class Config {
           port: number;
@@ -109,17 +104,23 @@ public class HostModuleLoadEmissionTest {
 
         export function main(): null {
           let c: cfg.Config = {%s};
+          if (!has(c.fallback) || !has(c.peers)) { throw {code: "presence", message: "missing"}; }
+          let fallback: number | null = c.fallback;
+          if (fallback !== null) {
+            if (fallback !== 3) { throw {code: "value", message: "fallback"}; }
+          } else { throw {code: "value", message: "null fallback"}; }
           return null;
         }
         """;
 
-    /** The deployed host implementation: {@code Config_defaults} carries only {@code port}. */
+    /** Any legacy default-hook lookup must fail rather than silently provide authority. */
     private static final String ORDER_LUA = """
-        return {
+        return setmetatable({
           ping = function() return "pong" end,
           Config = { [__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.classname] = "@$external/host/order/Config" },
-          Config_defaults = { port = 1 },
-        }
+        }, {__index = function(_, key)
+          if key == "Config_defaults" then error("retired defaults lookup") end
+        end})
         """;
 
     private static final String MISSING_SPECIFIER = "host/missing_export";
@@ -489,8 +490,8 @@ public class HostModuleLoadEmissionTest {
     /** The host-carrier metadata project's own module: a DEAL class and an exported function value. */
     private static final String CARRIER_UTIL_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 0;
+          x: number;
+          y: number;
         }
 
         export function bump(x: number): number {
@@ -512,8 +513,8 @@ public class HostModuleLoadEmissionTest {
         import * as json from "std/json";
 
         export class Widget {
-          name: string = "";
-          run: (x: number) => number = function(x: number): number { return x; };
+          name: string;
+          run: (x: number) => number;
         }
 
         export function main(): null {
@@ -538,8 +539,8 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String HOST_FREE_APP_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 0;
+          x: number;
+          y: number;
         }
 
         export function main(): null {
@@ -906,21 +907,9 @@ public class HostModuleLoadEmissionTest {
             + "occurrence cells");
     }
 
-    /**
-     * The HOST construction's deterministic extra-key scan: the loaded
-     * {@code <C>_defaults} key membership is the accepted-key authority,
-     * and the first provided-source name outside it fails with the exact
-     * E8007 tuple the oracle renders — before any field boundary check, in
-     * the provided order, never the runtime table's hash order. Two
-     * declared optional fields ({@code fallback}, {@code peers}) are
-     * absent from the loaded map, so the two provided orders name two
-     * different first-extra fields and a hash-order scan cannot satisfy
-     * both.
-     */
+    /** Source ordering and structural acceptance survive removal of host defaults. */
     private static void testOrderedExtraKeyScan(List<Path> roots) throws Exception {
-        System.out.println("-- the HOST construction's extra-key scan: the first "
-            + "provided-source name absent from the loaded <C>_defaults fails "
-            + "with the oracle's exact E8007 tuple, in provided order --");
+        System.out.println("-- HOST construction accepts declared optional fields in both source orders --");
         expectOrderedExtraKeyScan(roots, "port: 2, fallback: 3, peers: []", "fallback");
         expectOrderedExtraKeyScan(roots, "port: 2, peers: [], fallback: 3", "peers");
     }
@@ -940,25 +929,14 @@ public class HostModuleLoadEmissionTest {
         }
         ExecutableLoweredProject project = baseline.result().project();
         SemanticOp construction = orderedConstruction(project);
-        String message = "extra field '" + firstExtra
-            + "' in class '@$external/host/order/Config'";
-        String origin = construction.origin().sourceId() + ":"
-            + construction.origin().span().startLine() + ":"
-            + construction.origin().span().startColumn();
-
-        // The oracle: the same provided-source scan over the same loaded map.
-        SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {
-            @Override
-            public Map<String, SemanticOracle.Value> loadedClassDefaults(
-                    ClassId classId) {
-                if (!ORDER_CONFIG.equals(classId)) {
-                    return null;
-                }
-                Map<String, SemanticOracle.Value> defaults = new LinkedHashMap<>();
-                defaults.put("port", new SemanticOracle.Value.NumValue(1));
-                return defaults;
-            }
-        };
+        var payload = (KindPayload.ClassNewPayload) construction.payload();
+        checkEq(List.of("port", firstExtra, firstExtra.equals("fallback") ? "peers" : "fallback"),
+            payload.providedFields().stream().map(KindPayload.ProvidedField::name).toList(),
+            "provided values preserve each source ordering");
+        checkEq(List.of("port", "fallback", "peers"),
+            payload.fieldBoundaries().stream().map(KindPayload.FieldBoundary::field).toList(),
+            "validation follows declaration order regardless of provided order");
+        SemanticOracle.HostResponder responder = new SemanticOracle.HostResponder() {};
         Map<ClassId, ClassLayout> declarationLayouts = new LinkedHashMap<>();
         for (ClassId classId : baseline.result().seeds().classIds()) {
             declarationLayouts.put(classId,
@@ -967,19 +945,8 @@ public class HostModuleLoadEmissionTest {
         SemanticRuntimeModel.ConsumerRun oracleRun =
             SemanticOracle.executeProjectInits(project, baseline.result().tables(),
                 baseline.result().registries(), responder, declarationLayouts);
-        if (oracleRun.terminal()
-                instanceof SemanticRuntimeModel.Terminal.DealFailure failure) {
-            checkEq("E8007", failure.error().code(),
-                "the oracle names the pinned E8007 for '" + provided + "'");
-            checkEq(message, failure.error().message(),
-                "the oracle reports the first provided-source extra field for '"
-                    + provided + "'");
-            checkEq(origin, failure.error().origin(),
-                "the oracle carries the literal origin for '" + provided + "'");
-        } else {
-            fail("the oracle does not fail the construction for '" + provided
-                + "': " + oracleRun.terminal());
-        }
+        check(oracleRun.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
+            "Oracle accepts declared optional values without host defaults: " + oracleRun.terminal());
 
         // The real LuaJIT artifact: the same tuple through the published chunk.
         Path workspace = Files.createTempDirectory("host-order-lua");
@@ -989,7 +956,7 @@ public class HostModuleLoadEmissionTest {
             deployRuntime(workspace);
             writeFileIn(workspace, "host/order.lua", ORDER_LUA);
             Path probe = workspace.resolve("probe.lua");
-            Files.writeString(probe, orderedExtraKeyProbe(artifact, message, origin),
+            Files.writeString(probe, orderedExtraKeyProbe(artifact),
                 StandardCharsets.UTF_8);
             ProcessOutcome run = runProcess(List.of("luajit",
                 probe.toAbsolutePath().toString()), workspace, true);
@@ -1001,38 +968,30 @@ public class HostModuleLoadEmissionTest {
         }
     }
 
-    /** The lowered {@code CLASS_NEW(HOST_DEFAULTS)} of the ordered-extra-key fixture. */
+    /** The lowered {@code CLASS_NEW(HOST_DECLARATION)} of the ordered-extra-key fixture. */
     private static SemanticOp orderedConstruction(ExecutableLoweredProject project) {
         for (LoweredModuleUnit unit : project.modules().values()) {
             for (SemanticOp op : unit.ops()) {
                 if (op.kind() == SemanticOpKind.CLASS_NEW
                         && op.payload() instanceof KindPayload.ClassNewPayload payload
-                        && payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
+                        && payload.constructionProvider() == ConstructionProvider.HOST_DECLARATION) {
                     return op;
                 }
             }
         }
         throw new IllegalStateException("the fixture carries no"
-            + " CLASS_NEW(HOST_DEFAULTS) construction");
+            + " CLASS_NEW(HOST_DECLARATION) construction");
     }
 
-    /** The LuaJIT probe: the construction fails with the pinned E8007 tuple. */
-    private static String orderedExtraKeyProbe(Path artifact, String message,
-            String origin) {
+    /** Execute the constructed-field checks with poisoned legacy metadata. */
+    private static String orderedExtraKeyProbe(Path artifact) {
         return """
             local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
             dofile("%s")
             local ok, err = __dealMain()
-            if ok then fail("the construction succeeded") end
-            if type(err) ~= "table" or err[__dealCarrierKeys.d] ~= true then
-              fail("not a DEAL failure: " .. tostring(type(err)))
-            end
-            if err.code ~= "E8007" then fail("code: " .. tostring(err.code)) end
-            if err.m ~= %s then fail("message: " .. tostring(err.m)) end
-            if err.o ~= %s then fail("origin: " .. tostring(err.o)) end
+            if not ok then fail("construction failed: " .. tostring(err and err.m)) end
             print("PROBE-OK")
-            """.formatted(artifact.toAbsolutePath().toString(), luaString(message),
-                luaString(origin));
+            """.formatted(artifact.toAbsolutePath().toString());
     }
 
     private static void testLuaArtifactText(Baseline fixture, Baseline aliases)
@@ -2916,13 +2875,7 @@ public class HostModuleLoadEmissionTest {
     // 2b. The host-class construction defaults (ISSUE-0855)
     // =========================================================================
 
-    /**
-     * The declared host classes whose loaded {@code <C>_defaults} entries
-     * carry the construction-default shapes: an optional array, a nested
-     * class, a present null, an absent (host {@code __MISSING}) optional, a
-     * function wrapper, and a class whose every field is optional (the one
-     * shape that reaches the runtime's own defaults-shape failure).
-     */
+    /** Declared layouts for provided arrays, nested classes, nulls and functions. */
     private static final String CLASS_DEFAULTS_DECLARATION_SOURCE = """
         export class Endpoint {
           path: string;
@@ -2952,18 +2905,9 @@ public class HostModuleLoadEmissionTest {
         """;
 
     /**
-     * The DEAL side of the host-class construction defaults: the defaulted
-     * optional array is the DEAL array value (exact length and elements; the
-     * host observes the constructed instance's own {@code __a} carrier mark,
-     * logical length, and per-slot marks map through the declared parameter),
-     * a provided value overrides the default, the nested class default is the
-     * DEAL representation of its declared identity (the parameter entry of
-     * {@code pathOf} checks that identity), a present null default stays
-     * present, an absent default is not fabricated into a present null, the
-     * function default is the documented wrapper and is invocable, and a
-     * second construction after mutating the first instance's array reads
-     * the pristine default. The host's own defaults table is asserted
-     * unmutated through the declared {@code inspect} crossing.
+     * Provided values retain their carriers and identity across host crossings.
+     * Omitted optionals stay absent; independent literals do not share arrays.
+     * Unrelated legacy host data must remain unread and unchanged.
      */
     private static final String CLASS_DEFAULTS_APP_SOURCE = """
         import * as cfg from "host/defaults_probe";
@@ -2973,7 +2917,8 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function run(): string {
-          let a: cfg.ServerConfig = { port: 1, endpoint: { path: "/x" } };
+          let a: cfg.ServerConfig = { port: 1, endpoint: { path: "/x" },
+            tags: ["a", "b"], note: null, fallback: { path: "/fb" } };
           let tags: string[] | null = a.tags;
           if (tags !== null) {
             if (tags.length !== 2) {
@@ -2989,7 +2934,7 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "default tags absent" };
           }
           let carrier: string = cfg.tagsCarrier(a);
-          if (carrier !== "true:2:table:0:a:b") {
+          if (carrier !== "true:2:nil:0:a:b") {
             throw { code: "TEST_FAIL", message: "default tags carrier: " + carrier };
           }
           if (tags !== null) {
@@ -3027,7 +2972,11 @@ public class HostModuleLoadEmissionTest {
           } else {
             throw { code: "TEST_FAIL", message: "provided tags lost" };
           }
-          let c: cfg.ServerConfig = { port: 3, endpoint: { path: "/z" } };
+          let omitted: cfg.ServerConfig = { port: 0, endpoint: { path: "/o" } };
+          if (has(omitted.tags) || has(omitted.note) || has(omitted.fallback)) {
+            throw { code: "TEST_FAIL", message: "omitted optional fabricated" };
+          }
+          let c: cfg.ServerConfig = { port: 3, endpoint: { path: "/z" }, tags: ["a", "b"] };
           let cTags: string[] | null = c.tags;
           if (cTags !== null) {
             if (cTags.length !== 2) {
@@ -3042,7 +2991,7 @@ public class HostModuleLoadEmissionTest {
           } else {
             throw { code: "TEST_FAIL", message: "second default tags lost" };
           }
-          let bundle: cfg.Bundle = { label: "b" };
+          let bundle: cfg.Bundle = { label: "b", action: function(x: number): number { return x + 1; } };
           let action: ((x: number) => number) | null = bundle.action;
           if (action !== null) {
             let r: number = action(41);
@@ -3061,6 +3010,9 @@ public class HostModuleLoadEmissionTest {
 
         export function badDefaults(): string {
           let e: cfg.OptionalOnly = {};
+          if (has(e.flag)) {
+            throw { code: "TEST_FAIL", message: "omitted flag fabricated" };
+          }
           return "constructed";
         }
 
@@ -3140,27 +3092,13 @@ public class HostModuleLoadEmissionTest {
     private static final String CLASS_DEFAULTS_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
         "DEFAULTS-OK",
-        "E8001|class defaults must be a table|table|number",
+        "constructed",
         "TRANSCRIPT-END",
         "");
 
-    /**
-     * The host-class construction defaults on the published LuaJIT artifact
-     * (ISSUE-0855): the loaded {@code <C>_defaults} entry is projected
-     * host-to-DEAL per declared field through the host-carrier bridge with
-     * one memo per construction, before the runtime construction entry
-     * deep-copies it — so a defaulted optional array is the DEAL array
-     * value, a nested class default is the DEAL representation of its
-     * declared identity, a function default stays the documented wrapper
-     * and is invocable, a present null stays present, an absent default is
-     * not fabricated into a present null, a provided value overrides the
-     * default, two constructions never share a default value, and the
-     * loaded defaults table (and every host object it holds) is not
-     * mutated. The runtime's own defaults-shape failure keeps its landed
-     * tuple through the projection's pass-through.
-     */
+    /** Real structural construction and host carrier crossings, without default hooks. */
     private static void testLuaHostClassConstructionDefaults() throws Exception {
-        System.out.println("-- the host-class construction defaults: the "
+        System.out.println("-- structural host-class construction: the "
             + "published LuaJIT artifact under real luajit --");
         Path root = Files.createTempDirectory("host-class-defaults-lua");
         try {
@@ -3170,29 +3108,17 @@ public class HostModuleLoadEmissionTest {
             if (out == null) {
                 return;
             }
-            // The emitted construction sites read the loaded <C>_defaults
-            // entry through the projection helper with the class's
-            // canonical identity (the bridge's construction-defaults
-            // position), never the raw loaded table.
             String lua = Files.readString(out.resolve("app.lua"),
                 StandardCharsets.UTF_8);
             for (String identity : List.of("ServerConfig", "Endpoint",
                     "Bundle", "OptionalOnly")) {
-                String call = "__factories.__hostClassDefaultsIn(\"host.defaults_probe\", "
-                    + "\"" + identity + "\", \"@$external/host/defaults_probe/"
-                    + identity + "\")";
-                check(lua.contains(call), "the emitted construction of "
-                    + identity + " projects its loaded <C>_defaults entry"
-                    + " through __hostClassDefaultsIn with the class's"
-                    + " canonical identity: " + call);
+                check(!lua.contains(identity + "_defaults"),
+                    "construction never reads the retired hook for " + identity);
             }
-            check(lua.contains("__factories.__hostClassDefaultsIn = function(module, class, identity)"),
-                "the published host-binding chunk carries the construction-"
-                    + "defaults projection helper");
+            check(!lua.contains("__hostClassDefaultsIn"),
+                "no retired defaults projection helper is emitted");
             check(lua.contains("__factories.__hostCarrierIn(childDesc, val, memo)"),
-                "the construction-defaults projection delegates each declared"
-                    + " field to the host-carrier bridge with one memo per"
-                    + " construction");
+                "provided host crossings retain their declared carrier bridge");
             writeFileIn(out, "probe.lua", """
                 local function fail(m) print("PROBE-FAIL: " .. m) os.exit(1) end
                 dofile("app.lua")
@@ -3210,27 +3136,12 @@ public class HostModuleLoadEmissionTest {
                 end
                 print("TRANSCRIPT-BEGIN")
                 print(tostring(res))
-                -- The staged defaults-shape control: a non-table <C>_defaults
-                -- entry reaches the runtime construction entry unchanged, so
-                -- the landed E8001 defaults-shape failure is the published
-                -- one (the load validates the entry; this drive stages the
-                -- shape after the load).
-                local hostSurface = nil
-                for key, value in pairs(__exportSurfaces) do
-                  if key ~= "app" and type(value) == "table"
-                      and value["OptionalOnly_defaults"] ~= nil then
-                    hostSurface = value
-                  end
-                end
-                if hostSurface == nil then fail("no host surface") end
+                local hostSurface = __exportSurfaces["host.defaults_probe"]
+                if type(hostSurface) ~= "table" then fail("no host surface") end
                 hostSurface["OptionalOnly_defaults"] = 42
                 local ok3, res3 = pcall(surface["badDefaults"].f)
-                if ok3 then fail("the non-table defaults construction succeeded") end
-                if type(res3) ~= "table" or res3[__dealCarrierKeys.d] ~= true then
-                  fail("not a DEAL failure: " .. tostring(type(res3)))
-                end
-                print(tostring(res3.code) .. "|" .. tostring(res3.m) .. "|"
-                  .. tostring(res3.e) .. "|" .. tostring(res3.a))
+                if not ok3 then fail("structural construction failed") end
+                print(tostring(res3))
                 print("TRANSCRIPT-END")
                 """);
             ProcessOutcome run = runProcess(List.of("luajit", "probe.lua"),
@@ -3238,15 +3149,9 @@ public class HostModuleLoadEmissionTest {
             check(run.exitCode() == 0
                     && run.stdout().equals(CLASS_DEFAULTS_TRANSCRIPT)
                     && run.stderr().isEmpty(),
-                "the loaded <C>_defaults entry is projected host-to-DEAL per"
-                    + " declared field before the runtime construction"
-                    + " deep-copies it: the defaulted optional array reads as"
-                    + " the DEAL array value, a provided value overrides it,"
-                    + " the nested class default carries its declared DEAL"
-                    + " identity, a present null stays present, an absent"
-                    + " default is not fabricated, the function default is the"
-                    + " invocable wrapper, and the host's defaults table is"
-                    + " unmutated: exit=" + run.exitCode() + " stdout="
+                "provided arrays, nested identities, present null, absent optionals"
+                    + " and callable fields survive host crossings; retired host data"
+                    + " is unchanged and arbitrary retired metadata is ignored: exit=" + run.exitCode() + " stdout="
                     + escaped(run.stdout()) + " stderr="
                     + escaped(run.stderr()));
         } finally {
@@ -3742,7 +3647,7 @@ public class HostModuleLoadEmissionTest {
         import * as host from "host/async_probe";
 
         class Marker {
-          count: number = 0;
+          count: number;
         }
 
         function bump(x: number): number {
@@ -3778,7 +3683,7 @@ public class HostModuleLoadEmissionTest {
           let dyn: async (s: host.ServerConfig, g: (x: number) => number) => string =
             pick();
           let dynamicText: string = await dyn(cfg, cb);
-          let marker: Marker = {};
+          let marker: Marker = { count: 0 };
           let extra = function(): number {
             marker.count = marker.count + 1;
             return 1;
@@ -4339,19 +4244,13 @@ public class HostModuleLoadEmissionTest {
         local rt = require("deal.runtime")
         local K = rt.__keys
 
-        local endpoint = rt.class_("@$external/host/complete_probe/Endpoint",
-          { path = "/" }, { path = "/e" })
+        local endpoint = {[K.kind]="class", [K.classname]="@$external/host/complete_probe/Endpoint", path="/e"}
         local tags = { "a", "b" }
         local scores = { 1.5, 2 }
-        local cfg = rt.class_("@$external/host/complete_probe/ServerConfig",
-          { port = 0, endpoint = rt.__MISSING, backup = rt.__MISSING,
-            tags = rt.__MISSING, label = rt.__MISSING, note = rt.__MISSING,
-            scores = rt.__MISSING },
-          { port = 7, endpoint = endpoint, backup = endpoint, tags = tags,
-            note = rt.__NULL, scores = scores })
+        local cfg = {[K.kind]="class", [K.classname]="@$external/host/complete_probe/ServerConfig",
+          port=7, endpoint=endpoint, backup=endpoint, tags=tags, note=rt.__NULL, scores=scores}
 
-        local shared = rt.class_("@$external/host/complete_probe/Endpoint",
-          { path = "/" }, { path = "/x" })
+        local shared = {[K.kind]="class", [K.classname]="@$external/host/complete_probe/Endpoint", path="/x"}
 
         local wrapper = { [K.kind] = "function", sig = "(number)->number",
           f = function(x) return x + 1 end }
@@ -4831,15 +4730,12 @@ public class HostModuleLoadEmissionTest {
         end
 
         local function endpoint(path)
-          return rt.class_(SPEC .. "Endpoint", {path = ""}, {path = path})
+          return {[K.kind]="class", [K.classname]=SPEC .. "Endpoint", path=path}
         end
 
         local function config(port, path, first, second, note)
-          return rt.class_(SPEC .. "ServerConfig",
-            {port = 0, endpoint = rt.__MISSING, tags = rt.__MISSING,
-             note = rt.__MISSING},
-            {port = port, endpoint = endpoint(path), tags = {first, second},
-             note = note})
+          return {[K.kind]="class", [K.classname]=SPEC .. "ServerConfig",
+            port=port, endpoint=endpoint(path), tags={first,second}, note=note}
         end
 
         local function wrapper(f)
@@ -4847,8 +4743,7 @@ public class HostModuleLoadEmissionTest {
         end
 
         local function bundle(label, action)
-          return rt.class_(SPEC .. "Bundle", {label = "", action = rt.__MISSING},
-            {label = label, action = action})
+          return {[K.kind]="class", [K.classname]=SPEC .. "Bundle", label=label, action=action}
         end
 
         local function accepted(fn)
@@ -5142,8 +5037,8 @@ public class HostModuleLoadEmissionTest {
         import * as json from "std/json";
 
         class Point {
-          x: number = 0;
-          y: number = 0;
+          x: number;
+          y: number;
         }
 
         function scale(s: string): string {
@@ -5370,8 +5265,7 @@ public class HostModuleLoadEmissionTest {
         end
 
         local function cfg(count, ratio)
-          return rt.class_(SPEC .. "Cfg", {count = 0, ratio = 0.0},
-            {count = count, ratio = ratio})
+          return {[K.kind]="class", [K.classname]=SPEC .. "Cfg", count=count, ratio=ratio}
         end
 
         local keptPlain
@@ -5464,13 +5358,8 @@ public class HostModuleLoadEmissionTest {
           makeBundle = function()
             local extras = {fn = wrapper("(number)->number",
               function(x) return x * 2 end)}
-            return rt.class_(SPEC .. "Bundle",
-              {label = "", action = rt.__MISSING,
-               extras = rt.__MISSING},
-              {label = "made",
-               action = wrapper("(string)->string",
-                 function(s) return s .. "?" end),
-               extras = extras})
+            return {[K.kind]="class", [K.classname]=SPEC .. "Bundle", label="made",
+              action=wrapper("(string)->string", function(s) return s .. "?" end), extras=extras}
           end,
 
           consumeBundle = function(b)
@@ -5497,13 +5386,8 @@ public class HostModuleLoadEmissionTest {
           end,
 
           makeBadBundle = function()
-            return rt.class_(SPEC .. "Bundle",
-              {label = "", action = rt.__MISSING,
-               extras = rt.__MISSING},
-              {label = "bad",
-               action = wrapper("(number)->number",
-                 function(x) return x + 1 end),
-               extras = {}})
+            return {[K.kind]="class", [K.classname]=SPEC .. "Bundle", label="bad",
+              action=wrapper("(number)->number", function(x) return x + 1 end), extras={}}
           end,
 
           makePlainTable = function()
@@ -5769,17 +5653,15 @@ public class HostModuleLoadEmissionTest {
                 "expected", "@$external/host/cfg/ServerConfig",
                 "actual", "@$external/host/cfg/Other")),
             cfgOrigin, "cfg-identity-mismatch");
-        String defaultsMessage = invalidMetadata("ServerConfig", CFG_SPECIFIER,
-            "defaults").message();
         String fieldsMessage = invalidMetadata("Endpoint", CFG_SPECIFIER,
             "fields").message();
-        checkLuaArmSeed(cfgFixture, "host/cfg.lua",
+        checkLuaSuccessfulLoadSeed(cfgFixture,
             CFG_LUA.replace("ServerConfig_defaults", "ServerConfig_other"),
-            defaultsMessage, cfgOrigin, "cfg-missing-defaults");
-        checkLuaArmSeed(cfgFixture, "host/cfg.lua",
+            "cfg-without-retired-defaults");
+        checkLuaSuccessfulLoadSeed(cfgFixture,
             CFG_LUA.replace("ServerConfig_defaults = { port = 8080,",
                 "ServerConfig_defaults = 42, ServerConfig_ignored = {"),
-            defaultsMessage, cfgOrigin, "cfg-non-table-defaults");
+            "cfg-ignores-retired-defaults-shape");
         checkLuaSeed(cfgFixture, "host/cfg.lua",
             CFG_LUA.replace(
                 "ServerConfig = { [__dealCarrierKeys.kind] = \"class\", [__dealCarrierKeys.classname] = "
@@ -5927,6 +5809,16 @@ public class HostModuleLoadEmissionTest {
             + importOp.origin().span().startColumn();
     }
 
+    private static void checkLuaSuccessfulLoadSeed(Baseline fixture, String rawLua,
+            String label) throws Exception {
+        checkLuaSeed(fixture, "host/cfg.lua", rawLua, artifact -> """
+            dofile("%s")
+            local ok, err = __dealMain()
+            if not ok then error(tostring(err and err.m)) end
+            print("PROBE-OK")
+            """.formatted(artifact.toAbsolutePath().toString()), label);
+    }
+
     private static void checkLuaArmSeed(Baseline fixture, String hostFile,
             String rawLua, String expectedMessage, String origin, String label)
             throws Exception {
@@ -5979,7 +5871,7 @@ public class HostModuleLoadEmissionTest {
             ProcessOutcome run = runProcess(List.of("luajit",
                 probe.toAbsolutePath().toString()), workspace, true);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
-                "the negative seed '" + label + "' fails with the pinned E8011: "
+                "the host load seed '" + label + "' executes its expected outcome: "
                     + "exit=" + run.exitCode() + " stdout=" + escaped(run.stdout())
                     + " stderr=" + escaped(run.stderr()));
         } finally {
@@ -6049,8 +5941,8 @@ public class HostModuleLoadEmissionTest {
             if ping.f() ~= "pong" then fail("the loaded wrapper call") end
             local cfgSurface = __exportSurfaces["%s"]
             if type(cfgSurface) ~= "table" then fail("no cfg surface") end
-            if type(cfgSurface["ServerConfig_defaults"]) ~= "table" then
-              fail("the loaded <C>_defaults copy-through")
+            if cfgSurface["ServerConfig_defaults"] ~= nil then
+              fail("retired defaults metadata was copied through")
             end
             local before = surface
             __moduleStates = {}
@@ -6415,8 +6307,10 @@ public class HostModuleLoadEmissionTest {
                 check(App.__hostM$$PROBE$$join != null, "the join binding exists");
                 check(App.__hostM$$PROBE$$apply != null, "the apply binding exists");
                 check(App.__hostM$$PROBE$$fetchValue != null, "the async binding exists");
-                check(App.__hostD$$CFG$$ServerConfig != null,
-                    "the defaults capture exists");
+                for (java.lang.reflect.Field field : App.class.getDeclaredFields()) {
+                  check(!field.getName().startsWith("__hostD$"),
+                      "no retired defaults capture exists");
+                }
                 java.lang.reflect.Method before = App.__hostM$$PROBE$$ping;
                 App.__hostLoad$$PROBE$("probe.deal", 6, 1);
                 check(App.__hostM$$PROBE$$ping == before,
@@ -6507,11 +6401,8 @@ public class HostModuleLoadEmissionTest {
                 importOrigin(fixture, MISSING_SPECIFIER), "missing-host-class");
         }
 
-        // The declared-class seeds: a host class without its mandatory
-        // <C>_defaults field and a host class whose <C>_defaults is not a
-        // map both render the closed HOST_LOAD_INVALID_METADATA arm — the
-        // authority's message at the import statement's origin, no
-        // expected/actual fields (ISSUE-0769).
+        // Unrelated host export validation still runs when retired defaults
+        // metadata is absent or has an arbitrary shape.
         String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
         checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
             final class HostCfg {
@@ -6520,8 +6411,8 @@ public class HostModuleLoadEmissionTest {
               public static Object describe(Object s) { return "cfg"; }
             }
             """, "E8011",
-            invalidMetadata("ServerConfig", CFG_SPECIFIER, "defaults").message(),
-            cfgOrigin, "missing-defaults");
+            "missing host export 'describe' in module 'host/cfg'",
+            cfgOrigin, "missing-export-without-defaults");
         checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
             final class HostCfg {
               public static final java.util.Map<String, Object> Endpoint_defaults =
@@ -6530,8 +6421,8 @@ public class HostModuleLoadEmissionTest {
               public static Object describe(Object s) { return "cfg"; }
             }
             """, "E8011",
-            invalidMetadata("ServerConfig", CFG_SPECIFIER, "defaults").message(),
-            cfgOrigin, "wrong-kind-defaults");
+            "missing host export 'describe' in module 'host/cfg'",
+            cfgOrigin, "missing-export-with-arbitrary-retired-defaults");
     }
 
     private static void checkJvmLoadFailure(Baseline fixture, String hostFileName,

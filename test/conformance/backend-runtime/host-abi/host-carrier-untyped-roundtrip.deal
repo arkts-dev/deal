@@ -7,8 +7,8 @@ import * as host from "host/carrieruntyped";
 import * as util from "./carrier_untyped_lib";
 
 class Point {
-  x: number = 0;
-  y: number = 0;
+  x: number;
+  y: number;
 }
 
 function check(condition: boolean, message: string): null {

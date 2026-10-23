@@ -102,17 +102,17 @@ public class JsBackendTest {
             testJsonableRoundTripNode();
             testOrchestratorJsonableCrossModule();
             PreparedJs nestedExport = prepareJs("""
-                export class Outer { x: number = 1; }
+                export class Outer { x: number; }
                 export function test(): number { return 1; }
                 """, "moduleclass-export");
             PreparedJs nestedShadow = prepareJs("""
-                class Outer { v: number = 1; }
-                class Alternate { w: string = "s"; }
+                class Outer { v: number; }
+                class Alternate { w: string; }
                 export function test(): number {
-                  let a: Outer = {};
+                  let a: Outer = {v: 1};
                   {
                     a = { v: 9 };
-                    let b: Alternate = {};
+                    let b: Alternate = {w: "s"};
                     if (b.w !== "s") { return 0; }
                   }
                   if (a.v !== 9) { return 0; }
@@ -1658,7 +1658,7 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class Holder {
-              static: number = 0;
+              static: number;
             }
             export function test(): number {
               let static: number = 1;
@@ -1681,9 +1681,9 @@ public class JsBackendTest {
         check(js.contains("[\"static\"]")
                 || js.contains(", \"static\")"),
             "property position keeps the raw key");
-        check(js.contains("// Class default @Main/Main.deal/Holder.static")
-                && js.contains("= 0.0;"),
-            "the synthesized plan keys the field by the raw name");
+        check(js.contains("\"static\"")
+                && !js.contains("// Class default"),
+            "the structural layout keys the field by the raw name");
         check(js.contains("$rt.publishModule(\"Main\", \"test\","),
             "export key stays raw");
     }
@@ -1692,7 +1692,7 @@ public class JsBackendTest {
         System.out.println("-- Wrapper shapes and exact canonical descriptors --");
 
         JsEmission res = generate("""
-            class User { name: string = ""; }
+            class User { name: string; }
             function add(a: number, b: number): number { return a + b; }
             function first(xs: number[]): number { return xs[0]; }
             function wrap(u: User): User { return u; }
@@ -1740,7 +1740,7 @@ public class JsBackendTest {
         System.out.println("-- checkType call-site descriptors (canonical text) --");
 
         JsEmission res = generate("""
-            class User { name: string = ""; }
+            class User { name: string; }
             export function test(): number {
               let t: table = {};
               let b: number[] = t.arr;
@@ -1805,12 +1805,12 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class Point {
-              x: number = 10;
+              x: number;
               nick?: string | null;
             }
-            class Hidden { v: number = 0; }
+            class Hidden { v: number; }
             export class Public {
-              y: number = 0;
+              y: number;
             }
             export function test(): number { return 1; }
             """, "classpins");
@@ -1819,8 +1819,8 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("// Class default @Main/Main.deal/Point.x"),
-            "the class default plan keys the required field by its raw name");
+        check(!js.contains("// Class default @Main/Main.deal/Point.x"),
+            "the structural layout keys the required field by its raw name");
         check(!js.contains("// Class default @Main/Main.deal/Point.nick"),
             "the absent optional field has no default evaluator");
         check(js.contains("// The defaults-only factory transfer of @Main/Main.deal/Public."),
@@ -1854,9 +1854,9 @@ public class JsBackendTest {
         JsEmission res = generate("""
             // @jsonable
             export class U {
-              name: string = "";
+              name: string;
               nick?: string | null;
-              age: number = 0;
+              age: number;
             }
             export function test(): number { return 1; }
             """, "jsonable-pins");
@@ -1873,7 +1873,7 @@ public class JsBackendTest {
             "the hidden C$fields descriptor export is emitted");
         check(js.contains("$rt.function(\"(string)->?@Main/Main.deal/U\""),
             "U$fromJson carries the canonical (string)->?@Main/Main.deal/U signature");
-        check(js.contains("$rt.jsonFromJson(\"@Main/Main.deal/U\", $fU, null,")
+        check(js.contains("$rt.jsonFromJson(\"@Main/Main.deal/U\", $fU,")
                 && js.contains("\"jstest-jsonable-pins.deal\", 2, 8)"),
             "the fromJson walker call carries the identity, C$fields, and the "
                 + "recorded call span");
@@ -1882,16 +1882,15 @@ public class JsBackendTest {
         check(js.contains("$rt.jsonToJson(\"@Main/Main.deal/U\", "),
             "the toJson walker call carries the identity backstop");
         check(js.contains("{ name: \"name\", jtype: \"string\", optional: false, "
-                + "nullable: false, hasDefault: true")
+                + "nullable: false }")
                 && js.contains("{ name: \"nick\", jtype: \"string\", "
-                + "optional: true, nullable: true, hasDefault: false }")
+                + "optional: true, nullable: true }")
                 && js.contains("{ name: \"age\", jtype: \"number\", optional: false, "
-                + "nullable: false, hasDefault: true"),
+                + "nullable: false }"),
             "U$fields is the declaration-order descriptor array with one "
                 + "role per key (name/jtype/optional/nullable/hasDefault)");
-        check(js.contains("// Class default @Main/Main.deal/U.name")
-                && js.contains("// Class default @Main/Main.deal/U.age"),
-            "the field evaluators stay the per-construction defaults thunks");
+        check(!js.contains("hasDefault") && !js.contains("evaluator:"),
+            "the structural field metadata has no initializer hook");
     }
 
     /**
@@ -1907,9 +1906,9 @@ public class JsBackendTest {
             NodeResult run = runDealNode("""
                 // @jsonable
                 export class U {
-                  name: string = "";
+                  name: string;
                   nick?: string | null;
-                  age: number = 0;
+                  age: number;
                 }
                 export function test(): number {
                   let u: U = { name: "Ada", nick: null, age: 36 };
@@ -1923,7 +1922,7 @@ public class JsBackendTest {
                       if (w.nick !== null || w.age !== 36) { return 0; }
                     } else { return 0; }
                   } else { return 0; }
-                  let missing: U = { name: "A" };
+                  let missing: U = { name: "A", age: 0 };
                   let j1: string = U$toJson(missing);
                   if (j1 !== "{\\"name\\":\\"A\\",\\"age\\":0}") { return 0; }
                   let m2: U | null = U$fromJson(j1);
@@ -1963,7 +1962,7 @@ public class JsBackendTest {
         writeFile("xjson_proj/src/lib_a.deal", """
             // @jsonable
             export class Inner {
-              v: number = 0;
+              v: number;
             }
             export function inner(v: number): Inner {
               return { v: v };
@@ -1974,8 +1973,8 @@ public class JsBackendTest {
 
             // @jsonable
             export class Wrap {
-              inner: A.Inner = {};
-              children: A.Inner[] = [];
+              inner: A.Inner;
+              children: A.Inner[];
             }
             export function make(a: number): Wrap {
               return { inner: A.inner(a), children: [A.inner(a + 1)] };
@@ -2048,13 +2047,13 @@ public class JsBackendTest {
 
     private static String nestedClassShadowSubject() {
         return """
-            class Outer { v: number = 1; }
+            class Outer { v: number; }
             export function test(): number {
-              let a: Outer = {};
+              let a: Outer = {v: 1};
               {
-                class Outer { w: string = "s"; }
+                class Outer { w: string; }
                 a = { v: 9 };
-                let b: Outer = {};
+                let b: Outer = {w: "s"};
                 if (b.w !== "s") { return 0; }
               }
               if (a.v !== 9) { return 0; }
@@ -2081,14 +2080,17 @@ public class JsBackendTest {
         assertLocalClassRejected("""
             export function test(): number {
               let seed: number = 40;
-              class Inner { v: number = seed + 2; }
+              class Inner { v: number; }
               return 1;
             }
             """, "nestedclass");
         JsEmission nested = generate("""
-            class Seed { value: number = 40; }
-            class Inner { v: number = function(): number { let seed: Seed = {}; return seed.value + 2; }(); }
-            export function test(): number { return 1; }
+            class Seed { value: number; }
+            class Inner { v: number; }
+            export function test(): number {
+              let value: Inner = {v: function(): number {let seed: Seed = {value: 40}; return seed.value + 2;}()};
+              return value.v;
+            }
             """, "moduleclass");
         check(nested != null && !nested.hasErrors(),
             "nested class declaration generates with no diagnostics: "
@@ -2096,15 +2098,14 @@ public class JsBackendTest {
         if (nested == null || nested.hasErrors()) return;
 
         String js = nested.source();
-        int defaults = js.indexOf("// Class default @Main/Main.deal/Inner.v");
-        check(defaults >= 0,
-            "the declaration-site default plan carries the canonical identity");
+        check(!js.contains("// Class default"),
+            "structural class declarations emit no default evaluator");
         check(js.contains("$rt.setProp($s45, \"$classname\", \"@Main/Main.deal/Seed\");")
                 || js.contains("\"$classname\", \"@Main/Main.deal/Seed\""),
             "the default evaluator constructs the same-module Seed with its "
                 + "canonical identity");
-        check(js.contains("// Class default @Main/Main.deal/Seed.value"),
-            "the Seed default plan carries its own field identity");
+        check(js.contains("\"$classname\", \"@Main/Main.deal/Inner\""),
+            "the explicit outer construction retains its canonical identity");
 
         // A legal module default invokes an ordinary function wrapper.
         // Its removed local-class counterpart remains a separate negative.
@@ -2112,22 +2113,22 @@ public class JsBackendTest {
             export function test(): number {
               let seed: number = 40;
               function next(): number { return seed + 2; }
-              class Inner { v: number = next(); }
+              class Inner { v: number; }
               return 1;
             }
             """, "nestedclass-func");
         JsEmission func = generate("""
             function next(): number { let seed: number = 40; return seed + 2; }
-            class Inner { v: number = next(); }
-            export function test(): number { return 1; }
+            class Inner { v: number; }
+            export function test(): number { let value: Inner = {v: next()}; return value.v; }
             """, "moduleclass-func");
         check(func != null && !func.hasErrors(),
             "nested class with a scope-local default function generates: "
                 + (func == null ? "<null>" : func.diagnostics()));
         if (func != null && !func.hasErrors()) {
-            check(func.source().contains("// Class default @Main/Main.deal/Inner.v")
-                    && func.source().contains(".$f(\"jstest-moduleclass-func.deal\", 2, 27)"),
-                "the plan evaluator calls the ordinary function wrapper");
+            check(!func.source().contains("// Class default")
+                    && func.source().contains("next$f"),
+                "the provided expression retains the ordinary function wrapper");
         }
 
         // A module class publishes META and hidden construction under the
@@ -2160,13 +2161,13 @@ public class JsBackendTest {
         assertLocalClassRejected("""
             export function test(): number {
               // @jsonable
-              export class Outer { x: number = 1; }
+              export class Outer { x: number; }
               return 1;
             }
             """, "nestedclass-jsonable");
         assertLocalClassRejected("""
             export function test(): number {
-              export class Outer { x: number = 1; }
+              export class Outer { x: number; }
               return 1;
             }
             """, "nestedclass-export");
@@ -2180,7 +2181,7 @@ public class JsBackendTest {
                 + (shadowBase == null ? "<null>" : shadowBase.diagnostics()));
         if (shadowBase != null && !shadowBase.hasErrors()) {
             String sjs = shadowBase.source();
-            check(sjs.contains("// Class default @Main/Main.deal/Alternate.w"),
+            check(sjs.contains("\"$classname\", \"@Main/Main.deal/Alternate\""),
                 "the second module class has its own unambiguous artifacts");
             int outerTags = countOf(sjs, "\"$classname\", \"@Main/Main.deal/Outer\"");
             int alternateTags = countOf(sjs,
@@ -2212,7 +2213,7 @@ public class JsBackendTest {
               let seed: number = 40;
               function next(): number { return seed + 2; }
               class Inner {
-                v: number = next();
+                v: number;
               }
               let a: Inner = { };
               seed = 100;
@@ -2224,14 +2225,15 @@ public class JsBackendTest {
             """, "nestedclass-node");
         NodeResult run = runDealNode("""
             class Inner {
-              next: () => number = function(): () => number {
-                let seed: number = 40;
-                return function(): number { let value: number = seed + 2; seed = 100; return value; };
-              }();
+              next: () => number;
+            }
+            function make(): () => number {
+              let seed: number = 40;
+              return function(): number { let value: number = seed + 2; seed = 100; return value; };
             }
             export function test(): number {
-              let a: Inner = { };
-              let b: Inner = { };
+              let a: Inner = {next: make()};
+              let b: Inner = {next: make()};
               if (a.next() !== 42) { return 0; }
               if (a.next() !== 102) { return 0; }
               if (b.next() !== 42) { return 0; }
@@ -2263,7 +2265,7 @@ public class JsBackendTest {
             + " { throw new Error(\"identity: \" + m.Outer.$classname); }\n"
             + "if (typeof m[\"Outer$new\"] !== \"function\")"
             + " { throw new Error(\"exports.Outer$new missing\"); }\n"
-            + "const c = m[\"Outer$new\"]({}, \"probe\", 1, 1);\n"
+            + "const c = m[\"Outer$new\"]({x:1}, \"probe\", 1, 1);\n"
             + "if (c.x !== 1) { throw new Error(\"construction: \" + c.x); }\n"
             + "console.log(\"nested-export-ok\");\n");
         NodeResult probe = runNodeScript(dir, "probe.js");
@@ -2277,19 +2279,19 @@ public class JsBackendTest {
         // Removed local shadowing rejects; distinct module classes remain legal
         // when constructed inside ordinary function/block scopes.
         assertLocalClassRejected("""
-            class Shadowed { v: number = 1; }
+            class Shadowed { v: number; }
             export function test(): number {
-              class Shadowed { w: number = 2; }
+              class Shadowed { w: number; }
               let s: Shadowed = { };
               if (s.w !== 2) { return 0; }
               return 1;
             }
             """, "nestedclass-shadow");
         NodeResult shadow = runDealNode("""
-            class Shadowed { v: number = 1; }
-            class Alternate { w: number = 2; }
+            class Shadowed { v: number; }
+            class Alternate { w: number; }
             export function test(): number {
-              let s: Alternate = { };
+              let s: Alternate = {w: 2};
               if (s.w !== 2) { return 0; }
               return 1;
             }
@@ -2443,14 +2445,14 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             function boomCode(): null {
-              if (true) { throw { code: "E_CODE" }; }
+              if (true) { throw { code: "E_CODE", message: "" }; }
               return null;
             }
             function boomMsg(): null {
-              if (true) { throw { message: "m" }; }
+              if (true) { throw { code: "", message: "m" }; }
               return null;
             }
-            function produce(): Error { return { message: "ret" }; }
+            function produce(): Error { return { code: "", message: "ret" }; }
             function rethrow(): null {
               try {
                 throw { code: "C", message: "m" };
@@ -2472,26 +2474,25 @@ public class JsBackendTest {
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
-        check(js.contains("() => ({[\"code\"]: \"\", [\"message\"]: \"\"})"),
-            "the builtin Error defaults thunk fills both absent fields with "
-                + "the \"\" default");
-        check(js.contains("$rt.makeClass(\"Error\", \"Error\", ")
+        check(js.contains("{name: \"code\", descriptor: \"string\", optional: false}")
+                && js.contains("{name: \"message\", descriptor: \"string\", optional: false}"),
+            "the builtin Error structural layout requires both fields");
+        check(js.contains("$rt.classPlan(\"Error\", ")
                 && js.contains("{[\"code\"]: ")
                 && js.contains("\"jstest-errpins.deal\", 2, 21)"),
             "a literal throw with an omitted message keeps the code-only "
                 + "provided map at the literal span");
-        check(js.contains("{[\"message\"]: ")
+        check(js.contains("[\"message\"]: ")
                 && js.contains("\"jstest-errpins.deal\", 6, 21)"),
-            "a literal throw with an omitted code keeps the message-only "
-                + "provided map");
-        check(js.contains("$rt.makeClass(\"Error\", \"Error\", ")
-                && js.contains("{[\"message\"]: "),
+            "a literal throw keeps the explicitly supplied message");
+        check(js.contains("\"Error\"")
+                && js.contains("[\"code\"]: ") && js.contains("[\"message\"]: "),
             "a contextual Error literal constructs through the canonical "
                 + "Error factory");
         check(js.contains("throw $rt.throwValue(")
                 && js.contains("\"jstest-errpins.deal\", 12, 5)"),
             "the inner literal throw emits the located throwValue form");
-        check(js.contains("$rt.reifyError($c113)"),
+        check(js.contains("$rt.reifyError("),
             "the catch binding reifies through $rt.reifyError");
         check(js.contains("\"jstest-errpins.deal\", 14, 5)"),
             "a non-literal rethrow routes through throwValue with its own "
@@ -2853,18 +2854,15 @@ public class JsBackendTest {
                         + "identity: " + js);
                 check(js.contains("{ name: " + q + "endpoint" + q + ", $d: "
                         + q + "@$external/hostmod/Endpoint" + q
-                        + ", optional: false, nullable: false, "
-                        + "hasDefault: false }"),
+                        + ", optional: false, nullable: false }"),
                     "the same-module class field descriptor resolves to the "
                         + "declaring module's canonical identity: " + js);
                 check(js.contains("{ name: " + q + "tags" + q + ", $d: " + q
-                        + "[string]" + q + ", optional: true, nullable: false,"
-                        + " hasDefault: false }"),
+                        + "[string]" + q + ", optional: true, nullable: false }"),
                     "the optional array field renders the canonical [D] "
                         + "descriptor and the optional flag: " + js);
                 check(js.contains("{ name: " + q + "note" + q + ", $d: " + q
-                        + "?string" + q + ", optional: true, nullable: true,"
-                        + " hasDefault: false }"),
+                        + "?string" + q + ", optional: true, nullable: true }"),
                     "the nullable optional field renders the canonical ?D "
                         + "descriptor and both flags: " + js);
                 check(js.contains(q + "describe" + q + ": { $k: " + q
@@ -3714,7 +3712,7 @@ public class JsBackendTest {
         // no E2002, the annotation resolves to the user ClassSymbol, and
         // the artifact preserves the user class's generated members.
         PreparedJs clsPrepared = prepareJs("""
-            class bytes { x: number = 0; }
+            class bytes { x: number; }
             export function test(): number {
               let b: bytes = { x: 2 };
               return b.x;
@@ -3730,9 +3728,8 @@ public class JsBackendTest {
                 "the user class descriptor is not the retired primitive bytes");
             check(js.contains("\"$classname\", \"@Main/Main.deal/bytes\""),
                 "the user class named bytes keeps its own canonical identity");
-            check(js.contains("// Class default @Main/Main.deal/bytes.x"),
-                "the user class named bytes emits its own field default "
-                    + "plan");
+            check(!js.contains("// Class default @Main/Main.deal/bytes.x"),
+                "the user class named bytes has no initializer evaluator");
         }
 
         // (b) A module-level user FUNCTION named bytes: checker-accepted,
@@ -3775,7 +3772,7 @@ public class JsBackendTest {
             export function test(): number {
               let out: number = 0;
               {
-                class bytes { x: number = 0; }
+                class bytes { x: number; }
                 let b: bytes = { x: 2 };
                 out = b.x;
               }
@@ -3783,7 +3780,7 @@ public class JsBackendTest {
             }
             """, "bytes-user-class-nested-run");
         NodeResult nestedRun = runDealNode("""
-            class bytes { x: number = 0; }
+            class bytes { x: number; }
             export function test(): number {
               let out: number = 0;
               {
@@ -3904,7 +3901,7 @@ public class JsBackendTest {
               b[0] = b[0] + 1;
               return b;
             }
-            class Box { f: async (b: number[]) => number[] = bump; }
+            class Box { f: async (b: number[]) => number[]; }
             export async function test(): number {
               let b: number[] = [0];
               let afs: (async (b: number[]) => number[])[] = [bump, bump];
@@ -3935,13 +3932,13 @@ public class JsBackendTest {
 
 
         NodeResult run = runDealNode("""
-            class ArrayBox { buf: number[] = [0, 0]; }
+            class ArrayBox { buf: number[]; }
             export function test(): number {
-              let h: ArrayBox = {};
+              let h: ArrayBox = {buf: [0, 0]};
               if (h.buf.length !== 2) { return 0; }
               h.buf[0] = 6;
               if (h.buf[0] !== 6) { return 0; }
-              let h2: ArrayBox = {};
+              let h2: ArrayBox = {buf: [0, 0]};
               if (h2.buf[0] !== 0 || h2.buf.length !== 2) { return 0; }
               h.buf[0] = 8;
               if (h2.buf[0] !== 0) { return 0; }
@@ -4178,7 +4175,7 @@ public class JsBackendTest {
             """},
             {"closure-pin-async-container", """
             async function bump(b: number[]): number[] { b[0] = b[0] + 1; return b; }
-            class Box { f: async (b: number[]) => number[] = bump; }
+            class Box { f: async (b: number[]) => number[]; }
             export async function test(): number {
               let afs: (async (b: number[]) => number[])[] = [bump];
               let box: Box = { f: bump };
@@ -4441,22 +4438,22 @@ public class JsBackendTest {
             "use strict";
             const $rt = require("./deal/runtime");
             try {
-              $rt.makeClass("C", "@m/C", () => ({ ["x"]: 0 }), { ["y"]: 1 }, "probe.js", 3, 1);
+              $rt.classPlan("@m/C", [{name:"x",descriptor:"number",optional:false}], { ["y"]: 1 }, "probe.js", 3, 1);
               console.log("NO-ERROR");
             } catch (e) {
               console.log(e.$dealCode + ": " + e.message);
             }
             """);
         check(run.exitCode() == 0
-                && run.output().equals("E8007: extra field 'y' in class 'C'"),
-            "makeClass rejects an extra provided field with E8007: " + run.output());
+                && run.output().equals("E8007: extra field 'y' in class '@m/C'"),
+            "classPlan rejects an extra provided field with E8007: " + run.output());
     }
 
     private static void testClassIdentityTagPair() throws Exception {
         System.out.println("-- Node: class identity tag pair --");
 
         NodeResult ok = runDealNode("""
-            class User { name: string = ""; }
+            class User { name: string; }
             export function test(): number {
               let u: User = { name: "a" };
               let t: table = { item: u };
@@ -4469,8 +4466,8 @@ public class JsBackendTest {
             "a constructed instance passes its class-typed boundary: " + ok.output());
 
         NodeResult wrong = runDealNode("""
-            class User { name: string = ""; }
-            class Other { name: string = ""; }
+            class User { name: string; }
+            class Other { name: string; }
             export function test(): number {
               let o: Other = { name: "b" };
               let t: table = { item: o };
@@ -4488,7 +4485,7 @@ public class JsBackendTest {
         NodeResult tags = runRuntimeProbe("tags", """
             "use strict";
             const $rt = require("./deal/runtime");
-            const $v = $rt.makeClass("C", "@m/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
+            const $v = $rt.classPlan("@m/C", [{name:"x",descriptor:"number",optional:false}], { ["x"]: 1 }, "probe.js", 1, 1);
             if ($v.$kind !== "class" || $v.$classname !== "@m/C") {
               console.log("BAD-TAGS");
             } else {
@@ -4522,7 +4519,7 @@ public class JsBackendTest {
             $rt.checkType("?(number)->number", $f, "probe.js", 1, 1);
             $rt.checkType("[(number)->number]", [$f], "probe.js", 1, 1);
             // Byte-for-byte class-atom comparison.
-            const $v = $rt.makeClass("C", "@m/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
+            const $v = $rt.classPlan("@m/C", [{name:"x",descriptor:"number",optional:false}], { ["x"]: 1 }, "probe.js", 1, 1);
             $rt.checkType("@m/C", $v, "probe.js", 1, 1);
             try { $rt.checkType("@m/c", $v, "probe.js", 1, 1); $fail = "class-case"; } catch (e) {}
             // Differential whitespace pin: U+200B ZERO WIDTH SPACE is a
@@ -4531,7 +4528,7 @@ public class JsBackendTest {
             // the class atom @a<U+200B>b/C parses and compares
             // byte-for-byte; U+200A HAIR SPACE is forbidden whitespace
             // and takes the pinned E8001 cannot-parse arm.
-            const $v2 = $rt.makeClass("C", "@a\\u200Bb/C", () => ({ ["x"]: 0 }), { ["x"]: 1 }, "probe.js", 1, 1);
+            const $v2 = $rt.classPlan("@a\\u200Bb/C", [{name:"x",descriptor:"number",optional:false}], { ["x"]: 1 }, "probe.js", 1, 1);
             $rt.checkType("@a\\u200Bb/C", $v2, "probe.js", 1, 1);
             try {
               $rt.checkType("@a\\u200Ab/C", $v2, "probe.js", 1, 1);
@@ -4768,7 +4765,7 @@ public class JsBackendTest {
         NodeResult run = runDealNode("""
             function checkMsg(): number {
               try {
-                throw { message: "x" };
+                throw { code: "", message: "x" };
               } catch (e) {
                 if (e.code === "" && e.message === "x") { return 1; }
                 return 0;
@@ -4777,7 +4774,7 @@ public class JsBackendTest {
             }
             function checkCode(): number {
               try {
-                throw { code: "C" };
+                throw { code: "C", message: "" };
               } catch (e) {
                 if (e.code === "C" && e.message === "") { return 1; }
                 return 0;
@@ -4796,9 +4793,9 @@ public class JsBackendTest {
         System.out.println("-- Node: contextual Error construction --");
 
         NodeResult run = runDealNode("""
-            function produce(): Error { return { message: "ret" }; }
+            function produce(): Error { return { code: "", message: "ret" }; }
             export function test(): number {
-              let e: Error = { message: "x" };
+              let e: Error = { code: "", message: "x" };
               if (e.code !== "" || e.message !== "x") { return 0; }
               let f: Error = produce();
               if (f.code !== "" || f.message !== "ret") { return 0; }
@@ -4957,7 +4954,7 @@ public class JsBackendTest {
         NodeResult run = runDealNode("""
             import * as json from "std/json";
             class User {
-              name: string = "";
+              name: string;
               nick?: string | null;
             }
             export function test(): number {
@@ -5184,51 +5181,51 @@ public class JsBackendTest {
 
             // @jsonable
             export class Box {
-              nums: number[] = [];
-              tags: string[][] = [];
-              maybe: (number|null)[] = [];
-              ns: number[] = [];
-              nmaybe: (number|null)[] = [];
-              nnested: number[][] = [];
+              nums: number[];
+              tags: string[][];
+              maybe: (number|null)[];
+              ns: number[];
+              nmaybe: (number|null)[];
+              nnested: number[][];
             }
 
             export function test(): number {
               let t: table = json.parse("{\\"values\\":[1,2]}");
-              let b: Box = {};
+              let b: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               b.nums = t.values;
               if (!equivalent(Box$toJson(b), "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let n: table = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
-              let c: Box = {};
+              let c: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               c.tags = n.values;
               if (!equivalent(Box$toJson(c), "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let alias: number[] = b.nums;
               alias[0] = 7;
               if (!equivalent(Box$toJson(b), "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let empty: table = json.parse("{\\"values\\":[]}");
-              let e: Box = {};
+              let e: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               e.nums = empty.values;
               if (!equivalent(Box$toJson(e), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let mixed: table = json.parse("{\\"values\\":[1,null]}");
-              let m: Box = {};
+              let m: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               m.maybe = mixed.values;
               if (!equivalent(Box$toJson(m), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               // A decoded array's number slots keep the graph's own
               // classification: 1, 1.0 and -0.0 are number-classified and
               // spell as integers, 1.5 keeps the number spelling.
               let numv: table = json.parse("{\\"values\\":[1,1.0,10]}");
-              let nb: Box = {};
+              let nb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               nb.ns = numv.values;
               if (!equivalent(Box$toJson(nb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let nfrac: table = json.parse("{\\"values\\":[1.5,-0.0]}");
-              let fb: Box = {};
+              let fb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               fb.ns = nfrac.values;
               if (!equivalent(Box$toJson(fb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let nnull: table = json.parse("{\\"values\\":[1,null,2]}");
-              let nm: Box = {};
+              let nm: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               nm.nmaybe = nnull.values;
               if (!equivalent(Box$toJson(nm), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}")) { return 0; }
               let nnest: table = json.parse("{\\"values\\":[[1],[2,3]]}");
-              let nn: Box = {};
+              let nn: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               nn.nnested = nnest.values;
               if (!equivalent(Box$toJson(nn), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}")) { return 0; }
               // A decoded slot carrying the number variant is a number in
@@ -5236,7 +5233,7 @@ public class JsBackendTest {
               // integral, so the number row fails exactly like the other
               // lanes instead of re-rendering it as an number.
               let nv: table = json.parse("{\\"values\\":[2147483647.00000001]}");
-              let vb: Box = {};
+              let vb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
               vb.nums = nv.values;
               let intnum: string = "";
               try { intnum = Box$toJson(vb); }
@@ -5295,17 +5292,17 @@ public class JsBackendTest {
 
             // @jsonable
             export class WBox {
-              nums: number[] = [];
+              nums: number[];
             }
 
             // @jsonable
             export class IBox {
-              n: number = 0;
+              n: number;
             }
 
             // @jsonable
             export class NBox {
-              n: number = 0.0;
+              n: number;
             }
 
             export function test(): number {
@@ -5313,7 +5310,7 @@ public class JsBackendTest {
               // variant: a decoded number-variant slot rewritten with an
               // number expression is an number slot afterwards.
               let t1: table = json.parse("{\\"values\\":[2147483647.00000001]}");
-              let b: WBox = {};
+              let b: WBox = {nums: []};
               b.nums = t1.values;
               let alias: number[] = b.nums;
               alias[0] = 7;
@@ -5366,14 +5363,14 @@ public class JsBackendTest {
               // the positions the declared kind cannot express.
               let t4: table = json.parse("{\\"values\\":[2147483647.00000001]}");
               let xs4: number[] = t4.values;
-              let ib: IBox = {};
+              let ib: IBox = {n: 0};
               ib.n = xs4[0];
               let r1: string = "";
               try { r1 = IBox$toJson(ib); } catch (e) { r1 = e.code + "|" + e.message; }
               if (!equivalent(r1, "{\\"n\\":2147483647}")) { return 0; }
               let t5: table = json.parse("{\\"values\\":[1]}");
               let xs5: number[] = t5.values;
-              let nb: NBox = {};
+              let nb: NBox = {n: 0};
               nb.n = xs5[0];
               if (!equivalent(NBox$toJson(nb), "{\\"n\\":1}")) { return 0; }
               // The materialized variant still compares and computes by
@@ -5423,7 +5420,7 @@ public class JsBackendTest {
               try { d1 = json.stringify(t6); } catch (e) { d1 = e.code + "|" + e.message; }
               if (d1 !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
               let t7: table = json.parse("{\\"values\\":[1,2]}");
-              let db: WBox = {};
+              let db: WBox = {nums: []};
               db.nums = t7.values;
               let ys: number[] = db.nums;
               delete ys[0];
@@ -5866,7 +5863,7 @@ public class JsBackendTest {
 
             // @jsonable
             export class C {
-              n: number = 0.0;
+              n: number;
             }
 
             export function main(): null { return null; }
@@ -5884,7 +5881,7 @@ public class JsBackendTest {
             export async function box(): C {
               let t: table = json.parse("{\\"xs\\":[1]}");
               let xs: number[] = t.xs;
-              let c: C = {};
+              let c: C = {n: 0};
               c.n = xs[0];
               return c;
             }
@@ -6040,7 +6037,7 @@ public class JsBackendTest {
             const $rt = require("./deal/runtime");
             let $fail = "";
             const $f = (n, j, o, x, e) => {
-              const $e = { name: n, jtype: j, optional: !!o, nullable: !!x, hasDefault: true };
+              const $e = { name: n, jtype: j, optional: !!o, nullable: !!x };
               if (e !== undefined) {
                 if (e.element !== undefined) $e.element = e.element;
                 if (e.className !== undefined) $e.className = e.className;
@@ -6054,12 +6051,13 @@ public class JsBackendTest {
             // Top-level gate: scalars, null, and any array — the empty
             // array included — are null; {} decodes to the defaulted
             // instance.
-            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "42", "p.js", 1, 1) !== null) $fail = "scalar";
-            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "null", "p.js", 1, 1) !== null) $fail = "null-doc";
-            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "[1,2]", "p.js", 1, 1) !== null) $fail = "array-doc";
-            if ($rt.jsonFromJson("@m/U", $fields, $thunk, "[]", "p.js", 1, 1) !== null) $fail = "empty-array-doc";
-            const $o = $rt.jsonFromJson("@m/U", $fields, $thunk, "{}", "p.js", 1, 1);
-            if ($o === null) $fail = "empty-object-null";
+            if ($rt.jsonFromJson("@m/U", $fields, "42", "p.js", 1, 1) !== null) $fail = "scalar";
+            if ($rt.jsonFromJson("@m/U", $fields, "null", "p.js", 1, 1) !== null) $fail = "null-doc";
+            if ($rt.jsonFromJson("@m/U", $fields, "[1,2]", "p.js", 1, 1) !== null) $fail = "array-doc";
+            if ($rt.jsonFromJson("@m/U", $fields, "[]", "p.js", 1, 1) !== null) $fail = "empty-array-doc";
+            if ($rt.jsonFromJson("@m/U", $fields, "{}", "p.js", 1, 1) !== null) $fail = "missing-required";
+            const $o = $rt.jsonFromJson("@m/U", $fields, '{"name":"","age":0}', "p.js", 1, 1);
+            if ($o === null) throw new Error("complete-object-null");
             if ($o.$kind !== "class" || $o.$classname !== "@m/U") $fail = "tags";
             if ($rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1)
                 !== '{"name":"","age":0}') $fail = "empty-object-text:" + $rt.jsonToJson("@m/U", $o, $fields, "p.js", 1, 1);
@@ -6067,30 +6065,30 @@ public class JsBackendTest {
             // validation failure returning the DEAL null.
             const $nestedFields = [$f("child", "class", false, false,
               { className: "@m/U", fields: $fields })];
-            if ($rt.jsonFromJson("@m/P", $nestedFields, $thunk, '{"child":[]}', "p.js", 1, 1) !== null) $fail = "nested-empty-array";
+            if ($rt.jsonFromJson("@m/P", $nestedFields, '{"child":[]}', "p.js", 1, 1) !== null) $fail = "nested-empty-array";
             // Extra-key rejection, before any defaults run.
-            if ($rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"Ada","extra":1}', "p.js", 1, 1) !== null) $fail = "extra-key";
+            if ($rt.jsonFromJson("@m/U", $fields, '{"name":"Ada","age":0,"extra":1}', "p.js", 1, 1) !== null) $fail = "extra-key";
             // Three-state: missing omitted, present-null kept, value kept.
-            const $m = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"A","age":1}', "p.js", 1, 1);
+            const $m = $rt.jsonFromJson("@m/U", $fields, '{"name":"A","age":1}', "p.js", 1, 1);
             if ($m === null || $m.nick !== $rt.MISSING) $fail = "three-missing";
             if ($rt.jsonToJson("@m/U", $m, $fields, "p.js", 1, 1) !== '{"name":"A","age":1.0}') $fail = "three-omit";
-            const $n = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"name":"B","nick":null,"age":2}', "p.js", 1, 1);
+            const $n = $rt.jsonFromJson("@m/U", $fields, '{"name":"B","nick":null,"age":2}', "p.js", 1, 1);
             if ($n === null || $n.nick !== null) $fail = "three-null";
             if ($rt.jsonToJson("@m/U", $n, $fields, "p.js", 1, 1) !== '{"name":"B","nick":null,"age":2.0}') $fail = "three-null-text";
             // Binary64 magnitudes beyond signed32 remain admitted field values.
-            const $large = $rt.jsonFromJson("@m/U", $fields, $thunk, '{"age":9007199254740992}', "p.js", 1, 1);
+            const $large = $rt.jsonFromJson("@m/U", $fields, '{"name":"","age":9007199254740992}', "p.js", 1, 1);
             if ($large === null || $large.age !== 9007199254740992) $fail = "number-value";
             // Provided-value failure runs no defaults (counting thunk).
             let $runs = 0;
             const $counting = () => { $runs++; return { name: "", nick: $rt.MISSING, age: 0 }; };
-            if ($rt.jsonFromJson("@m/U", $fields, $counting, '{"age":"x"}', "p.js", 1, 1) !== null) $fail = "bad-number";
+            if ($rt.jsonFromJson("@m/U", $fields, '{"name":"","age":"x"}', "p.js", 1, 1) !== null) $fail = "bad-number";
             if ($runs !== 0) $fail = "defaults-ran:" + $runs;
             // toJson identity backstop and cycle rejection (E8001).
             try { $rt.jsonToJson("@m/Other", $m, $fields, "p.js", 1, 1); $fail = "identity-pass"; }
             catch (e) { if (e.$dealCode !== "E8001") $fail = "identity-code"; }
             const $nodeFields = [$f("next", "class", false, true,
               { className: "@m/Node", fields: [] })];
-            const $node = $rt.makeClass("Node", "@m/Node", () => ({ next: null }), null, "p.js", 1, 1);
+            const $node = $rt.classPlan("@m/Node", [{name:"next",descriptor:"?@m/Node",optional:false}], {next:null}, "p.js", 1, 1);
             $rt.setProp($node, "next", $node);
             try { $rt.jsonToJson("@m/Node", $node, $nodeFields, "p.js", 1, 1); $fail = "cycle-pass"; }
             catch (e) { if (e.$dealCode !== "E8001") $fail = "cycle-code"; }
@@ -6175,7 +6173,7 @@ public class JsBackendTest {
               b[0] = b[0] + 1;
               return b;
             }
-            class Holder { f: async (b: number[]) => number[] = bump; }
+            class Holder { f: async (b: number[]) => number[]; }
             export function main(): null { return null; }
             export async function oracle(): null {
               let b: number[] = [0, 0];
@@ -6213,7 +6211,7 @@ public class JsBackendTest {
         // { $ok: false, $failure } with the pinned reason — never a DEAL
         // error, never a false runtime-error pass.
         PreparedJs negatives = prepareJs("""
-            export class Payload { v: number = 0; }
+            export class Payload { v: number; }
             export function main(): null { return null; }
             export async function oracle(): null { return null; }
             export async function takes(i: number): number { return i; }

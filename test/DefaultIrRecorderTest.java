@@ -109,9 +109,7 @@ public final class DefaultIrRecorderTest {
         RecorderRun(String fieldDecl, String defaultSource,
                      Type fieldType, Type literalType) {
             String source = "import * as L from \"./lib\";\n"
-                + "class Outer {\n"
-                + "  " + fieldDecl + " = " + defaultSource + ";\n"
-                + "}\n";
+                + "let " + fieldDecl + " = " + defaultSource + ";\n";
             LexResult lex = new Lexer(source, "main.deal").tokenize();
             check(!lex.hasErrors(), "recorder fixture lexes: "
                 + lex.diagnostics());
@@ -120,23 +118,18 @@ public final class DefaultIrRecorderTest {
             check(!parse.hasErrors(), "recorder fixture parses: "
                 + parse.diagnostics());
             ProgramNode program = parse.program();
-            ClassDeclaration outer = null;
+            deal.ast.VariableDeclaration variable = null;
             for (StatementNode stmt : program.statements()) {
-                if (stmt instanceof ClassDeclaration cd
-                        && cd.name().equals("Outer")) {
-                    outer = cd;
-                }
+                if (stmt instanceof deal.ast.VariableDeclaration vd) variable = vd;
             }
-            check(outer != null && outer.fields().size() == 1,
-                "the fixture declares exactly one Outer field");
-            if (outer == null || outer.fields().size() != 1) {
+            check(variable != null, "the fixture declares its expression binding");
+            if (variable == null) {
                 defaultExpr = null;
                 recorder = null;
                 root = null;
                 return;
             }
-            defaultExpr = outer.fields().get(0).defaultExpr().orElse(null);
-            check(defaultExpr != null, "the fixture field has a default");
+            defaultExpr = variable.initializer();
 
             Map<ExpressionNode, Type> typeMap = new HashMap<>();
             if (literalType != null) {
@@ -184,10 +177,6 @@ public final class DefaultIrRecorderTest {
             return recorder.occurrences();
         }
 
-        List<CompilerDiagnostic> awaitDiagnostics() {
-            return recorder.awaitDiagnostics();
-        }
-
         Map<String, deal.checker.Symbol> bindings() {
             return recorder.bindings();
         }
@@ -198,9 +187,7 @@ public final class DefaultIrRecorderTest {
     private static ProgramNode providerProgram() {
         Span span = new Span("lib.deal", 1, 1, 1, 5);
         List<ClassField> fields = List.of(new ClassField(span, "tag",
-            false, false, new NamedType(span, "int"),
-            java.util.Optional.of(new LiteralExpr(span,
-                new LiteralValue.NumberLiteral(0)))));
+            false, false, new NamedType(span, "int")));
         ClassDeclaration rec = new ClassDeclaration(span, "Rec", fields);
         deal.ast.FunctionDeclaration getTag = new deal.ast.FunctionDeclaration(
             span, "getTag",
@@ -268,10 +255,10 @@ public final class DefaultIrRecorderTest {
             check(occurrence.kind().name()
                     .equals("IMPORTED_CLASS_DEFAULT_PLAN"),
                 "the occurrence is the imported class default plan");
-            check(occurrence.sourceRange().startLine() == 3
-                    && occurrence.sourceRange().startColumn() == 16,
-                "the occurrence keeps the literal range (line 3 column"
-                    + " 16), got " + occurrence.sourceRange().startLine()
+            check(occurrence.sourceRange().startLine() == 2
+                    && occurrence.sourceRange().startColumn() == 18,
+                "the occurrence keeps the literal range (line 2 column"
+                    + " 18), got " + occurrence.sourceRange().startLine()
                     + ":" + occurrence.sourceRange().startColumn());
             check(occurrence.importAlias().equals("L")
                     && "Rec".equals(occurrence.semanticResourceIdentity()
@@ -308,9 +295,9 @@ public final class DefaultIrRecorderTest {
             "both literals deduplicate to one occurrence by semantic"
                 + " resource identity, got " + occurrences.size());
         if (!occurrences.isEmpty()) {
-            check(occurrences.get(0).sourceRange().startColumn() == 12,
+            check(occurrences.get(0).sourceRange().startColumn() == 14,
                 "the first occurrence keeps the OUTER literal range"
-                    + " (column 12), got "
+                    + " (column 14), got "
                     + occurrences.get(0).sourceRange().startColumn());
         }
     }
@@ -336,8 +323,8 @@ public final class DefaultIrRecorderTest {
                     && "getTag".equals(call.semanticResourceIdentity()
                         .lexicalDeclarationIdentity().declaredName()),
                 "the first occurrence is the imported getTag wrapper");
-            check(call.sourceRange().startColumn() == 12,
-                "the wrapper keeps the CALL-site range (column 13), got "
+            check(call.sourceRange().startColumn() == 14,
+                "the wrapper keeps the CALL-site range (column 14), got "
                     + call.sourceRange().startColumn());
             DefaultResourceOccurrence plan = occurrences.get(1);
             check(plan.kind().name()
@@ -374,32 +361,19 @@ public final class DefaultIrRecorderTest {
     // =========================================================================
 
     private static void testAwaitGate() {
-        System.out.println("-- E3020 sync gate: evaluator scope vs"
-            + " nested function-expression body --");
-        // Await at evaluator scope (the checker-accepted shape inside an
-        // async function body): E3020 at the await range.
+        System.out.println("-- Await traversal preserves the awaited operand --");
         RecorderRun evaluatorScope = new RecorderRun("x: int",
             "await source()", Type.Number.INSTANCE, null);
-        List<CompilerDiagnostic> diagnostics =
-            evaluatorScope.awaitDiagnostics();
-        check(diagnostics.size() == 1
-                && "E3020".equals(diagnostics.get(0).code()),
-            "evaluator-scope await is E3020, got " + diagnostics);
-        if (!diagnostics.isEmpty()) {
-            check(diagnostics.get(0).range().startLine() == 3
-                    && diagnostics.get(0).range().startColumn() == 12,
-                "E3020 anchors the await range (line 3 column 12), got "
-                    + diagnostics.get(0).range().startLine() + ":"
-                    + diagnostics.get(0).range().startColumn());
-        }
-
+        check(evaluatorScope.root.kind() == DefaultIrNode.NodeKind.AWAIT
+                && evaluatorScope.root.children().size() == 1,
+            "await preserves its operand in the dependency walk");
+        check(evaluatorScope.root.span().startLine() == 2
+                && evaluatorScope.root.span().startColumn() == 14,
+            "await keeps its own source range");
         // Await inside a nested async function-expression body: legal.
         RecorderRun nested = new RecorderRun("f: async () => int",
             "async function(): int { return await source(); }",
             Types.func(List.of(), Type.Number.INSTANCE, true), null);
-        check(nested.awaitDiagnostics().isEmpty(),
-            "await inside the nested async function-expression body is"
-                + " legal, got " + nested.awaitDiagnostics());
         check(nested.root.kind().name().equals("FUNCTION_EXPRESSION")
                 && !nested.root.children().isEmpty(),
             "the function-expression body statements are part of the"
@@ -535,8 +509,7 @@ public final class DefaultIrRecorderTest {
     /** One int field {@code v} at the given span. */
     private static List<ClassField> siblingFields(Span span) {
         return List.of(new ClassField(span, "v", false, false,
-            new NamedType(span, "int"), java.util.Optional.of(
-                new LiteralExpr(span, new LiteralValue.NumberLiteral(0)))));
+            new NamedType(span, "int")));
     }
 
     /**
@@ -555,9 +528,7 @@ public final class DefaultIrRecorderTest {
         Span wrapperSpan = new Span(sourcePath, 2, 1, 2, 40, 40, 79);
         ClassDeclaration wrapper = new ClassDeclaration(wrapperSpan,
             "Wrap", List.of(new ClassField(wrapperSpan, "inner", false,
-                false, new NamedType(wrapperSpan, className),
-                java.util.Optional.of(new ObjectLiteralExpr(wrapperSpan,
-                    List.of())))));
+                false, new NamedType(wrapperSpan, className))));
         Span functionSpan = new Span(sourcePath, 3, 1, 3, 30, 80, 109);
         FunctionDeclaration use = new FunctionDeclaration(functionSpan,
             "use" + className,
@@ -1180,12 +1151,10 @@ public final class DefaultIrRecorderTest {
         if (localFunction != null) {
             source.append("function ").append(localFunction.name())
                 .append("(x: ").append(localFunction.qualifiedParamType())
-                .append("): int { return x.v; }\n");
+                .append("): number { return x.v; }\n");
         }
-        source.append("class Outer {\n")
-            .append("  ").append(fieldDecl).append(" = ")
-            .append(literalSource).append(";\n")
-            .append("}\n");
+        source.append("let ").append(fieldDecl).append(" = ")
+            .append(literalSource).append(";\n");
         LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
         check(!lex.hasErrors(), "sibling fixture lexes: "
             + lex.diagnostics());
@@ -1194,20 +1163,13 @@ public final class DefaultIrRecorderTest {
         check(!parse.hasErrors(), "sibling fixture parses: "
             + parse.diagnostics());
         ProgramNode program = parse.program();
-        ClassDeclaration outer = null;
+        deal.ast.VariableDeclaration variable = null;
         for (StatementNode stmt : program.statements()) {
-            if (stmt instanceof ClassDeclaration cd
-                    && cd.name().equals("Outer")) {
-                outer = cd;
-            }
+            if (stmt instanceof deal.ast.VariableDeclaration vd) variable = vd;
         }
-        check(outer != null && outer.fields().size() == 1,
-            "the sibling fixture declares exactly one Outer field");
-        if (outer == null || outer.fields().size() != 1) {
-            return List.of();
-        }
-        ExpressionNode defaultExpr = outer.fields().get(0).defaultExpr()
-            .orElse(null);
+        check(variable != null, "the sibling fixture declares its expression binding");
+        if (variable == null) return List.of();
+        ExpressionNode defaultExpr = variable.initializer();
         Map<ExpressionNode, Type> typeMap = new HashMap<>();
         if (defaultExpr != null && literalType != null) {
             for (ExpressionNode node : collectAll(defaultExpr)) {

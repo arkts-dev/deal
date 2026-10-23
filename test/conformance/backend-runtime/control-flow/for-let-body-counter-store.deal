@@ -190,7 +190,7 @@ function testReturnAndThrowSkipUpdate(): null {
   let caught: boolean = false;
   try {
     { let v14Loop13: number = 0; while (v14Loop13 < 3) { let i: number = v14Loop13; {
-      if (i === 0) { throw { message: "stop" }; }
+      if (i === 0) { throw { code: "STOP", message: "stop" }; }
     } v14Loop13 = i; v14Loop13 = next(v14Loop13); } }
   } catch (e) {
     caught = true;

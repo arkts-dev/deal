@@ -1,5 +1,5 @@
 // @spec: Functions — nested sync number[]-bearing function signatures
-// @description: a first-class function value returning another number[]-bearing function, nested wrapper shapes, class fields holding number[]-bearing function values — plain, nullable, and nullable-parameter slots with a default-provided function reference — and the callee-first evaluation pin for a call through a class field whose argument side effect reassigns the called field (spec Operational semantics rule 1; v1.2)
+// @description: a first-class function value returning another number[]-bearing function, nested wrapper shapes, class fields holding number[]-bearing function values — plain, nullable, and nullable-parameter slots with an explicitly provided function reference — and the callee-first evaluation pin for a call through a class field whose argument side effect reassigns the called field (spec Operational semantics rule 1; v1.2)
 // @expected: runtime-ok
 // @features: number[], functions, classes
 
@@ -22,9 +22,9 @@ function markTwo(b: number[] | null): number[] {
 }
 
 class Holder {
-  cb: (b: number[]) => number[] = id;
-  maybe: ((b: number[]) => number[]) | null = null;
-  cbMaybe: (b: number[] | null) => number[] = idMaybe;
+  cb: (b: number[]) => number[];
+  maybe: ((b: number[]) => number[]) | null;
+  cbMaybe: (b: number[] | null) => number[];
 }
 
 // The reassignment lives INSIDE the call argument: the callee field
@@ -46,13 +46,13 @@ export function test_array_nested_fn_shapes(): number {
   if (h([0, 0, 0]).length !== 3) {
     throw { code: "TEST_FAIL", message: "fn-of-fn failed" };
   }
-  let box: Holder = {};
+  let box: Holder = {cb: id, maybe: null, cbMaybe: idMaybe};
   if (box.cb([0]).length !== 1) {
     throw { code: "TEST_FAIL", message: "class field fn failed" };
   }
   let stored: ((b: number[]) => number[]) | null = box.maybe;
   if (stored !== null) {
-    throw { code: "TEST_FAIL", message: "nullable fn field default failed" };
+    throw { code: "TEST_FAIL", message: "nullable fn field provided null failed" };
   }
   box.cb = picker();
   if (box.cb([0, 0, 0, 0]).length !== 4) {

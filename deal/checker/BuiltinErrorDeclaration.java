@@ -68,10 +68,10 @@ public record BuiltinErrorDeclaration(
             NameResolver.intrinsicErrorIdentity(),
             List.of(
                 new Field(new ClassField(span, "code", false, false,
-                    new NamedType(span, "string"), Optional.of(emptyString)),
+                    new NamedType(span, "string")),
                     Type.String.INSTANCE),
                 new Field(new ClassField(span, "message", false, false,
-                    new NamedType(span, "string"), Optional.of(emptyString)),
+                    new NamedType(span, "string")),
                     Type.String.INSTANCE)));
     }
 }

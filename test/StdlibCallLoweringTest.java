@@ -1063,7 +1063,7 @@ public class StdlibCallLoweringTest {
                 raw.interfaceHash(), raw.loweringContextHash(), raw.requiredCapabilities(),
                 raw.coverage(), raw.classLayouts(), raw.functions(), raw.moduleInit(),
                 raw.exportPlan(), raw.bindings(), modified, raw.bodyTable(),
-                raw.classFactories(), raw.jsonDefaults(), raw.classBindingFacts());
+                raw.classFactories(), raw.classBindingFacts());
             String modifiedText = ContractSnapshotCanonicalizer.serializeText(
                 ContractSnapshotCanonicalizer.toJson(modifiedUnit));
             Optional<CompilerDiagnostic> wrongPolicy =
@@ -1100,7 +1100,7 @@ public class StdlibCallLoweringTest {
                 opOnlyRaw.coverage(), opOnlyRaw.classLayouts(), opOnlyRaw.functions(),
                 opOnlyRaw.moduleInit(), opOnlyRaw.exportPlan(), opOnlyRaw.bindings(),
                 opOnlyModified, opOnlyRaw.bodyTable(), opOnlyRaw.classFactories(),
-                opOnlyRaw.jsonDefaults(), opOnlyRaw.classBindingFacts());
+                opOnlyRaw.classBindingFacts());
             Optional<CompilerDiagnostic> opOnlyFailure = SemanticIrValidator.validateText(
                 ContractSnapshotCanonicalizer.serializeText(
                     ContractSnapshotCanonicalizer.toJson(opOnlyUnit)),

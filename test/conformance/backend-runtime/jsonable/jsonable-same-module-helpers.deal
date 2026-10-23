@@ -4,10 +4,10 @@
 // @features: jsonable, modules, helpers, v1.2
 
 // @jsonable
-export class Model { name: string = ""; nick?: string | null; }
+export class Model { name: string; nick?: string | null; }
 
 export function test_same_module_helpers(): null {
-  let a: Model = {};
+  let a: Model = {name: ""};
   let text: string = Model$toJson(a);
   let b: Model | null = Model$fromJson(text);
   if (b === null) { throw { code: "TEST_FAIL", message: "JSON roundtrip" }; }

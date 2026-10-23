@@ -454,7 +454,7 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String CLASS_COMPLETION_SOURCE = """
         class C {
-          x: number = 7;
+          x: number;
         }
 
         export async function run(): C {
@@ -470,7 +470,7 @@ public class AsyncExportInvokerProductionTest {
     /** The same class value nested in an array completion. */
     private static final String CLASS_ARRAY_COMPLETION_SOURCE = """
         class C {
-          x: number = 7;
+          x: number;
         }
 
         export async function run(): C[] {
@@ -486,7 +486,7 @@ public class AsyncExportInvokerProductionTest {
     /** The same class value under a nullable completion descriptor. */
     private static final String NULLABLE_CLASS_COMPLETION_SOURCE = """
         class C {
-          x: number = 7;
+          x: number;
         }
 
         export async function run(): C | null {

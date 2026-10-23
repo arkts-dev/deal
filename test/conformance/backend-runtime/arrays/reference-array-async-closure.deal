@@ -20,9 +20,9 @@ async function failEcho(b: number[]): number[] {
 }
 
 export class Holder {
-  cb: async (b: number[]) => number[] = echo;
-  maybe: (async (b: number[]) => number[]) | null = null;
-  n: number = 7;
+  cb: async (b: number[]) => number[];
+  maybe: (async (b: number[]) => number[]) | null;
+  n: number;
 }
 
 export async function test_array_async_closure(): number {

@@ -8,6 +8,6 @@ export function main(): null {
  let xs: number[] = [7]; let alias: number[] = xs; let t: table = {bad:"not-int"}; let count: number = 0;
  try {xs[0] = t.bad;} catch(e) {count = count + 1;}
  try {xs[xs.length] = t.bad;} catch(e) {count = count + 1;}
- if(count !== 2 || alias.length !== 1 || alias[0] !== 7) {throw {message:"failed element checks mutated storage"};}
+ if(count !== 2 || alias.length !== 1 || alias[0] !== 7) {throw {code:"TEST_FAIL",message:"failed element checks mutated storage"};}
  c.log("typed-array-failure-state"); return null;
 }

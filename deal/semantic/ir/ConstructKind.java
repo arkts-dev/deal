@@ -102,7 +102,7 @@ public enum ConstructKind {
         List.of(SemanticOpKind.TRY_CATCH, SemanticOpKind.THROW)),
 
     CLASS_DECLARATION("layout, defaults, factory, and export metadata",
-        List.of(SemanticOpKind.CLASS_DEFAULT, SemanticOpKind.CLASS_FACTORY,
+        List.of(SemanticOpKind.CLASS_FACTORY,
             SemanticOpKind.EXPORT_PUBLISH)),
 
     /** Required common form: module/import/export/entry operations plus interface/ABI records. */

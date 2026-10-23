@@ -1,20 +1,20 @@
 // @spec: Classes
-// @description: A function-call class default is re-executed for each construction
+// @description: Provided function calls execute independently for each construction
 // @expected: runtime-ok
-// @features: classes, defaults, function-calls
+// @features: classes, construction, function-calls
 
 function freshValues(): number[] {
   return [];
 }
 
 class Counter {
-  values: number[] = freshValues();
+  values: number[];
 }
 
 export function main(): null {
-  let first: Counter = {};
-  let second: Counter = {};
+  let first: Counter = {values: freshValues()};
+  let second: Counter = {values: freshValues()};
   first.values[0] = 41;
-  if (second.values.length !== 0) { throw { code: "TEST_FAIL", message: "function default call was cached" }; }
+  if (second.values.length !== 0) { throw { code: "TEST_FAIL", message: "provided function call was cached" }; }
   return null;
 }

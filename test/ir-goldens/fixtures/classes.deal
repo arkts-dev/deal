@@ -1,14 +1,13 @@
 // IR golden fixture: classes
-// Tests class declarations with required and optional fields,
-// default expressions.
+// Tests structural class declarations with required and optional fields.
 
 class Point {
-    x: number = 0;
-    y: number = 0;
+    x: number;
+    y: number;
 }
 
 class User {
-    name: string = "";
+    name: string;
     age?: number;
-    active: boolean = true;
+    active: boolean;
 }

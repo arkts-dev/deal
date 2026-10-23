@@ -44,7 +44,7 @@ final class JvmHostAbiEmission {
                              String descriptorText, boolean optional) {
     }
 
-    record HostClassFacts(String recordSimpleName, String defaultsField,
+    record HostClassFacts(String recordSimpleName,
                           String identityText, List<HostFieldFacts> fields) {
     }
 
@@ -182,7 +182,6 @@ final class JvmHostAbiEmission {
                         field.storageType(), field.descriptorText(), field.optional()));
                 }
                 return new HostClassFacts(record.simpleName(),
-                    defaultsField(key(module.modulePath()), classId.name()),
                     record.identityText(), List.copyOf(fields));
             }
         }
@@ -203,10 +202,6 @@ final class JvmHostAbiEmission {
 
     static String methodField(String key, String exportName) {
         return "__hostM$" + key + "$" + JvmNames.javaName(exportName);
-    }
-
-    static String defaultsField(String key, String className) {
-        return "__hostD$" + key + "$" + JvmNames.javaName(className);
     }
 
     static String wrapperName(String key, String exportName) {
@@ -646,11 +641,6 @@ final class JvmHostAbiEmission {
                         .append(methodField(key, export.getKey())).append(";\n");
                 }
             }
-            for (String className : module.facts().classes().keySet()) {
-                out.append("  static java.util.Map<java.lang.String, "
-                    + "java.lang.Object> ")
-                    .append(defaultsField(key, className)).append(";\n");
-            }
         }
         out.append("\n");
         for (HostModule module : modules) {
@@ -704,10 +694,7 @@ final class JvmHostAbiEmission {
                     .append(", new java.lang.Class[]{ ").append(params)
                     .append(" }, oFile, oLine, oCol);\n");
             } else if (export.getValue() instanceof Type.Class cls) {
-                out.append("    ").append(defaultsField(key, cls.name()))
-                    .append(" = __hostDefaults(__h, ").append(javaString(raw))
-                    .append(", ").append(javaString(cls.name()))
-                    .append(", oFile, oLine, oCol);\n");
+                // Class declarations contribute structural metadata, not constructor hooks.
             } else {
                 throw new IllegalStateException("the declared host export '"
                     + export.getKey() + "' of module '" + raw
@@ -1048,11 +1035,7 @@ final class JvmHostAbiEmission {
         out.append("    return inner.msg;\n");
         out.append("  }\n\n");
         emitCheckValue(out);
-        out.append("  static java.lang.Object __hostDefault(java.util.Map<java.lang.String, java.lang.Object> defaults, java.lang.String name, java.lang.String cls, java.lang.String oFile, int oLine, int oCol) {\n");
-        out.append("    java.lang.Object v = defaults.get(name);\n");
-        out.append("    if (v == null) throw JvmRuntime.fail(\"E8001\", \"missing default for field '\" + name + \"' of class '\" + cls + \"'\", oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
-        out.append("    return v;\n");
-        out.append("  }\n\n");
+
         out.append("  static java.lang.reflect.Method __hostMethod(java.lang.Class<?> h,"
             + " java.lang.String module, java.lang.String name, java.lang.String"
             + " desc, java.lang.Class<?>[] params, java.lang.String oFile, int"
@@ -1063,32 +1046,7 @@ final class JvmHostAbiEmission {
         out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", name, \"module\", module), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("    }\n");
         out.append("  }\n\n");
-        // The declared class's mandatory <C>_defaults capture: every one of
-        // its load failures renders the closed HOST_LOAD_INVALID_METADATA arm
-        // (the {defaults|fields} reason "defaults") at the import origin —
-        // the emitted helper holds no failure text of its own, exactly like
-        // the missing-export arm beside it.
-        out.append("  static java.util.Map<java.lang.String, java.lang.Object>"
-            + " __hostDefaults(java.lang.Class<?> h, java.lang.String module,"
-            + " java.lang.String name, java.lang.String oFile, int oLine, int"
-            + " oCol) {\n");
-        out.append("    try {\n");
-        out.append("      java.lang.reflect.Field f = h.getDeclaredField(name + \"_defaults\");\n");
-        out.append("      f.setAccessible(true);\n");
-        out.append("      java.lang.Object v = f.get(null);\n");
-        out.append("      if (v instanceof java.util.Map m) { return m; }\n");
-        out.append("      throw __hostDefaultsMetadataFailure(name, module, oFile, oLine, oCol);\n");
-        out.append("    } catch (java.lang.NoSuchFieldException __e) {\n");
-        out.append("      throw __hostDefaultsMetadataFailure(name, module, oFile, oLine, oCol);\n");
-        out.append("    } catch (java.lang.IllegalAccessException __e) {\n");
-        out.append("      throw __hostDefaultsMetadataFailure(name, module, oFile, oLine, oCol);\n");
-        out.append("    }\n");
-        out.append("  }\n\n");
-        out.append("  static JvmRuntime.DealError __hostDefaultsMetadataFailure("
-            + "java.lang.String name, java.lang.String module, java.lang.String oFile,"
-            + " int oLine, int oCol) {\n");
-        out.append("    return JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_INVALID_METADATA, java.util.Map.of(\"name\", name, \"module\", module, \"defaults|fields\", \"defaults\"), oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
-        out.append("  }\n\n");
+
         out.append("  static java.lang.Object __hostInvoke(java.lang.reflect.Method m,"
             + " java.lang.Object[] args, java.lang.String oFile, int oLine, int"
             + " oCol) {\n");

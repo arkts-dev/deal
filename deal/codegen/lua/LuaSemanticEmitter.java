@@ -20,7 +20,7 @@ import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FailureArm;
 import deal.semantic.ir.FailureArmId;
@@ -672,39 +672,6 @@ public final class LuaSemanticEmitter {
                 collectFunctionShapes(shapes, func.returnType());
             }
         }
-        /**
-         * The emitted expression of one declared host class's loaded
-         * {@code <C>_defaults} entry (K10; ISSUE-0855): the module's
-         * published surface entry — the module table {@code __rt.load_host}
-         * returned — read back by the construction site and projected
-         * host-to-DEAL through the host-carrier bridge per declared field,
-         * with one memo per construction, before the runtime construction
-         * entry deep-copies it. The projection's field descriptors are the
-         * emitted {@code __hostClassFields} entry of the class's canonical
-         * identity, so a defaulted array is the DEAL array carrier, a
-         * nested class default is the DEAL representation of its identity,
-         * and a function default stays the documented runtime wrapper; the
-         * loaded table itself is never mutated and keeps its exact keys
-         * (the construction's provided-field overlay and extra-key guard
-         * read that same authority). An absent surface or entry is a
-         * fail-closed producer defect in the prelude helper, never a silent
-         * default; a non-table entry reaches the runtime's own landed
-         * defaults-shape failure unchanged.
-         */
-        private String hostDefaultsExpr(SemanticOp op, ClassId classId) {
-            ModuleId declarationModule = hostClassModules.get(classId);
-            if (declarationModule == null) {
-                throw rejectedOp(op, "the class " + classId
-                    + " is not a declared host class of the compile's declaration"
-                    + " surface (the class defaults entry has exactly one source —"
-                    + " a producer defect)");
-            }
-            return "__factories.__hostClassDefaultsIn("
-                + luaString(declarationModule.path()) + ", "
-                + luaString(classId.name()) + ", "
-                + luaString(classId.text()) + ")";
-        }
-
         // -- naming ---------------------------------------------------------------
 
         protected String slot(ValueId id) {
@@ -1180,10 +1147,7 @@ public final class LuaSemanticEmitter {
             // instead of a nil global.
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        beginSourceMappedGroup(op, "");
-                        emitClassDefaultFunction(op);
-                    }
+
                 }
             }
 
@@ -1421,47 +1385,7 @@ public final class LuaSemanticEmitter {
          * form keeps the function reachable from every factory/
          * construction body emitted before this statement.
          */
-        private void emitClassDefaultFunction(SemanticOp defaultOp) {
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) defaultOp.payload();
-            StructuredBodyTable ownerTable = blockTableOf.get(payload.defaultBlock());
-            List<OpId> ops = ownerTable == null
-                ? null : ownerTable.blockOps().get(payload.defaultBlock());
-            if (ops == null) {
-                throw rejectedOp(defaultOp, "the class-default block "
-                    + payload.defaultBlock() + " has no membership row (producer defect)");
-            }
-            if (!(defaultOp.result() instanceof ValueId resultId)) {
-                throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
-                    + " publishes no ValueId result (producer defect)");
-            }
-            List<String> keys = defaultBlockStateKeys(payload.defaultBlock());
-            out.append(defaultFn(defaultOp.opId())).append(" = function()\n");
-            // The invocation-local attempt scratch: the default block's own
-            // slots and cells are saved in this invocation's own local table
-            // before the block runs and restored after it — on success and
-            // on failure alike — so a default re-entered by a nested or
-            // re-entrant construction restores the enclosing attempt's
-            // operands instead of overwriting them (the same private-state
-            // discipline the function-invocation save applies to a body; a
-            // function local is per invocation, so no chunk-level stack is
-            // needed). The produced value travels in the function return,
-            // never in a restored slot.
-            emitDefaultStateSave(keys);
-            out.append("  __okD, __chkD = pcall(function()\n");
-            for (OpId opId : ops) {
-                if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
-                    continue;
-                }
-                emitOp(opsById.get(opId));
-            }
-            out.append("  return ").append(slot(resultId)).append("\n");
-            out.append("  end)\n");
-            emitDefaultStateRestore(keys);
-            out.append("  if not __okD then error(__chkD, 0) end\n");
-            out.append("  return __chkD\n");
-            out.append("end\n");
-        }
+
 
         /**
          * The invocation-local save of one detached default attempt's
@@ -1509,11 +1433,6 @@ public final class LuaSemanticEmitter {
                 out.append("  ").append(targets).append(" = ").append(values)
                     .append("\n");
             }
-        }
-
-        /** One detached class-default function field of a CLASS_DEFAULT op. */
-        private String defaultFn(OpId defaultOp) {
-            return FACTORY_TABLE + ".D" + defaultOp.id();
         }
 
         /**
@@ -1592,7 +1511,7 @@ public final class LuaSemanticEmitter {
                 .append(", function(...)\n");
             emitBodyFunctionPreamble();
             int argIndex = 1;
-            List<OpId> bodyOps = tableOfFunction(function).blockOps().get(function.body());
+            List<OpId> bodyOps = requireFunctionBody(function, tableOfFunction(function));
             currentFunctionId = functionId;
             currentFunction = function;
             int paramCount = function.descriptor().paramTypes().size();
@@ -1741,10 +1660,7 @@ public final class LuaSemanticEmitter {
                 case JSON_FROM_CLASS -> emitJsonFromClass(op);
                 case JSON_TO_CLASS -> emitJsonToClass(op);
                 case CLASS_NEW -> emitClassNew(op);
-                case CLASS_DEFAULT -> throw rejectedOp(op, "a CLASS_DEFAULT "
-                    + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
-                    + "(the detached default block's ops are the class-default "
-                    + "function's; the block walk never runs the op itself)");
+
                 case CLASS_FACTORY -> throw rejectedOp(op, "a CLASS_FACTORY "
                     + "is a detached owner-module entry executed only under the "
                     + "triggering caller's CLASS_NEW (cross-unit parent) — the "
@@ -4573,11 +4489,11 @@ private void emitStdlib(SemanticOp op) {
                 (KindPayload.ClassNewPayload) op.payload();
             emitStart(op);
             ClassLayout layout = classLayouts.get(payload.classId());
-            if (layout == null && payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
+            if (layout == null && payload.constructionProvider() == ConstructionProvider.BUILTIN_ERROR) {
 
                 layout = ClassLayout.BUILTIN_ERROR;
             }
-            if (layout == null && payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
+            if (layout == null && payload.constructionProvider() == ConstructionProvider.HOST_DECLARATION) {
 
                 layout = payload.layout();
             }
@@ -4587,50 +4503,23 @@ private void emitStdlib(SemanticOp op) {
                     + payload.classId() + " has no layout in the resolution context "
                     + "(producer defect)");
             }
-            java.util.Set<String> provided = new java.util.HashSet<>();
-            for (KindPayload.ProvidedField field : payload.providedFields()) {
-                provided.add(field.name());
-            }
-            java.util.List<SemanticOp> omitted =
-                payload.defaultOwner() == DefaultOwner.LOCAL
-                    ? omittedDefaults(op, payload.classDefaultOpIds(), provided)
-                    : java.util.List.of();
-            // The LOCAL attempt's produced default values live in a
-            // construction-local scratch table, so the attempt's whole
-            // emission is one `do … end` block: a control-flow goto outside
-            // the construction then never jumps into the scratch local's
-            // scope (Lua forbids a forward goto into a local's scope).
-            boolean attemptScope = !omitted.isEmpty();
-            if (attemptScope) {
-                out.append("do\n");
-            }
-            java.util.Map<ValueId, String> defaultAttempts = java.util.Map.of();
-            switch (payload.defaultOwner()) {
-                case LOCAL -> defaultAttempts = emitClassNewLocalDefaults(op, omitted);
-                case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided);
-                case HOST_DEFAULTS -> {
-
-                }
-
-                case BUILTIN_DEFAULTS -> {
-                    // The builtin Error construction (K13 items 2-4): the
-                    // builtin defaults are compiler constants, so no default
-                    // child runs — provided fields only, and the omitted
-                    // fields take the constant empty string at the
-                    // construction site.
+            switch (payload.constructionProvider()) {
+                case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload);
+                case LOCAL, HOST_DECLARATION, BUILTIN_ERROR -> {
+                    // Structural construction; only provided values are consumed.
                 }
                 default -> throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner " + payload.defaultOwner()
+                    + " carries constructionProvider " + payload.constructionProvider()
                     + " outside the emitted owners (producer defect)");
             }
 
             emitExtraKeyRejection(op, payload, payload.layout());
-            if (payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
-                emitClassNewBuiltinDefaults(op, payload, layout);
+            if (payload.constructionProvider() == ConstructionProvider.BUILTIN_ERROR) {
+                emitClassNewBuiltinError(op, payload, layout);
                 return;
             }
-            if (payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
-                emitClassNewHostDefaults(op, payload, layout);
+            if (payload.constructionProvider() == ConstructionProvider.HOST_DECLARATION) {
+                emitClassNewHost(op, payload, layout);
                 return;
             }
 
@@ -4646,23 +4535,7 @@ private void emitStdlib(SemanticOp op) {
                 }
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                String inputExpr;
-                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
-                        && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
-
-                    SemanticOp factoryOp = opsById.get(factoryOpIdOf(op, payload));
-                    inputExpr = "__fT";
-                    out.append("__fT = __member(")
-                        .append(slot((ValueId) factoryOp.result())).append(", ")
-                        .append(luaString(entry.field())).append(")\n");
-                } else {
-                    // A defaulted field's value is the enclosing attempt's
-                    // own produced value (the attempt-local entry), never the
-                    // class-default shared slot a nested attempt overwrites.
-                    String attempt = defaultAttempts.get(boundaryPayload.input());
-                    inputExpr = attempt != null ? attempt
-                        : slot(boundaryPayload.input());
-                }
+                String inputExpr = slot(boundaryPayload.input());
                 emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor());
                 out.append("__okB, __chkB = pcall(__bcheck, ")
                     .append(bcheckArgs(boundaryPayload.descriptor(), inputExpr))
@@ -4689,9 +4562,6 @@ private void emitStdlib(SemanticOp op) {
             out.append(slot((ValueId) op.result())).append(" = __instT\n");
             emitResultSuccess(op, slot((ValueId) op.result()),
                 (RuntimeDescriptor) op.resultType());
-            if (attemptScope) {
-                out.append("end\n");
-            }
         }
 
         private void emitExtraKeyRejection(SemanticOp op,
@@ -4749,12 +4619,12 @@ private void emitStdlib(SemanticOp op) {
             emitBoundarySuccess(boundary, checked, boundaryPayload.descriptor());
         }
 
-        private void emitClassNewBuiltinDefaults(SemanticOp op,
+        private void emitClassNewBuiltinError(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (!ClassId.ERROR.equals(payload.classId())
                     || !layout.equals(ClassLayout.BUILTIN_ERROR)) {
                 throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner BUILTIN_DEFAULTS for " + payload.classId()
+                    + " carries constructionProvider BUILTIN_ERROR for " + payload.classId()
                     + " over " + layout.classId() + ": the builtin-defaults owner is"
                     + " admissible only for the compiler-owned builtin Error class"
                     + " (producer defect)");
@@ -4769,31 +4639,25 @@ private void emitStdlib(SemanticOp op) {
             String target = slot((ValueId) op.result());
             String code = values.get("code");
             String message = values.get("message");
+            if (code == null || message == null) {
+                throw rejectedOp(op, "builtin Error construction omits code or message (producer defect)");
+            }
             out.append("__instT = {[__dealCarrierKeys.d] = true, code = ")
-                .append(code == null ? luaString("") : code)
-                .append(", m = ")
-                .append(message == null ? luaString("") : message).append("}\n");
+                .append(code).append(", m = ").append(message).append("}\n");
             out.append(target).append(" = __instT\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
-        private void emitClassNewHostDefaults(SemanticOp op,
+        private void emitClassNewHost(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout) {
             if (!isHostClass(payload.classId())) {
                 throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner HOST_DEFAULTS for " + payload.classId()
+                    + " carries constructionProvider HOST_DECLARATION for " + payload.classId()
                     + ", which is not a declared host class of the compile's"
                     + " declaration surface (the class defaults entry has exactly"
                     + " one source — a producer defect)");
             }
-            if (payload.classFactoryRef() != null
-                    || !payload.classDefaultOpIds().isEmpty()) {
-                throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner HOST_DEFAULTS with a non-null factory"
-                    + " ref or a non-empty default child list: the host construction"
-                    + " carries neither (the loaded defaults are data — a producer"
-                    + " defect)");
-            }
+
             // (1) The provided values in literal order, normalized to the
             // deployed runtime's own language-null sentinel.
             out.append("__provT = {}\n");
@@ -4804,47 +4668,8 @@ private void emitStdlib(SemanticOp op) {
                 out.append("__provT[").append(luaString(field.name()))
                     .append("] = __pvT\n");
             }
-            // (1b) The loaded <C>_defaults entry, projected host-to-DEAL
-            // per declared field through the host-carrier bridge with one
-            // memo per construction (ISSUE-0855; the bridge's construction-
-            // defaults position), then the deterministic extra-key guard in
-            // provided-source order: the projected defaults' key membership
-            // is the accepted-key authority (the projection carries exactly
-            // the loaded table's keys; the runtime's own overlay test reads
-            // the deep copy's raw keys, so rawget is the exact membership
-            // predicate), and the runtime's overlay iterates the provided
-            // table in pairs() order, so the first supplied name outside
-            // the loaded map is pinned here — the same first-extra order
-            // the oracle's host construction scans and the JVM host arm
-            // pre-scans.
-            String hostDefaults = "__hdT" + op.opId().id();
-            out.append(hostDefaults).append(" = ")
-                .append(hostDefaultsExpr(op, payload.classId())).append("\n");
-            for (KindPayload.ProvidedField field : payload.providedFields()) {
-                out.append("if rawget(").append(hostDefaults).append(", ")
-                    .append(luaString(field.name())).append(") == nil then\n");
-                out.append("  __eT = __arm(\"CLASS_EXTRA_FIELD\", {field = ")
-                    .append(luaString(field.name())).append(", classId = ")
-                    .append(luaString(payload.classId().text())).append("}, ")
-                    .append(luaString(originOf(op))).append(", nil, nil)\n");
-                emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
-                out.append("  error(__eT, 0)\n");
-                out.append("end\n");
-            }
-            // (2)-(4) The deep copy of the projected defaults, the provided
-            // overlay with the extra-key rejection, the sentinel removal,
-            // and the tag: the deployed runtime construction entry. The
-            // loaded <C>_defaults table itself is never mutated.
-            out.append("__okB, __instT = pcall(__rt.class_, ")
-                .append(luaString(payload.classId().text())).append(", ")
-                .append(hostDefaults).append(", __provT, ")
-                .append(classLiteralOriginArgs(op)).append(")\n");
-            out.append("if not __okB then\n");
-            out.append("  __eT = __hostError(__instT, ")
-                .append(luaString(originOf(op))).append(")\n");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__eT)");
-            out.append("  error(__eT, 0)\n");
-            out.append("end\n");
+            out.append("__instT = {[__dealCarrierKeys.kind] = \"class\", [__dealCarrierKeys.classname] = ")
+                .append(luaString(payload.classId().text())).append("}\n");
             out.append("__instT[__dealCarrierKeys.c] = true\n");
             out.append("__instT[__dealCarrierKeys.id] = ")
                 .append(luaString(payload.classId().text())).append("\n");
@@ -4867,104 +4692,6 @@ private void emitStdlib(SemanticOp op) {
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
         /**
-         * The construction's omitted required defaults in declaration order:
-         * the complement of the skip-provided rule. A provided field neither
-         * executes its default nor needs a default slot; an omitted optional
-         * field has no default at all (the lowering emits no child for it).
-         */
-        private java.util.List<SemanticOp> omittedDefaults(SemanticOp owner,
-                java.util.List<OpId> defaultOpIds, java.util.Set<String> provided) {
-            java.util.List<SemanticOp> running = new ArrayList<>();
-            for (OpId defaultOpId : defaultOpIds) {
-                SemanticOp defaultOp = opsById.get(defaultOpId);
-                if (defaultOp == null) {
-                    throw rejectedOp(owner, owner.kind().name() + " " + owner.opId()
-                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
-                        + "(producer defect)");
-                }
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                if (provided.contains(defaultPayload.field())) {
-                    continue; // the skip-provided rule
-                }
-                running.add(defaultOp);
-            }
-            return running;
-        }
-
-        /**
-         * The LOCAL construction's omitted required defaults: each runs once
-         * in declaration order and publishes its produced value into the
-         * construction attempt's own scratch — a function-local table, so a
-         * default that re-enters the construction (the same class built
-         * inside a default, directly or through a helper) writes only its
-         * own attempt's entries. The declaration order field boundaries read
-         * those entries, never the class-default shared slots a nested
-         * attempt overwrites. The attempt keeps one local for the whole
-         * scratch rather than one local per default: the per-function local
-         * budget binds a class with many defaults otherwise.
-         */
-        private java.util.Map<ValueId, String> emitClassNewLocalDefaults(SemanticOp op,
-                java.util.List<SemanticOp> running) {
-            java.util.Map<ValueId, String> attempts = new java.util.LinkedHashMap<>();
-            if (running.isEmpty()) {
-                return attempts;
-            }
-            String scratch = attemptScratch(op.opId());
-            out.append("local ").append(scratch).append(" = {}\n");
-            for (int i = 0; i < running.size(); i++) {
-                SemanticOp defaultOp = running.get(i);
-                String entry = scratch + "[" + (i + 1) + "]";
-                emitClassDefaultCall(op, defaultOp, entry);
-                if (defaultOp.result() instanceof ValueId result) {
-                    attempts.put(result, entry);
-                }
-            }
-            return attempts;
-        }
-
-        /**
-         * The attempt-local scratch table name of one construction: a local
-         * of the enclosing function invocation (a loop body's block declares
-         * its own), so re-entrancy and recursion always write a fresh
-         * attempt's entries.
-         */
-        private String attemptScratch(OpId classNewOp) {
-            return "__dA" + classNewOp.id();
-        }
-
-        /**
-         * One CLASS_DEFAULT child execution (START, function, terminal): the
-         * produced value is published to the op's result slot and to the
-         * enclosing attempt's own entry.
-         */
-        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp,
-                                          String attemptEntry) {
-            out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
-                .append(", \"START\", \"CLASS_DEFAULT\", ")
-                .append(luaString(defaultOp.contract().canonicalDigest()))
-                .append(", \"-\", {}, nil, nil)\n");
-            out.append("__okT, __resT = pcall(")
-                .append(defaultFn(defaultOp.opId())).append(")\n");
-            out.append("if not __okT then\n");
-            emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
-                "__errtext(__resT)");
-            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
-            out.append("  error(__resT, 0)\n");
-            out.append("end\n");
-            if (defaultOp.result() instanceof ValueId resultId) {
-                out.append(slot(resultId)).append(" = __resT\n");
-                out.append(attemptEntry).append(" = __resT\n");
-            }
-            out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
-                .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
-                .append(luaString(defaultOp.contract().canonicalDigest()))
-                .append(", \"-\", {}, __atom(")
-                .append(luaString(staticKind((RuntimeDescriptor) defaultOp.resultType())))
-                .append(", __resT), nil)\n");
-        }
-
-        /**
          * The nesting-safe module save of a factory transfer: one stack
          * push; the stack order is the transfer nesting order.
          */
@@ -4982,7 +4709,7 @@ private void emitStdlib(SemanticOp op) {
         }
 
         private void emitClassNewFactoryTransfer(SemanticOp op,
-                KindPayload.ClassNewPayload payload, java.util.Set<String> provided) {
+                KindPayload.ClassNewPayload payload) {
             OpId factoryOpId = factoryOpIdOf(op, payload);
             SemanticOp factoryOp = opsById.get(factoryOpId);
             if (factoryOp == null || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
@@ -5002,109 +4729,22 @@ private void emitStdlib(SemanticOp op) {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
-            // The factory's default children in declaration order, skipping
-            // any child whose field the caller provides.
-            java.util.List<SemanticOp> running = omittedDefaults(factoryOp,
-                factoryPayload.classDefaultOpIds(), provided);
-            // The transfer attempt's own scratch: the produced default
-            // values live in this attempt's local table, never in the owner
-            // module's class-default shared slots, which a default that
-            // re-enters the construction (directly or through a helper)
-            // overwrites. One local for the whole attempt keeps the
-            // per-function local budget bounded; the `do … end` block keeps a
-            // control-flow goto outside the transfer out of the scratch
-            // local's scope.
-            java.util.Map<OpId, String> attemptEntries = new java.util.LinkedHashMap<>();
-            java.util.List<SemanticOp> filled = new ArrayList<>();
-            if (!running.isEmpty()) {
-                out.append("do\n");
-            }
-            // The owner-side factory group (the module transfer, the
-            // CLASS_FACTORY envelope, the defaults, and the transfer
-            // instance) opens its own mapped group in the owner module, so
-            // its statements are attributed to the owning source file.
+            // Retain exact provider identity and source attribution without
+            // evaluating any field initializer or constructor hook.
             beginSourceMappedGroup(factoryOp, "");
             emitModulePush();
             out.append("__module = ").append(luaString(ownerPath)).append("\n");
-            if (!running.isEmpty()) {
-                String scratch = attemptScratch(op.opId());
-                out.append("local ").append(scratch).append(" = {}\n");
-                for (int i = 0; i < running.size(); i++) {
-                    attemptEntries.put(running.get(i).opId(),
-                        scratch + "[" + (i + 1) + "]");
-                }
-            }
             out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
                 .append(", \"START\", \"CLASS_FACTORY\", ")
                 .append(luaString(factoryOp.contract().canonicalDigest()))
                 .append(", ").append(luaString(opKey(op.opId())))
                 .append(", {}, nil, nil)\n");
-            for (SemanticOp defaultOp : running) {
-                String entry = attemptEntries.get(defaultOp.opId());
-                out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
-                    .append(", \"START\", \"CLASS_DEFAULT\", ")
-                    .append(luaString(defaultOp.contract().canonicalDigest()))
-                    .append(", \"-\", {}, nil, nil)\n");
-                out.append("__okT, __resT = pcall(")
-                    .append(defaultFn(defaultOp.opId())).append(")\n");
-                out.append("if not __okT then\n");
-                emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
-                    "__errtext(__resT)");
-                out.append("__ev(").append(luaString(opKey(factoryOp.opId())))
-                    .append(", \"FAILURE\", \"CLASS_FACTORY\", ")
-                    .append(luaString(factoryOp.contract().canonicalDigest()))
-                    .append(", ").append(luaString(opKey(op.opId())))
-                    .append(", {}, nil, __errtext(__resT))\n");
-                // Restore the caller's module before the caller's own
-                // terminal: the owner-side terminals above carry the
-                // owner's module, the caller's CLASS_NEW FAILURE carries
-                // the caller's (the oracle's own tagging).
-                emitModulePop();
-                // Emission returns to the caller's statements: the caller's
-                // own terminal is attributed to the caller's source again.
-                beginSourceMappedGroup(op, "  ");
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "__errtext(__resT)");
-                out.append("  error(__resT, 0)\n");
-                out.append("end\n");
-                // The failure branch is the only caller-attributed region
-                // of the owner-side group: emission resumes in the owning
-                // module, so the owner's comment and mapping re-open before
-                // the default's completion statements (the mapping sequence
-                // is lexical, not execution-path-dependent).
-                beginSourceMappedGroup(factoryOp, "");
-                if (defaultOp.result() instanceof ValueId resultId) {
-                    out.append(slot(resultId)).append(" = __resT\n");
-                    out.append(entry).append(" = __resT\n");
-                }
-                out.append("__ev(").append(luaString(opKey(defaultOp.opId())))
-                    .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
-                    .append(luaString(defaultOp.contract().canonicalDigest()))
-                    .append(", \"-\", {}, __atom(")
-                    .append(luaString(staticKind((RuntimeDescriptor) defaultOp.resultType())))
-                    .append(", __resT), nil)\n");
-                filled.add(defaultOp);
-            }
-            // The untagged internal transfer instance: the defaulted
-            // fields present (present null via the __NULL sentinel),
-            // every other field missing.
+            // Internal provider record carries identity only; field values
+            // are supplied and validated by the calling construction.
             out.append("__instT = {}\n");
             out.append("__instT[__dealCarrierKeys.f] = {}\n");
             out.append("__instT[__dealCarrierKeys.p] = {}\n");
-            for (SemanticOp defaultOp : filled) {
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                String value = attemptEntries.get(defaultOp.opId());
-                if (value == null) {
-                    value = slot((ValueId) defaultOp.result());
-                }
-                out.append("__instT[__dealCarrierKeys.f][").append(luaString(defaultPayload.field()))
-                    .append("] = (").append(value)
-                    .append(" == nil) and __NULL or ")
-                    .append(value).append("\n");
-                out.append("__instT[__dealCarrierKeys.p][").append(luaString(defaultPayload.field()))
-                    .append("] = true\n");
-            }
+
             out.append("__instT[__dealCarrierKeys.c] = true\n");
             out.append("__instT[__dealCarrierKeys.id] = ")
                 .append(luaString(payload.classId().text())).append("\n");
@@ -5118,9 +4758,6 @@ private void emitStdlib(SemanticOp op) {
             // Emission returns to the caller's statements (the caller-side
             // instance and the caller's own success terminal).
             beginSourceMappedGroup(op, "");
-            if (!running.isEmpty()) {
-                out.append("end\n");
-            }
         }
 
         /** The declared layout entry of one field name, or null. */
@@ -7080,15 +6717,6 @@ private void emitStdlib(SemanticOp op) {
                     .append(", desc = ").append(luaString(jsonDescriptorText(field.descriptor())))
                     .append(", optional = ").append(field.required() ? "false" : "true")
                     .append(", k = ").append(luaString(staticKind(field.descriptor())));
-                SemanticOp defaultOp = classDefaultOpOf(
-                    jsonPlanOwners.get(layout.classId()), layout.classId(),
-                    field.name());
-                if (defaultOp != null && field.required()) {
-                    out.append(", dk = ").append(luaString(opKey(defaultOp.opId())))
-                        .append(", dd = ")
-                        .append(luaString(defaultOp.contract().canonicalDigest()))
-                        .append(", dfn = ").append(defaultFn(defaultOp.opId()));
-                }
                 out.append("},\n");
             }
             out.append("}}\n");
@@ -7649,16 +7277,6 @@ local function __jsonKnownField(plan, name)
 end
 -- One CLASS_DEFAULT child execution with its own START/terminal events
 -- (the detached default op's recorded key/digest, parent "-").
-local function __jsonDefaultRun(f)
-  __ev(f.dk, "START", "CLASS_DEFAULT", f.dd, "-", {}, nil, nil)
-  local ok, produced = pcall(f.dfn)
-  if not ok then
-    __ev(f.dk, "FAILURE", "CLASS_DEFAULT", f.dd, "-", {}, nil, __errtext(produced))
-    return false
-  end
-  __ev(f.dk, "SUCCESS", "CLASS_DEFAULT", f.dd, "-", {}, __atom(f.k, produced), nil)
-  return true, produced
-end
 -- The language carrier of one parsed JSON subtree: the shared table
 -- carrier's full marker set — the presence map __keys, the
 -- first-insertion order list __order (the TABLE_NEW / JSON_PARSE
@@ -7894,11 +7512,7 @@ __jsonDecodeClass = function(plan, doc)
   for i = 1, #fields do
     local f = fields[i]
     if not provided[f.name] and not f.optional then
-      if f.dfn == nil then return false end
-      local ok, produced = __jsonDefaultRun(f)
-      if not ok then return false end
-      values[f.name] = produced
-      provided[f.name] = true
+      return false
     end
   end
   for i = 1, #fields do
@@ -9007,23 +8621,6 @@ local function __hostError(e, origin)
   end
   return __failExpr(e.code, e.message, o, e.expected, e.actual)
 end
--- The loaded <C>_defaults entry of one declared host class (ISSUE-0624;
--- semantic-ir-construct-coverage-cutover K10): the declaring module's
--- published surface is the module table the one production load returned
--- (__rt.load_host, E8011 when the mandatory defaults entry is missing or
--- non-table), and the class's defaults entry is that copy-through. An
--- absent surface (the declaring module's MODULE_IMPORT(HOST) load has not
--- run) is a fail-closed producer defect: the load precedes every
--- construction in dependency order.
-local function __hostClassDefaults(module, class)
-  local surface = __exportSurfaces[module]
-  if type(surface) ~= "table" then
-    error("the host module '"..module.."' has no published surface before the"
-      .." construction of '"..class.."' (the MODULE_IMPORT(HOST) load precedes"
-      .." every construction in dependency order — a producer defect)", 0)
-  end
-  return surface[class.."_defaults"]
-end
 """;
 
     /**
@@ -9695,44 +9292,6 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     local marks = {}
     for k, flag in pairs(sourceMarks) do marks[k] = flag end
     out[__dealCarrierKeys.nK] = marks
-  end
-  return out
-end
--- The host-to-DEAL projection of one declared host class's loaded
--- <C>_defaults entry (ISSUE-0855; the bridge's construction-defaults
--- position): every key of the loaded table is carried with its declared
--- field's canonical descriptor — the emitted __hostClassFields entry of
--- the class's canonical identity — so a defaulted array is the DEAL array
--- carrier, a nested class default is the DEAL representation of its
--- declared identity, a function default stays the documented runtime
--- wrapper, a present null stays the chunk's null sentinel, and the
--- host's absent marker stays the absent marker (the runtime
--- construction's own missing-to-null mapping applies it). One memo spans
--- the construction, so a repeated host default object is one DEAL value.
--- A key outside the declared field map is projected value-directed, so the
--- projected table carries exactly the loaded table's keys: the provided
--- field overlay and the CLASS_EXTRA_FIELD guard read the same accepted-key
--- authority, and the loaded table itself is never mutated (the projection
--- is a fresh table, and a host object inside it is copied, not mutated).
--- The projected table is what __rt.class_ deep-copies. A non-table entry
--- is returned unchanged, so the runtime's own defaults-shape failure is
--- the landed one. The helper rides the chunk's factory store like the
--- other host-crossing helpers (no main-chunk local).
-__factories.__hostClassDefaultsIn = function(module, class, identity)
-  local defaults = __hostClassDefaults(module, class)
-  if type(defaults) ~= "table" then return defaults end
-  local fields = __factories.__hostClassFields[identity]
-  if fields == nil then
-    error("the host class identity '"..tostring(identity).."' has no"
-      .." __hostClassFields entry in the host-carrier metadata (a producer"
-      .." coverage defect)", 0)
-  end
-  local memo = {}
-  local out = {}
-  for k, val in pairs(defaults) do
-    local childDesc = nil
-    if type(k) == "string" then childDesc = fields[k] end
-    out[k] = __factories.__hostCarrierIn(childDesc, val, memo)
   end
   return out
 end

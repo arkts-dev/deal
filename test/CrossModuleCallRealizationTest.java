@@ -1260,7 +1260,7 @@ public class CrossModuleCallRealizationTest {
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
             unit.exportPlan(), bindings, ops, unit.bodyTable(), unit.classFactories(),
-            unit.jsonDefaults(), unit.classBindingFacts());
+            unit.classBindingFacts());
     }
 
     /**

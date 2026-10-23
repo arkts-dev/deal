@@ -372,7 +372,6 @@ public class FailureArmAuthorityTest {
             new deal.semantic.ir.ExportPlan(List.of()), Map.of(), List.of(),
             new deal.semantic.ir.StructuredBodyTable(Map.of(), Map.of()),
             new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-            new deal.semantic.ir.JsonDefaultChildTable(Map.of()),
             deal.semantic.ir.ClassBindingFacts.empty());
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
             new LinkedHashMap<>();
@@ -1693,7 +1692,7 @@ public class FailureArmAuthorityTest {
         // matcher rows and the emitted prelude's check, over the same values.
         List<String> rows = runProbe(emittedArmsChunk(), "arms", """
             local rt = require("deal.runtime")
-            local user = rt.class_("@src/app/User", {}, {})
+            local user = rt.class_plan_("@src/app/User", {}, {})
             local errv = rt.error_value("E_USER", "boom")
             local function runtimeRow(label, fn)
               local ok, value = pcall(fn)
@@ -2305,7 +2304,6 @@ public class FailureArmAuthorityTest {
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-                new deal.semantic.ir.JsonDefaultChildTable(Map.of()),
                 deal.semantic.ir.ClassBindingFacts.empty());
         deal.semantic.SemanticRuntimeModel.ConsumerRun run =
             deal.semantic.SemanticOracle.execute(unit, table);
@@ -3202,25 +3200,25 @@ public class FailureArmAuthorityTest {
         return new deal.semantic.ir.ClassLayout(WALK_ID, List.of(
             new deal.semantic.ir.ClassLayout.FieldLayout("name",
                 RuntimeDescriptor.String.INSTANCE, true,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("age",
                 RuntimeDescriptor.Number.INSTANCE, true,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("ratio",
                 RuntimeDescriptor.Number.INSTANCE, true,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("data",
                 RuntimeDescriptor.Table.INSTANCE, true,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("tags",
                 new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE), true,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             // The nullable optional field of the present-null admission
             // (testPresentNullAdmission): its presence pin is the exact
             // trigger of the walk's admission check.
             new deal.semantic.ir.ClassLayout.FieldLayout("note",
                 new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE), false,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             // The declared-array container-identity routes (the
             // declared-array self re-entry and the mixed
             // declared-array/table re-entry of walkCases()): both are
@@ -3229,10 +3227,10 @@ public class FailureArmAuthorityTest {
             new deal.semantic.ir.ClassLayout.FieldLayout("grid",
                 new RuntimeDescriptor.Array(new RuntimeDescriptor.Array(
                     RuntimeDescriptor.Table.INSTANCE)), false,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("matrix",
                 new RuntimeDescriptor.Array(RuntimeDescriptor.Table.INSTANCE), false,
-                deal.semantic.ir.DefaultOwner.LOCAL)));
+                deal.semantic.ir.ConstructionProvider.LOCAL)));
     }
 
     /** One drive case: the same failing value on the three consumers. */
@@ -3999,10 +3997,10 @@ public class FailureArmAuthorityTest {
         return new deal.semantic.ir.ClassLayout(WALK_ID, List.of(
             new deal.semantic.ir.ClassLayout.FieldLayout("nul",
                 RuntimeDescriptor.Null.INSTANCE, false,
-                deal.semantic.ir.DefaultOwner.LOCAL),
+                deal.semantic.ir.ConstructionProvider.LOCAL),
             new deal.semantic.ir.ClassLayout.FieldLayout("flag",
                 RuntimeDescriptor.Boolean.INSTANCE, false,
-                deal.semantic.ir.DefaultOwner.LOCAL)));
+                deal.semantic.ir.ConstructionProvider.LOCAL)));
     }
 
     /**
@@ -4691,7 +4689,6 @@ public class FailureArmAuthorityTest {
                 new deal.semantic.ir.ExportPlan(List.of()), Map.of(), ops,
                 new deal.semantic.ir.StructuredBodyTable(Map.of(), Map.of()),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-                new deal.semantic.ir.JsonDefaultChildTable(Map.of()),
                 deal.semantic.ir.ClassBindingFacts.empty());
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
             new LinkedHashMap<>();
@@ -4982,7 +4979,7 @@ public class FailureArmAuthorityTest {
             + "rt.async_create(function() return \"x\" end), age = 1, ratio = 0.5, "
             + "data = " + LUA_TABLE_CARRIER + ", tags = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, "
             + "[1] = 1}}}},\n"
-            + "  {label = \"runtime-class-root\", root = rt.class_(" + quote(foreign)
+            + "  {label = \"runtime-class-root\", root = rt.class_plan_(" + quote(foreign)
             + ", {}, {})},\n"
             + "}\n"
             + "for i = 1, #carriers do\n"
@@ -5326,9 +5323,9 @@ public class FailureArmAuthorityTest {
                 Map.of(WALK_ID, walkLayout())));
         }
 
-        // (2) An omitted required field with no declared default: the
-        // construction publishes the instance with the missing field state,
-        // the walk fails the first missing required field declaration-order.
+        // (2) A malformed construction cannot publish an omitted required
+        // field to the walk. Direct walk controls above independently cover
+        // missing fields on forged carriers.
         {
             DispatchIds ids = new DispatchIds();
             Map<String, DispatchValue> present = new LinkedHashMap<>();
@@ -5336,8 +5333,16 @@ public class FailureArmAuthorityTest {
             present.put("ratio", DispatchValue.NUMBER);
             present.put("data", DispatchValue.TABLE);
             present.put("tags", DispatchValue.ARRAY);
-            cases.add(dispatchCase("dispatch-missing-required-field", "age", "nil",
-                ids, WALK_ID, walkLayout(), present, Map.of(WALK_ID, walkLayout())));
+            DispatchCase omitted = dispatchCase("dispatch-missing-required-field", "age", "nil",
+                ids, WALK_ID, walkLayout(), present, Map.of(WALK_ID, walkLayout()));
+            try {
+                deal.semantic.SemanticOracle.executeProjectInits(
+                    omitted.unit().project(), omitted.unit().tables(), Map.of(), null);
+                check(false, "omitted required field must fail before class publication");
+            } catch (ClassOpsExecutor.Defect defect) {
+                check(defect.getMessage().contains("omits required-present field 'age'"),
+                    "the dispatch retains the missing field defect: " + defect.getMessage());
+            }
         }
 
         // (3) A produced instance of another class: the walk's own root
@@ -5657,7 +5662,7 @@ public class FailureArmAuthorityTest {
         return new deal.semantic.ir.ClassLayout(FOREIGN_ID, List.of(
             new deal.semantic.ir.ClassLayout.FieldLayout("x",
                 RuntimeDescriptor.Number.INSTANCE, true,
-                deal.semantic.ir.DefaultOwner.LOCAL)));
+                deal.semantic.ir.ConstructionProvider.LOCAL)));
     }
 
     /**
@@ -5718,7 +5723,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.ValueId instance = ids.value();
         ops.add(dispatchOp(classNewOp, deal.semantic.ir.SemanticOpKind.CLASS_NEW,
             new KindPayload.ClassNewPayload(classId, layout, provided,
-                deal.semantic.ir.DefaultOwner.LOCAL, List.of(), null, boundaries),
+                deal.semantic.ir.ConstructionProvider.LOCAL, null, boundaries),
             instance, new RuntimeDescriptor.Class(classId),
             FailurePolicyId.CLASS_CONSTRUCTION, dispatchOrigin(ids, null)));
         return new DispatchConstruction(ops, instance);
@@ -5858,7 +5863,6 @@ public class FailureArmAuthorityTest {
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-                new deal.semantic.ir.JsonDefaultChildTable(Map.of()),
                 deal.semantic.ir.ClassBindingFacts.empty());
         deal.semantic.ir.ProjectInterfaceIndex index =
             new deal.semantic.ir.ProjectInterfaceIndex(

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: functions, arrays, classes, chained-access
 
-class Box { value: number = 0; }
+class Box { value: number; }
 function box(v: number): Box { return { value: v }; }
 function makeBoxes(): Box[] { return [box(5), box(11)]; }
 

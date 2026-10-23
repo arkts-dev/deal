@@ -7,6 +7,6 @@ import * as c from "std/console";
 export function main(): null {
  let xs:number[][]=[[1]]; let old:number[]=xs[0]; let alias:number[][]=xs;
  xs[0]=[2]; old[0]=9;
- if(alias[0][0]!==2 || old[0]!==9 || xs[0]===old) {throw {message:"nested slot replacement mutated previous array"};}
+ if(alias[0][0]!==2 || old[0]!==9 || xs[0]===old) {throw {code:"TEST_FAIL",message:"nested slot replacement mutated previous array"};}
  c.log("array-inner-alias-replacement"); return null;
 }

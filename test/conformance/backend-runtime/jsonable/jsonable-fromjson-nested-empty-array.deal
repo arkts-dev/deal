@@ -5,29 +5,29 @@
 
 // @jsonable
 export class Child {
-  n: number = 7;
+  n: number;
 }
 
 // @jsonable
 export class Parent {
-  child: Child = {};
-  items: Child[] = [];
+  child: Child;
+  items: Child[];
 }
 
 export function test_nested_empty_array_rejected(): null {
-  if (Parent$fromJson("{\"child\":[]}") !== null) {
+  if (Parent$fromJson("{\"child\":[],\"items\":[]}") !== null) {
     throw { code: "TEST_FAIL", message: "a nested empty-array class field should return null" };
   }
-  if (Parent$fromJson("{\"items\":[[]]}") !== null) {
+  if (Parent$fromJson("{\"child\":{\"n\":7},\"items\":[[]]}") !== null) {
     throw { code: "TEST_FAIL", message: "a nested empty-array class element should return null" };
   }
-  let ok: Parent | null = Parent$fromJson("{\"child\":{},\"items\":[]}");
+  let ok: Parent | null = Parent$fromJson("{\"child\":{\"n\":7},\"items\":[]}");
   if (ok === null) {
     throw { code: "TEST_FAIL", message: "the object forms should decode" };
   } else {
     let n: number = ok.child.n;
     if (n !== 7) {
-      throw { code: "TEST_FAIL", message: "the nested default should apply" };
+      throw { code: "TEST_FAIL", message: "the provided nested value should survive" };
     }
     if (ok.items.length !== 0) {
       throw { code: "TEST_FAIL", message: "the empty class array should stay empty" };

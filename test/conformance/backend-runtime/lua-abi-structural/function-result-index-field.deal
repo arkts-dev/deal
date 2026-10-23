@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: lua-abi, arrays, chained-access, structural
 
-class Box { value: number = 0; }
+class Box { value: number; }
 function box(v: number): Box { return { value: v }; }
 function boxes(): Box[] { return [box(1), box(2), box(3)]; }
 

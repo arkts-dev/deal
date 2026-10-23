@@ -133,7 +133,7 @@ public class DynamicProducerRuleTest {
     /** The field-read arm: a function-typed class field read. */
     private static final String FIELD_READ_SOURCE = """
         class Holder {
-          f: (x: number) => number = compute;
+          f: (x: number) => number;
         }
 
         function compute(x: number): number {
@@ -1123,8 +1123,7 @@ public class DynamicProducerRuleTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops(),
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     private static LoweredModuleUnit withRegistration(LoweredModuleUnit unit,
@@ -1136,8 +1135,7 @@ public class DynamicProducerRuleTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), bindings, unit.ops(),
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     private static void testNegativeSeeds(RawLowering raw) {

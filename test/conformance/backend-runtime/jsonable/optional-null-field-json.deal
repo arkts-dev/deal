@@ -7,7 +7,7 @@ import * as console from "std/console";
 
 // @jsonable
 export class Note {
-  label: string = "";
+  label: string;
   n?: null;
 }
 

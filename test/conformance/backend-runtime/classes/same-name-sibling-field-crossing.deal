@@ -7,12 +7,12 @@ import * as a from "./same_name_sibling_a";
 import * as b from "./same_name_sibling_b";
 
 class Holder {
-  item: b.Item = {};
+  item: b.Item;
 }
 
 export function main(): null {
   let t: table = { value: a.make() };
-  let h: Holder = {};
+  let h: Holder = {item: b.make()};
   h.item = t.value;
   return null;
 }

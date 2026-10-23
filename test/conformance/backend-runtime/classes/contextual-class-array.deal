@@ -3,15 +3,15 @@
 // @expected: runtime-ok
 // @features: classes, arrays, contextual-typing
 
-class Box { n: number = 0; }
-class Container { children: Box[] = []; }
+class Box { n: number; }
+class Container { children: Box[]; }
 
 function take(a: Box[]): number { return a[0].n; }
 function make(): Box[] { return [{ n: 2 }]; }
 
 export function test_contextual_variable(): number {
-  let a: Box[] = [{ n: 2 }, {}];
-  if (a[0].n !== 2 || a[1].n !== 0) { throw {code: "TEST_FAIL", message: "contextual variable/default"}; }
+  let a: Box[] = [{ n: 2 }, {n: 0}];
+  if (a[0].n !== 2 || a[1].n !== 0) { throw {code: "TEST_FAIL", message: "contextual variable/provided value"}; }
   return a[0].n;
 }
 

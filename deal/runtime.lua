@@ -1301,18 +1301,6 @@ function __rt.load_host(module_path, declared, file, line, column)
             actual = tostring(carried) }, file, line, column)
       end
       exports[name] = { [__K.kind] = "class", [__K.classname] = descriptor }
-      -- <C>_defaults is mandatory (construction depends on it); a
-      -- missing or non-table entry is the HOST_LOAD_INVALID_METADATA
-      -- arm's `defaults` kind, rendered by the artifact-registered arm
-      -- renderer.
-      local defaults_key = name .. "_defaults"
-      local defaults = raw[defaults_key]
-      if type(defaults) ~= "table" then
-        host_load_failure("HOST_LOAD_INVALID_METADATA",
-          { name = name, module = module_path, ["defaults|fields"] = "defaults" },
-          file, line, column)
-      end
-      exports[defaults_key] = defaults
       -- <C>_fields is optional: copied through when the raw host table
       -- supplies it (an arm-rendered metadata failure when present but
       -- not a table); absence is tolerated.
@@ -1551,59 +1539,13 @@ end
 
 -- ===== Class infrastructure =====
 
---- Construct a class instance.
--- @param classname string - the class name for tagging and error messages
--- @param defaults table - all declared fields: required fields with default values,
---        optional fields with __MISSING sentinel
--- @param provided table - user-provided field values
--- @param file string    - optional source file for error reporting
--- @param line number    - optional source line for error reporting
--- @param column number  - optional source column for error reporting
--- @return table - the constructed class instance
-function __rt.class_(classname, defaults, provided, file, line, column)
-  if type(defaults) ~= "table" then
-    error(__rt._err("E8001", "class defaults must be a table", file, line, column, "table", type(defaults)))
-  end
-
-  -- 1. Deep-copy defaults (__MISSING and __NULL sentinels preserved by identity)
-  local instance = __rt._deep_copy(defaults)
-
-  -- 2. Overlay provided fields, rejecting extras
-  if provided ~= nil then
-    if type(provided) ~= "table" then
-      error(__rt._err("E8001", "class field values must be a table", file, line, column, "table", type(provided)))
-    end
-    for k, v in pairs(provided) do
-      if instance[k] == nil then
-        -- Key is not in the defaults table → extra field
-        error(__rt._err("E8007", "extra field '" .. tostring(k) .. "' in class '" .. classname .. "'", file, line, column, nil, nil))
-      end
-      instance[k] = v
-    end
-  end
-
-  -- 3. Remove __MISSING entries: optional fields not provided stay missing (nil)
-  for k, v in pairs(instance) do
-    if v == __rt.__MISSING then
-      instance[k] = nil
-    end
-  end
-
-  -- 4. Tag with class name and kind
-  instance[__K.classname] = classname
-  instance[__K.kind] = "class"
-
-  return instance
-end
-
 --- Fail-closed plan-shape validation shared by class_plan_ and
 -- json_from_plan (runtime page D4): the plan is the ordered field-entry
--- list { {name=..., descriptor=..., optional=..., evaluator=...}, ... } in
+-- list { {name=..., descriptor=..., optional=...}, ... } in
 -- class source order. Returns the declared-name set on success, or nil
 -- plus a reason on failure. Never throws, never mutates. An entry must be
 -- a table with a string name, a string canonical descriptor, a boolean
--- optional flag, and a nil-or-function evaluator; duplicate names are
--- rejections.
+-- optional flag; duplicate names reject. Retired hooks are never read.
 local function plan_declared_names(plan)
   if type(plan) ~= "table" then
     return nil, "class default plan must be a table"
@@ -1612,8 +1554,7 @@ local function plan_declared_names(plan)
   for _, entry in ipairs(plan) do
     if type(entry) ~= "table" or type(entry.name) ~= "string"
         or type(entry.descriptor) ~= "string"
-        or type(entry.optional) ~= "boolean"
-        or (entry.evaluator ~= nil and type(entry.evaluator) ~= "function") then
+        or type(entry.optional) ~= "boolean" then
       return nil, "malformed class default plan entry"
     end
     if declared[entry.name] then
@@ -1623,6 +1564,41 @@ local function plan_declared_names(plan)
     declared[entry.name] = true
   end
   return declared
+end
+
+--- Construct from a structural declaration-order field plan.
+-- Provided values are already evaluated. Validate unpublished slots before tagging.
+function __rt.class_plan_(identity, plan, provided, file, line, column)
+  local declared, reason = plan_declared_names(plan)
+  if declared == nil then
+    error(__rt._err("E8001", reason, file, line, column))
+  end
+  if provided == nil then provided = {} end
+  if type(provided) ~= "table" then
+    error(__rt._err("E8001", "class field values must be a table", file, line, column))
+  end
+  for name in pairs(provided) do
+    if not declared[name] then
+      error(__rt._err("E8007", "extra field '" .. tostring(name)
+        .. "' in class '" .. identity .. "'", file, line, column))
+    end
+  end
+  local instance = {}
+  for _, field in ipairs(plan) do
+    local value = provided[field.name]
+    if value == nil or value == __rt.__MISSING then
+      if not field.optional then
+        error(__rt._err("E8001", "missing required field '" .. field.name
+          .. "' in class '" .. identity .. "'", file, line, column))
+      end
+    else
+      instance[field.name] = __rt.check_canonical_type(field.descriptor,
+        value, file, line, column)
+    end
+  end
+  instance[__K.kind] = "class"
+  instance[__K.classname] = identity
+  return instance
 end
 
 --- Create a class export descriptor for module exports.
@@ -1821,84 +1797,6 @@ function __rt._json_table_shape(v, seen)
   return true
 end
 
---- D2 step 3 defaults identity gate, as a non-throwing predicate:
--- false when defaults is not a table, when defaults is __NULL or
--- __MISSING by identity, or when defaults[__K.kind] is
--- "function"/"class"/"async" — exactly the condition under which
--- _deep_copy returns the table by identity (see _deep_copy above).
--- A __kind field holding any other value (a legal field default) is
--- accepted.
-function __rt._json_defaults_identity_ok(defaults)
-  if type(defaults) ~= "table" then
-    return false
-  end
-  if defaults == __rt.__NULL or defaults == __rt.__MISSING then
-    return false
-  end
-  local k = defaults[__K.kind]
-  if k == "function" or k == "class" or k == "async" then
-    return false
-  end
-  return true
-end
-
---- Path-local acyclicity check for the defaults table (D4): false for
--- cyclic input, true for acyclic input. Traversal mirrors _deep_copy:
--- sentinels and __kind-tagged tables (function/class/async) are treated
--- as leaves — exactly the tables _deep_copy returns by identity — so
--- this check is precisely the condition under which _deep_copy
--- terminates. Never mutates input, never raises.
-function __rt._json_defaults_acyclic(t, seen)
-  if type(t) ~= "table" then
-    return true
-  end
-  if type(seen) ~= "table" then
-    seen = {}
-  end
-  -- The stack-safe walk: an explicit frame stack replaces the recursion,
-  -- so a finite nested defaults table of any depth is checked without a
-  -- Lua call-stack bound; sentinels and __kind-tagged tables stay leaves
-  -- and the path-local seen set keeps the cycle verdict.
-  local frames = {}
-  local function isLeaf(x)
-    if x == __rt.__NULL or x == __rt.__MISSING then
-      return true
-    end
-    local k = x[__K.kind]
-    return k == "function" or k == "class" or k == "async"
-  end
-  if seen[t] then
-    return false
-  end
-  seen[t] = true
-  frames[1] = {value = t, k = nil}
-  while #frames > 0 do
-    local frame = frames[#frames]
-    if isLeaf(frame.value) then
-      seen[frame.value] = nil
-      frames[#frames] = nil
-    else
-      local key, v = next(frame.value, frame.k)
-      frame.k = key
-      if key == nil then
-        seen[frame.value] = nil
-        frames[#frames] = nil
-      elseif type(v) == "table" then
-        if seen[v] then
-          for i = #frames, 1, -1 do
-            seen[frames[i].value] = nil
-            frames[i] = nil
-          end
-          return false
-        end
-        seen[v] = true
-        frames[#frames + 1] = {value = v, k = nil}
-      end
-    end
-  end
-  return true
-end
-
 --- True iff every entry of the fields array satisfies the
 -- direction-specific entry rules (D2 step 5 for decode, D3 step 2 for
 -- encode). Non-table fields -> false. The walkers re-run this at every
@@ -1934,9 +1832,8 @@ end
 -- and boolean optional and nullable keys (missing key or non-boolean
 -- value is malformed). An element descriptor may omit optional/nullable
 -- (absent means false/false); a present element flag must be boolean.
--- jtype == "class" requires a string className and a table fields, plus
--- a table defaults on the decode rule set only (defaults is decode-only;
--- encode never requires or reads it). jtype == "array" requires a table
+-- jtype == "class" requires a string className and a table fields.
+-- Legacy defaults metadata is never read. jtype == "array" requires a table
 -- element. Unknown jtype is false. The array branch checks only this
 -- entry's element reference — the walker re-runs this validator on the
 -- element descriptor itself when it descends, so a truncated
@@ -1978,9 +1875,6 @@ function __rt._json_validate_entry(entry, decode)
     if type(entry.fields) ~= "table" then
       return false
     end
-    if decode and type(entry.defaults) ~= "table" then
-      return false
-    end
     return true
   elseif jtype == "array" then
     if type(entry.element) ~= "table" then
@@ -1991,32 +1885,11 @@ function __rt._json_validate_entry(entry, decode)
   return false
 end
 
---- Decode one already-parsed JSON object into a tagged compiler-class
--- instance through the runtime default plan (runtime page D4). The
--- generated C$fromJson wrapper parses the JSON text and maps a nil result
--- to DEAL null. Never throws: every failure returns nil (parent D5: a
--- parse, key, provided-value, evaluator, or final-validation failure
--- returns DEAL null and publishes no instance). The phase order is the
--- parent's C$fromJson order:
---   1. top-level input gate — a non-table parsed value or the __NULL
---      sentinel rejects;
---   2. key gate — every parsed key must be a declared plan field name
---      (extra/unknown keys, the private carrier marks of a decoded
---      array, and the integer keys of a non-empty array-shaped input
---      reject; the empty object document decodes the defaulted
---      instance, and no array-shaped input is an empty-object
---      collapse);
---   3. provided-value validation in class source order through
---      check_canonical_type — a failure returns nil immediately and no
---      defaults run (a provided-value failure runs no defaults);
---   4. omitted-default evaluation in class source order: omitted
---      required-present defaults invoke their evaluator() exactly once per
---      attempt under pcall — an evaluator failure returns nil;
---   5. final validation — every present field re-checks against its
---      canonical descriptor in class source order;
---   6. tag [__K.classname] = identity, [__K.kind] = "class", publish.
--- Optional omissions stay absent; evaluator results are retained by
--- reference (no generic deep copy).
+--- Decode a structural class from an already-parsed object.
+-- Reject extras, required omissions and invalid supplied values. Validate
+-- unpublished slots in declaration order and tag only a complete instance.
+-- Optional omissions stay absent; no initializer hook is read or invoked.
+-- The generated wrapper maps every nil result to DEAL null.
 function __rt.json_from_plan(identity, plan, parsed, file, line, column)
   local declared = plan_declared_names(plan)
   if declared == nil then
@@ -2037,8 +1910,7 @@ function __rt.json_from_plan(identity, plan, parsed, file, line, column)
   local slots = {}
   local ok, checked
 
-  -- Provided-value validation in class source order; a failure returns
-  -- nil before any default evaluation (parent D5).
+  -- Validate supplied values in declaration order before publication.
   for _, entry in ipairs(plan) do
     local raw = parsed[entry.name]
     if raw ~= nil then
@@ -2051,18 +1923,9 @@ function __rt.json_from_plan(identity, plan, parsed, file, line, column)
     end
   end
 
-  -- Omitted-default evaluation, once per attempt, in class source order,
-  -- under pcall — an evaluator failure returns nil (completed evaluator
-  -- side effects are not rolled back).
+  -- Missing required fields reject; optional fields stay absent.
   for _, entry in ipairs(plan) do
-    if slots[entry.name] == nil and entry.evaluator ~= nil
-        and not entry.optional then
-      ok, checked = pcall(entry.evaluator)
-      if not ok then
-        return nil
-      end
-      slots[entry.name] = checked
-    end
+    if slots[entry.name] == nil and not entry.optional then return nil end
   end
 
   -- Final validation of every present field in class source order.
@@ -2090,18 +1953,17 @@ end
 --
 -- @param descriptor string  classifier for the __classname tag
 -- @param parsed     table   already-decoded JSON object (from json.parse)
--- @param defaults   table   default values per field (contains __NULL/__MISSING sentinels)
 -- @param fields     array   array of field descriptor tables
 -- @return tagged instance table on success, or nil on validation failure
-function __rt.json_from_json(descriptor, parsed, defaults, fields)
-  return __rt._json_from_instance(descriptor, parsed, defaults, fields, {})
+function __rt.json_from_json(descriptor, parsed, fields)
+  return __rt._json_from_instance(descriptor, parsed, fields, {})
 end
 
 --- Decode one class instance (D2 gate order, steps 1-10). Never throws:
 -- every failure path returns nil. seen is the shared path-local set (D4);
--- nested class decode recurses here, re-running every gate on the nested
--- defaults and fields. There is no fixed nesting-depth bound.
-function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
+-- nested class decode re-runs every structural gate at each depth.
+-- There is no fixed nesting-depth bound.
+function __rt._json_from_instance(descriptor, parsed, fields, seen)
   if type(seen) ~= "table" then
     seen = {}
   end
@@ -2113,15 +1975,6 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
     return nil
   end
   if parsed == __rt.__NULL then
-    return nil
-  end
-  -- 3. Defaults identity gate (D2 step 3): a sentinel or identity-
-  -- preserved defaults (__kind in {"function","class","async"} — exactly
-  -- the condition under which _deep_copy returns the table by identity)
-  -- would be overlaid and tagged in place, corrupting the global
-  -- sentinels; reject it before _deep_copy can return it as the instance
-  -- scaffold. Any other __kind value is a legal field default.
-  if not __rt._json_defaults_identity_ok(defaults) then
     return nil
   end
   -- 4. Fields gate (D2 step 4): a missing/non-table fields argument
@@ -2150,15 +2003,6 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
       return nil
     end
   end
-  -- 7. The empty object document decodes as the defaulted instance. An
-  -- array-shaped document is never an object: a decoded array carrier
-  -- records the private array/order marks the key gate above rejects,
-  -- and a non-empty array rejects on its integer keys, so there is no
-  -- empty-array-to-object collapse at this class gate.
-  -- 8. Defaults acyclicity (D4): cyclic defaults → nil before _deep_copy.
-  if not __rt._json_defaults_acyclic(defaults, {}) then
-    return nil
-  end
   -- 9. Seen push (D4): a cycle in the parsed data re-enters this table
   -- on the current path → nil. The set is popped on every return path.
   if seen[parsed] then
@@ -2168,7 +2012,7 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
   -- 10. Decode (D2 step 10): deep-copy → overlay → __MISSING-removal →
   -- tagging, order unchanged (D8). The instance is a fresh table and
   -- never enters seen.
-  local instance = __rt._deep_copy(defaults)
+  local instance = {}
   for _, f in ipairs(fields) do
     local raw = parsed[f.name]
     if raw ~= nil then
@@ -2179,7 +2023,10 @@ function __rt._json_from_instance(descriptor, parsed, defaults, fields, seen)
       end
       instance[f.name] = v
     end
-    -- Key absent: keep the deep-copied default.
+    if raw == nil and not f.optional then
+      seen[parsed] = nil
+      return nil
+    end
   end
   for k, v in pairs(instance) do
     if v == __rt.__MISSING then
@@ -2235,10 +2082,9 @@ function __rt._json_from_value(fdesc, raw, seen)
       return nil
     end
     -- The nested call re-runs every gate (descriptor-entry validation on
-    -- fdesc.fields, the defaults identity gate on fdesc.defaults, the
+    -- fdesc.fields, the required-presence gate, the
     -- key gate on the nested object) and pushes raw onto seen.
-    return __rt._json_from_instance(fdesc.className, raw, fdesc.defaults,
-        fdesc.fields, seen)
+    return __rt._json_from_instance(fdesc.className, raw, fdesc.fields, seen)
   elseif jtype == "array" then
     if type(raw) ~= "table" then
       return nil

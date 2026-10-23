@@ -373,8 +373,7 @@ public class CheckedProjectBuilderTest {
 
         // Synthetic declaration AST: export @jsonable class User { name: string; }.
         ClassDeclaration user = new ClassDeclaration(span(), "User",
-            List.of(new ClassField(span(), "name", false, false, nt("string"),
-                Optional.empty())),
+            List.of(new ClassField(span(), "name", false, false, nt("string"))),
             java.util.Set.of(deal.ast.DeclarationDirective.JSONABLE));
         ProgramNode ast = programOf(new ExportDeclaration(span(), user));
         Map<String, Type> exports = new LinkedHashMap<>();
@@ -404,7 +403,7 @@ public class CheckedProjectBuilderTest {
         check(entry.classes().size() == 1
                 && entry.classes().get(0).classId().text().equals("@lib/User")
                 && entry.classes().get(0).fields().equals(List.of(
-                    new FieldInterface("name", "string", false, false, false)))
+                    new FieldInterface("name", "string", false, false)))
                 && entry.classes().get(0).constructionEntry().equals(new ClassFactoryId(0)),
             "the exported class entry carries the derived constructionEntry and fields");
     }
@@ -794,11 +793,11 @@ public class CheckedProjectBuilderTest {
             Files.writeString(src.resolve("lib.d.deal"),
                 "export class A { x: number; }\n"
                     + "export class B { y: string; opt?: number; note: string | null; "
-                    + "count: number = 1; }\n");
+                    + "count: number; }\n");
             Files.writeString(src.resolve("main.deal"),
                 "import * as lib from \"host/lib\";\n"
-                    + "export class C { v: number = 0; }\n"
-                    + "export class D { w: boolean = false; }\n"
+                    + "export class C { v: number; }\n"
+                    + "export class D { w: boolean; }\n"
                     + "export function main(): null { return null; }\n");
             Files.writeString(tmp.resolve("deal.json"),
                 "{\n  \"languageVersion\": \"1.3\",\n"
@@ -869,17 +868,17 @@ public class CheckedProjectBuilderTest {
             // entry via the pinned TypeNode grammar; implementation entry via
             // the checked ClassSymbol records).
             check(a.fields().equals(List.of(
-                    new FieldInterface("x", "number", false, false, false))),
+                    new FieldInterface("x", "number", false, false))),
                 "lib.A fields = [x: number, optional=false, nullable=false, hasDefault=false]");
             check(b.fields().equals(List.of(
-                    new FieldInterface("y", "string", false, false, false),
-                    new FieldInterface("opt", "number", true, false, false),
-                    new FieldInterface("note", "string | null", false, true, false),
-                    new FieldInterface("count", "number", false, false, true))),
+                    new FieldInterface("y", "string", false, false),
+                    new FieldInterface("opt", "number", true, false),
+                    new FieldInterface("note", "string | null", false, true),
+                    new FieldInterface("count", "number", false, false))),
                 "lib.B fields carry optional/nullable/hasDefault from the record; got "
                     + b.fields());
             check(c.fields().equals(List.of(
-                    new FieldInterface("v", "number", false, false, true))),
+                    new FieldInterface("v", "number", false, false))),
                 "main.C fields derive from the checked ClassSymbol records; got " + c.fields());
 
             // The index never records a route: no route-shaped component exists
@@ -1096,12 +1095,12 @@ public class CheckedProjectBuilderTest {
                     + "export function main(): null { return null; }\n");
             writeSource(src, "a.deal",
                 "import * as D from \"./d\";\n"
-                    + "export class Alpha { d: D.Delta | null = null; }\n");
+                    + "export class Alpha { d: D.Delta | null; }\n");
             writeSource(src, "b.deal",
                 "import * as D from \"./d\";\n"
-                    + "export class Beta { d: D.Delta | null = null; }\n");
+                    + "export class Beta { d: D.Delta | null; }\n");
             writeSource(src, "d.deal",
-                "export class Delta { n: number = 0; }\n");
+                "export class Delta { n: number; }\n");
             Path output = diamond.resolve("out");
             CompilationOrchestrator orchestrator = new CompilationOrchestrator(
                 src.resolve("main.deal").toAbsolutePath(), output, false,
@@ -1125,10 +1124,10 @@ public class CheckedProjectBuilderTest {
                     + "export function main(): null { return null; }\n");
             Path aFile = writeSource(src, "a.deal",
                 "import * as B from \"./b\";\n"
-                    + "export class Alpha { b: B.Beta | null = null; }\n");
+                    + "export class Alpha { b: B.Beta | null; }\n");
             Path bFile = writeSource(src, "b.deal",
                 "import * as A from \"./a\";\n"
-                    + "export class Beta { a: A.Alpha | null = null; }\n");
+                    + "export class Beta { a: A.Alpha | null; }\n");
             checkCycles(typeOnly, src.resolve("main.deal").toAbsolutePath(), null,
                 List.of(List.of(aFile, bFile, aFile)));
         } finally {
@@ -1152,12 +1151,12 @@ public class CheckedProjectBuilderTest {
             writeSource(src, "main.deal",
                 "import * as L from \"./lib\";\n"
                     + "// @jsonable\n"
-                    + "export class A { b: L.B = {}; }\n"
+                    + "export class A { b: L.B; }\n"
                     + "export function main(): null { return null; }\n");
             writeSource(src, "lib.deal",
                 "import * as M from \"./main\";\n"
                     + "// @jsonable\n"
-                    + "export class B { a: M.A = {}; }\n");
+                    + "export class B { a: M.A; }\n");
             Path main = src.resolve("main.deal").toAbsolutePath();
             Path lib = src.resolve("lib.deal").toAbsolutePath();
             checkCycles(mixed, main, null, List.of(List.of(main, lib, main)));
@@ -1175,11 +1174,11 @@ public class CheckedProjectBuilderTest {
             Path support = root.resolve("support");
             Path declA = writeSource(support, "decl_two_a.d.deal",
                 "import * as B from \"./decl_two_b\";\n"
-                    + "export class A { value: number = 1; }\n"
+                    + "export class A { value: number; }\n"
                     + "export function accept(x: B.B): B.B;\n");
             Path declB = writeSource(support, "decl_two_b.d.deal",
                 "import * as A from \"./decl_two_a\";\n"
-                    + "export class B { value: number = 2; }\n"
+                    + "export class B { value: number; }\n"
                     + "export function accept(x: A.A): A.A;\n");
             Map<String, String> externals = new LinkedHashMap<>();
             externals.put("decl_two_a", "support/decl_two_a.d.deal");
@@ -1199,16 +1198,16 @@ public class CheckedProjectBuilderTest {
                     + "export function main(): null { return null; }\n");
             writeSource(src, "a.deal",
                 "import * as B from \"./b\";\n"
-                    + "export class Alpha { b: B.Beta | null = null; }\n");
+                    + "export class Alpha { b: B.Beta | null; }\n");
             writeSource(src, "b.deal",
                 "import * as A from \"./a\";\n"
-                    + "export class Beta { a: A.Alpha | null = null; }\n");
+                    + "export class Beta { a: A.Alpha | null; }\n");
             writeSource(src, "x.deal",
                 "import * as Y from \"./y\";\n"
-                    + "export class Chi { y: Y.Psi | null = null; }\n");
+                    + "export class Chi { y: Y.Psi | null; }\n");
             writeSource(src, "y.deal",
                 "import * as X from \"./x\";\n"
-                    + "export class Psi { x: X.Chi | null = null; }\n");
+                    + "export class Psi { x: X.Chi | null; }\n");
             Path a = src.resolve("a.deal").toAbsolutePath();
             Path b = src.resolve("b.deal").toAbsolutePath();
             Path x = src.resolve("x.deal").toAbsolutePath();
@@ -1233,13 +1232,13 @@ public class CheckedProjectBuilderTest {
                     + "export function main(): null { return null; }\n");
             Path aFile = writeSource(src, "a.deal",
                 "import * as C from \"./c\";\n"
-                    + "export class Alpha { c: C.Gamma | null = null; }\n");
+                    + "export class Alpha { c: C.Gamma | null; }\n");
             Path bFile = writeSource(src, "b.deal",
                 "import * as A from \"./a\";\n"
-                    + "export class Beta { a: A.Alpha | null = null; }\n");
+                    + "export class Beta { a: A.Alpha | null; }\n");
             Path cFile = writeSource(src, "c.deal",
                 "import * as B from \"./b\";\n"
-                    + "export class Gamma { b: B.Beta | null = null; }\n");
+                    + "export class Gamma { b: B.Beta | null; }\n");
             checkCycles(outOfOrder, src.resolve("main.deal").toAbsolutePath(), null,
                 List.of(List.of(aFile, cFile, bFile, aFile)));
         } finally {

@@ -5,7 +5,7 @@
 // @features: async, await, runtime
 
 // Invocation-local stage carrier threaded through the private chain helpers.
-class ChainStage { step: number = 0; }
+class ChainStage { step: number; }
 
 // Level 3: sync completion — no internal await
 async function level3_sync(stage: ChainStage): number {

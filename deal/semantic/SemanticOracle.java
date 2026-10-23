@@ -33,7 +33,7 @@ import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ClassOpsExecutor;
 import deal.semantic.ir.ComparisonExecutor;
 import deal.semantic.ir.ComparisonOperandView;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.FailureArm;
 import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
@@ -401,9 +401,9 @@ public final class SemanticOracle {
      * responder supplies every host terminal — sync returns/throws,
      * async starts (the returned operation handle, the non-operation value
      * the host returned in its place, or its absent result), async
-     * completions, the loaded host surface entries
-     * ({@link #loadedExport}), the loaded host class defaults
-     * ({@link #loadedClassDefaults}). The oracle records one
+     * completions and the loaded host surface entries
+     * ({@link #loadedExport}). Class construction uses declared structural
+     * layouts, not an executable host initializer projection. The oracle records one
      * ordered
      * {@code HOST_CALL}/{@code HOST_RETURN}/{@code HOST_THROW}/
      * {@code ASYNC_START_OP}/{@code ASYNC_COMPLETE_*} effect per
@@ -530,10 +530,6 @@ public final class SemanticOracle {
         }
 
         default Map<String, Value> loadedSurface(ModuleId module) {
-            return null;
-        }
-
-        default Map<String, Value> loadedClassDefaults(ClassId classId) {
             return null;
         }
 
@@ -1351,9 +1347,7 @@ record NumValue(double value) implements Value {
                 // the walk skip set keeps the default ops out of any
                 // block run (their own events are the owner arm's).
                 for (SemanticOp op : unit.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        ownedChildren.add(op.opId());
-                    }
+
                 }
                 for (SemanticOp op : unit.ops()) {
                     if (op.payload() instanceof KindPayload.TryCatchPayload tryCatch) {
@@ -2017,7 +2011,7 @@ record NumValue(double value) implements Value {
                 case MODULE_INIT -> executeModuleInit(op);
                 case JSON_FROM_CLASS -> executeJsonFromClass(op);
                 case JSON_TO_CLASS -> executeJsonToClass(op);
-                case CLASS_DEFAULT -> executeClassDefaultArm(op);
+
                 case CLASS_NEW -> executeClassNew(op);
                 case CLASS_FACTORY -> throw new IllegalStateException(
                     "a CLASS_FACTORY executes only under its triggering caller's "
@@ -2422,62 +2416,17 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
         /**
          * The block execution returning the original oracle value.
          */
-        private Value executeDefaultBlockValue(SemanticOp defaultOp) {
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) defaultOp.payload();
-            UnitState state = stateOf(defaultOp.opId());
-            stateStack.push(state);
-            try {
-                runBlock(payload.defaultBlock());
-            } finally {
-                stateStack.pop();
-            }
-            if (!(defaultOp.result() instanceof ValueId resultId)) {
-                throw new IllegalStateException("CLASS_DEFAULT " + defaultOp.opId()
-                    + " publishes no ValueId result (producer defect)");
-            }
-            Value produced = valueOf(resultId);
-            if (produced == null) {
-                throw new IllegalStateException("CLASS_DEFAULT " + defaultOp.opId()
-                    + " default block produced no value in its result slot "
-                    + resultId + " (producer defect)");
-            }
-            return produced;
-        }
 
-        /**
-         * CLASS_DEFAULT reached directly by the block walk — a producer
-         * defect (the detached default blocks execute only under their
-         * triggering construction; the walk skip set keeps them out of
-         * the walk).
-         */
-        private String executeClassDefaultArm(SemanticOp op) {
-            throw new IllegalStateException("a CLASS_DEFAULT executes only under its "
-                + "triggering CLASS_NEW/CLASS_FACTORY (the default op is a member of "
-                + "exactly its own detached default block — the block walk never "
-                + "runs it); reaching executeClassDefaultArm is a producer defect");
-        }
 
         private String executeJsonFromClass(SemanticOp op) {
             KindPayload.JsonFromClassPayload payload =
                 (KindPayload.JsonFromClassPayload) op.payload();
-            UnitState state = stateOf(op.opId());
             Map<ValueId, ClassOpsExecutor.Value> priorValues = new LinkedHashMap<>();
             priorValues.put(payload.jsonString(),
                 executorValueOf(valueOf(payload.jsonString())));
-            Map<OpId, SemanticOp> defaultOps = new LinkedHashMap<>();
-            for (SemanticOp candidate : state.unit.ops()) {
-                if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                    defaultOps.put(candidate.opId(), candidate);
-                }
-            }
-            List<OpId> defaultChildIds = jsonDefaultChildrenOf(state,
-                payload.layout());
             Value produced = oracleValueOf(ClassOpsExecutor.executeJsonFromClass(op,
-                priorValues, defaultChildIds, defaultOps,
-                jsonLayoutView(op, payload.layout().classId()),
-                JsonClassAlgorithmAdapter.parser(), nestedClassFactory(op),
-                bodyRunner(op)));
+                priorValues, jsonLayoutView(op, payload.layout().classId()),
+                JsonClassAlgorithmAdapter.parser()));
             return publish(op, produced);
         }
 
@@ -2505,105 +2454,6 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             };
         }
 
-        private List<OpId> jsonDefaultChildrenOf(UnitState state, ClassLayout layout) {
-            List<OpId> children = new ArrayList<>();
-            for (ClassLayout.FieldLayout field : layout.fields()) {
-                if (!field.required()) {
-                    continue;
-                }
-                for (SemanticOp candidate : state.unit.ops()) {
-                    if (candidate.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                        continue;
-                    }
-                    KindPayload.ClassDefaultPayload defaultPayload =
-                        (KindPayload.ClassDefaultPayload) candidate.payload();
-                    if (defaultPayload.classId().equals(layout.classId())
-                            && defaultPayload.field().equals(field.name())) {
-                        children.add(candidate.opId());
-                        break;
-                    }
-                }
-            }
-            return children;
-        }
-
-        private ClassOpsExecutor.NestedClassFactory nestedClassFactory(SemanticOp triggering) {
-            return (classId, providedFields) -> {
-                // The plan owner of a multiple-declaration identity: the
-                // generated plan table carries exactly that declaration's
-                // layout and defaults, so the nested decode's default
-                // filling resolves the owner module's CLASS_FACTORY — never
-                // a unit-order-first sibling's.
-                ModuleId planOwner = jsonPlanOwners.get(classId);
-                SemanticOp factoryOp = null;
-                for (UnitState candidateState : units.values()) {
-                    if (planOwner != null
-                            && !candidateState.unit.moduleId().equals(planOwner)) {
-                        continue;
-                    }
-                    for (SemanticOp candidate : candidateState.unit.ops()) {
-                        if (candidate.kind() != SemanticOpKind.CLASS_FACTORY) {
-                            continue;
-                        }
-                        if (((KindPayload.ClassFactoryPayload) candidate.payload())
-                                .classId().equals(classId)) {
-                            factoryOp = candidate;
-                            break;
-                        }
-                    }
-                    if (factoryOp != null) {
-                        break;
-                    }
-                }
-                if (factoryOp == null) {
-                    throw new IllegalStateException("a nested JSON decode of " + classId
-                        + " resolves no CLASS_FACTORY entry in the closure (the nested "
-                        + "defaults seam requires the owner factory — producer defect, "
-                        + "never executed)");
-                }
-                UnitState ownerState = stateOf(factoryOp.opId());
-                Map<OpId, SemanticOp> ownerDefaultOps = new LinkedHashMap<>();
-                for (SemanticOp candidate : ownerState.unit.ops()) {
-                    if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        ownerDefaultOps.put(candidate.opId(), candidate);
-                    }
-                }
-                ClassOpsExecutor.BodyRunner runner = this::runDefaultBlockBody;
-                Map<ClassId, ClassLayout> factoryLayoutView = layoutView(factoryOp,
-                    ((KindPayload.ClassFactoryPayload) factoryOp.payload()).classId(),
-                    null);
-                emitStartParented(factoryOp, triggering.opId(), List.of());
-                ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome;
-                try {
-                    outcome = ClassOpsExecutor.executeClassFactory(factoryOp, triggering,
-                        ownerDefaultOps, factoryLayoutView, providedFields, runner);
-                } catch (DealFailure failure) {
-                    emitFailureParented(factoryOp, triggering.opId(), failure);
-                    throw failure;
-                }
-                if (!(outcome instanceof ClassOpsExecutor.Outcome.Success
-                        <ClassOpsExecutor.Value> success
-                        && success.value() instanceof ClassOpsExecutor.Value.Class)) {
-                    throw new IllegalStateException("CLASS_FACTORY " + factoryOp.opId()
-                        + " produced " + outcome + " — the pinned factory returns "
-                        + "exactly its internal default-filled transfer instance "
-                        + "(producer defect)");
-                }
-                ClassOpsExecutor.Value.Class transferInstance =
-                    (ClassOpsExecutor.Value.Class) success.value();
-                Value transferValue = oracleValueOf(transferInstance);
-                recordInstanceLayout(transferValue,
-                    factoryLayoutView.get(
-                        ((KindPayload.ClassFactoryPayload) factoryOp.payload())
-                            .classId()));
-                if (factoryOp.result() instanceof ValueId factoryResult) {
-                    putValue(factoryResult, transferValue);
-                }
-                emitSuccessParented(factoryOp, triggering.opId(), atomOf(transferValue));
-                return transferInstance;
-            };
-        }
-
         private String executeClassNew(SemanticOp op) {
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) op.payload();
@@ -2613,12 +2463,9 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 priorValues.put(field.valueOpId(),
                     executorValueOf(valueOf(field.valueOpId())));
             }
-            Map<OpId, SemanticOp> defaultOps = new LinkedHashMap<>();
             Map<OpId, SemanticOp> boundaryOps = new LinkedHashMap<>();
             for (SemanticOp candidate : state.unit.ops()) {
-                if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                    defaultOps.put(candidate.opId(), candidate);
-                }
+
                 if (candidate.kind() == SemanticOpKind.BOUNDARY) {
                     boundaryOps.put(candidate.opId(), candidate);
                 }
@@ -2626,11 +2473,10 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome;
             Map<ClassId, ClassLayout> classLayoutView = layoutView(op,
                 payload.classId(), payload.classFactoryRef());
-            switch (payload.defaultOwner()) {
+            switch (payload.constructionProvider()) {
                 case LOCAL -> outcome = ClassOpsExecutor.executeClassNewLocal(op,
-                    priorValues, defaultOps, boundaryOps, classLayoutView,
-                    checkRunner(op, payload, boundaryOps, null),
-                    bodyRunner(op));
+                    priorValues, boundaryOps, classLayoutView,
+                    checkRunner(op, payload, boundaryOps));
                 case SHARED_FACTORY -> {
                     OpId factoryOpId = ClassFactoryRegistry.ownerFactoryOp(registries,
                         payload.classFactoryRef());
@@ -2667,35 +2513,12 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                             + " (producer defect)");
                     }
                     UnitState ownerState = stateOf(factoryOpId);
-                    Map<OpId, SemanticOp> ownerDefaultOps = new LinkedHashMap<>();
-                    for (SemanticOp candidate : ownerState.unit.ops()) {
-                        if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                            ownerDefaultOps.put(candidate.opId(), candidate);
-                        }
-                    }
-                    Set<String> providedNames = new LinkedHashSet<>();
-                    for (KindPayload.ProvidedField field : payload.providedFields()) {
-                        providedNames.add(field.name());
-                    }
-                    // Stage A — the recorded factory execution: the owner
-                    // CLASS_DEFAULT children run exactly once per
-                    // triggering construction attempt in the declaring
-                    // module's scope, with their own events (the original
-                    // produced values atomized); the factory's events
-                    // parent to this caller op (cross-unit).
-                    Map<OpId, ClassOpsExecutor.Value> captured = new LinkedHashMap<>();
-                    ClassOpsExecutor.BodyRunner recordingRunner = defaultOp -> {
-                        ClassOpsExecutor.Value produced =
-                            runDefaultBlockBody(defaultOp);
-                        captured.put(defaultOp.opId(), produced);
-                        return produced;
-                    };
+                    // Resolve and record the declaring provider without executing user code.
                     emitStartParented(factoryOp, op.opId(), List.of());
                     ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> transfer;
                     try {
                         transfer = ClassOpsExecutor.executeClassFactory(factoryOp, op,
-                            ownerDefaultOps, layoutView(factoryOp, payload.classId(), null),
-                            providedNames, recordingRunner);
+                            layoutView(factoryOp, payload.classId(), null));
                     } catch (DealFailure failure) {
                         emitFailureParented(factoryOp, op.opId(), failure);
                         throw failure;
@@ -2719,30 +2542,16 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     }
                     putValue((ValueId) factoryOp.result(), transferClassValue);
                     emitSuccessParented(factoryOp, op.opId(), atomOf(transferClassValue));
-                    // Stage B — the executor's pinned completion (extra-key,
-                    // overlay, boundaries, tag) with a replaying runner
-                    // returning the recorded default values (the blocks ran
-                    // once in stage A; the replay is pure bookkeeping).
-                    ClassOpsExecutor.BodyRunner replayRunner = defaultOp -> {
-                        ClassOpsExecutor.Value value = captured.get(defaultOp.opId());
-                        if (value == null) {
-                            throw new IllegalStateException("CLASS_FACTORY "
-                                + factoryOp.opId() + " default child " + defaultOp.opId()
-                                + " was not captured in the recorded pass "
-                                + "(producer defect)");
-                        }
-                        return value;
-                    };
+                    // Validate provided fields and publish the caller's new instance.
                     outcome = ClassOpsExecutor.executeClassNewSharedFactory(op,
                         priorValues, registry, ownerState.opsById, boundaryOps,
-                        classLayoutView, checkRunner(op, payload, boundaryOps,
-                            (ValueId) factoryOp.result()), replayRunner);
+                        classLayoutView, checkRunner(op, payload, boundaryOps));
                 }
-                case HOST_DEFAULTS -> {
+                case HOST_DECLARATION -> {
 
                     if (!declarationLayouts.containsKey(payload.classId())) {
                         throw new IllegalStateException("CLASS_NEW " + op.opId()
-                            + " carries defaultOwner HOST_DEFAULTS for class "
+                            + " carries constructionProvider HOST_DECLARATION for class "
                             + payload.classId() + ", which is not a registered"
                             + " declaration class of the execution's layout context:"
                             + " the host-defaults owner is admissible only for a"
@@ -2750,39 +2559,26 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                             + " registration seeds — a fail-closed producer defect,"
                             + " never executed");
                     }
-                    Map<String, ClassOpsExecutor.Value> defaults = null;
-                    if (responder != null) {
-                        Map<String, Value> projected =
-                            responder.loadedClassDefaults(payload.classId());
-                        if (projected != null) {
-                            defaults = new LinkedHashMap<>();
-                            for (Map.Entry<String, Value> entry
-                                    : projected.entrySet()) {
-                                defaults.put(entry.getKey(),
-                                    executorValueOf(entry.getValue()));
-                            }
-                        }
-                    }
-                    outcome = ClassOpsExecutor.executeClassNewHostDefaults(op,
+                    outcome = ClassOpsExecutor.executeClassNewHost(op,
                         priorValues, boundaryOps, classLayouts,
-                        checkRunner(op, payload, boundaryOps, null), defaults);
+                        checkRunner(op, payload, boundaryOps));
                 }
 
-                case BUILTIN_DEFAULTS -> {
+                case BUILTIN_ERROR -> {
                     if (!ClassId.ERROR.equals(payload.classId())) {
                         throw new IllegalStateException("CLASS_NEW " + op.opId()
-                            + " carries defaultOwner BUILTIN_DEFAULTS for class "
+                            + " carries constructionProvider BUILTIN_ERROR for class "
                             + payload.classId() + ": the builtin-defaults owner is"
                             + " admissible only for the builtin Error class"
                             + " (producer defect)");
                     }
 
-                    outcome = ClassOpsExecutor.executeClassNewBuiltinDefaults(op,
+                    outcome = ClassOpsExecutor.executeClassNewBuiltinError(op,
                         priorValues, boundaryOps, classLayouts,
-                        checkRunner(op, payload, boundaryOps, null));
+                        checkRunner(op, payload, boundaryOps));
                 }
                 default -> throw new IllegalStateException("CLASS_NEW " + op.opId()
-                    + " carries defaultOwner " + payload.defaultOwner()
+                    + " carries constructionProvider " + payload.constructionProvider()
                     + " outside the executable owners (producer defect)");
             }
             return switch (outcome) {
@@ -2798,29 +2594,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             };
         }
 
-        private ClassOpsExecutor.BodyRunner bodyRunner(SemanticOp op) {
-            return this::runDefaultBlockBody;
-        }
-
-        /** The shared body of {@link #bodyRunner} and its variants. */
-        private ClassOpsExecutor.Value runDefaultBlockBody(SemanticOp defaultOp) {
-            emitStart(defaultOp, List.of());
-            Value oracleProduced;
-            try {
-                oracleProduced = executeDefaultBlockValue(defaultOp);
-            } catch (DealFailure failure) {
-                emitFailure(defaultOp, failure);
-                throw failure;
-            }
-            ClassOpsExecutor.Value produced = executorValueOf(oracleProduced);
-            publish(defaultOp, oracleProduced);
-            emitSuccess(defaultOp, atomOf(oracleProduced));
-            return produced;
-        }
-
         private ClassOpsExecutor.BoundaryCheckRunner checkRunner(SemanticOp op,
-                KindPayload.ClassNewPayload payload, Map<OpId, SemanticOp> boundaryOps,
-                ValueId factoryResult) {
+                KindPayload.ClassNewPayload payload, Map<OpId, SemanticOp> boundaryOps) {
             final int[] boundaryIndex = {0};
             return (boundaryPayload, input) -> {
                 List<KindPayload.FieldBoundary> entries = payload.fieldBoundaries();
@@ -2836,20 +2611,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         + " field boundary " + entry.boundaryOpId() + " does not resolve "
                         + "(producer defect)");
                 }
-                Value oracleInput;
-                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
-                        && factoryResult != null
-                        && factoryResult.equals(boundaryPayload.input())) {
-                    Value transferred = valueOf(factoryResult);
-                    if (!(transferred instanceof Value.ClassValue transferInstance)) {
-                        throw new IllegalStateException("CLASS_NEW " + op.opId()
-                            + " CLASS_DEFAULT_FIELD input " + factoryResult
-                            + " resolves to a non-instance value (producer defect)");
-                    }
-                    oracleInput = classFieldOf(op, transferInstance, entry.field());
-                } else {
-                    oracleInput = valueOf(boundaryPayload.input());
-                }
+                Value oracleInput = valueOf(boundaryPayload.input());
                 try {
                     Value checked = runBoundaryChild(boundary, oracleInput,
                         BoundaryContext.none());
@@ -2863,35 +2625,6 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 }
             };
         }
-        /** The present value of one named declaration-order field of a class instance. */
-        private Value classFieldOf(SemanticOp op, Value.ClassValue instance,
-                                   String fieldName) {
-            ClassLayout layout = instanceLayouts.get(instance);
-            if (layout == null) {
-                layout = classLayouts.get(instance.classId());
-            }
-            if (layout == null || layout.fields().size() != instance.fields().size()) {
-                throw new IllegalStateException("CLASS_NEW " + op.opId()
-                    + " instance " + instance.classId()
-                    + " has no matching layout in the resolution context "
-                    + "(producer defect)");
-            }
-            for (int i = 0; i < layout.fields().size(); i++) {
-                if (layout.fields().get(i).name().equals(fieldName)) {
-                    return switch (instance.fields().get(i)) {
-                        case Value.ClassFieldState.Present present -> present.value();
-                        case Value.ClassFieldState.Missing ignored ->
-                            throw new IllegalStateException("CLASS_NEW " + op.opId()
-                                + " reads field '" + fieldName + "' of a transferred "
-                                + "instance whose field is missing (producer defect)");
-                    };
-                }
-            }
-            throw new IllegalStateException("CLASS_NEW " + op.opId() + " field '"
-                + fieldName + "' is not declared in " + instance.classId()
-                + " (producer defect)");
-        }
-
         /**
          * The run-global conversion caches between the oracle value
          * model and the executor's closed view (identity-keyed): a heap

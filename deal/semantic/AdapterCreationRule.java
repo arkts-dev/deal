@@ -316,7 +316,7 @@ public final class AdapterCreationRule {
             case FUNCTION_PARAMETER, EXTERNAL_PARAMETER, STDLIB_PARAMETER ->
                 PositionKind.PARAMETER;
             case FUNCTION_RETURN -> PositionKind.RETURN;
-            case CLASS_LITERAL_FIELD, CLASS_DEFAULT_FIELD -> PositionKind.CLASS_FIELD;
+            case CLASS_LITERAL_FIELD -> PositionKind.CLASS_FIELD;
             case ARRAY_ELEMENT_ASSIGNMENT -> PositionKind.ARRAY_ELEMENT_WRITE;
             case ARRAY_LITERAL_ELEMENT -> PositionKind.ARRAY_LITERAL_ELEMENT;
             case CLASS_FIELD_ASSIGNMENT -> PositionKind.CLASS_FIELD_WRITE;

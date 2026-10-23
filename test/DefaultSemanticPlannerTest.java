@@ -4,741 +4,215 @@ import deal.diagnostics.CompilerDiagnostic;
 import deal.module.CompilationOrchestrator;
 import deal.module.CompilerClassDefaultEntry;
 import deal.module.CompilerClassDefaultPlan;
-import deal.module.DefaultResourceOccurrence;
 import deal.module.PlannedDefaultClass;
-import deal.module.ResolvedDefaultExpression;
 import deal.project.ProjectLocator;
-import deal.semantic.CompilerInvocation;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-public class DefaultSemanticPlannerTest {
-
-    private static int passed = 0;
-    private static int failed = 0;
-
+/** Structural class planning through the production orchestration path. */
+public final class DefaultSemanticPlannerTest {
+    private static int passed;
     private static void check(boolean condition, String message) {
-        if (condition) {
-            passed++;
-        } else {
-            failed++;
-            System.err.println("FAIL: " + message);
-        }
+        if (!condition) throw new AssertionError(message);
+        passed++;
     }
 
-    private static Path write(Path root, String rel, String content)
-            throws Exception {
-        Path file = root.resolve(rel);
-        Files.createDirectories(file.getParent());
-        Files.writeString(file, content);
-        return file.toAbsolutePath();
-    }
+    private static final String MANIFEST = """
+        {"languageVersion":"1.3","moduleRoots":["src"],
+         "backend":"luajit","output":"build"}
+        """;
 
-    private static void deleteRecursively(Path dir) {
-        try {
-            if (dir == null || !Files.exists(dir)) {
-                return;
-            }
-            Files.walk(dir).sorted(Comparator.reverseOrder())
-                .forEach(f -> {
-                    try {
-                        Files.deleteIfExists(f);
-                    } catch (Exception ignored) {
-                    }
-                });
-        } catch (Exception ignored) {
+    private record Compile(Path root, CompilationOrchestrator orchestrator, boolean success) {
+        List<CompilerDiagnostic> diagnostics() { return orchestrator.diagnostics(); }
+        CompilerDiagnostic error(String code) {
+            return diagnostics().stream().filter(d -> code.equals(d.code()))
+                .findFirst().orElse(null);
         }
-    }
-
-    private static CompilerInvocation invocation() {
-        return ConformanceHarnessMetadata.invocation();
-    }
-
-    /** One in-process production compile over a scratch project. */
-    private static final class Compile {
-        final Path root;
-        final Path entry;
-        final CompilationOrchestrator orchestrator;
-        final boolean success;
-        final List<CompilerDiagnostic> diagnostics;
-
-        Compile(Map<String, String> files, String entryRel)
-                throws Exception {
-            root = Files.createTempDirectory("deal_plan_");
-            for (Map.Entry<String, String> file : files.entrySet()) {
-                write(root, file.getKey(), file.getValue());
-            }
-            entry = root.resolve(entryRel);
-            ProjectLocator.LocateResult located =
-                ProjectLocator.locate(entry.toString(), null);
-            if (located.context() == null) {
-                throw new IllegalStateException(
-                    "ProjectLocator failed: " + located.e2010());
-            }
-            orchestrator = new CompilationOrchestrator(
-                located.context(), entry, false, false, false, false,
-                null, invocation());
-            success = orchestrator.compile();
-            diagnostics = orchestrator.diagnostics();
-        }
-
-        /**
-         * True when the phase-3.8 default-plan facts — this suite's subject
-         * — are available. The one production arm runs after them: when a
-         * fixture carries a construct outside the landed lowering coverage,
-         * the compile fails closed with exactly its named E6005 while the
-         * earlier-phase facts stay available, and that honest fail-closed
-         * outcome is what this suite asserts.
-         */
-        boolean planFactsAvailable() {
-            if (success) {
-                return true;
-            }
-            if (orchestrator.checkedProject() == null
-                    || orchestrator.checkedProject().hasErrors()
-                    || orchestrator.plannedDefaultClasses().isEmpty()) {
-                return false;
-            }
-            return diagnostics.stream().allMatch(
-                d -> "E6005".equals(d.code()));
-        }
-
-        /** The planned classes of the module whose path ends with the
-         * given suffix, or an empty list. */
-        List<PlannedDefaultClass> plannedFor(String sourceSuffix) {
-            for (Map.Entry<String, List<PlannedDefaultClass>> entry
-                    : orchestrator.plannedDefaultClasses().entrySet()) {
-                if (entry.getKey().endsWith(sourceSuffix)) {
-                    return entry.getValue();
-                }
-            }
-            return List.of();
-        }
-
-        /** The plan of the class with the given simple name in the given
-         * module (path suffix), or null. */
-        CompilerClassDefaultPlan planOf(String sourceSuffix,
-                                        String className) {
-            for (PlannedDefaultClass planned : plannedFor(sourceSuffix)) {
-                if (planned.plan().classIdentity().className()
-                        .equals(className)) {
-                    return planned.plan();
-                }
-            }
-            return null;
-        }
-
-        PlannedDefaultClass plannedOf(String sourceSuffix,
-                                      String className) {
-            for (PlannedDefaultClass planned : plannedFor(sourceSuffix)) {
-                if (planned.plan().classIdentity().className()
-                        .equals(className)) {
-                    return planned;
-                }
-            }
-            return null;
-        }
-
-        CompilerDiagnostic errorOf(String code) {
-            return diagnostics.stream()
-                .filter(d -> "error".equals(d.severity())
-                    && code.equals(d.code()))
+        PlannedDefaultClass planned(String suffix, String name) {
+            return orchestrator.plannedDefaultClasses().entrySet().stream()
+                .filter(e -> e.getKey().endsWith(suffix)).flatMap(e -> e.getValue().stream())
+                .filter(p -> p.plan().classIdentity().className().equals(name))
                 .findFirst().orElse(null);
         }
     }
 
-    private static final String MANIFEST = """
-        {
-          "languageVersion": "1.3",
-          "moduleRoots": ["src"],
-          "backend": "luajit",
-          "output": "build"
+    private static Compile compile(Map<String, String> files) throws Exception {
+        Path root = Files.createTempDirectory("deal-structural-plan-");
+        Files.writeString(root.resolve("deal.json"), MANIFEST);
+        for (var file : files.entrySet()) {
+            Path target = root.resolve(file.getKey());
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, file.getValue());
         }
-        """;
-
-    public static void main(String[] args) throws Exception {
-        testPlanShapeAndResolutionThroughOrchestrator();
-        testE4001ImplementationClass();
-
-        testHostDeclaredExemption();
-        testE3020EvaluatorScopeAwaitInAsyncBody();
-        testE3020AwaitInsideAsyncFunctionExpressionCompiles();
-        testE3001DefaultRange();
-        testDeterminism();
-        System.out.println();
-        System.out.println("Passed: " + passed + ", Failed: " + failed);
-        if (failed > 0) {
-            System.err.println("DefaultSemanticPlannerTest FAILED: "
-                + failed + " failure(s)");
-            System.exit(1);
-        }
+        return compile(root);
     }
 
-    private static void testPlanShapeAndResolutionThroughOrchestrator()
-            throws Exception {
-        System.out.println("-- Plan shape, resolution, and provisional"
-            + " occurrences (real orchestrator path) --");
-        Compile compile = new Compile(Map.of(
-            "deal.json", MANIFEST,
+    private static Compile compile(Path root) throws Exception {
+        Path entry = root.resolve("src/main.deal");
+        var located = ProjectLocator.locate(entry.toString(), null);
+        check(located.context() != null, "project location: " + located.e2010());
+        var owner = new CompilationOrchestrator(located.context(), entry,
+            false, false, false, false, null, ConformanceHarnessMetadata.invocation());
+        return new Compile(root, owner, owner.compile());
+    }
+
+    private static void structuralPlan() throws Exception {
+        Compile run = compile(Map.of(
             "src/main.deal", """
                 import * as L from "./lib";
                 import * as S from "../shared";
-
                 class Outer {
-                  a: number = localHelper();
-                  b: L.Rec = {};
-                  c: L.Rec[] = [L.makeRec({ tag: 5 })];
-                  d: L.Rec[] = [];
-                  e: L.Rec | null = null;
-                  f: number = L.getTag({ tag: 3 });
-                  g: number = S.scale(2);
-                  h: L.Rec = { inner: { tag: 9 } };
+                  a: number;
+                  b: L.Rec;
+                  c: L.Rec[];
+                  d?: L.Rec[];
+                  e: L.Rec | null;
+                  f?: number | null;
                 }
-
-                function localHelper(): number {
-                  return 7;
-                }
-
+                function localHelper(): number { return 7; }
                 export function main(): null {
+                  let rec: L.Rec = {tag: 5};
+                  let outer: Outer = {a: localHelper(), b: L.makeRec(rec),
+                    c: [rec], e: null};
+                  let value: number = L.getTag(outer.b) + S.scale(2);
                   return null;
                 }
                 """,
             "src/lib.deal", """
-                export class Rec {
-                  tag: number = 0;
-                  inner: Rec = {};
-                }
-                export function getTag(r: Rec): number {
-                  return r.tag;
-                }
-                export function makeRec(r: Rec): Rec {
-                  return r;
-                }
+                export class Rec { tag: number; inner?: Rec; }
+                export function getTag(r: Rec): number { return r.tag; }
+                export function makeRec(r: Rec): Rec { return r; }
                 """,
-            "shared.deal", """
-                export function scale(v: number): number {
-                  return v * 2;
-                }
-                """), "src/main.deal");
-        try {
-            check(compile.planFactsAvailable(),
-                "the planning fixture reaches the default-plan phases "
-                    + "(the one production arm fails closed after them): "
-                    + compile.diagnostics);
-
-            // ---- The Outer plan: source-ordered entries ----
-            CompilerClassDefaultPlan outer = compile.planOf("main.deal",
-                "Outer");
-            check(outer != null, "Outer has a compiler default plan");
-            if (outer == null) {
-                return;
-            }
-            check(outer.orderedFields().stream()
-                    .map(CompilerClassDefaultEntry::name).toList()
-                    .equals(List.of("a", "b", "c", "d", "e", "f", "g", "h")),
-                "Outer orderedFields are in class source order, got "
-                    + outer.orderedFields().stream()
-                        .map(CompilerClassDefaultEntry::name).toList());
-            check(outer.orderedFields().get(0).resolvedFieldType()
-                        == deal.types.Type.Number.INSTANCE
-                    && "number".equals(
-                        outer.orderedFields().get(0).runtimeTypeDescriptor()),
-                "field a: number descriptor 'number'");
-            check("@src/lib.deal/Rec".equals(
-                    outer.orderedFields().get(1).runtimeTypeDescriptor()),
-                "field b: imported class descriptor '@src/lib.deal/Rec', got "
-                    + outer.orderedFields().get(1).runtimeTypeDescriptor());
-            check("[@src/lib.deal/Rec]".equals(
-                    outer.orderedFields().get(2).runtimeTypeDescriptor()),
-                "field c: imported class array descriptor '[@src/lib.deal/Rec]', got "
-                    + outer.orderedFields().get(2).runtimeTypeDescriptor());
-            check(outer.orderedFields().stream()
-                    .allMatch(e -> !e.optional()
-                        && e.defaultExpression() != null),
-                "every required-present Outer entry carries a default"
-                    + " expression");
-            check(outer.runtimeDependencies().isEmpty(),
-                "the plan carries empty runtimeDependencies (no"
-                    + " RuntimeImportDependency was constructed)");
-            check(outer.declaringSemanticModuleIdentity()
-                    .canonicalResolvedSourceUri()
-                    .endsWith("src/main.deal"),
-                "the plan carries the declaring module's semantic identity");
-
-            // ---- Resolved default facts: same-module binding ----
-            ResolvedDefaultExpression a = outer.orderedFields().get(0)
-                .defaultExpression();
-            check(a.resolvedBindings().containsKey("localHelper"),
-                "the same-module call records the callee in"
-                    + " resolvedBindings");
-            check(a.resolvedBindings().get("localHelper")
-                        instanceof deal.checker.Symbol.FunctionSymbol,
-                "the same-module binding is the checker's FunctionSymbol");
-            check(a.canonicalSemanticContent() == null
-                    && a.semanticDigest() == null
-                    && a.runtimeResources().isEmpty(),
-                "the default expression stays pre-serializer (null"
-                    + " canonical content/digest, empty runtimeResources)");
-            check(a.semanticIr() instanceof deal.module.TypedEvaluatorIr,
-                "the default expression carries typed evaluator IR");
-
-            // ---- Provisional occurrences: order, dedup, ranges ----
-            PlannedDefaultClass outerPlanned = compile.plannedOf("main.deal",
-                "Outer");
-            List<DefaultResourceOccurrence> occurrences =
-                outerPlanned.occurrences();
-            check(occurrences.size() == 4,
-                "exactly four occurrences (Rec plan, makeRec call, getTag"
-                    + " call, scale call), got " + occurrences.size()
-                    + ": " + occurrences);
-            if (occurrences.size() != 4) {
-                return;
-            }
-            DefaultResourceOccurrence plan = occurrences.get(0);
-            check(plan.kind().name().equals("IMPORTED_CLASS_DEFAULT_PLAN"),
-                "first occurrence is the imported class default plan, got "
-                    + plan.kind());
-            check(plan.importAlias().equals("L"),
-                "the class plan occurrence carries alias 'L', got "
-                    + plan.importAlias());
-            check(plan.toSemanticModuleIdentity()
-                        .canonicalResolvedSourceUri().endsWith("src/lib.deal"),
-                "the class plan occurrence targets the lib module");
-            check(plan.semanticResourceIdentity().resourceKind().name()
-                        .equals("CLASS")
-                    && "Rec".equals(plan.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().declaredName()),
-                "the class plan occurrence carries the Rec resource"
-                    + " identity");
-            check(plan.sourceRange().startLine() == 6
-                    && plan.sourceRange().startColumn() == 14,
-                "the class plan occurrence keeps the FIRST literal range"
-                    + " (field b's '{}' at line 6 column 14), got "
-                    + plan.sourceRange().startLine() + ":"
-                    + plan.sourceRange().startColumn());
-
-            DefaultResourceOccurrence makeRec = occurrences.get(1);
-            check(makeRec.kind().name().equals("IMPORTED_FUNCTION_WRAPPER")
-                    && "makeRec".equals(makeRec.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().declaredName()),
-                "second occurrence is the imported makeRec wrapper");
-            check(makeRec.sourceRange().startLine() == 7,
-                "the makeRec wrapper records the call-site range"
-                    + " (line 7), got " + makeRec.sourceRange().startLine());
-
-            DefaultResourceOccurrence getTag = occurrences.get(2);
-            check(getTag.kind().name().equals("IMPORTED_FUNCTION_WRAPPER")
-                    && "getTag".equals(getTag.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().declaredName()),
-                "third occurrence is the imported getTag wrapper");
-            check(getTag.sourceRange().startLine() == 10,
-                "the getTag wrapper records the call-site range"
-                    + " (line 10), got " + getTag.sourceRange().startLine());
-
-            DefaultResourceOccurrence scale = occurrences.get(3);
-            check(scale.kind().name().equals("IMPORTED_FUNCTION_WRAPPER")
-                    && "scale".equals(scale.semanticResourceIdentity()
-                        .lexicalDeclarationIdentity().declaredName()),
-                "fourth occurrence is the imported scale wrapper of the"
-                    + " class-free out-of-root provider");
-            check(scale.importAlias().equals("S"),
-                "the out-of-root occurrence carries alias 'S', got "
-                    + scale.importAlias());
-            check(scale.toSemanticModuleIdentity()
-                        .canonicalResolvedSourceUri().endsWith("shared.deal"),
-                "the out-of-root occurrence targets the class-free"
-                    + " provider module");
-            check(scale.fromSemanticModuleIdentity()
-                        .canonicalResolvedSourceUri().endsWith("src/main.deal"),
-                "every occurrence records the consuming module identity");
-
-            // Type-only references publish nothing: fields d and e carry
-            // no occurrence and no imported target.
-            ResolvedDefaultExpression d = outer.orderedFields().get(3)
-                .defaultExpression();
-            deal.module.DefaultIrNode dIr =
-                (deal.module.DefaultIrNode) d.semanticIr();
-            check(dIr.target() == null
-                    && dIr.children().isEmpty(),
-                "the empty array default publishes nothing (type-only)");
-            ResolvedDefaultExpression e = outer.orderedFields().get(4)
-                .defaultExpression();
-            deal.module.DefaultIrNode eIr =
-                (deal.module.DefaultIrNode) e.semanticIr();
-            check(eIr.target() == null,
-                "the null default publishes nothing (type-only)");
-
-            // ---- The Rec plan in the provider module ----
-            CompilerClassDefaultPlan rec = compile.planOf("lib.deal",
-                "Rec");
-            check(rec != null, "Rec has a compiler default plan");
-            if (rec != null) {
-                check(rec.orderedFields().stream()
-                        .map(CompilerClassDefaultEntry::name).toList()
-                        .equals(List.of("tag", "inner")),
-                    "Rec orderedFields are source-ordered");
-                ResolvedDefaultExpression inner = rec.orderedFields().get(1)
-                    .defaultExpression();
-                check(inner.resolvedBindings().containsKey("Rec"),
-                    "the same-module contextual class literal records the"
-                        + " class in resolvedBindings");
-                check(compile.plannedOf("lib.deal", "Rec").occurrences()
-                        .isEmpty(),
-                    "the provider's own plan has no occurrences"
-                        + " (same-module targets publish no edge)");
-            }
-
-            // ---- The class-free shared provider plans nothing ----
-            check(compile.plannedFor("shared.deal").isEmpty(),
-                "the class-free out-of-root provider plans no class");
-        } finally {
-            deleteRecursively(compile.root);
-        }
+            "shared.deal", "export function scale(v: number): number { return v * 2; }"));
+        check(run.success(), "structural project: " + run.diagnostics());
+        PlannedDefaultClass outer = run.planned("main.deal", "Outer");
+        check(outer != null, "Outer structural plan exists");
+        CompilerClassDefaultPlan plan = outer.plan();
+        check(plan.orderedFields().stream().map(CompilerClassDefaultEntry::name).toList()
+            .equals(List.of("a", "b", "c", "d", "e", "f")), "declaration order");
+        check(plan.orderedFields().get(0).resolvedFieldType() == deal.types.Type.Number.INSTANCE,
+            "number type retained");
+        check(plan.orderedFields().stream().map(CompilerClassDefaultEntry::runtimeTypeDescriptor)
+            .toList().equals(List.of("number", "@src/lib.deal/Rec", "[@src/lib.deal/Rec]",
+                "[@src/lib.deal/Rec]", "?@src/lib.deal/Rec", "?number")),
+            "canonical imported, array and nullable descriptors: " + plan.orderedFields());
+        check(plan.orderedFields().stream().map(CompilerClassDefaultEntry::optional).toList()
+            .equals(List.of(false, false, false, true, false, true)),
+            "optional presence independent of nullable type");
+        check(plan.declaringSemanticModuleIdentity().canonicalResolvedSourceUri()
+            .endsWith("src/main.deal"), "declaring module identity");
+        check(plan.runtimeDependencies().isEmpty() && outer.occurrences().isEmpty(),
+            "structural annotation planning creates no runtime use");
+        PlannedDefaultClass rec = run.planned("lib.deal", "Rec");
+        check(rec != null && rec.plan().orderedFields().stream()
+            .map(CompilerClassDefaultEntry::name).toList().equals(List.of("tag", "inner")),
+            "provider plan retains field order");
+        check(run.orchestrator().plannedDefaultClasses().entrySet().stream()
+            .filter(e -> e.getKey().endsWith("shared.deal")).allMatch(e -> e.getValue().isEmpty()),
+            "class-free out-of-root provider has no class plan");
+        Compile again = compile(run.root());
+        check(again.success(), "repeat production compile: " + again.diagnostics());
+        check(again.planned("main.deal", "Outer").plan().equals(plan),
+            "identical inputs produce identical structural plans");
+        check(again.planned("main.deal", "Outer").occurrences().equals(outer.occurrences()),
+            "identical structural occurrence facts");
     }
 
-    // =========================================================================
-    // E4001: implementation class declaration shape
-    // =========================================================================
-
-    private static void testE4001ImplementationClass() throws Exception {
-        System.out.println("-- E4001 at the field declaration range"
-            + " (implementation class) --");
-        Compile compile = new Compile(Map.of(
-            "deal.json", MANIFEST,
-            "src/main.deal", """
-                class Bad {
-                  x: number;
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """), "src/main.deal");
-        try {
-            check(!compile.success, "the missing-default class fails the"
-                + " compile");
-            CompilerDiagnostic e4001 = compile.errorOf("E4001");
-            check(e4001 != null,
-                "E4001 fired, got " + compile.diagnostics);
-            if (e4001 != null) {
-                check(e4001.range().startLine() == 2
-                        && e4001.range().startColumn() == 3,
-                    "E4001 anchors the field declaration range (line 2"
-                        + " column 3), got " + e4001.range().startLine()
-                        + ":" + e4001.range().startColumn());
-                check(e4001.message().contains(
-                        "Class field without default is not valid"),
-                    "E4001 carries the canonical message, got "
-                        + e4001.message());
-            }
-            check(compile.orchestrator.plannedDefaultClasses().values()
-                    .stream().allMatch(List::isEmpty),
-                "failure publishes no plan");
-        } finally {
-            deleteRecursively(compile.root);
-        }
+    private static void requiredPresence() throws Exception {
+        Compile declaration = compile(Map.of("src/main.deal", """
+            class Record { value: number; nullable: number | null; }
+            export function main(): null { return null; }
+            """));
+        check(declaration.success(), "required declarations need no initializer: "
+            + declaration.diagnostics());
+        Compile omitted = compile(Map.of("src/main.deal", """
+            class Record { value: number; nullable: number | null; }
+            function make(): Record { return {value: 1}; }
+            export function main(): null { return null; }
+            """));
+        check(!omitted.success() && omitted.error("E4001") != null,
+            "required nullable omission fails: " + omitted.diagnostics());
+        check(omitted.error("E4001").message()
+            .equals("Missing required field 'nullable' in class literal for 'Record'"),
+            "missing field diagnostic");
+        check(omitted.orchestrator().plannedDefaultClasses().isEmpty(),
+            "failed checking publishes no plan");
     }
 
-    // =========================================================================
-    // E4001: C-struct class declaration shape (declaration analyzer)
-    // =========================================================================
-
-    // =========================================================================
-    // Host-declared classes: exempt from the plan gates, no plan
-    // =========================================================================
-
-    private static void testHostDeclaredExemption() throws Exception {
-        System.out.println("-- Host-declared classes stay exempt"
-            + " (the host defaults seam) --");
-        Compile compile = new Compile(Map.of(
+    private static void hostDeclarations() throws Exception {
+        Compile run = compile(Map.of(
             "deal.json", """
-                {
-                  "languageVersion": "1.3",
-                  "moduleRoots": ["src"],
-                  "backend": "luajit",
-                  "output": "build",
-                  "externals": {
-                    "host/cfg": {
-                      "declaration": "bindings/cfg.d.deal"
-                    }
-                  }
-                }
+                {"languageVersion":"1.3","moduleRoots":["src"],"backend":"luajit",
+                 "output":"build","externals":{"host/cfg":
+                   {"declaration":"bindings/cfg.d.deal"}}}
                 """,
             "src/main.deal", """
                 import * as cfg from "host/cfg";
-
                 export function main(): null {
+                  let endpoint: cfg.Endpoint = {path: "/"};
+                  let server: cfg.ServerConfig = {port: 80, endpoint: endpoint};
                   return null;
                 }
                 """,
             "bindings/cfg.d.deal", """
-                export class Endpoint {
-                  path: string;
-                }
-
-                export class ServerConfig {
-                  port: number;
-                  endpoint: Endpoint;
-                }
-
+                export class Endpoint { path: string; }
+                export class ServerConfig { port: number; endpoint: Endpoint; }
                 export function describe(c: ServerConfig): string;
-                """), "src/main.deal");
-        try {
-            check(compile.success,
-                "the host-declared required-no-default fields keep"
-                    + " compiling, got " + compile.diagnostics);
-            check(compile.errorOf("E4001") == null,
-                "no E4001 for host-declared classes");
-            check(compile.plannedFor("cfg.d.deal").isEmpty(),
-                "host-declared classes produce no plan");
-        } finally {
-            deleteRecursively(compile.root);
-        }
+                """));
+        check(run.success(), "host structural construction: " + run.diagnostics());
+        check(run.planned("cfg.d.deal", "Endpoint") == null,
+            "host declarations contribute no implementation plan");
     }
 
-    // =========================================================================
-    // E3020: evaluator-scope await (class inside an async function body)
-    // =========================================================================
-
-    private static void testE3020EvaluatorScopeAwaitInAsyncBody()
-            throws Exception {
-        System.out.println("-- E3020 at the await range (class declared"
-            + " inside an async function body) --");
-        Compile compile = new Compile(Map.of(
-            "deal.json", MANIFEST,
-            "src/main.deal", """
-                async function build(): null {
-                  class Inner {
-                    x: number = await source();
-                  }
-                  return null;
-                }
-
-                async function source(): number {
-                  return 3;
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """), "src/main.deal");
-        try {
-            check(!compile.success, "the evaluator-scope await fails the"
-                + " compile");
-            CompilerDiagnostic placement = compile.errorOf("E1057");
-            check(placement != null,
-                "local-class placement rejects before default planning: " + compile.diagnostics);
-            if (placement != null) {
-                check(placement.range().startLine() == 2
-                        && placement.range().startColumn() == 3,
-                    "placement failure anchors the local class declaration");
-                check(placement.message().equals("Local class declaration 'Inner' is not allowed; classes are module-level"),
-                    "placement carries the existing exact diagnostic");
-            }
-            check(compile.errorOf("E3020") == null,
-                "rejected local syntax never reaches evaluator planning");
-            check(compile.errorOf("E3012") == null,
-                "the async context does not replace the placement rejection");
-            check(compile.orchestrator.plannedDefaultClasses().isEmpty(),
-                "failure publishes no plan");
-        } finally {
-            deleteRecursively(compile.root);
-        }
-    }
-
-    // =========================================================================
-    // E3020 negative: await inside a nested async function-expression body
-    // =========================================================================
-
-    private static void testE3020AwaitInsideAsyncFunctionExpressionCompiles()
-            throws Exception {
-        System.out.println("-- await inside a nested async"
-            + " function-expression body compiles --");
-        Compile compile = new Compile(Map.of(
-            "deal.json", MANIFEST,
-            "src/main.deal", """
-                class Holder {
-                  f: async () => number = async function(): number {
-                    return await source();
-                  };
-                }
-
-                async function source(): number {
-                  return 3;
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """), "src/main.deal");
-        try {
-            check(compile.planFactsAvailable(),
-                "the nested async function-expression body keeps its "
-                    + "default-plan facts (the one production arm fails "
-                    + "closed after them), got " + compile.diagnostics);
-            check(compile.errorOf("E3020") == null,
-                "no E3020 for await inside the nested async"
-                    + " function-expression body");
-            CompilerClassDefaultPlan holder = compile.planOf("main.deal",
-                "Holder");
-            check(holder != null, "Holder still receives its plan");
-            if (holder != null) {
-                ResolvedDefaultExpression f = holder.orderedFields().get(0)
-                    .defaultExpression();
-                check(((deal.module.DefaultIrNode) f.semanticIr())
-                        .kind().name().equals("FUNCTION_EXPRESSION"),
-                    "the default's IR root is the function expression");
-            }
-        } finally {
-            deleteRecursively(compile.root);
-        }
-    }
-
-    // =========================================================================
-    // E3001 at the default expression range (both owners)
-    // =========================================================================
-
-    private static void testE3001DefaultRange() throws Exception {
-        System.out.println("-- E3001 at the default expression range --");
-        Compile implementation = new Compile(Map.of(
-            "deal.json", MANIFEST,
-            "src/main.deal", """
+    private static void initializerRejection() throws Exception {
+        for (String expression : List.of("1", "\"wrong\"", "await source()",
+                "async function(): number { return await source(); }")) {
+            Compile run = compile(Map.of("src/main.deal", """
                 class Bad {
-                  x: number = "oops";
+                  value: number = %s;
                 }
-
-                export function main(): null {
-                  return null;
-                }
-                """), "src/main.deal");
-        try {
-            check(!implementation.success,
-                "the mismatched implementation default fails the compile");
-            CompilerDiagnostic e3001 = implementation.errorOf("E3001");
-            check(e3001 != null,
-                "E3001 fired for the implementation default, got "
-                    + implementation.diagnostics);
-            if (e3001 != null) {
-                check(e3001.range().startLine() == 2
-                        && e3001.range().startColumn() == 15,
-                    "E3001 anchors the default expression range (line 2"
-                        + " column 15), got " + e3001.range().startLine()
-                        + ":" + e3001.range().startColumn());
-            }
-        } finally {
-            deleteRecursively(implementation.root);
+                async function source(): number { return 3; }
+                export function main(): null { return null; }
+                """.formatted(expression)));
+            CompilerDiagnostic rejected = run.error("E1007");
+            check(!run.success() && rejected != null,
+                "initializer rejected before planning: " + expression + ": " + run.diagnostics());
+            check(rejected.range().startLine() == 2 && rejected.range().startColumn() == 17,
+                "initializer error anchors '=': " + rejected.range());
+            check(run.orchestrator().plannedDefaultClasses().isEmpty(),
+                "invalid syntax creates no structural plan");
         }
-
-
+        Compile local = compile(Map.of("src/main.deal", """
+            async function build(): null {
+              class Inner { value: number; }
+              return null;
+            }
+            export function main(): null { return null; }
+            """));
+        check(!local.success() && local.error("E1057") != null,
+            "local class placement remains rejected");
+        check(local.error("E1057").range().startLine() == 2
+            && local.error("E1057").range().startColumn() == 3,
+            "local placement error retains declaration range");
+        Compile async = compile(Map.of("src/main.deal", """
+            class Holder { f: async () => number; }
+            async function source(): number { return 3; }
+            export function main(): null {
+              let holder: Holder = {f: async function(): number { return await source(); }};
+              return null;
+            }
+            """));
+        check(async.success(), "ordinary provided async closure survives: " + async.diagnostics());
     }
 
-    // =========================================================================
-    // Determinism: byte-equal projects plan byte-equal plans
-    // =========================================================================
-
-    private static void testDeterminism() throws Exception {
-        System.out.println("-- Deterministic planning across runs --");
-        Map<String, String> files = Map.of(
-            "deal.json", MANIFEST,
-            "src/main.deal", """
-                import * as L from "./lib";
-
-                class Outer {
-                  b: L.Rec = {};
-                }
-
-                export function main(): null {
-                  return null;
-                }
-                """,
-            "src/lib.deal", """
-                export class Rec {
-                  tag: number = 0;
-                }
-                """);
-        Path root = Files.createTempDirectory("deal_plan_det_");
-        try {
-            for (Map.Entry<String, String> file : files.entrySet()) {
-                write(root, file.getKey(), file.getValue());
-            }
-            Path entry = root.resolve("src/main.deal");
-            ProjectLocator.LocateResult located =
-                ProjectLocator.locate(entry.toString(), null);
-            CompilationOrchestrator first = new CompilationOrchestrator(
-                located.context(), entry, false, false, false, false,
-                null, invocation());
-            boolean firstOk = first.compile();
-            CompilationOrchestrator second = new CompilationOrchestrator(
-                located.context(), entry, false, false, false, false,
-                null, invocation());
-            boolean secondOk = second.compile();
-            check(firstOk && secondOk, "both compiles succeed");
-            CompilerClassDefaultPlan firstPlan = null;
-            CompilerClassDefaultPlan secondPlan = null;
-            for (Map.Entry<String, List<PlannedDefaultClass>> entrySet
-                    : first.plannedDefaultClasses().entrySet()) {
-                if (entrySet.getKey().endsWith("main.deal")) {
-                    for (PlannedDefaultClass planned : entrySet.getValue()) {
-                        if (planned.plan().classIdentity().className()
-                                .equals("Outer")) {
-                            firstPlan = planned.plan();
-                        }
-                    }
-                }
-            }
-            for (Map.Entry<String, List<PlannedDefaultClass>> entrySet
-                    : second.plannedDefaultClasses().entrySet()) {
-                if (entrySet.getKey().endsWith("main.deal")) {
-                    for (PlannedDefaultClass planned : entrySet.getValue()) {
-                        if (planned.plan().classIdentity().className()
-                                .equals("Outer")) {
-                            secondPlan = planned.plan();
-                        }
-                    }
-                }
-            }
-            check(firstPlan != null && secondPlan != null,
-                "both compiles produce the plan");
-            if (firstPlan != null && secondPlan != null) {
-                check(firstPlan.equals(secondPlan)
-                        && firstPlan.orderedFields()
-                            .equals(secondPlan.orderedFields()),
-                    "byte-equal inputs produce equal plans");
-                List<DefaultResourceOccurrence> firstOccurrences = null;
-                List<DefaultResourceOccurrence> secondOccurrences = null;
-                for (Map.Entry<String, List<PlannedDefaultClass>> entrySet
-                        : first.plannedDefaultClasses().entrySet()) {
-                    if (entrySet.getKey().endsWith("main.deal")) {
-                        for (PlannedDefaultClass planned : entrySet.getValue()) {
-                            if (planned.plan().classIdentity().className()
-                                    .equals("Outer")) {
-                                firstOccurrences = planned.occurrences();
-                            }
-                        }
-                    }
-                }
-                for (Map.Entry<String, List<PlannedDefaultClass>> entrySet
-                        : second.plannedDefaultClasses().entrySet()) {
-                    if (entrySet.getKey().endsWith("main.deal")) {
-                        for (PlannedDefaultClass planned : entrySet.getValue()) {
-                            if (planned.plan().classIdentity().className()
-                                    .equals("Outer")) {
-                                secondOccurrences = planned.occurrences();
-                            }
-                        }
-                    }
-                }
-                check(firstOccurrences != null
-                        && firstOccurrences.equals(secondOccurrences),
-                    "byte-equal inputs produce equal occurrence records");
-            }
-        } finally {
-            deleteRecursively(root);
-        }
+    public static void main(String[] args) throws Exception {
+        structuralPlan();
+        requiredPresence();
+        hostDeclarations();
+        initializerRejection();
+        System.out.println("Structural class planner: " + passed + " checks passed");
     }
 }

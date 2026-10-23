@@ -3,5 +3,5 @@
 // @expected: compile-error E2008
 // @features: v1.2, frontend, reject
 
-class C$bad {x:number=0;}
+class C$bad {x:number;}
 export function f(): null {return null;}

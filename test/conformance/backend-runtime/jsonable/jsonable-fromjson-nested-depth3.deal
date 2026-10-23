@@ -5,17 +5,17 @@
 
 // @jsonable
 export class Z {
-  n: number = 0;
+  n: number;
 }
 
 // @jsonable
 export class Y {
-  z: Z = {};
+  z: Z;
 }
 
 // @jsonable
 export class X {
-  y: Y = {};
+  y: Y;
 }
 
 export function test_fromjson_nested_depth3(): null {

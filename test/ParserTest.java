@@ -453,15 +453,24 @@ public class ParserTest {
             check(cd.fields().get(1).name().equals("y"), "field 1 name");
         }
 
-        // With optional and default
-        r = parse("class User { name: string; age?: int = 0; }");
-        assertNoParseErrors(r, "class with optional default");
+        // Presence and nullability are independent; fields have no initializer.
+        r = parse("class User { name: string; age?: number | null; }");
+        assertNoParseErrors(r, "class with optional nullable field");
         cd = assertInstance(r.program().statements().get(0),
                 ClassDeclaration.class, "class optional");
         if (cd != null) {
             check(cd.fields().size() == 2, "field count");
             check(cd.fields().get(1).optional(), "field optional");
-            check(cd.fields().get(1).defaultExpr().isPresent(), "has default");
+            check(cd.fields().get(1).nullable(), "optional field nullable");
+        }
+
+        for (String source : new String[] {
+                "class C { x: number = 0; }",
+                "class C { x?: number = 0; }",
+                "class C { x: number | null = null; }",
+                "class C { x?: number | null = null; }",
+                "class C { f: () => number = (): number => { return 1; }; }" }) {
+            assertParseError(parse(source), "E1007", "class initializer rejects");
         }
 
         // Nullable field
@@ -926,9 +935,9 @@ public class ParserTest {
             "let at end of input");
 
         // Class field and import terminators.
-        assertParseError(parse("class C { x: int = 0 }"), "E1053",
+        assertParseError(parse("class C { x: number }"), "E1053",
             "class field before '}'");
-        assertParseError(parse("import * as m from \"m\"\nexport class C { x: int = 0; }"),
+        assertParseError(parse("import * as m from \"m\"\nexport class C { x: number; }"),
             "E1053", "import before the next declaration");
 
         // Delete, throw and expression statements.
@@ -941,7 +950,7 @@ public class ParserTest {
 
         // Explicit terminators compile clean, and block-ending forms need
         // no added ';'.
-        ParseResult ok = parse("export function main(): null {\n  let n: int = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: int = 0; while (v14Loop1 < 1) { let i: int = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return null;\n}\nclass C { x: int = 0; }\nfunction g(): null { return null; }\n");
+        ParseResult ok = parse("export function main(): null {\n  let n: int = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: int = 0; while (v14Loop1 < 1) { let i: int = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return null;\n}\nclass C { x: number; }\nfunction g(): null { return null; }\n");
         assertNoParseErrors(ok, "explicit terminators and block endings");
     }
 
@@ -2520,7 +2529,7 @@ public class ParserTest {
 
         // Every annotation position reaches the same Array<null> node:
         // class field, parameter, return type, and for-of loop variable.
-        String positions = "class Holder { xs: null[] = [null]; }\n"
+        String positions = "class Holder { xs: null[]; }\n"
             + "function f(xs: null[]): null[] { return xs; }\n"
             + "export function main(): null {\n"
             + "  for (let row: null[] of [[null]]) { }\n"
@@ -2587,7 +2596,7 @@ public class ParserTest {
         // no E1043, and explicitly declared C$fromJson/C$toJson
         // signatures are preserved (no synthetic exports are recorded —
         // ExportExtractor's synthetic loop keys on isJsonable()).
-        String decl = "// @jsonable\nexport class C { x: int = 0; }\n"
+        String decl = "// @jsonable\nexport class C { x: number; }\n"
             + "export function C$fromJson(s: string): C | null;\n"
             + "export function C$toJson(c: C): string;";
         ParseResult r = parseFile(decl, "lib.d.deal");
@@ -2620,7 +2629,7 @@ public class ParserTest {
         }
 
         // The E1045 argument rule still fires in .d.deal files.
-        r = parseFile("// @jsonable:foo\nexport class C { x: int = 0; }",
+        r = parseFile("// @jsonable:foo\nexport class C { x: number; }",
             "lib.d.deal");
         assertParseError(r, "E1045",
             "@jsonable:foo in a .d.deal file still produces E1045");

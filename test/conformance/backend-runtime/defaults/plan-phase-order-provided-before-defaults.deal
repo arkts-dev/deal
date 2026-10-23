@@ -1,13 +1,13 @@
 // @spec: Classes — Construction
-// @description: v1.2 default plans: provided field expressions evaluate before any default evaluation — a provided value that raises E8002 fires first and runs no defaults (the phase-order pin: the side-effect counter stays 0 after the failed attempt and observes exactly one call on the clean attempt).
+// @description: Provided expressions execute in source order before declaration-order boundaries; failure stops later effects and leaves the existing target unchanged.
 // @expected: runtime-ok
-// @features: classes, defaults, functions, modules, host-abi, arrays
+// @features: classes, construction, functions, modules, host-abi, arrays
 
 import * as probe from "host/planprobe";
 
 class C {
-  a: number = probe.nextValue();
-  b: number = 0;
+  a: number;
+  b: number;
 }
 
 function pick(): number {
@@ -17,8 +17,10 @@ function pick(): number {
 
 export function test_plan_phase_order(): null {
   let caught: Error | null = null;
+  let target: C = {a: 1, b: 2};
+  let original: C = target;
   try {
-    let c: C = { a: pick(), b: 3 };
+    target = { b: pick(), a: probe.nextValue() };
   } catch (e) {
     caught = e;
   }
@@ -30,14 +32,17 @@ export function test_plan_phase_order(): null {
     throw { code: "TEST_FAIL", message: "provided-value bounds error did not raise" };
   }
   if (probe.valueCount() !== 0) {
-    throw { code: "TEST_FAIL", message: "default ran before provided-value evaluation" };
+    throw { code: "TEST_FAIL", message: "later provided expression ran after failure" };
   }
-  let c2: C = { b: 3 };
+  if (target !== original || target.a !== 1 || target.b !== 2) {
+    throw {code: "TEST_FAIL", message: "failed construction replaced the target"};
+  }
+  let c2: C = { b: 3, a: probe.nextValue() };
   if (probe.valueCount() !== 1) {
-    throw { code: "TEST_FAIL", message: "clean attempt did not run the default once" };
+    throw { code: "TEST_FAIL", message: "clean attempt did not run its producer once" };
   }
   if (c2.a !== 10) {
-    throw { code: "TEST_FAIL", message: "clean attempt default result mismatch" };
+    throw { code: "TEST_FAIL", message: "clean attempt provided result mismatch" };
   }
   return null;
 }

@@ -21,7 +21,7 @@ import deal.semantic.ir.ClassOpsExecutor.FieldState;
 import deal.semantic.ir.ClassOpsExecutor.Outcome;
 import deal.semantic.ir.ClassOpsExecutor.Value;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.KindPayload;
@@ -147,7 +147,7 @@ public class FieldOpsExecutorTest {
 
     private static ClassLayout.FieldLayout field(String name, RuntimeDescriptor descriptor,
                                                  boolean required) {
-        return new ClassLayout.FieldLayout(name, descriptor, required, DefaultOwner.LOCAL);
+        return new ClassLayout.FieldLayout(name, descriptor, required, ConstructionProvider.LOCAL);
     }
 
     private static ClassLayout layout(ClassLayout.FieldLayout... fields) {
@@ -229,8 +229,8 @@ public class FieldOpsExecutorTest {
                 BoundaryKind.CLASS_LITERAL_FIELD, childId));
         }
         SemanticOp classNew = op(SemanticOpKind.CLASS_NEW,
-            new KindPayload.ClassNewPayload(CLS, layout, providedFields, DefaultOwner.LOCAL,
-                List.of(), null, boundaries),
+            new KindPayload.ClassNewPayload(CLS, layout, providedFields, ConstructionProvider.LOCAL,
+                null, boundaries),
             BASE_REF, new RuntimeDescriptor.Class(CLS), FailurePolicyId.CLASS_CONSTRUCTION,
             null);
         Map<OpId, SemanticOp> boundaryOps = new LinkedHashMap<>();
@@ -244,8 +244,7 @@ public class FieldOpsExecutorTest {
         ClassOpsExecutor.BoundaryCheckRunner pass = (boundary, input) ->
             new ClassOpsExecutor.BoundaryResult.Pass(input);
         ClassOpsExecutor.Outcome<Value> outcome = ClassOpsExecutor.executeClassNewLocal(
-            classNew, heap, Map.of(), boundaryOps, Map.of(CLS, layout), pass,
-            defaultOp -> { throw new IllegalStateException("no defaults in this fixture"); });
+            classNew, heap, boundaryOps, Map.of(CLS, layout), pass);
         if (!(outcome instanceof ClassOpsExecutor.Outcome.Success<Value> success
                 && success.value() instanceof Value.Class instance)) {
             throw new IllegalStateException("the T2 CLASS_NEW drive must construct the base "
@@ -565,7 +564,7 @@ public class FieldOpsExecutorTest {
     private static boolean optionalIntReadWraps(ClassLayout layout) {
         ClassLayout.FieldLayout required = layout.fields().get(0);
         ClassLayout optionalProbe = new ClassLayout(CLS,
-            List.of(new ClassLayout.FieldLayout("probe", INT, false, DefaultOwner.LOCAL)));
+            List.of(new ClassLayout.FieldLayout("probe", INT, false, ConstructionProvider.LOCAL)));
         return required.readResultDescriptor() == INT
             && optionalProbe.fields().get(0).readResultDescriptor()
                 instanceof RuntimeDescriptor.Nullable nullable

@@ -9,7 +9,7 @@ import * as b from "./same_name_sibling_b";
 import * as cfg from "host/cfg";
 
 class Holder {
-  item: a.Item = {};
+  item: a.Item;
 }
 
 function fail(what: string): null {
@@ -56,7 +56,7 @@ export function main(): null {
 
   // A class field declared with the declaring declaration's type accepts
   // its values.
-  let h: Holder = {};
+  let h: Holder = {item: a.make()};
   h.item = t.item;
   if (a.read(h.item) !== 1) {
     return fail("class field position");

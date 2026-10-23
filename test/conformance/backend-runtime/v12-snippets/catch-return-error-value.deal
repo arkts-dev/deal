@@ -9,7 +9,7 @@ function recover(): Error {
  try {throw {code:"USER",message:"a\nβ"};} catch(e) {return echo(e);}
 }
 export function main(): null {
- let e: Error = recover(); if(e.code !== "USER" || e.message !== "a\nβ") {throw {message:"error fields"};}
- let same: Error = echo(e); if(same !== e) {throw {message:"Error boundary copied class value"};}
+ let e: Error = recover(); if(e.code !== "USER" || e.message !== "a\nβ") {throw {code:"TEST_FAIL",message:"error fields"};}
+ let same: Error = echo(e); if(same !== e) {throw {code:"TEST_FAIL",message:"Error boundary copied class value"};}
  c.log("catch-return-error-value"); return null;
 }

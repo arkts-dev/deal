@@ -10,6 +10,6 @@ export function main(): null {
  function arg(s: string, x: number): number { trace = trace + s; return x; }
  let extended: (x: number, y: number, z: number) => number = small;
  let result: number = extended(arg("A", 4), arg("B", 5), arg("C", 6));
- if(result !== 4 || trace !== "ABCF") {throw {message:"ignored args: " + trace};}
+ if(result !== 4 || trace !== "ABCF") {throw {code:"TEST_FAIL",message:"ignored args: " + trace};}
  c.log("ignored-arguments-effects"); return null;
 }

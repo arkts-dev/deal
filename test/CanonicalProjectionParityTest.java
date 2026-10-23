@@ -606,15 +606,15 @@ public class CanonicalProjectionParityTest {
         mainEntry("host-abi/host-carrier-async-arity"),
         mainEntry("host-abi/host-carrier-untyped-roundtrip"),
         mainEntry("host-abi/host-carrier-class-values"),
+        // Declared optional fields are accepted independently of retired host metadata.
+        mainEntry("host-abi/host-class-extra-field"),
         // The @jsonable class helper's plain-table content (ISSUE-0868): a
         // host-returned table at a class table field, a plain table nested
         // in a table carrier and in a table[] element, the host table's own
         // nested object/array members, and the closed cycle arm.
         mainEntry("host-abi/host-jsonable-table-content"),
-        // The suppressed recursive class default (ISSUE-0865): a default
-        // whose recursive construction no construction demands stays an
-        // unexecuted plan, and the effectful default beside it still runs
-        // per construction on the LuaJIT and JVM production artifacts.
+        // Explicit finite recursive structures preserve provider identity,
+        // reference aliases, optional presence and ordinary producer effects.
         mainEntry("defaults/plan-suppressed-recursive-default"));
 
     /** The host-boundary families with a corpus pin. */
@@ -631,8 +631,6 @@ public class CanonicalProjectionParityTest {
         host("host-abi/host-nullable-function-param-bad",
             "test_host_nullable_function_param_bad", "nullable_fn"),
         host("host-abi/host-rest-bad", "test_host_rest_bad", "rest_join"),
-        host("host-abi/host-class-extra-field", "test_host_class_extra_field",
-            "presence"),
         host("host-abi/host-bad-return", "test_host_bad_return", "bad_return"),
         host("host-abi/host-missing-export", "test_host_missing_export",
             "missing_export"),
@@ -7453,7 +7451,6 @@ public class CanonicalProjectionParityTest {
                 List.of(),
                 new deal.semantic.ir.StructuredBodyTable(Map.of(), Map.of()),
                 new deal.semantic.ir.ClassFactoryRegistry(Map.of()),
-                new deal.semantic.ir.JsonDefaultChildTable(Map.of()),
                 deal.semantic.ir.ClassBindingFacts.empty());
         Map<ModuleId, deal.semantic.ir.LoweredModuleUnit> modules =
             new LinkedHashMap<>();

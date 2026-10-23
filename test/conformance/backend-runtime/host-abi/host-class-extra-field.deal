@@ -1,6 +1,6 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: A host-declared class literal that provides a declared optional field absent from the host <C>_defaults table raises E8007 at construction — the preserved defaults-map seam rejects the provided name at runtime (host-module-abi D2; the presence fixture's Config_defaults carries only port).
-// @expected: runtime-error E8007
+// @description: A declared optional host field is accepted from structural metadata regardless of retired defaults-map contents; explicit null remains present.
+// @expected: runtime-ok
 // @features: modules, host-abi, classes
 
 import * as presence from "host/presence";
@@ -10,6 +10,9 @@ export function test_host_class_extra_field(): null {
     port: 9000,
     fallback: null,
   };
+  if (c.port !== 9000 || !has(c.fallback) || c.fallback !== null || has(c.peers)) {
+    throw {code: "TEST_FAIL", message: "host structural field presence mismatch"};
+  }
   return null;
 }
 

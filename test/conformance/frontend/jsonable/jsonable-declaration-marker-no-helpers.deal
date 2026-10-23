@@ -7,7 +7,7 @@ import * as M from "./support/declared_json_model_marker_only";
 
 // @jsonable
 export class Holder {
-  m: M.Model | null = null;
+  m: M.Model | null;
 }
 
 export function main(): null { return null; }

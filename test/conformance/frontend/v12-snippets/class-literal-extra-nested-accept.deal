@@ -3,6 +3,6 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class Inner {x:number=0;}
-class Outer {inner:Inner={};}
+class Inner {x:number;}
+class Outer {inner:Inner;}
 export function f(): Outer {return {inner:{x:1}};}

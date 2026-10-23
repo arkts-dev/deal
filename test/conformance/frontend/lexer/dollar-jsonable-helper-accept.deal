@@ -5,7 +5,7 @@
 
 // @jsonable
 export class Payload {
-  name: string = "";
+  name: string;
 }
 
 export function main(): null {

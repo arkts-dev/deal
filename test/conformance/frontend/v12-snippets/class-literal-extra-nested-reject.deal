@@ -3,6 +3,6 @@
 // @expected: compile-error E4002
 // @features: v1.2, frontend, reject
 
-class Inner {x:number=0;}
-class Outer {inner:Inner={};}
+class Inner {x:number;}
+class Outer {inner:Inner;}
 export function f(): Outer {return {inner:{x:1,extra:2}};}

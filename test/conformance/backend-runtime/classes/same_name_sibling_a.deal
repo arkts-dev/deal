@@ -6,13 +6,13 @@
 // never passes the other sibling's typed boundary.
 // @jsonable
 export class Item {
-  value: number = 1;
+  value: number;
 }
 
 // @jsonable
 export class Payload {
-  label: string = "a";
-  item: Item = {};
+  label: string;
+  item: Item;
 }
 
 export function make(): Item {

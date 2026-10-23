@@ -1,12 +1,12 @@
 // @spec: Runtime execution model
-// @description: Corner-case subject provided-null-skips-default — Provided null is not omission: no default call permitted. (basis: Construction: omitted defaults; required-present nullable field)
+// @description: Explicit null satisfies a required-present nullable field and invokes no unrelated function.
 // @expected: runtime-ok
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
 function fallback(): string | null {c.log("forbidden-default"); return "fallback";}
-class C {value: string | null = fallback();}
+class C {value: string | null;}
 export function main(): null {
- let x: C = {value:null}; if(x.value !== null) {throw {message:"null treated as omitted"};}
+ let x: C = {value:null}; if(x.value !== null) {throw {code:"TEST_FAIL",message:"null treated as omitted"};}
  c.log("provided-null-skips-default"); return null;
 }

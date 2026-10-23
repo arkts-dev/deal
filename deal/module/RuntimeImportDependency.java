@@ -28,16 +28,9 @@ public record RuntimeImportDependency(
         Objects.requireNonNull(reason, "reason");
     }
 
-    /**
-     * The closed two-value edge reason set
-     * ({@code provider-versioned-default-plans} D7): ordinary runtime
-     * use and deferred default binding over the one dependency-edge
-     * carrier. No other reason value exists.
-     */
+    /** Executable importing code is the sole runtime dependency authority. */
     public enum Reason {
         /** An ordinary runtime-use edge of executable importing code. */
-        RUNTIME_USE,
-        /** A planner edge from a deferred default evaluator binding. */
-        DEFERRED_DEFAULT_BINDING
+        RUNTIME_USE
     }
 }

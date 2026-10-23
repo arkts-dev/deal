@@ -5,8 +5,8 @@
 
 // @jsonable
 export class User {
-  name: string = "";
-  age: number = 0;
+  name: string;
+  age: number;
 }
 
 export function test_toJson(): null {

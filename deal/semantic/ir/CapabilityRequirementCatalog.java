@@ -114,7 +114,6 @@ public final class CapabilityRequirementCatalog {
         catalog.put(SemanticCapability.CLASSES, List.of(
             RequiredOperation.of("CLASS_NEW", SemanticOpKind.CLASS_NEW),
             RequiredOperation.of("CLASS_FACTORY", SemanticOpKind.CLASS_FACTORY),
-            RequiredOperation.of("CLASS_DEFAULT", SemanticOpKind.CLASS_DEFAULT),
             RequiredOperation.of("FIELD_READ", SemanticOpKind.FIELD_READ),
             RequiredOperation.of("FIELD_WRITE", SemanticOpKind.FIELD_WRITE),
             RequiredOperation.of("FIELD_DELETE", SemanticOpKind.FIELD_DELETE),

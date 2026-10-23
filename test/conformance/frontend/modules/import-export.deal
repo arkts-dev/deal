@@ -8,8 +8,8 @@ export function add(a: number, b: number): number {
 }
 
 export class Point {
-  x: number = 0.0;
-  y: number = 0.0;
+  x: number;
+  y: number;
 }
 
 export function main(): null { return null; }

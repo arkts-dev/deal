@@ -14,6 +14,6 @@ export function readMissing(b: LibBox): null {
 
 // @jsonable
 export class LibNote {
-  label: string = "";
+  label: string;
   n?: null;
 }

@@ -45,7 +45,6 @@ public sealed interface KindPayload
             KindPayload.BreakPayload,
             KindPayload.ContinuePayload,
             KindPayload.DiscardPayload,
-            KindPayload.ClassDefaultPayload,
             KindPayload.ClassNewPayload,
             KindPayload.ClassFactoryPayload,
             KindPayload.FieldReadPayload,
@@ -198,7 +197,7 @@ public sealed interface KindPayload
     /**
      * One field boundary of {@code CLASS_NEW} (declaration order). The
      * pinned kind subset is {@code CLASS_LITERAL_FIELD} (provided values)
-     * or {@code CLASS_DEFAULT_FIELD} (defaulted values); membership in
+     * for provided values; membership in
      * that subset is a validator check over the closed table.
      */
     record FieldBoundary(String field, BoundaryKind kind, OpId boundaryOpId) {
@@ -875,52 +874,36 @@ public sealed interface KindPayload
         }
     }
 
-    /**
-     * {@code CLASS_DEFAULT} — class, field, and default block; produces the
-     * default value once per construction in declaration order and carries
-     * no boundary of its own.
-     */
-    record ClassDefaultPayload(ClassId classId, String field, BlockId defaultBlock)
-        implements KindPayload {
-
-        public ClassDefaultPayload {
-            Objects.requireNonNull(classId, "classId must not be null");
-            Objects.requireNonNull(field, "field must not be null");
-            Objects.requireNonNull(defaultBlock, "defaultBlock must not be null");
-        }
-    }
+    /** Structural construction with source-order values and declaration-order boundaries. */
 
     record ClassNewPayload(ClassId classId, ClassLayout layout, List<ProvidedField> providedFields,
-                           DefaultOwner defaultOwner, List<OpId> classDefaultOpIds,
+                           ConstructionProvider constructionProvider,
                            ClassFactoryId classFactoryRef, List<FieldBoundary> fieldBoundaries)
         implements KindPayload {
 
         public ClassNewPayload(ClassId classId, ClassLayout layout, List<ProvidedField> providedFields,
-                               DefaultOwner defaultOwner, List<OpId> classDefaultOpIds,
+                               ConstructionProvider constructionProvider,
                                ClassFactoryId classFactoryRef, List<FieldBoundary> fieldBoundaries) {
             this.classId = Objects.requireNonNull(classId, "classId must not be null");
             this.layout = Objects.requireNonNull(layout, "layout must not be null");
             this.providedFields = List.copyOf(providedFields);
-            this.defaultOwner = Objects.requireNonNull(defaultOwner, "defaultOwner must not be null");
-            this.classDefaultOpIds = List.copyOf(classDefaultOpIds);
+            this.constructionProvider = Objects.requireNonNull(constructionProvider, "constructionProvider must not be null");
             this.classFactoryRef = classFactoryRef;
             this.fieldBoundaries = List.copyOf(fieldBoundaries);
         }
     }
 
     /**
-     * {@code CLASS_FACTORY} — the declaring module's default-application op
-     * for an exported class: classId, the {@code CLASS_DEFAULT} child op
-     * ids in declaration order, and the triggering caller op ref. Runs
-     * zero boundaries and zero return boundaries; policy
+     * {@code CLASS_FACTORY} — exact declaring-provider resolution for an
+     * exported class, attributed to its triggering construction. Executes
+     * no initializers and no field or return boundaries; policy
      * {@code CLASS_CONSTRUCTION}.
      */
-    record ClassFactoryPayload(ClassId classId, List<OpId> classDefaultOpIds, OpId callerOpRef)
+    record ClassFactoryPayload(ClassId classId, OpId callerOpRef)
         implements KindPayload {
 
-        public ClassFactoryPayload(ClassId classId, List<OpId> classDefaultOpIds, OpId callerOpRef) {
+        public ClassFactoryPayload(ClassId classId, OpId callerOpRef) {
             this.classId = Objects.requireNonNull(classId, "classId must not be null");
-            this.classDefaultOpIds = List.copyOf(classDefaultOpIds);
             this.callerOpRef = Objects.requireNonNull(callerOpRef, "callerOpRef must not be null");
         }
     }

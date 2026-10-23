@@ -6,7 +6,7 @@
 import * as json from "std/json";
 
 class Box {
-  label: string = "b";
+  label: string;
 }
 
 export function test_json_stringify_contextual_read_carrier(): null {
@@ -42,7 +42,7 @@ export function test_json_stringify_contextual_read_carrier(): null {
     throw { code: "TEST_FAIL", message: "the decoded JSON null did not take the expected-table boundary: " + nullCode + "/" + nullMessage };
   }
   let holder: table = {};
-  let box: Box = {};
+  let box: Box = {label: "b"};
   holder.box = box;
   let classAdmitted: string = "";
   let classCode: string = "";

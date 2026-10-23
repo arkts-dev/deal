@@ -351,7 +351,7 @@ printf '%s\n' '// @deal-version 1.2' \
   >"$old_declaration/std/string.d.deal.tmp"
 mv "$old_declaration/std/string.d.deal.tmp" \
   "$old_declaration/std/string.d.deal"
-rejected_compile old-declaration-version "$old_declaration" E1046
+rejected_compile old-declaration-version "$old_declaration" E1044
 
 # =========================================================================
 # 5-8. Missing and mismatched distribution resources are rejected at the

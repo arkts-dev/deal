@@ -402,7 +402,7 @@ public final class SemanticDifferentialHarness {
                 }
                 KindPayload.ClassNewPayload payload =
                     (KindPayload.ClassNewPayload) op.payload();
-                if (payload.defaultOwner() != deal.semantic.ir.DefaultOwner.SHARED_FACTORY) {
+                if (payload.constructionProvider() != deal.semantic.ir.ConstructionProvider.SHARED_FACTORY) {
                     continue;
                 }
                 OpId factoryOpId = ClassFactoryRegistry.ownerFactoryOp(registries,

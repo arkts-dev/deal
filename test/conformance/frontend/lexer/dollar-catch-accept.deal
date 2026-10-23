@@ -5,7 +5,7 @@
 
 export function main(): null {
   try {
-    try { throw {}; } catch (inner) {
+    try { throw {code:"CONTROL",message:"control"}; } catch (inner) {
       let innerMessage: string = inner.message;
     }
   } catch (outer) {

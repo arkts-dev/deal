@@ -1,18 +1,18 @@
-// @spec: Classes — Default value isolation
-// @description: Table defaults are fresh per class instance under nested writes
+// @spec: Classes — Provided value isolation
+// @description: Provided table literals stay independent under nested writes
 // @expected: runtime-ok
-// @features: classes, defaults, tables
+// @features: classes, construction, tables
 
 class Holder {
-  data: table = {};
+  data: table;
 }
 
 export function test_table_default_freshness_extended(): null {
-  let a: Holder = {};
-  let b: Holder = {};
+  let a: Holder = {data: {}};
+  let b: Holder = {data: {}};
   a.data.count = 9;
   let count: number | null = b.data.count;
-  if (count !== null) { throw { code: "TEST_FAIL", message: "table default shared" }; }
+  if (count !== null) { throw { code: "TEST_FAIL", message: "provided tables shared" }; }
   return null;
 }
 

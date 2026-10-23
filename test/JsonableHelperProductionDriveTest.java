@@ -1506,7 +1506,7 @@ public class JsonableHelperProductionDriveTest {
             Path src = root.resolve("src");
             Files.createDirectories(src);
             Files.writeString(src.resolve("plain.deal"),
-                "export class Plain {\n  name: string = \"\";\n}\n\n"
+                "export class Plain {\n  name: string;\n}\n\n"
                 + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(root.resolve("deal.json"),
@@ -1537,7 +1537,7 @@ public class JsonableHelperProductionDriveTest {
             Path src = missing.resolve("src");
             Files.createDirectories(src);
             Files.writeString(src.resolve("plain_lib.deal"),
-                "export class Plain {\n  name: string = \"\";\n}\n",
+                "export class Plain {\n  name: string;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(src.resolve("app.deal"),
                 "import * as Lib from \"./plain_lib\";\n\n"
@@ -1620,8 +1620,7 @@ public class JsonableHelperProductionDriveTest {
             unit.loweringContextHash(), unit.requiredCapabilities(),
             unit.constructCoverage(), unit.classLayouts(), unit.functions(),
             unit.moduleInit(), unit.exportPlan(), unit.functionBindings(), ops,
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
         for (Map.Entry<ModuleId, LoweredModuleUnit> entry
                 : lowered.project().modules().entrySet()) {
@@ -2047,7 +2046,7 @@ public class JsonableHelperProductionDriveTest {
         String source = """
             // @jsonable
             export class Wrapper {
-              data: table = {};
+              data: table;
             }
 
             function apply(f: (w: Wrapper) => string, w: Wrapper): string {
@@ -2092,7 +2091,7 @@ public class JsonableHelperProductionDriveTest {
         String source = """
             // @jsonable
             export class Box {
-              x: number = 0;
+              x: number;
             }
 
             export function test_helper_binding(): null {
@@ -2219,12 +2218,12 @@ public class JsonableHelperProductionDriveTest {
         String source = """
             // @jsonable
             export class Child {
-              value: number = 0;
+              value: number;
             }
 
             // @jsonable
             export class Wrapper {
-              data: table = {};
+              data: table;
             }
 
             export function test_table_class_instance(): string {
@@ -2384,8 +2383,8 @@ public class JsonableHelperProductionDriveTest {
 
     /** The shared nested-class fixture: {@code Wrapper.child.data} is the table field. */
     private static String nestedTableFixtureSource(String function) {
-        return "// @jsonable\nexport class Child {\n  data: table = {};\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  child: Child = {};\n}\n\n"
+        return "// @jsonable\nexport class Child {\n  data: table;\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  child: Child;\n}\n\n"
             + function
             + "\nexport function main(): null {\n  return null;\n}\n";
     }
@@ -2478,8 +2477,8 @@ public class JsonableHelperProductionDriveTest {
         } else {
             body.append("  return Wrapper$toJson(w);\n");
         }
-        return "// @jsonable\nexport class Child {\n  data: table = {};\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  child: Child = {};\n}\n\n"
+        return "// @jsonable\nexport class Child {\n  data: table;\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  child: Child;\n}\n\n"
             + "export function linkAppend(cur: table): table {\n"
             + "  let n: table = {};\n"
             + "  cur.next = n;\n"
@@ -2582,8 +2581,8 @@ public class JsonableHelperProductionDriveTest {
     private static String arrayExecutorViewSyncSource() {
         System.out.println("-- the oracle's live array view: replacement and "
             + "append serialize on all three consumers --");
-        String source = "// @jsonable\nexport class Box {\n  xs: number[] = [];\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  data: table = {};\n}\n\n"
+        String source = "// @jsonable\nexport class Box {\n  xs: number[];\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  data: table;\n}\n\n"
             + "export function test_array_mutation(): null {\n"
             + "  let b: Box = { xs: [1] };\n"
             + "  b.xs[0] = 2;\n"
@@ -2632,7 +2631,7 @@ public class JsonableHelperProductionDriveTest {
     private static void testArrayExecutorViewDeleteParity() throws Exception {
         System.out.println("-- the oracle's live array view: a deleted element "
             + "agrees on all three consumers --");
-        String source = "// @jsonable\nexport class Box {\n  xs: number[] = [];\n}\n\n"
+        String source = "// @jsonable\nexport class Box {\n  xs: number[];\n}\n\n"
             + "export function test_array_delete(): string {\n"
             + "  let b: Box = { xs: [1.0, 2] };\n"
             + "  delete b.xs[0];\n"
@@ -2645,7 +2644,7 @@ public class JsonableHelperProductionDriveTest {
         // internal missing element on every consumer, never a serialized
         // null or the stale pre-delete value.
         String tableSource = "// @jsonable\nexport class Wrapper {\n"
-            + "  data: table = {};\n}\n\n"
+            + "  data: table;\n}\n\n"
             + "export function test_table_array_delete(): string {\n"
             + "  let w: Wrapper = { data: { xs: [1.0, 2] } };\n"
             + "  let arr: number[] = w.data.xs;\n"
@@ -2924,12 +2923,12 @@ public class JsonableHelperProductionDriveTest {
         System.out.println("-- the committed nested-class view: a field write "
             + "through the parent serializes on all three consumers --");
         String expected = dealStringLiteral("{\"child\":{\"x\":2.0},\"y\":0}");
-        String source = "// @jsonable\nexport class Child {\n  x: number = 0;\n}\n\n"
-            + "// @jsonable\nexport class Box {\n  child: Child = {};\n"
-            + "  y: number = 0;\n}\n\n"
+        String source = "// @jsonable\nexport class Child {\n  x: number;\n}\n\n"
+            + "// @jsonable\nexport class Box {\n  child: Child;\n"
+            + "  y: number;\n}\n\n"
             + "export function test_nested_class_intervening_commit(): null {\n"
             + "  let c: Child = { x: 1 };\n"
-            + "  let b: Box = { child: c };\n"
+            + "  let b: Box = { child: c, y: 0 };\n"
             + "  c.x = 2;\n"
             + "  b.y = 1;\n"
             + "  c.x = 3;\n"
@@ -2942,7 +2941,7 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function test_nested_class_mutation(): null {\n"
-            + "  let b: Box = { child: { x: 1 } };\n"
+            + "  let b: Box = { child: { x: 1 }, y: 0 };\n"
             + "  b.child.x = 2;\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = " + expected + ";\n"
@@ -2953,8 +2952,8 @@ public class JsonableHelperProductionDriveTest {
             + "}\n\n"
             + "export function test_nested_class_alias_mutation(): null {\n"
             + "  let c: Child = { x: 1 };\n"
-            + "  let p: Box = { child: c };\n"
-            + "  let q: Box = { child: c };\n"
+            + "  let p: Box = { child: c, y: 0 };\n"
+            + "  let q: Box = { child: c, y: 0 };\n"
             + "  p.child.x = 2;\n"
             + "  let expected: string = " + expected + ";\n"
             + "  let jsonP: string = Box$toJson(p);\n"
@@ -2984,12 +2983,12 @@ public class JsonableHelperProductionDriveTest {
     private static String arrayHeldClassViewSyncSource() {
         System.out.println("-- the committed array-held class view: a field write "
             + "through b.children[0].x serializes on all three consumers --");
-        String source = "// @jsonable\nexport class Child {\n  x: number = 0;\n}\n\n"
-            + "// @jsonable\nexport class Box {\n  children: Child[] = [];\n"
-            + "  y: number = 0;\n}\n\n"
+        String source = "// @jsonable\nexport class Child {\n  x: number;\n}\n\n"
+            + "// @jsonable\nexport class Box {\n  children: Child[];\n"
+            + "  y: number;\n}\n\n"
             + "export function test_array_held_intervening_commit(): null {\n"
             + "  let c: Child = { x: 1 };\n"
-            + "  let b: Box = { children: [c] };\n"
+            + "  let b: Box = { children: [c], y: 0 };\n"
             + "  b.children[0].x = 2;\n"
             + "  b.y = 1;\n"
             + "  b.children[0].x = 3;\n"
@@ -3003,7 +3002,7 @@ public class JsonableHelperProductionDriveTest {
             + "}\n\n"
             + "export function test_array_held_class_mutation(): null {\n"
             + "  let c: Child = { x: 1 };\n"
-            + "  let b: Box = { children: [c] };\n"
+            + "  let b: Box = { children: [c], y: 0 };\n"
             + "  b.children[0].x = 2;\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
@@ -3028,9 +3027,9 @@ public class JsonableHelperProductionDriveTest {
         System.out.println("-- the nullable-array element admission: the element "
             + "descriptor decides a null element on all three consumers --");
         String source = "// @jsonable\nexport class Box {\n"
-            + "  xs: (number | null)[] = [];\n}\n\n"
+            + "  xs: (number | null)[];\n}\n\n"
             + "// @jsonable\nexport class StrictBox {\n"
-            + "  xs: number[] = [];\n}\n\n"
+            + "  xs: number[];\n}\n\n"
             + "export function test_nullable_array_roundtrip(): null {\n"
             + "  let maybe: Box | null = Box$fromJson(\"{\\\"xs\\\":[1.0,null]}\");\n"
             + "  if (maybe !== null) {\n"
@@ -3070,10 +3069,10 @@ public class JsonableHelperProductionDriveTest {
         System.out.println("-- read-derived numeric carriers in declared fields and "
             + "array elements: the own-variant spelling on all three consumers --");
         String source = "// @jsonable\nexport class Child {\n"
-            + "  n: number = 0.5;\n"
-            + "  xs: number[] = [];\n}\n\n"
+            + "  n: number;\n"
+            + "  xs: number[];\n}\n\n"
             + "// @jsonable\nexport class Box {\n"
-            + "  child: Child = {};\n}\n\n"
+            + "  child: Child;\n}\n\n"
             + "export function test_read_derived_numbers(): null {\n"
             + "  let t: table = { i: 1, n: 2.5 };\n"
             + "  let i: number = t.i;\n"
@@ -3115,13 +3114,13 @@ public class JsonableHelperProductionDriveTest {
         // the declared number[] walk (and through the nullable and nested
         // array positions), never the closed decimal spelling.
         String deficient = "// @jsonable\nexport class Box {\n"
-            + "  xs: number[] = [];\n"
-            + "  ns: (number | null)[] = [];\n"
-            + "  grid: number[][] = [];\n}\n\n"
+            + "  xs: number[];\n"
+            + "  ns: (number | null)[];\n"
+            + "  grid: number[][];\n}\n\n"
             + "export function test_int_variant_elements(): null {\n"
             + "  let t: table = { xs: [1.0, 2] };\n"
             + "  let xs: number[] = t.xs;\n"
-            + "  let b: Box = { xs: xs };\n"
+            + "  let b: Box = { xs: xs, ns: [], grid: [] };\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[1.0,2.0],\"ns\":[],\"grid\":[]}") + ";\n"
@@ -3134,7 +3133,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let t: table = { ns: [1.0, 2] };\n"
             + "  let ns: (number | null)[] = t.ns;\n"
             + "  ns[1] = null;\n"
-            + "  let b: Box = { ns: ns };\n"
+            + "  let b: Box = { xs: [], ns: ns, grid: [] };\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[],\"ns\":[1.0,null],\"grid\":[]}") + ";\n"
@@ -3147,7 +3146,7 @@ public class JsonableHelperProductionDriveTest {
             + "  let t: table = { grid: [[1], [2]] };\n"
             + "  let grid: number[][] = t.grid;\n"
             + "  grid[1] = [2.5];\n"
-            + "  let b: Box = { grid: grid };\n"
+            + "  let b: Box = { xs: [], ns: [], grid: grid };\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
             + dealStringLiteral("{\"xs\":[],\"ns\":[],\"grid\":[[1.0],[2.5]]}")
@@ -3164,7 +3163,7 @@ public class JsonableHelperProductionDriveTest {
         // through an index write that marks only the number slot spells the
         // marked slot decimally and the int slot as its integer text.
         String controls = "// @jsonable\nexport class Box {\n"
-            + "  xs: number[] = [];\n}\n\n"
+            + "  xs: number[];\n}\n\n"
             + "export function test_number_variant_elements(): null {\n"
             + "  let t: table = { xs: [1.0, 1.5] };\n"
             + "  let xs: number[] = t.xs;\n"
@@ -3214,11 +3213,11 @@ public class JsonableHelperProductionDriveTest {
             + "three consumers, with the explicit-value control --");
         String expected = "{\"child\":{\"n\":2.5,\"o\":2.5,\"xs\":[2.5]}}";
         String source = "// @jsonable\nexport class Child {\n"
-            + "  n: number = getNum();\n"
-            + "  o: number | null = getNum();\n"
-            + "  xs: number[] = getNums();\n}\n\n"
+            + "  n: number;\n"
+            + "  o: number | null;\n"
+            + "  xs: number[];\n}\n\n"
             + "// @jsonable\nexport class Box {\n"
-            + "  child: Child = {};\n}\n\n"
+            + "  child: Child;\n}\n\n"
             + "function getNum(): number {\n"
             + "  let t: table = { n: 2.5 };\n"
             + "  return t.n;\n}\n\n"
@@ -3226,8 +3225,8 @@ public class JsonableHelperProductionDriveTest {
             + "  let t: table = { n: 2.5 };\n"
             + "  let n: number = t.n;\n"
             + "  return [n];\n}\n\n"
-            + "export function test_omitted_default_carriers(): null {\n"
-            + "  let box: Box | null = Box$fromJson(\"{\\\"child\\\":{}}\");\n"
+            + "export function test_provided_numeric_carriers(): null {\n"
+            + "  let box: Box | null = {child: {n: getNum(), o: getNum(), xs: getNums()}};\n"
             + "  if (box !== null) {\n"
             + "    let json: string = Box$toJson(box);\n"
             + "    let expected: string = " + dealStringLiteral(expected) + ";\n"
@@ -3236,8 +3235,11 @@ public class JsonableHelperProductionDriveTest {
             + "    }\n"
             + "    return null;\n"
             + "  }\n"
-            + "  throw { code: \"MISMATCH\", message: \"the omitted valid "
-            + "nested default was rejected\" };\n}\n\n"
+            + "  throw { code: \"MISMATCH\", message: \"the provided numeric carrier was rejected\" };\n}\n\n"
+            + "export function test_missing_nested_field(): null {\n"
+            + "  let missing: Box | null = Box$fromJson(\"{\\\"child\\\":{}}\");\n"
+            + "  if (missing !== null) {throw {code:\"MISMATCH\",message:\"missing nested fields accepted\"};}\n"
+            + "  return null;\n}\n\n"
             + "export function test_explicit_value_control(): null {\n"
             + "  let box: Box | null = Box$fromJson("
             + dealStringLiteral(expected) + ");\n"
@@ -3465,33 +3467,31 @@ public class JsonableHelperProductionDriveTest {
         testDynamicHelperOrigin();
         testHelperFunctionBindingInvocation();
         testTableClassInstanceRejection();
-        driveExactHelperProgram("cross-owner-json-defaults", """
+        driveExactHelperProgram("cross-owner-json-presence", """
             import * as Owner from "./owner";
             function nameDefault(): string { return "anon"; }
             function ageDefault(): number { return 0; }
-            function homeDefault(): Owner.Address { return {city: "seed"}; }
+            function homeDefault(): Owner.Address { return {city: "seed", zip: 10115}; }
             // @jsonable
             export class Person {
-              name: string = nameDefault();
-              age: number = ageDefault();
-              home: Owner.Address = homeDefault();
+              name: string;
+              age: number;
+              home: Owner.Address;
             }
             export function test_default_order(): null {
-              let p: Person | null = Person$fromJson("{\\"age\\":42.0}");
+              let supplied: Person = {name: nameDefault(), age: 42, home: homeDefault()};
+              let p: Person | null = Person$fromJson(Person$toJson(supplied));
               if (p === null) { throw {code: "MISMATCH", message: "partial rejected"}; }
               else {
                 if (Person$toJson(p) !== "{\\"name\\":\\"anon\\",\\"age\\":42.0,\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115.0}}") {
                   throw {code: "MISMATCH", message: "partial/default order"};
                 }
               }
-              let nested: Person | null = Person$fromJson("{\\"home\\":{}}");
-              if (nested === null) { throw {code: "MISMATCH", message: "nested rejected"}; }
-              else {
-                if (Person$toJson(nested) !== "{\\"name\\":\\"anon\\",\\"age\\":0,\\"home\\":{\\"city\\":\\"berlin\\",\\"zip\\":10115.0}}") {
-                  throw {code: "MISMATCH", message: "nested defaults"};
-                }
-              }
-              let bad: Person | null = Person$fromJson("{\\"age\\":\\"bad\\"}");
+              let nested: Person | null = Person$fromJson("{\\"name\\":\\"anon\\",\\"age\\":0,\\"home\\":{}}");
+              if (nested !== null) { throw {code: "MISMATCH", message: "nested omission accepted"}; }
+              let missing: Person | null = Person$fromJson("{\\"age\\":42}");
+              if (missing !== null) { throw {code: "MISMATCH", message: "outer omission accepted"}; }
+              let bad: Person | null = Person$fromJson("{\\"name\\":\\"anon\\",\\"age\\":\\"bad\\",\\"home\\":{\\"city\\":\\"seed\\",\\"zip\\":10115}}");
               if (bad !== null) {
                 throw {code: "MISMATCH", message: "failure ran defaults"};
               }
@@ -3500,7 +3500,7 @@ public class JsonableHelperProductionDriveTest {
             export function main(): null { return null; }
             """, Map.of("owner", """
                 // @jsonable
-                export class Address { city: string = "berlin"; zip: number = 10115; }
+                export class Address { city: string; zip: number; }
                 """));
         testNestedTableNumericVariants();
         testNestedClassDepthBound();

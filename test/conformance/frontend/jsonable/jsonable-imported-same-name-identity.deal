@@ -7,13 +7,13 @@ import * as A from "./support/identity_a/node_lib";
 import * as B from "./support/identity_b/node_lib";
 
 // @jsonable
-export class Node { local: number = 0; }
+export class Node { local: number; }
 
 // @jsonable
 export class Holder {
-  first: A.Node[] = [];
-  second: B.Node | null = null;
-  local: Node = {};
+  first: A.Node[];
+  second: B.Node | null;
+  local: Node;
 }
 
 export function main(): null { return null; }

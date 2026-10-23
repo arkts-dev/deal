@@ -3,7 +3,7 @@
 // @description: Companion for cross-module class, function, and table integration
 
 export class Counter {
-  value: number = 0;
+  value: number;
 }
 
 export function makeCounter(start: number): Counter {

@@ -32,12 +32,12 @@ function closedOutcome(w: TableField): string {
 
 // @jsonable
 export class TableField {
-  data: table = {};
+  data: table;
 }
 
 // @jsonable
 export class TableElements {
-  rows: table[] = [];
+  rows: table[];
 }
 
 export function test_host_table_field(): null {

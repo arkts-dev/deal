@@ -1,12 +1,12 @@
 // @spec: Error handling
-// @description: An Error literal with omitted code receives the default empty code
+// @description: An explicitly provided empty Error.code survives throw/catch unchanged
 // @expected: runtime-ok
 // @features: errors, error-type
 
 export function test_error_default_code(): null {
   let code: string = "unset";
-  try { throw { message: "expected" }; } catch (e) { code = e.code; }
-  if (code !== "") { throw { code: "TEST_FAIL", message: "Error default code was not empty" }; }
+  try { throw { code: "", message: "expected" }; } catch (e) { code = e.code; }
+  if (code !== "") { throw { code: "TEST_FAIL", message: "explicit Error code was not empty" }; }
   return null;
 }
 

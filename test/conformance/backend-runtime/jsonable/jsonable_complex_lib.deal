@@ -5,13 +5,13 @@
 // explicit classification, and companions must keep compiling standalone.
 // @jsonable
 export class Address {
-  city: string = "";
+  city: string;
 }
 
 // @jsonable
 export class User {
-  name: string = "";
-  addresses: Address[] = [];
+  name: string;
+  addresses: Address[];
   nickname?: string | null;
-  meta: table = {};
+  meta: table;
 }

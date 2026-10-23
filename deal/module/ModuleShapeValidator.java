@@ -121,22 +121,7 @@ public final class ModuleShapeValidator {
             case ExportDeclaration exp ->
                 checkTopLevelBody(exp.declaration(), diagnostics,
                     isDeclarationFile);
-            case ClassDeclaration cd ->
-                checkFieldDefaults(cd, diagnostics, isDeclarationFile);
             default -> { /* no nested statement scope */ }
-        }
-    }
-
-    /**
-     * Walks the default value expressions of a class body; a default may
-     * be a function expression whose body is a nested statement context.
-     */
-    private static void checkFieldDefaults(ClassDeclaration cd,
-                                           List<CompilerDiagnostic> diagnostics,
-                                           boolean isDeclarationFile) {
-        for (ClassField field : cd.fields()) {
-            field.defaultExpr().ifPresent(
-                expr -> checkExpression(expr, diagnostics, isDeclarationFile));
         }
     }
 
@@ -178,7 +163,6 @@ public final class ModuleShapeValidator {
                     "Local class declaration '" + cd.name()
                         + "' is not allowed; classes are module-level",
                     cd.span()));
-                checkFieldDefaults(cd, diagnostics, isDeclarationFile);
             }
             case VariableDeclaration vd ->
                 checkExpression(vd.initializer(), diagnostics,

@@ -10,7 +10,7 @@ class Box {
 }
 
 class Pair {
-  inner: Box = {};
+  inner: Box;
 }
 
 function expectEqual(what: string, actual: number, expected: number): null {

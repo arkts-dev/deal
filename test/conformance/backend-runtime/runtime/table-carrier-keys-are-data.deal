@@ -7,11 +7,11 @@ import * as json from "std/json";
 import * as tablelib from "std/table";
 
 class Tagged {
-  __kind: string = "kind-field";
-  __classname: string = "classname-field";
-  __c: number = 1;
-  __keys: string = "keys-field";
-  __t: boolean = true;
+  __kind: string;
+  __classname: string;
+  __c: number;
+  __keys: string;
+  __t: boolean;
 }
 
 export function test_table_carrier_keys_are_data(): null {
@@ -78,7 +78,7 @@ export function test_table_carrier_keys_are_data(): null {
   if (smallKeys.length !== 3) {
     throw { code: "TEST_FAIL", message: "a small tagged table lost keys" };
   }
-  let tagged: Tagged = {};
+  let tagged: Tagged = {__kind: "kind-field", __classname: "classname-field", __c: 1, __keys: "keys-field", __t: true};
   if (tagged.__kind !== "kind-field" || tagged.__classname !== "classname-field") {
     throw { code: "TEST_FAIL", message: "a class field named after a carrier key lost its value" };
   }

@@ -1,7 +1,7 @@
 // IR golden fixture: type-descriptors-class-descriptor-spec-format
 // Migrated IR-containment pin for legacy case 'class-descriptor-spec-format' (ISSUE-0358).
 
-class User { name: string = ""; }
+class User { name: string; }
 function makeUser(): User { return { name: "Ada" }; }
 export function main(): null {
 let f: User = makeUser();

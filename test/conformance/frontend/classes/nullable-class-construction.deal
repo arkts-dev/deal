@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: classes, nullable, contextual-typing
 
-class Box { n: number = 0; }
+class Box { n: number; }
 export function main(): null {
   let b: Box | null = { n: 2 };
   return null;

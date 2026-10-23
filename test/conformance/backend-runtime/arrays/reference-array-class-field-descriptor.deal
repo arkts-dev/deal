@@ -4,8 +4,8 @@
 // @features: descriptors, number[], classes
 
 class Payload {
-  data: number[] = [0, 0];
-  tag: string = "";
+  data: number[];
+  tag: string;
 }
 
 function describe(p: Payload): number {

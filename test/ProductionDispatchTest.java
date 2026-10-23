@@ -122,7 +122,7 @@ public class ProductionDispatchTest {
         import * as ir from "./m/ir";
         import * as codec from "./m/codec";
         export function main(): null {
-          if (ir.useIr({}) === 0 && codec.useCodec({}) === 0) { console.log("ok"); }
+          if (ir.useIr({a: 0}) === 0 && codec.useCodec({b: 0}) === 0) { console.log("ok"); }
           return null;
         }
         """;
@@ -132,12 +132,12 @@ public class ProductionDispatchTest {
         reverseSiblingImports(SIBLING_MAIN_SOURCE);
 
     private static final String SIBLING_IR_SOURCE = """
-        export class Ir { a: number = 0; }
+        export class Ir { a: number; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String SIBLING_CODEC_SOURCE = """
-        export class Codec { b: number = 0; }
+        export class Codec { b: number; }
         export function useCodec(y: Codec): number { return y.b; }
         """;
 
@@ -149,13 +149,13 @@ public class ProductionDispatchTest {
      * ({@code a = 93}) must never serialize as the demanded class.
      */
     private static final String COLLISION_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String COLLISION_CODEC_SOURCE = """
-        class Ir { a: number = 93; }
-        export class Codec { b: number = 9; }
+        class Ir { a: number; }
+        export class Codec { b: number; }
         export function useCodec(y: Codec): number { return y.b; }
         """;
 
@@ -166,9 +166,9 @@ public class ProductionDispatchTest {
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
+        export class Outer { r: ir.Ir; c: codec.Codec; }
         export function main(): null {
-          let o: Outer = {};
+          let o: Outer = {r: {a: 7}, c: {b: 9}};
           if (o.r.a === 7 && o.c.b === 9) { console.log("ok"); }
           return null;
         }
@@ -187,13 +187,13 @@ public class ProductionDispatchTest {
      * own default never serializes as the demanded class).
      */
     private static final String CONTEXTUAL_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String CONTEXTUAL_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
-        export class Codec { b: number = 9; }
+        export class Ir { a: number; }
+        export class Codec { b: number; }
         export function useCodec(y: Codec): number { return y.b; }
         """;
 
@@ -204,9 +204,9 @@ public class ProductionDispatchTest {
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        export class Outer { x: number = ir.useIr({}); c: codec.Codec = {}; }
+        export class Outer { x: number; c: codec.Codec; }
         export function main(): null {
-          let o: Outer = {};
+          let o: Outer = {x: ir.useIr({a: 7}), c: {b: 9}};
           if (o.x === 7 && o.c.b === 9) { console.log("ok"); }
           return null;
         }
@@ -224,7 +224,7 @@ public class ProductionDispatchTest {
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
         export function main(): null {
-          if (ir.useIr({}) === 7) { console.log("ok"); }
+          if (ir.useIr({a: 7}) === 7) { console.log("ok"); }
           return null;
         }
         """;
@@ -247,16 +247,16 @@ public class ProductionDispatchTest {
         return "import * as console from \"std/console\";\n"
             + firstImport + secondImport
             + "\n"
-            + "class Ir { a: number = 5; }\n"
+            + "class Ir { a: number; }\n"
             + "\n"
             + "function g(x: ir.Ir): number { return x.a; }\n"
-            + "function make(): ir.Ir { return {}; }\n"
+            + "function make(): ir.Ir { return {a: 7}; }\n"
             + "\n"
             + "export function main(): null {\n"
-            + "  let n: number = ir.useIr({});\n"
-            + "  let m: number = g({});\n"
+            + "  let n: number = ir.useIr({a: 7});\n"
+            + "  let m: number = g({a: 7});\n"
             + "  let r: ir.Ir = make();\n"
-            + "  let local: Ir = {};\n"
+            + "  let local: Ir = {a: 5};\n"
             + "  if (n === 7 && m === 7 && r.a === 7 && local.a === 5) {\n"
             + "    console.log(\"ok\");\n"
             + "  } else {\n"
@@ -281,7 +281,7 @@ public class ProductionDispatchTest {
         function consume(x: codec.Ir): number { return x.a; }
         export function main(): null {
           function consume(x: ir.Ir): number { return x.a; }
-          if (consume({}) === 7) { console.log("ok"); }
+          if (consume({a: 7}) === 7) { console.log("ok"); }
           else { console.log("wrong"); }
           return null;
         }
@@ -298,21 +298,21 @@ public class ProductionDispatchTest {
      * field declaration carries the nested class's provider.
      */
     private static final String NESTED_IR_SOURCE = """
-        export class Ir { a: number = 7; }
-        export class Wrap { inner: Ir = {}; }
+        export class Ir { a: number; }
+        export class Wrap { inner: Ir; }
         """;
 
     private static final String NESTED_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
+        export class Ir { a: number; }
         """;
 
     private static final String NESTED_MAIN_CODEC_FIRST = """
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        export class Outer { w: ir.Wrap = { inner: {} }; }
+        export class Outer { w: ir.Wrap; }
         export function main(): null {
-          let o: Outer = {};
+          let o: Outer = {w: {inner: {a: 7}}};
           if (o.w.inner.a === 7) { console.log("ok"); }
           return null;
         }
@@ -328,24 +328,24 @@ public class ProductionDispatchTest {
      * demanded default (7), never the sibling's (93).
      */
     private static final String RETURN_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         """;
 
     private static final String RETURN_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
-        export class Codec { b: number = 9; }
+        export class Ir { a: number; }
+        export class Codec { b: number; }
         """;
 
     private static final String RETURN_MAIN_CODEC_FIRST = """
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        function make(): ir.Ir { return {}; }
-        export class Outer { r: ir.Ir = {}; c: codec.Codec = {}; }
+        function make(): ir.Ir { return {a: 7}; }
+        export class Outer { r: ir.Ir; c: codec.Codec; }
         export function main(): null {
-          let o: Outer = {};
-          o.r = {};
-          let xs: ir.Ir[] = [{}];
+          let o: Outer = {r: {a: 7}, c: {b: 9}};
+          o.r = {a: 7};
+          let xs: ir.Ir[] = [{a: 7}];
           let m: ir.Ir = make();
           if (o.r.a === 7 && xs[0].a === 7 && m.a === 7 && o.c.b === 9)
             { console.log("ok"); }
@@ -366,29 +366,29 @@ public class ProductionDispatchTest {
      * first same-named export of the import order.
      */
     private static final String ASSIGN_IR_SOURCE = """
-        export class Ir { a: number = 7; }
-        export function make(): Ir { return {}; }
+        export class Ir { a: number; }
+        export function make(): Ir { return {a: 7}; }
         """;
 
     private static final String ASSIGN_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
-        export class Codec { b: number = 9; }
+        export class Ir { a: number; }
+        export class Codec { b: number; }
         """;
 
     private static final String ASSIGN_MAIN_CODEC_FIRST = """
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        function set(p: ir.Ir): number { p = {}; return p.a; }
+        function set(p: ir.Ir): number { p = {a: 7}; return p.a; }
         export function main(): null {
-          let x: ir.Ir = {};
-          x = {};
-          let xs: ir.Ir[] = [{}];
-          xs[0] = {};
+          let x: ir.Ir = {a: 7};
+          x = {a: 7};
+          let xs: ir.Ir[] = [{a: 7}];
+          xs[0] = {a: 7};
           let y = ir.make();
-          y = {};
-          let c: codec.Codec = {};
-          if (x.a === 7 && xs[0].a === 7 && y.a === 7 && set({}) === 7
+          y = {a: 7};
+          let c: codec.Codec = {b: 9};
+          if (x.a === 7 && xs[0].a === 7 && y.a === 7 && set({a: 7}) === 7
               && c.b === 9) { console.log("ok"); }
           else { console.log("wrong"); }
           return null;
@@ -407,34 +407,34 @@ public class ProductionDispatchTest {
      * same-named export of the import order.
      */
     private static final String ASSIGN_MEMBER_IR_SOURCE = """
-        export class Ir { a: number = 7; }
-        export class Wrap { inner: Ir = {}; }
-        export function makeWrap(): Wrap { return {}; }
+        export class Ir { a: number; }
+        export class Wrap { inner: Ir; }
+        export function makeWrap(): Wrap { return {inner: {a: 7}}; }
         """;
 
     private static final String ASSIGN_MEMBER_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
-        export class Wrap { inner: Ir = {}; }
-        export function makeWrap(): Wrap { return {}; }
+        export class Ir { a: number; }
+        export class Wrap { inner: Ir; }
+        export function makeWrap(): Wrap { return {inner: {a: 93}}; }
         """;
 
     private static final String ASSIGN_MEMBER_MAIN_CODEC_FIRST = """
         import * as console from "std/console";
         import * as codec from "./m/codec";
         import * as ir from "./m/ir";
-        class Holder { w: ir.Wrap = {}; }
-        function setParam(w: ir.Wrap): number { w.inner = {}; return w.inner.a; }
+        class Holder { w: ir.Wrap; }
+        function setParam(w: ir.Wrap): number { w.inner = {a: 7}; return w.inner.a; }
         export function main(): null {
-          let w: ir.Wrap = {};
-          w.inner = {};
+          let w: ir.Wrap = {inner: {a: 7}};
+          w.inner = {a: 7};
           let v = ir.makeWrap();
-          v.inner = {};
-          let h: Holder = {};
-          h.w.inner = {};
-          let xs: ir.Wrap[] = [{}];
-          xs[0].inner = {};
+          v.inner = {a: 7};
+          let h: Holder = {w: {inner: {a: 7}}};
+          h.w.inner = {a: 7};
+          let xs: ir.Wrap[] = [{inner: {a: 7}}];
+          xs[0].inner = {a: 7};
           if (w.inner.a === 7 && v.inner.a === 7 && h.w.inner.a === 7
-              && xs[0].inner.a === 7 && setParam({}) === 7) {
+              && xs[0].inner.a === 7 && setParam({inner: {a: 7}}) === 7) {
             console.log("ok");
           } else { console.log("wrong"); }
           return null;
@@ -456,16 +456,16 @@ public class ProductionDispatchTest {
      * diagnostic.
      */
     private static final String SHADOW_IR_SOURCE = """
-        export class Ir { a: number = 7; }
-        export function make(): Ir { return {}; }
+        export class Ir { a: number; }
+        export function make(): Ir { return {a: 7}; }
         """;
 
     private static final String SHADOW_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
-        export class Codec { b: number = 9; }
+        export class Ir { a: number; }
+        export class Codec { b: number; }
         """;
 
-    private static final String SHADOW_MAIN_CODEC_FIRST = "import * as console from \"std/console\";\nimport * as codec from \"./m/codec\";\nimport * as ir from \"./m/ir\";\nexport function main(): null {\n  let x: ir.Ir = {};\n  { let x: codec.Ir = (x = {}); }\n  { let x: codec.Ir = (x = {}); while (false) { } }\n  if (x.a === 7) { console.log(\"ok\"); } else { console.log(\"wrong\"); }\n  return null;\n}\n";
+    private static final String SHADOW_MAIN_CODEC_FIRST = "import * as console from \"std/console\";\nimport * as codec from \"./m/codec\";\nimport * as ir from \"./m/ir\";\nexport function main(): null {\n  let x: ir.Ir = {a: 7};\n  { let x: codec.Ir = (x = {a: 7}); }\n  { let x: codec.Ir = (x = {a: 7}); while (false) { } }\n  if (x.a === 7) { console.log(\"ok\"); } else { console.log(\"wrong\"); }\n  return null;\n}\n";
 
     private static final String SHADOW_MAIN_IR_FIRST =
         reverseSiblingImports(SHADOW_MAIN_CODEC_FIRST);
@@ -582,12 +582,12 @@ public class ProductionDispatchTest {
         }
 
         export class Point {
-          x: number = 0;
+          x: number;
         }
 
         export class DefaultPoint {
-          x: number = 3;
-          y: number = 4;
+          x: number;
+          y: number;
         }
         """;
 
@@ -608,7 +608,7 @@ public class ProductionDispatchTest {
 
         export function main(): null {
           let p: lib.Point = { x: 1 };
-          let q: lib.DefaultPoint = {};
+          let q: lib.DefaultPoint = {x: 3, y: 4};
           console.log("PROBE|DIRECT-MAIN");
           console.log("PROBE|OMITTED-DEFAULTS");
           return null;
@@ -766,7 +766,7 @@ public class ProductionDispatchTest {
     private static final String DEFAULT_CAPTURE_SOURCE =
         "export function main(): null {\n"
             + "  let x: number = 3;\n"
-            + "  class Local { n: number = x; }\n"
+            + "  class Local { n: number; }\n"
             + "  let c: Local = {};\n"
             + "  return null;\n"
             + "}\n";
@@ -778,9 +778,9 @@ public class ProductionDispatchTest {
      * the duplicate declaration (line 3, columns 5-27).
      */
     private static final String DUPLICATE_CLASS_SOURCE =
-        "class A { n: number = 7; }\n"
+        "class A { n: number; }\n"
             + "export function main(): null {\n"
-            + "  { class A { n: number = 9; } }\n"
+            + "  { class A { n: number; } }\n"
             + "  return null;\n"
             + "}\n";
 
@@ -797,10 +797,10 @@ public class ProductionDispatchTest {
             + "}\n";
 
     private static final String IMPORTED_DUPLICATE_LIB =
-        "class A { n: number = 7; }\n"
+        "class A { n: number; }\n"
             + "\n"
             + "export function f(): null {\n"
-            + "  { class A { n: number = 9; } }\n"
+            + "  { class A { n: number; } }\n"
             + "  return null;\n"
             + "}\n";
 
@@ -814,7 +814,7 @@ public class ProductionDispatchTest {
         "// " + new String(Character.toChars(0x1F600)) + "\n"
             + "export function main(): null {\n"
             + "\tlet x: number = 3;\n"
-            + "\tclass Local { n: number = x; }\n"
+            + "\tclass Local { n: number; }\n"
             + "\tlet c: Local = {};\n"
             + "\treturn null;\n"
             + "}\n";
@@ -1369,13 +1369,13 @@ public class ProductionDispatchTest {
      * (7 and the written 11), never the sibling's 93.
      */
     private static final String CALL_RECEIVER_IR_SOURCE = """
-        export class Ir { a: number = 7; nick?: string; }
+        export class Ir { a: number; nick?: string; }
         export function make(): Ir { return { a: 7 }; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
-        export class Ir { a: number = 93; nick: number = 1; }
+        export class Ir { a: number; nick: number; }
         """;
 
     private static String callReceiverBody(String firstImport,
@@ -1388,7 +1388,7 @@ public class ProductionDispatchTest {
             + "export function main(): null {\n"
             + "  let v: number = ir.make().a;\n"
             + "  let f: (x: ir.Ir) => number = ir.useIr;\n"
-            + "  let n: number = f({});\n"
+            + "  let n: number = f({a: 7});\n"
             + "  let y = ir.make();\n"
             + "  y.a = 11;\n"
             + "  let w: number = y.a;\n"
@@ -1443,18 +1443,18 @@ public class ProductionDispatchTest {
      */
     private static final String NESTED_FIELD_PROVIDER_IR_SOURCE = """
         import * as codec from "./codec";
-        export class Ir { inner: codec.Ir = {}; a: number = 7; }
+        export class Ir { inner: codec.Ir; a: number; }
         """;
 
     private static final String NESTED_FIELD_PROVIDER_CODEC_SOURCE = """
-        export class Ir { b: number = 93; }
+        export class Ir { b: number; }
         """;
 
     private static final String NESTED_FIELD_PROVIDER_MAIN_SOURCE = """
         import * as console from "std/console";
         import * as ir from "./m/ir";
         export function main(): null {
-          let x: ir.Ir = { inner: {} };
+          let x: ir.Ir = { inner: {b: 93}, a: 7 };
           if (x.inner.b === 93 && x.a === 7) { console.log("ok"); }
           return null;
         }
@@ -1467,19 +1467,19 @@ public class ProductionDispatchTest {
      */
     private static final String TRANSITIVE_PROVIDER_IR_SOURCE = """
         import * as codec from "./codec";
-        export class Part { z: string = "ir"; }
-        export class Outer { inner: codec.Part = {}; }
+        export class Part { z: string; }
+        export class Outer { inner: codec.Part; }
         """;
 
     private static final String TRANSITIVE_PROVIDER_CODEC_SOURCE = """
-        export class Part { b: number = 93; }
+        export class Part { b: number; }
         """;
 
     private static final String TRANSITIVE_PROVIDER_MAIN_SOURCE = """
         import * as console from "std/console";
         import * as ir from "./m/ir";
         export function main(): null {
-          let x: ir.Outer = { inner: {} };
+          let x: ir.Outer = { inner: {b: 93} };
           if (x.inner.b === 93) { console.log("ok"); }
           return null;
         }
@@ -1523,20 +1523,20 @@ public class ProductionDispatchTest {
      */
     private static final String PLAN_IMPORTED_OTHER_SOURCE = """
         // @jsonable
-        export class Point { a: number = 7; }
+        export class Point { a: number; }
         """;
 
     private static final String PLAN_IMPORTED_MAIN_SOURCE = """
         import * as console from "std/console";
         import * as other from "./other";
 
-        export class Point { nick: string = "local"; }
+        export class Point { nick: string; }
 
         // @jsonable
-        export class Wrap { p: other.Point = {}; }
+        export class Wrap { p: other.Point; }
 
         export function main(): null {
-          let w: Wrap = {};
+          let w: Wrap = {p: {a: 7}};
           let s: string = Wrap$toJson(w);
           if (s !== "{\\\"p\\\":{\\\"a\\\":7.0}}") {
             throw { code: "WRONG", message: s };
@@ -1554,7 +1554,7 @@ public class ProductionDispatchTest {
      * exact.
      */
     private static final String PLAN_LOCAL_OTHER_SOURCE = """
-        export class Point { nick: string = ""; }
+        export class Point { nick: string; }
         """;
 
     private static final String PLAN_LOCAL_MAIN_SOURCE = """
@@ -1562,13 +1562,13 @@ public class ProductionDispatchTest {
         import * as other from "./other";
 
         // @jsonable
-        export class Point { nick: string = "l"; }
+        export class Point { nick: string; }
 
         // @jsonable
-        export class Wrap { p: Point = {}; }
+        export class Wrap { p: Point; }
 
         export function main(): null {
-          let w: Wrap = {};
+          let w: Wrap = {p: {nick: "l"}};
           let s: string = Wrap$toJson(w);
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
             throw { code: "WRONG", message: s };
@@ -1614,18 +1614,18 @@ public class ProductionDispatchTest {
      * default, and an explicitly provided field skips its local default.
      */
     private static final String LAYOUT_SIBLING_OTHER_SOURCE = """
-        export class Point { a: number = 7; }
+        export class Point { a: number; }
         """;
 
     private static final String LAYOUT_SIBLING_MAIN_SOURCE = """
         import * as console from "std/console";
         import * as other from "./other";
 
-        export class Point { nick: string = "local"; }
+        export class Point { nick: string; }
 
         export function main(): null {
-          let local: Point = {};
-          let imported: other.Point = {};
+          let local: Point = {nick: "local"};
+          let imported: other.Point = {a: 7};
           let provided: Point = { nick: "given" };
           if (local.nick !== "local") {
             throw { code: "WRONG", message: "local" };
@@ -1714,7 +1714,7 @@ public class ProductionDispatchTest {
      * declaration descriptor is emitted without its declared defaults.
      */
     private static final String DECLARED_JSON_MODEL_DECLARATION = """
-        export class Model { n: number = 0; }
+        export class Model { n: number; }
         export function Model$fromJson(s: string): Model | null;
         export function Model$toJson(v: Model): string;
         """;
@@ -1724,7 +1724,7 @@ public class ProductionDispatchTest {
         import * as M from "model";
 
         // @jsonable
-        export class Holder { m: M.Model | null = null; }
+        export class Holder { m: M.Model | null; }
 
         export function main(): null {
           let h: Holder | null = Holder$fromJson("{\\\"m\\\":{}}");
@@ -2211,9 +2211,8 @@ public class ProductionDispatchTest {
             DiagnosticRange forbiddenDeclaration) {
         List<DefaultResourceOccurrence> occurrences =
             classPlanOccurrences(orchestrator, mainUri, className);
-        checkEq(1, occurrences.size(), "the " + label + " completed"
-            + " plan holds exactly one " + className
-            + " class-default occurrence");
+        checkEq(0, occurrences.size(), "the " + label + " structural declaration"
+            + " owns no initializer occurrences for " + className);
         if (occurrences.size() == 1) {
             DefaultResourceOccurrence occurrence = occurrences.get(0);
             checkEq(providerUri, occurrence.toSemanticModuleIdentity()
@@ -2227,10 +2226,14 @@ public class ProductionDispatchTest {
                     + " the exact defining declaration range");
         }
 
-        List<RuntimeImportDependency> edges = classPlanEdges(orchestrator,
-            mainUri, className);
+        checkEq(0, orchestrator.completedDefaultPlans().values().stream()
+                .flatMap(List::stream)
+                .mapToInt(plan -> plan.plan().runtimeDependencies().size()).sum(),
+            label + " has no deferred initializer edge for " + className);
+        List<RuntimeImportDependency> edges = classEdges(orchestrator,
+            mainUri, className, RuntimeImportDependency.Reason.RUNTIME_USE);
         checkEq(1, edges.size(), "the " + label + " completed graph"
-            + " holds exactly one deferred " + className + " edge");
+            + " holds exactly one ordinary " + className + " edge");
         if (edges.size() != 1) {
             return null;
         }
@@ -2282,15 +2285,6 @@ public class ProductionDispatchTest {
             }
         }
         return matches;
-    }
-
-    /** The completed deferred-default dependency edges of the given
-     * class name whose consuming module is {@code fromUri}. */
-    private static List<RuntimeImportDependency> classPlanEdges(
-            CompilationOrchestrator orchestrator, String fromUri,
-            String className) {
-        return classEdges(orchestrator, fromUri, className,
-            RuntimeImportDependency.Reason.DEFERRED_DEFAULT_BINDING);
     }
 
     /** The completed dependency edges of the given class name and reason
@@ -2665,27 +2659,27 @@ public class ProductionDispatchTest {
         checkPreservedLoweringOrigin("default-block capture",
             Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
-            3, 3, 3, 33, 54, 84, 30);
+            3, 3, 3, 29, 54, 80, 26);
         checkPreservedLoweringOrigin("duplicate class declaration",
             Map.of("src/main.deal", DUPLICATE_CLASS_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'A' is not allowed; classes are module-level",
-            3, 5, 3, 31, 62, 88, 26);
+            3, 5, 3, 27, 58, 80, 22);
         Map<String, String> imported = new java.util.LinkedHashMap<>();
         imported.put("src/main.deal", IMPORTED_DUPLICATE_MAIN);
         imported.put("src/lib.deal", IMPORTED_DUPLICATE_LIB);
         checkPreservedLoweringOrigin("duplicate class declaration in an imported module",
             imported, "lib", "src/lib.deal", "FRONTEND", "E1057",
             "Local class declaration 'A' is not allowed; classes are module-level",
-            4, 5, 4, 31, 60, 86, 26);
+            4, 5, 4, 27, 56, 78, 22);
         checkPreservedLoweringOrigin("supplementary scalar and tab indentation",
             Map.of("src/main.deal", SUPPLEMENTARY_TAB_CAPTURE_SOURCE), "main", "src/main.deal",
             "FRONTEND", "E1057", "Local class declaration 'Local' is not allowed; classes are module-level",
-            4, 2, 4, 32, 57, 87, 30);
+            4, 2, 4, 28, 57, 83, 26);
         checkPreservedLoweringOrigin("CRLF line endings",
             Map.of("src/main.deal", DEFAULT_CAPTURE_SOURCE.replace("\n", "\r\n")),
             "main", "src/main.deal", "FRONTEND", "E1057",
             "Local class declaration 'Local' is not allowed; classes are module-level",
-            3, 3, 3, 33, 56, 86, 30);
+            3, 3, 3, 29, 56, 82, 26);
     }
 
     /**
@@ -3597,7 +3591,7 @@ public class ProductionDispatchTest {
                 verifyDirectEmissionGroups(artifact, "Main.java",
                     "// ", "b\\d+g0 = args\\[0\\];",
                     "String __prevMod_\\d+ = MODULE;", "MODULE = __prevMod_\\d+;");
-                verifyOmittedDefaultOwnerAttribution(artifact,
+                verifyOmittedConstructionProviderAttribution(artifact,
                     "Main.java", "// ", "String __prevMod_\\d+ = MODULE;",
                     "JvmRuntime\\.setModule\\(MODULE\\);",
                     "\\w+ = default\\d+\\(\\);",
@@ -3644,7 +3638,7 @@ public class ProductionDispatchTest {
                     "S\\.b\\d+g0 = __args\\[1\\]",
                     "__modStack\\[#__modStack \\+ 1\\] = __module",
                     "__modStack\\[#__modStack\\] = nil");
-                verifyOmittedDefaultOwnerAttribution(artifact,
+                verifyOmittedConstructionProviderAttribution(artifact,
                     "main.lua", "-- ",
                     "__modStack\\[#__modStack \\+ 1\\] = __module",
                     "__modStack\\[#__modStack\\] = nil",
@@ -3803,7 +3797,7 @@ public class ProductionDispatchTest {
      * sidecar mapping of their own source group; each emitted failure branch
      * keeps the caller's mapping on the caller's own terminal.
      */
-    private static void verifyOmittedDefaultOwnerAttribution(MappedArtifact artifact,
+    private static void verifyOmittedConstructionProviderAttribution(MappedArtifact artifact,
             String artifactName, String commentMarker,
             String factoryGroupStart, String factoryGroupEnd,
             String defaultInvocation, String transferConstruction,
@@ -3843,8 +3837,8 @@ public class ProductionDispatchTest {
                 invocations.add(candidate);
             }
         }
-        checkEq(2, invocations.size(), artifactName
-            + " emits one invocation per omitted default: " + invocations);
+        checkEq(0, invocations.size(), artifactName
+            + " emits no retired initializer invocation: " + invocations);
         int transfer = -1;
         for (int i = (invocations.isEmpty()
                 ? groupStart : invocations.get(invocations.size() - 1));
@@ -3900,8 +3894,8 @@ public class ProductionDispatchTest {
                 callerComments.add(index + 1);
             }
         }
-        checkEq(2, callerComments.size(), artifactName
-            + " retains the caller's mapping inside each failure branch: "
+        checkEq(0, callerComments.size(), artifactName
+            + " emits no retired initializer-failure branch: "
             + callerComments);
         for (int comment : callerComments) {
             boolean terminal = comment < lines.size()
@@ -4368,7 +4362,7 @@ public class ProductionDispatchTest {
         import * as c from "std/console";
 
         class Log {
-          seq: number[] = [];
+          seq: number[];
         }
 
         function record(l: Log, tag: number): number {
@@ -4541,7 +4535,7 @@ public class ProductionDispatchTest {
         import * as json from "std/json";
 
         class Box {
-          label: string = "b";
+          label: string;
         }
 
         export function arrayCarrier(): string {
@@ -4556,14 +4550,14 @@ public class ProductionDispatchTest {
 
         export function classCarrier(): string {
           let holder: table = {};
-          let box: Box = {};
+          let box: Box = {label: "b"};
           holder.box = box;
           return json.stringify(holder.box);
         }
 
         export function errorCarrier(): string {
           let holder: table = {};
-          let failure: Error = {};
+          let failure: Error = {code: "", message: ""};
           holder.failure = failure;
           return json.stringify(holder.failure);
         }
@@ -6493,7 +6487,7 @@ public class ProductionDispatchTest {
         import * as left from "./left";
         import * as right from "./right";
         export function main(): null {
-          if(left.read() !== 7 || right.read() !== 7) {throw {message:"diamond value"};}
+          if(left.read() !== 7 || right.read() !== 7) {throw {code:"",message:"diamond value"};}
           c.log("entry-main"); return null;
         }
         """;
@@ -6503,8 +6497,8 @@ public class ProductionDispatchTest {
         import * as c from "std/console";
         import * as seed from "./seed";
         function value(): number {c.log("left-default"); return 0;}
-        export class Node {value:number=value();}
-        export function read(): number {let x:seed.Seed={}; return x.value;}
+        export class Node {value:number;}
+        export function read(): number {let x:seed.Seed={value: seed.value()}; return x.value;}
         export function main(): null {c.log("forbidden-left-main"); return null;}
         """;
 
@@ -6514,8 +6508,8 @@ public class ProductionDispatchTest {
     /** The diamond's seed: the default evaluated once per construction. */
     private static final String DIAMOND_SEED = """
         import * as c from "std/console";
-        function value(): number {c.log("seed-default"); return 7;}
-        export class Seed {value:number=value();}
+        export function value(): number {c.log("seed-default"); return 7;}
+        export class Seed {value:number;}
         export function main(): null {c.log("forbidden-seed-main"); return null;}
         """;
 
@@ -6554,7 +6548,7 @@ public class ProductionDispatchTest {
         export function main(): null {
          let original: number[] = [1]; let provider: () => number[] = shared(original); let calls: number = 0;
          function provide(): number[] {calls = calls + 1; return provider();}
-         class Box {xs: number[] = provide();}
+         class Box {xs: number[];}
          let a: Box = {}; let b: Box = {};
          a.xs[0] = 9;
          if(calls !== 2 || a.xs !== original || b.xs !== original || b.xs[0] !== 9) {throw {message:"call default copied"};}
@@ -6585,7 +6579,7 @@ public class ProductionDispatchTest {
     /** The legal throwing-try/fallthrough-catch control (subject 11's). */
     private static final String LEGAL_THROWING_TRY_CONTROL = """
         import * as c from "std/console";
-        export function f(): null {try {throw {message:"x"};} catch(e) {} return null;}
+        export function f(): null {try {throw {code:"",message:"x"};} catch(e) {} return null;}
         export function main(): null {f(); c.log("legal-throwing-try"); return null;}
         """;
 
@@ -6735,7 +6729,7 @@ public class ProductionDispatchTest {
         for (String backend : List.of("luajit", "jvm", "js")) {
             checkCornerCaseReject(backend, "local-class original",
                 Map.of("src/main.deal", LOCAL_CLASS_ORIGINAL),
-                "E1057", "src/main.deal", 6, 2, 6, 39,
+                "E1057", "src/main.deal", 6, 2, 6, 27,
                 "classes are module-level");
             checkCornerCaseReject(backend, "table-condition-context-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
@@ -6918,13 +6912,12 @@ public class ProductionDispatchTest {
             hostSources.put(backend, Files.readString(
                 corpus.resolve("retained_default." + extension)));
         }
-        runReentrantDefaultSubject(hostSources, "re-entrant default", """
+        runReentrantDefaultSubject(hostSources, "re-entrant provided expression", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
-            class A {
-              x: number = combine(state.calls(), build());
-            }
+            class A { x: number; }
+            function make(): A { return {x: combine(state.calls(), build())}; }
 
             function combine(a: number, b: number): number {
               return a * 1000 + b;
@@ -6935,12 +6928,12 @@ public class ProductionDispatchTest {
                 return 100;
               }
               state.provideFirst();
-              let inner: A = {};
+              let inner: A = make();
               return inner.x;
             }
 
             export function main(): null {
-              let a: A = {};
+              let a: A = make();
               if (a.x !== 1100) {
                 throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
               }
@@ -6952,9 +6945,8 @@ public class ProductionDispatchTest {
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
-            class A {
-              x: number = combine(state.calls(), build());
-            }
+            class A { x: number; }
+            function make(): A { return {x: combine(state.calls(), build())}; }
 
             function combine(a: number, b: number): number {
               return a * 1000 + b;
@@ -6966,14 +6958,14 @@ public class ProductionDispatchTest {
               }
               state.provideFirst();
               try {
-                let inner: A = {};
+                let inner: A = make();
               } catch (e) {
               }
               return 5;
             }
 
             export function main(): null {
-              let a: A = {};
+              let a: A = make();
               if (a.x !== 5) {
                 throw { code: "OPERAND_OVERWRITE", message: "a failed nested attempt overwrote the enclosing operands" };
               }
@@ -6981,26 +6973,24 @@ public class ProductionDispatchTest {
               return null;
             }
             """, Map.of());
-        runReentrantDefaultSubject(hostSources, "two required defaults", """
+        runReentrantDefaultSubject(hostSources, "two required provided fields", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
-            class A {
-              x: number = state.calls();
-              y: number = build();
-            }
+            class A { x: number; y: number; }
+            function make(): A { return {x: state.calls(), y: build()}; }
 
             function build(): number {
               if (state.calls() >= 1) {
                 return 100;
               }
               state.provideFirst();
-              let inner: A = {};
+              let inner: A = make();
               return 7;
             }
 
             export function main(): null {
-              let a: A = {};
+              let a: A = make();
               if (a.x !== 0) {
                 throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
               }
@@ -7011,14 +7001,12 @@ public class ProductionDispatchTest {
               return null;
             }
             """, Map.of());
-        runReentrantDefaultSubject(hostSources, "two required defaults, failed nested attempt", """
+        runReentrantDefaultSubject(hostSources, "two required provided fields, failed nested attempt", """
             import * as console from "std/console";
             import * as state from "host/retained_default";
 
-            class A {
-              x: number = state.calls();
-              y: number = build();
-            }
+            class A { x: number; y: number; }
+            function make(): A { return {x: state.calls(), y: build()}; }
 
             function build(): number {
               if (state.calls() >= 1) {
@@ -7026,14 +7014,14 @@ public class ProductionDispatchTest {
               }
               state.provideFirst();
               try {
-                let inner: A = {};
+                let inner: A = make();
               } catch (e) {
               }
               return 7;
             }
 
             export function main(): null {
-              let a: A = {};
+              let a: A = make();
               if (a.x !== 0) {
                 throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the enclosing attempt's first default value" };
               }
@@ -7049,9 +7037,9 @@ public class ProductionDispatchTest {
             import * as lib from "lib";
 
             export function main(): null {
-              let a: lib.A = {};
+              let a: lib.A = lib.make();
               if (a.x !== 0) {
-                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
+                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred provided value" };
               }
               if (a.y !== 7) {
                 throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
@@ -7062,17 +7050,15 @@ public class ProductionDispatchTest {
             """, Map.of("src/lib.deal", """
             import * as state from "host/retained_default";
 
-            export class A {
-              x: number = state.calls();
-              y: number = build();
-            }
+            export class A { x: number; y: number; }
+            export function make(): A { return {x: state.calls(), y: build()}; }
 
             function build(): number {
               if (state.calls() >= 1) {
                 return 100;
               }
               state.provideFirst();
-              let inner: A = {};
+              let inner: A = make();
               return 7;
             }
             """));
@@ -7081,9 +7067,9 @@ public class ProductionDispatchTest {
             import * as lib from "lib";
 
             export function main(): null {
-              let a: lib.A = {};
+              let a: lib.A = lib.make();
               if (a.x !== 0) {
-                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the transferred default value" };
+                throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a failed nested attempt overwrote the transferred provided value" };
               }
               if (a.y !== 7) {
                 throw { code: "ATTEMPT_VALUE_LOST", message: "the transferred second default value is wrong" };
@@ -7094,10 +7080,8 @@ public class ProductionDispatchTest {
             """, Map.of("src/lib.deal", """
             import * as state from "host/retained_default";
 
-            export class A {
-              x: number = state.calls();
-              y: number = build();
-            }
+            export class A { x: number; y: number; }
+            export function make(): A { return {x: state.calls(), y: build()}; }
 
             function build(): number {
               if (state.calls() >= 1) {
@@ -7105,7 +7089,7 @@ public class ProductionDispatchTest {
               }
               state.provideFirst();
               try {
-                let inner: A = {};
+                let inner: A = make();
               } catch (e) {
               }
               return 7;

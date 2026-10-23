@@ -53,7 +53,7 @@ import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.KindPayload;
@@ -234,7 +234,7 @@ public class ProductionProjectEmissionTest {
      */
     private static final String GENERATED_HELPER_APP_SOURCE = """
         // @jsonable
-        export class Widget { n: number = 1; }
+        export class Widget { n: number; }
         export function main(): null { return null; }
         """;
 
@@ -291,7 +291,7 @@ public class ProductionProjectEmissionTest {
         }
 
         export class Point {
-          x: number = 42;
+          x: number;
         }
         """;
 
@@ -572,16 +572,16 @@ public class ProductionProjectEmissionTest {
         }
 
         function makeDefaulted(): Defaulted {
-          return { name: "d" };
+          return { name: "d", tag: seven() };
         }
 
         class User {
-          name: string = "";
+          name: string;
         }
 
         class Defaulted {
-          name: string = "";
-          tag: number = seven();
+          name: string;
+          tag: number;
         }
 
         function seven(): number {
@@ -655,7 +655,7 @@ public class ProductionProjectEmissionTest {
      */
     private static final String JS_HOST_DECLARATION = """
         export class Endpoint {
-          path: string = "";
+          path: string;
           port?: number;
         }
 
@@ -666,8 +666,8 @@ public class ProductionProjectEmissionTest {
     private static final String JS_LIB_SOURCE = """
         // @jsonable
         export class Point {
-          x: number = 0;
-          y: number = 0;
+          x: number;
+          y: number;
         }
 
         export function add(a: number, b: number): number {
@@ -692,14 +692,14 @@ public class ProductionProjectEmissionTest {
           if (cfg.alpha() !== cfg2.alpha()) {
             throw { code: "JS_PROBE", message: "same host entry" };
           }
-          let e: cfg.Endpoint = {};
+          let e: cfg.Endpoint = {path: "/"};
           if (e.path !== "/") {
             throw { code: "JS_PROBE", message: "host class default" };
           }
           if (cfg.describe("probe") !== "/probe") {
             throw { code: "JS_PROBE", message: "host call" };
           }
-          let p: lib.Point = { x: cfg.alpha() };
+          let p: lib.Point = { x: cfg.alpha(), y: 0 };
           let total: number = lib.add(p.x, p.y);
           if (total !== 7) {
             throw { code: "JS_PROBE", message: "cross-module call" };
@@ -727,7 +727,7 @@ public class ProductionProjectEmissionTest {
         import * as console from "std/console";
 
         export function main(): null {
-          let c: Counter = {};
+          let c: Counter = {n: 0, x: 11};
           let f: (a: number, b: number) => number = make(c);
           let first: number = f(4, 5);
           let second: number = f(7, 8);
@@ -740,7 +740,7 @@ public class ProductionProjectEmissionTest {
           if (c.x !== 11) {
             throw { code: "JS_PROBE", message: "later class default" };
           }
-          let holder: Holder = {};
+          let holder: Holder = {counter: {n: 0, x: 11}};
           if (holder.counter.n !== 0) {
             throw { code: "JS_PROBE", message: "nested later-class default" };
           }
@@ -749,7 +749,7 @@ public class ProductionProjectEmissionTest {
         }
 
         class Holder {
-          counter: Counter = {};
+          counter: Counter;
         }
 
         function make(c: Counter): (a: number) => number {
@@ -758,8 +758,8 @@ public class ProductionProjectEmissionTest {
         }
 
         class Counter {
-          n: number = 0;
-          x: number = 11;
+          n: number;
+          x: number;
         }
         """;
 
@@ -858,37 +858,22 @@ public class ProductionProjectEmissionTest {
      */
     private static final String DEFERRED_DEFAULT_APP_SOURCE = """
         import * as console from "std/console";
-
         export function main(): null {
-          let a: A = {};
-          let b: B = {};
-          let self: Self = {};
-          if (a.makeB().n !== 2) {
-            throw { code: "JS_PROBE", message: "mutual default a" };
-          }
-          if (b.makeA().makeB().n !== 2) {
-            throw { code: "JS_PROBE", message: "mutual default b" };
-          }
-          if (self.make().n !== 3) {
-            throw { code: "JS_PROBE", message: "self default" };
+          let a: A = {makeB: makeB};
+          let b: B = {n: 2, makeA: makeA};
+          let self: Self = {n: 3, make: makeSelf};
+          if (a.makeB().n !== 2 || b.makeA().makeB().n !== 2 || self.make().n !== 3) {
+            throw {code: "JS_PROBE", message: "provided recursive callable"};
           }
           console.log("PROBE|JS|DEFERRED-DEFAULTS");
           return null;
         }
-
-        class A {
-          makeB: () => B = function(): B { return {}; };
-        }
-
-        class B {
-          n: number = 2;
-          makeA: () => A = function(): A { return {}; };
-        }
-
-        class Self {
-          n: number = 3;
-          make: () => Self = function(): Self { return {}; };
-        }
+        function makeA(): A { return {makeB: makeB}; }
+        function makeB(): B { return {n: 2, makeA: makeA}; }
+        function makeSelf(): Self { return {n: 3, make: makeSelf}; }
+        class A { makeB: () => B; }
+        class B { n: number; makeA: () => A; }
+        class Self { n: number; make: () => Self; }
         """;
 
     /**
@@ -902,7 +887,7 @@ public class ProductionProjectEmissionTest {
         import * as console from "std/console";
 
         export function main(): null {
-          let self: Self = {};
+          let self: Self = {child: {child: null}};
           let child: Self | null = self.child;
           if (child !== null) {
             if (child.child !== null) {
@@ -912,11 +897,11 @@ public class ProductionProjectEmissionTest {
             throw { code: "JS_PROBE", message: "self default child" };
           }
 
-          let outer: A = {};
+          let outer: A = {b: {a: null}};
           if (outer.b.a !== null) {
             throw { code: "JS_PROBE", message: "provided mutual field" };
           }
-          let b: B = {};
+          let b: B = {a: {b: {a: null}}};
           let a: A | null = b.a;
           if (a !== null) {
             if (a.b.a !== null) {
@@ -930,15 +915,15 @@ public class ProductionProjectEmissionTest {
         }
 
         class Self {
-          child: Self | null = { child: null };
+          child: Self | null;
         }
 
         class A {
-          b: B = { a: null };
+          b: B;
         }
 
         class B {
-          a: A | null = {};
+          a: A | null;
         }
         """;
 
@@ -1340,10 +1325,9 @@ public class ProductionProjectEmissionTest {
                             instanceof KindPayload.ClassNewPayload construction) {
                     if (construction.classId().equals(counterId)) {
                         counterConstructions++;
-                        check(!construction.classDefaultOpIds().isEmpty(),
-                            "the construction of the later-declared Counter"
-                                + " lists its omitted required-present default"
-                                + " op: " + construction.classDefaultOpIds());
+                        check(construction.providedFields().size() == 2
+                                && construction.fieldBoundaries().size() == 2,
+                            "the later-declared Counter checks both provided values");
                     }
                     if (construction.classId().equals(holderId)) {
                         holderConstructions++;
@@ -1576,27 +1560,20 @@ public class ProductionProjectEmissionTest {
             ExecutableLoweredProject produced = result.producedProject();
             check(produced != null,
                 "the forward-class run exposes its produced project");
-            boolean defaultOp = false;
             boolean localConstruction = false;
             if (produced != null) {
                 LoweredModuleUnit entry =
                     produced.modules().get(produced.entryModule());
                 for (SemanticOp op : entry.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        defaultOp = true;
-                    }
                     if (op.kind() == SemanticOpKind.CLASS_NEW
                             && op.payload()
                                 instanceof KindPayload.ClassNewPayload classNew
-                            && classNew.defaultOwner() == DefaultOwner.LOCAL
-                            && classNew.classDefaultOpIds().size() == 1) {
+                            && classNew.constructionProvider() == ConstructionProvider.LOCAL
+                            && classNew.providedFields().size() == 2) {
                         localConstruction = true;
                     }
                 }
             }
-            check(defaultOp,
-                "the later-declared class's per-construction default op is"
-                    + " produced");
             check(localConstruction,
                 "the forward construction applies the later-declared class's"
                     + " omitted required default");
@@ -1881,38 +1858,16 @@ public class ProductionProjectEmissionTest {
                     continue;
                 }
                 constructions++;
-                check(!construction.classDefaultOpIds().isEmpty(),
-                    "every construction of " + construction.classId()
-                        + " lists its omitted required-present default op(s): "
-                        + construction.classDefaultOpIds());
-                for (OpId defaultOpId : construction.classDefaultOpIds()) {
-                    SemanticOp defaultOp = byId.get(defaultOpId);
-                    check(defaultOp != null
-                            && defaultOp.kind() == SemanticOpKind.CLASS_DEFAULT,
-                        "the recorded default child resolves to a CLASS_DEFAULT"
-                            + " op: " + defaultOpId);
-                }
+                check(construction.providedFields().size() == construction.layout().fields().size(),
+                    "each recursive callable construction supplies every required field");
                 for (KindPayload.FieldBoundary entry : construction.fieldBoundaries()) {
-                    if (entry.kind() != deal.semantic.ir.BoundaryKind
-                            .CLASS_DEFAULT_FIELD) {
-                        continue;
-                    }
+                    check(entry.kind() == deal.semantic.ir.BoundaryKind.CLASS_LITERAL_FIELD,
+                        "provided callable owns a literal boundary");
                     SemanticOp boundary = byId.get(entry.boundaryOpId());
-                    check(boundary != null
-                            && boundary.payload()
-                                instanceof KindPayload.BoundaryPayload payload,
-                        "the default input boundary resolves: " + entry.boundaryOpId());
-                    if (!(boundary.payload()
-                            instanceof KindPayload.BoundaryPayload payload)) {
-                        continue;
-                    }
-                    SemanticOp defaultOp = byId.get(defaultOpForField(
-                        construction, entry.field(), byId));
-                    check(defaultOp != null
-                            && payload.input().equals(defaultOp.result()),
-                        "the construction's default input names the default"
-                            + " op's result identity (" + entry.field() + "): "
-                            + payload.input());
+                    ValueId input = construction.providedFields().stream()
+                        .filter(field -> field.name().equals(entry.field())).findFirst().orElseThrow().valueOpId();
+                    check(boundary != null && boundary.payload() instanceof KindPayload.BoundaryPayload payload
+                            && payload.input().equals(input), "boundary uses its provided callable value");
                 }
             }
             check(constructions >= 5,
@@ -1951,22 +1906,6 @@ public class ProductionProjectEmissionTest {
         }
     }
 
-    /** The recorded default op of one construction site's field, or null. */
-    private static OpId defaultOpForField(KindPayload.ClassNewPayload construction,
-            String field, Map<OpId, SemanticOp> byId) {
-        for (OpId defaultOpId : construction.classDefaultOpIds()) {
-            SemanticOp defaultOp = byId.get(defaultOpId);
-            if (defaultOp != null
-                    && defaultOp.payload()
-                        instanceof KindPayload.ClassDefaultPayload payload
-                    && payload.field().equals(field)
-                    && construction.classId().equals(payload.classId())) {
-                return defaultOpId;
-            }
-        }
-        return null;
-    }
-
     /**
      * A recursive class default is plan availability, never execution demand
      * (ISSUE-0865): the self-defaulting {@code Node} compiles and keeps the
@@ -2002,10 +1941,9 @@ public class ProductionProjectEmissionTest {
             CompilationOrchestrator demanded = compileJs(root,
                 root.resolve("src/demanded.deal").toAbsolutePath(), rejected,
                 false, Map.of());
-            check(demanded.diagnostics().stream().anyMatch(d -> "E6005"
-                    .equals(d.code()) && d.message().contains(
-                        "cyclic class-default construction")),
-                "the demanded recursive default keeps the named E6005 rule: "
+            check(demanded.diagnostics().stream().anyMatch(d -> "E4001"
+                    .equals(d.code()) && d.message().contains("Missing required field 'next'")),
+                "omitted required nullable field keeps E4001: "
                     + demanded.diagnostics());
             check(!Files.exists(rejected.resolve("demanded.js")),
                 "the rejected demanded construction publishes no artifact");
@@ -2041,15 +1979,15 @@ public class ProductionProjectEmissionTest {
         }
 
         class Node {
-          next: Node | null = {};
+          next: Node | null;
         }
 
         class A {
-          b: B | null = {};
+          b: B | null;
         }
 
         class B {
-          a: A | null = {};
+          a: A | null;
         }
         """;
 
@@ -2066,7 +2004,7 @@ public class ProductionProjectEmissionTest {
         }
 
         class Node {
-          next: Node | null = {};
+          next: Node | null;
         }
         """;
 
@@ -2088,10 +2026,9 @@ public class ProductionProjectEmissionTest {
                 root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
             check(!orchestrator.diagnostics().isEmpty(),
                 "the direct construction cycle is rejected");
-            check(orchestrator.diagnostics().stream().anyMatch(d -> "E6005"
-                    .equals(d.code()) && d.message().contains(
-                        "cyclic class-default construction")),
-                "the direct construction cycle keeps the named E6005 rule: "
+            check(orchestrator.diagnostics().stream().anyMatch(d -> "E1007"
+                    .equals(d.code()) && d.message().equals("Class field initializers are not supported")),
+                "recursive initializer syntax rejects before lowering with E1007: "
                     + orchestrator.diagnostics());
             check(!Files.exists(out.resolve("app.js")),
                 "the rejected cycle publishes no artifact");
@@ -2452,10 +2389,10 @@ public class ProductionProjectEmissionTest {
         Path root = Files.createTempDirectory("js-runtime-missing-");
         try {
             writeFileIn(root, "src/app.deal", """
-                export class Box { v: number = 1; }
+                export class Box { v: number; }
 
                 export function main(): null {
-                  let b: Box = {};
+                  let b: Box = {v: 1};
                   return null;
                 }
                 """);
@@ -2817,50 +2754,26 @@ public class ProductionProjectEmissionTest {
             }
             ExecutableLoweredProject project = lowering.project();
             LoweredModuleUnit entry = project.modules().get(project.entryModule());
-            SemanticOp classDefault = null;
-            for (SemanticOp op : entry.ops()) {
-                if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                    classDefault = op;
-                    break;
-                }
-            }
-            check(classDefault != null,
-                "the lowered entry module carries the CLASS_DEFAULT op");
-            if (classDefault == null) {
-                return;
-            }
+            SemanticOp classDefault = entry.ops().stream()
+                .filter(op -> op.kind() == SemanticOpKind.CLASS_FACTORY).findFirst().orElseThrow();
             DiagnosticRange expected = classDefault.origin().span().range();
-            check(expected.origin() == RangeOrigin.SOURCE
-                    && expected.scalarLength() > 0,
-                "the rejected op's own origin is a real SOURCE span: " + expected);
             StructuredBodyTable table = lowering.tables().get(entry.moduleId());
             BlockId initBlock = entry.moduleInit().initBlock();
-
-            // (a) The explicit op rejection: the CLASS_DEFAULT op is reached
-            // by the block walk (a doctored membership row) and the emitOp
-            // dispatch refuses it.
             Map<BlockId, List<OpId>> walkedRows = new LinkedHashMap<>();
             for (Map.Entry<BlockId, List<OpId>> row : table.blockOps().entrySet()) {
                 List<OpId> ops = new ArrayList<>(row.getValue());
-                if (row.getKey().equals(initBlock)) {
-                    ops.add(classDefault.opId());
-                }
+                if (row.getKey().equals(initBlock)) ops.add(classDefault.opId());
                 walkedRows.put(row.getKey(), ops);
             }
-            StructuredBodyTable walked =
-                new StructuredBodyTable(walkedRows, table.opBlocks());
-
-            // (b) The detached-body rejection: the class-default block's
-            // membership row is absent, so the detached default function
-            // cannot be emitted.
-            BlockId defaultBlock =
-                ((KindPayload.ClassDefaultPayload) classDefault.payload())
-                    .defaultBlock();
-            Map<BlockId, List<OpId>> detachedRows =
-                new LinkedHashMap<>(table.blockOps());
-            detachedRows.remove(defaultBlock);
-            StructuredBodyTable detached =
-                new StructuredBodyTable(detachedRows, table.opBlocks());
+            StructuredBodyTable walked = new StructuredBodyTable(walkedRows, table.opBlocks());
+            var function = entry.functions().values().stream().findFirst().orElseThrow();
+            DiagnosticRange bodyOrigin = entry.ops().stream()
+                .filter(op -> op.payload() instanceof KindPayload.ClosureNewPayload closure
+                    && closure.function().equals(function.functionId()))
+                .findFirst().orElseThrow().origin().span().range();
+            Map<BlockId, List<OpId>> detachedRows = new LinkedHashMap<>(table.blockOps());
+            detachedRows.remove(function.body());
+            StructuredBodyTable detached = new StructuredBodyTable(detachedRows, table.opBlocks());
 
             for (String target : List.of("LuaJIT", "JVM")) {
                 SharedEmissionFailure opRejection = emitFailure(target, project,
@@ -2872,7 +2785,7 @@ public class ProductionProjectEmissionTest {
                         target + ": the op rejection carries the rejected op's own "
                             + "exact range");
                     check(opRejection.getMessage().contains(
-                            "a CLASS_DEFAULT executes only under"),
+                            "a CLASS_FACTORY"),
                         target + ": the op rejection message is the unchanged text: "
                             + opRejection.getMessage());
                 }
@@ -2883,9 +2796,8 @@ public class ProductionProjectEmissionTest {
                     target + ": the missing default-block membership rejects the "
                         + "detached body");
                 if (detachedRejection != null) {
-                    checkEq(expected, detachedRejection.diagnosticRange(),
-                        target + ": the detached-body rejection carries the "
-                            + "CLASS_DEFAULT op's own exact range");
+                    checkEq(bodyOrigin, detachedRejection.diagnosticRange(),
+                        target + ": missing function membership keeps the producing closure's exact range");
                     check(detachedRejection.getMessage().contains(
                             "has no membership row"),
                         target + ": the detached-body message is the unchanged text: "
@@ -2908,8 +2820,8 @@ public class ProductionProjectEmissionTest {
     /** The imported-class fixture: a SHARED_FACTORY CLASS_NEW and class field reads. */
     private static final String IMPORTED_CLASS_LIB_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 0;
+          x: number;
+          y: number;
         }
         """;
 
@@ -2957,7 +2869,7 @@ public class ProductionProjectEmissionTest {
                     if (op.kind() == SemanticOpKind.CLASS_NEW
                             && op.payload()
                                 instanceof KindPayload.ClassNewPayload payload
-                            && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                            && payload.constructionProvider() == ConstructionProvider.SHARED_FACTORY) {
                         sharedFactory = op;
                     }
                     if (op.kind() == SemanticOpKind.FIELD_READ && fieldRead == null) {
@@ -2975,8 +2887,7 @@ public class ProductionProjectEmissionTest {
                     KindPayload.ClassNewPayload replaced =
                         new KindPayload.ClassNewPayload(payload.classId(),
                             payload.layout(), payload.providedFields(),
-                            DefaultOwner.SHARED_FACTORY, payload.classDefaultOpIds(),
-                            bogus, payload.fieldBoundaries());
+                            ConstructionProvider.SHARED_FACTORY, bogus, payload.fieldBoundaries());
                     assertSharedGuardOrigin(
                         "the unregistered class-factory reference", sharedFactory,
                         "CLASS_NEW " + sharedFactory.opId() + " classFactoryRef "
@@ -3474,13 +3385,13 @@ public class ProductionProjectEmissionTest {
                 check(range.origin() == RangeOrigin.SOURCE
                         && range.file().endsWith("src/app.deal")
                         && range.startLine() == 2 && range.startColumn() == 8
-                        && range.endLine() == 2 && range.endColumn() == 39
+                        && range.endLine() == 2 && range.endColumn() == 35
                         && range.startScalarOffset() == 20
-                        && range.endScalarOffset() == 51
-                        && range.scalarLength() == 31,
+                        && range.endScalarOffset() == 47
+                        && range.scalarLength() == 27,
                     "the corrupted " + helper + " failure carries the class "
-                        + "declaration's own exact SOURCE range 2:8-2:39 [20,51) "
-                        + "length 28; got " + range);
+                        + "declaration's own exact SOURCE range 2:8-2:35 [20,47) "
+                        + "length 27; got " + range);
                 check(range.equals(target.span().range()),
                     "the " + helper + " range is exactly the class declaration's own "
                         + "converted range; got " + range);
@@ -3655,7 +3566,7 @@ public class ProductionProjectEmissionTest {
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
             unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
-            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
+            unit.classFactories(), unit.classBindingFacts());
     }
 
     /** One emitter rejection of the doctored membership table, or null on no throw. */
@@ -4119,7 +4030,7 @@ public class ProductionProjectEmissionTest {
     }
 
     private static final String EMITTER_LIB = """
-        export class Counter { n: number = 0; }
+        export class Counter { n: number; }
         export function add(a: number, b: number): number { return a + b; }
         export function twice(x: number): number { return x * 2; }
         """;
@@ -4361,7 +4272,6 @@ public class ProductionProjectEmissionTest {
             check(module.source().contains("JvmRuntime.setTraceEnabled(false);"), "entry module API production mode");
         }
         int publication = -1;
-        int defaults = 0;
         for (var unit : project.modules().values()) {
             for (var function : unit.functions().values()) {
                 String factory = jvm ? "static JvmRuntime.FunctionValue F" + function.functionId().id() + "("
@@ -4380,18 +4290,13 @@ public class ProductionProjectEmissionTest {
                     check(at > publication && source.indexOf(write, at + 1) < 0, "unique ordered publication " + export.name());
                     publication = at;
                 }
-                if (!jvm && op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                    defaults++;
-                    int at = source.indexOf("__factories.D" + op.opId().id() + " = function()");
-                    check(at > store && at < walks, "detached default before init");
-                }
                 if (op.kind() == SemanticOpKind.ENTRY_INVOKE) {
                     checkEq(1L, unit.ops().stream().filter(call -> call.kind() == SemanticOpKind.CALL
                         && op.opId().equals(call.origin().parentOpId())).count(), "one CALL delegated per entry");
                 }
             }
         }
-        if (!jvm) { check(defaults > 0, "detached default coverage nonvacuous"); }
+        check(!source.contains("__factories.D"), "no detached initializer functions are emitted");
         checkEq(1L, project.modules().get(app).ops().stream().filter(op -> op.kind() == SemanticOpKind.ENTRY_INVOKE).count(), "one entry main");
         checkEq(0L, project.modules().get(LIB).ops().stream().filter(op -> op.kind() == SemanticOpKind.ENTRY_INVOKE).count(), "quiet library has no main");
     }

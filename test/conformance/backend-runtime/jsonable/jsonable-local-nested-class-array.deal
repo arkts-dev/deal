@@ -4,10 +4,10 @@
 // @features: jsonable, arrays, nested
 
 // @jsonable
-export class Child { value: number = 0; }
+export class Child { value: number; }
 
 // @jsonable
-export class Parent { children: Child[] = []; }
+export class Parent { children: Child[]; }
 
 function child(v: number): Child { return { value: v }; }
 

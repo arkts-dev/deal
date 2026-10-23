@@ -4,7 +4,7 @@
 // @features: lua-abi, jsonable, structural
 
 // @jsonable
-export class AbiUser { name: string = ""; }
+export class AbiUser { name: string; }
 
 export function test_abi_jsonable_helper_export_keys(): null {
   let u: AbiUser | null = AbiUser$fromJson("{\"name\":\"Ada\"}");

@@ -1,11 +1,11 @@
 // @spec: Classes — @jsonable fromJson top-level input gate
-// @description: @jsonable fromJson parses an object: scalar, null, and array JSON documents — the empty array included — return null (never throw), while "{}" decodes to the defaulted instance
+// @description: fromJson rejects scalar, null, array and missing-required documents; a complete object decodes.
 // @expected: runtime-ok
 // @features: jsonable, fromJson, validation
 
 // @jsonable
 export class C {
-  x: number = 0;
+  x: number;
 }
 
 export function test_fromJson_top_level_scalars(): null {
@@ -28,18 +28,18 @@ export function test_fromJson_top_level_scalars(): null {
 }
 
 export function test_fromJson_empty_documents(): null {
-  let from_obj: C | null = C$fromJson("{}");
+  if (C$fromJson("{}") !== null) {
+    throw { code: "TEST_FAIL", message: "fromJson({}) must reject missing required x" };
+  }
+  let from_obj: C | null = C$fromJson("{\"x\":0}");
   if (from_obj === null) {
-    throw { code: "TEST_FAIL", message: "fromJson({}) should decode the defaulted instance" };
+    throw { code: "TEST_FAIL", message: "complete object should decode" };
   } else {
-    let s_obj: string = C$toJson(from_obj);
-    if (s_obj !== "{\"x\":0}") {
-      throw { code: "TEST_FAIL", message: "fromJson({}) should keep the defaulted field" };
+    if (from_obj.x !== 0) {
+      throw { code: "TEST_FAIL", message: "provided zero field was lost" };
     }
   }
-  // The class helper accepts only its specified object shape: an empty
-  // JSON array is a validation failure returning null, never the
-  // defaulted instance.
+  // An empty JSON array is never a class object.
   if (C$fromJson("[]") !== null) {
     throw { code: "TEST_FAIL", message: "fromJson([]) should return null" };
   }

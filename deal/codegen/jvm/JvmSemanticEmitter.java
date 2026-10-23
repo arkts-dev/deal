@@ -18,7 +18,7 @@ import deal.semantic.ir.ChainOperandCompletion;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.FunctionExecutionBinding;
@@ -666,14 +666,7 @@ public final class JvmSemanticEmitter {
             // block's final producing value (the op's result slot), so
             // every triggering construction gets a fresh default
             // (mutable defaults allocate freshly per attempt).
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                for (SemanticOp op : moduleUnit.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
-                        beginSourceMappedGroup(op, indent(1));
-                        emitClassDefaultMethod(op);
-                    }
-                }
-            }
+
             // The generated class carriers (E5): one static nested class
             // per ClassId of the resolution context with per-field value
             // slots plus boolean presence flags, tagged with the
@@ -879,68 +872,6 @@ public final class JvmSemanticEmitter {
             return null;
         }
 
-        /**
-         * Emits one detached class-default method: the default block's
-         * ops in order (the CLASS_DEFAULT op itself skipped — its own
-         * events are the triggering CLASS_NEW/CLASS_FACTORY arm's) and
-         * the final producing value returned.
-         */
-        private void emitClassDefaultMethod(SemanticOp defaultOp) {
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) defaultOp.payload();
-            StructuredBodyTable ownerTable = blockTableOf.get(payload.defaultBlock());
-            List<OpId> ops = ownerTable == null
-                ? null : ownerTable.blockOps().get(payload.defaultBlock());
-            if (ops == null) {
-                throw rejectedOp(defaultOp, "the class-default block "
-                    + payload.defaultBlock() + " has no membership row (producer defect)");
-            }
-            if (!(defaultOp.result() instanceof ValueId resultId)) {
-                throw rejectedOp(defaultOp, "CLASS_DEFAULT " + defaultOp.opId()
-                    + " publishes no ValueId result (producer defect)");
-            }
-            List<String> keys = defaultBlockStateKeys(payload.defaultBlock());
-            out.append("  private static Object ").append(defaultFn(defaultOp.opId()))
-                .append("() {\n");
-            // The invocation-local attempt scratch: the default block's own
-            // slots and cells are saved before the block runs and restored
-            // in a finally, so a default re-entered by a nested or
-            // re-entrant construction restores the enclosing attempt's
-            // operands on the success and the failure path alike (the same
-            // private-state discipline the function-invocation save applies
-            // to a body). The produced value travels in the return, never
-            // in a restored slot.
-            int bodyIndent = 2;
-            if (!keys.isEmpty()) {
-                out.append("    Object[] __dsv = new Object[]{")
-                    .append(String.join(", ", keys)).append("};\n");
-                out.append("    try {\n");
-                bodyIndent = 3;
-            }
-            for (OpId opId : ops) {
-                if (opId.equals(defaultOp.opId()) || ownedChildren.contains(opId)) {
-                    continue;
-                }
-                emitOp(opsById.get(opId), bodyIndent);
-            }
-            out.append(indent(bodyIndent)).append("return ")
-                .append(slot(resultId)).append(";\n");
-            if (!keys.isEmpty()) {
-                out.append("    } finally {\n");
-                for (int i = 0; i < keys.size(); i++) {
-                    out.append("      ").append(keys.get(i)).append(" = __dsv[")
-                        .append(i).append("];\n");
-                }
-                out.append("    }\n");
-            }
-            out.append("  }\n");
-        }
-
-        /** One detached class-default method name of a CLASS_DEFAULT op. */
-        private String defaultFn(OpId defaultOp) {
-            return "default" + defaultOp.id();
-        }
-
         /** The generated carrier class name of one ClassId. */
         private String carrierName(ClassId classId) {
             return "C" + Integer.toHexString(classId.name().hashCode() & 0x7fffffff)
@@ -1041,19 +972,10 @@ public final class JvmSemanticEmitter {
                 .append(javaString(layout.classId().text())).append(",\n");
             out.append("    new JvmJson.Field[]{\n");
             for (ClassLayout.FieldLayout field : layout.fields()) {
-                SemanticOp defaultOp = classDefaultOpOf(
-                    jsonPlanOwners.get(layout.classId()), layout.classId(),
-                    field.name());
                 out.append("      new JvmJson.Field(").append(javaString(field.name()))
                     .append(", ").append(javaString(jsonDescriptorText(field.descriptor())))
                     .append(", ").append(field.required() ? "false" : "true")
                     .append(", ").append(javaString(staticKind(field.descriptor())));
-                if (defaultOp != null && field.required()) {
-                    out.append(", ").append(javaString(opKey(defaultOp.opId())))
-                        .append(", ")
-                        .append(javaString(defaultOp.contract().canonicalDigest()))
-                        .append(", () -> ").append(defaultFn(defaultOp.opId())).append("()");
-                }
                 out.append("),\n");
             }
             out.append("    },\n    () -> new ").append(carrierName(layout.classId()))
@@ -1188,7 +1110,7 @@ public final class JvmSemanticEmitter {
             out.append("  static JvmRuntime.FunctionValue ").append(fnFactory(functionId))
                 .append('(').append(params).append(") {\n");
             out.append("    return new JvmRuntime.FunctionValue(args -> {\n");
-            List<OpId> bodyOps = tableOfFunction(function).blockOps().get(function.body());
+            List<OpId> bodyOps = requireFunctionBody(function, tableOfFunction(function));
             currentFunction = function;
             int paramCount = function.descriptor().paramTypes().size();
             for (int i = 0; i < paramCount && i < bodyOps.size(); i++) {
@@ -1522,10 +1444,7 @@ public final class JvmSemanticEmitter {
                 case JSON_FROM_CLASS -> emitJsonFromClass(op, indent);
                 case JSON_TO_CLASS -> emitJsonToClass(op, indent);
                 case CLASS_NEW -> emitClassNew(op, indent);
-                case CLASS_DEFAULT -> throw rejectedOp(op, "a CLASS_DEFAULT "
-                    + "executes only under its triggering CLASS_NEW/CLASS_FACTORY "
-                    + "(the detached default block's ops are the class-default "
-                    + "method's; the block walk never runs the op itself)");
+
                 case CLASS_FACTORY -> throw rejectedOp(op, "a CLASS_FACTORY "
                     + "is a detached owner-module entry executed only under the "
                     + "triggering caller's CLASS_NEW (cross-unit parent) — the "
@@ -4485,11 +4404,11 @@ public final class JvmSemanticEmitter {
                 (KindPayload.ClassNewPayload) op.payload();
             emitStart(op, indent);
             ClassLayout layout = classLayouts.get(payload.classId());
-            if (layout == null && payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
+            if (layout == null && payload.constructionProvider() == ConstructionProvider.BUILTIN_ERROR) {
 
                 layout = ClassLayout.BUILTIN_ERROR;
             }
-            if (layout == null && payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
+            if (layout == null && payload.constructionProvider() == ConstructionProvider.HOST_DECLARATION) {
 
                 layout = payload.layout();
             }
@@ -4498,29 +4417,13 @@ public final class JvmSemanticEmitter {
                     + payload.classId() + " has no layout in the resolution context "
                     + "(producer defect)");
             }
-            java.util.Set<String> provided = new java.util.HashSet<>();
-            for (KindPayload.ProvidedField field : payload.providedFields()) {
-                provided.add(field.name());
-            }
-            java.util.Map<ValueId, String> defaultAttempts = java.util.Map.of();
-            switch (payload.defaultOwner()) {
-                case LOCAL -> defaultAttempts =
-                    emitClassNewLocalDefaults(op, payload, provided, indent);
-                case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, provided,
-                    indent);
-                case HOST_DEFAULTS -> {
-
-                }
-
-                case BUILTIN_DEFAULTS -> {
-                    // The builtin Error construction (K13 items 2-4): the
-                    // builtin defaults are compiler constants, so no default
-                    // child runs — provided fields only, and the omitted
-                    // fields take the constant empty string at the
-                    // construction site.
+            switch (payload.constructionProvider()) {
+                case SHARED_FACTORY -> emitClassNewFactoryTransfer(op, payload, indent);
+                case LOCAL, HOST_DECLARATION, BUILTIN_ERROR -> {
+                    // Structural construction consumes provided fields only.
                 }
                 default -> throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner " + payload.defaultOwner()
+                    + " carries constructionProvider " + payload.constructionProvider()
                     + " outside the emitted owners (producer defect)");
             }
 
@@ -4551,12 +4454,12 @@ public final class JvmSemanticEmitter {
                     out.append(indent(indent)).append("}\n");
                 }
             }
-            if (payload.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS) {
-                emitClassNewBuiltinDefaults(op, payload, layout, indent);
+            if (payload.constructionProvider() == ConstructionProvider.BUILTIN_ERROR) {
+                emitClassNewBuiltinError(op, payload, layout, indent);
                 return;
             }
-            if (payload.defaultOwner() == DefaultOwner.HOST_DEFAULTS) {
-                emitClassNewHostDefaults(op, payload, indent);
+            if (payload.constructionProvider() == ConstructionProvider.HOST_DECLARATION) {
+                emitClassNewHost(op, payload, indent);
                 return;
             }
 
@@ -4573,25 +4476,7 @@ public final class JvmSemanticEmitter {
                 }
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) boundary.payload();
-                String inputExpr;
-                if (entry.kind() == BoundaryKind.CLASS_DEFAULT_FIELD
-                        && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
-
-                    SemanticOp factoryOp = opsById.get(factoryOpIdOf(op, payload));
-                    String extracted = "__ft_" + boundary.opId().id();
-                    out.append(indent(indent)).append("Object ").append(extracted)
-                        .append(" = ((").append("JvmRuntime.ClassInstance) ")
-                        .append(slot((ValueId) factoryOp.result())).append(").read(")
-                        .append(javaString(entry.field())).append(");\n");
-                    inputExpr = extracted;
-                } else {
-                    // A defaulted field's value is the enclosing attempt's own
-                    // produced value (the attempt-local entry), never the
-                    // class-default shared slot a nested attempt overwrites.
-                    String attempt = defaultAttempts.get(boundaryPayload.input());
-                    inputExpr = attempt != null ? attempt
-                        : slot(boundaryPayload.input());
-                }
+                String inputExpr = slot(boundaryPayload.input());
                 emitBoundaryStart(boundary, inputExpr, boundaryPayload.descriptor(), indent);
                 String checked = "__c_" + boundary.opId().id();
                 out.append(indent(indent)).append("Object ").append(checked)
@@ -4675,12 +4560,12 @@ public final class JvmSemanticEmitter {
                 indent);
         }
 
-        private void emitClassNewBuiltinDefaults(SemanticOp op,
+        private void emitClassNewBuiltinError(SemanticOp op,
                 KindPayload.ClassNewPayload payload, ClassLayout layout, int indent) {
             if (!ClassId.ERROR.equals(payload.classId())
                     || !layout.equals(ClassLayout.BUILTIN_ERROR)) {
                 throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner BUILTIN_DEFAULTS for " + payload.classId()
+                    + " carries constructionProvider BUILTIN_ERROR for " + payload.classId()
                     + " over " + layout.classId() + ": the builtin-defaults owner is"
                     + " admissible only for the compiler-owned builtin Error class"
                     + " (producer defect)");
@@ -4702,12 +4587,15 @@ public final class JvmSemanticEmitter {
                         + " a fail-closed producer defect, never emitted");
                 }
             }
+            if (code == null || message == null) {
+                throw rejectedOp(op, "builtin Error construction omits code or message (producer defect)");
+            }
             String instName = "__inst_" + op.opId().id();
             out.append(indent(indent)).append("JvmRuntime.ErrorValue ")
                 .append(instName).append(" = new JvmRuntime.ErrorValue(")
-                .append(code == null ? javaString("") : "(String) " + code)
+                .append("(String) " + code)
                 .append(", ")
-                .append(message == null ? javaString("") : "(String) " + message)
+                .append("(String) " + message)
                 .append(");\n");
             out.append(indent(indent)).append(slot((ValueId) op.result()))
                 .append(" = ").append(instName).append(";\n");
@@ -4715,48 +4603,19 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        private void emitClassNewHostDefaults(SemanticOp op,
+        private void emitClassNewHost(SemanticOp op,
                 KindPayload.ClassNewPayload payload, int indent) {
             JvmHostAbiEmission.HostClassFacts facts = hostAbi == null ? null
                 : hostAbi.hostClassFacts(payload.classId());
             if (facts == null) {
                 throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner HOST_DEFAULTS for " + payload.classId()
+                    + " carries constructionProvider HOST_DECLARATION for " + payload.classId()
                     + ", which is not a declared host class of the compile's"
                     + " declaration surface (the class defaults capture has exactly"
                     + " one source — a producer defect)");
             }
-            if (payload.classFactoryRef() != null
-                    || !payload.classDefaultOpIds().isEmpty()) {
-                throw rejectedOp(op, "CLASS_NEW " + op.opId()
-                    + " carries defaultOwner HOST_DEFAULTS with a non-null factory"
-                    + " ref or a non-empty default child list: the host construction"
-                    + " carries neither (the loaded defaults are data — a producer"
-                    + " defect)");
-            }
 
-            for (KindPayload.ProvidedField field : payload.providedFields()) {
-                out.append(indent(indent)).append("if (!").append(facts.defaultsField())
-                    .append(".containsKey(").append(javaString(field.name()))
-                    .append(")) {\n");
-                String errName = "__eh_" + op.opId().id() + "_"
-                    + Integer.toHexString(field.name().hashCode() & 0x7fffffff);
-                out.append(indent(indent)).append("  JvmRuntime.DealError ")
-                    .append(errName).append(" = JvmRuntime.arm(deal.semantic.ir."
-                        + "FailureArmId.CLASS_EXTRA_FIELD, java.util.Map.of(\"field\", ")
-                    .append(javaString(field.name()))
-                    .append(", \"classId\", ")
-                    .append(javaString(payload.classId().text()))
-                    .append("), ").append(javaString(originOf(op)))
-                    .append(", null, null);\n");
-                if (trace) {
-                    emitFailureEvent(op.opId(), op.kind().name(), op,
-                        "JvmRuntime.errtext(" + errName + ")", indent + 1);
-                }
-                out.append(indent(indent)).append("  throw ").append(errName)
-                    .append(";\n");
-                out.append(indent(indent)).append("}\n");
-            }
+
 
             java.util.Map<String, String> checked = new java.util.LinkedHashMap<>();
             for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
@@ -4799,13 +4658,9 @@ public final class JvmSemanticEmitter {
                     args.add("false");
                     continue;
                 }
-                String loaded = "__hostDefault(" + facts.defaultsField() + ", "
-                    + javaString(field.name()) + ", "
-                    + javaString(payload.classId().text()) + ", "
-                    + originArgs(op) + ")";
-                args.add(JvmHostAbiEmission.hostFieldWriteProjection(
-                    field.descriptorText(), field.storageType(), loaded,
-                    "__hostProjectArg"));
+                throw rejectedOp(op, "CLASS_NEW " + op.opId()
+                    + " omits required-present field '" + field.name()
+                    + "' (producer defect)");
             }
             String instName = "__hi_" + op.opId().id();
             out.append(indent(indent)).append("$DealRt.")
@@ -4818,132 +4673,8 @@ public final class JvmSemanticEmitter {
                 (RuntimeDescriptor) op.resultType(), indent);
         }
 
-        /**
-         * The attempt-local scratch array name of one construction: a local
-         * of the enclosing method invocation (a loop body's block declares
-         * its own), so re-entrancy and recursion always write a fresh
-         * attempt's entries.
-         */
-        private String attemptScratch(OpId classNewOp) {
-            return "__dA" + classNewOp.id();
-        }
-
-        /**
-         * The construction's omitted required defaults in declaration order:
-         * the complement of the skip-provided rule. A provided field neither
-         * executes its default nor needs a default slot; an omitted optional
-         * field has no default at all (the lowering emits no child for it).
-         */
-        private java.util.List<SemanticOp> omittedDefaults(SemanticOp owner,
-                java.util.List<OpId> defaultOpIds, java.util.Set<String> provided) {
-            java.util.List<SemanticOp> running = new ArrayList<>();
-            for (OpId defaultOpId : defaultOpIds) {
-                SemanticOp defaultOp = opsById.get(defaultOpId);
-                if (defaultOp == null) {
-                    throw rejectedOp(owner, owner.kind().name() + " " + owner.opId()
-                        + " CLASS_DEFAULT child " + defaultOpId + " does not resolve "
-                        + "(producer defect)");
-                }
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                if (provided.contains(defaultPayload.field())) {
-                    continue; // the skip-provided rule
-                }
-                running.add(defaultOp);
-            }
-            return running;
-        }
-
-        /**
-         * The LOCAL construction's omitted required defaults: each runs once
-         * in declaration order and publishes its produced value into the
-         * construction attempt's own scratch — a method-local array, so a
-         * default that re-enters the construction (the same class built
-         * inside a default, directly or through a helper) writes only its
-         * own attempt's entries. The declaration order field boundaries read
-         * those entries, never the class-default shared slots a nested
-         * attempt overwrites.
-         */
-        private java.util.Map<ValueId, String> emitClassNewLocalDefaults(SemanticOp op,
-                KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
-                int indent) {
-            java.util.List<SemanticOp> running = omittedDefaults(op,
-                payload.classDefaultOpIds(), provided);
-            java.util.Map<ValueId, String> attempts = new java.util.LinkedHashMap<>();
-            if (running.isEmpty()) {
-                return attempts;
-            }
-            String scratch = attemptScratch(op.opId());
-            out.append(indent(indent)).append("Object[] ").append(scratch)
-                .append(" = new Object[").append(running.size()).append("];\n");
-            for (int i = 0; i < running.size(); i++) {
-                SemanticOp defaultOp = running.get(i);
-                String entry = scratch + "[" + i + "]";
-                emitClassDefaultCall(op, defaultOp, entry, indent);
-                if (defaultOp.result() instanceof ValueId result) {
-                    attempts.put(result, entry);
-                }
-            }
-            return attempts;
-        }
-
-        /**
-         * One CLASS_DEFAULT child execution (START, method, terminal): the
-         * produced value is published to the op's result slot and to the
-         * enclosing attempt's own entry.
-         */
-        private void emitClassDefaultCall(SemanticOp op, SemanticOp defaultOp,
-                                          String attemptEntry, int indent) {
-            if (trace) {
-                out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                    .append(javaString(opKey(defaultOp.opId())))
-                    .append(", \"START\", \"CLASS_DEFAULT\", ")
-                    .append(javaString(defaultOp.contract().canonicalDigest()))
-                    .append(", \"-\", List.of(), null, null);\n");
-            }
-            out.append(indent(indent)).append("try {\n");
-            if (defaultOp.result() instanceof ValueId resultId) {
-                out.append(indent(indent)).append("  ").append(slot(resultId))
-                    .append(" = ").append(defaultFn(defaultOp.opId())).append("();\n");
-                out.append(indent(indent)).append("  ").append(attemptEntry)
-                    .append(" = ").append(slot(resultId)).append(";\n");
-            } else {
-                out.append(indent(indent)).append("  ")
-                    .append(defaultFn(defaultOp.opId())).append("();\n");
-            }
-            out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
-            if (trace) {
-                emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
-                    "JvmRuntime.errtext(__e)", indent + 1);
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__e)", indent + 1);
-            }
-            out.append(indent(indent)).append("  throw __e;\n");
-            out.append(indent(indent)).append("}\n");
-            emitClassDefaultSuccess(defaultOp, indent);
-        }
-
-        /** The CLASS_DEFAULT SUCCESS terminal of one default child. */
-        private void emitClassDefaultSuccess(SemanticOp defaultOp, int indent) {
-            if (!trace) {
-                return;
-            }
-            out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                .append(javaString(opKey(defaultOp.opId())))
-                .append(", \"SUCCESS\", \"CLASS_DEFAULT\", ")
-                .append(javaString(defaultOp.contract().canonicalDigest()))
-                .append(", \"-\", List.of(), JvmRuntime.atom(")
-                .append(defaultOp.result() instanceof ValueId resultId
-                    ? slot(resultId) : "null")
-                .append(", ")
-                .append(javaString(staticKind(
-                    (RuntimeDescriptor) defaultOp.resultType())))
-                .append("), null);\n");
-        }
-
         private void emitClassNewFactoryTransfer(SemanticOp op,
-                KindPayload.ClassNewPayload payload, java.util.Set<String> provided,
-                int indent) {
+                KindPayload.ClassNewPayload payload, int indent) {
             OpId factoryOpId = factoryOpIdOf(op, payload);
             SemanticOp factoryOp = opsById.get(factoryOpId);
             if (factoryOp == null || factoryOp.kind() != SemanticOpKind.CLASS_FACTORY) {
@@ -4963,36 +4694,13 @@ public final class JvmSemanticEmitter {
                     + " publishes no ValueId result (producer defect)");
             }
             String ownerPath = factoryOpId.module().path();
-            // The factory's default children in declaration order, skipping
-            // any child whose field the caller provides.
-            java.util.List<SemanticOp> running = omittedDefaults(factoryOp,
-                factoryPayload.classDefaultOpIds(), provided);
-            // The transfer attempt's own scratch: the produced default
-            // values live in this attempt's method-local array, never in the
-            // owner module's class-default shared slots, which a default that
-            // re-enters the construction (directly or through a helper)
-            // overwrites.
-            java.util.Map<OpId, String> attemptEntries = new java.util.LinkedHashMap<>();
-            java.util.List<SemanticOp> filled = new ArrayList<>();
-            // The owner-side factory group (the module transfer, the
-            // CLASS_FACTORY envelope, the defaults, and the transfer
-            // instance) opens its own mapped group in the owner module, so
-            // its statements are attributed to the owning source file.
+            // Preserve provider identity and attribution; no field evaluator runs.
             beginSourceMappedGroup(factoryOp, indent(indent));
             out.append(indent(indent)).append("String __prevMod_")
                 .append(op.opId().id()).append(" = MODULE;\n");
             out.append(indent(indent)).append("MODULE = ")
                 .append(javaString(ownerPath)).append(";\n");
             out.append(indent(indent)).append("JvmRuntime.setModule(MODULE);\n");
-            if (!running.isEmpty()) {
-                String scratch = attemptScratch(op.opId());
-                out.append(indent(indent)).append("Object[] ").append(scratch)
-                    .append(" = new Object[").append(running.size()).append("];\n");
-                for (int i = 0; i < running.size(); i++) {
-                    attemptEntries.put(running.get(i).opId(),
-                        scratch + "[" + i + "]");
-                }
-            }
             if (trace) {
                 out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
                     .append(javaString(opKey(factoryOp.opId())))
@@ -5001,79 +4709,12 @@ public final class JvmSemanticEmitter {
                     .append(", ").append(javaString(opKey(op.opId())))
                     .append(", List.of(), null, null);\n");
             }
-            for (SemanticOp defaultOp : running) {
-                String entry = attemptEntries.get(defaultOp.opId());
-                if (trace) {
-                    out.append(indent(indent)).append("JvmRuntime.ev(MODULE, ")
-                        .append(javaString(opKey(defaultOp.opId())))
-                        .append(", \"START\", \"CLASS_DEFAULT\", ")
-                        .append(javaString(defaultOp.contract().canonicalDigest()))
-                        .append(", \"-\", List.of(), null, null);\n");
-                }
-                out.append(indent(indent)).append("try {\n");
-                if (defaultOp.result() instanceof ValueId resultId) {
-                    out.append(indent(indent)).append("  ").append(slot(resultId))
-                        .append(" = ").append(defaultFn(defaultOp.opId())).append("();\n");
-                    out.append(indent(indent)).append("  ").append(entry)
-                        .append(" = ").append(slot(resultId)).append(";\n");
-                } else {
-                    out.append(indent(indent)).append("  ")
-                        .append(defaultFn(defaultOp.opId())).append("();\n");
-                }
-                out.append(indent(indent)).append("} catch (JvmRuntime.DealError __e) {\n");
-                if (trace) {
-                    emitFailureEvent(defaultOp.opId(), "CLASS_DEFAULT", defaultOp,
-                        "JvmRuntime.errtext(__e)", indent + 1);
-                    out.append(indent(indent)).append("  JvmRuntime.ev(MODULE, ")
-                        .append(javaString(opKey(factoryOp.opId())))
-                        .append(", \"FAILURE\", \"CLASS_FACTORY\", ")
-                        .append(javaString(factoryOp.contract().canonicalDigest()))
-                        .append(", ").append(javaString(opKey(op.opId())))
-                        .append(", List.of(), null, JvmRuntime.errtext(__e));\n");
-                }
-                // Restore the caller's module context before the caller's
-                // own terminal: the owner-side terminals above carry the
-                // owner's module, the caller's CLASS_NEW FAILURE carries
-                // the caller's (the oracle's own tagging).
-                out.append(indent(indent)).append("  MODULE = __prevMod_")
-                    .append(op.opId().id()).append(";\n");
-                out.append(indent(indent)).append("  JvmRuntime.setModule(MODULE);\n");
-                // Emission returns to the caller's statements: the caller's
-                // own terminal is attributed to the caller's source again.
-                beginSourceMappedGroup(op, indent(indent + 1));
-                emitFailureEvent(op.opId(), op.kind().name(), op,
-                    "JvmRuntime.errtext(__e)", indent + 1);
-                out.append(indent(indent)).append("  throw __e;\n");
-                out.append(indent(indent)).append("}\n");
-                // The failure branch is the only caller-attributed region
-                // of the owner-side group: emission resumes in the owning
-                // module, so the owner's comment and mapping re-open before
-                // the default's completion statements (the mapping sequence
-                // is lexical, not execution-path-dependent).
-                beginSourceMappedGroup(factoryOp, indent(indent));
-                emitClassDefaultSuccess(defaultOp, indent);
-                filled.add(defaultOp);
-            }
-            // The untagged internal transfer instance: the defaulted
-            // fields present (present null is f == null && p == true),
-            // every other field missing.
+            // Internal identity record; caller-supplied fields are checked below.
             String carrier = carrierName(payload.classId());
             String instName = "__tf_" + factoryOp.opId().id() + "_" + op.opId().id();
             out.append(indent(indent)).append(carrier).append(' ').append(instName)
                 .append(" = new ").append(carrier).append("();\n");
-            for (SemanticOp defaultOp : filled) {
-                KindPayload.ClassDefaultPayload defaultPayload =
-                    (KindPayload.ClassDefaultPayload) defaultOp.payload();
-                String value = attemptEntries.get(defaultOp.opId());
-                if (value == null) {
-                    value = slot((ValueId) defaultOp.result());
-                }
-                out.append(indent(indent)).append(instName).append('.')
-                    .append(fieldSlot(defaultPayload.field())).append(" = ")
-                    .append(value).append(";\n");
-                out.append(indent(indent)).append(instName).append('.')
-                    .append(fieldFlag(defaultPayload.field())).append(" = true;\n");
-            }
+
             out.append(indent(indent)).append(slot(factoryResult)).append(" = ")
                 .append(instName).append(";\n");
             if (trace) {

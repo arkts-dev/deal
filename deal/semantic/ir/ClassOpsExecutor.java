@@ -352,33 +352,6 @@ public final class ClassOpsExecutor {
         }
     }
 
-    @FunctionalInterface
-    public interface BodyRunner {
-
-        /**
-         * Executes one {@code CLASS_DEFAULT} default block.
-         *
-         */
-        Value runDefault(SemanticOp defaultOp);
-    }
-
-    // =========================================================================
-    // CLASS_DEFAULT
-    // =========================================================================
-
-    public static Outcome<Value> executeClassDefault(SemanticOp op, BodyRunner bodyRunner) {
-        requireOp(op, SemanticOpKind.CLASS_DEFAULT, FailurePolicyId.NO_DEAL_FAILURE);
-        Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
-        Value produced = bodyRunner.runDefault(op);
-        if (produced instanceof Value.Missing) {
-            throw new Defect("CLASS_DEFAULT " + op.opId() + " produced the internal Missing "
-                + "view: a default block always produces a present value (language null is "
-                + "the explicit Null variant) — a wrong-kind value is a producer defect, "
-                + "never executed");
-        }
-        return new Outcome.Success<Value>(produced);
-    }
-
     // =========================================================================
     // CLASS_NEW(LOCAL)
     // =========================================================================
@@ -386,32 +359,28 @@ public final class ClassOpsExecutor {
     public static Outcome<Value> executeClassNewLocal(
             SemanticOp op,
             Map<ValueId, Value> priorValues,
-            Map<OpId, SemanticOp> defaultOps,
             Map<OpId, SemanticOp> boundaryOps,
             Map<ClassId, ClassLayout> layouts,
-            BoundaryCheckRunner checkRunner,
-            BodyRunner bodyRunner) {
+            BoundaryCheckRunner checkRunner) {
         requireOp(op, SemanticOpKind.CLASS_NEW, FailurePolicyId.CLASS_CONSTRUCTION);
         Objects.requireNonNull(priorValues, "priorValues must not be null");
-        Objects.requireNonNull(defaultOps, "defaultOps must not be null");
         Objects.requireNonNull(boundaryOps, "boundaryOps must not be null");
         Objects.requireNonNull(layouts, "layouts must not be null");
         Objects.requireNonNull(checkRunner, "checkRunner must not be null");
-        Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
         KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
         // This child's surface: LOCAL execution only. SHARED_FACTORY
         // execution is executeClassNewSharedFactory's; the host
         // declaration class construction is
-        // executeClassNewHostDefaults's; the builtin Error construction is
-        // executeClassNewBuiltinDefaults's; RETAINED_ABI is E10's — all fail
+        // executeClassNewHost's; the builtin Error construction is
+        // executeClassNewBuiltinError's; RETAINED_ABI is E10's — all fail
         // closed here, never silently executed as LOCAL.
-        if (payload.defaultOwner() != DefaultOwner.LOCAL) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
-                + payload.defaultOwner() + ": this executor surface is LOCAL "
+        if (payload.constructionProvider() != ConstructionProvider.LOCAL) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries constructionProvider "
+                + payload.constructionProvider() + ": this executor surface is LOCAL "
                 + "execution — SHARED_FACTORY transfer is "
                 + "executeClassNewSharedFactory's, RETAINED_ABI transfer is E10's, "
-                + "the host construction is executeClassNewHostDefaults's, the "
-                + "builtin Error construction is executeClassNewBuiltinDefaults's; "
+                + "the host construction is executeClassNewHost's, the "
+                + "builtin Error construction is executeClassNewBuiltinError's; "
                 + "a non-LOCAL owner reaching executeClassNewLocal is a producer "
                 + "defect, never executed");
         }
@@ -443,16 +412,6 @@ public final class ClassOpsExecutor {
         resolveProvidedFields(op, payload, priorValues, null, providedValues,
             providedValueIds);
 
-        LinkedHashMap<String, Value> defaultValues = new LinkedHashMap<>();
-        LinkedHashMap<String, SemanticOp> defaultOpsByField = applyClassDefaults(
-            op, payload.classId(), payload.classDefaultOpIds(), defaultOps, layout,
-            providedValues.keySet(),
-            "default application runs for omitted required-present fields only — an"
-                + " optional field's default never runs at construction (the field stays"
-                + " missing), so a listed optional default is a producer defect, never"
-                + " executed",
-            bodyRunner, defaultValues);
-
         Outcome.Failure<Value> extraKeyFailure =
             undeclaredProvidedFieldFailure(op, payload, layout);
         if (extraKeyFailure != null) {
@@ -460,48 +419,12 @@ public final class ClassOpsExecutor {
         }
 
         List<KindPayload.FieldBoundary> boundaries = payload.fieldBoundaries();
-        requireBoundaryShape(op, payload, layout, providedValues, boundaries,
-            defaultValues::containsKey);
-
-        LinkedHashMap<java.lang.String, Value> instanceFields = new LinkedHashMap<>();
-        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value provided = providedValues.get(fieldLayout.name());
-            Value defaultValue = defaultValues.get(fieldLayout.name());
-            if (provided != null) {
-                instanceFields.put(fieldLayout.name(), provided);
-            } else if (defaultValue != null) {
-                instanceFields.put(fieldLayout.name(), defaultValue);
-            }
-        }
+        requireBoundaryShape(op, layout, providedValues, boundaries);
 
         LinkedHashMap<String, Value> checkedValues = new LinkedHashMap<>();
         OpFailure fieldFailure = applyFieldBoundaries(op, payload, layout, boundaries,
-            providedValues, providedValueIds, boundaryOps, checkRunner, checkedValues,
-            (child, entry, boundaryPayload) -> {
-                SemanticOp defaultOp = defaultOpsByField.get(entry.field());
-                if (defaultOp == null) {
-                    throw new Defect("CLASS_NEW " + op.opId() + " carries a "
-                        + "CLASS_DEFAULT_FIELD boundary for field '" + entry.field()
-                        + "' without a default child: the pinned kind names omitted "
-                        + "required-present defaulted fields only — a producer defect, "
-                        + "never executed");
-                }
-                if (!(defaultOp.result() instanceof ValueId resultId)) {
-                    throw new Defect("CLASS_NEW " + op.opId() + " CLASS_DEFAULT child "
-                        + defaultOp.opId() + " publishes a non-ValueId result "
-                        + defaultOp.result() + ": the pinned CLASS_DEFAULT_FIELD input is "
-                        + "the CLASS_DEFAULT op's result ValueId (K-D4 input wiring) — a "
-                        + "producer defect, never executed");
-                }
-                if (!boundaryPayload.input().equals(resultId)) {
-                    throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
-                        + child.opId() + " carries input " + boundaryPayload.input()
-                        + ": the pinned CLASS_DEFAULT_FIELD input is the field's "
-                        + "CLASS_DEFAULT op result " + resultId + " (K-D4 input wiring) — "
-                        + "a mismatch is a producer defect, never executed");
-                }
-                return defaultValues.get(entry.field());
-            });
+            providedValues, providedValueIds, boundaryOps, checkRunner, checkedValues);
+        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
         if (fieldFailure != null) {
             return new Outcome.Failure<Value>(fieldFailure);
         }
@@ -518,10 +441,10 @@ public final class ClassOpsExecutor {
     }
 
     // =========================================================================
-    // CLASS_NEW (BUILTIN_DEFAULTS, the builtin Error construction)
+    // CLASS_NEW (BUILTIN_ERROR, the builtin Error construction)
     // =========================================================================
 
-    public static Outcome<Value> executeClassNewBuiltinDefaults(
+    public static Outcome<Value> executeClassNewBuiltinError(
             SemanticOp op,
             Map<ValueId, Value> priorValues,
             Map<OpId, SemanticOp> boundaryOps,
@@ -534,43 +457,37 @@ public final class ClassOpsExecutor {
         Objects.requireNonNull(checkRunner, "checkRunner must not be null");
         KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
 
-        // This child's surface: BUILTIN_DEFAULTS execution only. The host
-        // declaration class construction (HOST_DEFAULTS) is
-        // executeClassNewHostDefaults's; a foreign owner
+        // This child's surface: BUILTIN_ERROR execution only. The host
+        // declaration class construction (HOST_DECLARATION) is
+        // executeClassNewHost's; a foreign owner
         // reaching this surface is a producer defect, never silently
         // executed.
-        if (payload.defaultOwner() != DefaultOwner.BUILTIN_DEFAULTS) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
-                + payload.defaultOwner() + ": this executor surface is the builtin"
-                + " Error construction (BUILTIN_DEFAULTS) — LOCAL is"
+        if (payload.constructionProvider() != ConstructionProvider.BUILTIN_ERROR) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries constructionProvider "
+                + payload.constructionProvider() + ": this executor surface is the builtin"
+                + " Error construction (BUILTIN_ERROR) — LOCAL is"
                 + " executeClassNewLocal's, SHARED_FACTORY transfer is"
                 + " executeClassNewSharedFactory's, the host declaration class"
-                + " construction is executeClassNewHostDefaults's, RETAINED_ABI"
+                + " construction is executeClassNewHost's, RETAINED_ABI"
                 + " transfer is E10's; a foreign owner reaching"
-                + " executeClassNewBuiltinDefaults"
+                + " executeClassNewBuiltinError"
                 + " is a producer defect, never executed");
         }
         if (!ClassId.ERROR.equals(payload.classId())) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner"
-                + " BUILTIN_DEFAULTS for class " + payload.classId() + ": the"
+            throw new Defect("CLASS_NEW " + op.opId() + " carries constructionProvider"
+                + " BUILTIN_ERROR for class " + payload.classId() + ": the"
                 + " builtin-defaults owner is admissible only for the builtin Error"
                 + " class " + ClassId.ERROR.text() + " — a non-builtin class under"
-                + " BUILTIN_DEFAULTS is a producer defect, never executed");
+                + " BUILTIN_ERROR is a producer defect, never executed");
         }
         if (payload.classFactoryRef() != null) {
             throw new Defect("CLASS_NEW " + op.opId() + " carries a non-null"
                 + " classFactoryRef " + payload.classFactoryRef() + " under"
-                + " BUILTIN_DEFAULTS: the builtin Error construction carries a null"
+                + " BUILTIN_ERROR: the builtin Error construction carries a null"
                 + " factory ref (the builtin defaults are compiler constants, never a"
                 + " factory transfer) — a producer defect, never executed");
         }
-        if (!payload.classDefaultOpIds().isEmpty()) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries "
-                + payload.classDefaultOpIds() + " under BUILTIN_DEFAULTS: the builtin"
-                + " Error construction carries an empty child list (the omitted fields"
-                + " take the compiler constant empty string at the construction site)"
-                + " — a producer defect, never executed");
-        }
+
 
         ClassLayout layout = layouts.get(payload.classId());
         if (layout == null || !layout.equals(ClassLayout.BUILTIN_ERROR)) {
@@ -600,14 +517,12 @@ public final class ClassOpsExecutor {
             return new Outcome.Failure<Value>(fieldFailure);
         }
 
-        // The instance: the declaration-order field states (both fields
-        // present) — the boundary-published provided values and the compiler
-        // constant empty string for the omitted fields.
+        // Both Error fields must have boundary-published provided values.
         List<FieldState> states = new ArrayList<>(layout.fields().size());
         for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
             Value value = checkedValues.get(fieldLayout.name());
             if (value == null) {
-                value = Value.string("");
+                throw new Defect("builtin Error construction omits '" + fieldLayout.name() + "'");
             }
             states.add(new FieldState.Present(value));
         }
@@ -615,24 +530,12 @@ public final class ClassOpsExecutor {
             new Value.Class(payload.classId(), List.copyOf(states)));
     }
 
-    @FunctionalInterface
-    public interface HostDefaultsProjection {
-
-        /**
-         * The loaded defaults of one declared host class, or {@code null}
-         * when the seam supplies none.
-         *
-         */
-        Map<String, Value> defaultsOf(ClassId classId);
-    }
-
-    public static Outcome<Value> executeClassNewHostDefaults(
+    public static Outcome<Value> executeClassNewHost(
             SemanticOp op,
             Map<ValueId, Value> priorValues,
             Map<OpId, SemanticOp> boundaryOps,
             Map<ClassId, ClassLayout> layouts,
-            BoundaryCheckRunner checkRunner,
-            Map<String, Value> hostDefaults) {
+            BoundaryCheckRunner checkRunner) {
         requireOp(op, SemanticOpKind.CLASS_NEW, FailurePolicyId.CLASS_CONSTRUCTION);
         Objects.requireNonNull(priorValues, "priorValues must not be null");
         Objects.requireNonNull(boundaryOps, "boundaryOps must not be null");
@@ -640,39 +543,25 @@ public final class ClassOpsExecutor {
         Objects.requireNonNull(checkRunner, "checkRunner must not be null");
         KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
 
-        if (payload.defaultOwner() != DefaultOwner.HOST_DEFAULTS) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
-                + payload.defaultOwner() + ": this executor surface is the host"
-                + " declaration class construction (HOST_DEFAULTS) — LOCAL is"
+        if (payload.constructionProvider() != ConstructionProvider.HOST_DECLARATION) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries constructionProvider "
+                + payload.constructionProvider() + ": this executor surface is the host"
+                + " declaration class construction (HOST_DECLARATION) — LOCAL is"
                 + " executeClassNewLocal's, SHARED_FACTORY transfer is"
                 + " executeClassNewSharedFactory's, the builtin Error construction is"
-                + " executeClassNewBuiltinDefaults's, RETAINED_ABI transfer is E10's;"
-                + " a foreign owner reaching executeClassNewHostDefaults is a producer"
+                + " executeClassNewBuiltinError's, RETAINED_ABI transfer is E10's;"
+                + " a foreign owner reaching executeClassNewHost is a producer"
                 + " defect,"
                 + " never executed");
         }
         if (payload.classFactoryRef() != null) {
             throw new Defect("CLASS_NEW " + op.opId() + " carries a non-null"
                 + " classFactoryRef " + payload.classFactoryRef() + " under"
-                + " HOST_DEFAULTS: the host construction carries a null factory ref"
+                + " HOST_DECLARATION: the host construction carries a null factory ref"
                 + " (the loaded defaults are data, never a factory transfer) — a"
                 + " producer defect, never executed");
         }
-        if (!payload.classDefaultOpIds().isEmpty()) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries "
-                + payload.classDefaultOpIds() + " under HOST_DEFAULTS: the host"
-                + " construction carries an empty child list (the omitted fields'"
-                + " values come from the loaded defaults entry — no in-project"
-                + " default expression is evaluated) — a producer defect, never"
-                + " executed");
-        }
-        if (hostDefaults == null) {
-            throw new Defect("CLASS_NEW " + op.opId() + " classId " + payload.classId()
-                + " reaches the host construction without the loaded defaults"
-                + " projection: the host seam supplies the module's <C>_defaults"
-                + " entry — an absent projection is a producer defect, never an"
-                + " invented default");
-        }
+
 
         ClassLayout layout = layouts.get(payload.classId());
         if (layout == null) {
@@ -697,19 +586,6 @@ public final class ClassOpsExecutor {
         resolveProvidedFields(op, payload, priorValues, layout, providedValues,
             providedValueIds);
 
-        // Phase 3: extra-key rejection first in provided-source order — the
-        // loaded defaults projection is the accepted-key authority (the
-        // deployed construction entry's own rule), before any field
-        // validation.
-        for (KindPayload.ProvidedField field : payload.providedFields()) {
-            if (!hostDefaults.containsKey(field.name())) {
-                BoundaryFailure failure = FailureContractRegistry.render(
-                    FailureArmId.CLASS_EXTRA_FIELD,
-                    parametersOf("field", field.name(), "classId", payload.classId().text()),
-                    null, null, null);
-                return new Outcome.Failure<Value>(new OpFailure(failure, op.origin()));
-            }
-        }
 
         // Phase 4: exactly one CLASS_LITERAL_FIELD boundary per provided
         // field in declaration order; each runs through the delegate.
@@ -721,24 +597,13 @@ public final class ClassOpsExecutor {
             return new Outcome.Failure<Value>(fieldFailure);
         }
 
-        // Phase 5: the declaration-order field states — the provided fields
-        // with their boundary-published values, an omitted required-present
-        // field with the loaded default (absent when the loaded projection
-        // carries no present entry, exactly like the deployed class_
-        // construction), and an omitted optional field absent.
+        // Only provided values become present; omitted optionals stay absent.
         List<FieldState> states = new ArrayList<>(layout.fields().size());
         for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
             Value provided = checkedValues.get(fieldLayout.name());
             if (provided != null) {
                 states.add(new FieldState.Present(provided));
                 continue;
-            }
-            if (fieldLayout.required()) {
-                Value loaded = hostDefaults.get(fieldLayout.name());
-                if (loaded != null && !(loaded instanceof Value.Missing)) {
-                    states.add(new FieldState.Present(loaded));
-                    continue;
-                }
             }
             states.add(FieldState.Missing.INSTANCE);
         }
@@ -749,26 +614,15 @@ public final class ClassOpsExecutor {
     public static Outcome<Value> executeClassFactory(
             SemanticOp op,
             SemanticOp triggeringCaller,
-            Map<OpId, SemanticOp> defaultOps,
-            Map<ClassId, ClassLayout> layouts,
-            Set<String> providedFields,
-            BodyRunner bodyRunner) {
+            Map<ClassId, ClassLayout> layouts) {
         requireOp(op, SemanticOpKind.CLASS_FACTORY, FailurePolicyId.CLASS_CONSTRUCTION);
         Objects.requireNonNull(triggeringCaller, "triggeringCaller must not be null");
-        Objects.requireNonNull(defaultOps, "defaultOps must not be null");
         Objects.requireNonNull(layouts, "layouts must not be null");
-        Objects.requireNonNull(providedFields, "providedFields must not be null");
-        Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
 
-        if (triggeringCaller.kind() != SemanticOpKind.CLASS_NEW
-                && triggeringCaller.kind() != SemanticOpKind.JSON_FROM_CLASS) {
+        if (triggeringCaller.kind() != SemanticOpKind.CLASS_NEW) {
             throw new Defect("CLASS_FACTORY " + op.opId() + " triggered by an op of kind "
-                + triggeringCaller.kind() + ": the closed trigger set is {CLASS_NEW (the "
-                + "SHARED_FACTORY construction trigger), JSON_FROM_CLASS (the "
-                + "nested-class decode trigger, K-D8 step 6/K-D5 trigger (b))} and the "
-                + "factory's executed parentOpId is the triggering caller op's id "
-                + "(K-D5/K-D12) — an op outside the closed trigger set reaching "
-                + "execution is a producer defect, never executed");
+                + triggeringCaller.kind() + ": only CLASS_NEW resolves a construction provider"
+                + " (producer defect)");
         }
         if (triggeringCaller.opId().equals(op.opId())) {
             throw new Defect("CLASS_FACTORY " + op.opId() + " triggered by itself: the "
@@ -787,20 +641,11 @@ public final class ClassOpsExecutor {
                 + "unresolvable layout is a producer defect, never executed");
         }
 
-        LinkedHashMap<String, Value> filled = new LinkedHashMap<>();
-        applyClassDefaults(op, payload.classId(), payload.classDefaultOpIds(), defaultOps,
-            layout, providedFields,
-            "the factory payload lists required-present defaulted fields only (an"
-                + " optional-with-default field's default never runs and its op id never"
-                + " enters the payload) — a listed optional default is a producer defect,"
-                + " never executed",
-            bodyRunner, filled);
-
+        // The provider record carries declaration identity, not executable
+        // initialization or values to overlay onto a construction.
         List<FieldState> states = new ArrayList<>(layout.fields().size());
         for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value value = filled.get(fieldLayout.name());
-            states.add(value == null ? FieldState.Missing.INSTANCE
-                : new FieldState.Present(value));
+            states.add(FieldState.Missing.INSTANCE);
         }
         return new Outcome.Success<Value>(
             new Value.Class(payload.classId(), List.copyOf(states)));
@@ -817,8 +662,7 @@ public final class ClassOpsExecutor {
             Map<OpId, SemanticOp> ownerOps,
             Map<OpId, SemanticOp> boundaryOps,
             Map<ClassId, ClassLayout> layouts,
-            BoundaryCheckRunner checkRunner,
-            BodyRunner ownerBodyRunner) {
+            BoundaryCheckRunner checkRunner) {
         requireOp(op, SemanticOpKind.CLASS_NEW, FailurePolicyId.CLASS_CONSTRUCTION);
         Objects.requireNonNull(priorValues, "priorValues must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
@@ -826,22 +670,21 @@ public final class ClassOpsExecutor {
         Objects.requireNonNull(boundaryOps, "boundaryOps must not be null");
         Objects.requireNonNull(layouts, "layouts must not be null");
         Objects.requireNonNull(checkRunner, "checkRunner must not be null");
-        Objects.requireNonNull(ownerBodyRunner, "ownerBodyRunner must not be null");
         KindPayload.ClassNewPayload payload = (KindPayload.ClassNewPayload) op.payload();
 
         // This child's surface: SHARED_FACTORY execution. LOCAL execution
         // is {@link #executeClassNewLocal}'s; the host declaration class
-        // construction is {@link #executeClassNewHostDefaults}'s; the
+        // construction is {@link #executeClassNewHost}'s; the
         // builtin Error construction is
-        // {@link #executeClassNewBuiltinDefaults}'s; RETAINED_ABI is E10's — a
+        // {@link #executeClassNewBuiltinError}'s; RETAINED_ABI is E10's — a
         // non-SHARED_FACTORY owner reaching this surface is a producer
         // defect, never silently executed as a transfer.
-        if (payload.defaultOwner() != DefaultOwner.SHARED_FACTORY) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries defaultOwner "
-                + payload.defaultOwner() + ": this child's executor surface is "
+        if (payload.constructionProvider() != ConstructionProvider.SHARED_FACTORY) {
+            throw new Defect("CLASS_NEW " + op.opId() + " carries constructionProvider "
+                + payload.constructionProvider() + ": this child's executor surface is "
                 + "SHARED_FACTORY transfer (executeClassNewLocal is the LOCAL surface, "
-                + "executeClassNewHostDefaults is the host declaration class surface, "
-                + "executeClassNewBuiltinDefaults is the builtin Error surface, "
+                + "executeClassNewHost is the host declaration class surface, "
+                + "executeClassNewBuiltinError is the builtin Error surface, "
                 + "RETAINED_ABI transfer is E10's) — a"
                 + " non-SHARED_FACTORY owner reaching "
                 + "executeClassNewSharedFactory is a producer defect, never executed");
@@ -852,12 +695,7 @@ public final class ClassOpsExecutor {
                 + "interface's pre-allocated constructionEntry — a null factory ref is a "
                 + "producer defect, never executed");
         }
-        if (!payload.classDefaultOpIds().isEmpty()) {
-            throw new Defect("CLASS_NEW " + op.opId() + " carries " + payload.classDefaultOpIds()
-                + ": the pinned SHARED_FACTORY shape carries classDefaultOpIds empty (the "
-                + "owner's CLASS_FACTORY carries the CLASS_DEFAULT child list) — a "
-                + "non-empty list is a producer defect, never executed");
-        }
+
 
         ClassLayout layout = layouts.get(payload.classId());
         if (layout == null) {
@@ -901,35 +739,22 @@ public final class ClassOpsExecutor {
         if (!factoryPayload.classId().equals(payload.classId())) {
             throw new Defect("CLASS_NEW " + op.opId() + " resolves factory op "
                 + factoryOp.opId() + " of class " + factoryPayload.classId()
-                + ": the pinned factory fills the constructed class's defaults ("
+                + ": the provider must name the constructed class ("
                 + payload.classId() + ") — a classId mismatch is a producer defect, "
                 + "never executed");
         }
-        if (!(factoryOp.result() instanceof ValueId factoryResult)) {
+        if (!(factoryOp.result() instanceof ValueId)) {
             throw new Defect("CLASS_NEW " + op.opId() + " factory op " + factoryOp.opId()
-                + " publishes a non-ValueId result " + factoryOp.result()
-                + ": the pinned CLASS_DEFAULT_FIELD input is the CLASS_FACTORY op's "
-                + "result ValueId (K-D4 input wiring) — a producer defect, never "
-                + "executed");
+                + " publishes a non-ValueId provider result " + factoryOp.result()
+                + " (producer defect)");
         }
 
-        // The owner-side CLASS_DEFAULT lookup (defaults evaluate in the
-        // declaring module's scope through the owner's ops).
-        Map<OpId, SemanticOp> ownerDefaultOps = new LinkedHashMap<>();
-        for (Map.Entry<OpId, SemanticOp> entry : ownerOps.entrySet()) {
-            if (entry.getValue().kind() == SemanticOpKind.CLASS_DEFAULT) {
-                ownerDefaultOps.put(entry.getKey(), entry.getValue());
-            }
-        }
-
-        Set<String> providedNames = new LinkedHashSet<>(providedValues.keySet());
-        Outcome<Value> transferred = executeClassFactory(factoryOp, op, ownerDefaultOps,
-            layouts, providedNames, ownerBodyRunner);
+        Outcome<Value> transferred = executeClassFactory(factoryOp, op, layouts);
         if (!(transferred instanceof Outcome.Success<Value> transferSuccess
                 && transferSuccess.value() instanceof Value.Class transferredInstance)) {
             throw new Defect("CLASS_NEW " + op.opId() + " factory transfer produced "
                 + transferred + ": the pinned factory returns exactly its internal "
-                + "default-filled transfer instance — a wrong outcome is a producer "
+                + "structural provider instance — a wrong outcome is a producer "
                 + "defect, never executed");
         }
         if (!transferredInstance.classId().equals(payload.classId())
@@ -949,45 +774,12 @@ public final class ClassOpsExecutor {
         }
 
         List<KindPayload.FieldBoundary> boundaries = payload.fieldBoundaries();
-        requireBoundaryShape(op, payload, layout, providedValues, boundaries,
-            name -> defaultValueOf(transferredInstance, layout, name) != null);
-
-        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
-        for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            Value provided = providedValues.get(fieldLayout.name());
-            Value defaultValue = defaultValueOf(transferredInstance, layout, fieldLayout.name());
-            if (provided != null) {
-                instanceFields.put(fieldLayout.name(), provided);
-            } else if (defaultValue != null) {
-                instanceFields.put(fieldLayout.name(), defaultValue);
-            }
-        }
+        requireBoundaryShape(op, layout, providedValues, boundaries);
 
         LinkedHashMap<String, Value> checkedValues = new LinkedHashMap<>();
         OpFailure fieldFailure = applyFieldBoundaries(op, payload, layout, boundaries,
-            providedValues, providedValueIds, boundaryOps, checkRunner, checkedValues,
-            (child, entry, boundaryPayload) -> {
-
-                if (!boundaryPayload.input().equals(factoryResult)) {
-                    throw new Defect("CLASS_NEW " + op.opId() + " field boundary "
-                        + child.opId() + " carries input " + boundaryPayload.input()
-                        + ": the pinned CLASS_DEFAULT_FIELD input of a SHARED_FACTORY "
-                        + "CLASS_NEW is the owner CLASS_FACTORY op's result ValueId "
-                        + factoryResult + " (K-D4 input wiring, the cross-unit D4-global "
-                        + "reference) — a mismatch is a producer defect, never executed");
-                }
-                Value extracted = defaultValueOf(transferredInstance, layout, entry.field());
-                if (extracted == null) {
-                    throw new Defect("CLASS_NEW " + op.opId() + " carries a "
-                        + "CLASS_DEFAULT_FIELD boundary for field '" + entry.field()
-                        + "' whose transferred instance field is missing: the factory "
-                        + "fills exactly the omitted required-present defaulted fields "
-                        + "the boundary list names (the extraction rule reads the "
-                        + "transferred instance's named field) — a missing field is a "
-                        + "producer defect, never executed");
-                }
-                return extracted;
-            });
+            providedValues, providedValueIds, boundaryOps, checkRunner, checkedValues);
+        LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
         if (fieldFailure != null) {
             return new Outcome.Failure<Value>(fieldFailure);
         }
@@ -1001,24 +793,6 @@ public final class ClassOpsExecutor {
         }
         return new Outcome.Success<Value>(
             new Value.Class(payload.classId(), List.copyOf(states)));
-    }
-
-    /**
-     * The present value of the named declaration-order field of one class
-     * instance, or {@code null} when the field is missing (never a
-     * conflated state — present null is the explicit {@link Value.Null}
-     * variant and returns non-null). The instance's states parallel its
-     * layout's declaration order (checked fail closed by the callers).
-     */
-    private static Value defaultValueOf(Value.Class instance, ClassLayout layout,
-                                        String fieldName) {
-        for (int i = 0; i < layout.fields().size(); i++) {
-            if (layout.fields().get(i).name().equals(fieldName)) {
-                FieldState state = instance.fields().get(i);
-                return state instanceof FieldState.Present present ? present.value() : null;
-            }
-        }
-        return null;
     }
 
     // =========================================================================
@@ -1454,33 +1228,15 @@ public final class ClassOpsExecutor {
         }
     }
 
-    @FunctionalInterface
-    public interface NestedClassFactory {
-
-        /**
-         * Fills the nested class's omitted required-present defaults.
-         *
-         */
-        Value fillDefaults(ClassId classId, Set<String> providedFields);
-    }
-
     public static Value executeJsonFromClass(
             SemanticOp op,
             Map<ValueId, Value> priorValues,
-            List<OpId> defaultChildIds,
-            Map<OpId, SemanticOp> defaultOps,
             Map<ClassId, ClassLayout> layouts,
-            JsonParser parser,
-            NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner) {
+            JsonParser parser) {
         requireOp(op, SemanticOpKind.JSON_FROM_CLASS, FailurePolicyId.JSON_FROM_NULL);
         Objects.requireNonNull(priorValues, "priorValues must not be null");
-        Objects.requireNonNull(defaultChildIds, "defaultChildIds must not be null");
-        Objects.requireNonNull(defaultOps, "defaultOps must not be null");
         Objects.requireNonNull(layouts, "layouts must not be null");
         Objects.requireNonNull(parser, "parser must not be null");
-        Objects.requireNonNull(nestedFactory, "nestedFactory must not be null");
-        Objects.requireNonNull(bodyRunner, "bodyRunner must not be null");
         KindPayload.JsonFromClassPayload payload =
             (KindPayload.JsonFromClassPayload) op.payload();
 
@@ -1529,12 +1285,9 @@ public final class ClassOpsExecutor {
             return Value.Null.INSTANCE;
         }
         try {
-            return decodeFromJson(op, layout, (Value.Table) table, defaultChildIds,
-                defaultOps, layouts, nestedFactory, bodyRunner);
+            return decodeFromJson(op, layout, table, layouts);
         } catch (JsonFromFailure failure) {
-            // Every listed walk failure publishes language null and no
-            // partial instance is visible; completed default-block
-            // effects remain (the walk never rolls back a runner).
+            // Decode failure publishes null, never a partial instance.
             return Value.Null.INSTANCE;
         }
     }
@@ -1648,38 +1401,7 @@ public final class ClassOpsExecutor {
 
     private static Value decodeFromJson(
             SemanticOp op, ClassLayout layout, Value.Table document,
-            List<OpId> defaultChildIds, Map<OpId, SemanticOp> defaultOps,
-            Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner) {
-        // The pinned default-child shape, checked fail closed before the
-        // walk: exactly one CLASS_DEFAULT child per required-present
-        // defaulted field in declaration order (the JsonDefaultChildTable
-        // record's production shape).
-        LinkedHashMap<String, SemanticOp> defaultsByField = new LinkedHashMap<>();
-        for (OpId childId : defaultChildIds) {
-            SemanticOp child = requireDefaultChild(defaultOps, childId, layout.classId(),
-                op);
-            KindPayload.ClassDefaultPayload defaultPayload =
-                (KindPayload.ClassDefaultPayload) child.payload();
-            ClassLayout.FieldLayout fieldLayout = fieldOf(layout, defaultPayload.field());
-            if (fieldLayout == null || !fieldLayout.required()) {
-                throw new Defect("JSON_FROM_CLASS " + op.opId() + " names CLASS_DEFAULT "
-                    + "child " + childId + " for field '" + defaultPayload.field()
-                    + "' which is not a required-present declared field of "
-                    + layout.classId() + ": the JsonDefaultChildTable lists "
-                    + "required-present defaulted fields only — a producer defect, "
-                    + "never executed");
-            }
-            if (defaultsByField.containsKey(defaultPayload.field())) {
-                throw new Defect("JSON_FROM_CLASS " + op.opId() + " names two "
-                    + "CLASS_DEFAULT children for field '" + defaultPayload.field()
-                    + "': the pinned shape carries exactly one default child per "
-                    + "defaulted field — a duplicate is a producer defect, never "
-                    + "executed");
-            }
-            defaultsByField.put(defaultPayload.field(), child);
-        }
-
+            Map<ClassId, ClassLayout> layouts) {
         SemanticTable<Value> entries = document.table();
         for (String key : entries.keys()) {
             if (fieldOf(layout, key) == null) {
@@ -1697,7 +1419,7 @@ public final class ClassOpsExecutor {
             Value raw = present.value();
             requireJsonShape(op, raw);
             instanceFields.put(field.name(), decodeRaw(op, field.descriptor(), raw,
-                layouts, nestedFactory, bodyRunner));
+                layouts));
         }
 
         for (ClassLayout.FieldLayout field : layout.fields()) {
@@ -1707,31 +1429,8 @@ public final class ClassOpsExecutor {
             if (!field.required()) {
                 continue; // optional: stays missing, no default ever runs.
             }
-            SemanticOp child = defaultsByField.get(field.name());
-            if (child == null) {
-                throw new JsonFromFailure("required-present field '" + field.name()
-                    + "' absent from the JSON document without a declared default "
-                    + "(K-D9)");
-            }
-            Value produced;
-            try {
-                produced = bodyRunner.runDefault(child);
-            } catch (Defect defect) {
-
-                throw defect;
-            } catch (RuntimeException childFailure) {
-                throw new JsonFromFailure("CLASS_DEFAULT child " + child.opId()
-                    + " of field '" + field.name() + "' failed (K-D8 step 5)",
-                    childFailure);
-            }
-            if (produced instanceof Value.Missing) {
-                throw new Defect("JSON_FROM_CLASS " + op.opId() + " CLASS_DEFAULT child "
-                    + child.opId() + " produced the internal Missing view: a default "
-                    + "block always produces a present value (language null is the "
-                    + "explicit Null variant) — a wrong-kind value is a producer "
-                    + "defect, never executed");
-            }
-            instanceFields.put(field.name(), produced);
+            throw new JsonFromFailure("required-present field '" + field.name()
+                + "' absent from the JSON document");
         }
 
         for (ClassLayout.FieldLayout field : layout.fields()) {
@@ -1747,8 +1446,7 @@ public final class ClassOpsExecutor {
 
     private static Value decodeNestedClass(
             SemanticOp op, ClassId classId, Value.Table document,
-            Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner) {
+            Map<ClassId, ClassLayout> layouts) {
         ClassLayout nested = layouts.get(classId);
         if (nested == null) {
             throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested decode of "
@@ -1774,40 +1472,7 @@ public final class ClassOpsExecutor {
             }
             Value raw = present.value();
             requireJsonShape(op, raw);
-            decoded.put(field.name(), decodeRaw(op, field.descriptor(), raw, layouts,
-                nestedFactory, bodyRunner));
-        }
-
-        Value filled;
-        try {
-            filled = nestedFactory.fillDefaults(classId,
-                new LinkedHashSet<>(decoded.keySet()));
-        } catch (Defect defect) {
-
-            throw defect;
-        } catch (RuntimeException factoryFailure) {
-            throw new JsonFromFailure("nested CLASS_FACTORY of " + classId
-                + " failed during default filling (K-D8 step 6)",
-                factoryFailure);
-        }
-        if (!(filled instanceof Value.Class instance)) {
-            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
-                + classId + " produced " + filled.actualKind() + ": the factory returns "
-                + "the default-filled transfer instance (a Value.Class) — a producer "
-                + "defect, never executed");
-        }
-        if (!instance.classId().equals(classId)) {
-            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
-                + classId + " produced an instance of " + instance.classId()
-                + ": the factory fills its own class's declared layout — a wrong "
-                + "identity is a producer defect, never executed");
-        }
-        if (instance.fields().size() != nested.fields().size()) {
-            throw new Defect("JSON_FROM_CLASS " + op.opId() + " nested factory of "
-                + classId + " produced an instance of " + instance.fields().size()
-                + " field states for a layout of " + nested.fields().size()
-                + " fields: the pinned instance shape matches its layout's declaration "
-                + "order — a count mismatch is a producer defect, never executed");
+            decoded.put(field.name(), decodeRaw(op, field.descriptor(), raw, layouts));
         }
 
         LinkedHashMap<String, Value> instanceFields = new LinkedHashMap<>();
@@ -1817,15 +1482,9 @@ public final class ClassOpsExecutor {
                 instanceFields.put(field.name(), provided);
                 continue;
             }
-            Value defaulted = defaultValueOf(instance, nested, field.name());
-            if (defaulted != null) {
-                instanceFields.put(field.name(), defaulted);
-                continue;
-            }
             if (field.required()) {
                 throw new JsonFromFailure("required-present field '" + field.name()
-                    + "' of nested class " + classId + " absent without a declared "
-                    + "default (K-D9)");
+                    + "' of nested class " + classId + " absent from the JSON document");
             }
         }
         // Nested final validation in declaration order, then the nested
@@ -1842,8 +1501,7 @@ public final class ClassOpsExecutor {
 
     private static Value decodeRaw(
             SemanticOp op, RuntimeDescriptor descriptor, Value raw,
-            Map<ClassId, ClassLayout> layouts, NestedClassFactory nestedFactory,
-            BodyRunner bodyRunner) {
+            Map<ClassId, ClassLayout> layouts) {
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> {
                 if (!(raw instanceof Value.Null)) {
@@ -1892,8 +1550,7 @@ public final class ClassOpsExecutor {
                 List<Value> decoded = new ArrayList<>(elements.array().size());
                 for (Value element : elements.array().elements()) {
                     requireJsonShape(op, element);
-                    decoded.add(decodeRaw(op, arrayDescriptor.element(), element,
-                        layouts, nestedFactory, bodyRunner));
+                    decoded.add(decodeRaw(op, arrayDescriptor.element(), element, layouts));
                 }
                 yield new Value.Array(SemanticArray.of(decoded));
             }
@@ -1901,8 +1558,7 @@ public final class ClassOpsExecutor {
                 if (raw instanceof Value.Null) {
                     yield Value.Null.INSTANCE;
                 }
-                yield decodeRaw(op, nullable.inner(), raw, layouts, nestedFactory,
-                    bodyRunner);
+                yield decodeRaw(op, nullable.inner(), raw, layouts);
             }
             case RuntimeDescriptor.Class classDescriptor -> {
                 if (raw instanceof Value.Null) {
@@ -1916,7 +1572,7 @@ public final class ClassOpsExecutor {
                 // never an empty-object collapse.
                 if (raw instanceof Value.Table) {
                     yield decodeNestedClass(op, classDescriptor.classId(),
-                        (Value.Table) raw, layouts, nestedFactory, bodyRunner);
+                        (Value.Table) raw, layouts);
                 }
                 throw new JsonFromFailure("expected "
                     + classDescriptor.canonicalSpecText() + ", got " + raw.actualKind());
@@ -2339,59 +1995,19 @@ public final class ClassOpsExecutor {
                     + " literal field before lowering — a producer defect, never"
                     + " executed");
             }
-            providedValues.put(field.name(), value);
+            if (providedValues.putIfAbsent(field.name(), value) != null) {
+                throw new Defect("CLASS_NEW " + op.opId() + " repeats provided field '"
+                    + field.name() + "'");
+            }
             providedValueIds.put(field.name(), field.valueOpId());
         }
-    }
-
-    private static LinkedHashMap<String, SemanticOp> applyClassDefaults(
-            SemanticOp op, ClassId classId, List<OpId> defaultOpIds,
-            Map<OpId, SemanticOp> defaultOps, ClassLayout layout,
-            Set<String> skipFields, String optionalDefaultReason,
-            BodyRunner bodyRunner, LinkedHashMap<String, Value> values) {
-        LinkedHashMap<String, SemanticOp> opsByField = new LinkedHashMap<>();
-        for (OpId defaultOpId : defaultOpIds) {
-            SemanticOp defaultOp = requireDefaultChild(defaultOps, defaultOpId,
-                classId, op);
-            KindPayload.ClassDefaultPayload defaultPayload =
-                (KindPayload.ClassDefaultPayload) defaultOp.payload();
-            if (skipFields.contains(defaultPayload.field())) {
-                // The skip-provided rule: a provided field's default
-                // block is never executed by this construction attempt.
-                continue;
+        ClassLayout layout = declaredLayout == null ? payload.layout() : declaredLayout;
+        for (ClassLayout.FieldLayout field : layout.fields()) {
+            if (field.required() && !providedValues.containsKey(field.name())) {
+                throw new Defect("CLASS_NEW " + op.opId() + " omits required-present field '"
+                    + field.name() + "'");
             }
-            ClassLayout.FieldLayout fieldLayout = fieldOf(layout, defaultPayload.field());
-            if (fieldLayout == null) {
-                throw new Defect(op.kind() + " " + op.opId() + " names CLASS_DEFAULT child "
-                    + defaultOpId + " for field '" + defaultPayload.field() + "' which is "
-                    + "not a declared field of " + classId + ": a default child "
-                    + "of an undeclared field is a producer defect, never executed");
-            }
-            if (!fieldLayout.required()) {
-                throw new Defect(op.kind() + " " + op.opId() + " names CLASS_DEFAULT child "
-                    + defaultOpId + " for optional field '" + defaultPayload.field()
-                    + "': " + optionalDefaultReason);
-            }
-            if (values.containsKey(defaultPayload.field())) {
-                throw new Defect(op.kind() + " " + op.opId() + " names two CLASS_DEFAULT "
-                    + "children for field '" + defaultPayload.field() + "': the pinned "
-                    + "shape carries exactly one default child per defaulted field — a "
-                    + "duplicate is a producer defect, never executed");
-            }
-            Outcome<Value> produced = executeClassDefault(defaultOp, bodyRunner);
-            if (!(produced instanceof Outcome.Success<Value> success)) {
-                // executeClassDefault cannot fail by itself: a default-block
-                // failure propagates as the callback's own throw.
-                throw new Defect(op.kind() + " " + op.opId() + " CLASS_DEFAULT child "
-                    + defaultOpId + " returned a failure terminal from the default "
-                    + "execution: the default op's policy is NO_DEAL_FAILURE and only "
-                    + "already-started child/operand failures may propagate — a "
-                    + "producer defect, never executed");
-            }
-            values.put(defaultPayload.field(), success.value());
-            opsByField.put(defaultPayload.field(), defaultOp);
         }
-        return opsByField;
     }
 
     private static Outcome.Failure<Value> undeclaredProvidedFieldFailure(
@@ -2409,14 +2025,11 @@ public final class ClassOpsExecutor {
     }
 
     private static void requireBoundaryShape(
-            SemanticOp op, KindPayload.ClassNewPayload payload, ClassLayout layout,
-            Map<String, Value> providedValues,
-            List<KindPayload.FieldBoundary> boundaries,
-            java.util.function.Predicate<String> hasDefault) {
+            SemanticOp op, ClassLayout layout, Map<String, Value> providedValues,
+            List<KindPayload.FieldBoundary> boundaries) {
         List<java.lang.String> expectedBoundaryFields = new ArrayList<>();
         for (ClassLayout.FieldLayout fieldLayout : layout.fields()) {
-            if (providedValues.containsKey(fieldLayout.name())
-                    || hasDefault.test(fieldLayout.name())) {
+            if (providedValues.containsKey(fieldLayout.name())) {
                 expectedBoundaryFields.add(fieldLayout.name());
             }
         }
@@ -2424,7 +2037,7 @@ public final class ClassOpsExecutor {
             throw new Defect("CLASS_NEW " + op.opId() + " carries " + boundaries.size()
                 + " field-boundary entries for " + expectedBoundaryFields.size()
                 + " present fields: the pinned shape carries exactly one boundary per "
-                + "provided field and per omitted required-present defaulted field in "
+                + "provided field in "
                 + "declaration order — a child-count mismatch is a producer defect, "
                 + "never executed");
         }
@@ -2437,24 +2050,14 @@ public final class ClassOpsExecutor {
                     + "names '" + expectedField + "' — a field-boundary order mismatch "
                     + "is a producer defect, never executed");
             }
-            BoundaryKind expectedKind = providedValues.containsKey(entry.field())
-                ? BoundaryKind.CLASS_LITERAL_FIELD : BoundaryKind.CLASS_DEFAULT_FIELD;
+            BoundaryKind expectedKind = BoundaryKind.CLASS_LITERAL_FIELD;
             if (entry.kind() != expectedKind) {
                 throw new Defect("CLASS_NEW " + op.opId() + " field-boundary entry for '"
                     + entry.field() + "' carries kind " + entry.kind() + ": the pinned "
-                    + "kind is " + expectedKind + " (CLASS_LITERAL_FIELD for provided "
-                    + "values, CLASS_DEFAULT_FIELD for defaulted values) — a kind "
+                    + "kind is " + expectedKind + " for provided values — a kind "
                     + "mismatch is a producer defect, never executed");
             }
         }
-    }
-
-    /** The input-value wiring of one {@code CLASS_DEFAULT_FIELD} entry. */
-    @FunctionalInterface
-    private interface DefaultFieldInputResolver {
-
-        Value resolve(SemanticOp child, KindPayload.FieldBoundary entry,
-                      KindPayload.BoundaryPayload boundaryPayload);
     }
 
     private static OpFailure applyFieldBoundaries(
@@ -2462,8 +2065,7 @@ public final class ClassOpsExecutor {
             List<KindPayload.FieldBoundary> boundaries,
             Map<String, Value> providedValues, Map<String, ValueId> providedValueIds,
             Map<OpId, SemanticOp> boundaryOps, BoundaryCheckRunner checkRunner,
-            LinkedHashMap<String, Value> checkedValues,
-            DefaultFieldInputResolver defaultInput) {
+            LinkedHashMap<String, Value> checkedValues) {
         for (KindPayload.FieldBoundary entry : boundaries) {
             ClassLayout.FieldLayout fieldLayout = fieldOf(layout, entry.field());
             if (fieldLayout == null) {
@@ -2504,7 +2106,8 @@ public final class ClassOpsExecutor {
                 }
                 input = provided;
             } else {
-                input = defaultInput.resolve(child, entry, boundaryPayload);
+                throw new Defect("CLASS_NEW " + op.opId()
+                    + " carries a non-provided boundary for '" + entry.field() + "'");
             }
             BoundaryResult result = checkRunner.run(boundaryPayload, input);
             if (result instanceof BoundaryResult.Pass pass) {
@@ -2614,38 +2217,6 @@ public final class ClassOpsExecutor {
                 + "defect, never executed");
         }
         return value;
-    }
-
-    private static SemanticOp requireDefaultChild(Map<OpId, SemanticOp> defaultOps,
-                                                  OpId childId, ClassId classId,
-                                                  SemanticOp owner) {
-        SemanticOp child = defaultOps.get(childId);
-        if (child == null) {
-            throw new Defect(owner.kind() + " " + owner.opId() + " names CLASS_DEFAULT "
-                + "child " + childId + " which the default-op lookup does not resolve — a "
-                + "producer defect, never executed");
-        }
-        if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
-            throw new Defect(owner.kind() + " " + owner.opId() + " names default child "
-                + child.opId() + " of kind " + child.kind()
-                + ": the pinned child kind is CLASS_DEFAULT — a producer defect, never "
-                + "executed");
-        }
-        if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
-            throw new Defect(owner.kind() + " " + owner.opId() + " names default child "
-                + child.opId() + " carrying failure policy " + child.failurePolicy()
-                + ": the pinned CLASS_DEFAULT policy is NO_DEAL_FAILURE — a non-pinned "
-                + "policy is a producer defect, never executed");
-        }
-        KindPayload.ClassDefaultPayload payload =
-            (KindPayload.ClassDefaultPayload) child.payload();
-        if (!payload.classId().equals(classId)) {
-            throw new Defect(owner.kind() + " " + owner.opId() + " names default child "
-                + child.opId() + " of class " + payload.classId()
-                + ": the pinned default child belongs to the constructed class " + classId
-                + " — a classId mismatch is a producer defect, never executed");
-        }
-        return child;
     }
 
     private static SemanticOp requireBoundaryChild(Map<OpId, SemanticOp> boundaryOps,

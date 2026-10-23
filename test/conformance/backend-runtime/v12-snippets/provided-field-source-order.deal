@@ -1,14 +1,14 @@
 // @spec: Runtime execution model
-// @description: Corner-case subject provided-field-source-order — Provided fields ordered by literal, not declaration; provided fields skip their default calls. (basis: Operational semantics summary rule 6; Defaults applied only omitted fields)
+// @description: Provided fields execute in literal source order, not declaration order; unrelated functions never run.
 // @expected: runtime-ok
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
 function supplied(s: string, n: number): number {c.log(s); return n;}
 function fallback(s: string): number {c.log(s); return 0;}
-class C {a: number = fallback("default-a"); b: number = fallback("default-b"); d: number = fallback("default-d");}
+class C {a: number; b: number; d: number;}
 export function main(): null {
- let x: C = {b:supplied("B",2), a:supplied("A",1)};
- if(x.a !== 1 || x.b !== 2 || x.d !== 0) {throw {message:"field values"};}
+ let x: C = {b:supplied("B",2), a:supplied("A",1), d:fallback("default-d")};
+ if(x.a !== 1 || x.b !== 2 || x.d !== 0) {throw {code:"TEST_FAIL",message:"field values"};}
  c.log("provided-field-source-order"); return null;
 }

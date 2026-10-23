@@ -30,8 +30,8 @@ public final class RepairWorkspaceTest {
     private static void missingTypeHasExactGrant(Inspection baseline) {
         var module = baseline.moduleId();
         var workspace = stage(BASE, List.of(
-                new AmendWorkspace.AddDeclaration(module, "export class Holder { value: Leaf = {value:1}; }"),
-                new AmendWorkspace.AddDeclaration(module, "export class Unrelated { value: number = 7; }")));
+                new AmendWorkspace.AddDeclaration(module, "export class Holder { value: Leaf; }"),
+                new AmendWorkspace.AddDeclaration(module, "export class Unrelated { value: number; }")));
         String snapshot = CompilerProtocolJson.encode(workspace);
         var offer = RepairWorkspaceProtocol.inspectRepair(workspace);
         check(offer.disposition() == RepairWorkspaceProtocol.Disposition.EXPANSION_REQUIRED, "missing type needs expansion: " + CompilerProtocolJson.encode(offer));
@@ -42,18 +42,18 @@ public final class RepairWorkspaceTest {
                 "grant is deterministic");
         var forged = new RepairWorkspaceProtocol.Grant(grant.version(), grant.workspaceDigest(), List.of("R1", "R2"),
                 grant.obligations(), grant.expansions(), grant.digest());
-        check(!apply(workspace, forged, List.of(), "export class Leaf { value: number = 0; }").accepted(),
+        check(!apply(workspace, forged, List.of(), "export class Leaf { value: number; }").accepted(),
                 "tampered grant cannot widen write access");
         boolean stale = false;
         try { RepairWorkspaceProtocol.expandRepairScope(workspace, "stale", List.of("add:D1")); }
         catch (IllegalArgumentException expected) { stale = true; }
         check(stale, "stale expansion rejected");
-        var wrong = apply(workspace, grant, List.of(), "export class Other { value: number = 0; }");
+        var wrong = apply(workspace, grant, List.of(), "export class Other { value: number; }");
         check(!wrong.accepted() && wrong.source().equals(BASE) && wrong.workspace().equals(workspace), "unrelated addition rolls back");
         var illegal = apply(workspace, grant, List.of(new SlotPatch("R2", Map.of("declaration",
-                "export class Unrelated { value: number = 99; }"))), "export class Leaf { value: number = 0; }");
+                "export class Unrelated { changed: number; }"))), "export class Leaf { value: number; }");
         check(!illegal.accepted() && illegal.source().equals(BASE), "independent slot is not writable");
-        var repaired = apply(workspace, grant, List.of(), "export class Leaf { value: number = 0; }");
+        var repaired = apply(workspace, grant, List.of(), "export class Leaf { value: number; }");
         check(repaired.accepted(), "exact missing declaration repairs candidate: " + repaired.diagnostics());
         check(repaired.workspace().slots().get(1).payloadFingerprint().equals(workspace.slots().get(1).payloadFingerprint()),
                 "unrelated slot fingerprint preserved");
@@ -93,7 +93,7 @@ public final class RepairWorkspaceTest {
         var workspace = stage(BASE, List.of(
                 new AmendWorkspace.AddDeclaration(module, "export function helper(): number { return 1; }"),
                 new AmendWorkspace.AddDeclaration(module, "export function label(): string { return helper(); }"),
-                new AmendWorkspace.AddDeclaration(module, "export class Independent { value: number = 3; }")));
+                new AmendWorkspace.AddDeclaration(module, "export class Independent { value: number; }")));
         var initial = RepairWorkspaceProtocol.expandRepairScope(workspace, workspace.workspaceDigest(), List.of());
         var retry = AmendWorkspace.applyRepairTransaction(BASE, MODULE, workspace, initial,
                 List.of(new SlotPatch("R2", Map.of("declaration", "export function label(): string { return helper() + 2; }"))), List.of());

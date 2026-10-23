@@ -163,8 +163,7 @@ public final class RawUnitMaterializer {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION, profile, moduleId,
             unit.interfaceHash(), unit.loweringContextHash(), capabilities, coverage,
             classLayouts, functions, unit.moduleInit(), exportPlan, bindings, ops,
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     // =========================================================================
@@ -177,8 +176,8 @@ public final class RawUnitMaterializer {
             fields.add(new ClassLayout.FieldLayout(field.name(),
                 descriptor(field.descriptor(), where + " field '" + field.name() + "'"),
                 field.required(),
-                enumOf(DefaultOwner.class, field.defaultOwner(),
-                    where + " field '" + field.name() + "' defaultOwner")));
+                enumOf(ConstructionProvider.class, field.constructionProvider(),
+                    where + " field '" + field.name() + "' constructionProvider")));
         }
         return new ClassLayout(layout.classId(), fields);
     }
@@ -527,19 +526,15 @@ public final class RawUnitMaterializer {
             case BREAK -> new KindPayload.BreakPayload(opIdAt(p, "loopId", where));
             case CONTINUE -> new KindPayload.ContinuePayload(opIdAt(p, "loopId", where));
             case DISCARD -> new KindPayload.DiscardPayload(valueIdAt(p, "value", where));
-            case CLASS_DEFAULT -> new KindPayload.ClassDefaultPayload(
-                classIdAt(p, "classId", where), stringAt(p, "field", where),
-                blockIdAt(p, "defaultBlock", where));
+
             case CLASS_NEW -> new KindPayload.ClassNewPayload(
                 classIdAt(p, "classId", where), layoutAt(p, "layout", where),
                 providedFields(p, "providedFields", where),
-                enumAt(p, "defaultOwner", DefaultOwner.class, where),
-                opIds(p, "classDefaultOpIds", where),
+                enumAt(p, "constructionProvider", ConstructionProvider.class, where),
                 optionalClassFactoryId(p, "classFactoryRef", where),
                 fieldBoundaries(p, "fieldBoundaries", where));
             case CLASS_FACTORY -> new KindPayload.ClassFactoryPayload(
-                classIdAt(p, "classId", where), opIds(p, "classDefaultOpIds", where),
-                opIdAt(p, "callerOpRef", where));
+                classIdAt(p, "classId", where), opIdAt(p, "callerOpRef", where));
             case FIELD_READ -> new KindPayload.FieldReadPayload(
                 valueIdAt(p, "classValue", where), classIdAt(p, "classId", where),
                 stringAt(p, "field", where),
@@ -765,7 +760,7 @@ public final class RawUnitMaterializer {
             CanonicalJson.Obj field = objectValue(item, "fields", where);
             fields.add(new ClassLayout.FieldLayout(stringAt(field, "name", where),
                 descriptorAt(field, "descriptor", where), boolAt(field, "required", where),
-                enumAt(field, "defaultOwner", DefaultOwner.class, where)));
+                enumAt(field, "constructionProvider", ConstructionProvider.class, where)));
         }
         return new ClassLayout(classId, fields);
     }

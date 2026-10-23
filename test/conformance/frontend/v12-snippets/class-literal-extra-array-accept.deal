@@ -3,5 +3,5 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class C {x:number=0;}
+class C {x:number;}
 export function f(): C[] {return [{x:1},{x:2}];}

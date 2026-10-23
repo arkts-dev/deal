@@ -5,7 +5,7 @@
 
 // @jsonable
 export class Blob {
-  data: () => null = function(): null { return null; };
+  data: () => null;
 }
 
 export function main(): null {

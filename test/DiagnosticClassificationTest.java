@@ -163,13 +163,13 @@ public class DiagnosticClassificationTest {
             "class Foo { name: string; } "
             + inMain.replace("%s", "let f: Foo = { name: \"x\", extra: 1 }; "));
         triggers.put("E4007",
-            "// @jsonable\nexport class Foo { fn: (x: number) => null = function(x: number): null { return null; }; }");
+            "// @jsonable\nexport class Foo { fn: (x: number) => null; }");
         triggers.put("E5001", "function f(x: number): null {} f(true);");
         triggers.put("E1047", "function f(...xs: number[]): null { return null; }");
         triggers.put("E1044",
-            "// @not-a-directive\nclass A { x: number = 0; }\n");
+            "// @not-a-directive\nclass A { x: number; }\n");
         triggers.put("E1045",
-            "// @jsonable:foo\nexport class A { x: number = 0; }\n");
+            "// @jsonable:foo\nexport class A { x: number; }\n");
         triggers.put("E5003",
             "function f(): number { return \"hi\"; }");
 

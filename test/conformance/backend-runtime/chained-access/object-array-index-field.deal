@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: classes, arrays, chained-access
 
-class Box { value: number = 0; }
-class Holder { boxes: Box[] = []; }
+class Box { value: number; }
+class Holder { boxes: Box[]; }
 function box(v: number): Box { return { value: v }; }
 
 export function test_object_array_index_field(): number {

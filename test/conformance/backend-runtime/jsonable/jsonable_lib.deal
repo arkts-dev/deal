@@ -5,6 +5,6 @@
 // explicit classification, and companions must keep compiling standalone.
 // @jsonable
 export class Widget {
-  label: string = "";
-  count: number = 0;
+  label: string;
+  count: number;
 }

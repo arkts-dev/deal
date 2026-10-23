@@ -13,13 +13,12 @@ import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FieldInterface;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringFailureDetail;
@@ -53,7 +52,6 @@ public final class ClassConstructionValidator {
 
     public static final String FIELD_OPERATION_SHAPE = "FIELD_OPERATION_SHAPE";
 
-    public static final String DEFAULT_BLOCK_ADMISSION = "DEFAULT_BLOCK_ADMISSION";
 
     public static final String JSON_LAYOUT_COHERENCE = "JSON_LAYOUT_COHERENCE";
 
@@ -65,10 +63,9 @@ public final class ClassConstructionValidator {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             ClassFactoryRegistry factories,
-            JsonDefaultChildTable jsonDefaults,
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories) {
-        return validate(unit, table, factories, jsonDefaults, ownInterface,
+        return validate(unit, table, factories, ownInterface,
             sharedFactories, Map.of());
     }
 
@@ -76,11 +73,10 @@ public final class ClassConstructionValidator {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             ClassFactoryRegistry factories,
-            JsonDefaultChildTable jsonDefaults,
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses) {
-        return validate(unit, table, factories, jsonDefaults, ownInterface,
+        return validate(unit, table, factories, ownInterface,
             sharedFactories, declarationClasses, Map.of());
     }
 
@@ -96,12 +92,11 @@ public final class ClassConstructionValidator {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             ClassFactoryRegistry factories,
-            JsonDefaultChildTable jsonDefaults,
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
             Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts) {
-        return validate(unit, table, factories, jsonDefaults, ownInterface,
+        return validate(unit, table, factories, ownInterface,
             sharedFactories, declarationClasses, providerFactoryFacts, Set.of());
     }
 
@@ -119,13 +114,12 @@ public final class ClassConstructionValidator {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             ClassFactoryRegistry factories,
-            JsonDefaultChildTable jsonDefaults,
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
             Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
             Set<ClassId> ambiguousJsonPlanClassIds) {
-        return validate(unit, table, factories, jsonDefaults, ownInterface,
+        return validate(unit, table, factories, ownInterface,
             sharedFactories, declarationClasses, providerFactoryFacts,
             ambiguousJsonPlanClassIds, Map.of());
     }
@@ -158,7 +152,6 @@ public final class ClassConstructionValidator {
             LoweredModuleUnit unit,
             StructuredBodyTable table,
             ClassFactoryRegistry factories,
-            JsonDefaultChildTable jsonDefaults,
             ExternalModuleInterface ownInterface,
             Map<ClassId, SharedFactoryFacts> sharedFactories,
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
@@ -168,7 +161,6 @@ public final class ClassConstructionValidator {
         Objects.requireNonNull(unit, "unit must not be null");
         Objects.requireNonNull(table, "table must not be null");
         Objects.requireNonNull(factories, "factories must not be null");
-        Objects.requireNonNull(jsonDefaults, "jsonDefaults must not be null");
         Objects.requireNonNull(ownInterface, "ownInterface must not be null");
         Objects.requireNonNull(sharedFactories, "sharedFactories must not be null");
         Objects.requireNonNull(declarationClasses,
@@ -179,7 +171,7 @@ public final class ClassConstructionValidator {
             "ambiguousJsonPlanClassIds must not be null");
         Objects.requireNonNull(jsonPlanOwners,
             "jsonPlanOwners must not be null");
-        Context context = new Context(unit, table, factories, jsonDefaults, ownInterface,
+        Context context = new Context(unit, table, factories, ownInterface,
             sharedFactories, declarationClasses, providerFactoryFacts,
             ambiguousJsonPlanClassIds, jsonPlanOwners);
         Optional<CompilerDiagnostic> failure = context.checkFactoryCoherence();
@@ -191,10 +183,6 @@ public final class ClassConstructionValidator {
             return failure;
         }
         failure = context.checkFieldOperationShapes();
-        if (failure.isPresent()) {
-            return failure;
-        }
-        failure = context.checkDefaultBlockAdmission();
         if (failure.isPresent()) {
             return failure;
         }
@@ -217,7 +205,7 @@ public final class ClassConstructionValidator {
      * <ul>
      *   <li>a registration's key names its contained layout — one class
      *       identity per registration — and carries a declaration owner
-     *       ({@link DefaultOwner#HOST_DEFAULTS});</li>
+     *       ({@link ConstructionProvider#HOST_DECLARATION});</li>
      *   <li>a carried builtin {@code Error} registration is exactly the
      *       compiler-owned layout under the builtin owner (an absent entry is
      *       not by itself a contradiction: the {@code /2} seed collection
@@ -261,12 +249,12 @@ public final class ClassConstructionValidator {
         // not a contradiction between two supplied records.
         ClassRegistrationSeeds.ClassRegistration error =
             seeds.registrationFor(ClassId.ERROR);
-        if (error != null && (error.owner() != DefaultOwner.BUILTIN_DEFAULTS
+        if (error != null && (error.owner() != ConstructionProvider.BUILTIN_ERROR
                 || !error.layout().equals(ClassLayout.BUILTIN_ERROR))) {
             return Optional.of("the builtin " + ClassId.ERROR.text()
                 + " registration carries owner " + error.owner() + " and layout "
                 + error.layout() + "; the compiler-owned registration is exactly "
-                + ClassLayout.BUILTIN_ERROR + " under " + DefaultOwner.BUILTIN_DEFAULTS);
+                + ClassLayout.BUILTIN_ERROR + " under " + ConstructionProvider.BUILTIN_ERROR);
         }
 
         // (b) Every exported class of a host declaration entry carries exactly
@@ -317,10 +305,10 @@ public final class ClassConstructionValidator {
                     + "; a registration's key and its contained layout name one "
                     + "class identity");
             }
-            if (registration.owner() != DefaultOwner.HOST_DEFAULTS) {
+            if (registration.owner() != ConstructionProvider.HOST_DECLARATION) {
                 return Optional.of("the " + key + " registration carries owner "
                     + registration.owner() + "; a declaration class registration is"
-                    + " owned by " + DefaultOwner.HOST_DEFAULTS);
+                    + " owned by " + ConstructionProvider.HOST_DECLARATION);
             }
             LocatedDeclaredClass declared = locateDeclaredClass(index, key);
             if (declared == null) {
@@ -369,8 +357,8 @@ public final class ClassConstructionValidator {
     /**
      * The project-level seed/module join of the transported class facts:
      * every carried construction of a declaration class — a
-     * {@code CLASS_NEW} whose {@code defaultOwner} is a declaration owner
-     * ({@link DefaultOwner#HOST_DEFAULTS})
+     * {@code CLASS_NEW} whose {@code constructionProvider} is a declaration owner
+     * ({@link ConstructionProvider#HOST_DECLARATION})
      * — refers to exactly one carried class registration seed, and that
      * registration repeats the referring operation's owner and contained
      * layout. The transport carries the seeds and the modules as separate
@@ -417,8 +405,8 @@ public final class ClassConstructionValidator {
                 if (!SemanticOpKind.CLASS_NEW.name().equals(op.kind())) {
                     continue;
                 }
-                String owner = stringPayloadField(op.payload(), "defaultOwner");
-                if (!DefaultOwner.HOST_DEFAULTS.name().equals(owner)) {
+                String owner = stringPayloadField(op.payload(), "constructionProvider");
+                if (!ConstructionProvider.HOST_DECLARATION.name().equals(owner)) {
                     continue;
                 }
                 ClassId classId = classIdPayloadField(op.payload(), "classId");
@@ -429,14 +417,14 @@ public final class ClassConstructionValidator {
                     seeds.registrationFor(classId);
                 if (registration == null) {
                     return Optional.of(new SeedModuleViolation(unit, op,
-                        "the CLASS_NEW carries defaultOwner " + owner + " for "
+                        "the CLASS_NEW carries constructionProvider " + owner + " for "
                             + classId + ", which no class registration seed registers:"
                             + " a declaration-class construction is never admissible"
                             + " without its registration"));
                 }
                 if (!registration.owner().name().equals(owner)) {
                     return Optional.of(new SeedModuleViolation(unit, op,
-                        "the CLASS_NEW carries defaultOwner " + owner + " for "
+                        "the CLASS_NEW carries constructionProvider " + owner + " for "
                             + classId + " while its class registration seed carries"
                             + " owner " + registration.owner()
                             + ": the referring module class fact and the seed"
@@ -753,7 +741,6 @@ public final class ClassConstructionValidator {
         private final LoweredModuleUnit unit;
         private final StructuredBodyTable table;
         private final ClassFactoryRegistry factories;
-        private final JsonDefaultChildTable jsonDefaults;
         private final ExternalModuleInterface ownInterface;
         private final Map<ClassId, SharedFactoryFacts> sharedFactories;
         /**
@@ -802,8 +789,7 @@ public final class ClassConstructionValidator {
         private final Map<ClassId, ClassInterface> interfaceContext = new LinkedHashMap<>();
 
         Context(LoweredModuleUnit unit, StructuredBodyTable table,
-                ClassFactoryRegistry factories, JsonDefaultChildTable jsonDefaults,
-                ExternalModuleInterface ownInterface,
+                ClassFactoryRegistry factories, ExternalModuleInterface ownInterface,
                 Map<ClassId, SharedFactoryFacts> sharedFactories,
                 Map<ClassId, ClassRegistrationSeeds.ClassRegistration> declarationClasses,
                 Map<ClassFactoryId, SharedFactoryFacts> providerFactoryFacts,
@@ -812,7 +798,6 @@ public final class ClassConstructionValidator {
             this.unit = unit;
             this.table = table;
             this.factories = factories;
-            this.jsonDefaults = jsonDefaults;
             this.ownInterface = ownInterface;
             this.sharedFactories = Map.copyOf(sharedFactories);
             this.declarationClasses = Map.copyOf(declarationClasses);
@@ -901,25 +886,6 @@ public final class ClassConstructionValidator {
         /** The op named by the id, or {@code null}. */
         private SemanticOp op(OpId opId) {
             return opsById.get(opId);
-        }
-
-        /**
-         * The unit's {@code CLASS_DEFAULT} op of one class and field, or
-         * {@code null}. At most one such op may exist (the uniqueness is
-         * {@link #FACTORY_COHERENCE}'s check, run before every consumer).
-         */
-        private SemanticOp defaultOp(ClassId classId, String field) {
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                    continue;
-                }
-                KindPayload.ClassDefaultPayload payload =
-                    (KindPayload.ClassDefaultPayload) op.payload();
-                if (payload.classId().equals(classId) && payload.field().equals(field)) {
-                    return op;
-                }
-            }
-            return null;
         }
 
         /** The declared field of one layout, or {@code null}. */
@@ -1166,49 +1132,7 @@ public final class ClassConstructionValidator {
         // =====================================================================
 
         Optional<CompilerDiagnostic> checkFactoryCoherence() {
-            // (a) Exactly one CLASS_DEFAULT op per defaulted (classId,
-            // field): a duplicate default child is a malformed
-            // construction shape (every consumer — the factory payload,
-            // the LOCAL CLASS_NEW child list, and the JSON default-child
-            // table — names exactly one op per field).
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                    continue;
-                }
-                KindPayload.ClassDefaultPayload payload =
-                    (KindPayload.ClassDefaultPayload) op.payload();
-                SemanticOp other = defaultOp(payload.classId(), payload.field());
-                if (!other.opId().equals(op.opId())) {
-                    return fail(FACTORY_COHERENCE, "two CLASS_DEFAULT ops (" + other.opId()
-                        + " and " + op.opId() + ") exist for " + payload.classId() + "."
-                        + payload.field() + ": the pinned shape carries exactly one "
-                        + "default child per defaulted field", op);
-                }
-            }
-
-            // (b) The exported classes' default-op coverage against the
-            // interface hasDefault facts: every defaulted field carries
-            // exactly one CLASS_DEFAULT op, every non-defaulted field
-            // none.
-            for (ClassInterface entry : ownInterface.classes()) {
-                for (deal.semantic.ir.FieldInterface field : entry.fields()) {
-                    SemanticOp defaultOp = defaultOp(entry.classId(), field.name());
-                    if (field.hasDefault() && defaultOp == null) {
-                        return fail(FACTORY_COHERENCE, "defaulted field '" + field.name()
-                            + "' of exported class " + entry.classId() + " has no "
-                            + "CLASS_DEFAULT op in the unit: the declaration arm emits "
-                            + "one per defaulted field");
-                    }
-                    if (!field.hasDefault() && defaultOp != null) {
-                        return fail(FACTORY_COHERENCE, "non-defaulted field '"
-                            + field.name() + "' of exported class " + entry.classId()
-                            + " carries a CLASS_DEFAULT op (" + defaultOp.opId()
-                            + "): only defaulted fields produce default ops", defaultOp);
-                    }
-                }
-            }
-
-            // (c) The factory/constructionEntry bijection and the factory
+            // The factory/constructionEntry bijection and the factory
             // payload shape for every exported class.
             Map<ClassFactoryId, ClassId> entryOwners = new LinkedHashMap<>();
             for (ClassInterface entry : ownInterface.classes()) {
@@ -1335,60 +1259,13 @@ public final class ClassConstructionValidator {
             }
             // classDefaultOpIds = exactly the required-present defaulted
             // fields' CLASS_DEFAULT op ids in declaration order.
-            List<String> expected = new ArrayList<>();
-            for (deal.semantic.ir.FieldInterface field : entry.fields()) {
-                if (!field.optional() && field.hasDefault()) {
-                    expected.add(field.name());
-                }
-            }
-            List<OpId> listed = payload.classDefaultOpIds();
-            if (listed.size() != expected.size()) {
-                return fail(FACTORY_COHERENCE, "factory op " + factory.opId() + " lists "
-                    + listed.size() + " CLASS_DEFAULT children for " + expected.size()
-                    + " required-present defaulted fields: the pinned payload lists "
-                    + "exactly those fields' op ids in declaration order", factory);
-            }
             ClassLayout layout = layoutContext.get(entry.classId());
             if (layout == null) {
                 return fail(FACTORY_COHERENCE, "exported class " + entry.classId()
                     + " has no layout in the unit's classLayouts (the factory fills the "
                     + "declared layout)");
             }
-            for (int i = 0; i < expected.size(); i++) {
-                String fieldName = expected.get(i);
-                SemanticOp child = op(listed.get(i));
-                if (child == null) {
-                    return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
-                        + " lists CLASS_DEFAULT child " + listed.get(i) + " (field '"
-                        + fieldName + "') which is not a produced op of the unit", factory);
-                }
-                if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                    return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
-                        + " lists child " + listed.get(i) + " of kind " + child.kind()
-                        + " for field '" + fieldName + "', not CLASS_DEFAULT", child);
-                }
-                KindPayload.ClassDefaultPayload childPayload =
-                    (KindPayload.ClassDefaultPayload) child.payload();
-                if (!childPayload.classId().equals(entry.classId())
-                        || !childPayload.field().equals(fieldName)) {
-                    return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
-                        + " lists child " + listed.get(i) + " for "
-                        + childPayload.classId() + "." + childPayload.field()
-                        + ", not " + entry.classId() + "." + fieldName, child);
-                }
-                if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
-                    return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
-                        + " lists CLASS_DEFAULT child " + listed.get(i) + " carrying "
-                        + "policy " + child.failurePolicy() + ", not NO_DEAL_FAILURE", child);
-                }
-                ClassLayout.FieldLayout fieldLayout = fieldOf(layout, fieldName);
-                if (fieldLayout == null || !fieldLayout.required()) {
-                    return fail(FACTORY_COHERENCE, "factory op " + factory.opId()
-                        + " lists CLASS_DEFAULT child " + listed.get(i) + " for field '"
-                        + fieldName + "' which is not a required declared field of "
-                        + entry.classId(), child);
-                }
-            }
+
             return Optional.empty();
         }
 
@@ -1457,7 +1334,10 @@ public final class ClassConstructionValidator {
             Map<String, ValueId> providedIds = new LinkedHashMap<>();
             for (KindPayload.ProvidedField field : payload.providedFields()) {
                 providedNames.add(field.name());
-                providedIds.put(field.name(), field.valueOpId());
+                if (providedIds.putIfAbsent(field.name(), field.valueOpId()) != null) {
+                    return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
+                        + " repeats provided field '" + field.name() + "'", op);
+                }
             }
 
             for (String name : providedNames) {
@@ -1467,14 +1347,18 @@ public final class ClassConstructionValidator {
                         + "field of " + payload.classId(), op);
                 }
             }
-            List<String> expectedDefaults = new ArrayList<>();
-            ValueId sharedFactoryResult = null;
-            switch (payload.defaultOwner()) {
+            for (ClassLayout.FieldLayout field : resolved.fields()) {
+                if (field.required() && !providedIds.containsKey(field.name())) {
+                    return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
+                        + " omits required-present field '" + field.name() + "'", op);
+                }
+            }
+            switch (payload.constructionProvider()) {
                 case LOCAL -> {
                     if (!own) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of imported class " + payload.classId() + " carries "
-                            + "defaultOwner LOCAL: imported classes construct through "
+                            + "constructionProvider LOCAL: imported classes construct through "
                             + "the owner's CLASS_FACTORY (SHARED_FACTORY), never LOCAL", op);
                     }
                     if (payload.classFactoryRef() != null) {
@@ -1483,35 +1367,14 @@ public final class ClassConstructionValidator {
                             + " under LOCAL: the pinned LOCAL shape carries a null "
                             + "factory ref", op);
                     }
-                    for (ClassLayout.FieldLayout field : resolved.fields()) {
-                        if (field.required() && defaultOp(payload.classId(),
-                                field.name()) != null
-                                && !providedNames.contains(field.name())) {
-                            expectedDefaults.add(field.name());
-                        }
-                    }
-                    if (payload.classDefaultOpIds().size() != expectedDefaults.size()) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " (LOCAL) lists " + payload.classDefaultOpIds().size()
-                            + " CLASS_DEFAULT children for " + expectedDefaults.size()
-                            + " omitted required-present defaulted fields: the pinned "
-                            + "child list names exactly those fields' op ids in "
-                            + "declaration order", op);
-                    }
-                    for (int i = 0; i < expectedDefaults.size(); i++) {
-                        Optional<CompilerDiagnostic> child =
-                            checkDefaultChild(op, payload.classDefaultOpIds().get(i),
-                                expectedDefaults.get(i), resolved);
-                        if (child.isPresent()) {
-                            return child;
-                        }
-                    }
+
+
                 }
                 case SHARED_FACTORY -> {
                     if (own) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of same-module class " + payload.classId() + " carries "
-                            + "defaultOwner SHARED_FACTORY: same-module literals stay "
+                            + "constructionProvider SHARED_FACTORY: same-module literals stay "
                             + "LOCAL", op);
                     }
                     if (payload.classFactoryRef() == null) {
@@ -1520,12 +1383,7 @@ public final class ClassConstructionValidator {
                             + "null classFactoryRef under SHARED_FACTORY: the pinned "
                             + "shape carries the interface's constructionEntry", op);
                     }
-                    if (!payload.classDefaultOpIds().isEmpty()) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " (SHARED_FACTORY) lists " + payload.classDefaultOpIds()
-                            + ": the pinned imported shape carries an empty child list "
-                            + "(defaults transfer to the owner's factory)", op);
-                    }
+
                     SharedFactoryFacts facts = factsOf(payload.classId(),
                         payload.classFactoryRef());
                     if (facts == null) {
@@ -1543,37 +1401,31 @@ public final class ClassConstructionValidator {
                             + facts.interfaceEntry().constructionEntry() + " of "
                             + payload.classId(), op);
                     }
-                    sharedFactoryResult = facts.factoryResult();
-                    for (ClassLayout.FieldLayout field : resolved.fields()) {
-                        if (field.required() && !providedNames.contains(field.name())) {
-                            expectedDefaults.add(field.name());
-                        }
-                    }
                 }
                 case RETAINED_ABI -> {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                        + " carries defaultOwner RETAINED_ABI: the retained ABI "
+                        + " carries constructionProvider RETAINED_ABI: the retained ABI "
                         + "transfer is E10's (ISSUE-0239) and is never produced in "
                         + "this epic — the lowerer defers with RETAINED_ABI_DEFERRED", op);
                 }
-                case HOST_DEFAULTS -> {
+                case HOST_DECLARATION -> {
 
                     ClassRegistrationSeeds.ClassRegistration registration =
                         declarationClasses.get(payload.classId());
                     if (registration == null
-                            || registration.owner() != DefaultOwner.HOST_DEFAULTS) {
+                            || registration.owner() != ConstructionProvider.HOST_DECLARATION) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " carries defaultOwner HOST_DEFAULTS for class "
+                            + " carries constructionProvider HOST_DECLARATION for class "
                             + payload.classId() + ": the host-defaults owner is"
                             + " admissible only for a declared host class of the"
                             + " compilation's class registration seeds — an"
-                            + " unregistered class under HOST_DEFAULTS is a"
+                            + " unregistered class under HOST_DECLARATION is a"
                             + " fail-closed producer defect", op);
                     }
                     if (own) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " of same-module class " + payload.classId()
-                            + " carries defaultOwner HOST_DEFAULTS: a same-module"
+                            + " carries constructionProvider HOST_DECLARATION: a same-module"
                             + " class never carries a declaration-class owner", op);
                     }
                     if (!registration.layout().equals(payload.layout())) {
@@ -1587,18 +1439,11 @@ public final class ClassConstructionValidator {
                     if (payload.classFactoryRef() != null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " carries classFactoryRef " + payload.classFactoryRef()
-                            + " under HOST_DEFAULTS: the host construction carries a"
+                            + " under HOST_DECLARATION: the host construction carries a"
                             + " null factory ref (the loaded defaults are data,"
                             + " never a factory transfer)", op);
                     }
-                    if (!payload.classDefaultOpIds().isEmpty()) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " (HOST_DEFAULTS) lists " + payload.classDefaultOpIds()
-                            + ": the host construction carries an empty child list"
-                            + " (the omitted fields' values come from the loaded"
-                            + " {@code <C>_defaults} entry — no in-project default"
-                            + " expression is evaluated)", op);
-                    }
+
                     for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                         if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
                             return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW "
@@ -1606,24 +1451,24 @@ public final class ClassConstructionValidator {
                                 + entry.field() + "' carries kind " + entry.kind()
                                 + ", not CLASS_LITERAL_FIELD: the host construction"
                                 + " carries exactly one CLASS_LITERAL_FIELD boundary"
-                                + " per provided field and no CLASS_DEFAULT_FIELD", op);
+                                + " per provided field", op);
                         }
                     }
                 }
 
-                case BUILTIN_DEFAULTS -> {
+                case BUILTIN_ERROR -> {
 
                     if (!ClassId.ERROR.equals(payload.classId())) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " carries defaultOwner BUILTIN_DEFAULTS for class "
+                            + " carries constructionProvider BUILTIN_ERROR for class "
                             + payload.classId() + ": the builtin-defaults owner"
                             + " is admissible only for the builtin Error class "
                             + ClassId.ERROR.text() + " (a non-builtin class under"
-                            + " BUILTIN_DEFAULTS is a fail-closed producer defect)", op);
+                            + " BUILTIN_ERROR is a fail-closed producer defect)", op);
                     }
                     if (!payload.layout().equals(ClassLayout.BUILTIN_ERROR)) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " under BUILTIN_DEFAULTS carries a layout other than"
+                            + " under BUILTIN_ERROR carries a layout other than"
                             + " the compiler-owned builtin Error layout (exactly the"
                             + " two string required-present fields code and"
                             + " message): a foreign layout is a fail-closed"
@@ -1632,19 +1477,12 @@ public final class ClassConstructionValidator {
                     if (payload.classFactoryRef() != null) {
                         return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                             + " carries classFactoryRef " + payload.classFactoryRef()
-                            + " under BUILTIN_DEFAULTS: the builtin Error"
+                            + " under BUILTIN_ERROR: the builtin Error"
                             + " construction carries a null factory ref (the"
                             + " builtin defaults are compiler constants, never a"
                             + " factory transfer)", op);
                     }
-                    if (!payload.classDefaultOpIds().isEmpty()) {
-                        return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                            + " (BUILTIN_DEFAULTS) lists "
-                            + payload.classDefaultOpIds()
-                            + ": the builtin Error construction carries an empty"
-                            + " child list (the omitted fields take the compiler"
-                            + " constant empty string at the construction site)", op);
-                    }
+
                     for (KindPayload.FieldBoundary entry : payload.fieldBoundaries()) {
                         if (entry.kind() != BoundaryKind.CLASS_LITERAL_FIELD) {
                             return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW "
@@ -1653,7 +1491,7 @@ public final class ClassConstructionValidator {
                                 + ", not CLASS_LITERAL_FIELD: the builtin Error"
                                 + " construction carries exactly one"
                                 + " CLASS_LITERAL_FIELD boundary per provided field"
-                                + " and no CLASS_DEFAULT_FIELD (the omitted fields"
+                                + " (the omitted fields"
                                 + " take the compiler constant empty string)", op);
                         }
                     }
@@ -1663,25 +1501,20 @@ public final class ClassConstructionValidator {
                     // arrive from a forged payload, and it never gets a
                     // construction shape.
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                        + " carries defaultOwner " + payload.defaultOwner()
+                        + " carries constructionProvider " + payload.constructionProvider()
                         + ": an owner outside the closed default-ownership set"
                         + " is a fail-closed producer defect", op);
                 }
             }
 
-            // The pinned field-boundary list: exactly one entry per
-            // provided field (CLASS_LITERAL_FIELD) and per omitted
-            // required-present defaulted field (CLASS_DEFAULT_FIELD) in
-            // declaration order; omitted optionals get no boundary.
+            // Exactly one boundary per provided field, in declaration order.
+            // Omitted optional fields have neither a value nor a boundary.
             List<String> expectedBoundaries = new ArrayList<>();
             List<BoundaryKind> expectedKinds = new ArrayList<>();
             for (ClassLayout.FieldLayout field : resolved.fields()) {
                 if (providedNames.contains(field.name())) {
                     expectedBoundaries.add(field.name());
                     expectedKinds.add(BoundaryKind.CLASS_LITERAL_FIELD);
-                } else if (expectedDefaults.contains(field.name())) {
-                    expectedBoundaries.add(field.name());
-                    expectedKinds.add(BoundaryKind.CLASS_DEFAULT_FIELD);
                 }
             }
             List<KindPayload.FieldBoundary> boundaries = payload.fieldBoundaries();
@@ -1689,8 +1522,7 @@ public final class ClassConstructionValidator {
                 return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId() + " carries "
                     + boundaries.size() + " field-boundary entries for "
                     + expectedBoundaries.size() + " present fields: the pinned shape "
-                    + "carries exactly one boundary per provided field and per "
-                    + "omitted required-present defaulted field in declaration order", op);
+                    + "carries exactly one boundary per provided field in declaration order", op);
             }
             List<SemanticOp> parentedChildren = boundaryChildren(op);
             if (parentedChildren.size() != boundaries.size()) {
@@ -1734,25 +1566,7 @@ public final class ClassConstructionValidator {
                 KindPayload.BoundaryPayload boundaryPayload =
                     (KindPayload.BoundaryPayload) child.payload();
 
-                ValueId pinnedInput;
-                if (entry.kind() == BoundaryKind.CLASS_LITERAL_FIELD) {
-                    pinnedInput = providedIds.get(entry.field());
-                } else {
-                    if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
-                        pinnedInput = sharedFactoryResult;
-                    } else {
-                        SemanticOp defaultChild = defaultOp(payload.classId(),
-                            entry.field());
-                        if (defaultChild == null || !(defaultChild.result()
-                                instanceof ValueId resultId)) {
-                            return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
-                                + " names CLASS_DEFAULT_FIELD for '" + entry.field()
-                                + "' without a CLASS_DEFAULT child publishing a "
-                                + "ValueId result", op);
-                        }
-                        pinnedInput = resultId;
-                    }
-                }
+                ValueId pinnedInput = providedIds.get(entry.field());
                 if (pinnedInput == null) {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " boundary for '" + entry.field() + "' has no pinned input "
@@ -1762,42 +1576,8 @@ public final class ClassConstructionValidator {
                     return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + op.opId()
                         + " boundary " + child.opId() + " carries input "
                         + boundaryPayload.input() + ", not the pinned " + pinnedInput
-                        + " (the provided value op for CLASS_LITERAL_FIELD; the "
-                        + "field's CLASS_DEFAULT child result for LOCAL; the owner "
-                        + "factory result for SHARED_FACTORY)", child);
+                        + " (the provided value for CLASS_LITERAL_FIELD)", child);
                 }
-            }
-            return Optional.empty();
-        }
-
-        /** The pinned LOCAL CLASS_DEFAULT child of one field. */
-        private Optional<CompilerDiagnostic> checkDefaultChild(SemanticOp owner,
-                                                               OpId childId,
-                                                               String fieldName,
-                                                               ClassLayout layout) {
-            SemanticOp child = op(childId);
-            if (child == null) {
-                return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
-                    + " lists CLASS_DEFAULT child " + childId + " (field '" + fieldName
-                    + "') which is not a produced op of the unit", owner);
-            }
-            if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
-                    + " lists child " + childId + " of kind " + child.kind()
-                    + " for field '" + fieldName + "', not CLASS_DEFAULT", child);
-            }
-            KindPayload.ClassDefaultPayload payload =
-                (KindPayload.ClassDefaultPayload) child.payload();
-            if (!payload.classId().equals(layout.classId())
-                    || !payload.field().equals(fieldName)) {
-                return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
-                    + " lists child " + childId + " for " + payload.classId() + "."
-                    + payload.field() + ", not " + layout.classId() + "." + fieldName, child);
-            }
-            if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
-                return fail(CONSTRUCTION_COHERENCE, "CLASS_NEW " + owner.opId()
-                    + " lists CLASS_DEFAULT child " + childId + " carrying policy "
-                    + child.failurePolicy() + ", not NO_DEAL_FAILURE", child);
             }
             return Optional.empty();
         }
@@ -1999,226 +1779,6 @@ public final class ClassConstructionValidator {
         }
 
         // =====================================================================
-        // 4. DEFAULT_BLOCK_ADMISSION
-        // =====================================================================
-
-        Optional<CompilerDiagnostic> checkDefaultBlockAdmission() {
-            // The producing block of every binding-producing allocation
-            // kind (the B2 producing-allocation kinds): BINDING_ALLOC,
-            // FOR_EACH (the iteration binding), RECURSIVE_GROUP_INIT (the
-            // group members).
-            Map<BindingId, BlockId> producingBlocks = new LinkedHashMap<>();
-            for (SemanticOp op : unit.ops()) {
-                switch (op.kind()) {
-                    case BINDING_ALLOC -> {
-                        KindPayload.BindingAllocPayload payload =
-                            (KindPayload.BindingAllocPayload) op.payload();
-                        BlockId block = table.opBlocks().get(op.opId());
-                        if (block != null) {
-                            producingBlocks.put(payload.binding(), block);
-                        }
-                    }
-                    case FOR_EACH -> {
-                        KindPayload.ForEachPayload payload =
-                            (KindPayload.ForEachPayload) op.payload();
-                        BlockId block = table.opBlocks().get(op.opId());
-                        if (block != null) {
-                            producingBlocks.put(payload.binding(), block);
-                        }
-                    }
-                    case RECURSIVE_GROUP_INIT -> {
-                        KindPayload.RecursiveGroupInitPayload payload =
-                            (KindPayload.RecursiveGroupInitPayload) op.payload();
-                        BlockId block = table.opBlocks().get(op.opId());
-                        if (block != null) {
-                            for (BindingId binding : payload.bindings()) {
-                                producingBlocks.put(binding, block);
-                            }
-                        }
-                    }
-                    default -> {
-                        // Not a binding producer.
-                    }
-                }
-            }
-            BlockId moduleInitBlock = unit.moduleInit().initBlock();
-            for (SemanticOp op : unit.ops()) {
-                if (op.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                    continue;
-                }
-                KindPayload.ClassDefaultPayload payload =
-                    (KindPayload.ClassDefaultPayload) op.payload();
-                if (!table.blockOps().containsKey(payload.defaultBlock())) {
-                    return fail(DEFAULT_BLOCK_ADMISSION, "CLASS_DEFAULT " + op.opId()
-                        + " of " + payload.classId() + "." + payload.field()
-                        + " references block " + payload.defaultBlock() + " which is not "
-                        + "a block of the membership table", op);
-                }
-                Set<BlockId> closure = defaultClosure(payload.defaultBlock());
-                if (closure == null) {
-                    return fail(DEFAULT_BLOCK_ADMISSION, "CLASS_DEFAULT " + op.opId()
-                        + " of " + payload.classId() + "." + payload.field()
-                        + " references a payload block outside the membership table", op);
-                }
-                Set<BlockId> admitted = new LinkedHashSet<>(closure);
-                admitted.add(moduleInitBlock);
-                for (SemanticOp member : unit.ops()) {
-                    BlockId block = table.opBlocks().get(member.opId());
-                    if (block == null || !closure.contains(block)) {
-                        continue;
-                    }
-                    switch (member.kind()) {
-                        case BINDING_LOAD -> {
-                            KindPayload.BindingLoadPayload load =
-                                (KindPayload.BindingLoadPayload) member.payload();
-                            Optional<CompilerDiagnostic> failure = admitReference(op,
-                                member, load.binding(), producingBlocks, admitted);
-                            if (failure.isPresent()) {
-                                return failure;
-                            }
-                        }
-                        case CLOSURE_NEW -> {
-                            KindPayload.ClosureNewPayload closurePayload =
-                                (KindPayload.ClosureNewPayload) member.payload();
-                            for (BindingGeneration capture : closurePayload.captures()) {
-                                Optional<CompilerDiagnostic> failure = admitReference(op,
-                                    member, capture.binding(), producingBlocks, admitted);
-                                if (failure.isPresent()) {
-                                    return failure;
-                                }
-                            }
-                        }
-                        case FUNCTION_ADAPT -> {
-                            KindPayload.FunctionAdaptPayload adaptPayload =
-                                (KindPayload.FunctionAdaptPayload) member.payload();
-                            if (adaptPayload.source()
-                                    instanceof deal.semantic.ir.AdaptSourceRef.Thunk thunk) {
-                                for (BindingGeneration capture
-                                        : thunk.capturedBindings()) {
-                                    Optional<CompilerDiagnostic> failure = admitReference(op,
-                                        member, capture.binding(), producingBlocks, admitted);
-                                    if (failure.isPresent()) {
-                                        return failure;
-                                    }
-                                }
-                            }
-                        }
-                        default -> {
-                            // Other op kinds carry no binding references.
-                        }
-                    }
-                }
-            }
-            return Optional.empty();
-        }
-
-        /**
-         * Admits one binding reference against the closed admission set.
-         * The message names the owning {@code CLASS_DEFAULT}
-         * ({@code defaultOp}); the diagnostic range belongs to the
-         * offending {@code reference} — the produced op that actually
-         * carries the rejected binding reference — never the enclosing
-         * default expression.
-         */
-        private Optional<CompilerDiagnostic> admitReference(SemanticOp defaultOp,
-                                                            SemanticOp reference,
-                                                            BindingId binding,
-                                                            Map<BindingId, BlockId>
-                                                                producingBlocks,
-                                                            Set<BlockId> admitted) {
-            BlockId producing = producingBlocks.get(binding);
-            if (producing == null || !admitted.contains(producing)) {
-                return fail(DEFAULT_BLOCK_ADMISSION, "CLASS_DEFAULT " + defaultOp.opId()
-                    + " of " + ((KindPayload.ClassDefaultPayload) defaultOp.payload())
-                        .classId() + "." + ((KindPayload.ClassDefaultPayload)
-                        defaultOp.payload()).field()
-                    + " references binding " + binding + " whose producing allocation "
-                    + (producing == null ? "is not a block member" : "sits in block "
-                        + producing) + ": a default block admits only allocations inside "
-                    + "the default closure itself and module-level bindings resolved "
-                    + "through the module-init block (an enclosing-region free "
-                    + "reference is invalid — K-D3)", reference);
-            }
-            return Optional.empty();
-        }
-
-        /**
-         * The block closure of one default block: the block itself plus
-         * every block referenced by a payload position of an op whose
-         * membership block is in the closure (a fixpoint over the
-         * table). {@code null} when a referenced block is not a table
-         * block.
-         */
-        private Set<BlockId> defaultClosure(BlockId root) {
-            Set<BlockId> closure = new LinkedHashSet<>();
-            closure.add(root);
-            boolean extended = true;
-            while (extended) {
-                extended = false;
-                for (SemanticOp op : unit.ops()) {
-                    BlockId block = table.opBlocks().get(op.opId());
-                    if (block == null || !closure.contains(block)) {
-                        continue;
-                    }
-                    for (BlockId referenced : payloadBlocks(op.payload())) {
-                        if (!table.blockOps().containsKey(referenced)) {
-                            return null;
-                        }
-                        if (closure.add(referenced)) {
-                            extended = true;
-                        }
-                    }
-                }
-            }
-            return closure;
-        }
-
-        /** The block ids referenced by one payload's closed block positions. */
-        private static List<BlockId> payloadBlocks(KindPayload payload) {
-            List<BlockId> blocks = new ArrayList<>();
-            switch (payload) {
-                case KindPayload.ClassDefaultPayload p ->
-                    blocks.add(p.defaultBlock());
-                case KindPayload.BranchPayload p -> {
-                    blocks.add(p.selectedBlock());
-                    if (p.alternateBlock() != null) {
-                        blocks.add(p.alternateBlock());
-                    }
-                }
-                case KindPayload.LoopPayload p -> {
-                    if (p.initBlock() != null) {
-                        blocks.add(p.initBlock());
-                    }
-                    blocks.add(p.bodyBlock());
-                    if (p.updateBlock() != null) {
-                        blocks.add(p.updateBlock());
-                    }
-                }
-                case KindPayload.ForEachPayload p -> blocks.add(p.body());
-                case KindPayload.TryCatchPayload p -> {
-                    blocks.add(p.tryBlock());
-                    blocks.add(p.catchBlock());
-                }
-                case KindPayload.CallPayload p -> {
-                    if (p.bodyBlock() != null) {
-                        blocks.add(p.bodyBlock());
-                    }
-                }
-                case KindPayload.BindingAllocPayload p -> blocks.add(p.scope());
-                case KindPayload.FunctionAdaptPayload p -> {
-                    if (p.source() instanceof deal.semantic.ir.AdaptSourceRef.Thunk thunk) {
-                        blocks.add(thunk.blockId());
-                    }
-                }
-                case KindPayload.ClosureNewPayload p -> blocks.add(p.binding().blockId());
-                default -> {
-                    // No block position.
-                }
-            }
-            return blocks;
-        }
-
-        // =====================================================================
         // 5. JSON_LAYOUT_COHERENCE
         // =====================================================================
 
@@ -2240,16 +1800,6 @@ public final class ClassConstructionValidator {
                     default -> {
                         // Not a JSON op.
                     }
-                }
-            }
-            // No orphan JsonDefaultChildTable entries: every key is a
-            // produced JSON_FROM_CLASS op.
-            for (OpId key : jsonDefaults.defaultChildren().keySet()) {
-                SemanticOp op = op(key);
-                if (op == null || op.kind() != SemanticOpKind.JSON_FROM_CLASS) {
-                    return fail(JSON_LAYOUT_COHERENCE, "the JsonDefaultChildTable "
-                        + "records a default-child entry for " + key + " which is not "
-                        + "a produced JSON_FROM_CLASS op of the unit", op);
                 }
             }
             return Optional.empty();
@@ -2279,54 +1829,7 @@ public final class ClassConstructionValidator {
                     + "the payload layout must be exactly the unit's own layout of "
                     + payload.layout().classId(), op);
             }
-            // The per-site default children: exactly the class's
-            // required-present defaulted fields' CLASS_DEFAULT op ids in
-            // declaration order.
-            List<String> expected = new ArrayList<>();
-            for (ClassLayout.FieldLayout field : layout.fields()) {
-                if (field.required() && defaultOp(layout.classId(), field.name())
-                        != null) {
-                    expected.add(field.name());
-                }
-            }
-            List<OpId> children = jsonDefaults.childrenOf(op.opId());
-            if (children == null) {
-                children = List.of();
-            }
-            if (children.size() != expected.size()) {
-                return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
-                    + " records " + children.size() + " per-site CLASS_DEFAULT "
-                    + "children for " + expected.size() + " required-present defaulted "
-                    + "fields: the pinned table entry lists exactly those fields' op "
-                    + "ids in declaration order", op);
-            }
-            for (int i = 0; i < expected.size(); i++) {
-                SemanticOp child = op(children.get(i));
-                if (child == null) {
-                    return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
-                        + " lists CLASS_DEFAULT child " + children.get(i) + " (field '"
-                        + expected.get(i) + "') which is not a produced op of the unit", op);
-                }
-                if (child.kind() != SemanticOpKind.CLASS_DEFAULT) {
-                    return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
-                        + " lists child " + children.get(i) + " of kind " + child.kind()
-                        + " for field '" + expected.get(i) + "', not CLASS_DEFAULT", child);
-                }
-                KindPayload.ClassDefaultPayload childPayload =
-                    (KindPayload.ClassDefaultPayload) child.payload();
-                if (!childPayload.classId().equals(layout.classId())
-                        || !childPayload.field().equals(expected.get(i))) {
-                    return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
-                        + " lists child " + children.get(i) + " for "
-                        + childPayload.classId() + "." + childPayload.field() + ", not "
-                        + layout.classId() + "." + expected.get(i), child);
-                }
-                if (child.failurePolicy() != FailurePolicyId.NO_DEAL_FAILURE) {
-                    return fail(JSON_LAYOUT_COHERENCE, "JSON_FROM_CLASS " + op.opId()
-                        + " lists CLASS_DEFAULT child " + children.get(i) + " carrying "
-                        + "policy " + child.failurePolicy() + ", not NO_DEAL_FAILURE", child);
-                }
-            }
+
             return checkNestedJsonable(layout, new LinkedHashSet<>());
         }
 

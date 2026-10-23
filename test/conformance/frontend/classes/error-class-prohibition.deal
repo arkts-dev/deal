@@ -3,6 +3,6 @@
 // @expected: compile-error E4006
 // @features: classes, error-prohibition
 
-class Error { message: string = ""; }
+class Error { message: string; }
 
 export function main(): null { return null; }

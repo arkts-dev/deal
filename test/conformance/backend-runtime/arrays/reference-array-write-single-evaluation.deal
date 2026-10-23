@@ -4,8 +4,8 @@
 // @features: number[], runtime, v1.2
 
 class Log {
-  seq: number[] = [];
-  buf: number[] = [0, 0, 0, 0];
+  seq: number[];
+  buf: number[];
 }
 
 function record(l: Log, tag: number): number {

@@ -127,8 +127,7 @@ public record RuntimeDeclarationSurface(
     public record RuntimeDeclaredField(
             String name,
             RuntimeDescriptor descriptor,
-            boolean required,
-            boolean hasDefault) {
+            boolean required) {
 
         public RuntimeDeclaredField {
             Objects.requireNonNull(name, "name must not be null");

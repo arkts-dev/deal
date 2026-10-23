@@ -5,14 +5,14 @@
 
 // @jsonable
 export class Address {
-  city: string = "";
-  zip: number = 0;
+  city: string;
+  zip: number;
 }
 
 // @jsonable
 export class Person {
-  name: string = "";
-  home: Address = {};
+  name: string;
+  home: Address;
 }
 
 export function test_nested(): null {

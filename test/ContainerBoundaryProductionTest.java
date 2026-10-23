@@ -632,7 +632,7 @@ public class ContainerBoundaryProductionTest {
     private static final String INTEGRAL_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
         export class Doc {
-          values: number[] = [];
+          values: number[];
         }
 
         export function main(): null {
@@ -656,7 +656,7 @@ public class ContainerBoundaryProductionTest {
     private static final String NESTED_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
         export class Nest {
-          values: table = {};
+          values: table;
         }
 
         export function main(): null {
@@ -679,7 +679,7 @@ public class ContainerBoundaryProductionTest {
     private static final String NESTED_INNER_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
         export class Deep {
-          values: number[][] = [];
+          values: number[][];
         }
 
         export function main(): null {
@@ -703,7 +703,7 @@ public class ContainerBoundaryProductionTest {
     private static final String NESTED_ADMISSION_SOURCE = """
         // @jsonable
         export class Ok {
-          values: table = {};
+          values: table;
         }
 
         export function main(): null {
@@ -778,7 +778,7 @@ public class ContainerBoundaryProductionTest {
         }
 
         class Box {
-          f: (x: number) => number = identity;
+          f: (x: number) => number;
         }
 
         function asString(x: number): string {
@@ -803,7 +803,7 @@ public class ContainerBoundaryProductionTest {
         }
 
         class Box {
-          f: (x: number) => number = identity;
+          f: (x: number) => number;
         }
 
         function asString(x: number): string {
@@ -908,7 +908,7 @@ public class ContainerBoundaryProductionTest {
         }
 
         class Box {
-          fs: ((x: number) => number)[] = [];
+          fs: ((x: number) => number)[];
         }
 
         export function main(): null {

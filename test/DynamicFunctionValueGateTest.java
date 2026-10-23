@@ -46,7 +46,6 @@ import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryRegistry;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
@@ -392,8 +391,7 @@ public class DynamicFunctionValueGateTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), registry, ops,
-            table, unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            table, unit.classFactories(), unit.classBindingFacts());
     }
 
     private static LoweredModuleUnit withRegistry(LoweredModuleUnit unit,
@@ -447,7 +445,7 @@ public class DynamicFunctionValueGateTest {
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), registry, ops,
             table,
             new ClassFactoryRegistry(Map.of()),
-            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+            ClassBindingFacts.empty());
     }
 
     private static List<SemanticOp> appendOp(List<SemanticOp> ops, SemanticOp op) {

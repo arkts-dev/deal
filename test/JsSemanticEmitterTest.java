@@ -870,7 +870,7 @@ public class JsSemanticEmitterTest {
             import * as lib from "./lib";
 
             export class Counter {
-              n: number = 0;
+              n: number;
             }
 
             export function attempt(c: Counter, t: table): number {
@@ -996,7 +996,7 @@ public class JsSemanticEmitterTest {
         Path out = stage(fixture, "maps-foreign", true);
         Files.writeString(out.resolve("driver.js"), """
             const app = require("./app.js");
-            const counter = app.Counter$new({}, "d.js", 1, 1);
+            const counter = app.Counter$new({n:0}, "d.js", 1, 1);
             const out = {before: counter.n, errors: []};
             for (let i = 0; i < 2; i++) {
               try {
@@ -1926,13 +1926,13 @@ public class JsSemanticEmitterTest {
             import * as lib from "./lib";
 
             class Bag {
-              items: number[] = [];
-              fresh: Item = makeItem();
+              items: number[];
+              fresh: Item;
               opt?: string;
             }
 
             class Item {
-              v: number = 0;
+              v: number;
             }
 
             function makeItem(): Item {
@@ -1947,22 +1947,22 @@ public class JsSemanticEmitterTest {
             }
 
             class FailOrder {
-              first: number = defaultBoom();
-              second: number = 0;
+              first: number;
+              second: number;
             }
 
             // @jsonable
             export class Form {
-              name: string = "";
+              name: string;
               nick?: string;
-              score: number = 0.0;
-              point: lib.Point = {};
-              many: lib.Point[] = [];
+              score: number;
+              point: lib.Point;
+              many: lib.Point[];
             }
 
             export class Fault {
-              err: Error = {};
-              errs: Error[] = [];
+              err: Error;
+              errs: Error[];
             }
 
             export function main(): null {
@@ -1974,30 +1974,30 @@ public class JsSemanticEmitterTest {
               let suppliedBoom: () => number = function(): number {
                 throw { code: "SUPPLIED_ORDER", message: "supplied expression first" };
               };
-              let a: Bag = {};
-              let b: Bag = {};
+              let a: Bag = {items: [], fresh: makeItem()};
+              let b: Bag = {items: [], fresh: makeItem()};
               a.items[0] = 5;
               if (b.items.length !== 0) { throw { code: "TEST_FAIL", message: "shared array default" }; }
               a.fresh.v = 1;
               if (b.fresh.v !== 7) { throw { code: "TEST_FAIL", message: "call default not re-executed" }; }
               if (a.fresh.v !== 1) { throw { code: "TEST_FAIL", message: "call default not retained" }; }
-              let c: Bag = { items: [9], opt: "s" };
+              let c: Bag = { items: [9], fresh: makeItem(), opt: "s" };
               if (c.items[0] !== 9) { throw { code: "TEST_FAIL", message: "provided skip" }; }
               if (!has(c.opt)) { throw { code: "TEST_FAIL", message: "provided optional" }; }
               delete c.opt;
               if (has(c.opt)) { throw { code: "TEST_FAIL", message: "deleted optional" }; }
-              let p1: lib.Point = { x: 2 };
-              let p2: lib.Point = {};
+              let p1: lib.Point = { x: 2, y: 0 };
+              let p2: lib.Point = { x: 0, y: 0 };
               if (p1.y !== 0 || p2.x !== 0) { throw { code: "TEST_FAIL", message: "provider defaults" }; }
               if (lib.Point$toJson(p1) !== "{\\"x\\":2.0,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "provider toJson" }; }
               // A source literal evaluates its supplied expressions
               // left-to-right, then applies the omitted required defaults.
-              let ordered: lib.Point = { x: note(1), opt: note(2) };
+              let ordered: lib.Point = { x: note(1), opt: note(2), y: 0 };
               if (order.length !== 2 || order[0] !== 1 || order[1] !== 2) { throw { code: "TEST_FAIL", message: "supplied order" }; }
               if (ordered.y !== 0) { throw { code: "TEST_FAIL", message: "default after supplied" }; }
               let orderCode: string = "";
               try {
-                let failed: FailOrder = { second: suppliedBoom() };
+                let failed: FailOrder = { second: suppliedBoom(), first: defaultBoom() };
                 orderCode = "NOFAIL";
               } catch (e) {
                 orderCode = e.code;
@@ -2006,9 +2006,9 @@ public class JsSemanticEmitterTest {
               // The optional-nullable three states survive source literals and
               // the generated helpers: missing stays absent, a present null
               // stays present-null, a present value stays present.
-              let pm: lib.Point = { x: 1 };
-              let pn: lib.Point = { x: 1, opt: null };
-              let pv: lib.Point = { x: 1, opt: 2 };
+              let pm: lib.Point = { x: 1, y: 0 };
+              let pn: lib.Point = { x: 1, y: 0, opt: null };
+              let pv: lib.Point = { x: 1, y: 0, opt: 2 };
               if (has(pm.opt)) { throw { code: "TEST_FAIL", message: "missing optional" }; }
               if (!has(pn.opt)) { throw { code: "TEST_FAIL", message: "present null" }; }
               if (pn.opt !== null) { throw { code: "TEST_FAIL", message: "present null read" }; }
@@ -2016,15 +2016,15 @@ public class JsSemanticEmitterTest {
               if (lib.Point$toJson(pm) !== "{\\"x\\":1.0,\\"y\\":0}") { throw { code: "TEST_FAIL", message: "missing optional toJson" }; }
               if (lib.Point$toJson(pn) !== "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}") { throw { code: "TEST_FAIL", message: "present null toJson" }; }
               if (lib.Point$toJson(pv) !== "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":2.0}") { throw { code: "TEST_FAIL", message: "present value toJson" }; }
-              let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0}");
-              let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"opt\\":null}");
+              let dm: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"y\\":0}");
+              let dn: lib.Point | null = lib.Point$fromJson("{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}");
               if (dm !== null) {
                 if (has(dm.opt)) { throw { code: "TEST_FAIL", message: "decoded missing optional" }; }
               }
               if (dn !== null) {
                 if (!has(dn.opt)) { throw { code: "TEST_FAIL", message: "decoded present null" }; }
               }
-              let f: Form = { name: "Ada", point: { x: 3 }, many: [{ y: 4 }] };
+              let f: Form = { name: "Ada", score: 0, point: { x: 3, y: 0 }, many: [{ x: 0, y: 4 }] };
               let s: string = Form$toJson(f);
               let g: Form | null = Form$fromJson(s);
               if (g !== null) {
@@ -2047,8 +2047,8 @@ public class JsSemanticEmitterTest {
             """, Map.of("src/lib.deal", """
                 // @jsonable
                 export class Point {
-                  x: number = 0;
-                  y: number = 0;
+                  x: number;
+                  y: number;
                   opt?: number | null;
                 }
                 """));
@@ -2115,7 +2115,7 @@ public class JsSemanticEmitterTest {
             "a SHARED_FACTORY construction transfers the owner's defaults"
                 + " through the private linkage");
         check(appSource != null && appSource.contains(
-                "$rt.jsonFromJson(\"@src/app.deal/Form\", $fForm, null,")
+                "$rt.jsonFromJson(\"@src/app.deal/Form\", $fForm,")
                 && appSource.contains(
                     "$rt.readModule(\"lib\", \"Point$fields\")"),
             "the generated JSON helper drives the canonical walker over the"
@@ -2204,15 +2204,15 @@ public class JsSemanticEmitterTest {
               __APP_FACTORY_ID__, []);
             out.transfer = {keys: Object.keys(transfer),
               kind: transfer.$kind, cls: transfer.$classname,
-              nested: transfer.point.$classname,
               calls: factoryCalls - beforeTransfer};
             // The public C$new performs full construction (provided defaults).
-            const made = app.Form$new({name: "Eve"}, "d.js", 1, 1);
+            const made = app.Form$new({name: "Eve", score: 0,
+              point: lib.Point$new({x: 0, y: 0}), many: []}, "d.js", 1, 1);
             out.made = {name: made.name, score: made.score,
               pointX: made.point.x, manyLen: made.many.length,
               kind: made.$kind, cls: made.$classname};
             // An imported provider constructs through its own public C$new.
-            const pt = lib.Point$new({x: 5}, "d.js", 2, 2);
+            const pt = lib.Point$new({x: 5, y: 0}, "d.js", 2, 2);
             out.point = {x: pt.x, y: pt.y};
             try {
               app.Form$new({zz: 1}, "d.js", 3, 3);
@@ -2222,7 +2222,8 @@ public class JsSemanticEmitterTest {
             }
             // The provided input is never mutated and a failed construction
             // publishes no instance; an omitted origin stays absent.
-            const given = {name: "Ada"};
+            const given = {name: "Ada", score: 0,
+              point: lib.Point$new({x: 0, y: 0}), many: []};
             const snapshot = JSON.stringify(given);
             const madeGiven = app.Form$new(given, "d.js", 40, 40);
             out.given = {unchanged: JSON.stringify(given) === snapshot,
@@ -2243,7 +2244,7 @@ public class JsSemanticEmitterTest {
             }
             out.bad = {unchanged: JSON.stringify(bad) === badSnapshot,
               kind: bad.$kind, calls: factoryCalls - beforeBad};
-            const typed = {name: 5};
+            const typed = {name: 5, score: 0, point: pt, many: []};
             const typedSnapshot = JSON.stringify(typed);
             try {
               app.Form$new(typed, "d.js", 42, 42);
@@ -2264,27 +2265,30 @@ public class JsSemanticEmitterTest {
             }
             out.absent = absent;
             // The optional-nullable three states through the public helpers.
-            const nilStates = [lib.Point$new({x: 1}, "d.js", 10, 10),
-              lib.Point$new({x: 1, opt: null}, "d.js", 11, 11),
-              lib.Point$new({x: 1, opt: 2}, "d.js", 12, 12)];
+            const nilStates = [lib.Point$new({x: 1, y: 0}, "d.js", 10, 10),
+              lib.Point$new({x: 1, y: 0, opt: null}, "d.js", 11, 11),
+              lib.Point$new({x: 1, y: 0, opt: 2}, "d.js", 12, 12)];
             out.nilStates = nilStates.map(function (p) {
               return [rt.has(p, "opt"), rt.optRead(p.opt)];
             });
             out.nilJson = nilStates.map(function (p, i) {
               return lib.Point$toJson.$f(p, "d.js", 20 + i, 20 + i);
             });
-            const decodedMissing = lib.Point$fromJson.$f("{\\"x\\":1.0}",
+            const decodedMissing = lib.Point$fromJson.$f("{\\"x\\":1.0,\\"y\\":0}",
               "d.js", 30, 30);
             const decodedNull = lib.Point$fromJson.$f(
-              "{\\"x\\":1.0,\\"opt\\":null}", "d.js", 31, 31);
+              "{\\"x\\":1.0,\\"y\\":0,\\"opt\\":null}", "d.js", 31, 31);
             out.decodedStates = [
               [rt.has(decodedMissing, "opt"),
                 rt.optRead(decodedMissing.opt)],
               [rt.has(decodedNull, "opt"), rt.optRead(decodedNull.opt)]];
             // The builtin Error identity is exactly Error, and each
             // construction receives its own Error[] default array.
-            const fault = app.Fault$new({}, "d.js", 50, 50);
-            const secondFault = app.Fault$new({}, "d.js", 51, 51);
+            const error = rt.classPlan("Error", [
+              {name:"code",descriptor:"string",optional:false},
+              {name:"message",descriptor:"string",optional:false}], {code:"",message:""});
+            const fault = app.Fault$new({err:error,errs:[]}, "d.js", 50, 50);
+            const secondFault = app.Fault$new({err:error,errs:[]}, "d.js", 51, 51);
             out.fault = {errKind: fault.err.$kind,
               errCls: fault.err.$classname, code: fault.err.code,
               errsLen: fault.errs.length,
@@ -2341,23 +2345,18 @@ public class JsSemanticEmitterTest {
             "the generated JSON helpers are function wrappers carrying the"
                 + " exact declared signatures and only jsonable classes carry"
                 + " C$fields: " + run.output());
-        check(run.output().contains("\"fieldRoles\":[\"name,jtype,optional,"
-                + "nullable,hasDefault,evaluator\",\"name,jtype,optional,"
-                + "nullable,hasDefault\",\"name,jtype,optional,nullable,"
-                + "hasDefault,evaluator\",\"name,jtype,className,fields,"
-                + "optional,nullable,hasDefault,evaluator\",\"name,jtype,"
-                + "element,optional,nullable,hasDefault,evaluator\"]"),
+        check(run.output().contains("\"fieldRoles\":[\"name,jtype,optional,nullable\","
+                + "\"name,jtype,optional,nullable\",\"name,jtype,optional,nullable\","
+                + "\"name,jtype,className,fields,optional,nullable\","
+                + "\"name,jtype,element,optional,nullable\"]"),
             "the descriptor array keeps the pinned per-role keys in declaration"
                 + " order: " + run.output());
         check(run.output().contains("\"factoryCallsAtRequire\":0"),
             "registration executes no default (no factory call during init): "
                 + run.output());
-        check(run.output().contains("\"transfer\":{\"keys\":[\"name\","
-                + "\"score\",\"point\",\"many\"],\"nested\":"
-                + "\"@src/lib.deal/Point\",\"calls\":1}"),
-            "the defaults-only transfer carries the omitted required defaults"
-                + " in declaration order, no optional and no public tag, and"
-                + " runs its nested provider default: " + run.output());
+        check(run.output().contains("\"transfer\":{\"keys\":[],\"calls\":0}"),
+            "the private provider transfer evaluates no initializer and carries no default fields: "
+                + run.output());
         check(run.output().contains("\"given\":{\"unchanged\":true,"
                 + "\"madeName\":\"Ada\",\"madePoint\":\"@src/lib.deal/Point\"}"),
             "C$new copies the provided input without mutating it: "
@@ -2570,25 +2569,25 @@ public class JsSemanticEmitterTest {
             import * as lib from "./lib";
 
             class Bag {
-              items: lib.Point[] = [];
-              p: lib.Point = {};
+              items: lib.Point[];
+              p: lib.Point;
               opt?: string;
               np?: lib.Point | null;
             }
 
             // @jsonable
             export class Item {
-              v: number = 0;
-              data: table = {};
+              v: number;
+              data: table;
             }
 
             // @jsonable
             export class Form {
-              name: string = "";
-              point: lib.Point = {};
-              many: lib.Point[] = [];
+              name: string;
+              point: lib.Point;
+              many: lib.Point[];
               node?: Item | null;
-              data: table = {};
+              data: table;
             }
 
             function b(v: boolean): string {
@@ -2618,12 +2617,12 @@ public class JsSemanticEmitterTest {
 
             function aliasHelper(): string {
               let a: (v: Item) => string = Item$toJson;
-              return a({ v: 7 });
+              return a({ v: 7, data: {} });
             }
 
             export function directHelper(): string {
               let first: string = aliasHelper();
-              return Item$toJson({ v: 1 }) + "|" + first;
+              return Item$toJson({ v: 1, data: {} }) + "|" + first;
             }
 
             export function aliasReassign(): number {
@@ -2658,7 +2657,7 @@ public class JsSemanticEmitterTest {
             }
 
             export function presence(): string {
-              let bag: Bag = {};
+              let bag: Bag = {items: [], p: {x: 0, y: 0}};
               let out: string = "";
               out = out + b(has(bag.opt)) + b(bag.opt === null);
               bag.opt = "x";
@@ -2671,7 +2670,7 @@ public class JsSemanticEmitterTest {
             }
 
             export function importedFields(): string {
-              let p: lib.Point = {};
+              let p: lib.Point = {x: 0, y: 0};
               let out: string = b(has(p.opt)) + b(p.opt === null);
               delete p.opt;
               out = out + b(has(p.opt));
@@ -2687,19 +2686,19 @@ public class JsSemanticEmitterTest {
             }
 
             export function chains(): string {
-              let bag: Bag = {};
-              bag.items = [{ x: 1 }];
+              let bag: Bag = {items: [], p: {x: 0, y: 0}};
+              bag.items = [{ x: 1, y: 0 }];
               let notes: number[] = [];
               function note(n: number): number {
                 notes[notes.length] = n;
                 return n;
               }
-              bag.items[note(0)] = { y: note(2) };
+              bag.items[note(0)] = { y: note(2), x: 0 };
               let after: string = b(bag.items[0].x === 0)
                 + b(bag.items[0].y === 2) + b(notes.length === 2);
               let failed: string = "COMMITTED";
               try {
-                bag.items[note(3)] = { y: note(4) };
+                bag.items[note(3)] = { y: note(4), x: 0 };
               } catch (e) {
                 failed = e.code;
               }
@@ -2709,20 +2708,20 @@ public class JsSemanticEmitterTest {
             }
 
             export function fieldWrites(): string {
-              let bag: Bag = {};
-              bag.p = { x: 4 };
-              bag.items = [{ y: 5 }];
+              let bag: Bag = {items: [], p: {x: 0, y: 0}};
+              bag.p = { x: 4, y: 0 };
+              bag.items = [{ x: 0, y: 5 }];
               return b(bag.p.x === 4) + b(bag.p.y === 0)
                 + b(bag.items.length === 1) + b(bag.items[0].x === 0)
                 + b(bag.items[0].y === 5);
             }
 
             export function jsonStates(): string {
-              let missing: Form | null = Form$fromJson("{\\"name\\":\\"A\\"}");
+              let missing: Form | null = Form$fromJson("{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{}}");
               let nil: Form | null = Form$fromJson(
-                "{\\"name\\":\\"A\\",\\"node\\":null}");
+                "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{},\\"node\\":null}");
               let value: Form | null = Form$fromJson(
-                "{\\"name\\":\\"A\\",\\"node\\":{\\"v\\":5.0}}");
+                "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"many\\":[],\\"data\\":{},\\"node\\":{\\"v\\":5.0,\\"data\\":{}}}");
               let out: string = "";
               if (missing !== null) {
                 out = out + b(has(missing.node)) + Form$toJson(missing);
@@ -2741,12 +2740,12 @@ public class JsSemanticEmitterTest {
               out = out + b(Form$fromJson("42") !== null);
               out = out + b(Form$fromJson("null") !== null);
               out = out + b(Form$fromJson(
-                "{\\"many\\":[{\\"x\\":1.0},{\\"y\\":2.0}]}") !== null);
+                "{\\"name\\":\\"A\\",\\"point\\":{\\"x\\":0,\\"y\\":0},\\"data\\":{},\\"many\\":[{\\"x\\":1.0,\\"y\\":0},{\\"x\\":0,\\"y\\":2.0}]}") !== null);
               return out;
             }
 
             export function deepChain(links: number): string {
-              let form: Form = {};
+              let form: Form = {name: "", point: {x: 0, y: 0}, many: [], data: {}};
               let cur: table = form.data;
               let i: number = 0;
               while (i < links) {
@@ -2770,7 +2769,7 @@ public class JsSemanticEmitterTest {
             }
 
             export function toJsonFailure(): string {
-              let item: Item = { v: 1 };
+              let item: Item = { v: 1, data: {} };
               let f: (n: number) => number = function(n: number): number {
                 return n;
               };
@@ -2780,7 +2779,7 @@ public class JsSemanticEmitterTest {
             }
 
             export function toJsonCycle(): string {
-              let item: Item = { v: 1 };
+              let item: Item = { v: 1, data: {} };
               item.data.self = item.data;
               return Item$toJson(item);
             }
@@ -2808,8 +2807,8 @@ public class JsSemanticEmitterTest {
             Map.of("src/lib.deal", """
                 // @jsonable
                 export class Point {
-                  x: number = 0;
-                  y: number = 0;
+                  x: number;
+                  y: number;
                   opt?: number | null;
                 }
                 """));
@@ -4036,7 +4035,7 @@ public class JsSemanticEmitterTest {
     /** The declared host module of the HOST-surface drives. */
     private static final String HOST_CFG_DECLARATION = """
         export class Endpoint {
-          path: string = "";
+          path: string;
           port?: number;
         }
 
@@ -4188,14 +4187,14 @@ public class JsSemanticEmitterTest {
             "a declared class export carries its identity and field metadata"
                 + " in the declared map: " + app);
         check(app.contains("{ name: \"path\", $d: \"string\", optional:"
-                + " false, nullable: false, hasDefault: true }"),
+                + " false, nullable: false }"),
             "the declared field entry carries the structural descriptor and"
-                + " the optional/nullable/has-default flags: " + app);
+                + " the optional/nullable flags: " + app);
         check(app.contains("{ name: \"port\", $d: \"number\", optional: true,"
-                + " nullable: false, hasDefault: false }"),
+                + " nullable: false }"),
             "the optional declared field entry projects the !required flag");
         check(app.contains("{ name: \"tags\", $d: \"[string]\", optional:"
-                + " true, nullable: false, hasDefault: false }"),
+                + " true, nullable: false }"),
             "the array-typed declared field carries its structural array"
                 + " descriptor");
         check(app.contains("{ $k: \"function\", $d: \"()->number\" }"),
@@ -4689,10 +4688,10 @@ public class JsSemanticEmitterTest {
         Path declaration = root.resolve("src/cfg.d.deal").toAbsolutePath();
         writeFileIn(root, "src/cfg.d.deal", """
             export class Endpoint {
-              path: string = "";
+              path: string;
               port?: number;
-              tag: string = "t";
-              weight: number | null = null;
+              tag: string;
+              weight: number | null;
             }
 
             export function zebra(): number;
@@ -4740,11 +4739,6 @@ public class JsSemanticEmitterTest {
                 .map(RuntimeDeclarationSurface.RuntimeDeclaredField::required)
                 .toList(),
             "the required flag is the projected !optional fact");
-        checkEq(List.of(true, false, true, true),
-            endpoint.fields().stream()
-                .map(RuntimeDeclarationSurface.RuntimeDeclaredField::hasDefault)
-                .toList(),
-            "the has-default flag is the projected declaration fact");
         checkEq(List.of("string", "number", "string", "?number"),
             endpoint.fields().stream()
                 .map(f -> f.descriptor().canonicalSpecText())

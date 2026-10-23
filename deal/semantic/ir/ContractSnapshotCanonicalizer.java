@@ -617,7 +617,7 @@ public final class ContractSnapshotCanonicalizer {
     public static CanonicalJson.Value fieldLayoutJson(ClassLayout.FieldLayout field) {
         Objects.requireNonNull(field, "field must not be null");
         return CanonicalJson.obj(
-            CanonicalJson.e("defaultOwner", CanonicalJson.str(field.defaultOwner().name())),
+            CanonicalJson.e("constructionProvider", CanonicalJson.str(field.constructionProvider().name())),
             CanonicalJson.e("descriptor", descriptorText(field.descriptor())),
             CanonicalJson.e("name", CanonicalJson.str(field.name())),
             CanonicalJson.e("required", CanonicalJson.bool(field.required())));
@@ -885,17 +885,12 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("loopId", semanticIdJson(p.loopId())));
             case KindPayload.DiscardPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("value", semanticIdJson(p.value())));
-            case KindPayload.ClassDefaultPayload p -> CanonicalJson.obj(
-                CanonicalJson.e("classId", semanticIdJson(p.classId())),
-                CanonicalJson.e("defaultBlock", semanticIdJson(p.defaultBlock())),
-                CanonicalJson.e("field", CanonicalJson.str(p.field())));
+
             case KindPayload.ClassNewPayload p -> CanonicalJson.obj(
-                CanonicalJson.e("classDefaultOpIds", CanonicalJson.arr(
-                    p.classDefaultOpIds().stream().map(ContractSnapshotCanonicalizer::semanticIdJson).toList())),
                 CanonicalJson.e("classFactoryRef", p.classFactoryRef() == null
                     ? CanonicalJson.nullValue() : semanticIdJson(p.classFactoryRef())),
                 CanonicalJson.e("classId", semanticIdJson(p.classId())),
-                CanonicalJson.e("defaultOwner", CanonicalJson.str(p.defaultOwner().name())),
+                CanonicalJson.e("constructionProvider", CanonicalJson.str(p.constructionProvider().name())),
                 CanonicalJson.e("fieldBoundaries", CanonicalJson.arr(
                     p.fieldBoundaries().stream().map(ContractSnapshotCanonicalizer::fieldBoundaryJson).toList())),
                 CanonicalJson.e("layout", layoutJson(p.layout())),
@@ -903,8 +898,6 @@ public final class ContractSnapshotCanonicalizer {
                     p.providedFields().stream().map(ContractSnapshotCanonicalizer::providedFieldJson).toList())));
             case KindPayload.ClassFactoryPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("callerOpRef", semanticIdJson(p.callerOpRef())),
-                CanonicalJson.e("classDefaultOpIds", CanonicalJson.arr(
-                    p.classDefaultOpIds().stream().map(ContractSnapshotCanonicalizer::semanticIdJson).toList())),
                 CanonicalJson.e("classId", semanticIdJson(p.classId())));
             case KindPayload.FieldReadPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("classFactoryRef", p.classFactoryRef() == null
@@ -1058,7 +1051,7 @@ public final class ContractSnapshotCanonicalizer {
         checkKeys(obj, "formatVersion", "semanticProfile", "moduleId", "interfaceHash",
             "loweringContextHash", "requiredCapabilities", "constructCoverage",
             "classLayouts", "functions", "moduleInit", "exportPlan", "functionBindings",
-            "ops", "bodyTable", "classFactories", "jsonDefaults", "classBindingFacts");
+            "ops", "bodyTable", "classFactories", "classBindingFacts");
         String formatVersion = requireString(obj, "formatVersion");
         if (!LoweredModuleUnit.FORMAT_VERSION.equals(formatVersion)) {
             throw new SemanticIrTextDecodeException(
@@ -1110,11 +1103,10 @@ public final class ContractSnapshotCanonicalizer {
         List<RawOp> ops = parseOps(obj);
         StructuredBodyTable bodyTable = parseBodyTable(obj);
         ClassFactoryRegistry classFactories = parseClassFactories(obj);
-        JsonDefaultChildTable jsonDefaults = parseJsonDefaults(obj);
         ClassBindingFacts classBindingFacts = parseClassBindingFacts(obj);
         return new RawUnit(modulePath, semanticProfile, interfaceHash, loweringContextHash,
             capabilities, coverage, classLayouts, functions, moduleInit, exportPlan,
-            bindings, ops, bodyTable, classFactories, jsonDefaults, classBindingFacts);
+            bindings, ops, bodyTable, classFactories, classBindingFacts);
     }
 
     /** Decodes the complete class-layout registry entries (separate key and contained identity). */
@@ -1139,10 +1131,10 @@ public final class ContractSnapshotCanonicalizer {
             for (int j = 0; j < fieldRows.items().size(); j++) {
                 String fieldWhere = where + ".layout.fields[" + j + "]";
                 CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j), fieldWhere);
-                checkKeys(field, "defaultOwner", "descriptor", "name", "required");
+                checkKeys(field, "constructionProvider", "descriptor", "name", "required");
                 fields.add(new RawUnit.RawFieldLayout(requireString(field, "name"),
                     requireString(field, "descriptor"), requireBool(field, "required"),
-                    requireString(field, "defaultOwner")));
+                    requireString(field, "constructionProvider")));
             }
             classLayouts.add(new RawUnit.RawClassLayout(key,
                 new RawUnit.RawLayout(classId, fields)));
@@ -1340,31 +1332,6 @@ public final class ContractSnapshotCanonicalizer {
         return new ClassFactoryRegistry(factories);
     }
 
-    /** Decodes the JSON-producing op → ordered CLASS_DEFAULT children rows. */
-    private static JsonDefaultChildTable parseJsonDefaults(CanonicalJson.Obj obj) {
-        CanonicalJson.Arr rows = requireArray(obj, "jsonDefaults");
-        Map<OpId, List<OpId>> defaultChildren = new LinkedHashMap<>();
-        for (int i = 0; i < rows.items().size(); i++) {
-            String where = "jsonDefaults[" + i + "]";
-            CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
-            checkKeys(row, "jsonFromClassOp", "classDefaultOps");
-            OpId jsonFromClassOp = parseOpId(requireObject(row, "jsonFromClassOp"));
-            if (defaultChildren.containsKey(jsonFromClassOp)) {
-                throw new SemanticIrTextDecodeException(
-                    "duplicate jsonDefaults entry jsonFromClassOp " + jsonFromClassOp
-                        + " (" + where + ")");
-            }
-            List<OpId> children = new ArrayList<>();
-            CanonicalJson.Arr childRows = requireArray(row, "classDefaultOps");
-            for (int j = 0; j < childRows.items().size(); j++) {
-                children.add(parseOpId(requireObjectValue(childRows.items().get(j),
-                    where + ".classDefaultOps[" + j + "]")));
-            }
-            defaultChildren.put(jsonFromClassOp, children);
-        }
-        return new JsonDefaultChildTable(defaultChildren);
-    }
-
     /** Decodes the parameter/import initialization facts. */
     private static ClassBindingFacts parseClassBindingFacts(CanonicalJson.Obj obj) {
         CanonicalJson.Obj facts = requireObject(obj, "classBindingFacts");
@@ -1541,11 +1508,10 @@ public final class ContractSnapshotCanonicalizer {
                 String fieldWhere = classWhere + ".fields[" + j + "]";
                 CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j),
                     fieldWhere);
-                checkKeys(field, "name", "declaredType", "optional", "nullable",
-                    "hasDefault");
+                checkKeys(field, "name", "declaredType", "optional", "nullable");
                 fields.add(new FieldInterface(requireString(field, "name"),
                     requireString(field, "declaredType"), requireBool(field, "optional"),
-                    requireBool(field, "nullable"), requireBool(field, "hasDefault")));
+                    requireBool(field, "nullable")));
             }
             classes.add(new ClassInterface(parseClassId(requireObject(classRow, "classId")),
                 fields, parseClassFactoryId(requireObject(classRow, "constructionEntry"))));
@@ -1577,9 +1543,9 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     /** One closed default-owner name, or the documented transport decode failure. */
-    private static DefaultOwner parseDefaultOwner(String raw, String what) {
+    private static ConstructionProvider parseConstructionProvider(String raw, String what) {
         try {
-            return DefaultOwner.valueOf(raw);
+            return ConstructionProvider.valueOf(raw);
         } catch (IllegalArgumentException e) {
             throw new SemanticIrTextDecodeException(
                 "unknown " + what + " \"" + raw + "\"");
@@ -1629,15 +1595,15 @@ public final class ContractSnapshotCanonicalizer {
                 String fieldWhere = where + ".layout.fields[" + j + "]";
                 CanonicalJson.Obj field = requireObjectValue(fieldRows.items().get(j),
                     fieldWhere);
-                checkKeys(field, "defaultOwner", "descriptor", "name", "required");
+                checkKeys(field, "constructionProvider", "descriptor", "name", "required");
                 fields.add(new ClassLayout.FieldLayout(requireString(field, "name"),
                     parseFieldDescriptor(requireString(field, "descriptor"),
                         fieldWhere + ".descriptor"),
                     requireBool(field, "required"),
-                    parseDefaultOwner(requireString(field, "defaultOwner"),
-                        fieldWhere + ".defaultOwner")));
+                    parseConstructionProvider(requireString(field, "constructionProvider"),
+                        fieldWhere + ".constructionProvider")));
             }
-            DefaultOwner owner = parseDefaultOwner(requireString(row, "owner"),
+            ConstructionProvider owner = parseConstructionProvider(requireString(row, "owner"),
                 where + ".owner");
             try {
                 registrations.put(key, new ClassRegistrationSeeds.ClassRegistration(
@@ -1718,7 +1684,6 @@ public final class ContractSnapshotCanonicalizer {
             CanonicalJson.e("ops", CanonicalJson.arr(ops)),
             CanonicalJson.e("bodyTable", bodyTableJson(unit.bodyTable())),
             CanonicalJson.e("classFactories", classFactoriesJson(unit.classFactories())),
-            CanonicalJson.e("jsonDefaults", jsonDefaultsJson(unit.jsonDefaults())),
             CanonicalJson.e("classBindingFacts", classBindingFactsJson(unit.classBindingFacts())));
     }
 
@@ -1742,7 +1707,7 @@ public final class ContractSnapshotCanonicalizer {
         List<CanonicalJson.Value> fields = new ArrayList<>();
         for (RawUnit.RawFieldLayout field : layout.fields()) {
             fields.add(CanonicalJson.obj(
-                CanonicalJson.e("defaultOwner", CanonicalJson.str(field.defaultOwner())),
+                CanonicalJson.e("constructionProvider", CanonicalJson.str(field.constructionProvider())),
                 CanonicalJson.e("descriptor", CanonicalJson.str(field.descriptor())),
                 CanonicalJson.e("name", CanonicalJson.str(field.name())),
                 CanonicalJson.e("required", CanonicalJson.bool(field.required()))));
@@ -1826,22 +1791,6 @@ public final class ContractSnapshotCanonicalizer {
             rows.add(CanonicalJson.obj(
                 CanonicalJson.e("constructionEntry", semanticIdJson(entry.getKey())),
                 CanonicalJson.e("factoryOp", semanticIdJson(entry.getValue()))));
-        }
-        return CanonicalJson.arr(rows);
-    }
-
-    /** Renders the JSON-producing op → ordered CLASS_DEFAULT child op rows. */
-    public static CanonicalJson.Value jsonDefaultsJson(JsonDefaultChildTable table) {
-        Objects.requireNonNull(table, "table must not be null");
-        List<CanonicalJson.Value> rows = new ArrayList<>();
-        for (Map.Entry<OpId, List<OpId>> entry : table.defaultChildren().entrySet()) {
-            List<CanonicalJson.Value> children = new ArrayList<>();
-            for (OpId child : entry.getValue()) {
-                children.add(semanticIdJson(child));
-            }
-            rows.add(CanonicalJson.obj(
-                CanonicalJson.e("classDefaultOps", CanonicalJson.arr(children)),
-                CanonicalJson.e("jsonFromClassOp", semanticIdJson(entry.getKey()))));
         }
         return CanonicalJson.arr(rows);
     }

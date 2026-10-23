@@ -279,7 +279,7 @@ public class DirectiveTest {
         System.out.println("-- Binding (D4) --");
 
         // Exported class + @jsonable: JSONABLE metadata, no diagnostics.
-        ParseResult r = parse("// @jsonable\nexport class C { x: int = 0; }");
+        ParseResult r = parse("// @jsonable\nexport class C { x: number; }");
         boolean clean = r.diagnostics().isEmpty();
         check(clean, clean ? "" : "export class binding clean: " + r.diagnostics());
         ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
@@ -294,7 +294,7 @@ public class DirectiveTest {
         check(diagOf(r, "E1043") != null, "E1043 for export function");
 
         // Non-exported class: E1043 error, no metadata.
-        r = parse("// @jsonable\nclass C { x: int = 0; }");
+        r = parse("// @jsonable\nclass C { x: number; }");
         check(diagOf(r, "E1043") != null, "E1043 for standalone class");
         ClassDeclaration standalone = (ClassDeclaration) r.program()
             .statements().get(0);
@@ -322,7 +322,7 @@ public class DirectiveTest {
 
         // Invalid metadata never reaches generation: the only jsonable
         // classes are the valid export-class bindings.
-        r = parse("// @jsonable\nclass Bad { x: int = 0; }");
+        r = parse("// @jsonable\nclass Bad { x: number; }");
         check(!((ClassDeclaration) r.program().statements().get(0))
                 .isJsonable(),
             "invalid metadata never applied");
@@ -338,7 +338,7 @@ public class DirectiveTest {
         // @jsonable on an export class in a .d.deal file: no metadata,
         // no E1043, no synthetic C$fromJson/C$toJson; explicit JSON
         // signatures preserved.
-        String decl = "// @jsonable\nexport class C { x: int = 0; }\n"
+        String decl = "// @jsonable\nexport class C { x: number; }\n"
             + "export function C$fromJson(s: string): C | null;\n"
             + "export function C$toJson(c: C): string;";
         ParseResult r = parseFile(decl, "lib.d.deal");
@@ -366,7 +366,7 @@ public class DirectiveTest {
             "non-class attachment in a .d.deal file warns E1043");
 
         // The E1045 argument rule still fires in .d.deal files.
-        r = parseFile("// @jsonable:foo\nexport class C { x: int = 0; }",
+        r = parseFile("// @jsonable:foo\nexport class C { x: number; }",
             "lib.d.deal");
         check(hasError(r, "E1045"),
             "@jsonable:foo in a .d.deal file still produces E1045");

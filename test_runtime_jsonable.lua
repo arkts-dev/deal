@@ -29,7 +29,7 @@ test("json_from_json with number field", function()
   }
   local defaults = { count = 0 }
   local parsed = { count = 42 }
-  local instance = __rt.json_from_json("Counter", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Counter", parsed, fields)
   assert(instance ~= nil)
   assert(instance.count == 42)
   assert(instance[__K.classname] == "Counter")
@@ -42,7 +42,7 @@ test("json_from_json with string field", function()
   }
   local defaults = { name = "" }
   local parsed = { name = "Alice" }
-  local instance = __rt.json_from_json("Person", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Person", parsed, fields)
   assert(instance ~= nil)
   assert(instance.name == "Alice")
 end)
@@ -53,7 +53,7 @@ test("json_from_json with boolean field", function()
   }
   local defaults = { active = false }
   local parsed = { active = true }
-  local instance = __rt.json_from_json("Flag", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Flag", parsed, fields)
   assert(instance ~= nil)
   assert(instance.active == true)
 end)
@@ -64,7 +64,7 @@ test("json_from_json with number field", function()
   }
   local defaults = { price = 0.0 }
   local parsed = { price = 3.14 }
-  local instance = __rt.json_from_json("Item", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Item", parsed, fields)
   assert(instance ~= nil)
   assert(instance.price == 3.14)
 end)
@@ -75,7 +75,7 @@ test("json_from_json with null field", function()
   }
   local defaults = { data = __rt.__NULL }
   local parsed = { data = __rt.__NULL }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.data == __rt.__NULL)
 end)
@@ -86,24 +86,24 @@ test("json_from_json with table field", function()
   }
   local defaults = { meta = {} }
   local parsed = { meta = { key = "value" } }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.meta.key == "value")
 end)
 
 -- ==================== json_from_json: defaults applied ====================
 
-test("json_from_json applies defaults for missing keys", function()
+test("json_from_json rejects missing required keys", function()
   local fields = {
     { name = "a", jtype = "number", optional = false, nullable = false },
     { name = "b", jtype = "string", optional = false, nullable = false }
   }
   local defaults = { a = 10, b = "default" }
   local parsed = { a = 99 }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
-  assert(instance ~= nil)
-  assert(instance.a == 99)
-  assert(instance.b == "default")
+  local instance = __rt.json_from_json("C", parsed, fields)
+  assert(instance == nil)
+  local complete = __rt.json_from_json("C", {a = 99, b = "provided"}, fields)
+  assert(complete.a == 99 and complete.b == "provided")
 end)
 
 test("json_from_json with empty object document applies all defaults", function()
@@ -113,10 +113,10 @@ test("json_from_json with empty object document applies all defaults", function(
   }
   local defaults = { x = 5, y = "hi" }
   local parsed = {}
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
-  assert(instance ~= nil)
-  assert(instance.x == 5)
-  assert(instance.y == "hi")
+  local instance = __rt.json_from_json("C", parsed, fields)
+  assert(instance == nil)
+  local complete = __rt.json_from_json("C", {x = 5, y = "hi"}, fields)
+  assert(complete.x == 5 and complete.y == "hi")
 end)
 
 test("json_from_json rejects a decoded empty array carrier (no []/{} collapse)", function()
@@ -126,7 +126,7 @@ test("json_from_json rejects a decoded empty array carrier (no []/{} collapse)",
   local defaults = { x = 5 }
   -- The std/json decode marks an array carrier even when it is empty, so
   -- the class gate never reads [] as an empty object document.
-  assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 }, fields) == nil)
 end)
 
 -- ==================== json_from_json: defaults deep-copied ====================
@@ -137,9 +137,9 @@ test("json_from_json deep-copies defaults (instances independent)", function()
       element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { items = {1, 2, 3} }
-  local parsed = {}
-  local a = __rt.json_from_json("C", parsed, defaults, fields)
-  local b = __rt.json_from_json("C", parsed, defaults, fields)
+  local parsed = {items = {1, 2, 3}}
+  local a = __rt.json_from_json("C", parsed, fields)
+  local b = __rt.json_from_json("C", parsed, fields)
   a.items[1] = 99
   assert(b.items[1] == 1)
 end)
@@ -149,11 +149,12 @@ test("json_from_json deep-copies nested table defaults", function()
     { name = "data", jtype = "table", optional = false, nullable = false }
   }
   local defaults = { data = { nested = { x = 1 } } }
-  local parsed = {}
-  local a = __rt.json_from_json("C", parsed, defaults, fields)
-  local b = __rt.json_from_json("C", parsed, defaults, fields)
+  local parsed = {data = {nested = {x = 1}}}
+  local a = __rt.json_from_json("C", parsed, fields)
+  local b = __rt.json_from_json("C", {data = {nested = {x = 1}}}, fields)
+  assert(a.data == parsed.data)
   a.data.nested.x = 99
-  assert(b.data.nested.x == 1)
+  assert(parsed.data.nested.x == 99 and b.data.nested.x == 1)
 end)
 
 -- ==================== json_from_json: extra keys rejected ====================
@@ -164,7 +165,7 @@ test("json_from_json rejects extra keys", function()
   }
   local defaults = { name = "" }
   local parsed = { name = "ok", extra = "bad" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance == nil)
 end)
 
@@ -174,7 +175,7 @@ test("json_from_json rejects unknown key with valid known key", function()
   }
   local defaults = { a = 0 }
   local parsed = { a = 1, b = 2 }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance == nil)
 end)
 
@@ -185,7 +186,7 @@ test("json_from_json accepts only known keys (no extras)", function()
   }
   local defaults = { id = 0, name = "" }
   local parsed = { id = 1, name = "test" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.id == 1)
   assert(instance.name == "test")
@@ -197,7 +198,7 @@ test("json_from_json with empty fields array", function()
   local fields = {}
   local defaults = {}
   local parsed = {}
-  local instance = __rt.json_from_json("Empty", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Empty", parsed, fields)
   assert(instance ~= nil)
   assert(instance[__K.classname] == "Empty")
   assert(instance[__K.kind] == "class")
@@ -207,10 +208,10 @@ test("json_from_json with empty fields and defaults", function()
   local fields = {}
   local defaults = { x = 1, y = 2 }
   local parsed = {}
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
-  assert(instance.x == 1)
-  assert(instance.y == 2)
+  assert(instance.x == nil)
+  assert(instance.y == nil)
 end)
 
 -- ==================== json_from_json: optional fields ====================
@@ -222,7 +223,7 @@ test("json_from_json optional field not provided stays nil", function()
   }
   local defaults = { required = "", optional = __rt.__MISSING }
   local parsed = { required = "hi" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.required == "hi")
   assert(instance.optional == nil)
@@ -235,7 +236,7 @@ test("json_from_json optional field provided takes value", function()
   }
   local defaults = { required = "", optional = __rt.__MISSING }
   local parsed = { required = "hi", optional = "there" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.required == "hi")
   assert(instance.optional == "there")
@@ -249,7 +250,7 @@ test("json_from_json nullable field with null value", function()
   }
   local defaults = { bio = __rt.__NULL }
   local parsed = { bio = __rt.__NULL }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.bio == __rt.__NULL)
 end)
@@ -260,20 +261,20 @@ test("json_from_json nullable field with actual value", function()
   }
   local defaults = { bio = __rt.__NULL }
   local parsed = { bio = "hello" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.bio == "hello")
 end)
 
-test("json_from_json nullable field absent keeps default null", function()
+test("json_from_json required nullable field still requires presence", function()
   local fields = {
     { name = "bio", jtype = "string", optional = false, nullable = true }
   }
   local defaults = { bio = __rt.__NULL }
   local parsed = {}
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
-  assert(instance ~= nil)
-  assert(instance.bio == __rt.__NULL)
+  assert(__rt.json_from_json("C", parsed, fields) == nil)
+  local instance = __rt.json_from_json("C", {bio = __rt.__NULL}, fields)
+  assert(instance ~= nil and instance.bio == __rt.__NULL)
 end)
 
 -- ==================== json_from_json: optional+nullable ====================
@@ -284,7 +285,7 @@ test("json_from_json optional+nullable: missing → nil", function()
   }
   local defaults = { tag = __rt.__MISSING }
   local parsed = {}
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.tag == nil)
 end)
@@ -295,7 +296,7 @@ test("json_from_json optional+nullable: null → __NULL", function()
   }
   local defaults = { tag = __rt.__MISSING }
   local parsed = { tag = __rt.__NULL }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.tag == __rt.__NULL)
 end)
@@ -306,7 +307,7 @@ test("json_from_json optional+nullable: value → value", function()
   }
   local defaults = { tag = __rt.__MISSING }
   local parsed = { tag = "important" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.tag == "important")
 end)
@@ -324,7 +325,7 @@ test("json_from_json nested class field", function()
   }
   local parent_defaults = { child = __rt.__MISSING }
   local parsed = { child = { x = 42 } }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance ~= nil)
   assert(instance.child ~= nil)
   assert(instance.child.x == 42)
@@ -343,7 +344,7 @@ test("json_from_json nested class with extra keys fails", function()
   }
   local parent_defaults = { child = __rt.__MISSING }
   local parsed = { child = { x = 42, extra = true } }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance == nil)
 end)
 
@@ -358,7 +359,7 @@ test("json_from_json nested class: non-table value fails", function()
   }
   local parent_defaults = { child = __rt.__MISSING }
   local parsed = { child = "not_a_table" }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance == nil)
 end)
 
@@ -375,7 +376,7 @@ test("json_from_json nullable nested class with null", function()
   }
   local parent_defaults = { child = __rt.__NULL }
   local parsed = { child = __rt.__NULL }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance ~= nil)
   assert(instance.child == __rt.__NULL)
 end)
@@ -389,7 +390,7 @@ test("json_from_json array of ints", function()
   }
   local defaults = { tags = {} }
   local parsed = { tags = {1, 2, 3} }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(#instance.tags == 3)
   assert(instance.tags[1] == 1)
@@ -404,7 +405,7 @@ test("json_from_json array of strings", function()
   }
   local defaults = { names = {} }
   local parsed = { names = {"a", "b", "c"} }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(#instance.names == 3)
   assert(instance.names[1] == "a")
@@ -418,7 +419,7 @@ test("json_from_json empty array", function()
   }
   local defaults = { items = {} }
   local parsed = { items = {} }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(#instance.items == 0)
 end)
@@ -430,7 +431,7 @@ test("json_from_json array: non-table fails", function()
   }
   local defaults = { tags = {} }
   local parsed = { tags = 42 }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance == nil)
 end)
 
@@ -447,7 +448,7 @@ test("json_from_json array of nested classes", function()
   }
   local parent_defaults = { children = {} }
   local parsed = { children = { { val = 1 }, { val = 2 }, { val = 3 } } }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance ~= nil)
   assert(#instance.children == 3)
   assert(instance.children[1].val == 1)
@@ -468,7 +469,7 @@ test("json_from_json array of nested classes: element failure fails parent", fun
   local parent_defaults = { children = {} }
   -- Third element has extra key, should fail
   local parsed = { children = { { val = 1 }, { val = 2 }, { val = 3, extra = true } } }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance == nil)
 end)
 
@@ -482,7 +483,7 @@ test("json_from_json removes __MISSING from instance", function()
   }
   local defaults = { required = "", optional1 = __rt.__MISSING, optional2 = __rt.__MISSING }
   local parsed = { required = "x" }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   -- Verify no __MISSING in instance
   for k, v in pairs(instance) do
@@ -668,14 +669,14 @@ test("optional-nullable roundtrip: missing → missing", function()
     { name = "tag", jtype = "string", optional = true, nullable = true }
   }
   -- Build instance with missing optional field
-  local instance = __rt.class_("C", { tag = __rt.__MISSING }, {})
+  local instance = __rt.class_plan_("C", {{name="tag",descriptor="?string",optional=true}}, {})
   assert(instance.tag == nil)
 
   local serialized = __rt.json_to_json("C", instance, fields)
   -- tag should be omitted
   assert(serialized.tag == nil)
 
-  local roundtripped = __rt.json_from_json("C", serialized, { tag = __rt.__MISSING }, fields)
+  local roundtripped = __rt.json_from_json("C", serialized, fields)
   assert(roundtripped ~= nil)
   assert(roundtripped.tag == nil)
 end)
@@ -685,14 +686,14 @@ test("optional-nullable roundtrip: null → null", function()
     { name = "tag", jtype = "string", optional = true, nullable = true }
   }
   -- Build instance with explicit null
-  local instance = __rt.class_("C", { tag = __rt.__NULL }, { tag = __rt.__NULL })
+  local instance = __rt.class_plan_("C", {{name="tag",descriptor="?string",optional=true}}, {tag=__rt.__NULL})
   assert(instance.tag == __rt.__NULL)
 
   local serialized = __rt.json_to_json("C", instance, fields)
   -- tag should be __NULL
   assert(serialized.tag == __rt.__NULL)
 
-  local roundtripped = __rt.json_from_json("C", serialized, { tag = __rt.__NULL }, fields)
+  local roundtripped = __rt.json_from_json("C", serialized, fields)
   assert(roundtripped ~= nil)
   assert(roundtripped.tag == __rt.__NULL)
 end)
@@ -702,14 +703,14 @@ test("optional-nullable roundtrip: value → value", function()
     { name = "tag", jtype = "string", optional = true, nullable = true }
   }
   -- Build instance with value
-  local instance = __rt.class_("C", { tag = __rt.__MISSING }, { tag = "important" })
+  local instance = __rt.class_plan_("C", {{name="tag",descriptor="?string",optional=true}}, {tag="important"})
   assert(instance.tag == "important")
 
   local serialized = __rt.json_to_json("C", instance, fields)
   -- tag should be the value
   assert(serialized.tag == "important")
 
-  local roundtripped = __rt.json_from_json("C", serialized, { tag = __rt.__MISSING }, fields)
+  local roundtripped = __rt.json_from_json("C", serialized, fields)
   assert(roundtripped ~= nil)
   assert(roundtripped.tag == "important")
 end)
@@ -722,11 +723,11 @@ test("optional-nullable roundtrip: all three states in one instance", function()
     { name = "required", jtype = "string", optional = false, nullable = false }
   }
   -- Construct with all three states
-  local instance = __rt.class_("TriState", {
-    missing_field = __rt.__MISSING,
-    null_field = __rt.__NULL,
-    value_field = __rt.__MISSING,
-    required = ""
+  local instance = __rt.class_plan_("TriState", {
+    {name="missing_field",descriptor="?string",optional=true},
+    {name="null_field",descriptor="?string",optional=true},
+    {name="value_field",descriptor="?string",optional=true},
+    {name="required",descriptor="string",optional=false}
   }, {
     null_field = __rt.__NULL,
     value_field = "hello",
@@ -743,12 +744,7 @@ test("optional-nullable roundtrip: all three states in one instance", function()
   assert(serialized.value_field == "hello")
   assert(serialized.required == "r")
 
-  local roundtripped = __rt.json_from_json("TriState", serialized, {
-    missing_field = __rt.__MISSING,
-    null_field = __rt.__NULL,
-    value_field = __rt.__MISSING,
-    required = ""
-  }, fields)
+  local roundtripped = __rt.json_from_json("TriState", serialized, fields)
   assert(roundtripped ~= nil)
   assert(roundtripped.missing_field == nil)
   assert(roundtripped.null_field == __rt.__NULL)
@@ -772,7 +768,7 @@ test("nested class roundtrip", function()
   local parent_defaults = { name = "", child = __rt.__MISSING }
 
   -- Build nested instance
-  local child = __rt.class_("Child", child_defaults, { x = 99, y = "why" })
+  local child = __rt.class_plan_("Child", {{name="x",descriptor="number",optional=false}, {name="y",descriptor="string",optional=false}}, {x=99,y="why"})
   local parent = { name = "Parent", child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
 
   local serialized = __rt.json_to_json("Parent", parent, parent_fields)
@@ -781,7 +777,7 @@ test("nested class roundtrip", function()
   assert(serialized.child.x == 99)
   assert(serialized.child.y == "why")
 
-  local roundtripped = __rt.json_from_json("Parent", serialized, parent_defaults, parent_fields)
+  local roundtripped = __rt.json_from_json("Parent", serialized, parent_fields)
   assert(roundtripped ~= nil)
   assert(roundtripped.name == "Parent")
   assert(roundtripped.child ~= nil)
@@ -809,7 +805,7 @@ test("three-level nested class roundtrip", function()
   }
   local parent_defaults = { child = __rt.__MISSING }
 
-  local gc = __rt.class_("GrandChild", grandchild_defaults, { v = 7 })
+  local gc = __rt.class_plan_("GrandChild", {{name="v",descriptor="number",optional=false}}, {v=7})
   local child = { name = "middle", grand = gc, [__K.classname] = "Child", [__K.kind] = "class" }
   local parent = { child = child, [__K.classname] = "Parent", [__K.kind] = "class" }
 
@@ -817,7 +813,7 @@ test("three-level nested class roundtrip", function()
   assert(serialized.child.name == "middle")
   assert(serialized.child.grand.v == 7)
 
-  local roundtripped = __rt.json_from_json("Parent", serialized, parent_defaults, parent_fields)
+  local roundtripped = __rt.json_from_json("Parent", serialized, parent_fields)
   assert(roundtripped ~= nil)
   assert(roundtripped.child.name == "middle")
   assert(roundtripped.child.grand.v == 7)
@@ -838,7 +834,7 @@ test("array of primitives roundtrip", function()
   assert(serialized.nums[1] == 10)
   assert(serialized.nums[3] == 30)
 
-  local roundtripped = __rt.json_from_json("C", serialized, defaults, fields)
+  local roundtripped = __rt.json_from_json("C", serialized, fields)
   assert(roundtripped ~= nil)
   assert(#roundtripped.nums == 3)
   assert(roundtripped.nums[1] == 10)
@@ -856,8 +852,9 @@ test("array of nested classes roundtrip", function()
   }
   local parent_defaults = { children = {} }
 
-  local c1 = __rt.class_("Child", child_defaults, { val = 1 })
-  local c2 = __rt.class_("Child", child_defaults, { val = 2 })
+  local child_plan = {{name="val",descriptor="number",optional=false}}
+  local c1 = __rt.class_plan_("Child", child_plan, {val=1})
+  local c2 = __rt.class_plan_("Child", child_plan, {val=2})
   local instance = { children = {c1, c2}, [__K.classname] = "Parent", [__K.kind] = "class" }
 
   local serialized = __rt.json_to_json("Parent", instance, parent_fields)
@@ -865,7 +862,7 @@ test("array of nested classes roundtrip", function()
   assert(serialized.children[1].val == 1)
   assert(serialized.children[2].val == 2)
 
-  local roundtripped = __rt.json_from_json("Parent", serialized, parent_defaults, parent_fields)
+  local roundtripped = __rt.json_from_json("Parent", serialized, parent_fields)
   assert(roundtripped ~= nil)
   assert(#roundtripped.children == 2)
   assert(roundtripped.children[1].val == 1)
@@ -879,7 +876,7 @@ test("json_from_json tags instance with __kind = class", function()
   local fields = { { name = "x", jtype = "number", optional = false, nullable = false } }
   local defaults = { x = 0 }
   local parsed = { x = 1 }
-  local instance = __rt.json_from_json("MyClass", parsed, defaults, fields)
+  local instance = __rt.json_from_json("MyClass", parsed, fields)
   assert(instance[__K.kind] == "class")
 end)
 
@@ -887,7 +884,7 @@ test("json_from_json tags instance with correct __classname", function()
   local fields = { { name = "x", jtype = "number", optional = false, nullable = false } }
   local defaults = { x = 0 }
   local parsed = { x = 1 }
-  local instance = __rt.json_from_json("MyClass", parsed, defaults, fields)
+  local instance = __rt.json_from_json("MyClass", parsed, fields)
   assert(instance[__K.classname] == "MyClass")
 end)
 
@@ -918,7 +915,7 @@ test("json_from_json with all primitive field types", function()
     f_string = "hello",
     f_table = { key = "val" },
   }
-  local instance = __rt.json_from_json("AllTypes", parsed, defaults, fields)
+  local instance = __rt.json_from_json("AllTypes", parsed, fields)
   assert(instance ~= nil)
   assert(instance.f_null == __rt.__NULL)
   assert(instance.f_bool == true)
@@ -941,7 +938,7 @@ test("json_from_json: null as json_parse result on non-nullable string field is 
   }
   local defaults = { name = "" }
   local parsed = { name = __rt.__NULL }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance == nil)
 end)
 
@@ -965,7 +962,7 @@ test("json_from_json returns nil on failure (does not throw)", function()
   }
   local defaults = { x = 0 }
   local parsed = { x = 1, extra = true }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance == nil)
 end)
 
@@ -1134,7 +1131,6 @@ test("_json_table_shape: malformed seen arguments never throw", function()
   local cyc = {}
   cyc.self = cyc
   assert(__rt._json_table_shape(cyc, "not-a-set") == false)
-  assert(__rt._json_defaults_acyclic({ a = 1 }, "not-a-set") == true)
 end)
 
 test("_json_table_shape: seen set unwound on success and failure", function()
@@ -1218,7 +1214,7 @@ test("_json_validate_entry: class entries need className and fields; defaults de
   local no_defaults = { name = "c", jtype = "class", optional = false, nullable = false,
                         className = "C", fields = {} }
   assert(__rt._json_validate_entry(no_defaults, false) == true)
-  assert(__rt._json_validate_entry(no_defaults, true) == false)
+  assert(__rt._json_validate_entry(no_defaults, true) == true)
   -- missing className
   local no_classname = { name = "c", jtype = "class", optional = false, nullable = false,
                          defaults = {}, fields = {} }
@@ -1236,7 +1232,7 @@ test("_json_validate_entry: class entries need className and fields; defaults de
   -- non-table defaults rejected on decode only
   local bad_defaults = { name = "c", jtype = "class", optional = false, nullable = false,
                          className = "C", defaults = "x", fields = {} }
-  assert(__rt._json_validate_entry(bad_defaults, true) == false)
+  assert(__rt._json_validate_entry(bad_defaults, true) == true)
   assert(__rt._json_validate_entry(bad_defaults, false) == true)
 end)
 
@@ -1246,7 +1242,7 @@ test("_json_validate_entry: class elements follow the same rule", function()
   assert(__rt._json_validate_entry(elem, false) == true)
   local no_defaults = { jtype = "class", className = "C", fields = {} }
   assert(__rt._json_validate_entry(no_defaults, false) == true)
-  assert(__rt._json_validate_entry(no_defaults, true) == false)
+  assert(__rt._json_validate_entry(no_defaults, true) == true)
   local no_fields = { jtype = "class", className = "C", defaults = {} }
   assert(__rt._json_validate_entry(no_fields, true) == false)
   assert(__rt._json_validate_entry(no_fields, false) == false)
@@ -1336,71 +1332,21 @@ test("_json_validate_fields: existing hand-built descriptors stay valid", functi
       className = "Child", fields = child_fields }
   }
   assert(__rt._json_validate_fields(enc_fields, false) == true)
-  assert(__rt._json_validate_fields(enc_fields, true) == false)
+  assert(__rt._json_validate_fields(enc_fields, true) == true)
 end)
 
 -- ==================== Direct helpers: defaults identity gate ====================
 
-test("_json_defaults_identity_ok: sentinels and tagged tables rejected, plain accepted", function()
-  assert(__rt._json_defaults_identity_ok(__rt.__NULL) == false)
-  assert(__rt._json_defaults_identity_ok(__rt.__MISSING) == false)
-  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "class", [__K.classname] = "C" }) == false)
-  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "function" }) == false)
-  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "async" }) == false)
-  -- a __kind field holding any other value is a legal field default
-  assert(__rt._json_defaults_identity_ok({ [__K.kind] = "plain" }) == true)
-  assert(__rt._json_defaults_identity_ok({ a = 1 }) == true)
-  assert(__rt._json_defaults_identity_ok({}) == true)
-  -- non-table defaults
-  assert(__rt._json_defaults_identity_ok(42) == false)
-  assert(__rt._json_defaults_identity_ok("x") == false)
-  assert(__rt._json_defaults_identity_ok(nil) == false)
-  assert(__rt._json_defaults_identity_ok(function() end) == false)
-  -- the predicate never mutates the global sentinels
-  assert(__rt.__NULL[__K.kind] == nil)
-  assert(__rt.__MISSING[__K.kind] == nil)
-  assert(__rt.__NULL[__K.classname] == nil)
-end)
-
--- ==================== Direct helpers: _json_defaults_acyclic ====================
-
-test("_json_defaults_acyclic: acyclic defaults accepted, cyclic rejected", function()
-  local acyclic = { a = 1, b = { c = "x" }, d = __rt.__NULL, e = __rt.__MISSING }
-  assert(__rt._json_defaults_acyclic(acyclic, {}) == true)
-  assert(__rt._json_defaults_acyclic({}, {}) == true)
-  assert(__rt._json_defaults_acyclic(42, {}) == true)   -- non-table is trivially acyclic
-  assert(__rt._json_defaults_acyclic(nil, {}) == true)
-  assert(__rt._json_defaults_acyclic("x", {}) == true)
-  assert(__rt._json_defaults_acyclic(function() end, {}) == true)
-  -- input is never mutated
-  assert(acyclic.a == 1 and acyclic.b.c == "x" and acyclic.d == __rt.__NULL and acyclic.e == __rt.__MISSING)
-  -- direct self-cycle
-  local cyc = { a = 1 }
-  cyc.self = cyc
-  assert(__rt._json_defaults_acyclic(cyc, {}) == false)
-  -- cycle through a nested table
-  local nested = { child = {} }
-  nested.child.back = nested
-  assert(__rt._json_defaults_acyclic(nested, {}) == false)
-  -- shared non-cyclic child: path-local seen, no false positive
-  local shared = { x = 1 }
-  assert(__rt._json_defaults_acyclic({ a = shared, b = shared }, {}) == true)
-  -- sentinels and __kind-tagged tables are leaves (mirror _deep_copy)
-  assert(__rt._json_defaults_acyclic(__rt.__NULL, {}) == true)
-  assert(__rt._json_defaults_acyclic(__rt.__MISSING, {}) == true)
-  local tagged = { [__K.kind] = "class", [__K.classname] = "C" }
-  tagged.self = tagged
-  assert(__rt._json_defaults_acyclic(tagged, {}) == true)
-end)
-
-test("_json_defaults_acyclic: seen set unwound on every return", function()
-  local seen = {}
-  assert(__rt._json_defaults_acyclic({ a = { b = 1 } }, seen) == true)
-  assert(next(seen) == nil)
-  local cyc = {}
-  cyc.self = cyc
-  assert(__rt._json_defaults_acyclic(cyc, seen) == false)
-  assert(next(seen) == nil)
+test("JSON decode uses no legacy defaults helpers", function()
+  assert(__rt._json_defaults_identity_ok == nil)
+  assert(__rt._json_defaults_acyclic == nil)
+  local field = setmetatable({name="x",jtype="number",optional=false,nullable=false},
+    {__index=function(_, key)
+      if key == "defaults" or key == "evaluator" then error("legacy hook read") end
+    end})
+  local result = __rt.json_from_json("C", {x=1}, {field})
+  assert(result ~= nil and result.x == 1)
+  assert(__rt.__NULL[__K.kind] == nil and __rt.__MISSING[__K.kind] == nil)
 end)
 
 -- ==================== Direct helpers: depth constant ====================
@@ -1439,7 +1385,7 @@ test("decode matrix: positive jtype x nullable x optional combinations", functio
     a = { 1, 2 },
     nb = __rt.__NULL, nn = 9.5, on = __rt.__NULL,
   }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.b == true)
   assert(instance.i == -7)
@@ -1468,7 +1414,7 @@ test("decode matrix: nullable class/array/table fields accept explicit null", fu
   }
   local defaults = { c = __rt.__NULL, a = __rt.__NULL, t = __rt.__NULL }
   local parsed = { c = __rt.__NULL, a = __rt.__NULL, t = __rt.__NULL }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.c == __rt.__NULL)
   assert(instance.a == __rt.__NULL)
@@ -1486,7 +1432,7 @@ test("decode matrix: nested class with value decodes a tagged instance", functio
   }
   local parent_defaults = { child = __rt.__MISSING }
   local parsed = { child = { x = 42 } }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance ~= nil)
   assert(instance.child.x == 42)
   assert(instance.child[__K.classname] == "Child")
@@ -1501,7 +1447,7 @@ test("decode matrix: number[][] nested arrays decode level by level", function()
   }
   local defaults = { grid = {} }
   local parsed = { grid = { { 1, 2 }, { 3, 4 } } }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(#instance.grid == 2)
   assert(instance.grid[1][1] == 1)
@@ -1522,7 +1468,7 @@ test("decode matrix: nullable class array elements accept explicit null", functi
   }
   local defaults = { children = {} }
   local parsed = { children = { { val = 1 }, __rt.__NULL, { val = 3 } } }
-  local instance = __rt.json_from_json("Parent", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Parent", parsed, fields)
   assert(instance ~= nil)
   assert(#instance.children == 3)
   assert(instance.children[1].val == 1)
@@ -1543,11 +1489,11 @@ test("decode matrix: element descriptors omitting both flags decode (absent = fa
   }
   local defaults = { children = {} }
   local parsed = { children = { { val = 1 } } }
-  local instance = __rt.json_from_json("Parent", parsed, defaults, fields)
+  local instance = __rt.json_from_json("Parent", parsed, fields)
   assert(instance ~= nil)
   assert(instance.children[1].val == 1)
   -- absent element flags mean nullable = false: element null rejected
-  assert(__rt.json_from_json("Parent", { children = { __rt.__NULL } }, defaults, fields) == nil)
+  assert(__rt.json_from_json("Parent", { children = { __rt.__NULL } }, fields) == nil)
 end)
 
 -- Negative matrix: every case returns nil, never throws (the test()
@@ -1561,11 +1507,11 @@ test("decode matrix: wrong primitive type per jtype returns nil", function()
     { name = "n", jtype = "number",  optional = false, nullable = false },
   }
   local defaults = { i = 0, b = false, s = "", n = 0.0 }
-  assert(__rt.json_from_json("C", { i = "x",   b = true,  s = "ok",  n = 1.5 }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { i = 1,     b = 1,     s = "ok",  n = 1.5 }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { i = 1,     b = true,  s = 42,    n = 1.5 }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { i = 1,     b = true,  s = "ok",  n = "true" }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { i = 1,     b = true,  s = "ok",  n = true }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { i = "x",   b = true,  s = "ok",  n = 1.5 }, fields) == nil)
+  assert(__rt.json_from_json("C", { i = 1,     b = 1,     s = "ok",  n = 1.5 }, fields) == nil)
+  assert(__rt.json_from_json("C", { i = 1,     b = true,  s = 42,    n = 1.5 }, fields) == nil)
+  assert(__rt.json_from_json("C", { i = 1,     b = true,  s = "ok",  n = "true" }, fields) == nil)
+  assert(__rt.json_from_json("C", { i = 1,     b = true,  s = "ok",  n = true }, fields) == nil)
 end)
 
 test("decode matrix: non-nullable null-typed field rejects non-null values", function()
@@ -1573,10 +1519,10 @@ test("decode matrix: non-nullable null-typed field rejects non-null values", fun
     { name = "z", jtype = "null", optional = false, nullable = true }
   }
   local defaults = { z = __rt.__NULL }
-  assert(__rt.json_from_json("C", { z = __rt.__NULL }, defaults, fields) ~= nil)
-  assert(__rt.json_from_json("C", { z = 42 }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { z = "x" }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { z = false }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { z = __rt.__NULL }, fields) ~= nil)
+  assert(__rt.json_from_json("C", { z = 42 }, fields) == nil)
+  assert(__rt.json_from_json("C", { z = "x" }, fields) == nil)
+  assert(__rt.json_from_json("C", { z = false }, fields) == nil)
 end)
 
 test("decode matrix: explicit null on non-nullable element returns nil", function()
@@ -1585,7 +1531,7 @@ test("decode matrix: explicit null on non-nullable element returns nil", functio
       element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { nums = {} }
-  assert(__rt.json_from_json("C", { nums = { 1, __rt.__NULL, 3 } }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { nums = { 1, __rt.__NULL, 3 } }, fields) == nil)
 end)
 
 test("decode matrix: non-table raw for class/array/table fields returns nil", function()
@@ -1601,10 +1547,10 @@ test("decode matrix: non-table raw for class/array/table fields returns nil", fu
     { name = "t", jtype = "table", optional = false, nullable = false },
   }
   local defaults = { c = __rt.__MISSING, a = {}, t = {} }
-  assert(__rt.json_from_json("C", { c = "not_a_table", a = { 1 }, t = {} }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { c = { x = 1 }, a = 42, t = {} }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { 1 }, t = 42 }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { 1 }, t = false }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { c = "not_a_table", a = { 1 }, t = {} }, fields) == nil)
+  assert(__rt.json_from_json("C", { c = { x = 1 }, a = 42, t = {} }, fields) == nil)
+  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { 1 }, t = 42 }, fields) == nil)
+  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { 1 }, t = false }, fields) == nil)
 end)
 
 test("decode matrix: object/array shape cross-wiring returns nil", function()
@@ -1621,11 +1567,11 @@ test("decode matrix: object/array shape cross-wiring returns nil", function()
   }
   local defaults = { c = __rt.__MISSING, a = {}, t = {} }
   -- object where array expected
-  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { key = "v" }, t = {} }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { key = "v" }, t = {} }, fields) == nil)
   -- array where class (object) expected: integer keys are not field names
-  assert(__rt.json_from_json("C", { c = { 1, 2 }, a = { 1 }, t = {} }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { c = { 1, 2 }, a = { 1 }, t = {} }, fields) == nil)
   -- array where table expected (D7: fromJson table fields accept only objects)
-  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { 1 }, t = { 1, 2 } }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { c = { x = 1 }, a = { 1 }, t = { 1, 2 } }, fields) == nil)
 end)
 
 test("decode matrix: table field accepts objects with nested arrays (D7 asymmetry)", function()
@@ -1634,7 +1580,7 @@ test("decode matrix: table field accepts objects with nested arrays (D7 asymmetr
   }
   local defaults = { t = {} }
   local parsed = { t = { values = { { 1, 2 }, { 3, 4 } } } }
-  local instance = __rt.json_from_json("C", parsed, defaults, fields)
+  local instance = __rt.json_from_json("C", parsed, fields)
   assert(instance ~= nil)
   assert(instance.t.values[1][1] == 1)
   assert(instance.t.values[2][2] == 4)
@@ -1645,11 +1591,11 @@ test("decode matrix: table field with non-JSON leaves returns nil", function()
     { name = "t", jtype = "table", optional = false, nullable = false }
   }
   local defaults = { t = {} }
-  assert(__rt.json_from_json("C", { t = { fn = function() end } }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { t = { w = { [__K.kind] = "function" } } }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { t = { c = { [__K.kind] = "class", [__K.classname] = "C" } } }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { t = { x = 0/0 } }, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", { t = { x = 1/0 } }, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { fn = function() end } }, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { w = { [__K.kind] = "function" } } }, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { c = { [__K.kind] = "class", [__K.classname] = "C" } } }, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { x = 0/0 } }, fields) == nil)
+  assert(__rt.json_from_json("C", { t = { x = 1/0 } }, fields) == nil)
 end)
 
 test("decode matrix: non-table parsed (scalar/function/nil) returns nil", function()
@@ -1657,11 +1603,11 @@ test("decode matrix: non-table parsed (scalar/function/nil) returns nil", functi
     { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
-  assert(__rt.json_from_json("C", 42, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", "x", defaults, fields) == nil)
-  assert(__rt.json_from_json("C", true, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", function() end, defaults, fields) == nil)
-  assert(__rt.json_from_json("C", nil, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", 42, fields) == nil)
+  assert(__rt.json_from_json("C", "x", fields) == nil)
+  assert(__rt.json_from_json("C", true, fields) == nil)
+  assert(__rt.json_from_json("C", function() end, fields) == nil)
+  assert(__rt.json_from_json("C", nil, fields) == nil)
 end)
 
 test("decode matrix: parsed __NULL sentinel returns nil", function()
@@ -1669,7 +1615,7 @@ test("decode matrix: parsed __NULL sentinel returns nil", function()
     { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
-  assert(__rt.json_from_json("C", __rt.__NULL, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", __rt.__NULL, fields) == nil)
 end)
 
 test("decode matrix: non-table defaults and fields return nil", function()
@@ -1677,25 +1623,25 @@ test("decode matrix: non-table defaults and fields return nil", function()
     { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 0 }
-  assert(__rt.json_from_json("C", {}, 42, fields) == nil)
-  assert(__rt.json_from_json("C", {}, "x", fields) == nil)
-  assert(__rt.json_from_json("C", {}, nil, fields) == nil)
-  assert(__rt.json_from_json("C", {}, function() end, fields) == nil)
-  assert(__rt.json_from_json("C", {}, defaults, 42) == nil)
-  assert(__rt.json_from_json("C", {}, defaults, "x") == nil)
-  assert(__rt.json_from_json("C", {}, defaults, nil) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, 42) == nil)
+  assert(__rt.json_from_json("C", {}, "x") == nil)
+  assert(__rt.json_from_json("C", {}, nil) == nil)
 end)
 
 test("decode matrix: sentinel/identity-preserved defaults rejected, sentinels unmutated", function()
   local fields = {
     { name = "x", jtype = "number", optional = false, nullable = false }
   }
-  assert(__rt.json_from_json("C", {}, __rt.__NULL, fields) == nil)
-  assert(__rt.json_from_json("C", {}, __rt.__MISSING, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
   local class_instance = { [__K.kind] = "class", [__K.classname] = "C", x = 1 }
-  assert(__rt.json_from_json("C", {}, class_instance, fields) == nil)
-  assert(__rt.json_from_json("C", {}, { [__K.kind] = "function" }, fields) == nil)
-  assert(__rt.json_from_json("C", {}, { [__K.kind] = "async" }, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
   -- the global sentinels carry no tag or field value after the calls
   assert(__rt.__NULL[__K.kind] == nil)
   assert(__rt.__NULL[__K.classname] == nil)
@@ -1711,7 +1657,7 @@ end)
 test("decode matrix: defaults table with a plain __kind value accepted", function()
   local fields = {}
   local defaults = { [__K.kind] = "plain" }
-  local instance = __rt.json_from_json("C", {}, defaults, fields)
+  local instance = __rt.json_from_json("C", {}, fields)
   assert(instance ~= nil)
   assert(instance[__K.classname] == "C")
   assert(instance[__K.kind] == "class")
@@ -1720,30 +1666,30 @@ end)
 test("decode matrix: malformed descriptor entries return nil", function()
   local defaults = {}
   -- non-table entry
-  assert(__rt.json_from_json("C", {}, defaults, { 42 }) == nil)
+  assert(__rt.json_from_json("C", {}, { 42 }) == nil)
   -- non-string name
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = 42, jtype = "number", optional = false, nullable = false } }) == nil)
   -- unknown jtype
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "x", jtype = "bytes", optional = false, nullable = false } }) == nil)
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "x", jtype = "function", optional = false, nullable = false } }) == nil)
   -- missing element
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "a", jtype = "array", optional = false, nullable = false } }) == nil)
   -- non-table element
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "a", jtype = "array", optional = false, nullable = false, element = "number" } }) == nil)
   -- class entry missing className / defaults / fields on the decode path
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "c", jtype = "class", optional = false, nullable = false, defaults = {}, fields = {} } }) == nil)
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "c", jtype = "class", optional = false, nullable = false, className = "C", fields = {} } }) == nil)
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "c", jtype = "class", optional = false, nullable = false, className = "C", defaults = {} } }) == nil)
   -- non-string className
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "c", jtype = "class", optional = false, nullable = false, className = 42, defaults = {}, fields = {} } }) == nil)
 end)
 
@@ -1751,8 +1697,8 @@ test("decode matrix: nameless field entry returns nil (no raw Lua error)", funct
   local defaults = {}
   -- a nameless member would otherwise pass the element rules and crash
   -- the key gate with a raw "table index is nil" at valid_keys[f.name]
-  assert(__rt.json_from_json("C", {}, defaults, { { jtype = "number" } }) == nil)
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {}, { { jtype = "number" } }) == nil)
+  assert(__rt.json_from_json("C", {},
       { { jtype = "number", optional = true, nullable = false } }) == nil)
 end)
 
@@ -1762,7 +1708,7 @@ test("decode matrix: nameless entry inside nested class fields returns nil", fun
       className = "Child", defaults = {}, fields = { { jtype = "number" } } }
   }
   local defaults = { child = __rt.__MISSING }
-  assert(__rt.json_from_json("Parent", { child = {} }, defaults, parent_fields) == nil)
+  assert(__rt.json_from_json("Parent", { child = {} }, parent_fields) == nil)
 end)
 
 test("decode matrix: class element missing className/defaults/fields returns nil", function()
@@ -1775,40 +1721,41 @@ test("decode matrix: class element missing className/defaults/fields returns nil
     { name = "children", jtype = "array", optional = false, nullable = false,
       element = { jtype = "class", defaults = { val = 0 }, fields = child_fields } }
   }
-  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, defaults, no_classname) == nil)
+  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, no_classname) == nil)
   -- class element missing fields (className/defaults present)
   local no_fields = {
     { name = "children", jtype = "array", optional = false, nullable = false,
       element = { jtype = "class", className = "Child", defaults = { val = 0 } } }
   }
-  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, defaults, no_fields) == nil)
+  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, no_fields) == nil)
   -- class element missing defaults on the decode path (className/fields present)
   local no_defaults = {
     { name = "children", jtype = "array", optional = false, nullable = false,
       element = { jtype = "class", className = "Child", fields = child_fields } }
   }
-  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, defaults, no_defaults) == nil)
+  local result = __rt.json_from_json("Parent", { children = { { val = 1 } } }, no_defaults)
+  assert(result ~= nil and result.children[1].val == 1)
   -- non-string element className
   local bad_classname = {
     { name = "children", jtype = "array", optional = false, nullable = false,
       element = { jtype = "class", className = 42, defaults = { val = 0 }, fields = child_fields } }
   }
-  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, defaults, bad_classname) == nil)
+  assert(__rt.json_from_json("Parent", { children = { { val = 1 } } }, bad_classname) == nil)
 end)
 
 test("decode matrix: field-entry boolean flag violations return nil", function()
   local defaults = { x = 0 }
   -- nullable = "yes" (truthy non-boolean would silently flip semantics)
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "x", jtype = "number", optional = false, nullable = "yes" } }) == nil)
   -- optional = 1
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "x", jtype = "number", optional = 1, nullable = false } }) == nil)
   -- omitted optional key
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "x", jtype = "number", nullable = false } }) == nil)
   -- omitted nullable key
-  assert(__rt.json_from_json("C", {}, defaults,
+  assert(__rt.json_from_json("C", {},
       { { name = "x", jtype = "number", optional = false } }) == nil)
 end)
 
@@ -1822,7 +1769,7 @@ test("decode matrix: malformed field entry inside nested fields array returns ni
   }
   local parent_defaults = { child = __rt.__MISSING }
   local parsed = { child = { y = 1 } }
-  assert(__rt.json_from_json("Parent", parsed, parent_defaults, parent_fields) == nil)
+  assert(__rt.json_from_json("Parent", parsed, parent_fields) == nil)
 end)
 
 test("decode matrix: present non-boolean element flag returns nil", function()
@@ -1832,12 +1779,12 @@ test("decode matrix: present non-boolean element flag returns nil", function()
   }
   local defaults = { nums = {} }
   local parsed = { nums = { 1, 2 } }
-  assert(__rt.json_from_json("C", parsed, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", parsed, fields) == nil)
   local fields2 = {
     { name = "nums", jtype = "array", optional = false, nullable = false,
       element = { jtype = "number", optional = 1, nullable = false } }
   }
-  assert(__rt.json_from_json("C", parsed, defaults, fields2) == nil)
+  assert(__rt.json_from_json("C", parsed, fields2) == nil)
 end)
 
 test("decode matrix: truncated nested-array element at depth returns nil (no raw error)", function()
@@ -1850,7 +1797,7 @@ test("decode matrix: truncated nested-array element at depth returns nil (no raw
   }
   local defaults = { grid = {} }
   local parsed = { grid = { { 1, 2 }, { 3, 4 } } }
-  assert(__rt.json_from_json("C", parsed, defaults, fields) == nil)
+  assert(__rt.json_from_json("C", parsed, fields) == nil)
 end)
 
 test("decode matrix: sparse and mixed-key arrays return nil", function()
@@ -1859,11 +1806,11 @@ test("decode matrix: sparse and mixed-key arrays return nil", function()
       element = { jtype = "number", optional = false, nullable = false } }
   }
   local defaults = { nums = {} }
-  assert(__rt.json_from_json("C", { nums = { 1, nil, 3 } }, defaults, fields) == nil)      -- hole
-  assert(__rt.json_from_json("C", { nums = { [1] = 1, [3] = 3 } }, defaults, fields) == nil) -- sparse
-  assert(__rt.json_from_json("C", { nums = { [1] = 1, a = 2 } }, defaults, fields) == nil)  -- mixed keys
-  assert(__rt.json_from_json("C", { nums = { [2] = 1 } }, defaults, fields) == nil)          -- missing 1
-  assert(__rt.json_from_json("C", { nums = { [0] = 1 } }, defaults, fields) == nil)          -- 0-key
+  assert(__rt.json_from_json("C", { nums = { 1, nil, 3 } }, fields) == nil)      -- hole
+  assert(__rt.json_from_json("C", { nums = { [1] = 1, [3] = 3 } }, fields) == nil) -- sparse
+  assert(__rt.json_from_json("C", { nums = { [1] = 1, a = 2 } }, fields) == nil)  -- mixed keys
+  assert(__rt.json_from_json("C", { nums = { [2] = 1 } }, fields) == nil)          -- missing 1
+  assert(__rt.json_from_json("C", { nums = { [0] = 1 } }, fields) == nil)          -- 0-key
 end)
 
 test("decode matrix: NaN/Infinity number and number values return nil", function()
@@ -1872,13 +1819,13 @@ test("decode matrix: NaN/Infinity number and number values return nil", function
     { name = "n", jtype = "number", optional = false, nullable = false },
   }
   local defaults = { i = 0, n = 0.0 }
-  assert(__rt.json_from_json("C", { i = 0/0,  n = 1.5 }, defaults, fields) == nil)  -- NaN on number
-  assert(__rt.json_from_json("C", { i = 1/0,  n = 1.5 }, defaults, fields) == nil)  -- +Inf on number
-  assert(__rt.json_from_json("C", { i = -1/0, n = 1.5 }, defaults, fields) == nil)  -- -Inf on number
-  assert(__rt.json_from_json("C", { i = 1.5,  n = 1.5 }, defaults, fields).i == 1.5)  -- non-integer number
-  assert(__rt.json_from_json("C", { i = 1,    n = 0/0 }, defaults, fields) == nil)  -- NaN on number
-  assert(__rt.json_from_json("C", { i = 1,    n = 1/0 }, defaults, fields) == nil)  -- +Inf on number
-  assert(__rt.json_from_json("C", { i = 1,    n = -1/0 }, defaults, fields) == nil) -- -Inf on number
+  assert(__rt.json_from_json("C", { i = 0/0,  n = 1.5 }, fields) == nil)  -- NaN on number
+  assert(__rt.json_from_json("C", { i = 1/0,  n = 1.5 }, fields) == nil)  -- +Inf on number
+  assert(__rt.json_from_json("C", { i = -1/0, n = 1.5 }, fields) == nil)  -- -Inf on number
+  assert(__rt.json_from_json("C", { i = 1.5,  n = 1.5 }, fields).i == 1.5)  -- non-integer number
+  assert(__rt.json_from_json("C", { i = 1,    n = 0/0 }, fields) == nil)  -- NaN on number
+  assert(__rt.json_from_json("C", { i = 1,    n = 1/0 }, fields) == nil)  -- +Inf on number
+  assert(__rt.json_from_json("C", { i = 1,    n = -1/0 }, fields) == nil) -- -Inf on number
 end)
 
 test("decode matrix: cyclic parsed data returns nil (class recursion)", function()
@@ -1892,7 +1839,7 @@ test("decode matrix: cyclic parsed data returns nil (class recursion)", function
   local b = {}
   a.b = b
   b.a = a
-  assert(__rt.json_from_json("A", a, {}, a_fields) == nil)
+  assert(__rt.json_from_json("A", a, a_fields) == nil)
   -- direct self-cycle through a class field
   local self_fields = {
     { name = "self", jtype = "class", optional = false, nullable = false,
@@ -1900,7 +1847,7 @@ test("decode matrix: cyclic parsed data returns nil (class recursion)", function
   }
   local self_raw = {}
   self_raw.self = self_raw
-  assert(__rt.json_from_json("S", self_raw, {}, self_fields) == nil)
+  assert(__rt.json_from_json("S", self_raw, self_fields) == nil)
 end)
 
 test("decode matrix: cyclic parsed data returns nil (array and table values)", function()
@@ -1912,29 +1859,31 @@ test("decode matrix: cyclic parsed data returns nil (array and table values)", f
   }
   local grid = {}
   grid[1] = grid
-  assert(__rt.json_from_json("C", { grid = grid }, { grid = {} }, arr_fields) == nil)
+  assert(__rt.json_from_json("C", { grid = grid }, arr_fields) == nil)
   -- cyclic table datum
   local tbl_fields = {
     { name = "t", jtype = "table", optional = false, nullable = false }
   }
   local t = {}
   t.self = t
-  assert(__rt.json_from_json("C", { t = t }, { t = {} }, tbl_fields) == nil)
+  assert(__rt.json_from_json("C", { t = t }, tbl_fields) == nil)
   -- table datum referencing the parsed root
   local root = {}
   root.t = {}
   root.t.back = root
-  assert(__rt.json_from_json("C", root, { t = {} }, tbl_fields) == nil)
+  assert(__rt.json_from_json("C", root, tbl_fields) == nil)
 end)
 
-test("decode matrix: cyclic defaults return nil", function()
+test("decode matrix: legacy cyclic hooks are never traversed", function()
   local fields = {}
   local defaults = {}
   defaults.self = defaults
-  assert(__rt.json_from_json("C", {}, defaults, fields) == nil)
+  local first = __rt.json_from_json("C", {}, fields)
+  assert(first ~= nil and first.self == nil)
   local nested = { child = {} }
   nested.child.back = nested
-  assert(__rt.json_from_json("C", {}, nested, fields) == nil)
+  local second = __rt.json_from_json("C", {}, fields)
+  assert(second ~= nil and second.child == nil and second ~= first)
 end)
 
 test("decode matrix: a deep table value has no fixed cap", function()
@@ -1952,9 +1901,9 @@ test("decode matrix: a deep table value has no fixed cap", function()
     cur.leaf = "x"
     return root
   end
-  local ok = __rt.json_from_json("C", { data = build_chain(513) }, defaults, fields)
+  local ok = __rt.json_from_json("C", { data = build_chain(513) }, fields)
   assert(ok ~= nil)
-  assert(__rt.json_from_json("C", { data = build_chain(600) }, defaults, fields) ~= nil)
+  assert(__rt.json_from_json("C", { data = build_chain(600) }, fields) ~= nil)
 end)
 
 test("decode matrix: a deep nested array has no fixed cap", function()
@@ -1979,9 +1928,9 @@ test("decode matrix: a deep nested array has no fixed cap", function()
   end
   local defaults = { grid = {} }
   local f512, d512 = build(512)
-  assert(__rt.json_from_json("C", { grid = d512 }, defaults, f512) ~= nil)
+  assert(__rt.json_from_json("C", { grid = d512 }, f512) ~= nil)
   local f513, d513 = build(513)
-  assert(__rt.json_from_json("C", { grid = d513 }, defaults, f513) ~= nil)
+  assert(__rt.json_from_json("C", { grid = d513 }, f513) ~= nil)
 end)
 
 test("decode matrix: a deep nested class has no fixed cap", function()
@@ -2003,7 +1952,7 @@ test("decode matrix: a deep nested class has no fixed cap", function()
     end
     local parsed = {}
     local cur = parsed
-    for i = 1, n - 1 do
+    for i = 1, n do
       local next_tbl = {}
       cur.f = next_tbl
       cur = next_tbl
@@ -2011,9 +1960,9 @@ test("decode matrix: a deep nested class has no fixed cap", function()
     return { entries[1] }, defaults[1], parsed
   end
   local f513, d513, p513 = build_chain(513)
-  assert(__rt.json_from_json("L1", p513, d513, f513) ~= nil)
+  assert(__rt.json_from_json("L1", p513, f513) ~= nil)
   local f514, d514, p514 = build_chain(600)
-  assert(__rt.json_from_json("L1", p514, d514, f514) ~= nil)
+  assert(__rt.json_from_json("L1", p514, f514) ~= nil)
 end)
 
 test("decode matrix: empty object document decodes as the defaulted instance", function()
@@ -2021,15 +1970,15 @@ test("decode matrix: empty object document decodes as the defaulted instance", f
     { name = "x", jtype = "number", optional = false, nullable = false }
   }
   local defaults = { x = 5 }
-  local from_obj = __rt.json_from_json("C", {}, defaults, fields)
+  assert(__rt.json_from_json("C", {}, fields) == nil)
+  local from_obj = __rt.json_from_json("C", {x = 5}, fields)
   assert(from_obj ~= nil)
   assert(from_obj.x == 5)
   assert(from_obj[__K.kind] == "class")
   assert(from_obj[__K.classname] == "C")
   -- A decoded array carrier records the private array/order marks even at
   -- length zero, so [] is never an empty object document (v1.3).
-  assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 },
-    defaults, fields) == nil)
+  assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 }, fields) == nil)
 end)
 
 test("decode matrix: an empty nested object applies the nested defaults", function()
@@ -2045,8 +1994,9 @@ test("decode matrix: an empty nested object applies the nested defaults", functi
     { name = "meta", jtype = "table", optional = false, nullable = false },
   }
   local parent_defaults = { child = __rt.__MISSING, items = {}, meta = {} }
-  local parsed = { child = {}, items = {}, meta = {} }
-  local instance = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  assert(__rt.json_from_json("Parent", {child = {}, items = {}, meta = {}}, parent_fields) == nil)
+  local parsed = { child = {x = 7}, items = {}, meta = {} }
+  local instance = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(instance ~= nil)
   assert(instance.child.x == 7)
   assert(instance.child[__K.kind] == "class")
@@ -2056,7 +2006,7 @@ test("decode matrix: an empty nested object applies the nested defaults", functi
   -- carrier is a validation failure, never a defaulted nested instance.
   local nested_array = { [__K.a] = true, [__K.n] = 0 }
   local rejected = __rt.json_from_json("Parent",
-    { child = nested_array, items = {}, meta = {} }, parent_defaults, parent_fields)
+    { child = nested_array, items = {}, meta = {} }, parent_fields)
   assert(rejected == nil)
 end)
 
@@ -2729,7 +2679,7 @@ test("ISSUE-0188 roundtrip invariant: optional-nullable three-state", function()
   }
 
   -- decode
-  local original = __rt.json_from_json("TriState", parsed, defaults, fields)
+  local original = __rt.json_from_json("TriState", parsed, fields)
   assert(original ~= nil)
   assert(original.missing_field == nil)
   assert(original.null_field == __rt.__NULL)
@@ -2744,7 +2694,7 @@ test("ISSUE-0188 roundtrip invariant: optional-nullable three-state", function()
   assert(encoded.required == "r")
 
   -- re-decode
-  local redecoded = __rt.json_from_json("TriState", encoded, defaults, fields)
+  local redecoded = __rt.json_from_json("TriState", encoded, fields)
   assert(redecoded ~= nil)
 
   -- compare: the re-decoded instance is deep-equal to the original
@@ -2768,7 +2718,7 @@ test("ISSUE-0188 roundtrip invariant: nested class", function()
   local parsed = { name = "P", child = { x = 41, y = "yy" } }
 
   -- decode
-  local original = __rt.json_from_json("Parent", parsed, parent_defaults, parent_fields)
+  local original = __rt.json_from_json("Parent", parsed, parent_fields)
   assert(original ~= nil)
   assert(original.child[__K.classname] == "Child")
   assert(original.child.x == 41 and original.child.y == "yy")
@@ -2779,7 +2729,7 @@ test("ISSUE-0188 roundtrip invariant: nested class", function()
   assert(encoded.child.x == 41 and encoded.child.y == "yy")
 
   -- re-decode
-  local redecoded = __rt.json_from_json("Parent", encoded, parent_defaults, parent_fields)
+  local redecoded = __rt.json_from_json("Parent", encoded, parent_fields)
   assert(redecoded ~= nil)
 
   -- compare (recurses into the nested child instance and its tags)
@@ -2800,7 +2750,7 @@ test("ISSUE-0188 roundtrip invariant: number[][]", function()
   local parsed = { matrix = { { 1, 2, 3 }, {}, { 4 } } }
 
   -- decode
-  local original = __rt.json_from_json("Matrix", parsed, defaults, fields)
+  local original = __rt.json_from_json("Matrix", parsed, fields)
   assert(original ~= nil)
   assert(#original.matrix == 3)
   assert(#original.matrix[2] == 0)
@@ -2812,7 +2762,7 @@ test("ISSUE-0188 roundtrip invariant: number[][]", function()
   assert(encoded.matrix[1][3] == 3 and encoded.matrix[3][1] == 4)
 
   -- re-decode
-  local redecoded = __rt.json_from_json("Matrix", encoded, defaults, fields)
+  local redecoded = __rt.json_from_json("Matrix", encoded, fields)
   assert(redecoded ~= nil)
 
   -- compare
@@ -2836,7 +2786,7 @@ test("ISSUE-0188 roundtrip invariant: class arrays", function()
   local parsed = { children = { { val = 1 }, __rt.__NULL, { val = 3 } } }
 
   -- decode
-  local original = __rt.json_from_json("Parent", parsed, defaults, fields)
+  local original = __rt.json_from_json("Parent", parsed, fields)
   assert(original ~= nil)
   assert(#original.children == 3)
   assert(original.children[1][__K.classname] == "Child")
@@ -2850,7 +2800,7 @@ test("ISSUE-0188 roundtrip invariant: class arrays", function()
   assert(encoded.children[1].val == 1 and encoded.children[3].val == 3)
 
   -- re-decode
-  local redecoded = __rt.json_from_json("Parent", encoded, defaults, fields)
+  local redecoded = __rt.json_from_json("Parent", encoded, fields)
   assert(redecoded ~= nil)
 
   -- compare (recurses through the nested class elements and the null
@@ -2872,7 +2822,7 @@ test("ISSUE-0188 roundtrip invariant: table objects with nested arrays", functio
   } }
 
   -- decode
-  local original = __rt.json_from_json("Holder", parsed, defaults, fields)
+  local original = __rt.json_from_json("Holder", parsed, fields)
   assert(original ~= nil)
   assert(original.data.config.levels[3] == 3)
   assert(original.data.config.label == "cfg")
@@ -2883,7 +2833,7 @@ test("ISSUE-0188 roundtrip invariant: table objects with nested arrays", functio
   assert(encoded.data.tags[1] == "a" and encoded.data.tags[2] == "b")
 
   -- re-decode
-  local redecoded = __rt.json_from_json("Holder", encoded, defaults, fields)
+  local redecoded = __rt.json_from_json("Holder", encoded, fields)
   assert(redecoded ~= nil)
 
   -- compare (recurses through the nested arrays inside the table datum)

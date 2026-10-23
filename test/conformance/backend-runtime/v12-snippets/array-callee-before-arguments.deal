@@ -10,6 +10,6 @@ export function main(): null {
  function index(): number { trace = trace + "I"; return 0; }
  function argument(): number { trace = trace + "A"; fs[0] = function(x: number): number {trace = trace + "N"; return x + 20;}; return 3; }
  let result: number = fs[index()](argument());
- if (result !== 13 || trace !== "IAO") {throw {message:"callee capture: " + trace};}
+ if (result !== 13 || trace !== "IAO") {throw {code:"TEST_FAIL",message:"callee capture: " + trace};}
  c.log("array-callee-before-arguments"); return null;
 }

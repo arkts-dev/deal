@@ -4,13 +4,16 @@
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
 
-// Module-local (non-exported) default provider: only the declaring
-// module's evaluator closures can reach it — consumer-module lowering
-// would leave this name unresolved.
+// The exported ordinary producer calls a module-local helper; consumers
+// have no lexical binding for that helper.
 function internalDefault(): number {
   return 7;
 }
 
 export class Provider {
-  value: number = internalDefault();
+  value: number;
+}
+
+export function make(): Provider {
+  return {value: internalDefault()};
 }

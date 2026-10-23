@@ -1,21 +1,27 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: A nested class field decoded from an empty JSON object applies the nested class's omitted required-present defaults (v1.2 defect snippet 44)
+// @description: Nested decoding rejects required omissions and preserves explicitly supplied fields.
 // @expected: runtime-ok
-// @features: jsonable, defaults, nested-class, v1.2
+// @features: jsonable, required-presence, nested-class
 
 // @jsonable
-export class Child { n: number = 7; }
+export class Child { n: number; }
 
 // @jsonable
-export class Parent { child: Child = {}; }
+export class Parent { child: Child; }
 
 export function test_nested_default_application(): null {
-  let p: Parent | null = Parent$fromJson("{\"child\":{}}");
+  if (Parent$fromJson("{\"child\":{}}") !== null) {
+    throw {code: "TEST_FAIL", message: "nested required omission accepted"};
+  }
+  if (Parent$fromJson("{}") !== null) {
+    throw {code: "TEST_FAIL", message: "outer required omission accepted"};
+  }
+  let p: Parent | null = Parent$fromJson("{\"child\":{\"n\":7}}");
   if (p === null) {
-    throw { code: "TEST_FAIL", message: "nested default rejected" };
+    throw { code: "TEST_FAIL", message: "complete nested object rejected" };
   } else {
     let n: number = p.child.n;
-    if (n !== 7) { throw { code: "TEST_FAIL", message: "nested default missing" }; }
+    if (n !== 7) { throw { code: "TEST_FAIL", message: "provided nested value missing" }; }
   }
   return null;
 }

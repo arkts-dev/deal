@@ -138,13 +138,7 @@ public final class NullReturnFallOff {
             }
             case ExportDeclaration export -> walkStatement(export.declaration(), out,
                 nested, grouped);
-            case ClassDeclaration declaration -> {
-                for (ClassField field : declaration.fields()) {
-                    if (field.defaultExpr().isPresent()) {
-                        walkExpression(field.defaultExpr().get(), out);
-                    }
-                }
-            }
+            case ClassDeclaration declaration -> {}
             case VariableDeclaration declaration ->
                 walkExpression(declaration.initializer(), out);
             case ReturnStatement ret -> {

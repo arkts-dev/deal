@@ -5,7 +5,7 @@
 
 // @jsonable
 export class Item {
-  name: string = "";
+  name: string;
 }
 
 export function test_fromJson_null(): null {

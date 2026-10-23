@@ -503,9 +503,8 @@ function $arrayElementDescriptor($descriptor, $file, $line, $column) {
 // $isPlainObject: the class-construction plain-object predicate
 // (js-backend-runtime-artifact D6 step 1). A value is plain exactly when
 // its prototype is Object.prototype or null — the two shapes the emitter
-// produces for defaults thunk results and provided literals. Everything
-// else (Array, Map, function, class instances of other prototypes,
-// primitives) is rejected by the defensive arms of makeClass.
+// produces for supplied class-field literals. Other prototypes and
+// carrier kinds reject at structural construction.
 function $isPlainObject($v) {
   if ($v === null || typeof $v !== "object") {
     return false;
@@ -1856,11 +1855,9 @@ function $encodeJsonText($v, $active, $file, $line, $column, $typed, $path, $var
 // shape — { name: string, jtype: "null"|"boolean"|"number"|
 // "string"|"table"|"class"|"array", element?: entry, className?:
 // string, fields?: entry[] | imported C$fields ref, optional: boolean,
-// nullable: boolean, hasDefault: boolean } — entries in declaration
-// order, one role per key. fromJson realizes the parent D5 phase order
-// (parse -> provided-field decode in class source order -> omitted
-// required defaults -> final validation -> publish) and collapses every
-// failure to the DEAL null; toJson serializes the declared fields in
+// nullable: boolean } — entries in declaration order. fromJson decodes
+// supplied fields, requires every nonoptional key, validates and publishes.
+// Every failure returns DEAL null; toJson serializes declared fields in
 // declaration order and raises E8001 on failure. Both walkers mutate no
 // inputs and publish nothing on failure.
 
@@ -1886,25 +1883,10 @@ function $jsonEntryDescriptor($entry) {
   return $entry.nullable ? "?" + $base : $base;
 }
 
-// $jsonFromDocument: decode one class instance from an already-parsed
-// JSON document (the top-level gate, the extra-key rejection, the
-// provided-field decode, the omitted-required defaults, the final
-// validation, and the publish — D2 steps 3-8). Never mutates the
-// document. Throws on validation failure — jsonFromJson's outer catch
-// collapses every throw to the DEAL null — and defaults run only after
-// every provided value decoded (parent D5: a provided-value failure
-// runs no defaults). Omitted required defaults come from the plan-
-// carrying entry shape first (an entry with an `evaluator` function
-// key invokes its labelled zero-argument evaluator exactly once per
-// attempt, in descriptor-array order — ISSUE-0545, the
-// runtime-default-evaluators-and-construction-phases D1 plan
-// projection); the legacy defaults thunk stays the fallback for host
-// declarations and the pinned probe surface. Nested class decode
-// passes null as the defaults thunk: the pinned descriptor shape
-// carries no nested defaults surface (className + fields only, D2), so
-// an omitted required field of a nested class stays absent while
-// absent nested optionals still materialize as $rt.MISSING.
-function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $line, $column) {
+// Decode a structural class without hooks or input mutation. Required
+// omissions, extras and invalid nested values reject the entire document.
+// The public caller converts every thrown validation failure to DEAL null.
+function $jsonFromDocument($identity, $doc, $fields, $file, $line, $column) {
   // Top-level gate (D3): only a JSON object may decode; a scalar, JSON
   // null, or an array document — the empty array included — returns the
   // DEAL null. The class helper accepts exactly its specified object
@@ -1944,35 +1926,17 @@ function $jsonFromDocument($identity, $doc, $fields, $defaultsThunk, $file, $lin
       $jsonFromValue($entry, $doc[$entry.name], $file, $line, $column,
         $isNumberVariant($doc, $entry.name)));
   }
-  // Omitted required defaults (D2 step 6): the thunk runs once per
-  // construction, only after every provided value decoded. A thunk
-  // result that is not a plain object is a defensive failure.
-  let $defaults = null;
-  if ($defaultsThunk !== null && $defaultsThunk !== $undefined) {
-    $defaults = $defaultsThunk();
-    if (!$isPlainObject($defaults)) {
-      $rt.fail("E8001", "class defaults must be a table", $file, $line, $column);
-    }
+  // Required fields must be provided. Missing optionals remain absent;
+  // no evaluator or host hook runs during decoding.
+  for (const $entry of $fields) {
+    if (!$entry.optional && !$provided.has($entry.name)) return null;
   }
-  // Publish scaffold (D2 step 8): provided values, then the omitted
-  // required defaults — the plan-carrying per-entry evaluator first
-  // (ISSUE-0545: exactly one invocation per omitted required entry per
-  // attempt, in descriptor-array order; the emitter's plan projection
-  // carries the labelled zero-argument evaluator closures created at
-  // load and never invoked there), then the thunk fallback (host
-  // declarations and the probe surface), then $rt.MISSING for absent
-  // optionals — all own-property writes via $rt.setProp. An omitted
-  // required field without a default (nested decode) stays absent.
   const $instance = {};
   for (let $i = 0; $i < $fields.length; $i++) {
     const $entry = $fields[$i];
     const $name = $entry.name;
     if ($provided.has($name)) {
       $rt.setProp($instance, $name, $provided.get($name));
-    } else if (typeof $entry.evaluator === "function" && !$entry.optional) {
-      $rt.setProp($instance, $name, $entry.evaluator());
-    } else if ($defaults !== null && Object.prototype.hasOwnProperty.call($defaults, $name)) {
-      $rt.setProp($instance, $name, $defaults[$name]);
     } else if ($entry.optional) {
       $rt.setProp($instance, $name, $MISSING);
     }
@@ -2047,7 +2011,7 @@ function $jsonFromValue($entry, $raw, $file, $line, $column, $numberVariant) {
         $rt.fail("E8001", "malformed field descriptors", $file, $line, $column);
       }
       const $nested = $jsonFromDocument($entry.className, $raw,
-        $entry.fields, null, $file, $line, $column);
+        $entry.fields, $file, $line, $column);
       if ($nested === null) {
         // A nested decode has no successful-null outcome: every gate and
         // every validation failure collapses to the language null of the
@@ -2991,105 +2955,11 @@ const $rt = {
 
   // ===== Class construction (js-backend-runtime-artifact D6) =====
 
-  // makeClass: the mirror of class_ (deal/runtime.lua:859-894) in the JS
-  // representation — a per-construction defaults thunk replaces the Lua
-  // deep copy, and absent optional fields store $MISSING instead of being
-  // removed (the DEAL-observable three-state is identical via optRead/has).
-  //
-  // Step 1: evaluate defaultsThunk() on every construction (fresh mutable
-  // defaults, re-executed call-valued defaults, spec §Construction). The
-  // defensive mirror of class_'s table checks (deal/runtime.lua:861-870):
-  // a non-plain-object thunk result fails with E8001 "class defaults must
-  // be a table"; a null/undefined provided argument is treated as absent
-  // and never errors (Lua's provided ~= nil guard, deal/runtime.lua:868);
-  // any other non-plain-object provided value fails with E8001 "class
-  // field values must be a table". Both arms are defensive — only emitter
-  // mis-emission reaches them (A3) — and raise through fail.
-  //
-  // Step 2: overlay provided own keys in source order. A provided key that
-  // is not an own key of the defaults object fails with E8007
-  // "extra field '<key>' in class '<className>'" — the class_ arm at
-  // deal/runtime.lua:875-879, naming the className argument. Present keys
-  // write via $rt.setProp.
-  //
-  // Step 3: for every remaining declared field (own keys of defaults,
-  // declaration order) write defaults[key] via $rt.setProp — required
-  // fields get their fresh default, absent optionals get $MISSING. Every
-  // declared field materializes as an own property, a field named
-  // __proto__ included (setProp never invokes the inherited accessor), so
-  // field reads never resolve to Object.prototype. No field value
-  // type-checks run here — each provided value already crossed its own
-  // expression-site boundary (class_'s contract, deal/runtime.lua:859-886).
-  //
-  // Step 4: tag via $rt.setProp(instance, "$kind", "class") and
-  // $rt.setProp(instance, "$classname", identity) — the pair class_ step 4
-  // sets on every instance (deal/runtime.lua:889-890) — and return the
-  // instance. Each instance is independent of the defaults template and of
-  // every other instance; no user name can mutate the instance's prototype.
-  makeClass: function $makeClass(className, identity, defaultsThunk, provided, file, line, column) {
-    const $defaults = defaultsThunk();
-    if (!$isPlainObject($defaults)) {
-      $rt.fail("E8001", "class defaults must be a table", file, line, column);
-    }
-    const $instance = {};
-    if (provided !== null && provided !== $undefined) {
-      if (!$isPlainObject(provided)) {
-        $rt.fail("E8001", "class field values must be a table", file, line, column);
-      }
-      const $providedKeys = Object.keys(provided);
-      for (let $i = 0; $i < $providedKeys.length; $i++) {
-        const $key = $providedKeys[$i];
-        if (!Object.prototype.hasOwnProperty.call($defaults, $key)) {
-          $rt.fail("E8007", "extra field '" + $key + "' in class '" + className + "'", file, line, column);
-        }
-        $rt.setProp($instance, $key, provided[$key]);
-      }
-    }
-    const $declaredKeys = Object.keys($defaults);
-    for (let $j = 0; $j < $declaredKeys.length; $j++) {
-      const $key = $declaredKeys[$j];
-      if (provided === null || provided === $undefined || !Object.prototype.hasOwnProperty.call(provided, $key)) {
-        $rt.setProp($instance, $key, $defaults[$key]);
-      }
-    }
-    $rt.setProp($instance, "$kind", "class");
-    $rt.setProp($instance, "$classname", identity);
-    return $instance;
-  },
-
-  // classPlan: the plan-driven class construction entry (ISSUE-0545,
-  // runtime-default-evaluators-and-construction-phases D4 — the
-  // __rt.class_plan_ mirror, deal/runtime.lua:1388-1434) over the
-  // published runtime plan list
-  //   [ { name, descriptor, optional, evaluator? }, ... ]
-  // in class source order. The emitter creates the labelled
-  // zero-argument evaluator closures at module load and never invokes
-  // them there; the provided object literal already evaluated its field
-  // expressions left-to-right at the construction call site.
-  //
-  // The four construction phases:
-  //  1. Provided fields copy into unpublished slots. An extra provided
-  //     name raises E8007 immediately — no default evaluation and no
-  //     field validation has run.
-  //  2. Omitted required-present defaults invoke their evaluator()
-  //     exactly once per attempt, in plan order. Optional omissions
-  //     stay absent ($rt.MISSING). Evaluator results are retained by
-  //     reference — no generic deep copy (typed mutable literals are
-  //     freshly constructed inside the generated evaluator).
-  //  3. Every present field validates against its canonical descriptor
-  //     in plan order through the canonical matcher rows ($rt.checkType).
-  //  4. Tag $kind = "class", $classname = identity, publish.
-  //
-  // Failure publishes no instance (the slots are local and discarded);
-  // completed evaluator or nested-construction side effects are not
-  // rolled back; one attempt per construction with independent
-  // unpublished slots.
-  //
-  // Fail-closed plan-shape validation mirrors plan_declared_names
-  // (deal/runtime.lua:1337-1365): the plan must be an array of entries
-  // with a string name, a string canonical descriptor, a boolean
-  // optional flag, and a null-or-function evaluator; duplicate names
-  // reject.
+  // Structural construction over declaration-order {name, descriptor, optional}
+  // entries. Provided expressions have already evaluated in source order.
+  // Reject extras and required omissions, validate unpublished slots, then tag.
+  // Supplied references retain identity; failures publish nothing and do not
+  // roll back completed effects. Absent optionals store MISSING.
   classPlan: function $classPlan(identity, plan, provided, file, line, column) {
     if (!$Array.isArray(plan)) {
       $rt.fail("E8001", "class default plan must be a table", file, line, column);
@@ -3100,9 +2970,7 @@ const $rt = {
       if ($entry === null || typeof $entry !== "object"
           || typeof $entry.name !== "string"
           || typeof $entry.descriptor !== "string"
-          || typeof $entry.optional !== "boolean"
-          || ($entry.evaluator !== null && $entry.evaluator !== $undefined
-              && typeof $entry.evaluator !== "function")) {
+          || typeof $entry.optional !== "boolean") {
         $rt.fail("E8001", "malformed class default plan entry", file, line, column);
       }
       if ($declared.has($entry.name)) {
@@ -3128,19 +2996,16 @@ const $rt = {
         $providedNames.set($key, true);
       }
     }
-    // Phase 2: omitted required defaults invoke their evaluator()
-    // exactly once per attempt, in plan order; optional omissions stay
-    // absent.
+    // Required presence is independent of nullability.
     for (let $i = 0; $i < plan.length; $i++) {
       const $entry = plan[$i];
       if ($providedNames.has($entry.name)) {
         continue;
       }
-      if (typeof $entry.evaluator === "function" && !$entry.optional) {
-        $rt.setProp($slots, $entry.name, $entry.evaluator());
-      } else if ($entry.optional) {
-        $rt.setProp($slots, $entry.name, $MISSING);
+      if (!$entry.optional) {
+        $rt.fail("E8001", "missing required field '" + $entry.name + "' in class '" + identity + "'", file, line, column);
       }
+      $rt.setProp($slots, $entry.name, $MISSING);
     }
     // Phase 3: validate every present field against its canonical
     // descriptor in plan order through the canonical matcher rows.
@@ -3161,45 +3026,23 @@ const $rt = {
     return $slots;
   },
 
-  // optRead: optional-field reads map MISSING -> null; every other value —
-  // a present null included — passes through unchanged (D6). Under the
-  // verbatim host defaults-map seam (ISSUE-0331 gate closure) an absent
-  // own property — an optional the host defaults table does not mark
-  // with $rt.MISSING — reads the nil-equivalent undefined, which maps
-  // to DEAL null exactly like MISSING (undefined is never a valid
-  // present field value: checkNull rejects it).
+  // Optional reads map absent values to null and retain every present value.
   optRead: function $optRead(v) {
     return v === $MISSING || v === $undefined ? null : v;
   },
 
-  // has: field presence for the has() intrinsic, checker-restricted to
-  // optional class fields (deal/checker/TypeChecker.java:1401-1441). An
-  // own-property read on a class instance: MISSING -> false; an absent
-  // own property (a host-defaults table without a MISSING mark for the
-  // declared optional, the verbatim defaults-map seam) reads the
-  // nil-equivalent undefined -> false; any present value including
-  // null -> true (the spec three-state). The Map branch is deliberately
-  // absent.
+  // Presence is independent of nullability: absent is false, present null true.
+  // The checker restricts has to optional class fields.
   has: function $has(obj, field) {
     return obj[field] !== $MISSING && obj[field] !== $undefined;
   },
 
   // ===== @jsonable runtime walkers (js-v12-jsonable-completion D2-D5) =====
 
-  // jsonFromJson: decode a JSON document string into a tagged class
-  // instance over the pinned field-descriptor shape (D2) with the
-  // parent D5 phase order — parse -> provided-field decode in class
-  // source order -> omitted required defaults (the thunk, once per
-  // construction, only after every provided value decoded) -> final
-  // validation through the canonical matcher rows -> publish. The
-  // top-level gate (D3): a scalar, JSON null, or array document — the
-  // empty array included — returns the DEAL null; only a JSON object
-  // decodes. Every failure — malformed input, unpaired
-  // surrogates, extra keys, provided-value failures, evaluator
-  // failures, final-validation mismatches — returns the DEAL null and
-  // publishes no instance; the walker never throws (the public
-  // C$fromJson contract, D5). No input is ever mutated.
-  jsonFromJson: function $jsonFromJson(identity, fields, defaultsThunk, s, file, line, column) {
+  // Decode only object documents. Malformed text, extra keys, required
+  // omissions and invalid supplied/nested values return null without mutation
+  // or partial publication. Legacy hooks are never read.
+  jsonFromJson: function $jsonFromJson(identity, fields, s, file, line, column) {
     try {
       $rt.checkString(s, file, line, column);
     } catch ($e) {
@@ -3212,7 +3055,7 @@ const $rt = {
       return null;
     }
     try {
-      return $jsonFromDocument(identity, $doc, fields, defaultsThunk, file, line, column);
+      return $jsonFromDocument(identity, $doc, fields, file, line, column);
     } catch ($e) {
       return null;
     }
@@ -3556,7 +3399,7 @@ const $rt = {
   //
   //   "<name>": { $k: "function", $d: "<canonical declared descriptor>" }
   //           | { $k: "class", $d: "<canonical identity>",
-  //               $fields: [ { name, $d, optional, nullable, hasDefault }, ... ] }
+  //               $fields: [ { name, $d, optional, nullable }, ... ] }
   //
   // Function entries: a raw JS function wraps through hostFunction;
   // a pre-wrapped { $kind: "function", $sig, $f } requires
@@ -3569,19 +3412,10 @@ const $rt = {
   //
   // Class entries: the host META must be
   // { $kind: "class", $classname: <declared identity> } (byte-equal to
-  // the declared $d, else E8011); the host-supplied defaults — a
-  // plain object or a zero-arg function returning one, found at
-  // "<C>$defaults" or the cross-backend "<C>_defaults" key — must be
-  // present (else E8011, construction depends on it). The loader
-  // synthesizes "<C>$new" (construction through $rt.makeClass in the
-  // parent D5 phase order, over the host defaults passed through
-  // verbatim — the preserved defaults-map seam, host-module-abi D2:
-  // makeClass's extra-key gate runs against the raw host defaults and
-  // raises E8007 with the canonical identity in the message, so the
-  // host owns the $rt.MISSING marks of its absent optionals exactly
-  // like the Lua triplet's __MISSING marks) and "<C>$fields" (the
-  // declared map's field metadata). The validated META stays under the
-  // declared name.
+  // the declared $d, else E8011). The loader synthesizes "<C>$new"
+  // through structural classPlan and "<C>$fields" from declaration metadata.
+  // No defaults export or legacy hook is read. The validated META stays
+  // under the declared name.
   //
   // Extra host exports are structurally dropped (the surface carries
   // only declared names plus the synthesized keys); the raw exports
@@ -3665,39 +3499,12 @@ const $rt = {
             $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " has malformed field metadata", file, line, column);
           }
         }
-        let $hostDefaults = rawExports[$name + "$defaults"];
-        if ($hostDefaults === $undefined) {
-          $hostDefaults = rawExports[$name + "_defaults"];
-        }
-        if ($hostDefaults === $undefined
-            || !(typeof $hostDefaults === "function"
-                || $isPlainObject($hostDefaults))) {
-          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " is missing its defaults", file, line, column, "table", $rawShapeKind($hostDefaults));
-        }
-        // The preserved defaults-map seam (host-module-abi D2, ISSUE-0331
-        // gate closure): the host defaults — the plain object, or the
-        // zero-arg function evaluated exactly once per construction —
-        // pass through VERBATIM as the construction defaults. makeClass's
-        // extra-key gate compares provided names against the raw host
-        // defaults, so a provided name the host defaults table does not
-        // carry raises E8007 with the canonical identity in the message
-        // (the reference's class_ first argument, deal/runtime.lua:1293+;
-        // the host owns which absent optionals its defaults table marks
-        // with $rt.MISSING, exactly like the Lua triplet's __MISSING
-        // marks). The former declared-optional $MISSING augmentation is
-        // retired: it widened the gate and let a provided declared
-        // optional absent from <C>_defaults pass where the shared
-        // fixture pins E8007. A non-plain-object host defaults result
-        // fails inside makeClass with the pinned E8001 "class defaults
-        // must be a table" (construction-time, never load-time).
+        const $classPlan = $fields.map($field => ({name: $field.name,
+          descriptor: $field.$d, optional: $field.optional}));
+        // Construct against declared structural fields, never raw host hooks.
         $surface[$name] = $v;
         $surface[$name + "$new"] = function(provided, $file, $line, $column) {
-          const $raw = typeof $hostDefaults === "function"
-              ? $hostDefaults()
-              : $hostDefaults;
-          return $rt.makeClass($desc, $desc, function() {
-            return $raw;
-          }, provided, $file, $line, $column);
+          return $rt.classPlan($desc, $classPlan, provided, $file, $line, $column);
         };
         $surface[$name + "$fields"] = $fields.slice();
       } else {

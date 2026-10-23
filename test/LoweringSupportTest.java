@@ -30,7 +30,6 @@ import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.InitializationMode;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryRegistry;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.LoweringContextHash;
@@ -1069,7 +1068,7 @@ public class LoweringSupportTest {
                       return 1;
                     }
                     """,
-                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number = 1;\n  y?: number;\n}\n\nasync function asyncOne(): number { return 1; }\n\nexport async function compute(a: number[]): number {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: table = { k: 1 };\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (has(p.y)) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v: number of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
+                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): number { return 1; }\n\nexport async function compute(a: number[]): number {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: table = { k: 1 };\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (has(p.y)) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v: number of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
             if (result == null) {
                 return;
             }
@@ -1140,7 +1139,6 @@ public class LoweringSupportTest {
             List.of(),
             new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),
-            new JsonDefaultChildTable(Map.of()),
             ClassBindingFacts.empty());
         check(unit.constructCoverage().equals(manifest.constructCoverage()),
             "the synthetic unit's constructCoverage equals the manifest's rows — the "
@@ -1150,13 +1148,12 @@ public class LoweringSupportTest {
             "the std/time.nowMillis row is carried onto the unit's coverage (S1) like "
                 + "every other recorded row");
         check(unit.bodyTable() != null && unit.classFactories() != null
-                && unit.jsonDefaults() != null && unit.classBindingFacts() != null,
+                && unit.classBindingFacts() != null,
             "a synthetic unit with no operations still carries every mandatory "
                 + "companion as a present record, never null");
         check(unit.bodyTable().blockOps().isEmpty()
                 && unit.bodyTable().opBlocks().isEmpty()
                 && unit.classFactories().factories().isEmpty()
-                && unit.jsonDefaults().defaultChildren().isEmpty()
                 && unit.classBindingFacts().equals(ClassBindingFacts.empty()),
             "the operation-free unit's companions are the present-empty records");
     }
@@ -1292,7 +1289,7 @@ public class LoweringSupportTest {
                 import * as time from "std/time";
 
                 export class Point {
-                  x: number = 1;
+                  x: number;
                   y?: number;
                 }
 

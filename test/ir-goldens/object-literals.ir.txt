@@ -1,11 +1,7 @@
 module @test/ir-goldens/fixtures/object-literals.deal:4:1-13:1
   class Point @test/ir-goldens/fixtures/object-literals.deal:4:1-7:1
     field x: number @test/ir-goldens/fixtures/object-literals.deal:5:5-6:5
-      [boundary: class-default]
-      literal 0.0 : number @test/ir-goldens/fixtures/object-literals.deal:5:17-5:17
     field y: number @test/ir-goldens/fixtures/object-literals.deal:6:5-7:1
-      [boundary: class-default]
-      literal 0.0 : number @test/ir-goldens/fixtures/object-literals.deal:6:17-6:17
   function main: null @test/ir-goldens/fixtures/object-literals.deal:9:1-13:1
     body
       let p: @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:10:5-11:7

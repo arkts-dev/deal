@@ -4,8 +4,8 @@
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
 export class Point {
-  x: number = 0;
-  y: number = 0;
+  x: number;
+  y: number;
 }
 
 export function make(x: number, y: number): Point {

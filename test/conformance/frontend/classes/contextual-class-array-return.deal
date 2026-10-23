@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: classes, arrays, contextual-typing
 
-class Box { n: number = 0; }
+class Box { n: number; }
 function make(): Box[] { return [{ n: 2 }]; }
 export function main(): null {
   let a: Box[] = make();

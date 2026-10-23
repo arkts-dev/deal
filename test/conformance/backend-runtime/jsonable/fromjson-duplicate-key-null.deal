@@ -5,7 +5,7 @@
 
 // @jsonable
 export class Depth {
-  value: number = 0;
+  value: number;
 }
 
 export function test_fromjson_duplicate_key(): null {

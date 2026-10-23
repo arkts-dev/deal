@@ -5,14 +5,14 @@
 
 // @jsonable
 export class Item {
-  id: number = 0;
+  id: number;
   note?: string | null;
 }
 
 // @jsonable
 export class Batch {
-  name: string = "";
-  items: Item[] = [];
+  name: string;
+  items: Item[];
 }
 
 export function main(): null {

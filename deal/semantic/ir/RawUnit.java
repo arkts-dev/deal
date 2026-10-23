@@ -41,7 +41,7 @@ import java.util.Objects;
  *   <li>{@link #ops()} — the produced operations in source order.</li>
  *   <li>{@link #bodyTable()} — both membership directions, transported
  *       independently and never rebuilt from one another.</li>
- *   <li>{@link #classFactories()}, {@link #jsonDefaults()} and
+ *   <li>{@link #classFactories()} and
  *       {@link #classBindingFacts()} — the complete unit companions
  *       under their existing names.</li>
  * </ul>
@@ -67,7 +67,6 @@ public record RawUnit(
     List<RawOp> ops,
     StructuredBodyTable bodyTable,
     ClassFactoryRegistry classFactories,
-    JsonDefaultChildTable jsonDefaults,
     ClassBindingFacts classBindingFacts
 ) {
 
@@ -87,7 +86,6 @@ public record RawUnit(
         ops = List.copyOf(Objects.requireNonNull(ops, "ops must not be null"));
         Objects.requireNonNull(bodyTable, "bodyTable must not be null");
         Objects.requireNonNull(classFactories, "classFactories must not be null");
-        Objects.requireNonNull(jsonDefaults, "jsonDefaults must not be null");
         Objects.requireNonNull(classBindingFacts, "classBindingFacts must not be null");
     }
 
@@ -126,7 +124,7 @@ public record RawUnit(
             for (ClassLayout.FieldLayout field : layout.fields()) {
                 fields.add(new RawFieldLayout(field.name(),
                     field.descriptor().canonicalSpecText(), field.required(),
-                    field.defaultOwner().name()));
+                    field.constructionProvider().name()));
             }
             classLayouts.add(new RawClassLayout(entry.getKey(),
                 new RawLayout(layout.classId(), fields)));
@@ -155,8 +153,7 @@ public record RawUnit(
         return new RawUnit(unit.moduleId().path(), unit.semanticProfile().name(),
             unit.interfaceHash(), unit.loweringContextHash(), capabilities, coverage,
             classLayouts, functions, unit.moduleInit(), exportPlan, bindings, ops,
-            unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     private static RawBinding bindingFromTyped(long allocationId, FunctionExecutionBinding binding) {
@@ -258,13 +255,13 @@ public record RawUnit(
         String name,
         String descriptor,
         boolean required,
-        String defaultOwner
+        String constructionProvider
     ) {
 
         public RawFieldLayout {
             Objects.requireNonNull(name, "name must not be null");
             Objects.requireNonNull(descriptor, "descriptor must not be null");
-            Objects.requireNonNull(defaultOwner, "defaultOwner must not be null");
+            Objects.requireNonNull(constructionProvider, "constructionProvider must not be null");
         }
     }
 

@@ -1,19 +1,19 @@
 // @spec: Classes — Construction
-// @description: v1.2 default plans: mutable table defaults are freshly constructed per construction attempt — two instances never share the default table (defaults are deep-constructed per their typed literal structure, never evaluated once at class declaration time).
+// @description: Explicit table literals are evaluated separately for each construction; mutation remains instance-local.
 // @expected: runtime-ok
-// @features: classes, defaults, tables
+// @features: classes, construction, tables
 
 class Box {
-  data: table = {};
+  data: table;
 }
 
 export function test_plan_fresh_literals(): null {
-  let a: Box = {};
-  let b: Box = {};
+  let a: Box = {data: {}};
+  let b: Box = {data: {}};
   a.data.x = 7;
   let bx: number | null = b.data.x;
   if (bx !== null) {
-    throw { code: "TEST_FAIL", message: "plan table default shared across instances" };
+    throw { code: "TEST_FAIL", message: "provided table literals shared across instances" };
   }
   return null;
 }

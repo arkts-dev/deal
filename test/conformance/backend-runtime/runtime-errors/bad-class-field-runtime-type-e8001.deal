@@ -3,7 +3,7 @@
 // @expected: compile-error E3001
 // @features: classes, diagnostics
 
-class Box { value: number = 0; }
+class Box { value: number; }
 
 export function test_bad_class_field_runtime_type(): Box {
   let t: table = { value: "bad" };

@@ -22,7 +22,7 @@ import java.util.Set;
  *   classLayouts, functions, moduleInit, exportPlan,
  *   functionBindings: Map<FunctionAllocationIdentity, FunctionExecutionBinding>
  *   ops: [SemanticOp],                           // the unit's produced operations in source order
- *   bodyTable, classFactories, jsonDefaults, classBindingFacts
+ *   bodyTable, classFactories, classBindingFacts
  * }
  * }</pre>
  *
@@ -40,8 +40,7 @@ import java.util.Set;
  * <p>The unit is the single owner of the structural companions the
  * transport and the composed admission need: {@link #bodyTable()} (both
  * block-membership directions), {@link #classFactories()} (the
- * construction-entry → {@code CLASS_FACTORY} registry), {@link
- * #jsonDefaults()} (the per-site {@code JSON_FROM_CLASS} default children)
+ * construction-entry → {@code CLASS_FACTORY} registry),
  * and {@link #classBindingFacts()} (the parameter/import initialization
  * facts). They are mandatory facts of every unit: a unit without class
  * content carries present-empty records, never null or absent. The
@@ -80,7 +79,6 @@ public record LoweredModuleUnit(
     List<SemanticOp> ops,
     StructuredBodyTable bodyTable,
     ClassFactoryRegistry classFactories,
-    JsonDefaultChildTable jsonDefaults,
     ClassBindingFacts classBindingFacts
 ) {
 
@@ -99,7 +97,6 @@ public record LoweredModuleUnit(
                              List<SemanticOp> ops,
                              StructuredBodyTable bodyTable,
                              ClassFactoryRegistry classFactories,
-                             JsonDefaultChildTable jsonDefaults,
                              ClassBindingFacts classBindingFacts) {
         this.formatVersion = Objects.requireNonNull(formatVersion, "formatVersion must not be null");
         if (!FORMAT_VERSION.equals(formatVersion)) {
@@ -142,8 +139,6 @@ public record LoweredModuleUnit(
         this.bodyTable = Objects.requireNonNull(bodyTable, "bodyTable must not be null");
         this.classFactories = Objects.requireNonNull(classFactories,
             "classFactories must not be null");
-        this.jsonDefaults = Objects.requireNonNull(jsonDefaults,
-            "jsonDefaults must not be null");
         this.classBindingFacts = Objects.requireNonNull(classBindingFacts,
             "classBindingFacts must not be null");
     }

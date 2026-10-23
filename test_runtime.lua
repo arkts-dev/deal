@@ -245,7 +245,7 @@ test("forged class carriers are rejected at a class descriptor (v1.3)", function
   local forged = carrier_key_table()
   assert_boundary_error(function() __rt.check_type("@m/C", forged) end,
     "E8001", "expected class instance", "class", "table")
-  assert(__rt.check_type("@m/C", __rt.class_("@m/C", {}, {})) ~= nil,
+  assert(__rt.check_type("@m/C", __rt.class_plan_("@m/C", {}, {})) ~= nil,
     "the produced class instance is admitted")
 end)
 
@@ -267,7 +267,7 @@ test("non-arrays are rejected at an array descriptor (v1.3)", function()
   assert_boundary_error(function() __rt.check_type("[number]", { a = 1 }) end,
     "E8001", "expected array", "array", "table")
   assert_boundary_error(function()
-    __rt.check_type("[number]", __rt.class_("@m/C", {}, {}))
+    __rt.check_type("[number]", __rt.class_plan_("@m/C", {}, {}))
   end, "E8001", "expected array", "array", "@m/C")
   assert_boundary_error(function()
     __rt.check_type("[number]", __rt.function_("()->null", function() return nil end))
@@ -300,7 +300,7 @@ end)
 
 test("carriers are rejected at a table descriptor (v1.3)", function()
   assert_boundary_error(function()
-    __rt.check_table(__rt.class_("@m/C", {}, {}))
+    __rt.check_table(__rt.class_plan_("@m/C", {}, {}))
   end, "E8001", "expected table", "table", "@m/C")
   assert_boundary_error(function()
     __rt.check_table(__rt.function_("()->null", function() return nil end))
@@ -344,8 +344,9 @@ test("carriers are rejected at a table descriptor (v1.3)", function()
 end)
 
 test("a class instance may declare fields named after the carrier keys (v1.3)", function()
-  local instance = __rt.class_("@m/Tagged",
-    { __kind = "user-kind", __c = 1, __keys = "keys" }, {})
+  local instance = __rt.class_plan_("@m/Tagged",
+    {{name="__kind",descriptor="string",optional=false}, {name="__c",descriptor="number",optional=false}, {name="__keys",descriptor="string",optional=false}},
+    { __kind = "user-kind", __c = 1, __keys = "keys" })
   assert(instance[__K.kind] == "class", "the instance keeps its runtime class mark")
   assert(instance[__K.classname] == "@m/Tagged", "the instance keeps its identity")
   assert(instance.__kind == "user-kind", "the user field named __kind survives")
@@ -364,7 +365,7 @@ end)
 -- table spelling, at every non-class boundary as well as at the class and
 -- function rows' wrong-kind arms.
 test("a class instance publishes its carried class atom at every boundary (v1.3)", function()
-  local instance = __rt.class_("@m/C", { a = 1 }, {})
+  local instance = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1})
   assert(__rt.typed_kind(instance) == "@m/C", "the instance's closed token is its atom")
   -- The primitive rows.
   assert_boundary_error(function() __rt.check_string(instance) end,
@@ -406,7 +407,7 @@ test("the builtin Error publishes the canonical Error atom at every boundary (v1
   assert(__rt.check_type("Error", err_value) == err_value,
     "the Error descriptor admits the builtin Error value")
   assert_boundary_error(function()
-    __rt.check_type("Error", __rt.class_("@m/C", { a = 1 }, {}))
+    __rt.check_type("Error", __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1}))
   end, "E8001", "expected instance of Error, got @m/C", "Error", "@m/C")
 end)
 
@@ -788,7 +789,7 @@ test("the host parameter cell rejects a forged carrier (ISSUE-0830)", function()
   assert(errArray.message == "arm:HOST_PARAMETER_CELL", tostring(errArray.message))
   -- The real carriers pass the same cells.
   assert(__rt.from_lua_function("(@m/C)->null", raw).f(
-    __rt.class_("@m/C", {}, {})) == __rt.__NULL)
+    __rt.class_plan_("@m/C", {}, {})) == __rt.__NULL)
   assert(__rt.from_lua_function("([number])->null", raw).f(
     { [__K.a] = true, [__K.n] = 0 }) == __rt.__NULL)
 end)
@@ -839,89 +840,93 @@ test("from_lua_function on non-function errors", function()
   assert_error(function() __rt.from_lua_function("(number)->number", "notafunc") end, "E8001")
 end)
 
--- ==================== class_ tests ====================
+-- ==================== Structural construction ====================
 
-test("class_ basic construction", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada"})
-  assert(u.name == "Ada")
-  assert(u.nick == nil)
+local function field(name, descriptor, optional)
+  return {name = name, descriptor = descriptor, optional = optional == true}
+end
+local user_plan = {field("name", "string"), field("nick", "string", true)}
+
+test("class_plan_ never reads a retired evaluator hook", function()
+  local entry = setmetatable(field("x", "number"), {__index=function(_, key)
+    if key == "evaluator" then error("retired hook read") end
+  end})
+  assert(__rt.class_plan_("C", {entry}, {x=7}).x == 7)
+  local err = assert_error(function() __rt.class_plan_("C", {entry}, {}) end, "E8001")
+  assert(string.find(err.message, "missing required field 'x'", 1, true) ~= nil)
+end)
+
+test("class_plan_ basic construction", function()
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada"})
+  assert(u.name == "Ada" and u.nick == nil)
+  assert(u[__K.classname] == "User" and u[__K.kind] == "class")
+end)
+
+test("class_plan_ optional field provided", function()
+  local u = __rt.class_plan_("User", user_plan, {name = "", nick = "ads"})
+  assert(u.name == "" and u.nick == "ads")
   assert(u[__K.classname] == "User")
-  assert(u[__K.kind] == "class")
 end)
 
-test("class_ optional field provided", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {nick = "ads"})
-  assert(u.name == "")
-  assert(u.nick == "ads")
-  assert(u[__K.classname] == "User")
+test("class_plan_ all optional fields provided", function()
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada", nick = "ads"})
+  assert(u.name == "Ada" and u.nick == "ads")
 end)
 
-test("class_ all optional fields provided", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada", nick = "ads"})
-  assert(u.name == "Ada")
-  assert(u.nick == "ads")
-end)
-
-test("class_ extra field rejected with E8007", function()
+test("class_plan_ extra field rejected with E8007", function()
   assert_error(function()
-    __rt.class_("User", {name = ""}, {extra = 1})
+    __rt.class_plan_("User", user_plan, {extra = 1})
   end, "E8007")
 end)
 
-test("class_ extra field error contains field name and class name", function()
+test("class_plan_ extra field error contains field name and class name", function()
   local err = assert_error(function()
-    __rt.class_("User", {name = ""}, {extra = 1})
+    __rt.class_plan_("User", user_plan, {extra = 1})
   end, "E8007")
   assert(string.find(err.message, "extra") ~= nil)
   assert(string.find(err.message, "User") ~= nil)
 end)
 
-test("class_ with __NULL default value", function()
-  local u = __rt.class_("C", {val = __rt.__NULL}, {})
-  assert(u.val == __rt.__NULL)
-  assert(u[__K.kind] == "class")
+test("class_plan_ required nullable omission rejects", function()
+  assert_error(function()
+    __rt.class_plan_("C", {field("val", "?string")}, {})
+  end, "E8001")
 end)
 
-test("class_ with provided __NULL field (not rejected as extra)", function()
-  -- __NULL is a table, so instance["val"] ~= nil → valid overlay
-  local u = __rt.class_("C", {val = __rt.__NULL}, {val = __rt.__NULL})
-  assert(u.val == __rt.__NULL)
+test("class_plan_ provided null is present", function()
+  local u = __rt.class_plan_("C", {field("val", "?string")}, {val = __rt.__NULL})
+  assert(u.val == __rt.__NULL and u[__K.kind] == "class")
 end)
 
-test("class_ empty provided table", function()
-  local u = __rt.class_("C", {a = 1, b = 2}, {})
-  assert(u.a == 1)
-  assert(u.b == 2)
+test("class_plan_ empty provided table cannot fill required fields", function()
+  assert_error(function()
+    __rt.class_plan_("C", {field("a", "number"), field("b", "number")}, {})
+  end, "E8001")
 end)
 
-test("class_ nil provided treated as empty", function()
-  local u = __rt.class_("C", {a = 1}, nil)
-  assert(u.a == 1)
-end)
-
-test("class_ all defaults removed properly", function()
-  local u = __rt.class_("C", {a = __rt.__MISSING, b = __rt.__MISSING}, {})
+test("class_plan_ nil provided treats optional fields as absent", function()
+  local u = __rt.class_plan_("C", {field("a", "number", true)}, nil)
   assert(u.a == nil)
-  assert(u.b == nil)
-  -- Verify __MISSING is not in the instance by iterating
-  for k, v in pairs(u) do
-    assert(v ~= __rt.__MISSING)
-  end
+end)
+
+test("class_plan_ absent optionals do not materialize sentinels", function()
+  local u = __rt.class_plan_("C", {field("a", "number", true), field("b", "number", true)}, {})
+  assert(u.a == nil and u.b == nil)
+  for _, value in pairs(u) do assert(value ~= __rt.__MISSING) end
 end)
 
 -- ==================== Deep copy tests ====================
 
 test("deep copy: instances are independent", function()
-  local defaults = { items = {1, 2, 3}, name = "default" }
-  local a = __rt.class_("C", defaults, {})
-  local b = __rt.class_("C", defaults, {})
+  local plan = {field("items", "[number]"), field("name", "string")}
+  local a = __rt.class_plan_("C", plan, {items = {1,2,3}, name = "provided"})
+  local b = __rt.class_plan_("C", plan, {items = {1,2,3}, name = "provided"})
   a.items[1] = 99
   assert(b.items[1] == 1)
 end)
 
 test("deep copy: __NULL preserved by identity", function()
-  local defaults = { val = __rt.__NULL }
-  local a = __rt.class_("C", defaults, {})
+  local a = __rt.class_plan_("C", {field("val", "?string")}, {val = __rt.__NULL})
   assert(a.val == __rt.__NULL)
 end)
 
@@ -932,9 +937,9 @@ test("deep copy: __MISSING preserved by identity", function()
 end)
 
 test("deep copy: nested tables are independent", function()
-  local defaults = { data = { x = { y = 1 } } }
-  local a = __rt.class_("C", defaults, {})
-  local b = __rt.class_("C", defaults, {})
+  local plan = {field("data", "table")}
+  local a = __rt.class_plan_("C", plan, {data = {x = {y = 1}}})
+  local b = __rt.class_plan_("C", plan, {data = {x = {y = 1}}})
   a.data.x.y = 99
   assert(b.data.x.y == 1)
 end)
@@ -949,14 +954,14 @@ local function int_plan()
   }
 end
 
-test("json_from_plan decodes provided fields, evaluates omitted defaults, and tags", function()
+test("json_from_plan decodes required fields and preserves absent optionals",  function()
   local calls = 0
   local plan = {
     { name = "id", descriptor = "number", optional = false, evaluator = function() calls = calls + 1 return 7 end },
     { name = "name", descriptor = "string", optional = false, evaluator = function() return "anon" end },
     { name = "nick", descriptor = "string", optional = true },
   }
-  local u = __rt.json_from_plan("@mod/User", plan, { id = 42 }, "f.deal", 1, 1)
+  local u = __rt.json_from_plan("@mod/User", plan, { id = 42, name = "anon" }, "f.deal", 1, 1)
   assert(u ~= nil)
   assert(u.id == 42)
   assert(u.name == "anon")
@@ -998,10 +1003,9 @@ test("json_from_plan non-empty array-shaped input returns nil", function()
   assert(__rt.json_from_plan("C", int_plan(), { 1, 2 }, "f.deal", 1, 1) == nil)
 end)
 
-test("json_from_plan empty object document decodes the defaulted instance", function()
-  -- An empty object document is a JSON object: the omitted
-  -- required-present defaults evaluate and the instance publishes.
-  local u = __rt.json_from_plan("C", int_plan(), {}, "f.deal", 1, 1)
+test("json_from_plan empty object requires all nonoptional fields", function()
+  assert(__rt.json_from_plan("C", int_plan(), {}, "f.deal", 1, 1) == nil)
+  local u = __rt.json_from_plan("C", int_plan(), {id = 0, name = "anon"}, "f.deal", 1, 1)
   assert(u ~= nil and u.id == 0 and u.name == "anon" and u.nick == nil)
 end)
 
@@ -1078,12 +1082,12 @@ test("json_from_plan array fields validate element-wise", function()
   assert(__rt.json_from_plan("C", plan, { xs = { 1, "x" } }, "f.deal", 1, 1) == nil)
 end)
 
-test("json_from_plan evaluator results are retained by reference and fresh per attempt", function()
+test("json_from_plan supplied arrays are independently decoded per attempt", function()
   local plan = {
     { name = "items", descriptor = "[number]", optional = false, evaluator = function() return { 1 } end },
   }
-  local a = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
-  local b = __rt.json_from_plan("C", plan, {}, "f.deal", 1, 1)
+  local a = __rt.json_from_plan("C", plan, {items = {1}}, "f.deal", 1, 1)
+  local b = __rt.json_from_plan("C", plan, {items = {1}}, "f.deal", 1, 1)
   assert(a ~= nil and b ~= nil and a.items ~= b.items)
   a.items[1] = 99
   assert(b.items[1] == 1)
@@ -1125,22 +1129,22 @@ test("has on explicit null (__NULL) returns true", function()
 end)
 
 test("has on class instance optional field not set returns false", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada"})
   assert(__rt.has(u, "nick") == false)
 end)
 
 test("has on class instance required field returns true", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada"})
   assert(__rt.has(u, "name") == true)
 end)
 
 test("has on class instance optional field set to value returns true", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada", nick = "ads"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada", nick = "ads"})
   assert(__rt.has(u, "nick") == true)
 end)
 
 test("has after delete returns false", function()
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada", nick = "ads"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada", nick = "ads"})
   u.nick = nil  -- simulate delete
   assert(__rt.has(u, "nick") == false)
 end)
@@ -1179,7 +1183,7 @@ test("number admission is nontrapping beyond signed32", function()
 end)
 
 test("error() from class_ extra field produces E8007", function()
-  local ok, err = pcall(function() __rt.class_("User", {name = ""}, {extra = 1}) end)
+  local ok, err = pcall(function() __rt.class_plan_("User", user_plan, {extra = 1}) end)
   assert(ok == false)
   assert(err.code == "E8007")
 end)
@@ -1188,7 +1192,7 @@ end)
 
 test("check_nullable after delete returns __NULL", function()
   -- Simulate: class constructed with optional field, then deleted
-  local u = __rt.class_("User", {name = "", nick = __rt.__MISSING}, {name = "Ada", nick = "ads"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada", nick = "ads"})
   -- delete u.nick → u.nick = nil
   u.nick = nil
   -- Now check_nullable should return __NULL
@@ -1216,13 +1220,13 @@ end)
 -- ==================== check_type with class descriptor tests ====================
 
 test("check_type class instance passes", function()
-  local u = __rt.class_("@test/User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("@test/User", user_plan, {name = "Ada"})
   local r = __rt.check_type("@test/User", u)
   assert(r == u)
 end)
 
 test("check_type class instance wrong class errors", function()
-  local u = __rt.class_("@test/User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("@test/User", user_plan, {name = "Ada"})
   assert_error(function() __rt.check_type("@test/Admin", u) end, "E8001")
 end)
 
@@ -1233,7 +1237,7 @@ end)
 test("check_type rejects the bare class-name spelling", function()
   -- Bare class names are a legacy dialect spelling: the canonical parser
   -- rejects them before any value check runs.
-  local u = __rt.class_("User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada"})
   local err = assert_error(function() __rt.check_type("User", u) end, "E8001")
   assert(string.find(err.message, "cannot parse type descriptor", 1, true) ~= nil)
 end)
@@ -1241,25 +1245,25 @@ end)
 -- ==================== module-qualified class identity tests ====================
 
 test("check_type qualified class instance passes on exact identity", function()
-  local u = __rt.class_("@mod/User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("@mod/User", user_plan, {name = "Ada"})
   local r = __rt.check_type("@mod/User", u)
   assert(r == u)
 end)
 
 test("check_type qualified class rejects foreign-module identity", function()
-  local u = __rt.class_("@other/User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("@other/User", user_plan, {name = "Ada"})
   assert_error(function() __rt.check_type("@mod/User", u) end, "E8001")
 end)
 
 test("check_type qualified class rejects bare-tagged instance", function()
-  local u = __rt.class_("User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("User", user_plan, {name = "Ada"})
   assert_error(function() __rt.check_type("@mod/User", u) end, "E8001")
 end)
 
 test("check_type bare class spelling rejects qualified-tagged instance", function()
   -- The bare "User" spelling fails the canonical parser before the value
   -- check runs, so a qualified-tagged instance is rejected with E8001.
-  local u = __rt.class_("@mod/User", {name = ""}, {name = "Ada"})
+  local u = __rt.class_plan_("@mod/User", user_plan, {name = "Ada"})
   assert_error(function() __rt.check_type("User", u) end, "E8001")
 end)
 
@@ -1294,7 +1298,7 @@ test("check_type Error passes against error_value outputs", function()
 end)
 
 test("check_type Error rejects non-Error class instances", function()
-  local u = __rt.class_("Error", {code = "", message = ""}, {code = "X"})
+  local u = __rt.class_plan_("Error", {field("code", "string"), field("message", "string")}, {code = "X", message = ""})
   assert_error(function() __rt.check_type("Error", {[__K.kind] = "class", [__K.classname] = "User"}) end, "E8001")
   -- sanity: a genuine Error instance still passes
   assert(u[__K.kind] == "class" and u[__K.classname] == "Error")
@@ -1314,15 +1318,13 @@ end)
 
 test("deep copy preserves function wrappers by identity", function()
   local w = __rt.function_("(number)->number", function(x) return x end)
-  local defaults = { fn = w }
-  local a = __rt.class_("C", defaults, {})
+  local a = __rt.class_plan_("C", {field("fn", "(number)->number")}, {fn = w})
   assert(a.fn == w)
 end)
 
 test("deep copy preserves class instances by identity", function()
-  local inner = __rt.class_("Inner", {x = 1}, {})
-  local defaults = { child = inner }
-  local a = __rt.class_("C", defaults, {})
+  local inner = __rt.class_plan_("@m/Inner", {field("x", "number")}, {x = 1})
+  local a = __rt.class_plan_("C", {field("child", "@m/Inner")}, {child = inner})
   assert(a.child == inner)
 end)
 
@@ -1561,9 +1563,9 @@ end)
 -- ==================== class_ edge cases ====================
 
 test("class_ with default array deep-copied independently", function()
-  local defaults = { items = {1, 2, 3} }
-  local a = __rt.class_("C", defaults, {})
-  local b = __rt.class_("C", defaults, {})
+  local plan = {field("items", "[number]")}
+  local a = __rt.class_plan_("C", plan, {items = {1,2,3}})
+  local b = __rt.class_plan_("C", plan, {items = {1,2,3}})
   -- Modify a.items
   a.items[1] = 99
   -- b.items should be unaffected
@@ -1572,9 +1574,9 @@ test("class_ with default array deep-copied independently", function()
 end)
 
 test("class_ with default table deep-copied independently", function()
-  local defaults = { data = { x = 1, y = 2 } }
-  local a = __rt.class_("C", defaults, {})
-  local b = __rt.class_("C", defaults, {})
+  local plan = {field("data", "table")}
+  local a = __rt.class_plan_("C", plan, {data = {x=1,y=2}})
+  local b = __rt.class_plan_("C", plan, {data = {x=1,y=2}})
   a.data.x = 99
   assert(b.data.x == 1)
 end)
@@ -2379,37 +2381,28 @@ test("load_host nullable-function param export accepts null and matching-sig fun
   assert_error(function() host.register.f(inner) end, "E8010")
 end)
 
-test("load_host class export validates identity and copies defaults", function()
+test("load_host class export validates identity and ignores defaults", function()
   local host = __rt.load_host(HOST_FIXTURE, {
     ServerConfig = "@$external/host.cfg/ServerConfig",
   })
   assert(type(host.ServerConfig) == "table" and host.ServerConfig[__K.kind] == "class")
   assert(host.ServerConfig[__K.classname] == "@$external/host.cfg/ServerConfig")
-  assert(type(host.ServerConfig_defaults) == "table")
-  assert(host.ServerConfig_defaults.port == 80)
+  assert(host.ServerConfig_defaults == nil)
 end)
 
-test("load_host synthesizes no <C>_plan key and host classes keep the defaults-map seam", function()
+test("load_host synthesizes no defaults or plan hook and structural construction stays fresh", function()
   local host = __rt.load_host(HOST_FIXTURE, {
     ServerConfig = "@$external/host.cfg/ServerConfig",
   })
-  -- The loader copies META and <C>_defaults through and synthesizes
-  -- nothing else: no <C>_plan artifact ever exists on a host module
-  -- (runtime page D4 host seam re-contract).
-  assert(host.ServerConfig_plan == nil)
-  -- Construction through the preserved class_ defaults-map entry:
-  -- per-instance deep copies (the host's own defaults table is never
-  -- mutated or tagged), provided overlays stay instance-local, and
-  -- extra provided names still raise E8007.
-  local a = __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 9000 })
-  local b = __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 8080 })
+  assert(host.ServerConfig_plan == nil and host.ServerConfig_defaults == nil)
+  local plan = {{name = "port", descriptor = "number", optional = false}}
+  local a = __rt.class_plan_("@$external/host.cfg/ServerConfig", plan, { port = 9000 })
+  local b = __rt.class_plan_("@$external/host.cfg/ServerConfig", plan, { port = 8080 })
   assert(a.port == 9000)
   assert(b.port == 8080)
-  assert(host.ServerConfig_defaults.port == 80)
-  assert(host.ServerConfig_defaults[__K.kind] == nil)
-  assert(host.ServerConfig_defaults[__K.classname] == nil)
+  assert(a ~= b and host.ServerConfig[__K.kind] == "class")
   assert_error(function()
-    __rt.class_("@$external/host.cfg/ServerConfig", host.ServerConfig_defaults, { port = 1, extra = true })
+    __rt.class_plan_("@$external/host.cfg/ServerConfig", plan, { port = 1, extra = true })
   end, "E8007")
 end)
 
@@ -2495,27 +2488,15 @@ test("load_host mapped load failures delegate to the registered arm renderer", f
   assert(type(call.values.actual) == "string")
   assert(call.file == "probe.deal" and call.line == 9 and call.column == 4)
 
-  -- HOST_LOAD_INVALID_METADATA: the declared class's missing or non-table
-  -- <C>_defaults / <C>_fields entry.
+  -- Missing and wrong-shaped retired defaults metadata are not authority.
   host_load_arm_calls = {}
-  local missingDefaults = assert_error(function()
-    __rt.load_host(HOST_FIXTURE,
-      { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
-  end, "E8011")
-  assert(missingDefaults.message == "arm:HOST_LOAD_INVALID_METADATA")
-  call = host_load_arm_calls[1]
-  assert(#host_load_arm_calls == 1 and call.id == "HOST_LOAD_INVALID_METADATA")
-  assert(call.values.name == "NoDefaults" and call.values.module == HOST_FIXTURE
-    and call.values["defaults|fields"] == "defaults")
-  assert(call.file == "probe.deal" and call.line == 3 and call.column == 9)
-  host_load_arm_calls = {}
-  local wrongKind = assert_error(function()
-    __rt.load_host(HOST_FIXTURE,
-      { BadDefaults = "@$external/host.cfg/BadDefaults" }, "probe.deal", 4, 1)
-  end, "E8011")
-  assert(wrongKind.message == "arm:HOST_LOAD_INVALID_METADATA")
-  assert(#host_load_arm_calls == 1
-    and host_load_arm_calls[1].values["defaults|fields"] == "defaults")
+  local absent = __rt.load_host(HOST_FIXTURE,
+    { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
+  local poisoned = __rt.load_host(HOST_FIXTURE,
+    { BadDefaults = "@$external/host.cfg/BadDefaults" }, "probe.deal", 4, 1)
+  assert(absent.NoDefaults ~= nil and poisoned.BadDefaults ~= nil)
+  assert(absent.NoDefaults_defaults == nil and poisoned.BadDefaults_defaults == nil)
+  assert(#host_load_arm_calls == 0)
   host_load_arm_calls = {}
   local badFields = assert_error(function()
     __rt.load_host(HOST_FIXTURE,
@@ -2541,7 +2522,7 @@ test("load_host mapped failures without the registered renderer fail closed", fu
     end,
     function()
       __rt.load_host(HOST_FIXTURE,
-        { NoDefaults = "@$external/host.cfg/NoDefaults" }, "probe.deal", 3, 9)
+        { BadFields = "@$external/host.cfg/BadFields" }, "probe.deal", 3, 9)
     end,
   }
   for i = 1, #probes do

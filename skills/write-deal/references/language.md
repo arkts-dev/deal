@@ -20,7 +20,7 @@ Equality uses `===`/`!==` with equal types, except nullable comparison with null
 
 ## Classes
 
-Classes describe nominal records and are module-level declarations only. Required fields have defaults; optional fields use `?`. Construct through typed object literals with declared fields. Defaults apply per construction; mutable literal defaults are fresh. Same-shaped classes remain distinct.
+Classes describe nominal records and are module-level declarations only. Declare fields by name and type; optional fields use `?`. Construct through typed object literals that supply every required field, including nullable fields. Supply separate mutable literals when independent instances need fresh storage. Same-shaped classes remain distinct.
 
 Use records for fixed schemas, tables for dynamic keys, functions for behavior. Pass records explicitly to those functions.
 
@@ -50,7 +50,7 @@ Arrays are zero-based. Annotate empty literals. Append at length and iterate wit
 
 Attach `// @jsonable` immediately to an exported class. Call its generated module helpers: `C$fromJson(string): C | null`, `C$toJson(C): string`.
 
-Parsing rejects extra keys and duplicate keys, applies defaults, preserves presence, and returns null on invalid input. JSON numbers parse as binary64, preserving negative zero; serialization emits either zero sign as `0`. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Handle non-JSON data, non-finite numbers, and cycles explicitly.
+Parsing requires every nonoptional field, rejects extra keys and duplicate keys, preserves optional presence, and returns null on invalid input. JSON numbers parse as binary64, preserving negative zero; serialization emits either zero sign as `0`. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Handle non-JSON data, non-finite numbers, and cycles explicitly.
 
 ## Modules
 

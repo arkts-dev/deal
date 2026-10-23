@@ -9,8 +9,8 @@ export function main(): null {
  function mark(s: string): number {trace = trace + s; return 1;}
  function fail(): number {trace = trace + "B"; throw {code:"STOP",message:"literal"};}
  try {let v: number[] = [mark("A"), fail(), mark("X")]; trace = trace + "Y";} catch(e) {
-  if(e.code !== "STOP") {throw {message:"wrong code"};} trace = trace + "C";
+  if(e.code !== "STOP") {throw {code:"TEST_FAIL",message:"wrong code"};} trace = trace + "C";
  }
- if(trace !== "ABC") {throw {message:"literal order: " + trace};}
+ if(trace !== "ABC") {throw {code:"TEST_FAIL",message:"literal order: " + trace};}
  c.log("array-literal-abrupt"); return null;
 }

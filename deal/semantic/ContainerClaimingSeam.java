@@ -173,7 +173,7 @@ public final class ContainerClaimingSeam {
             case BOUNDARY -> switch (((KindPayload.BoundaryPayload) op.payload()).kind()) {
                 case ARRAY_LITERAL_ELEMENT, CONTEXTUAL_TABLE_READ,
                      UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CLASS_FIELD_ASSIGNMENT,
-                     CLASS_LITERAL_FIELD, CLASS_DEFAULT_FIELD ->
+                     CLASS_LITERAL_FIELD ->
                     List.of(SemanticCapability.DESCRIPTORS, SemanticCapability.BOUNDARIES);
                 default -> List.of();
             };
@@ -181,7 +181,7 @@ public final class ContainerClaimingSeam {
             case BRANCH, LOOP, DISCARD -> List.of(SemanticCapability.EVALUATION_ORDER);
             case STDLIB_CALL -> List.of(SemanticCapability.STDLIB_SEMANTICS);
 
-            case CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ, FIELD_WRITE,
+            case CLASS_NEW, CLASS_FACTORY, FIELD_READ, FIELD_WRITE,
                  FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS ->
                 List.of(SemanticCapability.CLASSES);
             case HAS_FIELD -> List.of(SemanticCapability.CONTAINERS_AND_STRINGS);

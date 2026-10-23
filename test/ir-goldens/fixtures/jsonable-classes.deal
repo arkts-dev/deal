@@ -1,23 +1,23 @@
 // IR golden fixture: jsonable-classes
 // Tests class declarations with various field patterns:
-// required fields with defaults, optional fields, and edge cases.
+// required and optional fields across the primitive types.
 
 class Point {
-    x: number = 0;
-    y: number = 0;
+    x: number;
+    y: number;
 }
 
 class User {
-    name: string = "";
+    name: string;
     age?: number;
-    active: boolean = true;
+    active: boolean;
 }
 
 class Config {
-    title: string = "untitled";
-    count: number = 1;
-    ratio: number = 1.0;
-    enabled: boolean = false;
+    title: string;
+    count: number;
+    ratio: number;
+    enabled: boolean;
 }
 
 function makePoint(x: number, y: number): Point {

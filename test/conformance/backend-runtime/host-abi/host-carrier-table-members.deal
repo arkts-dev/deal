@@ -6,8 +6,8 @@
 import * as host from "host/carriertable";
 
 class Point {
-  x: number = 0;
-  y: number = 0;
+  x: number;
+  y: number;
 }
 
 function check(condition: boolean, message: string): null {

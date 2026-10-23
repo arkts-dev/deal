@@ -23,7 +23,7 @@ import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
 import deal.semantic.ir.ControlSelector;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.DeleteTargetKind;
 import deal.semantic.ir.ExternalAsyncLink;
 import deal.semantic.ir.ExternalExecutionOwner;
@@ -194,14 +194,13 @@ public class CanonicalJsonTest {
             RuntimeDescriptor.Null.INSTANCE, new OpId(APP, 4), null,
             new ExternalAsyncLink(LIB, "asyncExport", canonical));
         ClassLayout layout = new ClassLayout(CLS, List.of(
-            new ClassLayout.FieldLayout("f", RuntimeDescriptor.Number.INSTANCE, false, DefaultOwner.LOCAL)));
+            new ClassLayout.FieldLayout("f", RuntimeDescriptor.Number.INSTANCE, false, ConstructionProvider.LOCAL)));
         KindPayload.ClassNewPayload classNew = new KindPayload.ClassNewPayload(
             CLS, layout,
             List.of(new KindPayload.ProvidedField("g", new ValueId(7))),
-            DefaultOwner.SHARED_FACTORY,
-            List.of(new OpId(APP, 5)),
+            ConstructionProvider.SHARED_FACTORY,
             new ClassFactoryId(9),
-            List.of(new KindPayload.FieldBoundary("f", BoundaryKind.CLASS_DEFAULT_FIELD, new OpId(APP, 6))));
+            List.of(new KindPayload.FieldBoundary("f", BoundaryKind.CLASS_LITERAL_FIELD, new OpId(APP, 6))));
         return new OperationContractSnapshot(1, SemanticOpKind.CLASS_NEW,
             new RuntimeDescriptor.Class(CLS),
             List.of(),
@@ -806,7 +805,7 @@ public class CanonicalJsonTest {
     // =========================================================================
 
     private static final ClassLayout LAYOUT = new ClassLayout(CLS, List.of(
-        new ClassLayout.FieldLayout("f", RuntimeDescriptor.Number.INSTANCE, false, DefaultOwner.LOCAL)));
+        new ClassLayout.FieldLayout("f", RuntimeDescriptor.Number.INSTANCE, false, ConstructionProvider.LOCAL)));
 
     static KindPayload minimalPayload(SemanticOpKind kind) {
         ValueId v0 = new ValueId(0);
@@ -880,10 +879,9 @@ public class CanonicalJsonTest {
             case BREAK -> new KindPayload.BreakPayload(o0);
             case CONTINUE -> new KindPayload.ContinuePayload(o0);
             case DISCARD -> new KindPayload.DiscardPayload(v0);
-            case CLASS_DEFAULT -> new KindPayload.ClassDefaultPayload(CLS, "f", b0);
             case CLASS_NEW -> new KindPayload.ClassNewPayload(CLS, LAYOUT,
-                List.of(), DefaultOwner.LOCAL, List.of(), null, List.of());
-            case CLASS_FACTORY -> new KindPayload.ClassFactoryPayload(CLS, List.of(), o0);
+                List.of(), ConstructionProvider.LOCAL, null, List.of());
+            case CLASS_FACTORY -> new KindPayload.ClassFactoryPayload(CLS, o0);
             case FIELD_READ -> new KindPayload.FieldReadPayload(v0, CLS, "f");
             case FIELD_WRITE -> new KindPayload.FieldWritePayload(v0, CLS, "f", v1);
             case FIELD_DELETE -> new KindPayload.FieldDeletePayload(v0, CLS, "f");

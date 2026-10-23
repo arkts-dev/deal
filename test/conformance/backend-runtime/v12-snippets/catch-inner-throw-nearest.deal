@@ -8,10 +8,10 @@ export function main(): null {
  let trace:string="";
  try {
   try {trace=trace+"A"; throw {code:"FIRST",message:"one"};} catch(e) {
-   if(e.code!=="FIRST") {throw {message:"wrong inner"};} trace=trace+"B"; throw {code:"SECOND",message:"two"};
+   if(e.code!=="FIRST") {throw {code:"TEST_FAIL",message:"wrong inner"};} trace=trace+"B"; throw {code:"SECOND",message:"two"};
   }
   trace=trace+"X";
- } catch(e) {if(e.code!=="SECOND" || e.message!=="two") {throw {message:"wrong outer"};} trace=trace+"C";}
- if(trace!=="ABC") {throw {message:"catch recursively handled own throw"};}
+ } catch(e) {if(e.code!=="SECOND" || e.message!=="two") {throw {code:"TEST_FAIL",message:"wrong outer"};} trace=trace+"C";}
+ if(trace!=="ABC") {throw {code:"TEST_FAIL",message:"catch recursively handled own throw"};}
  c.log("catch-inner-throw-nearest"); return null;
 }

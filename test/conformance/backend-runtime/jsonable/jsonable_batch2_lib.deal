@@ -5,12 +5,12 @@
 // explicit classification, and companions must keep compiling standalone.
 // @jsonable
 export class Child {
-  value: number = 0;
+  value: number;
 }
 
 // @jsonable
 export class Parent {
-  children: Child[] = [];
+  children: Child[];
 }
 
 // @jsonable
@@ -20,7 +20,7 @@ export class MaybeChild {
 
 // @jsonable
 export class TableWrap {
-  data: table = {};
+  data: table;
 }
 
 export function child(v: number): Child {

@@ -9,17 +9,15 @@ import deal.semantic.ir.ClassFactoryId;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ClassOpsExecutor;
-import deal.semantic.ir.ClassOpsExecutor.BodyRunner;
 import deal.semantic.ir.ClassOpsExecutor.Defect;
 import deal.semantic.ir.ClassOpsExecutor.FieldState;
 import deal.semantic.ir.ClassOpsExecutor.JsonParse;
 import deal.semantic.ir.ClassOpsExecutor.JsonStringify;
-import deal.semantic.ir.ClassOpsExecutor.NestedClassFactory;
 import deal.semantic.ir.ClassOpsExecutor.Outcome;
 import deal.semantic.ir.ClassOpsExecutor.Value;
 import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.ModuleId;
@@ -160,18 +158,11 @@ public class JsonClassExecutorTest {
 
     private static ClassLayout.FieldLayout field(String name, RuntimeDescriptor descriptor,
                                                  boolean required) {
-        return new ClassLayout.FieldLayout(name, descriptor, required, DefaultOwner.LOCAL);
+        return new ClassLayout.FieldLayout(name, descriptor, required, ConstructionProvider.LOCAL);
     }
 
     private static ClassLayout layoutOf(ClassId classId, ClassLayout.FieldLayout... fields) {
         return new ClassLayout(classId, List.of(fields));
-    }
-
-    private static SemanticOp defaultOp(ClassId classId, String field, SemanticValue result,
-                                        RuntimeDescriptor resultType) {
-        return op(SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(classId, field, new BlockId(1)),
-            result, resultType, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
     /** The JSON_FROM_CLASS op of one layout. */
@@ -226,87 +217,10 @@ public class JsonClassExecutorTest {
         return new Value.Table(table);
     }
 
-    // =========================================================================
-    // Fixture seams: the recording body runner and the nested-factory trigger
-    // =========================================================================
-
-    /**
-     * A recording body-runner fixture: every invocation of a
-     * {@code CLASS_DEFAULT} default block is recorded (the log proves
-     * the declaration order, the skip-provided rule, and that no
-     * default runs after a provided-field decode failure) and returns
-     * the scripted produced value of the op (or throws at the scripted
-     * failing op).
-     */
-    private static final class ScriptedBodyRunner implements BodyRunner {
-
-        private final List<String> log;
-        private final Map<OpId, Value> produced;
-        private final OpId failingOp;
-        private int calls = 0;
-
-        ScriptedBodyRunner(List<String> log, Map<OpId, Value> produced, OpId failingOp) {
-            this.log = log;
-            this.produced = produced;
-            this.failingOp = failingOp;
-        }
-
-        int calls() {
-            return calls;
-        }
-
-        @Override
-        public Value runDefault(SemanticOp defaultOp) {
-            calls++;
-            log.add("default " + defaultOp.opId());
-            if (defaultOp.opId().equals(failingOp)) {
-                throw new IllegalStateException("scripted default-block failure of "
-                    + defaultOp.opId());
-            }
-            return produced.get(defaultOp.opId());
-        }
-    }
-
-    private static final class FactorySeam implements NestedClassFactory {
-
-        private final List<String> log;
-        private final SemanticOp triggeringJsonOp;
-        private final Map<ClassId, SemanticOp> factoryOps;
-        private final Map<OpId, SemanticOp> ownerDefaultOps;
-        private final Map<ClassId, ClassLayout> layouts;
-        private final Map<OpId, Value> produced;
-
-        FactorySeam(List<String> log, SemanticOp triggeringJsonOp,
-                    Map<ClassId, SemanticOp> factoryOps,
-                    Map<OpId, SemanticOp> ownerDefaultOps,
-                    Map<ClassId, ClassLayout> layouts,
-                    Map<OpId, Value> produced) {
-            this.log = log;
-            this.triggeringJsonOp = triggeringJsonOp;
-            this.factoryOps = factoryOps;
-            this.ownerDefaultOps = ownerDefaultOps;
-            this.layouts = layouts;
-            this.produced = produced;
-        }
-
-        @Override
-        public Value fillDefaults(ClassId classId, Set<String> providedFields) {
-            SemanticOp factoryOp = factoryOps.get(classId);
-            if (factoryOp == null) {
-                throw new Defect("no CLASS_FACTORY resolves for " + classId
-                    + " in the seam context (a producer defect, never executed)");
-            }
-            Outcome<Value> outcome = ClassOpsExecutor.executeClassFactory(factoryOp,
-                triggeringJsonOp, ownerDefaultOps, layouts, providedFields,
-                defaultOp -> {
-                    log.add("nested-default " + defaultOp.opId());
-                    return produced.get(defaultOp.opId());
-                });
-            if (!(outcome instanceof Outcome.Success<Value> success)) {
-                throw new Defect("the nested factory returned a failure terminal");
-            }
-            return success.value();
-        }
+    private static Value decode(SemanticOp op, ValueId input, String text,
+            Map<ClassId, ClassLayout> layouts) {
+        return ClassOpsExecutor.executeJsonFromClass(op,
+            Map.of(input, Value.string(text)), layouts, JsonClassAlgorithmAdapter.parser());
     }
 
     private static void testAlgorithmObservations() {
@@ -396,372 +310,114 @@ public class JsonClassExecutorTest {
     // =========================================================================
 
     private static void testFromJsonTopLevelGate() {
-        System.out.println("-- fromJson: the top-level object gate --");
-
-        ClassLayout point = layoutOf(POINT,
-            field("x", INT, true),
-            field("tag", STRING, true));
-        ValueId jsonId = nextValue();
-        SemanticOp op = jsonFromOp(point, jsonId);
-        Map<OpId, SemanticOp> defaultOps = Map.of();
+        ClassLayout point = layoutOf(POINT, field("x", INT, true), field("tag", STRING, true));
+        ValueId input = nextValue();
+        SemanticOp op = jsonFromOp(point, input);
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, point);
-        List<String> log = new ArrayList<>();
-        ScriptedBodyRunner runner = new ScriptedBodyRunner(log, Map.of(), null);
-
-        // A JSON null returns language null.
-        Value nullResult = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("null")), List.of(), defaultOps, layouts,
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
-        check(nullResult instanceof Value.Null, "a JSON null top level returns null");
-
-        // A non-object scalar returns language null.
-        Value scalarResult = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("42")), List.of(), defaultOps, layouts,
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
-        check(scalarResult instanceof Value.Null, "a scalar top level returns null");
-
-        // A non-empty array returns language null.
-        Value nonEmpty = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("[1]")), List.of(), defaultOps, layouts,
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
-        check(nonEmpty instanceof Value.Null, "a non-empty array top level returns null");
-
-        Value emptyObject = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{}")), List.of(), defaultOps, layouts,
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), runner);
-        check(emptyObject instanceof Value.Null,
-            "{} with absent required no-default fields returns null (K-D9)");
-
-        // The empty object document decodes through the omitted defaults:
-        // with defaults, {} publishes the defaulted instance.
-        ClassLayout defaulted = layoutOf(POINT,
-            field("x", INT, true),
-            field("tag", STRING, true));
-        ValueId defaultJsonId = nextValue();
-        SemanticOp defaultedOp = jsonFromOp(defaulted, defaultJsonId);
-        SemanticOp xDefault = defaultOp(POINT, "x", nextValue(), INT);
-        SemanticOp tagDefault = defaultOp(POINT, "tag", nextValue(), STRING);
-        Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(xDefault.opId(), new Value.Number(40));
-        produced.put(tagDefault.opId(), Value.string("pt"));
-        Map<OpId, SemanticOp> defaultedOps = Map.of(xDefault.opId(), xDefault,
-            tagDefault.opId(), tagDefault);
-        List<String> logDefaults = new ArrayList<>();
-        ScriptedBodyRunner defaultsRunner = new ScriptedBodyRunner(logDefaults, produced,
-            null);
-        Value defaultedObject = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
-            Map.of(defaultJsonId, Value.string("{}")), List.of(xDefault.opId(),
-                tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), defaultsRunner);
-        check(defaultedObject instanceof Value.Class instance
-                && fieldValue(instance, defaulted, "x") instanceof Value.Number intValue
-                && intValue.value() == 40,
-            "{} decodes as the defaulted instance (default x = 40)");
-        // The [] document is not an object: an array of any length — the
-        // empty array included — is a decode failure, never the defaulted
-        // instance.
-        List<String> logRejected = new ArrayList<>();
-        ScriptedBodyRunner rejectedRunner = new ScriptedBodyRunner(logRejected, produced,
-            null);
-        Value rejectedArray = ClassOpsExecutor.executeJsonFromClass(defaultedOp,
-            Map.of(defaultJsonId, Value.string("[]")), List.of(xDefault.opId(),
-                tagDefault.opId()), defaultedOps, Map.of(POINT, defaulted),
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), rejectedRunner);
-        check(rejectedArray instanceof Value.Null,
-            "[] returns null: the class helper accepts only a JSON object");
-        check(logRejected.isEmpty(),
-            "the rejected [] document runs no default: " + logRejected);
-    }
-
-    private static NestedClassFactory missingFactorySeam() {
-        return (classId, providedFields) -> {
-            throw new Defect("the missing-factory seam never resolves " + classId);
-        };
+        for (String text : List.of("null", "42", "true", "\"text\"", "[1]", "[]", "{}")) {
+            check(decode(op, input, text, layouts) instanceof Value.Null,
+                "non-object or missing-required document returns null: " + text);
+        }
+        Value provided = decode(op, input, "{\"tag\":\"pt\",\"x\":40}", layouts);
+        check(provided instanceof Value.Class value
+                && fieldValue(value, point, "x") instanceof Value.Number number
+                && number.value() == 40, "provided required fields decode");
+        ClassLayout optional = layoutOf(POINT, field("x", INT, false));
+        Value absent = decode(jsonFromOp(optional, input), input, "{}", Map.of(POINT, optional));
+        check(absent instanceof Value.Class value
+                && fieldState(value, optional, "x") instanceof FieldState.Missing,
+            "empty object decodes when every field is optional");
+        check(decode(jsonFromOp(optional, input), input, "[]", Map.of(POINT, optional))
+                instanceof Value.Null, "empty array never collapses to empty object");
     }
 
     // =========================================================================
     // (c) JSON_FROM_CLASS: syntax, extra-key, and decode failures
     // =========================================================================
 
+
     private static void testFromJsonFailures() {
-        System.out.println("-- fromJson: null on every listed failure with no partial "
-            + "instance --");
-
-        ClassLayout point = layoutOf(POINT,
-            field("x", INT, true),
-            field("tag", STRING, true),
+        ClassLayout point = layoutOf(POINT, field("x", INT, true), field("tag", STRING, true),
             field("note", new RuntimeDescriptor.Nullable(STRING), false));
-        ValueId jsonId = nextValue();
-        SemanticOp op = jsonFromOp(point, jsonId);
-        SemanticOp xDefault = defaultOp(POINT, "x", nextValue(), INT);
-        SemanticOp tagDefault = defaultOp(POINT, "tag", nextValue(), STRING);
-        Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(xDefault.opId(), new Value.Number(40));
-        produced.put(tagDefault.opId(), Value.string("pt"));
-        Map<OpId, SemanticOp> defaultOps = Map.of(xDefault.opId(), xDefault,
-            tagDefault.opId(), tagDefault);
-        List<OpId> childIds = List.of(xDefault.opId(), tagDefault.opId());
+        ValueId input = nextValue();
+        SemanticOp op = jsonFromOp(point, input);
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, point);
-
-        // A syntax defect returns null (no DEAL failure).
-        List<String> logSyntax = new ArrayList<>();
-        ScriptedBodyRunner syntaxRunner = new ScriptedBodyRunner(logSyntax, produced, null);
-        Value syntax = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{oops")), childIds, defaultOps, layouts,
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), syntaxRunner);
-        check(syntax instanceof Value.Null, "a syntax defect returns null");
-        check(syntaxRunner.calls() == 0, "no default runs after a syntax defect");
-
-        // The extra-key gate: the first unknown key in document order
-        // fails before any field decode or default runs.
-        List<String> logKey = new ArrayList<>();
-        ScriptedBodyRunner keyRunner = new ScriptedBodyRunner(logKey, produced, null);
-        Value extraKey = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"x\":1,\"alien\":true,\"tag\":\"t\"}")),
-            childIds, defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            keyRunner);
-        check(extraKey instanceof Value.Null, "an unknown key returns null");
-        check(keyRunner.calls() == 0, "no default runs after the extra-key gate");
-
-        // A wrong-kind provided field fails without running defaults.
-        List<String> logInt = new ArrayList<>();
-        ScriptedBodyRunner intRunner = new ScriptedBodyRunner(logInt, produced, null);
-        Value intFailure = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"x\":\"bad\",\"tag\":\"t\"}")), childIds,
-            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), intRunner);
-        check(intFailure instanceof Value.Null,
-            "a number field with a string carrier returns null");
-        check(intRunner.calls() == 0,
-            "a provided-field decode failure runs no defaults (parent D5)");
-
-        // A JSON null on a non-nullable field fails.
-        Value nullFailure = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"x\":null,\"tag\":\"t\"}")), childIds,
-            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), produced, null));
-        check(nullFailure instanceof Value.Null,
-            "a JSON null on a non-nullable field returns null");
-
-        // A nullable field accepts JSON null (the three-state present
-        // null).
-        Value presentNull = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"x\":1,\"tag\":\"t\",\"note\":null}")),
-            childIds, defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), produced, null));
-        check(presentNull instanceof Value.Class instance
-                && fieldState(instance, point, "note") instanceof FieldState.Present
-                    present && present.value() instanceof Value.Null,
-            "a nullable field decodes JSON null as present null");
-
-        // An omitted optional field stays missing (the three-state
-        // missing).
-        Value missingNote = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"x\":1,\"tag\":\"t\"}")), childIds,
-            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), produced, null));
-        check(missingNote instanceof Value.Class instance
-                && fieldState(instance, point, "note") instanceof FieldState.Missing,
-            "an omitted optional field stays missing");
-
-        // A table field accepts only a JSON object (docs/spec-v1.3.md:695):
-        // an array-shaped value of any length fails, the empty array
-        // included; the empty object is the positive control.
-        ClassLayout withTable = layoutOf(POINT,
-            field("data", TABLE, true));
-        ValueId tableJsonId = nextValue();
-        SemanticOp tableOp = jsonFromOp(withTable, tableJsonId);
-        Value nonEmptyArray = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("{\"data\":[1,2]}")), List.of(), Map.of(),
-            Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(nonEmptyArray instanceof Value.Null,
-            "a non-empty array-shaped table field value returns null");
-        Value emptyArrayTable = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("{\"data\":[]}")), List.of(), Map.of(),
-            Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(emptyArrayTable instanceof Value.Null,
-            "an empty array-shaped table field value returns null: a table"
-                + " field's fromJson admits only a JSON object");
-        Value emptyObjectTable = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("{\"data\":{}}")), List.of(), Map.of(),
-            Map.of(POINT, withTable), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(emptyObjectTable instanceof Value.Class decodedObject
-                && fieldValue(decodedObject, withTable, "data")
-                    instanceof Value.Table emptyTable
-                && emptyTable.table().keys().isEmpty(),
-            "an empty JSON object decodes an empty table field");
-
-        ClassLayout strict = layoutOf(POINT, field("x", INT, true));
-        ValueId strictJsonId = nextValue();
-        SemanticOp strictOp = jsonFromOp(strict, strictJsonId);
-        Value noDefault = ClassOpsExecutor.executeJsonFromClass(strictOp,
-            Map.of(strictJsonId, Value.string("{}")), List.of(), Map.of(),
-            Map.of(POINT, strict), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
-        check(noDefault instanceof Value.Null,
-            "an absent required-present no-default key returns null (K-D9)");
-
-        // A failing default child returns null with the completed
-        // children's effects remaining (the log shows the earlier child
-        // ran).
-        List<String> logFailing = new ArrayList<>();
-        ScriptedBodyRunner failingRunner = new ScriptedBodyRunner(logFailing, produced,
-            tagDefault.opId());
-        Value failingDefault = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{}")), childIds, defaultOps, layouts,
-            JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), failingRunner);
-        check(failingDefault instanceof Value.Null, "a failing default child returns null");
-        check(logFailing.equals(List.of("default " + xDefault.opId(),
-                "default " + tagDefault.opId())),
-            "completed children's effects remain (x ran; tag ran and failed)");
-
-        BodyRunner defectiveRunner = defaultOp -> {
-            throw new Defect("a producer defect inside the default block of "
-                + defaultOp.opId() + " — fail closed, never language null");
-        };
-        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(op,
-                Map.of(jsonId, Value.string("{}")), childIds, defaultOps, layouts,
-                JsonClassAlgorithmAdapter.parser(), missingFactorySeam(), defectiveRunner),
-            "a body-runner Defect during a local default child fails closed "
-                + "(never language null)");
+        for (String text : List.of("{oops", "{\"x\":1,\"alien\":true,\"tag\":\"t\"}",
+                "{\"x\":\"bad\",\"tag\":\"t\"}", "{\"x\":null,\"tag\":\"t\"}",
+                "{\"x\":1}", "{\"tag\":\"t\"}", "{}")) {
+            check(decode(op, input, text, layouts) instanceof Value.Null,
+                "invalid document returns null without partial publication: " + text);
+        }
+        Value present = decode(op, input, "{\"x\":1,\"tag\":\"t\",\"note\":null}", layouts);
+        check(present instanceof Value.Class value
+                && fieldState(value, point, "note") instanceof FieldState.Present state
+                && state.value() instanceof Value.Null, "explicit nullable null is present");
+        Value omitted = decode(op, input, "{\"x\":1,\"tag\":\"t\"}", layouts);
+        check(omitted instanceof Value.Class value
+                && fieldState(value, point, "note") instanceof FieldState.Missing,
+            "omitted optional stays missing");
+        ClassLayout nullable = layoutOf(POINT, field("note", RuntimeDescriptor.nullable(STRING), true));
+        SemanticOp nullableOp = jsonFromOp(nullable, input);
+        check(decode(nullableOp, input, "{}", Map.of(POINT, nullable)) instanceof Value.Null,
+            "required nullable cannot be omitted");
+        check(decode(nullableOp, input, "{\"note\":null}", Map.of(POINT, nullable))
+                instanceof Value.Class, "required nullable accepts present null");
+        ClassLayout table = layoutOf(POINT, field("data", TABLE, true));
+        SemanticOp tableOp = jsonFromOp(table, input);
+        for (String text : List.of("{\"data\":[1,2]}", "{\"data\":[]}")) {
+            check(decode(tableOp, input, text, Map.of(POINT, table)) instanceof Value.Null,
+                "table field rejects array shape: " + text);
+        }
+        Value empty = decode(tableOp, input, "{\"data\":{}}", Map.of(POINT, table));
+        check(empty instanceof Value.Class value
+                && fieldValue(value, table, "data") instanceof Value.Table object
+                && object.table().keys().isEmpty(), "empty object is an empty table");
     }
 
     // =========================================================================
     // (d) JSON_FROM_CLASS: the nested-class factory trigger
     // =========================================================================
 
+
     private static void testFromJsonNestedFactory() {
-        System.out.println("-- fromJson: nested defaults through the nested class's "
-            + "CLASS_FACTORY (K-D5 trigger (b)) --");
-
-        // The owner module's nested class: an exported class with
-        // defaulted required-present fields and a CLASS_FACTORY op.
-        ClassLayout nested = layoutOf(NESTED,
-            field("city", STRING, true),
-            field("zip", INT, true));
-        ValueId nestedFactoryResult = nextValue();
-        OpId nestedCallerRef = nextOpId();
-        SemanticOp nestedFactory = opWithId(nextOpId(), SemanticOpKind.CLASS_FACTORY,
-            new KindPayload.ClassFactoryPayload(NESTED, List.of(), nestedCallerRef),
-            nestedFactoryResult, new RuntimeDescriptor.Class(NESTED),
-            FailurePolicyId.CLASS_CONSTRUCTION, null, nextOrigin(null));
-        SemanticOp cityDefault = defaultOp(NESTED, "city", nextValue(), STRING);
-        SemanticOp zipDefault = defaultOp(NESTED, "zip", nextValue(), INT);
-        // Rebuild the factory payload with the real child list.
-        nestedFactory = opWithId(nestedFactory.opId(), SemanticOpKind.CLASS_FACTORY,
-            new KindPayload.ClassFactoryPayload(NESTED,
-                List.of(cityDefault.opId(), zipDefault.opId()), nestedCallerRef),
-            nestedFactoryResult, new RuntimeDescriptor.Class(NESTED),
-            FailurePolicyId.CLASS_CONSTRUCTION, null, nestedFactory.origin());
-        final SemanticOp rebuiltFactory = nestedFactory;
-        Map<OpId, Value> ownerProduced = new LinkedHashMap<>();
-        ownerProduced.put(cityDefault.opId(), Value.string("berlin"));
-        ownerProduced.put(zipDefault.opId(), new Value.Number(10115));
-
-        // The caller module's @jsonable class with a nested class field.
-        ClassLayout person = layoutOf(POINT,
-            field("name", STRING, true),
+        ClassLayout nested = layoutOf(NESTED, field("city", STRING, true), field("zip", INT, true),
+            field("note", RuntimeDescriptor.nullable(STRING), false));
+        ClassLayout person = layoutOf(POINT, field("name", STRING, true),
             field("home", new RuntimeDescriptor.Class(NESTED), true));
-        ValueId jsonId = nextValue();
-        SemanticOp op = jsonFromOp(person, jsonId);
-        SemanticOp nameDefault = defaultOp(POINT, "name", nextValue(), STRING);
-        Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(nameDefault.opId(), Value.string("anon"));
-        Map<OpId, SemanticOp> defaultOps = Map.of(nameDefault.opId(), nameDefault);
+        ValueId input = nextValue();
+        SemanticOp op = jsonFromOp(person, input);
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, person, NESTED, nested);
-
-        List<String> log = new ArrayList<>();
-        FactorySeam seam = new FactorySeam(log, op, Map.of(NESTED, nestedFactory),
-            Map.of(cityDefault.opId(), cityDefault, zipDefault.opId(), zipDefault),
-            layouts, ownerProduced);
-        ScriptedBodyRunner runner = new ScriptedBodyRunner(log, produced, null);
-        Value decoded = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"home\":{}}")), List.of(nameDefault.opId()),
-            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), seam, runner);
-
-        check(decoded instanceof Value.Class instance
-                && instance.classId().equals(POINT),
-            "the nested-decode walk publishes the tagged caller instance");
-        if (!(decoded instanceof Value.Class instance)) {
-            return;
-        }
-        Value home = fieldValue(instance, person, "home");
-        check(home instanceof Value.Class homeInstance
-                && homeInstance.classId().equals(NESTED),
-            "the nested field carries the tagged nested instance");
-        if (!(home instanceof Value.Class homeInstance)) {
-            return;
-        }
-        check(fieldValue(homeInstance, nested, "city") instanceof Value.String city
-                && carrier(city).equals("berlin"),
-            "the nested defaults evaluated in the declaring module's scope (city = "
-                + "berlin)");
-        check(fieldValue(homeInstance, nested, "zip") instanceof Value.Number zip
-                && zip.value() == 10115,
-            "the nested defaults evaluated in the declaring module's scope (zip = 10115)");
-        check(fieldValue(instance, person, "name") instanceof Value.String name
-                && carrier(name).equals("anon"),
-            "the caller's own default child ran for the omitted name field");
-        check(log.equals(List.of("nested-default " + cityDefault.opId(),
-                "nested-default " + zipDefault.opId(), "default " + nameDefault.opId())),
-            "nested owner children run once in declaration order before the caller default");
-
-        // A nested decode failure returns null end-to-end.
-        Value nestedFailure = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"home\":{\"alien\":1}}")),
-            List.of(nameDefault.opId()), defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), seam,
-            new ScriptedBodyRunner(new ArrayList<>(), produced, null));
-        check(nestedFailure instanceof Value.Null,
-            "a nested extra-key failure returns null end-to-end");
-
-        // A nested class value is a JSON object, exactly the root gate's
-        // own shape: an empty array is a validation failure returning
-        // null, never the nested defaulted instance.
-        List<String> logNestedArray = new ArrayList<>();
-        Value nestedEmptyArray = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"home\":[]}")),
-            List.of(nameDefault.opId()), defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), seam,
-            new ScriptedBodyRunner(logNestedArray, produced, null));
-        check(nestedEmptyArray instanceof Value.Null,
-            "a nested [] class value returns null end-to-end: the nested walk accepts "
-                + "only a JSON object");
-        check(logNestedArray.isEmpty(),
-            "the rejected nested [] value runs no nested default: " + logNestedArray);
-
-        List<String> failingLog = new ArrayList<>();
-        NestedClassFactory failingSeam = (classId, providedFields) -> {
-            Outcome<Value> outcome = ClassOpsExecutor.executeClassFactory(rebuiltFactory,
-                op, Map.of(cityDefault.opId(), cityDefault, zipDefault.opId(), zipDefault),
-                layouts, providedFields, defaultOp -> {
-                    failingLog.add("nested-default " + defaultOp.opId());
-                    throw new IllegalStateException("scripted owner-side default-block "
-                        + "failure of " + defaultOp.opId());
-                });
-            if (!(outcome instanceof Outcome.Success<Value> success)) {
-                throw new IllegalStateException("unexpected factory failure terminal");
+        Value decoded = decode(op, input,
+            "{\"home\":{\"zip\":10115,\"city\":\"berlin\"},\"name\":\"anon\"}", layouts);
+        check(decoded instanceof Value.Class, "nested decode publishes caller instance");
+        if (decoded instanceof Value.Class value) {
+            Value home = fieldValue(value, person, "home");
+            check(home instanceof Value.Class item && item.classId().equals(NESTED),
+                "nested field keeps its declaring identity");
+            if (home instanceof Value.Class item) {
+                check(fieldValue(item, nested, "city") instanceof Value.String city
+                        && carrier(city).equals("berlin"), "nested city decoded");
+                check(fieldValue(item, nested, "zip") instanceof Value.Number zip
+                        && zip.value() == 10115, "nested zip decoded");
+                check(fieldState(item, nested, "note") instanceof FieldState.Missing,
+                    "nested optional stays absent");
             }
-            return success.value();
-        };
-        Value nestedDefaultFailure = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("{\"home\":{}}")), List.of(nameDefault.opId()),
-            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), failingSeam, runner);
-        check(nestedDefaultFailure instanceof Value.Null,
-            "a failing nested-factory child returns null end-to-end (K-D8 step 6)");
-        check(failingLog.equals(List.of("nested-default " + cityDefault.opId())),
-            "the failing nested factory ran its first child before the failure "
-                + "(completed children's effects remain)");
-
-        NestedClassFactory defectiveSeam = (classId, providedFields) -> {
-            throw new Defect("a producer defect of the nested factory seam — never a "
-                + "walk failure");
-        };
-        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(op,
-                Map.of(jsonId, Value.string("{\"home\":{}}")),
-                List.of(nameDefault.opId()), defaultOps, layouts, JsonClassAlgorithmAdapter.parser(),
-                defectiveSeam, new ScriptedBodyRunner(new ArrayList<>(), produced, null)),
-            "a nested-factory producer Defect fails closed (never language null)");
+            check(fieldValue(value, person, "name") instanceof Value.String name
+                    && carrier(name).equals("anon"), "outer provided field decoded");
+        }
+        for (String text : List.of("{\"name\":\"n\",\"home\":{}}",
+                "{\"name\":\"n\",\"home\":{\"city\":\"b\"}}",
+                "{\"name\":\"n\",\"home\":{\"zip\":1}}",
+                "{\"name\":\"n\",\"home\":{\"city\":\"b\",\"zip\":1,\"alien\":1}}",
+                "{\"name\":\"n\",\"home\":[]}", "{\"name\":\"n\",\"home\":null}",
+                "{\"name\":\"n\",\"home\":{\"city\":\"b\",\"zip\":\"bad\"}}")) {
+            check(decode(op, input, text, layouts) instanceof Value.Null,
+                "nested failure returns null end-to-end: " + text);
+        }
+        Map<ClassId, ClassLayout> missingNested = Map.of(POINT, person);
+        expectDefect(() -> decode(op, input,
+            "{\"name\":\"n\",\"home\":{\"city\":\"b\",\"zip\":1}}", missingNested),
+            "missing nested declaration layout is a producer defect, not language null");
     }
 
     // =========================================================================
@@ -781,21 +437,15 @@ public class JsonClassExecutorTest {
         ValueId jsonId = nextValue();
         SemanticOp op = jsonFromOp(node, jsonId);
 
-        NestedClassFactory emptyFactory = (classId, providedFields) ->
-            new Value.Class(classId, List.of(FieldState.Missing.INSTANCE));
         Value deep = nestedTable(513);
         Value decoded = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("unused")), List.of(), Map.of(), layouts,
-            scriptedParser(deep), emptyFactory,
-            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+            Map.of(jsonId, Value.string("unused")), layouts, scriptedParser(deep));
         check(decoded instanceof Value.Class,
             "a 513-deep nested document decodes (the old bound is gone)");
 
         Value deeper = nestedTable(1200);
         Value deeperDecoded = ClassOpsExecutor.executeJsonFromClass(op,
-            Map.of(jsonId, Value.string("unused")), List.of(), Map.of(), layouts,
-            scriptedParser(deeper), emptyFactory,
-            new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+            Map.of(jsonId, Value.string("unused")), layouts, scriptedParser(deeper));
         check(deeperDecoded instanceof Value.Class,
             "a 1200-deep nested document decodes");
 
@@ -805,21 +455,15 @@ public class JsonClassExecutorTest {
         ValueId tableJsonId = nextValue();
         SemanticOp tableOp = jsonFromOp(withTable, tableJsonId);
         Map<ClassId, ClassLayout> tableLayouts = Map.of(POINT, withTable);
-        NestedClassFactory noNested = (classId, providedFields) -> {
-            throw new Defect("the table-content walk never resolves a nested "
-                + "class");
-        };
         Value tableDeep = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
-            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(600)))),
-            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+            Map.of(tableJsonId, Value.string("unused")),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedTableChain(600)))));
         check(tableDeep instanceof Value.Class instance
                 && fieldValue(instance, withTable, "data") instanceof Value.Table,
             "a 600-deep table subtree inside a table field decodes");
         Value mixedDeep = ClassOpsExecutor.executeJsonFromClass(tableOp,
-            Map.of(tableJsonId, Value.string("unused")), List.of(), Map.of(),
-            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(600)))),
-            noNested, new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null));
+            Map.of(tableJsonId, Value.string("unused")),
+            tableLayouts, scriptedParser(rawTable(Map.of("data", nestedMixedChain(600)))));
         check(mixedDeep instanceof Value.Class,
             "a 600-deep mixed table/array subtree inside a table field decodes");
     }
@@ -1882,23 +1526,9 @@ public class JsonClassExecutorTest {
             field("tags", new RuntimeDescriptor.Array(INT), true));
         ValueId fromId = nextValue();
         SemanticOp fromOp = jsonFromOp(point, fromId);
-        SemanticOp nameDefault = defaultOp(POINT, "name", nextValue(), STRING);
-        SemanticOp ageDefault = defaultOp(POINT, "age", nextValue(), INT);
-        SemanticOp tagsDefault = defaultOp(POINT, "tags", nextValue(),
-            new RuntimeDescriptor.Array(INT));
-        Map<OpId, Value> produced = new LinkedHashMap<>();
-        produced.put(nameDefault.opId(), Value.string("anon"));
-        produced.put(ageDefault.opId(), new Value.Number(0));
-        produced.put(tagsDefault.opId(),
-            new Value.Array(SemanticArray.of(new Value.Number(1), new Value.Number(2))));
-        Map<OpId, SemanticOp> defaultOps = Map.of(nameDefault.opId(), nameDefault,
-            ageDefault.opId(), ageDefault, tagsDefault.opId(), tagsDefault);
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, point);
-        Value decoded = ClassOpsExecutor.executeJsonFromClass(fromOp,
-            Map.of(fromId, Value.string("{\"age\":42}")),
-            List.of(nameDefault.opId(), ageDefault.opId(), tagsDefault.opId()),
-            defaultOps, layouts, JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-            new ScriptedBodyRunner(new ArrayList<>(), produced, null));
+        Value decoded = decode(fromOp, fromId,
+            "{\"name\":\"anon\",\"age\":42,\"tags\":[1,2]}", layouts);
         check(decoded instanceof Value.Class, "the fromJson walk publishes an instance");
         if (!(decoded instanceof Value.Class instance)) {
             return;
@@ -1911,72 +1541,38 @@ public class JsonClassExecutorTest {
                 && success.value() instanceof Value.String text
                 && carrier(text).equals(
                     "{\"name\":\"anon\",\"age\":42.0,\"tags\":[1.0,2.0]}"),
-            "the roundtrip emits the deterministic text (defaulted name, decoded age, "
-                + "defaulted tags, omitted optional skipped)");
+            "roundtrip preserves provided values and skips omitted optionals");
 
-        // Fail-closed defects.
         ClassLayout strict = layoutOf(POINT, field("x", INT, true));
-        SemanticOp fromStrict = jsonFromOp(strict, nextValue());
+        ValueId input = nextValue();
+        SemanticOp fromStrict = jsonFromOp(strict, input);
+        Map<ClassId, ClassLayout> strictLayouts = Map.of(POINT, strict);
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(
-                op(SemanticOpKind.CLASS_NEW,
-                    new KindPayload.ClassNewPayload(POINT, point, List.of(),
-                        DefaultOwner.LOCAL, List.of(), null, List.of()),
-                    nextValue(), new RuntimeDescriptor.Class(POINT),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "a non-JSON_FROM_CLASS op kind");
-        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(
-                op(SemanticOpKind.JSON_FROM_CLASS,
-                    new KindPayload.JsonFromClassPayload(strict, nextValue()),
-                    nextValue(), new RuntimeDescriptor.Nullable(new RuntimeDescriptor.Class(
-                        POINT)),
-                    FailurePolicyId.CLASS_CONSTRUCTION, null),
-                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "a non-JSON_FROM_NULL policy");
+            jsonToOp(strict, input), Map.of(), strictLayouts, JsonClassAlgorithmAdapter.parser()),
+            "wrong fromJson operation kind");
+        SemanticOp wrongPolicy = op(SemanticOpKind.JSON_FROM_CLASS,
+            new KindPayload.JsonFromClassPayload(strict, input), nextValue(),
+            RuntimeDescriptor.nullable(new RuntimeDescriptor.Class(POINT)),
+            FailurePolicyId.CLASS_CONSTRUCTION, null);
+        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(wrongPolicy,
+            Map.of(input, Value.string("{}")), strictLayouts, JsonClassAlgorithmAdapter.parser()),
+            "wrong fromJson policy");
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
-                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "an unresolvable jsonString operand");
+            Map.of(), strictLayouts, JsonClassAlgorithmAdapter.parser()), "missing JSON operand");
         expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
-                Map.of(fromStrict.payload() instanceof KindPayload.JsonFromClassPayload p
-                    ? p.jsonString() : nextValue(), new Value.Number(3)),
-                List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-                new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
-            "a wrong-kind jsonString operand");
-        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict,
-                Map.of(fromStrict.payload() instanceof KindPayload.JsonFromClassPayload p
-                    ? p.jsonString() : nextValue(), Value.string("{}")),
-                List.of(), Map.of(), Map.of(),
-                JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-                new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
-            "an unresolvable layout resolution (empty context)");
-        // A duplicate default child is a producer defect.
-        SemanticOp dupDefault = defaultOp(POINT, "name", nextValue(), STRING);
-        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(fromOp,
-                Map.of(fromOp.payload() instanceof KindPayload.JsonFromClassPayload p
-                    ? p.jsonString() : nextValue(), Value.string("{}")),
-                List.of(dupDefault.opId(), dupDefault.opId()),
-                Map.of(dupDefault.opId(), dupDefault), layouts, JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "duplicate CLASS_DEFAULT children");
-        // An optional default child is a producer defect.
-        ClassLayout optionalNote = layoutOf(POINT,
-            field("note", new RuntimeDescriptor.Nullable(STRING), false));
-        SemanticOp optionalDefault = defaultOp(POINT, "note", nextValue(),
-            new RuntimeDescriptor.Nullable(STRING));
-        expectDefect(() -> ClassOpsExecutor.executeJsonFromClass(
-                jsonFromOp(optionalNote, nextValue()),
-                Map.of(), List.of(optionalDefault.opId()),
-                Map.of(optionalDefault.opId(), optionalDefault),
-                Map.of(POINT, optionalNote), JsonClassAlgorithmAdapter.parser(), missingFactorySeam(),
-                new ScriptedBodyRunner(new ArrayList<>(), Map.of(), null)),
-            "an optional field's CLASS_DEFAULT child");
+            Map.of(input, new Value.Number(3)), strictLayouts, JsonClassAlgorithmAdapter.parser()),
+            "wrong-kind JSON operand");
+        expectDefect(() -> decode(fromStrict, input, "{}", Map.of()), "missing root layout");
+        expectDefect(() -> decode(fromStrict, input, "{}", Map.of(POINT,
+            layoutOf(POINT, field("wrong", STRING, true)))), "mismatched root layout");
+        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(null, Map.of(), strictLayouts,
+            JsonClassAlgorithmAdapter.parser()), "null JSON_FROM_CLASS operation");
+        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict, null, strictLayouts,
+            JsonClassAlgorithmAdapter.parser()), "null prior values");
+        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict, Map.of(), null,
+            JsonClassAlgorithmAdapter.parser()), "null layout map");
+        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromStrict, Map.of(), strictLayouts,
+            null), "null JSON parser");
         // The toJson operand resolution and layout resolution fail closed.
         ValueId toStrictValue = nextValue();
         expectDefect(() -> ClassOpsExecutor.executeJsonToClass(
@@ -1999,22 +1595,6 @@ public class JsonClassExecutorTest {
             "a non-JSON_TO_ERROR policy");
 
         // Null-argument NPEs.
-        SemanticOp fromNpe = jsonFromOp(strict, nextValue());
-        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(null,
-                Map.of(), List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "a null JSON_FROM_CLASS op");
-        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromNpe,
-                null, List.of(), Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "null priorValues");
-        expectNpe(() -> ClassOpsExecutor.executeJsonFromClass(fromNpe,
-                Map.of(), null, Map.of(), Map.of(), JsonClassAlgorithmAdapter.parser(),
-                missingFactorySeam(), new ScriptedBodyRunner(new ArrayList<>(), Map.of(),
-                    null)),
-            "null defaultChildIds");
         expectNpe(() -> ClassOpsExecutor.executeJsonToClass(null,
                 Map.of(), Map.of(), JsonClassAlgorithmAdapter.stringifier(), nextOrigin(null)),
             "a null JSON_TO_CLASS op");

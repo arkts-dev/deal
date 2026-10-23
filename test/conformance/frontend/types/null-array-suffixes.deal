@@ -1,12 +1,12 @@
 // @spec: Type system — Type grammar (ArrayType over BuiltinType null)
-// @description: 'null' is a BuiltinType, so the ArrayType suffixes apply to it in every annotation position the normative Type grammar reaches — variable, class field (defaulted and optional), parameter, return, for-of loop variable, function-type parameter and return — including repeated suffixes and the nullable prefix/suffix over a null array
+// @description: 'null' is a BuiltinType, so the ArrayType suffixes apply to it in every annotation position the normative Type grammar reaches — variable, class field (required and optional), parameter, return, for-of loop variable, function-type parameter and return — including repeated suffixes and the nullable prefix/suffix over a null array
 // @expected: compile-ok
 // @features: types, parser, nullable, arrays
 
 class Holder {
-  xs: null[] = [null];
+  xs: null[];
   maybe?: null[] | null;
-  grid: null[][] = [[null]];
+  grid: null[][];
 }
 
 function collect(xs: null[], grid: null[][]): null[] {

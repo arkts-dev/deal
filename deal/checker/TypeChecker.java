@@ -334,38 +334,15 @@ public final class TypeChecker {
 
         classDeclarationScopes.put(cd, currentScope);
 
-        for (ClassField cf : cd.fields()) {
-            if (cf.defaultExpr().isEmpty()) continue;
-            ExpressionNode def = cf.defaultExpr().get();
-            Type fieldType = nameResolver.resolveTypeNode(cf.type());
-            Type savedExpected = expectedType;
-            Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
-            expectedType = fieldType;
-            // The field's declared annotation is the default expression's
-            // construction context: a qualified spelling names the exact
-            // declaring provider (two same-named siblings share one
-            // canonical identity, never a first alias).
-            contextualClassDecl = exactAnnotationClassSymbol(currentScope,
-                cf.type());
-            Type defType = checkExpression(def);
-            expectedType = savedExpected;
-            contextualClassDecl = savedContextualClass;
-            if (fieldType != Type.Error.INSTANCE
-                    && defType != Type.Error.INSTANCE
-                    && !isAssignable(fieldType, defType)) {
-                if (!reportClassProviderCrossing(fieldType, defType,
-                        def.span())) {
-                    error(DiagnosticCode.E3001,
-                        "Default value type mismatch for field '" + cf.name()
-                        + "': expected " + typeName(fieldType)
-                        + ", got " + typeName(defType),
-                        def.span());
-                }
-            }
+        // Structural declarations still own their annotation diagnostics,
+        // even when no construction ever demands the field layout.
+        Map<ClassField, Type> fieldTypes = new IdentityHashMap<>();
+        for (ClassField field : cd.fields()) {
+            fieldTypes.put(field, nameResolver.resolveTypeNode(field.type()));
         }
 
         if (!cd.isJsonable()) {
-            return; // nothing extra to check for non-jsonable classes
+            return;
         }
 
         CanonicalClassIdentity identity = jsonableIdentityOf(cd);
@@ -385,7 +362,7 @@ public final class TypeChecker {
         // classes generate no helpers and contribute no edge)
         Set<CanonicalClassIdentity> deps = new LinkedHashSet<>();
         for (ClassField cf : cd.fields()) {
-            Type fieldType = nameResolver.resolveTypeNode(cf.type());
+            Type fieldType = fieldTypes.get(cf);
             if (fieldType == Type.Error.INSTANCE) continue;
 
             if (!isJsonableType(fieldType)) {
@@ -2435,47 +2412,34 @@ public final class TypeChecker {
             }
         }
 
-        for (ClassField cf : classFields) {
-            Property prop = provided.get(cf.name());
-            Type fieldType = resolveFieldTypeInClassModule(cs, cf.type());
-
-            if (prop != null) {
-                Type savedExpected = expectedType;
-                Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
-                expectedType = fieldType;
-                // The field's declared annotation is the value's
-                // construction context: a class-typed field names its
-                // own declaring provider (the same resolution the
-                // field-default path uses), so a nested literal of a
-                // same-name sibling declaration is laid out by the
-                // field's provider and never by the enclosing literal's
-                // contextual declaration of the same identity (ISSUE-0809
-                // field/construction agreement).
-                contextualClassDecl = exactFieldClassSymbol(cs, cf.type(),
-                    fieldType);
-                Type valueType = checkExpression(prop.value());
-                expectedType = savedExpected;
-                contextualClassDecl = savedContextualClass;
-                if (valueType != Type.Error.INSTANCE) {
-                    if (!isAssignable(fieldType, valueType)) {
-                        if (!reportClassProviderCrossing(fieldType, valueType,
-                                prop.span())) {
-                            error(DiagnosticCode.E4003,
-                                "Type mismatch for field '" + cf.name() + "': expected "
-                                + typeName(fieldType) + ", got " + typeName(valueType),
-                                prop.span());
-                        }
-                    }
-                }
-            } else {
-                if (!cf.optional() && cf.defaultExpr().isEmpty()) {
+        for (ClassField field : classFields) {
+            Property property = provided.get(field.name());
+            Type fieldType = resolveFieldTypeInClassModule(cs, field.type());
+            if (property == null) {
+                if (!field.optional()) {
                     error(DiagnosticCode.E4001,
-                        "Missing required field '" + cf.name()
-                        + "' in class literal for '" + cls.name() + "'",
+                        "Missing required field '" + field.name()
+                            + "' in class literal for '" + cls.name() + "'",
                         obj.span());
                 }
+                continue;
+            }
+            Type savedExpected = expectedType;
+            Symbol.ClassSymbol savedContextualClass = contextualClassDecl;
+            expectedType = fieldType;
+            contextualClassDecl = exactFieldClassSymbol(cs, field.type(), fieldType);
+            Type valueType = checkExpression(property.value());
+            expectedType = savedExpected;
+            contextualClassDecl = savedContextualClass;
+            if (valueType != Type.Error.INSTANCE && !isAssignable(fieldType, valueType)
+                    && !reportClassProviderCrossing(fieldType, valueType, property.span())) {
+                error(DiagnosticCode.E4003,
+                    "Type mismatch for field '" + field.name() + "': expected "
+                        + typeName(fieldType) + ", got " + typeName(valueType),
+                    property.span());
             }
         }
+
         // A literal an explicit construction context named is checked as
         // that declaration's own class type (the contextual declaration,
         // the callee parameter, or the declared return annotation) —

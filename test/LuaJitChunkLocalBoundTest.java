@@ -166,7 +166,7 @@ public class LuaJitChunkLocalBoundTest {
         source.append("export function makeDefault(): number {\n  return 3;\n}\n\n");
         source.append("export class Wide {\n");
         for (int i = 0; i < DEFAULTED_FIELDS; i++) {
-            source.append("  a").append(i).append(": number = makeDefault();\n");
+            source.append("  a").append(i).append(": number;\n");
         }
         source.append("}\n\n");
         int expected = GROUP_COUNT * GROUP_MEMBERS + DEFAULTED_FIELDS * 3;
@@ -179,7 +179,12 @@ public class LuaJitChunkLocalBoundTest {
             source.append("g").append(i).append("()");
         }
         source.append(";\n");
-        source.append("  let w: Wide = {};\n");
+        source.append("  let w: Wide = {");
+        for (int i = 0; i < DEFAULTED_FIELDS; i++) {
+            if (i > 0) source.append(", ");
+            source.append("a").append(i).append(": makeDefault()");
+        }
+        source.append("};\n");
         source.append("  total = total");
         for (int i = 0; i < DEFAULTED_FIELDS; i++) {
             source.append(" + w.a").append(i);

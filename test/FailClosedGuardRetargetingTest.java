@@ -96,8 +96,8 @@ public class FailClosedGuardRetargetingTest {
     /** The imported-class owner of the RETAINED_ABI_DEFERRED seed. */
     private static final String UTIL_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 1;
+          x: number;
+          y: number;
         }
         """;
 
@@ -111,7 +111,7 @@ public class FailClosedGuardRetargetingTest {
         import * as u from "util";
 
         export function main(): null {
-          let p: u.Point = {x: 5};
+          let p: u.Point = {x: 5, y: 1};
           return null;
         }
         """;
@@ -469,7 +469,7 @@ public class FailClosedGuardRetargetingTest {
         probe("same-module @jsonable public CLI", """
             import * as console from "std/console";
             // @jsonable
-            export class Person { name: string = ""; score: number = 0; }
+            export class Person { name: string; score: number; }
             export function main(): null {
               let p: Person = { name: "Carol", score: 7 };
               let s: string = Person$toJson(p);
@@ -485,7 +485,7 @@ public class FailClosedGuardRetargetingTest {
         probeSources("cross-module @jsonable public CLI", Map.of(
             "src/lib.deal", """
                 // @jsonable
-                export class Widget { label: string = ""; count: number = 0; }
+                export class Widget { label: string; count: number; }
                 """,
             "src/main.deal", """
                 import * as console from "std/console";

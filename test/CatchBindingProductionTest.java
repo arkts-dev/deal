@@ -658,7 +658,7 @@ public final class CatchBindingProductionTest {
             + "block --");
         String source = """
             export function main(): null {
-              try { throw {}; } catch (e) { }
+              try { throw {code:"CONTROL",message:"control"}; } catch (e) { }
               if (e.message !== "") { return null; }
               return null;
             }

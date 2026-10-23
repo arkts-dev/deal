@@ -41,14 +41,13 @@ import deal.semantic.ir.ClosedSelector;
 import deal.semantic.ir.CanonicalJson;
 import deal.semantic.ir.ConstructKind;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExportInterface;
 import deal.semantic.ir.ExternalModuleInterface;
 import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FieldInterface;
 import deal.semantic.ir.InitializationMode;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
@@ -263,8 +262,7 @@ public class ClassConstructionValidatorTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            ops, unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            ops, unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     private static LoweredModuleUnit unitWithLayouts(LoweredModuleUnit unit,
@@ -273,8 +271,7 @@ public class ClassConstructionValidatorTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), layouts,
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     private static List<SemanticOp> ofKind(LoweredModuleUnit unit, SemanticOpKind kind) {
@@ -375,16 +372,16 @@ public class ClassConstructionValidatorTest {
         String source = """
             // @jsonable
             export class Point {
-              x: number = 40 + 2;
-              tag: string = "p";
+              x: number;
+              tag: string;
               note?: string;
             }
             // @jsonable
-            export class Inner { n: number = 7; }
+            export class Inner { n: number; }
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
-            let p: Point = {x: 1};
-            let q: Point = {};
+            let p: Point = {x: 1, tag: "p"};
+            let q: Point = {x: 2, tag: "q"};
             p.x = 9;
             p.note = "a";
             delete p.note;
@@ -407,7 +404,7 @@ public class ClassConstructionValidatorTest {
         // facts) passes.
         Optional<CompilerDiagnostic> direct = ClassConstructionValidator.validate(
             result.lowering().unit(), result.lowering().table(), result.registry(),
-            result.jsonDefaults(), lowered.ownInterface(), Map.of());
+            lowered.ownInterface(), Map.of());
         check(direct.isEmpty(),
             "the produced records validate directly: " + direct);
 
@@ -437,8 +434,7 @@ public class ClassConstructionValidatorTest {
         // (a) An unregistered exported class: the registry emptied while
         // the unit still produces the factory op.
         expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
-            new ClassFactoryRegistry(Map.of()), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()), ClassConstructionValidator
+            new ClassFactoryRegistry(Map.of()), lowered.ownInterface(), Map.of()), ClassConstructionValidator
                 .FACTORY_COHERENCE);
 
         // (b) A fabricated registry key: a registration under an entry no
@@ -450,52 +446,31 @@ public class ClassConstructionValidatorTest {
             .get(0).opId());
         expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
             new ClassFactoryRegistry(withFabricated),
-            result.jsonDefaults(), lowered.ownInterface(), Map.of()),
-            ClassConstructionValidator.FACTORY_COHERENCE);
-
-        // (c) Reordered factory classDefaultOpIds.
-        SemanticOp factory = firstOfKind(unit, SemanticOpKind.CLASS_FACTORY);
-        KindPayload.ClassFactoryPayload factoryPayload =
-            (KindPayload.ClassFactoryPayload) factory.payload();
-        List<OpId> reversed = new ArrayList<>(factoryPayload.classDefaultOpIds());
-        java.util.Collections.reverse(reversed);
-        SemanticOp tampered = rebuild(factory,
-            new KindPayload.ClassFactoryPayload(factoryPayload.classId(), reversed,
-                factoryPayload.callerOpRef()));
-        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, replaceOp(unit, tampered)),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
             lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
+
+        // (c) A provider names a class absent from its declaration surface.
+        SemanticOp factory = firstOfKind(unit, SemanticOpKind.CLASS_FACTORY);
+        KindPayload.ClassFactoryPayload factoryPayload = (KindPayload.ClassFactoryPayload) factory.payload();
+        SemanticOp tampered = rebuild(factory, new KindPayload.ClassFactoryPayload(
+            new ClassId(MODULE.path(), "Missing"), factoryPayload.callerOpRef()));
+        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, replaceOp(unit, tampered)),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()), ClassConstructionValidator.FACTORY_COHERENCE);
 
         // (d) A parented factory (the detached static shape broken).
         expectE6005(ClassConstructionValidator.validate(
             unitWithOps(unit, replaceOp(unit, withParent(factory, factory.opId()))),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FACTORY_COHERENCE);
 
-        // (e) A duplicate CLASS_DEFAULT op: clone one default op under a
-        // fresh op id.
-        SemanticOp firstDefault = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
-        KindPayload.ClassDefaultPayload defaultPayload =
-            (KindPayload.ClassDefaultPayload) firstDefault.payload();
-        KindPayload.ClassDefaultPayload clonePayload =
-            new KindPayload.ClassDefaultPayload(defaultPayload.classId(),
-                defaultPayload.field(), defaultPayload.defaultBlock());
-        String cloneDigest = ContractSnapshotCanonicalizer.digest(contractFor(
-            firstDefault, clonePayload, "placeholder"));
-        SemanticOp clone = new SemanticOp(new OpId(MODULE, 99_998), firstDefault.kind(),
-            new SourceOrigin(firstDefault.origin().sourceId(), firstDefault.origin().span(),
-                SourceOriginKind.SYNTHETIC, new AnchorId(1), null),
-            new ValueId(99_998), firstDefault.resultType(), firstDefault.operands(),
-            firstDefault.operandTypes(), clonePayload, FailurePolicyId.NO_DEAL_FAILURE,
-            contractFor(firstDefault, clonePayload, cloneDigest));
+        // (e) A duplicate detached provider under a fresh operation/result identity.
+        SemanticOp clone = new SemanticOp(new OpId(MODULE, 99_998), factory.kind(),
+            factory.origin(), new ValueId(99_998), factory.resultType(), factory.operands(),
+            factory.operandTypes(), factory.payload(), factory.failurePolicy(), factory.contract());
         List<SemanticOp> withClone = new ArrayList<>(unit.ops());
         withClone.add(clone);
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, withClone),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
-            ClassConstructionValidator.FACTORY_COHERENCE);
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()), ClassConstructionValidator.FACTORY_COHERENCE);
 
         // (f) A factory op carrying another module's tag: the registry's
         // owning module and the operation's module tag are the provider
@@ -523,7 +498,7 @@ public class ClassConstructionValidatorTest {
             expectE6005(ClassConstructionValidator.validate(
                 unitWithOps(unit, foreignOps),
                 result.lowering().table(), new ClassFactoryRegistry(foreign),
-                result.jsonDefaults(), lowered.ownInterface(), Map.of()),
+                lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FACTORY_COHERENCE);
         }
     }
@@ -572,11 +547,10 @@ public class ClassConstructionValidatorTest {
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
             replaceOp(unit, rebuild(classNew,
                 new KindPayload.ClassNewPayload(payload.classId(), foreignLayout,
-                    payload.providedFields(), payload.defaultOwner(),
-                    payload.classDefaultOpIds(), payload.classFactoryRef(),
+                    payload.providedFields(), payload.constructionProvider(),
+                    payload.classFactoryRef(),
                     payload.fieldBoundaries())))),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
 
         // (b) An undeclared provided field.
@@ -586,10 +560,8 @@ public class ClassConstructionValidatorTest {
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
             replaceOp(unit, rebuild(classNew,
                 new KindPayload.ClassNewPayload(payload.classId(), payload.layout(),
-                    extraProvided, payload.defaultOwner(), payload.classDefaultOpIds(),
-                    payload.classFactoryRef(), payload.fieldBoundaries())))),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
+                    extraProvided, payload.constructionProvider(), payload.classFactoryRef(), payload.fieldBoundaries())))),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
 
         // (c) A swapped field-boundary order (the parented children keep
@@ -603,11 +575,10 @@ public class ClassConstructionValidatorTest {
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, rebuild(classNew,
                     new KindPayload.ClassNewPayload(payload.classId(), payload.layout(),
-                        payload.providedFields(), payload.defaultOwner(),
-                        payload.classDefaultOpIds(), payload.classFactoryRef(),
+                        payload.providedFields(), payload.constructionProvider(),
+                        payload.classFactoryRef(),
                         swapped)))),
-                result.lowering().table(), result.registry(), result.jsonDefaults(),
-                lowered.ownInterface(), Map.of()),
+                result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE);
         }
 
@@ -623,12 +594,11 @@ public class ClassConstructionValidatorTest {
                     boundaryPayload.realization()));
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, tampered)), result.lowering().table(),
-                result.registry(), result.jsonDefaults(), lowered.ownInterface(),
+                result.registry(), lowered.ownInterface(),
                 Map.of()), ClassConstructionValidator.CONSTRUCTION_COHERENCE);
         }
 
-        // (e) A wrong boundary kind (CLASS_LITERAL_FIELD becomes
-        // CLASS_DEFAULT_FIELD at a provided position).
+        // (e) An ordinary variable boundary cannot serve a provided class field.
         if (!payload.fieldBoundaries().isEmpty()) {
             KindPayload.FieldBoundary first = payload.fieldBoundaries().get(0);
             SemanticOp child = null;
@@ -642,7 +612,7 @@ public class ClassConstructionValidatorTest {
                     (KindPayload.BoundaryPayload) child.payload();
                 BoundaryKind wrongKind = first.kind() == BoundaryKind
                     .CLASS_LITERAL_FIELD
-                    ? BoundaryKind.CLASS_DEFAULT_FIELD
+                    ? BoundaryKind.VARIABLE_DECLARATION
                     : BoundaryKind.CLASS_LITERAL_FIELD;
                 SemanticOp tampered = rebuild(child,
                     new KindPayload.BoundaryPayload(wrongKind,
@@ -654,7 +624,7 @@ public class ClassConstructionValidatorTest {
                     first.boundaryOpId()));
                 expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                     replaceOp(unit, tampered)), result.lowering().table(),
-                    result.registry(), result.jsonDefaults(), lowered.ownInterface(),
+                    result.registry(), lowered.ownInterface(),
                     Map.of()), ClassConstructionValidator.CONSTRUCTION_COHERENCE);
                 // The payload kind and the child kind both tampered
                 // against the pinned expectation.
@@ -662,10 +632,8 @@ public class ClassConstructionValidatorTest {
                     replaceOp(unit, rebuild(classNew,
                         new KindPayload.ClassNewPayload(payload.classId(),
                             payload.layout(), payload.providedFields(),
-                            payload.defaultOwner(), payload.classDefaultOpIds(),
-                            payload.classFactoryRef(), wrongEntries)))),
-                    result.lowering().table(), result.registry(), result.jsonDefaults(),
-                    lowered.ownInterface(), Map.of()),
+                            payload.constructionProvider(), payload.classFactoryRef(), wrongEntries)))),
+                    result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                     ClassConstructionValidator.CONSTRUCTION_COHERENCE);
             }
         }
@@ -674,10 +642,8 @@ public class ClassConstructionValidatorTest {
         expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
             replaceOp(unit, rebuild(classNew,
                 new KindPayload.ClassNewPayload(payload.classId(), payload.layout(),
-                    payload.providedFields(), DefaultOwner.RETAINED_ABI, List.of(),
-                    new ClassFactoryId(78), payload.fieldBoundaries())))),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
+                    payload.providedFields(), ConstructionProvider.RETAINED_ABI, new ClassFactoryId(78), payload.fieldBoundaries())))),
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.CONSTRUCTION_COHERENCE);
     }
 
@@ -692,7 +658,7 @@ public class ClassConstructionValidatorTest {
         String source = """
             class Point {
               x: number;
-              y?: number = 0;
+              y?: number;
             }
             let p: Point = {x: 1};
             let v: number | null = p.y;
@@ -716,8 +682,7 @@ public class ClassConstructionValidatorTest {
         if (readChildren.size() == 2) {
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, withParent(readChildren.get(1), null))),
-                result.lowering().table(), result.registry(), result.jsonDefaults(),
-                lowered.ownInterface(), Map.of()),
+                result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
 
@@ -731,7 +696,7 @@ public class ClassConstructionValidatorTest {
                     boundaryPayload.input(), boundaryPayload.realization()));
             expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                 replaceOp(unit, tampered)), result.lowering().table(),
-                result.registry(), result.jsonDefaults(), lowered.ownInterface(),
+                result.registry(), lowered.ownInterface(),
                 Map.of()), ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
 
@@ -742,8 +707,7 @@ public class ClassConstructionValidatorTest {
             if (!deleteChildren.isEmpty()) {
                 expectE6005(ClassConstructionValidator.validate(unitWithOps(unit,
                     replaceOp(unit, withParent(deleteChildren.get(0), read.opId()))),
-                    result.lowering().table(), result.registry(), result.jsonDefaults(),
-                    lowered.ownInterface(), Map.of()),
+                    result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                     ClassConstructionValidator.FIELD_OPERATION_SHAPE);
             }
         }
@@ -757,8 +721,7 @@ public class ClassConstructionValidatorTest {
                 replaceOp(unit, rebuild(delete,
                     new KindPayload.FieldDeletePayload(deletePayload.classValue(),
                         deletePayload.classId(), "x")))),
-                result.lowering().table(), result.registry(), result.jsonDefaults(),
-                lowered.ownInterface(), Map.of()),
+                result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.FIELD_OPERATION_SHAPE);
         }
     }
@@ -820,7 +783,7 @@ public class ClassConstructionValidatorTest {
         // clean re-validation of the lowered unit is the regression (a raw
         // ?null construction throws out of the validator instead).
         check(ClassConstructionValidator.validate(unit, result.lowering().table(),
-                result.registry(), result.jsonDefaults(), lowered.ownInterface(), Map.of())
+                result.registry(), lowered.ownInterface(), Map.of())
                 .isEmpty(),
             "the lowered optional-null read re-validates with no failure");
 
@@ -836,8 +799,7 @@ public class ClassConstructionValidatorTest {
         replaceOpIn(tampered, wrongChild);
         expectE6005(ClassConstructionValidator.validate(
                 unitWithOps(unit, tampered),
-                result.lowering().table(), result.registry(), result.jsonDefaults(),
-                lowered.ownInterface(), Map.of()),
+                result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
             ClassConstructionValidator.FIELD_OPERATION_SHAPE);
     }
 
@@ -857,7 +819,7 @@ public class ClassConstructionValidatorTest {
         String source = """
             class Point {
               x: number;
-              y?: number = 0;
+              y?: number;
             }
             let p: Point = {x: 1};
             let v: number | null = p.y;
@@ -888,10 +850,10 @@ public class ClassConstructionValidatorTest {
         // a record-less operation of the identity resolves no exact
         // declaration and fails closed rather than selecting a first alias.
         List<FieldInterface> foreignFields = List.of(
-            new FieldInterface("a", "number", false, false, false));
+            new FieldInterface("a", "number", false, false));
         ClassLayout foreignLayout = new ClassLayout(foreign, List.of(
             new ClassLayout.FieldLayout("a", RuntimeDescriptor.Number.INSTANCE, true,
-                DefaultOwner.LOCAL)));
+                ConstructionProvider.LOCAL)));
         Map<ClassFactoryId, SharedFactoryFacts> providers = new LinkedHashMap<>();
         providers.put(foreignEntry, new SharedFactoryFacts(foreign,
             new ClassInterface(foreign, foreignFields, foreignEntry), foreignLayout,
@@ -942,7 +904,7 @@ public class ClassConstructionValidatorTest {
             Map<ClassFactoryId, SharedFactoryFacts> providers) {
         return ClassConstructionValidator.validate(
             withFieldLink(unit, op, classId, ref), result.lowering().table(),
-            result.registry(), result.jsonDefaults(), lowered.ownInterface(),
+            result.registry(), lowered.ownInterface(),
             Map.of(), Map.of(), providers, Set.of());
     }
 
@@ -1028,378 +990,6 @@ public class ClassConstructionValidatorTest {
                 + accessText + "' in the source; got [" + start + "," + end + ")");
     }
 
-    // =========================================================================
-    // 5. DEFAULT_BLOCK_ADMISSION negatives
-    // =========================================================================
-
-    private static void testDefaultBlockAdmissionNegatives(LoweredSlice lowered) {
-        System.out.println("-- default-block admission negatives: an enclosing-function "
-            + "load and a nested capture inside the default closure --");
-
-        SemanticLowerer.ClassDeclarationCoreResult result =
-            lowered == null ? null : lowered.result();
-        check(result != null && !result.lowering().hasErrors()
-                && result.lowering().unit() != null, "the admission baseline lowers");
-        if (result == null || result.lowering().hasErrors()
-                || result.lowering().unit() == null) {
-            return;
-        }
-        ExternalModuleInterface own = lowered.ownInterface();
-        LoweredModuleUnit unit = result.lowering().unit();
-        SemanticOp defaultOp = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
-        KindPayload.ClassDefaultPayload defaultPayload =
-            (KindPayload.ClassDefaultPayload) defaultOp.payload();
-        BlockId defaultBlock = defaultPayload.defaultBlock();
-
-        // A foreign binding allocated in a foreign block (a function body
-        // the default block does not reach).
-        BindingId foreignBinding = new BindingId(97_777);
-        BlockId foreignBlock = new BlockId(97_778);
-        List<SemanticOp> ops = new ArrayList<>(unit.ops());
-        KindPayload.BindingAllocPayload allocPayload =
-            new KindPayload.BindingAllocPayload(foreignBinding, foreignBlock, true,
-                deal.semantic.ir.BindingCellKind.DIRECT, 0);
-        String allocDigest = ContractSnapshotCanonicalizer.digest(new
-            OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.BINDING_ALLOC, null, List.of(), null, allocPayload,
-                FailurePolicyId.NO_DEAL_FAILURE, List.of(), "placeholder"));
-        ops.add(new SemanticOp(new OpId(MODULE, 97_776), SemanticOpKind.BINDING_ALLOC,
-            new SourceOrigin(SOURCE_ID, SourceSpan.synthetic(SOURCE_ID),
-                SourceOriginKind.SYNTHETIC, new AnchorId(2), null),
-            null, null, List.of(), List.of(), allocPayload,
-            FailurePolicyId.NO_DEAL_FAILURE,
-            new OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.BINDING_ALLOC, null, List.of(), null, allocPayload,
-                FailurePolicyId.NO_DEAL_FAILURE, List.of(), allocDigest)));
-        List<SemanticOp> allocatedOps = List.copyOf(ops);
-        KindPayload.BindingLoadPayload loadPayload =
-            new KindPayload.BindingLoadPayload(foreignBinding, 0);
-        String loadDigest = ContractSnapshotCanonicalizer.digest(new
-            OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.BINDING_LOAD, RuntimeDescriptor.Number.INSTANCE, List.of(),
-                null, loadPayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
-                "placeholder"));
-        ops.add(new SemanticOp(new OpId(MODULE, 97_774), SemanticOpKind.BINDING_LOAD,
-            new SourceOrigin(SOURCE_ID, SourceSpan.synthetic(SOURCE_ID),
-                SourceOriginKind.SYNTHETIC, new AnchorId(3), defaultOp.opId()),
-            new ValueId(97_775), RuntimeDescriptor.Number.INSTANCE, List.of(), List.of(),
-            loadPayload, FailurePolicyId.NO_DEAL_FAILURE,
-            new OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.BINDING_LOAD, RuntimeDescriptor.Number.INSTANCE, List.of(),
-                null, loadPayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
-                loadDigest)));
-        // The tampered load becomes a member of the default block; the
-        // foreign alloc becomes a member of the foreign block.
-        Map<BlockId, List<OpId>> blockOps = new LinkedHashMap<>(result.lowering().table()
-            .blockOps());
-        List<OpId> defaultMembers = new ArrayList<>(blockOps.getOrDefault(defaultBlock,
-            List.of()));
-        defaultMembers.add(new OpId(MODULE, 97_774));
-        blockOps.put(defaultBlock, defaultMembers);
-        blockOps.put(foreignBlock, List.of(new OpId(MODULE, 97_776)));
-        Map<OpId, BlockId> opBlocks = new LinkedHashMap<>(result.lowering().table()
-            .opBlocks());
-        opBlocks.put(new OpId(MODULE, 97_774), defaultBlock);
-        opBlocks.put(new OpId(MODULE, 97_776), foreignBlock);
-        StructuredBodyTable tamperedTable = new StructuredBodyTable(blockOps, opBlocks);
-        expectE6005(ClassConstructionValidator.validate(unitWithOps(unit, ops),
-            tamperedTable, result.registry(), result.jsonDefaults(), own, Map.of()),
-            ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION);
-
-        // A nested closure capture of the foreign binding inside the
-        // default block (the capture is the reference, not a load): the
-        // closure body is an internal block of the default walk while the
-        // captured binding stays allocated in the foreign block.
-        BlockId closureBody = new BlockId(97_770);
-        RuntimeDescriptor.Func closureSignature =
-            new RuntimeDescriptor.Func(List.of(), RuntimeDescriptor.Number.INSTANCE, false);
-        KindPayload.ClosureNewPayload closurePayload = new KindPayload.ClosureNewPayload(
-            new deal.semantic.ir.FunctionId(97_771), closureSignature,
-            List.of(new BindingGeneration(foreignBinding, 0)),
-            new deal.semantic.ir.FunctionExecutionBinding.LoweredBody(
-                new deal.semantic.ir.FunctionId(97_771), closureBody));
-        String closureDigest = ContractSnapshotCanonicalizer.digest(new
-            OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.CLOSURE_NEW, closureSignature, List.of(), null,
-                closurePayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
-                "placeholder"));
-        SemanticOp closure = new SemanticOp(new OpId(MODULE, 97_772),
-            SemanticOpKind.CLOSURE_NEW,
-            new SourceOrigin(SOURCE_ID, SourceSpan.synthetic(SOURCE_ID),
-                SourceOriginKind.SYNTHETIC, new AnchorId(4), defaultOp.opId()),
-            new ValueId(97_773), closureSignature, List.of(), List.of(),
-            closurePayload, FailurePolicyId.NO_DEAL_FAILURE,
-            new OperationContractSnapshot(OperationContractSnapshot.VERSION,
-                SemanticOpKind.CLOSURE_NEW, closureSignature, List.of(), null,
-                closurePayload, FailurePolicyId.NO_DEAL_FAILURE, List.of(),
-                closureDigest));
-        Map<BlockId, List<OpId>> captureBlocks = new LinkedHashMap<>(
-            result.lowering().table().blockOps());
-        captureBlocks.put(foreignBlock, List.of(new OpId(MODULE, 97_776)));
-        captureBlocks.put(closureBody, List.of());
-        Map<OpId, BlockId> captureInverse = new LinkedHashMap<>(
-            result.lowering().table().opBlocks());
-        captureInverse.put(new OpId(MODULE, 97_776), foreignBlock);
-        StructuredBodyTable allocatedTable = new StructuredBodyTable(captureBlocks,
-            captureInverse);
-        check(ClassConstructionValidator.validate(unitWithOps(unit, allocatedOps),
-            allocatedTable, result.registry(), result.jsonDefaults(), own, Map.of()).isEmpty(),
-            "the fresh foreign-allocation seed validates before adding the capture");
-        List<SemanticOp> captureOps = new ArrayList<>(allocatedOps);
-        captureOps.add(closure);
-        List<OpId> captureMembers = new ArrayList<>(captureBlocks.get(defaultBlock));
-        captureMembers.add(closure.opId());
-        captureBlocks.put(defaultBlock, captureMembers);
-        captureInverse.put(closure.opId(), defaultBlock);
-        StructuredBodyTable captureTable = new StructuredBodyTable(captureBlocks,
-            captureInverse);
-        Optional<CompilerDiagnostic> captureFailure = ClassConstructionValidator.validate(
-            unitWithOps(unit, captureOps), captureTable, result.registry(),
-            result.jsonDefaults(), own, Map.of());
-        expectE6005(captureFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION);
-        check(captureFailure.isPresent() && captureFailure.get().message().endsWith(
-            admissionSubject(defaultOp, foreignBinding, "sits in block " + foreignBlock)),
-            "the nested capture rejects the foreign allocation with the exact admission detail");
-        check(captureFailure.isPresent()
-                && closure.origin().span().range().equals(captureFailure.get().range()),
-            "the nested capture failure carries the closure's own offsetless range");
-        KindPayload.ClosureNewPayload admittedCapture = new KindPayload.ClosureNewPayload(
-            closurePayload.function(), closurePayload.signature(), List.of(),
-            closurePayload.binding());
-        check(ClassConstructionValidator.validate(unitWithOps(unit,
-            replaceOp(unitWithOps(unit, captureOps), rebuild(closure, admittedCapture))),
-            captureTable, result.registry(), result.jsonDefaults(), own, Map.of()).isEmpty(),
-            "removing only the foreign capture restores admission");
-    }
-
-    // =========================================================================
-    // 5b. DEFAULT_BLOCK_ADMISSION origins (ISSUE-0750 review cycle 4)
-    // =========================================================================
-
-    /**
-     * ISSUE-0750: a rejected binding reference names the owning
-     * {@code CLASS_DEFAULT} in its message but carries the referencing
-     * operation's own file/span as its diagnostic range — never the
-     * enclosing default expression's. All three reference-bearing
-     * branches (BINDING_LOAD, CLOSURE_NEW, FUNCTION_ADAPT) are driven
-     * with a reference range distinct from the default's, plus the
-     * originless-default control whose identifiable reference still
-     * supplies the exact range. Codes, messages, and fail-closed
-     * behavior are unchanged.
-     */
-    private static void testDefaultBlockAdmissionReferenceOrigins() {
-        System.out.println("-- default-block admission origins: the rejected reference's "
-            + "own range survives, not the enclosing CLASS_DEFAULT's --");
-
-        final String source = """
-            let base: number = 5;
-            let f: () => null = function(): null { };
-            export class Point {
-              x: number = base + 1;
-            }
-            """;
-        LoweredSlice lowered = lowerModule(source);
-        SemanticLowerer.ClassDeclarationCoreResult result =
-            lowered == null ? null : lowered.result();
-        check(result != null && !result.lowering().hasErrors()
-                && result.lowering().unit() != null,
-            "the admission-origin slice lowers");
-        if (result == null || result.lowering().hasErrors()
-                || result.lowering().unit() == null) {
-            return;
-        }
-        LoweredModuleUnit unit = result.lowering().unit();
-        StructuredBodyTable table = result.lowering().table();
-        ExternalModuleInterface own = lowered.ownInterface();
-
-        SemanticOp defaultOp = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
-        check(defaultOp != null, "the slice produces one CLASS_DEFAULT op");
-        if (defaultOp == null) {
-            return;
-        }
-        KindPayload.ClassDefaultPayload defaultPayload =
-            (KindPayload.ClassDefaultPayload) defaultOp.payload();
-        BlockId defaultBlock = defaultPayload.defaultBlock();
-        DiagnosticRange defaultRange = defaultOp.origin().span().range();
-        check(defaultRange.origin() == RangeOrigin.SOURCE
-                && SOURCE_ID.equals(defaultRange.file())
-                && defaultRange.startLine() == 4 && defaultRange.startColumn() == 15
-                && defaultRange.endLine() == 4 && defaultRange.endColumn() == 23
-                && defaultRange.startScalarOffset() == 99
-                && defaultRange.endScalarOffset() == 107,
-            "the enclosing CLASS_DEFAULT's own range is the default expression "
-                + "4:12-4:20 [93,101); got " + defaultRange);
-
-        Optional<CompilerDiagnostic> baseline = ClassConstructionValidator.validate(unit,
-            table, result.registry(), result.jsonDefaults(), own, Map.of());
-        check(baseline.isEmpty(), "the untampered slice validates cleanly: " + baseline);
-
-        // The BINDING_LOAD of `base` inside the default expression's
-        // block: the referencing op whose own span the failure must use.
-        SemanticOp loadOp = null;
-        for (SemanticOp member : unit.ops()) {
-            if (member.kind() == SemanticOpKind.BINDING_LOAD
-                    && defaultBlock.equals(table.opBlocks().get(member.opId()))) {
-                loadOp = member;
-            }
-        }
-        check(loadOp != null, "the default block carries the `base` BINDING_LOAD");
-        if (loadOp == null) {
-            return;
-        }
-        DiagnosticRange loadRange = loadOp.origin().span().range();
-        check(!loadRange.equals(defaultRange),
-            "the reference and default spans are distinct (reference " + loadRange
-                + ", default " + defaultRange + ")");
-
-        // (a) BINDING_LOAD: the reviewer's probe — a nonexistent binding
-        // identity makes the reference inadmissible; the load's own range
-        // (4:12-4:16 [93,97)) must be the diagnostic's, not the enclosing
-        // default expression's (4:12-4:20 [93,101)).
-        BindingId missingBinding = new BindingId(999_999);
-        KindPayload.BindingLoadPayload loadPayload =
-            (KindPayload.BindingLoadPayload) loadOp.payload();
-        SemanticOp tamperedLoad = rebuild(loadOp,
-            new KindPayload.BindingLoadPayload(missingBinding, loadPayload.generation()));
-        Optional<CompilerDiagnostic> loadFailure = ClassConstructionValidator.validate(
-            unitWithOp(unit, loadOp.opId(), tamperedLoad), table, result.registry(),
-            result.jsonDefaults(), own, Map.of());
-        expectE6005Range(loadFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 4, 15, 4, 19, 99, 103);
-        if (loadFailure.isPresent()) {
-            check(loadFailure.get().range().equals(loadRange),
-                "the BINDING_LOAD failure carries the referencing op's own converted "
-                    + "span " + loadRange + "; got " + loadFailure.get().range());
-            check(!loadFailure.get().range().equals(defaultRange),
-                "the BINDING_LOAD failure never substitutes the enclosing default's "
-                    + "range " + defaultRange);
-            check(loadFailure.get().message().endsWith(admissionSubject(defaultOp,
-                    missingBinding, "is not a block member")),
-                "the BINDING_LOAD message still names the owning CLASS_DEFAULT "
-                    + defaultOp.opId() + " and the rejected binding; got "
-                    + loadFailure.get().message());
-        }
-
-        // (b) CLOSURE_NEW: the real module-level closure moved into the
-        // default closure with one foreign capture — the range is the
-        // closure expression's own span (2:21-2:42 [39,60)), not the
-        // default's.
-        SemanticOp closureOp = firstOfKind(unit, SemanticOpKind.CLOSURE_NEW);
-        check(closureOp != null, "the slice produces one CLOSURE_NEW op");
-        if (closureOp != null) {
-            KindPayload.ClosureNewPayload closurePayload =
-                (KindPayload.ClosureNewPayload) closureOp.payload();
-            BindingId foreignBinding = new BindingId(97_777);
-            SemanticOp tamperedClosure = rebuild(closureOp,
-                new KindPayload.ClosureNewPayload(closurePayload.function(),
-                    closurePayload.signature(),
-                    List.of(new BindingGeneration(foreignBinding, 0)),
-                    closurePayload.binding()));
-            Optional<CompilerDiagnostic> closureFailure =
-                ClassConstructionValidator.validate(
-                    unitWithOp(unit, closureOp.opId(), tamperedClosure),
-                    tableWithOpBlock(table, closureOp.opId(), defaultBlock),
-                    result.registry(), result.jsonDefaults(), own, Map.of());
-            expectE6005Range(closureFailure,
-                ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-                SOURCE_ID, 2, 21, 2, 42, 42, 63);
-            if (closureFailure.isPresent()) {
-                check(closureFailure.get().range()
-                        .equals(closureOp.origin().span().range()),
-                    "the CLOSURE_NEW failure carries the capturing closure's own "
-                        + "span; got " + closureFailure.get().range());
-                check(!closureFailure.get().range().equals(defaultRange),
-                    "the CLOSURE_NEW failure never substitutes the enclosing "
-                        + "default's range " + defaultRange);
-            }
-        }
-
-        // (c) FUNCTION_ADAPT(REEVALUATE_THUNK) with one foreign capture:
-        // the seeded reference op's own range (2:21-2:42 [38,59)) wins.
-        BlockId thunkBlock = new BlockId(97_780);
-        BindingId adaptForeign = new BindingId(97_781);
-        RuntimeDescriptor.Func adaptSignature = new RuntimeDescriptor.Func(
-            List.of(), RuntimeDescriptor.Number.INSTANCE, false);
-        KindPayload.FunctionAdaptPayload adaptPayload =
-            new KindPayload.FunctionAdaptPayload(adaptSignature, adaptSignature,
-                CaptureMode.REEVALUATE_THUNK,
-                new AdaptSourceRef.Thunk(thunkBlock,
-                    List.of(new BindingGeneration(adaptForeign, 0))), null);
-        SemanticOp adaptOp = seedOp(SemanticOpKind.FUNCTION_ADAPT,
-            new OpId(MODULE, 97_782),
-            new SourceOrigin(SOURCE_ID, new SourceSpan(SOURCE_ID, 2, 21, 2, 41, 38, 59),
-                SourceOriginKind.USER, new AnchorId(97_783), defaultOp.opId()),
-            new ValueId(97_784), adaptSignature, adaptPayload);
-        List<SemanticOp> adaptOps = new ArrayList<>(unit.ops());
-        adaptOps.add(adaptOp);
-        Optional<CompilerDiagnostic> adaptFailure = ClassConstructionValidator.validate(
-            unitWithOps(unit, adaptOps),
-            tableWithOpBlockAndBlock(table, adaptOp.opId(), defaultBlock, thunkBlock),
-            result.registry(), result.jsonDefaults(), own, Map.of());
-        expectE6005Range(adaptFailure, ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 2, 21, 2, 42, 38, 59);
-        if (adaptFailure.isPresent()) {
-            check(adaptFailure.get().range().equals(adaptOp.origin().span().range()),
-                "the FUNCTION_ADAPT failure carries the capturing adapter's own "
-                    + "span; got " + adaptFailure.get().range());
-            check(!adaptFailure.get().range().equals(defaultRange),
-                "the FUNCTION_ADAPT failure never substitutes the enclosing "
-                    + "default's range " + defaultRange);
-            check(adaptFailure.get().message().endsWith(admissionSubject(defaultOp,
-                    adaptForeign, "is not a block member")),
-                "the FUNCTION_ADAPT message still names the owning CLASS_DEFAULT "
-                    + defaultOp.opId() + " and the rejected binding; got "
-                    + adaptFailure.get().message());
-        }
-
-        // (d) Originless-default control: a synthetic empty-file
-        // CLASS_DEFAULT origin with an identifiable reference still
-        // yields the reference's exact SOURCE range — the diagnostic never
-        // borrows the absent default anchor.
-        SemanticOp originlessDefault = withOrigin(defaultOp,
-            new SourceOrigin(SOURCE_ID, SourceSpan.synthetic(""),
-                SourceOriginKind.SYNTHETIC, defaultOp.origin().anchorId(), null));
-        List<SemanticOp> originlessOps = new ArrayList<>();
-        for (SemanticOp op : unit.ops()) {
-            if (op.opId().equals(defaultOp.opId())) {
-                originlessOps.add(originlessDefault);
-            } else if (op.opId().equals(loadOp.opId())) {
-                originlessOps.add(tamperedLoad);
-            } else {
-                originlessOps.add(op);
-            }
-        }
-        Optional<CompilerDiagnostic> originlessFailure =
-            ClassConstructionValidator.validate(unitWithOps(unit, originlessOps), table,
-                result.registry(), result.jsonDefaults(), own, Map.of());
-        expectE6005Range(originlessFailure,
-            ClassConstructionValidator.DEFAULT_BLOCK_ADMISSION,
-            SOURCE_ID, 4, 15, 4, 19, 99, 103);
-        if (originlessFailure.isPresent()) {
-            check(!originlessFailure.get().range().isCanonicalSynthetic(),
-                "the originless-default failure does not fall back to the canonical "
-                    + "empty-file synthetic range; got " + originlessFailure.get().range());
-            check(originlessFailure.get().message().endsWith(admissionSubject(defaultOp,
-                    missingBinding, "is not a block member")),
-                "the originless-default message still names the owning CLASS_DEFAULT "
-                    + defaultOp.opId() + " and the rejected binding; got "
-                    + originlessFailure.get().message());
-        }
-    }
-
-    /** The exact parenthesized subject tail of a DEFAULT_BLOCK_ADMISSION message. */
-    private static String admissionSubject(SemanticOp defaultOp, BindingId binding,
-                                           String reason) {
-        KindPayload.ClassDefaultPayload payload =
-            (KindPayload.ClassDefaultPayload) defaultOp.payload();
-        return "(CLASS_DEFAULT " + defaultOp.opId() + " of " + payload.classId() + "."
-            + payload.field() + " references binding " + binding
-            + " whose producing allocation " + reason
-            + ": a default block admits only allocations inside the default closure "
-            + "itself and module-level bindings resolved through the module-init "
-            + "block (an enclosing-region free reference is invalid — K-D3))";
-    }
-
     /** Replaces one produced op by identity. */
     private static LoweredModuleUnit unitWithOp(LoweredModuleUnit unit, OpId replaced,
                                                 SemanticOp replacement) {
@@ -1469,11 +1059,11 @@ public class ClassConstructionValidatorTest {
         String source = """
             // @jsonable
             export class Point {
-              x: number = 40 + 2;
-              tag: string = "p";
+              x: number;
+              tag: string;
             }
             // @jsonable
-            export class Inner { n: number = 7; }
+            export class Inner { n: number; }
             // @jsonable
             export class Holder { home: Point; opt?: Inner; }
             """;
@@ -1491,30 +1081,9 @@ public class ClassConstructionValidatorTest {
         KindPayload.JsonFromClassPayload fromPayload =
             (KindPayload.JsonFromClassPayload) fromJson.payload();
 
-        // (a) A dropped per-site default child (the table entry loses its
-        // second child).
-        List<OpId> children = result.jsonDefaults().childrenOf(fromJson.opId());
-        if (children != null && children.size() >= 2) {
-            Map<OpId, List<OpId>> entries = new LinkedHashMap<>(
-                result.jsonDefaults().defaultChildren());
-            List<OpId> dropped = new ArrayList<>(children);
-            dropped.remove(dropped.size() - 1);
-            entries.put(fromJson.opId(), dropped);
-            expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
-                result.registry(), new JsonDefaultChildTable(entries),
-                lowered.ownInterface(), Map.of()),
-                ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
-        }
-
-        // (b) An orphan table entry naming a non-JSON op.
-        SemanticOp someDefault = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
-        if (someDefault != null) {
-            expectE6005(ClassConstructionValidator.validate(unit, result.lowering().table(),
-                result.registry(),
-                new JsonDefaultChildTable(Map.of(someDefault.opId(), List.of())),
-                lowered.ownInterface(), Map.of()),
-                ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
-        }
+        check(ClassConstructionValidator.validate(unit, result.lowering().table(),
+            result.registry(), lowered.ownInterface(), Map.of()).isEmpty(),
+            "the structural JSON baseline admits without an initializer companion");
 
         // (c) An unresolvable nested class layout: the Holder layout is
         // rebuilt (unit layout and JSON payload layouts alike) with a
@@ -1528,7 +1097,7 @@ public class ClassConstructionValidatorTest {
                 new ArrayList<>(unresolvedHolderLayout.fields());
             holderFields.add(new ClassLayout.FieldLayout("gone",
                 new RuntimeDescriptor.Class(new ClassId("foreign", "Missing")),
-                true, DefaultOwner.LOCAL));
+                true, ConstructionProvider.LOCAL));
             ClassLayout tamperedHolder =
                 new ClassLayout(unresolvedHolderId, holderFields);
             Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(unit.classLayouts());
@@ -1550,8 +1119,7 @@ public class ClassConstructionValidatorTest {
             }
             expectE6005(ClassConstructionValidator.validate(
                 unitWithLayouts(unitWithOps(unit, ops), layouts),
-                result.lowering().table(), result.registry(), result.jsonDefaults(),
-                lowered.ownInterface(), Map.of()),
+                result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
 
@@ -1563,7 +1131,7 @@ public class ClassConstructionValidatorTest {
             List<ClassLayout.FieldLayout> fields = new ArrayList<>(holderLayout.fields());
             fields.add(new ClassLayout.FieldLayout("raw",
                 RuntimeDescriptor.parseCanonicalText("()->null"),
-                true, DefaultOwner.LOCAL));
+                true, ConstructionProvider.LOCAL));
             ClassLayout tamperedLayout = new ClassLayout(holderId, fields);
             Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>(unit.classLayouts());
             layouts.put(holderId, tamperedLayout);
@@ -1588,8 +1156,7 @@ public class ClassConstructionValidatorTest {
             }
             expectE6005(ClassConstructionValidator.validate(
                 unitWithLayouts(unitWithOps(unit, ops), layouts),
-                result.lowering().table(), result.registry(), result.jsonDefaults(),
-                lowered.ownInterface(), Map.of()),
+                result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()),
                 ClassConstructionValidator.JSON_LAYOUT_COHERENCE);
         }
     }
@@ -1604,11 +1171,11 @@ public class ClassConstructionValidatorTest {
         String source = """
             // @jsonable
             export class Point {
-              x: number = 40 + 2;
-              tag: string = "p";
+              x: number;
+              tag: string;
               note?: string;
             }
-            let p: Point = {x: 1};
+            let p: Point = {x: 1, tag: "p"};
             p.x = 9;
             let v: string | null = p.note;
             let hasNote: boolean = has(p.note);
@@ -1645,7 +1212,7 @@ public class ClassConstructionValidatorTest {
         // (the snapshot wiring pin).
         for (SemanticOp op : unit.ops()) {
             switch (op.kind()) {
-                case CLASS_NEW, CLASS_FACTORY, CLASS_DEFAULT, FIELD_READ, FIELD_WRITE,
+                case CLASS_NEW, CLASS_FACTORY, FIELD_READ, FIELD_WRITE,
                      FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS, HAS_FIELD -> {
                     String recomputed = ContractSnapshotCanonicalizer.digest(
                         op.contract());
@@ -1662,10 +1229,10 @@ public class ClassConstructionValidatorTest {
         // Determinism and purity: the direct validation repeats with
         // byte-identical outcomes and mutates nothing.
         Optional<CompilerDiagnostic> first = ClassConstructionValidator.validate(unit,
-            result.lowering().table(), result.registry(), result.jsonDefaults(), own,
+            result.lowering().table(), result.registry(), own,
             Map.of());
         Optional<CompilerDiagnostic> second = ClassConstructionValidator.validate(unit,
-            result.lowering().table(), result.registry(), result.jsonDefaults(), own,
+            result.lowering().table(), result.registry(), own,
             Map.of());
         check(first.isEmpty() && second.isEmpty(),
             "the direct validation is deterministic (both runs empty)");
@@ -1675,21 +1242,21 @@ public class ClassConstructionValidatorTest {
 
         // Null-argument rejection.
         expectNpe(() -> ClassConstructionValidator.validate(null,
-            result.lowering().table(), result.registry(), result.jsonDefaults(), own,
+            result.lowering().table(), result.registry(), own,
             Map.of()), "null unit");
         expectNpe(() -> ClassConstructionValidator.validate(unit, null,
-            result.registry(), result.jsonDefaults(), own, Map.of()), "null table");
+            result.registry(), own, Map.of()), "null table");
         expectNpe(() -> ClassConstructionValidator.validate(unit,
-            result.lowering().table(), null, result.jsonDefaults(), own, Map.of()),
+            result.lowering().table(), null, own, Map.of()),
             "null factory registry");
         expectNpe(() -> ClassConstructionValidator.validate(unit,
-            result.lowering().table(), result.registry(), null, own, Map.of()),
+            result.lowering().table(), result.registry(), null, Map.of()),
             "null json defaults");
         expectNpe(() -> ClassConstructionValidator.validate(unit,
-            result.lowering().table(), result.registry(), result.jsonDefaults(), null,
+            result.lowering().table(), result.registry(), null,
             Map.of()), "null own interface");
         expectNpe(() -> ClassConstructionValidator.validate(unit,
-            result.lowering().table(), result.registry(), result.jsonDefaults(), own,
+            result.lowering().table(), result.registry(), own,
             null), "null shared factories");
     }
 
@@ -1711,7 +1278,7 @@ public class ClassConstructionValidatorTest {
 
         String source = """
             export class Point {
-              x: number = 40 + 2;
+              x: number;
             }
             """;
         LoweredSlice lowered = lowerModule(source);
@@ -1725,29 +1292,19 @@ public class ClassConstructionValidatorTest {
         }
         LoweredModuleUnit unit = result.lowering().unit();
 
-        // (a) A duplicate CLASS_DEFAULT op (fresh ids, the offending op's
-        // own origin retained): the factory-coherence failure carries the
-        // default expression's exact SOURCE range.
-        SemanticOp firstDefault = firstOfKind(unit, SemanticOpKind.CLASS_DEFAULT);
-        KindPayload.ClassDefaultPayload defaultPayload =
-            (KindPayload.ClassDefaultPayload) firstDefault.payload();
-        KindPayload.ClassDefaultPayload clonePayload =
-            new KindPayload.ClassDefaultPayload(defaultPayload.classId(),
-                defaultPayload.field(), defaultPayload.defaultBlock());
-        String cloneDigest = ContractSnapshotCanonicalizer.digest(contractFor(
-            firstDefault, clonePayload, "placeholder"));
-        SemanticOp clone = new SemanticOp(new OpId(MODULE, 99_999), firstDefault.kind(),
-            firstDefault.origin(), new ValueId(99_999), firstDefault.resultType(),
-            firstDefault.operands(), firstDefault.operandTypes(), clonePayload,
-            FailurePolicyId.NO_DEAL_FAILURE,
-            contractFor(firstDefault, clonePayload, cloneDigest));
+        // (a) A duplicate provider retains the offending operation's exact source range.
+        SemanticOp provider = firstOfKind(unit, SemanticOpKind.CLASS_FACTORY);
+        SourceOrigin sourceOrigin = new SourceOrigin(SOURCE_ID,
+            new SourceSpan(SOURCE_ID, 2, 3, 2, 6, 20, 24),
+            SourceOriginKind.USER, new AnchorId(99_999), null);
+        SemanticOp clone = new SemanticOp(new OpId(MODULE, 99_999), provider.kind(),
+            sourceOrigin, new ValueId(99_999), provider.resultType(), provider.operands(),
+            provider.operandTypes(), provider.payload(), provider.failurePolicy(), provider.contract());
         List<SemanticOp> withClone = new ArrayList<>(unit.ops());
         withClone.add(clone);
         expectE6005Range(ClassConstructionValidator.validate(unitWithOps(unit, withClone),
-            result.lowering().table(), result.registry(), result.jsonDefaults(),
-            lowered.ownInterface(), Map.of()),
-            ClassConstructionValidator.FACTORY_COHERENCE,
-            SOURCE_ID, 2, 15, 2, 21, 35, 41);
+            result.lowering().table(), result.registry(), lowered.ownInterface(), Map.of()), ClassConstructionValidator.FACTORY_COHERENCE,
+            SOURCE_ID, 2, 3, 2, 7, 20, 24);
 
         // (b) A second converted branch: a CLASS_NEW-carried failure keeps
         // the CLASS_NEW op's own range (its origin), not the synthetic
@@ -1764,10 +1321,9 @@ public class ClassConstructionValidatorTest {
                 .validate(unitWithOps(constructionUnit, replaceOp(constructionUnit,
                     rebuild(classNew, new KindPayload.ClassNewPayload(newPayload.classId(),
                         newPayload.layout(), newPayload.providedFields(),
-                        DefaultOwner.LOCAL, newPayload.classDefaultOpIds(),
-                        new ClassFactoryId(77), newPayload.fieldBoundaries())))),
+                        ConstructionProvider.LOCAL, new ClassFactoryId(77), newPayload.fieldBoundaries())))),
                     constructionResult.lowering().table(), constructionResult.registry(),
-                    constructionResult.jsonDefaults(), constructionLowered.ownInterface(),
+                    constructionLowered.ownInterface(),
                     Map.of());
             expectE6005(classNewFailure, ClassConstructionValidator.CONSTRUCTION_COHERENCE);
             check(classNewFailure.isPresent() && classNewFailure.get().message().endsWith(
@@ -1800,7 +1356,7 @@ public class ClassConstructionValidatorTest {
         orphaned.put(constructionEntry, new OpId(MODULE, 1_000_000));
         Optional<CompilerDiagnostic> originless = ClassConstructionValidator.validate(
             unit, result.lowering().table(), new ClassFactoryRegistry(orphaned),
-            result.jsonDefaults(), lowered.ownInterface(), Map.of());
+            lowered.ownInterface(), Map.of());
         expectE6005(originless, ClassConstructionValidator.FACTORY_COHERENCE);
         if (originless.isPresent()) {
             DiagnosticRange range = originless.get().range();
@@ -1843,26 +1399,23 @@ public class ClassConstructionValidatorTest {
             List.of(new ExportInterface("Endpoint", "@host.facade/Endpoint")),
             List.of(
                 new ClassInterface(FACADE_ENDPOINT_DECLARED,
-                    List.of(new FieldInterface("path", "string", false, false, false),
-                        new FieldInterface("port", "number", true, false, false),
-                        new FieldInterface("note", "string | null", true, true, false),
-                        new FieldInterface("tags", "string[]", true, false, false),
-                        new FieldInterface("cb", "((number) => string) | null", true, true,
-                            false),
-                        new FieldInterface("peer", "@host.facade/Other", false, false,
-                            false),
-                        new FieldInterface("others", "(@host.facade/Other | null)[]", true,
-                            false, false),
-                        new FieldInterface("failure", "Error", false, false, false)),
+                    List.of(new FieldInterface("path", "string", false, false),
+                        new FieldInterface("port", "number", true, false),
+                        new FieldInterface("note", "string | null", true, true),
+                        new FieldInterface("tags", "string[]", true, false),
+                        new FieldInterface("cb", "((number) => string) | null", true, true),
+                        new FieldInterface("peer", "@host.facade/Other", false, false),
+                        new FieldInterface("others", "(@host.facade/Other | null)[]", true, false),
+                        new FieldInterface("failure", "Error", false, false)),
                     new ClassFactoryId(3)),
                 new ClassInterface(FACADE_OTHER_DECLARED,
-                    List.of(new FieldInterface("count", "number", false, false, true)),
+                    List.of(new FieldInterface("count", "number", false, false)),
                     new ClassFactoryId(4))),
             InitializationMode.ONCE_AFTER_DEPENDENCIES));
         modules.put(MODULE, new ExternalModuleInterface(MODULE,
             ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
             List.of(new ClassInterface(new ClassId("src", "Point"),
-                List.of(new FieldInterface("x", "number", false, false, true)),
+                List.of(new FieldInterface("x", "number", false, false)),
                 new ClassFactoryId(6))),
             InitializationMode.ONCE_AFTER_DEPENDENCIES));
         return new ProjectInterfaceIndex(ProjectInterfaceIndex.FORMAT_VERSION, modules);
@@ -1870,11 +1423,11 @@ public class ClassConstructionValidatorTest {
 
     private static ClassLayout.FieldLayout seedField(String name,
             RuntimeDescriptor descriptor, boolean required) {
-        return seedField(name, descriptor, required, DefaultOwner.HOST_DEFAULTS);
+        return seedField(name, descriptor, required, ConstructionProvider.HOST_DECLARATION);
     }
 
     private static ClassLayout.FieldLayout seedField(String name,
-            RuntimeDescriptor descriptor, boolean required, DefaultOwner owner) {
+            RuntimeDescriptor descriptor, boolean required, ConstructionProvider owner) {
         return new ClassLayout.FieldLayout(name, descriptor, required, owner);
     }
 
@@ -1901,12 +1454,12 @@ public class ClassConstructionValidatorTest {
                         new RuntimeDescriptor.Nullable(
                             new RuntimeDescriptor.Class(FACADE_OTHER))), false),
                     seedField("failure", new RuntimeDescriptor.Class(ClassId.ERROR), true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         registrations.put(FACADE_OTHER,
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(FACADE_OTHER,
                     List.of(seedField("count", RuntimeDescriptor.Number.INSTANCE, true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         return new ClassRegistrationSeeds(registrations);
     }
 
@@ -1965,7 +1518,7 @@ public class ClassConstructionValidatorTest {
                 new ClassLayout(new ClassId(EXTERNAL_PREFIX + HOST_FACADE_SPECIFIER,
                     "Hidden"),
                     List.of(seedField("hidden", RuntimeDescriptor.Number.INSTANCE, true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         check(ClassConstructionValidator.checkProjectSeedCoherence(index,
                 new ClassRegistrationSeeds(withHidden)).isEmpty(),
             "a declaration module class the index does not declare (a non-exported "
@@ -1977,7 +1530,7 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(emptyModulePath,
                     List.of(seedField("stray", RuntimeDescriptor.Number.INSTANCE, true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         check(ClassConstructionValidator.checkProjectSeedCoherence(index,
                 new ClassRegistrationSeeds(withEmptyModulePath)).isEmpty(),
             "a registration key with an empty externals suffix is unresolvable, not a "
@@ -2032,8 +1585,7 @@ public class ClassConstructionValidatorTest {
                 continue;
             }
             List<FieldInterface> fields = new ArrayList<>(entry.fields());
-            fields.add(new FieldInterface("hidden", "@host.facade/Hidden", false, false,
-                false));
+            fields.add(new FieldInterface("hidden", "@host.facade/Hidden", false, false));
             hiddenClasses.add(new ClassInterface(entry.classId(), fields,
                 entry.constructionEntry()));
         }
@@ -2056,7 +1608,7 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(hidden, List.of(
                     seedField("value", RuntimeDescriptor.String.INSTANCE, true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         Optional<String> nonExported = ClassConstructionValidator
             .checkProjectSeedCoherence(new ProjectInterfaceIndex(
                     ProjectInterfaceIndex.FORMAT_VERSION, hiddenModules),
@@ -2129,7 +1681,7 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(FACADE_ENDPOINT, List.of(
                     seedField("path", RuntimeDescriptor.String.INSTANCE, true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         check(seedCoherenceFailure(index, new ClassRegistrationSeeds(detachedKey))
                 .contains("class identity"),
             "a seed whose registration key disagrees with its contained layout "
@@ -2162,8 +1714,8 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(FACADE_ENDPOINT, List.of(
                     new ClassLayout.FieldLayout("path",
-                        RuntimeDescriptor.String.INSTANCE, true, DefaultOwner.LOCAL))),
-                DefaultOwner.LOCAL));
+                        RuntimeDescriptor.String.INSTANCE, true, ConstructionProvider.LOCAL))),
+                ConstructionProvider.LOCAL));
         check(seedCoherenceFailure(index, new ClassRegistrationSeeds(localOwner))
                 .contains("owner"),
             "a declaration registration under the LOCAL owner rejects");
@@ -2174,7 +1726,7 @@ public class ClassConstructionValidatorTest {
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(new ClassId("src", "Point"), List.of(
                     seedField("x", RuntimeDescriptor.Number.INSTANCE, true))),
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
         check(seedCoherenceFailure(index, new ClassRegistrationSeeds(implementationSeed))
                 .contains("IMPLEMENTATION"),
             "a registration naming an implementation module class rejects");
@@ -2195,8 +1747,8 @@ public class ClassConstructionValidatorTest {
                 new ClassLayout(ClassId.ERROR, List.of(
                     new ClassLayout.FieldLayout("code",
                         RuntimeDescriptor.String.INSTANCE, true,
-                        DefaultOwner.HOST_DEFAULTS))),
-                DefaultOwner.HOST_DEFAULTS));
+                        ConstructionProvider.HOST_DECLARATION))),
+                ConstructionProvider.HOST_DECLARATION));
         check(seedCoherenceFailure(index, new ClassRegistrationSeeds(wrongError))
                 .contains("builtin"),
             "a builtin Error registration under another owner rejects");
@@ -2226,16 +1778,16 @@ public class ClassConstructionValidatorTest {
         // Positive: the referring CLASS_NEW repeats its registration exactly,
         // under either declaration owner, and an unrelated unit is unaffected.
         check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
-                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, ConstructionProvider.HOST_DECLARATION,
                     endpoint.layout()))).isEmpty(),
-            "a CLASS_NEW repeating its HOST_DEFAULTS registration passes the join");
+            "a CLASS_NEW repeating its HOST_DECLARATION registration passes the join");
         check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
                 List.of(unitWithOps(List.of()))).isEmpty(),
             "a unit without declaration-class constructions passes the join");
         check(ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
-                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, ConstructionProvider.HOST_DECLARATION,
                     endpoint.layout()), unitWithClassNew(FACADE_OTHER,
-                    DefaultOwner.HOST_DEFAULTS,
+                    ConstructionProvider.HOST_DECLARATION,
                     seeds.registrationFor(FACADE_OTHER).layout()))).isEmpty(),
             "two declaration-class constructions in supplied unit order pass the join");
 
@@ -2250,13 +1802,13 @@ public class ClassConstructionValidatorTest {
                             endpoint.layout().fields().stream().map(field ->
                                 new ClassLayout.FieldLayout(field.name(),
                                     field.descriptor(), field.required(),
-                                    DefaultOwner.BUILTIN_DEFAULTS)).toList()),
-                        DefaultOwner.BUILTIN_DEFAULTS))),
-                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                                    ConstructionProvider.BUILTIN_ERROR)).toList()),
+                        ConstructionProvider.BUILTIN_ERROR))),
+                List.of(unitWithClassNew(FACADE_ENDPOINT, ConstructionProvider.HOST_DECLARATION,
                     endpoint.layout())));
-        check(owner.isPresent() && owner.get().detail().contains("defaultOwner")
-                && owner.get().detail().contains("HOST_DEFAULTS")
-                && owner.get().detail().contains("BUILTIN_DEFAULTS"),
+        check(owner.isPresent() && owner.get().detail().contains("constructionProvider")
+                && owner.get().detail().contains("HOST_DECLARATION")
+                && owner.get().detail().contains("BUILTIN_ERROR"),
             "a CLASS_NEW whose default owner disagrees with its seed rejects: " + owner);
         check(owner.isPresent() && owner.get().reason().contains(MODULE.path())
                 && owner.get().detail().contains("CLASS_NEW")
@@ -2269,7 +1821,7 @@ public class ClassConstructionValidatorTest {
         Optional<ClassConstructionValidator.SeedModuleViolation> missing =
             ClassConstructionValidator.checkProjectSeedModuleCoherence(
                 new ClassRegistrationSeeds(Map.of()),
-                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, ConstructionProvider.HOST_DECLARATION,
                     endpoint.layout())));
         check(missing.isPresent()
                 && missing.get().detail().contains("no class registration seed"),
@@ -2279,7 +1831,7 @@ public class ClassConstructionValidatorTest {
             List.of(seedField("path", RuntimeDescriptor.Number.INSTANCE, true)));
         Optional<ClassConstructionValidator.SeedModuleViolation> layout =
             ClassConstructionValidator.checkProjectSeedModuleCoherence(seeds,
-                List.of(unitWithClassNew(FACADE_ENDPOINT, DefaultOwner.HOST_DEFAULTS,
+                List.of(unitWithClassNew(FACADE_ENDPOINT, ConstructionProvider.HOST_DECLARATION,
                     foreign)));
         check(layout.isPresent() && layout.get().detail().contains("layout"),
             "a CLASS_NEW whose layout differs from its registration rejects: " + layout);
@@ -2399,12 +1951,11 @@ public class ClassConstructionValidatorTest {
             List.of(), List.of(), List.of(), List.of(),
             new ModuleInitPlan(List.of(), new BlockId(0)), List.of(), List.of(), ops,
             new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+            new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty());
     }
 
     /** One raw unit carrying a single CLASS_NEW of the given class. */
-    private static RawUnit unitWithClassNew(ClassId classId, DefaultOwner owner,
+    private static RawUnit unitWithClassNew(ClassId classId, ConstructionProvider owner,
             ClassLayout layout) {
         return unitWithOps(List.of(rawClassNew(owner.name(), classId, layout)));
     }
@@ -2414,7 +1965,7 @@ public class ClassConstructionValidatorTest {
         CanonicalJson.Obj payload = CanonicalJson.obj(
             CanonicalJson.e("classId",
                 ContractSnapshotCanonicalizer.semanticIdJson(classId)),
-            CanonicalJson.e("defaultOwner", CanonicalJson.str(owner)),
+            CanonicalJson.e("constructionProvider", CanonicalJson.str(owner)),
             CanonicalJson.e("layout", ContractSnapshotCanonicalizer.layoutJson(layout)));
         return new RawOp(new OpId(MODULE, 1L), SemanticOpKind.CLASS_NEW.name(),
             FailurePolicyId.NO_DEAL_FAILURE.name(), null, null, null, null,
@@ -2462,9 +2013,9 @@ public class ClassConstructionValidatorTest {
         List<ClassLayout.FieldLayout> seedFields = new ArrayList<>();
         for (int i = 0; i < forms.size(); i++) {
             declaredFields.add(new FieldInterface("f" + i,
-                CanonicalTypeText.render(forms.get(i)), false, false, false));
+                CanonicalTypeText.render(forms.get(i)), false, false));
             seedFields.add(new ClassLayout.FieldLayout("f" + i,
-                DescriptorService.describe(forms.get(i)), true, DefaultOwner.HOST_DEFAULTS));
+                DescriptorService.describe(forms.get(i)), true, ConstructionProvider.HOST_DECLARATION));
         }
         ProjectInterfaceIndex index = new ProjectInterfaceIndex(
             ProjectInterfaceIndex.FORMAT_VERSION,
@@ -2479,7 +2030,7 @@ public class ClassConstructionValidatorTest {
             ClassRegistrationSeeds.builtinErrorRegistration());
         registrations.put(formsClass,
             new ClassRegistrationSeeds.ClassRegistration(
-                new ClassLayout(formsClass, seedFields), DefaultOwner.HOST_DEFAULTS));
+                new ClassLayout(formsClass, seedFields), ConstructionProvider.HOST_DECLARATION));
         Optional<String> coherent = ClassConstructionValidator
             .checkProjectSeedCoherence(index, new ClassRegistrationSeeds(registrations));
         check(coherent.isEmpty(),
@@ -2494,12 +2045,12 @@ public class ClassConstructionValidatorTest {
             List<ClassLayout.FieldLayout> mutated = new ArrayList<>(seedFields);
             mutated.set(i, new ClassLayout.FieldLayout("f" + i,
                 DescriptorService.describe(forms.get(other)), true,
-                DefaultOwner.HOST_DEFAULTS));
+                ConstructionProvider.HOST_DECLARATION));
             Map<ClassId, ClassRegistrationSeeds.ClassRegistration> mutatedRegistrations =
                 new LinkedHashMap<>(registrations);
             mutatedRegistrations.put(formsClass,
                 new ClassRegistrationSeeds.ClassRegistration(
-                    new ClassLayout(formsClass, mutated), DefaultOwner.HOST_DEFAULTS));
+                    new ClassLayout(formsClass, mutated), ConstructionProvider.HOST_DECLARATION));
             Optional<String> failure = ClassConstructionValidator.checkProjectSeedCoherence(
                 index, new ClassRegistrationSeeds(mutatedRegistrations));
             check(failure.isPresent() && failure.get().contains("f" + i + "'"),
@@ -2517,19 +2068,17 @@ public class ClassConstructionValidatorTest {
         LoweredSlice shared = lowerModule("""
             let base: number = 40;
             export class Point {
-              x: number = base + 2;
-              tag: string = "p";
+              x: number;
+              tag: string;
               note?: string;
             }
-            let p: Point = {x: 1};
+            let p: Point = {x: 1, tag: "p"};
             """);
         testFactoryNegatives(shared);
         testConstructionNegatives(shared);
         testFieldOperationNegatives();
         testOptionalNullFieldReadArm();
         testFieldLayoutLinkOrigins();
-        testDefaultBlockAdmissionNegatives(shared);
-        testDefaultBlockAdmissionReferenceOrigins();
         testJsonNegatives();
         testDetailsDumpDeterminism();
         testFailureRangeOrigins(shared);

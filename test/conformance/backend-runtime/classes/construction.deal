@@ -4,13 +4,13 @@
 // @features: classes, construction
 
 class Address {
-  city: string = "";
-  zip: number = 0;
+  city: string;
+  zip: number;
 }
 
 class User {
-  name: string = "";
-  home: Address = {};
+  name: string;
+  home: Address;
 }
 
 export function test_construct(): string {

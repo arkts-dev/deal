@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E2008",
     "line": 7,
-    "column": 28,
+    "column": 60,
     "message": "Identifier '$bad' must not contain '$'"
   }
 }

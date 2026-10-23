@@ -5,12 +5,12 @@
 
 // @jsonable
 export class A {
-  b: B = {};
+  b: B;
 }
 
 // @jsonable
 export class B {
-  a: A = {};
+  a: A;
 }
 
 export function main(): null { return null; }

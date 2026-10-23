@@ -37,7 +37,6 @@ import deal.semantic.ir.ExternalModuleKind;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -455,10 +454,6 @@ public class JsonClassLoweringTest {
         return null;
     }
 
-    private static KindPayload.ClassDefaultPayload defaultPayload(SemanticOp op) {
-        return (KindPayload.ClassDefaultPayload) op.payload();
-    }
-
     private static KindPayload.ClosureNewPayload closurePayload(SemanticOp op) {
         return (KindPayload.ClosureNewPayload) op.payload();
     }
@@ -629,23 +624,8 @@ public class JsonClassLoweringTest {
                 "the JSON_TO_CLASS op publishes the pinned string result type");
         }
 
-        // The JsonDefaultChildTable entry: one per-site CLASS_DEFAULT
-        // child per required-present defaulted field in declaration
-        // order (x, tag — the optional note has no default and never
-        // enters the list).
-        List<SemanticOp> defaults = ofKind(unit.ops(), SemanticOpKind.CLASS_DEFAULT);
-        check(defaults.size() == 2, "two CLASS_DEFAULT ops (x and tag); got "
-            + defaults.size());
-        List<OpId> children = result.jsonDefaults().childrenOf(fromJson.opId());
-        check(children != null && children.size() == 2
-                && children.get(0).equals(defaults.get(0).opId())
-                && children.get(1).equals(defaults.get(1).opId())
-                && defaultPayload(defaults.get(0)).field().equals("x")
-                && defaultPayload(defaults.get(1)).field().equals("tag"),
-            "the JsonDefaultChildTable entry lists exactly one CLASS_DEFAULT child per "
-                + "required-present defaulted field in declaration order (x, tag)");
-        check(result.jsonDefaults().childrenOf(toClosure.opId()) == null,
-            "no JSON_TO_CLASS op records default children");
+        check(unit.ops().stream().noneMatch(op -> op.kind().name().equals("CLASS_DEFAULT")),
+            "JSON decoding owns no initializer operations");
     }
 
     // =========================================================================
@@ -658,7 +638,7 @@ public class JsonClassLoweringTest {
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             export class Plain {
-              x: number = 1;
+              x: number;
             }
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
@@ -675,8 +655,6 @@ public class JsonClassLoweringTest {
                 && ofKind(unit.ops(), SemanticOpKind.JSON_TO_CLASS).isEmpty()
                 && ofKind(unit.ops(), SemanticOpKind.CLOSURE_NEW).isEmpty(),
             "no JSON op and no CLOSURE_NEW op exist for the non-@jsonable class");
-        check(result.jsonDefaults().defaultChildren().isEmpty(),
-            "the produced JsonDefaultChildTable record is empty");
     }
 
     // =========================================================================
@@ -699,7 +677,7 @@ public class JsonClassLoweringTest {
 
         String source = """
             // @jsonable
-            export class Widget { n: number = 1; }
+            export class Widget { n: number; }
             """;
 
         // (a) both generated signatures (fromJson, toJson), known offsets:
@@ -729,12 +707,12 @@ public class JsonClassLoweringTest {
             check(range.origin() == RangeOrigin.SOURCE
                     && "main.deal".equals(range.file())
                     && range.startLine() == 2 && range.startColumn() == 8
-                    && range.endLine() == 2 && range.endColumn() == 39
+                    && range.endLine() == 2 && range.endColumn() == 35
                     && range.startScalarOffset() == 20
-                    && range.endScalarOffset() == 51
-                    && range.scalarLength() == 31,
+                    && range.endScalarOffset() == 47
+                    && range.scalarLength() == 27,
                 "the corrupted " + helper + " failure carries the class declaration's "
-                    + "own exact SOURCE range main.deal 2:8-2:39 [20,51) length 31; got "
+                    + "own exact SOURCE range main.deal 2:8-2:35 [20,47) length 27; got "
                     + range);
             check(range.equals(declaration.span().range()),
                 "the " + helper + " range is exactly the class declaration's own span "
@@ -845,19 +823,8 @@ public class JsonClassLoweringTest {
         check(from.size() == 2, "Person and Strict each produce a fromJson op");
         for (SemanticOp op : from) {
             ClassId classId = ((KindPayload.JsonFromClassPayload) op.payload()).layout().classId();
-            List<OpId> children = pair.caller().jsonDefaults().childrenOf(op.opId());
-            List<String> expected = classId.name().equals("Person")
-                ? List.of("name", "age", "home") : List.of();
-            check(children != null && children.stream().map(id ->
-                    defaultPayload(opById(caller, id)).field()).toList().equals(expected),
-                classId + ": generated children retain declaration order and empty defaults");
-            if (children != null) {
-                for (OpId child : children) {
-                    KindPayload.ClassDefaultPayload payload = defaultPayload(opById(caller, child));
-                    check(pair.caller().lowering().table().blockOps().containsKey(
-                        payload.defaultBlock()), "every generated child owns a detached executable block");
-                }
-            }
+            check(caller.classLayouts().containsKey(classId),
+                classId + ": decoding uses its structural layout");
         }
         for (ClassInterface entry : pair.project().index().modules().get(OWNER).classes()) {
             SemanticOp factory = opById(pair.owner().lowering().unit(),
@@ -882,8 +849,8 @@ public class JsonClassLoweringTest {
         String ownerSource = """
             // @jsonable
             export class Address {
-              city: string = "berlin";
-              zip: number = 10115;
+              city: string;
+              zip: number;
             }
             """;
         String callerSource = """
@@ -891,9 +858,9 @@ public class JsonClassLoweringTest {
 
             // @jsonable
             export class Person {
-              name: string = "anon";
-              age: number = 0;
-              home: Owner.Address = {city: "seed"};
+              name: string;
+              age: number;
+              home: Owner.Address;
             }
 
             // @jsonable
@@ -917,14 +884,8 @@ public class JsonClassLoweringTest {
         check(Arrays.equals(firstCaller, secondCaller),
             "the caller unit dump is byte-identical across repetitions");
 
-        // The record surface: immutability of the JsonDefaultChildTable.
-        JsonDefaultChildTable table = first.caller().jsonDefaults();
-        Map<OpId, List<OpId>> source = new LinkedHashMap<>(table.defaultChildren());
-        OpId probeKey = source.keySet().iterator().next();
-        source.remove(probeKey);
-        check(table.defaultChildren().containsKey(probeKey),
-            "the produced JsonDefaultChildTable record is immutable (later mutation of "
-                + "the constructor argument cannot change it)");
+        check(!new String(firstCaller, java.nio.charset.StandardCharsets.UTF_8).contains("jsonDefaults"),
+            "canonical units contain no retired JSON initializer companion");
     }
 
     private static void testSingleModuleDeterminism() {
@@ -932,8 +893,8 @@ public class JsonClassLoweringTest {
         SemanticLowerer.ClassDeclarationCoreResult a = lowerModule("""
             // @jsonable
             export class Point {
-              x: number = 40 + 2;
-              tag: string = "p" + "t";
+              x: number;
+              tag: string;
               note?: string;
             }
             """);
@@ -941,8 +902,8 @@ public class JsonClassLoweringTest {
         SemanticLowerer.ClassDeclarationCoreResult b = lowerModule("""
             // @jsonable
             export class Point {
-              x: number = 40 + 2;
-              tag: string = "p" + "t";
+              x: number;
+              tag: string;
               note?: string;
             }
             """);

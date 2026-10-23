@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, runtime-errors, arrays, classes
 
 class Box {
-  value: number = 0;
+  value: number;
 }
 
 function needInt(value: number): number {

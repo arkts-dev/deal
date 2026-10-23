@@ -8,7 +8,7 @@ export function main(): null {
  let trace:string="";
  function mark(s:string): string {trace=trace+s; return s;}
  function fail(): string {trace=trace+"B"; throw {code:"STOP",message:"template"};}
- try {let text:string=`${mark("A")}${fail()}${mark("X")}`; trace=trace+"Y";} catch(e) {if(e.code!=="STOP") {throw {message:"wrong error"};} trace=trace+"C";}
- if(trace!=="ABC") {throw {message:"interpolation order: "+trace};}
+ try {let text:string=`${mark("A")}${fail()}${mark("X")}`; trace=trace+"Y";} catch(e) {if(e.code!=="STOP") {throw {code:"TEST_FAIL",message:"wrong error"};} trace=trace+"C";}
+ if(trace!=="ABC") {throw {code:"TEST_FAIL",message:"interpolation order: "+trace};}
  c.log("template-interpolation-abrupt"); return null;
 }

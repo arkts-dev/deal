@@ -252,11 +252,7 @@ public class ContainerLoweringArmsTest {
                     collectStatements(s, outStatements, outExpressions);
                 }
             }
-            case ClassDeclaration cd -> {
-                for (ClassField f : cd.fields()) {
-                    f.defaultExpr().ifPresent(e -> collectExpressions(e, outExpressions));
-                }
-            }
+            case ClassDeclaration cd -> {}
             default -> { /* Break/Continue/Import carry no sub-structure. */ }
         }
     }
@@ -1913,7 +1909,6 @@ public class ContainerLoweringArmsTest {
         DiagnosticRange expected = span.range();
         List<RuntimeException> sourceSignals = List.of(
             new SemanticLowerer.ConstructUnlowered("a construct", span),
-            new SemanticLowerer.ClassDefaultCapture("outside", span),
             new SemanticLowerer.RetainedAbiDeferred("mod.C", span));
         for (RuntimeException signal : sourceSignals) {
             String what = signal.getClass().getSimpleName();
@@ -1943,7 +1938,6 @@ public class ContainerLoweringArmsTest {
 
         List<RuntimeException> noSpanSignals = List.of(
             new SemanticLowerer.ConstructUnlowered("a construct"),
-            new SemanticLowerer.ClassDefaultCapture("outside"),
             new SemanticLowerer.RetainedAbiDeferred("mod.C"));
         for (RuntimeException signal : noSpanSignals) {
             String what = signal.getClass().getSimpleName();

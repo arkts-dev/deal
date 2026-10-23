@@ -1384,7 +1384,7 @@ public class AddressChainLoweringTest {
             unit.requiredCapabilities(), unit.constructCoverage(), Map.of(), Map.of(),
             new ModuleInitPlan(List.of(), new deal.semantic.ir.BlockId(0)),
             ExportPlan.empty(), Map.of(), ops, unit.bodyTable(),
-            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
+            unit.classFactories(), unit.classBindingFacts());
     }
 
     private static void checkE6005(Optional<CompilerDiagnostic> diagnostic, String rule,
@@ -1578,7 +1578,7 @@ public class AddressChainLoweringTest {
             unit.interfaceHash(), unit.loweringContextHash(), unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(), unit.exportPlan(),
             unit.functionBindings(), ops, new StructuredBodyTable(blockOps, opBlocks), unit.classFactories(),
-            unit.jsonDefaults(), unit.classBindingFacts());
+            unit.classBindingFacts());
     }
 
     private static SemanticOp protocolCopy(SemanticOp op, KindPayload payload, FailurePolicyId policy,
@@ -1723,7 +1723,7 @@ public class AddressChainLoweringTest {
             clean.constructCoverage(), clean.classLayouts(), clean.functions(),
             clean.moduleInit(), clean.exportPlan(), clean.functionBindings(), clean.ops(),
             new StructuredBodyTable(blocks, clean.bodyTable().opBlocks()),
-            clean.classFactories(), clean.jsonDefaults(), clean.classBindingFacts());
+            clean.classFactories(), clean.classBindingFacts());
 
         // Both defects are real: the control owner rejects the membership and
         // the address-chain owner rejects the chain, but the common-admission
@@ -1760,7 +1760,7 @@ public class AddressChainLoweringTest {
         // first failure, and it runs once.
         Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(unit,
             unit.bodyTable(), facts(), unit.classBindingFacts(), unit.classFactories(),
-            unit.jsonDefaults(), ownInterface(), Map.of());
+            ownInterface(), Map.of());
         checkE6005(composed, "ADDRESS_CHAIN_SHAPE",
             "the composed production admission reports the address-chain rule");
         check(chainFailure.isPresent() && composed.isPresent()

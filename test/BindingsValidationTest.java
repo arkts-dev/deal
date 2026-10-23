@@ -57,7 +57,6 @@ import deal.semantic.ir.SourceOriginKind;
 import deal.semantic.ir.SourceSpan;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryRegistry;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.StructuredBodyTable;
 import deal.semantic.ir.ValueId;
 
@@ -730,13 +729,6 @@ public class BindingsValidationTest {
             null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
     }
 
-    private static SemanticOp classDefaultOp(BlockId defaultBlock) {
-        return op(SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(new ClassId("mod.binding", "C"), "handler",
-                defaultBlock),
-            nextValue(), SIG1, FailurePolicyId.NO_DEAL_FAILURE, null);
-    }
-
     private static LoweredFunction function(FunctionId id, RuntimeDescriptor.Func signature,
             List<BindingGeneration> captures, BlockId body) {
         return new LoweredFunction(id, signature, captures, body);
@@ -750,7 +742,7 @@ public class BindingsValidationTest {
             functions, new ModuleInitPlan(List.of(), INIT_BLOCK), ExportPlan.empty(), registry,
             ops, new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),
-            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+            ClassBindingFacts.empty());
     }
 
     /** Builds a table from block → ops and derives the exact inverse map. */
@@ -1637,25 +1629,31 @@ public class BindingsValidationTest {
         FunctionId fn = nextFunctionId();
         BlockId fnBody = nextBlock();
         ValueId identity = nextValue();
-        BlockId defaultBlock = nextBlock();
+        BlockId nestedBlock = nextBlock();
         SemanticOp alloc = allocOp(makeFactory, INIT_BLOCK, 0);
         SemanticOp closure = closureNewOp(fn, SIG1, List.of(), fnBody, identity);
         SemanticOp init = initOp(makeFactory, 0, identity);
-        SemanticOp classDefault = classDefaultOp(defaultBlock);
-        SemanticOp defaultLoad = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
+        ValueId conditionValue = nextValue();
+        SemanticOp condition = op(SemanticOpKind.CONST,
+            new KindPayload.ConstPayload(new ScalarValue.Boolean(true)), conditionValue,
+            RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp branch = op(SemanticOpKind.BRANCH,
+            new KindPayload.BranchPayload(deal.semantic.ir.ControlSelector.IF, conditionValue, nestedBlock, null),
+            null, null, FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp nestedLoad = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
             new KindPayload.BindingLoadPayload(makeFactory, 0),
             nextValue(), SIG1, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
         LoweredModuleUnit unit = unit(
             Map.of(fn, function(fn, SIG1, List.of(), fnBody)),
             Map.of(new FunctionAllocationIdentity(identity.id()),
                 new FunctionExecutionBinding.LoweredBody(fn, fnBody)),
-            List.of(alloc, closure, init, classDefault, defaultLoad));
+            List.of(alloc, closure, init, condition, branch, nestedLoad));
         StructuredBodyTable table = tableOf(Map.ofEntries(
-            Map.entry(INIT_BLOCK, List.of(alloc, closure, init, classDefault)),
+            Map.entry(INIT_BLOCK, List.of(alloc, closure, init, condition, branch)),
             Map.entry(fnBody, List.of()),
-            Map.entry(defaultBlock, List.of(defaultLoad))));
+            Map.entry(nestedBlock, List.of(nestedLoad))));
         assertPass(BindingsProductionValidator.validate(unit, table),
-            "the default-block module-level reference (R4's module-level arm)");
+            "the ordinary nested-block module-level reference (R4's module-level arm)");
 
         // The import-alias synthetic write: the MODULE_IMPORT
         // completion names the alias cell in its payload and dominates

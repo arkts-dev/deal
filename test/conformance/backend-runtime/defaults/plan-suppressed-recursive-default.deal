@@ -1,106 +1,100 @@
 // @spec: Classes — Construction
-// @description: A recursive non-jsonable class default is plan availability, never execution demand: only a construction that omits the recursive field evaluates it (docs/spec-v1.3.md §Construction — provided fields suppress defaults), so the self-defaulting Node, the mutual Ping/Pong pair and a default whose own literal supplies the recursive field all stay finite when the construction supplies the recursive field. The effectful default beside the suppressed one still runs exactly once per construction in declaration order, a supplied field runs none, class registration runs none, a supplied value is never replaced by the default it suppresses, a suppressed default contributes none of its own host calls, and the construction's explicit null, absent-optional and present-optional states stay distinct.
+// @description: Explicit finite recursive structures retain exact providers, nullable links, optional presence and per-construction producer effects; structural registration invokes nothing.
 // @expected: runtime-ok
-// @features: v1.3, runtime, defaults, classes, recursion
+// @features: runtime, construction, classes, recursion, host-abi
 
 import * as probe from "host/planprobe";
 
-function nextStamp(): number {
-  return probe.nextValue();
-}
+function nextStamp(): number { return probe.nextValue(); }
 
 function check(condition: boolean, message: string): null {
-  if (!condition) {
-    throw { code: "TEST_FAIL", message: message };
-  }
+  if (!condition) { throw {code: "TEST_FAIL", message: message}; }
   return null;
 }
 
 class Node {
-  stamp: number = nextStamp();
-  next: Node | null = {};
+  stamp: number;
+  next: Node | null;
   tag?: string | null;
 }
-
-class Ping {
-  pong: Pong | null = {};
-}
-
-class Pong {
-  ping: Ping | null = {};
-}
-
-class Holder {
-  node: Node = { stamp: 0, next: null };
-}
-
-class Spin {
-  next: Spin | null = { spin: nextStamp() };
-  spin: number = 0;
-}
+class Ping { pong: Pong | null; }
+class Pong { ping: Ping | null; }
+class Holder { node: Node; }
+class Spin { next: Spin | null; spin: number; }
 
 export function test_suppressed_self_default_keeps_override(): null {
   let base: number = probe.valueCount();
-  let first: Node = { next: null };
-  check(probe.valueCount() === base + 1, "the omitted effectful default did not run exactly once for this construction");
-  check(first.stamp === (base + 1) * 10, "the omitted effectful default publishes this construction's value");
-  check(first.next === null, "the supplied recursive field suppresses its default");
-  let second: Node = { next: null };
-  check(probe.valueCount() === base + 2, "the second construction did not evaluate its own omission");
-  check(second.stamp === (base + 2) * 10, "the second construction's default value is fresh");
-  check(second.next === null, "the second supplied recursive field suppresses its default");
-  let explicit: Node = { stamp: 5, next: null };
-  check(probe.valueCount() === base + 2, "a fully supplied literal runs no default");
-  check(explicit.stamp === 5, "the supplied effectful field keeps its value");
-  check(explicit.next === null, "the supplied recursive field keeps its value");
-  check(!has(explicit.tag), "an omitted optional field stays absent");
-  let explicitTag: string | null = explicit.tag;
-  check(explicitTag === null, "the absent optional field reads as null");
-  let presentNull: Node = { next: null, tag: null };
-  check(probe.valueCount() === base + 3, "the present-null construction ran its omitted default once");
-  check(has(presentNull.tag), "an explicitly null optional field is present");
-  let presentNullTag: string | null = presentNull.tag;
-  check(presentNullTag === null, "the present optional field keeps its explicit null");
-  let presentText: Node = { next: null, tag: "kept" };
-  check(probe.valueCount() === base + 4, "the present-value construction ran its omitted default once");
-  let presentTextTag: string | null = presentText.tag;
-  check(presentTextTag !== null, "the present optional field lost its value");
-  if (presentTextTag !== null) {
-    check(presentTextTag === "kept", "the present optional field keeps its value");
-  }
-  check(presentText.next === null, "the supplied recursive field still suppresses its default");
+  let first: Node = {stamp: nextStamp(), next: null};
+  check(probe.valueCount() === base + 1, "first provided producer must run once");
+  check(first.stamp === (base + 1) * 10, "first producer result");
+  check(first.next === null, "explicit nullable link");
+  let second: Node = {stamp: nextStamp(), next: first};
+  check(probe.valueCount() === base + 2, "second provided producer must run once");
+  check(second.stamp === (base + 2) * 10, "second producer result");
+  let secondNext: Node | null = second.next;
+  if (secondNext !== null) {
+    check(secondNext === first, "recursive link must retain provided identity");
+  } else { check(false, "recursive link became null"); }
+  let explicit: Node = {stamp: 5, next: null};
+  check(probe.valueCount() === base + 2, "plain values invoke no producer");
+  check(explicit.stamp === 5, "provided stamp");
+  check(explicit.next === null, "provided null");
+  check(!has(explicit.tag), "omitted optional stays absent");
+  let absentTag: string | null = explicit.tag;
+  check(absentTag === null, "absent optional reads null");
+  let presentNull: Node = {stamp: nextStamp(), next: null, tag: null};
+  check(probe.valueCount() === base + 3, "present-null construction producer count");
+  check(has(presentNull.tag), "explicit null is present");
+  let nullTag: string | null = presentNull.tag;
+  check(nullTag === null, "present optional retains null");
+  let presentText: Node = {stamp: nextStamp(), next: second, tag: "kept"};
+  check(probe.valueCount() === base + 4, "present-value construction producer count");
+  let textTag: string | null = presentText.tag;
+  check(textTag !== null, "present optional retains value");
+  if (textTag !== null) { check(textTag === "kept", "provided text"); }
+  let textNext: Node | null = presentText.next;
+  if (textNext !== null) {
+    check(textNext === second, "recursive chain retains identity");
+  } else { check(false, "recursive chain became null"); }
   return null;
 }
 
 export function test_suppressed_mutual_defaults(): null {
   let base: number = probe.valueCount();
-  let ping: Ping = { pong: null };
-  let pong: Pong = { ping: null };
-  check(ping.pong === null, "the supplied field suppresses its recursive default");
-  check(pong.ping === null, "the other class's supplied field suppresses its recursive default");
-  check(probe.valueCount() === base, "a suppressed recursive default ran its effect");
+  let ping: Ping = {pong: null};
+  let pong: Pong = {ping: ping};
+  ping.pong = pong;
+  let linkedPong: Pong | null = ping.pong;
+  if (linkedPong !== null) {
+    check(linkedPong === pong, "mutual link retains exact Pong");
+  } else { check(false, "Pong link became null"); }
+  let linkedPing: Ping | null = pong.ping;
+  if (linkedPing !== null) {
+    check(linkedPing === ping, "mutual link retains exact Ping");
+  } else { check(false, "Ping link became null"); }
+  check(probe.valueCount() === base, "mutual links invoke no producer");
   return null;
 }
 
 export function test_nonexecuted_suppressed_default_side_effect(): null {
   let base: number = probe.valueCount();
-  let spun: Spin = { next: null };
-  check(spun.next === null, "the supplied recursive field suppresses its own host call");
-  check(spun.spin === 0, "the omitted non-recursive default still runs for this construction");
-  check(probe.valueCount() === base, "the suppressed recursive default evaluated its host call");
+  let spun: Spin = {next: null, spin: 0};
+  check(spun.next === null, "explicit recursive null");
+  check(spun.spin === 0, "explicit zero");
+  check(probe.valueCount() === base, "structural construction invokes no hook");
   return null;
 }
 
 export function test_nested_default_literal_override(): null {
   let base: number = probe.valueCount();
-  let holder: Holder = {};
-  check(holder.node.next === null, "the demanded default's own literal supplies the recursive field, so its construction terminates");
-  check(holder.node.stamp === 0, "the demanded default's own literal supplies the effectful field");
-  check(probe.valueCount() === base, "a suppressed default ran for the nested construction");
+  let holder: Holder = {node: {stamp: 0, next: null}};
+  check(holder.node.next === null, "finite nested recursive literal");
+  check(holder.node.stamp === 0, "provided nested stamp");
+  check(probe.valueCount() === base, "nested literal invokes no producer");
   return null;
 }
 
 export function main(): null {
-  check(probe.valueCount() === 0, "class registration executed a default");
+  check(probe.valueCount() === 0, "structural registration invoked a producer");
   return null;
 }

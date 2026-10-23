@@ -6,7 +6,7 @@
 import * as Lib from "./parser_import_lib";
 
 export class ParserShape {
-  value: number = 0;
+  value: number;
 }
 
 export function test_import_export_mix(): number {

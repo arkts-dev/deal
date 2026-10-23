@@ -4,7 +4,7 @@
 // @features: async, await, runtime
 
 // Invocation-local stage carrier threaded through the private chain helpers.
-class ChainStage { step: number = 0; }
+class ChainStage { step: number; }
 
 async function c(stage: ChainStage): number {
   // The innermost completion must be the first chain event: stage 0.

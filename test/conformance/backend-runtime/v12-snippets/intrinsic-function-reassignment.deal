@@ -9,7 +9,7 @@ export function main(): null {
  let before:number=f(2.0);
  f=function(x:number): number {return 9;};
  let after:number=f(2.0);
- if(before!==2 || after!==9) {throw {message:"intrinsic folded past reassignment"};}
+ if(before!==2 || after!==9) {throw {code:"TEST_FAIL",message:"intrinsic folded past reassignment"};}
  c.log("intrinsic-function-reassignment"); return null;
 }
 

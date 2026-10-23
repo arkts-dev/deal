@@ -6,17 +6,17 @@
 // runtime tag.
 // @jsonable
 export class Item {
-  value: number = 2;
+  value: number;
 }
 
 export class Crate {
-  value: number = 3;
+  value: number;
 }
 
 // @jsonable
 export class Payload {
-  label: string = "b";
-  item: Item = {};
+  label: string;
+  item: Item;
 }
 
 export function make(): Item {

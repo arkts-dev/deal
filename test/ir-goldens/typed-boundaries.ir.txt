@@ -1,8 +1,6 @@
 module @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-21:1
   class Counter @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-9:1
     field count: number @test/ir-goldens/fixtures/typed-boundaries.deal:8:5-9:1
-      [boundary: class-default]
-      literal 0.0 : number @test/ir-goldens/fixtures/typed-boundaries.deal:8:21-8:21
   function increment: number @test/ir-goldens/fixtures/typed-boundaries.deal:11:1-16:8
     param c: Counter @test/ir-goldens/fixtures/typed-boundaries.deal:11:20-11:30
       [boundary: param-entry]

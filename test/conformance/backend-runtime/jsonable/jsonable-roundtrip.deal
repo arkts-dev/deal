@@ -5,9 +5,9 @@
 
 // @jsonable
 export class Person {
-  name: string = "";
-  active: boolean = true;
-  score: number = 0.0;
+  name: string;
+  active: boolean;
+  score: number;
 }
 
 export function test_roundtrip(): null {

@@ -359,8 +359,6 @@ public final class ControlFlowValidator {
                 addOptional(foreign, payload, "scope");
             } else if (kind == SemanticOpKind.CALL) {
                 addOptional(foreign, payload, "bodyBlock");
-            } else if (kind == SemanticOpKind.CLASS_DEFAULT) {
-                addOptional(foreign, payload, "defaultBlock");
             } else if (kind == SemanticOpKind.FUNCTION_ADAPT) {
                 CanonicalJson.Value source = ContractSnapshotCanonicalizer
                     .payloadValue(payload, "source");
@@ -601,8 +599,7 @@ public final class ControlFlowValidator {
                     blocks.add(body);
                 }
             }
-            case CLASS_DEFAULT ->
-                blocks.add(((KindPayload.ClassDefaultPayload) op.payload()).defaultBlock());
+
             case FUNCTION_ADAPT -> {
                 AdaptSourceRef source = ((KindPayload.FunctionAdaptPayload) op.payload()).source();
                 if (source instanceof AdaptSourceRef.Thunk thunk) {

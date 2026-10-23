@@ -12,6 +12,6 @@ export function main(): null {
  let b: boolean = true || fail();
  let d: boolean = mark("A", true) && mark("B", false) && mark("X", true);
  let e: boolean = mark("C", false) || mark("D", true) || mark("Y", false);
- if (a || !b || d || !e || trace !== "ABCD") { throw {message:"short-circuit: " + trace}; }
+ if (a || !b || d || !e || trace !== "ABCD") { throw {code:"TEST_FAIL",message:"short-circuit: " + trace}; }
  c.log("short-circuit-abrupt"); return null;
 }

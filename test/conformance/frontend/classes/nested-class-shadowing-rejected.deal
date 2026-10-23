@@ -3,13 +3,13 @@
 // @expected: compile-error E1057
 // @features: classes, identity, diagnostics, v1.3
 
-class A { n: number = 0; }
+class A { n: number; }
 
 export function main(): null {
-  let a: A = {};
+  let a: A = {n: 0};
   {
-    class A { n: number = 0; }
-    let b: A = {};
+    class A { n: number; }
+    let b: A = {n: 0};
     a = b;
   }
   return null;

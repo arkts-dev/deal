@@ -4,12 +4,12 @@
 // @features: jsonable, type-checking
 
 class NonJsonable {
-  data: number = 0;
+  data: number;
 }
 
 // @jsonable
 export class BadClass {
-  x: NonJsonable = {};
+  x: NonJsonable;
 }
 
 export function main(): null { return null; }

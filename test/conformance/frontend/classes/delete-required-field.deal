@@ -4,7 +4,7 @@
 // @features: classes, delete
 
 class User {
-  name: string = "";
+  name: string;
 }
 
 export function test_delete_required(): null {

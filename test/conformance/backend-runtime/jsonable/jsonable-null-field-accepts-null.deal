@@ -4,7 +4,7 @@
 // @features: jsonable, null, fromJson
 
 // @jsonable
-export class Marker { value: null = null; }
+export class Marker { value: null; }
 
 export function main(): null {
   let m: Marker | null = Marker$fromJson("{\"value\":null}");

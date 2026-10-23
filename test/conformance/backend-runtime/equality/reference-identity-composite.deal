@@ -4,7 +4,7 @@
 // @features: equality, arrays, tables, classes, functions, aliasing
 
 class Cell {
-  value: number = 0;
+  value: number;
 }
 
 function id(x: number): number {

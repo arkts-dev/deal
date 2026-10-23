@@ -3,7 +3,7 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-export class Point { x: number = 0; y: number = 0; }
+export class Point { x: number; y: number; }
 export function makePoint(x: number, y: number): Point { return { x: x, y: y }; }
 export function makePoints(): Point[] { return [makePoint(1, 2), makePoint(3, 4)]; }
 export function makeAdder(base: number): (x: number) => number {

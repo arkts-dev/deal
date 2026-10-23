@@ -5,7 +5,7 @@
 // - field-write
 
 class Counter {
-    count: number = 0;
+    count: number;
 }
 
 function increment(c: Counter): number {

@@ -116,7 +116,7 @@ test("string.length publishes the shared typed-boundary token for a carrier", fu
   -- stdlib's $rt.checkString ($kindOf) and the compiled artifact lanes
   -- publish — never the raw Lua table spelling of the carrier.
   local rt = require("deal.runtime")
-  local instance = rt.class_("@m/C", { a = 1 }, {})
+  local instance = rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1})
   local err_value = rt.error_value("E_USER", "boom")
   local err = assert_error_code(function() strings.length.f(instance) end, "E8001")
   assert(err.message == "expected string", tostring(err.message))
@@ -1457,7 +1457,7 @@ end)
 -- nested in a table is the walk's own arm.
 test("json.stringify rejects a class instance with the closed table token", function()
   local __rt = require("deal.runtime")
-  local inst = __rt.class_("@m/C", { a = 1 }, {})
+  local inst = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1})
   local err = assert_error_code(function() json.stringify.f({ c = inst }) end, "E8001")
   assert(err.message == "unsupported type for JSON encoding: table",
     "class instance message, got: " .. tostring(err.message))
@@ -1471,7 +1471,7 @@ test("json.stringify rejects a carrier at the declared table parameter cell", fu
   -- admission with the carrier's own kind token.
   local __rt = require("deal.runtime")
   local cases = {
-    { name = "class instance", value = __rt.class_("@m/C", { a = 1 }, {}),
+    { name = "class instance", value = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1}),
       actual = "@m/C" },
     { name = "function wrapper",
       value = __rt.function_("()->null", function() return __rt.__NULL end),

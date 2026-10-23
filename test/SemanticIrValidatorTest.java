@@ -46,8 +46,7 @@ import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
-import deal.semantic.ir.DefaultOwner;
-import deal.semantic.ir.JsonDefaultChildTable;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.StructuredBodyTable;
@@ -189,7 +188,7 @@ public class SemanticIrValidatorTest {
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
             bindings, ops, membership(ops, bindings),
             new ClassFactoryRegistry(Map.of()),
-            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+            ClassBindingFacts.empty());
     }
 
     /**
@@ -240,8 +239,7 @@ public class SemanticIrValidatorTest {
             unit.moduleId(), interfaceHash, unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     /** The comparison facts of one carried project index (its own digest). */
@@ -522,7 +520,7 @@ public class SemanticIrValidatorTest {
         LoweredModuleUnit unit = completeUnit(Map.of(), functions,
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), bindings, ops,
             membership(ops, bindings), new ClassFactoryRegistry(Map.of()),
-            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+            ClassBindingFacts.empty());
         assertUnitPass(unit, FACTS, what);
     }
 
@@ -737,8 +735,7 @@ public class SemanticIrValidatorTest {
                     Map.of(), Map.of(), Map.of(),
                     new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
                     List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
-                    new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-                    ClassBindingFacts.empty()), FACTS),
+                    new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty()), FACTS),
             "R-PROFILE", "interfaceHash");
 
         // R-PROFILE: loweringContextHash computed by T3's helper for a
@@ -755,7 +752,6 @@ public class SemanticIrValidatorTest {
                         Map.of(), List.of(constOp()),
                         new StructuredBodyTable(Map.of(), Map.of()),
                         new ClassFactoryRegistry(Map.of()),
-                        new JsonDefaultChildTable(Map.of()),
                         ClassBindingFacts.empty()), FACTS),
                 "R-PROFILE", "loweringContextHash");
         }
@@ -1275,12 +1271,11 @@ public class SemanticIrValidatorTest {
             List<SemanticOp> ops,
             StructuredBodyTable bodyTable,
             ClassFactoryRegistry classFactories,
-            JsonDefaultChildTable jsonDefaults,
             ClassBindingFacts classBindingFacts) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_3_INT32, MOD, IFACE, LCH, Set.of(), Map.of(),
             classLayouts, functions, moduleInit, exportPlan, bindings, ops, bodyTable,
-            classFactories, jsonDefaults, classBindingFacts);
+            classFactories, classBindingFacts);
     }
 
     private static LoweredModuleUnit transportUnit(Map<ClassId, ClassLayout> layouts,
@@ -1288,8 +1283,7 @@ public class SemanticIrValidatorTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings) {
         return completeUnit(layouts, functions, new ModuleInitPlan(List.of(), new BlockId(0)),
             ExportPlan.empty(), bindings, List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+            new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty());
     }
 
     private static CanonicalJson.Value blockIdJson(long id) {
@@ -1309,8 +1303,8 @@ public class SemanticIrValidatorTest {
 
         Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
         layouts.put(LAYOUT_CLASS, new ClassLayout(LAYOUT_CLASS, List.of(
-            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL),
-            new ClassLayout.FieldLayout("label", STR, false, DefaultOwner.HOST_DEFAULTS))));
+            new ClassLayout.FieldLayout("x", INT, true, ConstructionProvider.LOCAL),
+            new ClassLayout.FieldLayout("label", STR, false, ConstructionProvider.HOST_DECLARATION))));
         Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         functions.put(named, new LoweredFunction(named, SIG_II,
             List.of(new BindingGeneration(captureA, 0),
@@ -1358,16 +1352,11 @@ public class SemanticIrValidatorTest {
             Map.of(new OpId(MOD, 52), new BlockId(16)));
         ClassFactoryRegistry classFactories =
             new ClassFactoryRegistry(Map.of(new ClassFactoryId(41), new OpId(MOD, 53)));
-        JsonDefaultChildTable jsonDefaults = new JsonDefaultChildTable(
-            new LinkedHashMap<>() {{
-                put(new OpId(MOD, 54), List.of(new OpId(MOD, 55), new OpId(MOD, 56)));
-                put(new OpId(MOD, 57), List.of());
-            }});
         ClassBindingFacts bindingFacts = new ClassBindingFacts(
             new LinkedHashSet<>(List.of(captureA)), new LinkedHashSet<>(List.of(captureB)));
 
         return completeUnit(layouts, functions, moduleInit, exportPlan, bindings,
-            List.of(constOp()), bodyTable, classFactories, jsonDefaults, bindingFacts);
+            List.of(constOp()), bodyTable, classFactories, bindingFacts);
     }
 
     private static void testCompleteTransport(LoweredModuleUnit unit) {
@@ -1386,16 +1375,13 @@ public class SemanticIrValidatorTest {
             "the complete raw unit round-trips exactly through the canonical text");
         checkEq(unit.bodyTable(), reparsed.bodyTable(), "typed body membership survives");
         checkEq(unit.classFactories(), reparsed.classFactories(), "typed factories survive");
-        checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(), "typed JSON-default rows survive");
         checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(), "typed binding facts survive");
         check(text.contains("\"exportPlan\":[{\"descriptor\":"),
             "the populated export plan keeps its array form");
         check(text.contains("\"classFactories\":[{\"constructionEntry\":") && text.contains("\"factoryOp\":"),
             "the populated factory registry keeps its required member names");
-        check(text.contains("\"jsonDefaults\":[{\"classDefaultOps\":[")
-                && text.contains("\"classDefaultOps\":[],\"jsonFromClassOp\":{\"id\":57,"
-                    + "\"modulePath\":\"mod.a\",\"type\":\"op\"}"),
-            "JSON-default framing and the empty-child row survive");
+        check(!text.contains("\"jsonDefaults\""),
+            "the retired JSON initializer companion is absent");
         check(text.contains("\"key\":{\"id\":4,\"type\":\"function\"}")
                 && text.contains("\"functionId\":{\"id\":4,\"type\":\"function\"}"),
             "function entries emit separate key and functionId members");
@@ -1403,7 +1389,7 @@ public class SemanticIrValidatorTest {
         check(text.contains("\"sourceName\":null"),
             "an explicit null sourceName means an anonymous function");
         assertE6005(SemanticIrValidator.validateText(
-                text.replace("\"defaultOwner\":\"LOCAL\"", "\"defaultOwner\":\"BOGUS\""),
+                text.replace("\"constructionProvider\":\"LOCAL\"", "\"constructionProvider\":\"BOGUS\""),
                 FACTS),
             "R-ENUM", "BOGUS");
 
@@ -1419,8 +1405,7 @@ public class SemanticIrValidatorTest {
         RawUnit hugeRaw = RawUnit.fromTyped(completeUnit(Map.of(), Map.of(),
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), hugeBinding,
             List.of(), new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty()));
+            new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty()));
         expectIllegalArgument(() -> ContractSnapshotCanonicalizer.toJson(hugeRaw),
             "an unrepresentable allocationId fails encoding instead of narrowing");
 
@@ -1431,8 +1416,7 @@ public class SemanticIrValidatorTest {
                         (long) Integer.MAX_VALUE + 1)), new BlockId(1), "f")),
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
             List.of(), new StructuredBodyTable(Map.of(), Map.of()),
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty()));
+            new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty()));
         expectIllegalArgument(() -> ContractSnapshotCanonicalizer.toJson(hugeGeneration),
             "an unrepresentable capture generation fails encoding instead of narrowing", "generation");
     }
@@ -1445,7 +1429,7 @@ public class SemanticIrValidatorTest {
         FunctionId containedFunction = new FunctionId(4);
         Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
         layouts.put(FOREIGN_CLASS, new ClassLayout(LAYOUT_CLASS, List.of(
-            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL))));
+            new ClassLayout.FieldLayout("x", INT, true, ConstructionProvider.LOCAL))));
         Map<FunctionId, LoweredFunction> functions = new LinkedHashMap<>();
         functions.put(keyFunction, new LoweredFunction(containedFunction, SIG_II, List.of(),
             new BlockId(7), "inc"));
@@ -1500,7 +1484,7 @@ public class SemanticIrValidatorTest {
         LoweredModuleUnit empty = transportUnit(Map.of(), Map.of(), Map.of());
         String text = SemanticIrValidator.toUnitText(empty);
         for (String fact : List.of("\"classLayouts\":[]", "\"functions\":[]",
-                "\"exportPlan\":[]", "\"classFactories\":[]", "\"jsonDefaults\":[]",
+                "\"exportPlan\":[]", "\"classFactories\":[]",
                 "\"moduleInit\":{\"imports\":[],\"initBlock\":{\"id\":0,\"type\":\"block\"}}",
                 "\"bodyTable\":{\"blockOps\":[],\"opBlocks\":[]}",
                 "\"classBindingFacts\":{\"importAliases\":[],\"parameters\":[]}")) {
@@ -1510,7 +1494,6 @@ public class SemanticIrValidatorTest {
         check(reparsed.classLayouts().isEmpty() && reparsed.functions().isEmpty()
                 && reparsed.exportPlan().isEmpty()
                 && reparsed.classFactories().factories().isEmpty()
-                && reparsed.jsonDefaults().defaultChildren().isEmpty()
                 && reparsed.bodyTable().blockOps().isEmpty()
                 && reparsed.bodyTable().opBlocks().isEmpty()
                 && reparsed.classBindingFacts().parameters().isEmpty()
@@ -1839,27 +1822,22 @@ public class SemanticIrValidatorTest {
 
     /**
      * The transport project's entry unit: the declared class of the carried
-     * interface index with its complete construction facts (the registered
-     * {@code CLASS_FACTORY} and the defaulted field's {@code CLASS_DEFAULT}
-     * child), so the carried index, the unit's layouts and the unit's class
+     * interface index with its registered structural provider, so the carried
+     * index, the unit's layouts and the unit's class
      * registry are one coherent class graph.
      */
     private static LoweredModuleUnit classTransportUnit(String interfaceHash) {
         ClassId point = new ClassId("mod.a", "Point");
         ClassFactoryId constructionEntry = new ClassFactoryId(7);
         ClassLayout layout = new ClassLayout(point, List.of(
-            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL),
-            new ClassLayout.FieldLayout("label", STR, false, DefaultOwner.LOCAL)));
+            new ClassLayout.FieldLayout("x", INT, true, ConstructionProvider.LOCAL),
+            new ClassLayout.FieldLayout("label", STR, false, ConstructionProvider.LOCAL)));
         OpId caller = new OpId(MOD, 60);
-        OpId defaultX = new OpId(MOD, 61);
         OpId factoryOp = new OpId(MOD, 62);
         List<SemanticOp> ops = new ArrayList<>();
         ops.add(constOp());
-        ops.add(opWith(defaultX, SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(point, "x", new BlockId(0)),
-            null, null, FailurePolicyId.NO_DEAL_FAILURE, null));
         ops.add(opWith(factoryOp, SemanticOpKind.CLASS_FACTORY,
-            new KindPayload.ClassFactoryPayload(point, List.of(defaultX), caller),
+            new KindPayload.ClassFactoryPayload(point, caller),
             new ValueId(63), new RuntimeDescriptor.Class(point),
             FailurePolicyId.CLASS_CONSTRUCTION, null));
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
@@ -1868,7 +1846,7 @@ public class SemanticIrValidatorTest {
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
             ops, membership(ops, Map.of()),
             new ClassFactoryRegistry(Map.of(constructionEntry, factoryOp)),
-            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+            ClassBindingFacts.empty());
     }
 
     /**
@@ -1893,8 +1871,8 @@ public class SemanticIrValidatorTest {
                             ExternalModuleKind.HOST)),
                     List.of(new ExportInterface("main", "() => null")),
                     List.of(new ClassInterface(new ClassId("mod.a", "Point"),
-                        List.of(new FieldInterface("x", "number", false, false, true),
-                            new FieldInterface("label", "string", true, true, false)),
+                        List.of(new FieldInterface("x", "number", false, false),
+                            new FieldInterface("label", "string", true, true)),
                         new ClassFactoryId(7))),
                     InitializationMode.ONCE_AFTER_DEPENDENCIES));
                 put(MOD_B, new ExternalModuleInterface(MOD_B,
@@ -1976,10 +1954,9 @@ public class SemanticIrValidatorTest {
         checkEq(List.of("x", "label"),
             point.fields().stream().map(FieldInterface::name).toList(),
             "the class field order survives");
-        check(!point.fields().get(0).optional() && point.fields().get(0).hasDefault()
-                && point.fields().get(1).optional() && point.fields().get(1).nullable()
-                && !point.fields().get(1).hasDefault(),
-            "the optional/nullable/hasDefault field facts survive");
+        check(!point.fields().get(0).optional() && !point.fields().get(0).nullable()
+                && point.fields().get(1).optional() && point.fields().get(1).nullable(),
+            "the independent optional/nullable structural facts survive");
         checkEq(InitializationMode.ONCE_AFTER_DEPENDENCIES,
             parsed.interfaceIndex().modules().get(MOD_B).initialization(),
             "the initialization mode survives");
@@ -2010,7 +1987,7 @@ public class SemanticIrValidatorTest {
             new ClassId("mod.a", "Other"),
             new ClassRegistrationSeeds.ClassRegistration(
                 new ClassLayout(new ClassId("mod.a", "Point"), List.of()),
-                DefaultOwner.LOCAL)));
+                ConstructionProvider.LOCAL)));
         ExecutableLoweredProject detachedProject = new ExecutableLoweredProject(
             SemanticProfile.DEAL_V1_3_INT32, index, modules, MOD, detachedSeeds);
         String detachedText = SemanticIrValidator.toProjectText(detachedProject);
@@ -2061,7 +2038,7 @@ public class SemanticIrValidatorTest {
             new TextCorruption("an unknown seed owner rejects", input ->
                 withEntryAt(input, "owner", CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0)),
             new TextCorruption("an unknown seed field owner rejects", input -> withEntryAt(input,
-                "defaultOwner", CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0, "layout", "fields", 0)),
+                "constructionProvider", CanonicalJson.str("NOT_AN_OWNER"), "classSeeds", 0, "layout", "fields", 0)),
             new TextCorruption("a seed without its owner member rejects", input ->
                 withoutKeyAt(input, "owner", "classSeeds", 0)),
             new TextCorruption("a duplicate class-seed registration key rejects", input ->
@@ -2121,7 +2098,7 @@ public class SemanticIrValidatorTest {
     private static Map<ClassId, ClassLayout> batteryLayouts() {
         Map<ClassId, ClassLayout> layouts = new LinkedHashMap<>();
         layouts.put(BATTERY_CLASS, new ClassLayout(BATTERY_CLASS, List.of(
-            new ClassLayout.FieldLayout("x", INT, true, DefaultOwner.LOCAL))));
+            new ClassLayout.FieldLayout("x", INT, true, ConstructionProvider.LOCAL))));
         return layouts;
     }
 
@@ -2208,8 +2185,7 @@ public class SemanticIrValidatorTest {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
             SemanticProfile.DEAL_V1_3_INT32, MOD, interfaceHash, LCH, Set.of(), coverage,
             layouts, functions, moduleInit, exportPlan, Map.of(), ops, table,
-            new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+            new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty());
     }
 
     private static final class BatteryMutation {
@@ -2247,8 +2223,7 @@ public class SemanticIrValidatorTest {
             List.of(opWith(constOp, SemanticOpKind.CONST,
                 new KindPayload.ConstPayload(new ScalarValue.Number(2)), new ValueId(91), INT,
                 FailurePolicyId.NO_DEAL_FAILURE, null)),
-            table, new ClassFactoryRegistry(Map.of()), new JsonDefaultChildTable(Map.of()),
-            ClassBindingFacts.empty());
+            table, new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty());
     }
 
     private static ExecutableLoweredProject batteryProject(LoweredModuleUnit unit,
@@ -2301,7 +2276,7 @@ public class SemanticIrValidatorTest {
         // production path can expose a project or a companion view for it.
         Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
             mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
-            mutated.jsonDefaults(), index.modules().get(MOD), Map.of(), Map.of());
+            index.modules().get(MOD), Map.of(), Map.of());
         check(composed.isPresent() && typed.isPresent()
                 && composed.get().message().equals(typed.get().message()),
             what + ": the composed typed production admission rejects with the same "

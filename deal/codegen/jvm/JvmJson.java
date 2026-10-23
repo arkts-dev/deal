@@ -27,30 +27,17 @@ public final class JvmJson {
         }
     };
 
-    /** One field of a class plan: name, descriptor, optionality, default child. */
+    /** One field of a class plan in declaration order. */
     public static final class Field {
         public final String name;
         public final String descriptor;
         public final boolean optional;
         public final String kind;
-        public final String defaultKey;
-        public final String defaultDigest;
-        public final Supplier<Object> defaultThunk;
-
         public Field(String name, String descriptor, boolean optional, String kind) {
-            this(name, descriptor, optional, kind, null, null, null);
-        }
-
-        public Field(String name, String descriptor, boolean optional, String kind,
-                     String defaultKey, String defaultDigest,
-                     Supplier<Object> defaultThunk) {
             this.name = name;
             this.descriptor = descriptor;
             this.optional = optional;
             this.kind = kind;
-            this.defaultKey = defaultKey;
-            this.defaultDigest = defaultDigest;
-            this.defaultThunk = defaultThunk;
         }
     }
 
@@ -618,22 +605,8 @@ public final class JvmJson {
             values.put(field.name, decoded);
             present.add(field.name);
         }
-        // Default application in declaration order (skip-provided).
         for (Field field : plan.fields) {
-            if (present.contains(field.name) || field.optional) {
-                continue;
-            }
-            if (field.defaultThunk == null) {
-                return null;
-            }
-            Object produced;
-            try {
-                produced = runDefault(field);
-            } catch (DefaultFailure failure) {
-                return null;
-            }
-            values.put(field.name, produced);
-            present.add(field.name);
+            if (!field.optional && !present.contains(field.name)) return null;
         }
         // Final validation in declaration order.
         for (Field field : plan.fields) {
@@ -651,32 +624,6 @@ public final class JvmJson {
             }
         }
         return instance;
-    }
-
-    /** The failed default child (the JSON_FROM_NULL carrier of the walk). */
-    private static final class DefaultFailure extends RuntimeException {
-        DefaultFailure(Throwable cause) {
-            super(cause);
-        }
-    }
-
-    /** One CLASS_DEFAULT child execution with its own events; throws on failure. */
-    private static Object runDefault(Field field) {
-        JvmRuntime.ev(JvmRuntime.currentModule(), field.defaultKey, "START",
-            "CLASS_DEFAULT", field.defaultDigest, "-", List.of(), null, null);
-        Object produced;
-        try {
-            produced = field.defaultThunk.get();
-        } catch (RuntimeException failure) {
-            JvmRuntime.ev(JvmRuntime.currentModule(), field.defaultKey, "FAILURE",
-                "CLASS_DEFAULT", field.defaultDigest, "-", List.of(), null,
-                JvmRuntime.errtext(failure));
-            throw new DefaultFailure(failure);
-        }
-        JvmRuntime.ev(JvmRuntime.currentModule(), field.defaultKey, "SUCCESS",
-            "CLASS_DEFAULT", field.defaultDigest, "-", List.of(),
-            JvmRuntime.atom(produced, field.kind), null);
-        return produced;
     }
 
     private static final Object FAIL = new Object();
@@ -826,20 +773,7 @@ public final class JvmJson {
             present.add(field.name);
         }
         for (Field field : nested.fields) {
-            if (present.contains(field.name) || field.optional) {
-                continue;
-            }
-            if (field.defaultThunk == null) {
-                return null;
-            }
-            Object produced;
-            try {
-                produced = runDefault(field);
-            } catch (DefaultFailure failure) {
-                return null;
-            }
-            values.put(field.name, produced);
-            present.add(field.name);
+            if (!field.optional && !present.contains(field.name)) return null;
         }
         for (Field field : nested.fields) {
             if (!present.contains(field.name)) {

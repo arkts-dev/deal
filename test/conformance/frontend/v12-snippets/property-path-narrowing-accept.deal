@@ -3,5 +3,5 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class C {x: number | null = null;}
+class C {x: number | null;}
 export function f(c: C): number {let x: number | null = c.x; if(x !== null) {return x;} return 0;}

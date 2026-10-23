@@ -6,8 +6,8 @@
 import * as console from "std/console";
 
 class Slot {
-  xs: null[] = [null];
-  grid: null[][] = [[null]];
+  xs: null[];
+  grid: null[][];
 }
 
 function expectTrue(what: string, condition: boolean): null {
@@ -72,13 +72,13 @@ export function main(): null {
   let parenthesized: (null)[] = [null];
   expectTrue("parenthesized control keeps its length", parenthesized.length === 1);
 
-  // The class field annotation, including the defaulted nested field.
-  let slot: Slot = {};
-  expectTrue("field default length", slot.xs.length === 1);
+  // Class field annotations cover explicit flat and nested values.
+  let slot: Slot = {xs: [null], grid: [[null]]};
+  expectTrue("field provided length", slot.xs.length === 1);
   slot.xs[slot.xs.length] = null;
   expectTrue("field append", slot.xs.length === 2);
   let fieldRead: null = slot.xs[0];
-  expectTrue("field grid default", slot.grid.length === 1);
+  expectTrue("field grid provided value", slot.grid.length === 1);
 
   // The parameter and return annotations.
   let shared: null[] = takeNulls(xs);

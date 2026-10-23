@@ -47,7 +47,7 @@ import deal.semantic.ir.ClassId;
 import deal.semantic.ir.ClassInterface;
 import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ContractSnapshotCanonicalizer;
-import deal.semantic.ir.DefaultOwner;
+import deal.semantic.ir.ConstructionProvider;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ExportPlan;
 import deal.semantic.ir.ExternalModuleInterface;
@@ -58,7 +58,6 @@ import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FunctionAllocationIdentity;
 import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
@@ -220,7 +219,7 @@ public class ProjectLoweringTest {
         import * as state from "host/retained_default";
 
         class A {
-          x: number = combine(state.calls(), build());
+          x: number;
         }
 
         function combine(a: number, b: number): number {
@@ -232,12 +231,12 @@ public class ProjectLoweringTest {
             return 100;
           }
           state.provideFirst();
-          let inner: A = {};
+          let inner: A = {x: combine(state.calls(), build())};
           return inner.x;
         }
 
         export function main(): null {
-          let a: A = {};
+          let a: A = {x: combine(state.calls(), build())};
           if (a.x !== 1100) {
             throw { code: "OPERAND_OVERWRITE", message: "a nested attempt overwrote the enclosing operands" };
           }
@@ -267,8 +266,8 @@ public class ProjectLoweringTest {
         import * as state from "host/retained_default";
 
         class A {
-          x: number = state.calls();
-          y: number = build();
+          x: number;
+          y: number;
         }
 
         function build(): number {
@@ -276,12 +275,12 @@ public class ProjectLoweringTest {
             return 100;
           }
           state.provideFirst();
-          let inner: A = {};
+          let inner: A = {x: state.calls(), y: build()};
           return 7;
         }
 
         export function main(): null {
-          let a: A = {};
+          let a: A = {x: state.calls(), y: build()};
           if (a.x !== 0) {
             throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the enclosing attempt's first default value" };
           }
@@ -309,16 +308,16 @@ public class ProjectLoweringTest {
         import * as state from "host/retained_default";
 
         export class A {
-          x: number = state.calls();
-          y: number = build();
+          x: number;
+          y: number;
         }
 
-        function build(): number {
+        export function build(): number {
           if (state.calls() >= 1) {
             return 100;
           }
           state.provideFirst();
-          let inner: A = {};
+          let inner: A = {x: state.calls(), y: build()};
           return 7;
         }
         """;
@@ -330,17 +329,20 @@ public class ProjectLoweringTest {
     private static String failedNestedDefault(String source, String message) {
         return source.replace("return 100;",
                 "throw { code: \"INNER_FAIL\", message: \"" + message + "\" };")
-            .replace("  let inner: A = {};",
-                "  try {\n    let inner: A = {};\n  } catch (e) {\n  }");
+            .replace("  let inner: A = {x: combine(state.calls(), build())};",
+                "  try {\n    let inner: A = {x: combine(state.calls(), build())};\n  } catch (e) {\n  }")
+            .replace("  let inner: A = {x: state.calls(), y: build()};",
+                "  try {\n    let inner: A = {x: state.calls(), y: build()};\n  } catch (e) {\n  }");
     }
 
     /** The consumer of the imported two-required-default class. */
     private static final String IMPORTED_DEFAULT_TWO_DEFAULTS_APP_SOURCE = """
         import * as console from "std/console";
         import * as lib from "lib";
+        import * as state from "host/retained_default";
 
         export function main(): null {
-          let a: lib.A = {};
+          let a: lib.A = {x: state.calls(), y: lib.build()};
           if (a.x !== 0) {
             throw { code: "ATTEMPT_VALUE_OVERWRITE", message: "a nested attempt overwrote the transferred default value" };
           }
@@ -439,16 +441,16 @@ public class ProjectLoweringTest {
      */
     private static final String CLASS_UTIL_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 1;
+          x: number;
+          y: number;
         }
 
         class Hidden {
-          label: string = "hidden";
+          label: string;
         }
 
         export function makePoint(x: number): Point {
-          let p: Point = {x: x};
+          let p: Point = {x: x, y: 1};
           let h: Hidden = {label: "local"};
           return p;
         }
@@ -465,16 +467,16 @@ public class ProjectLoweringTest {
 
     private static final String IMPORTED_CLASS_UTIL_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 1;
+          x: number;
+          y: number;
         }
 
         export class Segment {
-          length: number = 0;
+          length: number;
         }
 
         export function makePoint(x: number): Point {
-          return {x: x};
+          return {x: x, y: 1};
         }
         """;
 
@@ -482,7 +484,7 @@ public class ProjectLoweringTest {
         import * as u from "util";
 
         export function main(): null {
-          let p: u.Point = {x: 5};
+          let p: u.Point = {x: 5, y: 1};
           let s: u.Segment = {length: 3};
           let q: u.Point = u.makePoint(7);
           return null;
@@ -500,7 +502,7 @@ public class ProjectLoweringTest {
     private static final String SAME_SPELLED_ALPHA_SOURCE = """
         // @jsonable
         export class Point {
-          x: number = 0;
+          x: number;
           nick?: string;
         }
         """;
@@ -508,7 +510,7 @@ public class ProjectLoweringTest {
     private static final String SAME_SPELLED_BETA_SOURCE = """
         // @jsonable
         export class Point {
-          y: string = "";
+          y: string;
         }
         """;
 
@@ -524,8 +526,8 @@ public class ProjectLoweringTest {
 
         // @jsonable
         export class Wrap {
-          a: alpha.Point = { x: 1 };
-          b: beta.Point = { y: "s" };
+          a: alpha.Point;
+          b: beta.Point;
         }
 
         export function main(): null {
@@ -543,7 +545,7 @@ public class ProjectLoweringTest {
           if (xs[0].y !== "a") { throw { code: "WRONG_ARRAY", message: "array" }; }
           let n: alpha.Point | null = { x: 2 };
           if (n === null) { throw { code: "WRONG_NULLABLE", message: "n" }; }
-          let w: Wrap = {};
+          let w: Wrap = {a: {x: 1}, b: {y: "s"}};
           let json: string = Wrap$toJson(w);
           if (json !== "{\\\"a\\\":{\\\"x\\\":1.0},\\\"b\\\":{\\\"y\\\":\\\"s\\\"}}") {
             throw { code: "WRONG_JSON", message: json };
@@ -568,13 +570,13 @@ public class ProjectLoweringTest {
      * exact declaration of every construction.
      */
     private static final String SIBLING_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     private static final String SIBLING_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
-        export class Codec { b: number = 9; }
+        export class Ir { a: number; }
+        export class Codec { b: number; }
         export function useCodec(y: Codec): number { return y.b; }
         """;
 
@@ -583,18 +585,18 @@ public class ProjectLoweringTest {
         import * as codec from "./m/codec";
 
         class Holder {
-          inner: ir.Ir = {};
-          items: ir.Ir[] = [{}];
+          inner: ir.Ir;
+          items: ir.Ir[];
         }
 
         export function main(): null {
-          let direct: ir.Ir = {};
+          let direct: ir.Ir = {a: 7};
           if (direct.a !== 7) { throw { code: "WRONG_DIRECT", message: "a" }; }
-          if (ir.useIr({}) !== 7) { throw { code: "WRONG_CALL", message: "a" }; }
-          let h: Holder = {};
+          if (ir.useIr({a: 7}) !== 7) { throw { code: "WRONG_CALL", message: "a" }; }
+          let h: Holder = {inner: {a: 7}, items: [{a: 7}]};
           if (h.inner.a !== 7) { throw { code: "WRONG_NESTED", message: "a" }; }
           if (h.items[0].a !== 7) { throw { code: "WRONG_ARRAY", message: "a" }; }
-          let xs: ir.Ir[] = [{}];
+          let xs: ir.Ir[] = [{a: 7}];
           if (xs[0].a !== 7) { throw { code: "WRONG_LITERAL_ARRAY", message: "a" }; }
           return null;
         }
@@ -609,15 +611,15 @@ public class ProjectLoweringTest {
      * exact declaring provider.
      */
     private static final String FIELD_SIBLING_IR_SOURCE = """
-        export class Ir { a: number = 7; nick?: string; }
+        export class Ir { a: number; nick?: string; }
         """;
 
     private static final String FIELD_SIBLING_CODEC_SOURCE = """
-        export class Ir { nick: number = 93; }
+        export class Ir { nick: number; }
         """;
 
     private static final String FIELD_SIBLING_OTHER_SOURCE = """
-        export class Point { nick: number = 1; }
+        export class Point { nick: number; }
         """;
 
     private static final String FIELD_SIBLING_APP_SOURCE = """
@@ -625,19 +627,19 @@ public class ProjectLoweringTest {
         import * as codec from "./m/codec";
         import * as other from "./other";
 
-        class Point { nick: string = ""; }
+        class Point { nick: string; }
 
         export function main(): null {
-          let x: ir.Ir = {};
+          let x: ir.Ir = {a: 7};
           x.a = 5;
           if (x.a !== 5) { throw { code: "WRONG_IR_READ", message: "a" }; }
           let had: boolean = has(x.nick);
           delete x.nick;
           if (had || has(x.nick)) { throw { code: "WRONG_IR_DELETE", message: "nick" }; }
-          let y: other.Point = {};
+          let y: other.Point = {nick: 1};
           y.nick = 2;
           if (y.nick !== 2) { throw { code: "WRONG_OTHER", message: "nick" }; }
-          let p: Point = {};
+          let p: Point = {nick: ""};
           if (p.nick !== "") { throw { code: "WRONG_LOCAL", message: "nick" }; }
           return null;
         }
@@ -659,12 +661,12 @@ public class ProjectLoweringTest {
      */
     private static final String JSON_SIBLING_IR_SOURCE = """
         // @jsonable
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         """;
 
     private static final String JSON_SIBLING_CODEC_SOURCE = """
         // @jsonable
-        export class Ir { a: string = ""; }
+        export class Ir { a: string; }
         """;
 
     private static final String JSON_SIBLING_APP_SOURCE = """
@@ -672,10 +674,10 @@ public class ProjectLoweringTest {
         import * as codec from "./m/codec";
 
         // @jsonable
-        export class Wrap { item: ir.Ir = {}; }
+        export class Wrap { item: ir.Ir; }
 
         export function main(): null {
-          let w: Wrap = {};
+          let w: Wrap = {item: {a: 7}};
           let s: string = Wrap$toJson(w);
           if (s === "") { throw { code: "WRONG", message: "s" }; }
           return null;
@@ -693,20 +695,20 @@ public class ProjectLoweringTest {
      * registers none and cannot collide with it).
      */
     private static final String SINGLE_PLAN_OTHER_SOURCE = """
-        export class Point { nick: string = ""; }
+        export class Point { nick: string; }
         """;
 
     private static final String SINGLE_PLAN_APP_SOURCE = """
         import * as other from "./other";
 
         // @jsonable
-        export class Point { nick: string = "l"; }
+        export class Point { nick: string; }
 
         // @jsonable
-        export class Wrap { p: Point = {}; }
+        export class Wrap { p: Point; }
 
         export function main(): null {
-          let w: Wrap = {};
+          let w: Wrap = {p: {nick: "l"}};
           let s: string = Wrap$toJson(w);
           if (s !== "{\\\"p\\\":{\\\"nick\\\":\\\"l\\\"}}") {
             throw { code: "WRONG", message: s };
@@ -725,7 +727,7 @@ public class ProjectLoweringTest {
      */
     private static final String PLAN_IMPORTED_OTHER_SOURCE = """
         // @jsonable
-        export class Point { a: number = 7; }
+        export class Point { a: number; }
         """;
 
     /**
@@ -735,25 +737,25 @@ public class ProjectLoweringTest {
      * this sibling's.
      */
     private static final String PLAN_IMPORTED_CODEC_SOURCE = """
-        export class Point { nick: string = "c"; }
+        export class Point { nick: string; }
         """;
 
     private static final String PLAN_IMPORTED_APP_SOURCE = """
         import * as codec from "./codec";
         import * as other from "./other";
 
-        export class Point { nick: string = "local"; }
+        export class Point { nick: string; }
 
         // @jsonable
-        export class Wrap { p: other.Point = {}; }
+        export class Wrap { p: other.Point; }
 
         export function main(): null {
-          let w: Wrap = {};
+          let w: Wrap = {p: {a: 7}};
           let s: string = Wrap$toJson(w);
           if (s !== "{\\\"p\\\":{\\\"a\\\":7.0}}") {
             throw { code: "WRONG", message: s };
           }
-          let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{}}");
+          let w2: Wrap | null = Wrap$fromJson("{\\\"p\\\":{\\\"a\\\":7}}");
           if (w2 !== null) {
             if (w2.p.a !== 7) { throw { code: "WRONG_A", message: "a" }; }
           } else {
@@ -776,12 +778,12 @@ public class ProjectLoweringTest {
      * declaration's 5 — never the imported sibling's 7 or 93.
      */
     private static final String LOCAL_ATTRIBUTION_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         export function id(x: Ir): Ir { return x; }
         """;
 
     private static final String LOCAL_ATTRIBUTION_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
+        export class Ir { a: number; }
         export function id(x: Ir): Ir { return x; }
         """;
 
@@ -789,15 +791,15 @@ public class ProjectLoweringTest {
         import * as ir from "./ir";
         import * as codec from "./codec";
 
-        class Ir { a: number = 5; }
+        class Ir { a: number; }
 
         function id(x: Ir): Ir { return x; }
 
-        class Holder { f: Ir = id({}); }
+        class Holder { f: Ir; }
 
         export function main(): null {
-          let p: Ir = id({});
-          let q: Holder = {};
+          let p: Ir = id({a: 5});
+          let q: Holder = {f: id({a: 5})};
           if (p.a !== 5) { throw { code: "WRONG_P", message: "p.a" }; }
           if (q.f.a !== 5) { throw { code: "WRONG_F", message: "q.f.a" }; }
           return null;
@@ -820,7 +822,7 @@ public class ProjectLoweringTest {
         import * as codec from "./codec";
 
         export function main(): null {
-          let p: codec.Ir = codec.id({});
+          let p: codec.Ir = codec.id({a: 93});
           if (p.a !== 93) { throw { code: "WRONG_CODEC", message: "p.a" }; }
           return null;
         }
@@ -833,13 +835,13 @@ public class ProjectLoweringTest {
      * return annotations name it.
      */
     private static final String PARAM_RETURN_PROVIDER_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     /** A second same-named sibling provider (the differing default 93). */
     private static final String PARAM_RETURN_PROVIDER_CODEC_SOURCE = """
-        export class Ir { a: number = 93; }
+        export class Ir { a: number; }
         """;
 
     /**
@@ -850,14 +852,14 @@ public class ProjectLoweringTest {
      * an entry whose parameter names it.
      */
     private static final String CALL_RECEIVER_IR_SOURCE = """
-        export class Ir { a: number = 7; nick?: string; }
+        export class Ir { a: number; nick?: string; }
         export function make(): Ir { return { a: 7 }; }
         export function useIr(x: Ir): number { return x.a; }
         """;
 
     /** The same-named sibling of the call-receiver provider (93). */
     private static final String CALL_RECEIVER_CODEC_SOURCE = """
-        export class Ir { a: number = 93; nick: number = 1; }
+        export class Ir { a: number; nick: number; }
         """;
 
     /**
@@ -876,7 +878,7 @@ public class ProjectLoweringTest {
         export function main(): null {
           let v: number = ir.make().a;
           let f: (x: ir.Ir) => number = ir.useIr;
-          let n: number = f({});
+          let n: number = f({a: 7});
           let y = ir.make();
           y.a = 11;
           let w: number = y.a;
@@ -918,22 +920,22 @@ public class ProjectLoweringTest {
                     + "import * as codec from \"./codec\";\n")
             + "\n"
             + (localFieldsOnly
-                ? "class Ir { b: string = \"local\"; }\n"
-                : "class Ir { a: number = 5; }\n")
+                ? "class Ir { b: string; }\n"
+                : "class Ir { a: number; }\n")
             + "\n"
             + "function g(x: ir.Ir): number { return x.a; }\n"
-            + "function make(): ir.Ir { return {}; }\n"
+            + "function make(): ir.Ir { return {a: 7}; }\n"
             + "\n"
             + "export function main(): null {\n"
-            + "  let n: number = ir.useIr({});\n"
+            + "  let n: number = ir.useIr({a: 7});\n"
             + "  if (n !== 7) { throw { code: \"WRONG_PARAM\", message: \"n\" }; }\n"
-            + "  let m: number = g({});\n"
+            + "  let m: number = g({a: 7});\n"
             + "  if (m !== 7) { throw { code: \"WRONG_LOCAL_PARAM\", message: \"m\" }; }\n"
             + "  let r: ir.Ir = make();\n"
             + "  if (r.a !== 7) { throw { code: \"WRONG_RETURN\", message: \"r\" }; }\n"
             + (localFieldsOnly
                 ? "  return null;\n"
-                : "  let local: Ir = {};\n"
+                : "  let local: Ir = {a: 5};\n"
                     + "  if (local.a !== 5) { throw { code: \"WRONG_LOCAL\","
                     + " message: \"local\" }; }\n"
                     + "  return null;\n")
@@ -970,8 +972,8 @@ public class ProjectLoweringTest {
     private static final String BINDING_CLASS_UTIL_SOURCE = """
         // @jsonable
         export class Point {
-          x: number = 4;
-          label: string = "p";
+          x: number;
+          label: string;
           note?: string;
         }
 
@@ -999,7 +1001,7 @@ public class ProjectLoweringTest {
         }
 
         export function main(): null {
-          let p: u.Point = {x: 5};
+          let p: u.Point = {x: 5, label: "p"};
           let c: () => number = u.makeCounter(1, 2);
           let a: (x: number, y: number) => number = twice;
           let h: (x: number) => number = cfg.pick();
@@ -1012,8 +1014,8 @@ public class ProjectLoweringTest {
 
     private static final String OWNERSHIP_UTIL_SOURCE = """
         export class Point {
-          x: number = 0;
-          y: number = 1;
+          x: number;
+          y: number;
         }
 
         export function makeCounter(start: number): () => number {
@@ -1037,7 +1039,7 @@ public class ProjectLoweringTest {
         import * as m from "mid";
 
         export function main(): null {
-          let p: u.Point = {x: 4};
+          let p: u.Point = {x: 4, y: 1};
           let c: () => number = u.makeCounter(1);
           let v: number = m.answer();
           return null;
@@ -1292,9 +1294,9 @@ public class ProjectLoweringTest {
                 == null ? null : result.seeds().registrationFor(BUILTIN_ERROR).layout();
             check(errorLayout != null
                     && result.seeds().registrationFor(BUILTIN_ERROR).owner()
-                        == DefaultOwner.BUILTIN_DEFAULTS,
+                        == ConstructionProvider.BUILTIN_ERROR,
                 "the seeds carry the compiler-owned builtin Error layout under "
-                    + "BUILTIN_DEFAULTS");
+                    + "BUILTIN_ERROR");
             checkEq(2, result.seeds().registrations().size(),
                 "the seeds carry exactly one layout per declared class of every "
                     + "declaration module plus the builtin Error entry");
@@ -1317,16 +1319,16 @@ public class ProjectLoweringTest {
                         + "order");
                 check(errorLayout.fields().stream()
                         .allMatch(field -> field.required()
-                            && field.defaultOwner() == DefaultOwner.BUILTIN_DEFAULTS),
+                            && field.constructionProvider() == ConstructionProvider.BUILTIN_ERROR),
                     "both builtin Error fields are required-present under "
-                        + "BUILTIN_DEFAULTS");
+                        + "BUILTIN_ERROR");
             }
             ClassLayout endpointLayout = result.seeds().registrationFor(ENDPOINT)
                 == null ? null : result.seeds().registrationFor(ENDPOINT).layout();
             check(endpointLayout != null
                     && result.seeds().registrationFor(ENDPOINT).owner()
-                        == DefaultOwner.HOST_DEFAULTS,
-                "the declared host class carries its layout under HOST_DEFAULTS "
+                        == ConstructionProvider.HOST_DECLARATION,
+                "the declared host class carries its layout under HOST_DECLARATION "
                     + "(the seed proves the declaration identity classification)");
             if (endpointLayout != null) {
                 checkEq(List.of("path", "port"),
@@ -1431,7 +1433,7 @@ public class ProjectLoweringTest {
 
     private static void testUnitProjectCompanionOwnership() throws Exception {
         System.out.println("-- the complete unit/project companion ownership: the "
-            + "unit owns bodyTable/classFactories/jsonDefaults/classBindingFacts, "
+            + "unit owns bodyTable/classFactories/classBindingFacts, "
             + "the project owns classSeeds, and the result accessors are those "
             + "exact records --");
         RealProject project = compileProject(OWNERSHIP_APP_SOURCE,
@@ -1462,13 +1464,12 @@ public class ProjectLoweringTest {
                 ModuleId module = unit.moduleId();
                 StructuredBodyTable body = unit.bodyTable();
                 ClassFactoryRegistry factories = unit.classFactories();
-                JsonDefaultChildTable defaults = unit.jsonDefaults();
                 ClassBindingFacts bindingFacts = unit.classBindingFacts();
-                check(body != null && factories != null && defaults != null
+                check(body != null && factories != null
                         && bindingFacts != null,
                     "module " + module + " carries every mandatory companion as a "
                         + "present record, never null");
-                if (body == null || factories == null || defaults == null
+                if (body == null || factories == null
                         || bindingFacts == null) {
                     continue;
                 }
@@ -1497,7 +1498,7 @@ public class ProjectLoweringTest {
                             + " of " + module);
                 }
                 // Every registered factory names a produced CLASS_FACTORY of
-                // this unit, and every JSON-default child a produced op.
+                // this unit.
                 for (Map.Entry<ClassFactoryId, OpId> entry
                         : factories.factories().entrySet()) {
                     SemanticOp factory = opOf(unit, entry.getValue());
@@ -1506,17 +1507,6 @@ public class ProjectLoweringTest {
                             && factory.opId().module().equals(module),
                         "the registry entry " + entry.getKey() + " of " + module
                             + " names this unit's CLASS_FACTORY op");
-                }
-                for (Map.Entry<OpId, List<OpId>> entry
-                        : defaults.defaultChildren().entrySet()) {
-                    check(opOf(unit, entry.getKey()) != null,
-                        "the JSON-default site " + entry.getKey() + " of " + module
-                            + " is a produced op");
-                    for (OpId child : entry.getValue()) {
-                        check(opOf(unit, child) != null,
-                            "the JSON-default child " + child + " of " + module
-                                + " is a produced op");
-                    }
                 }
                 // Every parameter/import fact names a produced BINDING_ALLOC
                 // of this unit.
@@ -1566,8 +1556,6 @@ public class ProjectLoweringTest {
                     check(factories.factories().isEmpty(),
                         "the plain module carries an empty class-factory "
                             + "registry");
-                    checkEq(new JsonDefaultChildTable(Map.of()), defaults,
-                        "the plain module carries an empty JSON-default table");
                     checkEq(ClassBindingFacts.empty(), bindingFacts,
                         "the plain module carries empty parameter/import facts");
                 }
@@ -1953,7 +1941,6 @@ public class ProjectLoweringTest {
                         + "validator");
                 check(deal.semantic.ClassConstructionValidator.validate(unit,
                         table, result.registryOf(unit.moduleId()),
-                        new JsonDefaultChildTable(Map.of()),
                         project.index().modules().get(unit.moduleId()),
                         Map.of()).isEmpty(),
                     "module " + unit.moduleId() + " passes the class-construction "
@@ -2042,7 +2029,7 @@ public class ProjectLoweringTest {
                     .toList(),
                 "the exported class layout carries its fields in declaration order");
             check(pointLayout.fields().stream().allMatch(field -> field.required()
-                    && field.defaultOwner() == DefaultOwner.LOCAL),
+                    && field.constructionProvider() == ConstructionProvider.LOCAL),
                 "the in-project class fields carry the LOCAL owner member");
             checkEq(List.of("label"),
                 hiddenLayout.fields().stream().map(ClassLayout.FieldLayout::name)
@@ -2065,15 +2052,13 @@ public class ProjectLoweringTest {
             for (SemanticOp op : constructions) {
                 KindPayload.ClassNewPayload payload =
                     (KindPayload.ClassNewPayload) op.payload();
-                check(payload.defaultOwner() == DefaultOwner.LOCAL
+                check(payload.constructionProvider() == ConstructionProvider.LOCAL
                         && payload.classFactoryRef() == null,
                     "the same-module literal carries LOCAL with no factory ref");
                 if (payload.classId().equals(POINT)) {
                     sawPoint = true;
                     checkEq(pointLayout, payload.layout(),
                         "the exported class literal carries the unit's own layout");
-                    checkEq(1, payload.classDefaultOpIds().size(),
-                        "the omitted defaulted y field lists its CLASS_DEFAULT child");
                     checkEq(List.of("x", "y"),
                         payload.fieldBoundaries().stream()
                             .map(KindPayload.FieldBoundary::field).toList(),
@@ -2081,16 +2066,14 @@ public class ProjectLoweringTest {
                     check(payload.fieldBoundaries().get(0).kind()
                             == BoundaryKind.CLASS_LITERAL_FIELD
                             && payload.fieldBoundaries().get(1).kind()
-                                == BoundaryKind.CLASS_DEFAULT_FIELD,
-                        "the provided field is a literal boundary and the omitted "
-                            + "defaulted field a default boundary");
+                                == BoundaryKind.CLASS_LITERAL_FIELD,
+                        "both provided fields carry literal boundaries");
                 }
                 if (payload.classId().equals(HIDDEN)) {
                     sawHidden = true;
                     checkEq(hiddenLayout, payload.layout(),
                         "the local class literal carries the unit's own layout");
-                    check(payload.classDefaultOpIds().isEmpty()
-                            && payload.fieldBoundaries().size() == 1
+                    check(payload.fieldBoundaries().size() == 1
                             && payload.fieldBoundaries().get(0).kind()
                                 == BoundaryKind.CLASS_LITERAL_FIELD,
                         "the fully provided local literal carries no default child");
@@ -2161,7 +2144,7 @@ public class ProjectLoweringTest {
                     result.tableOf(UTIL)).isEmpty(),
                 "the class-carrying unit passes the control-flow validator");
             check(ClassConstructionValidator.validate(util, result.tableOf(UTIL),
-                    registry, new JsonDefaultChildTable(Map.of()), utilInterface,
+                    registry, utilInterface,
                     Map.of()).isEmpty(),
                 "the class-carrying unit passes the class-construction validator "
                     + "(the composed chain's class arm)");
@@ -2342,7 +2325,7 @@ public class ProjectLoweringTest {
                 ownerLayout, factoryOpId, factoryResult);
 
             // The dependent module's imported literals: one CLASS_NEW per
-            // constructed imported class, each with defaultOwner
+            // constructed imported class, each with constructionProvider
             // SHARED_FACTORY, the owner's constructionEntry as the factory
             // reference, an empty CLASS_DEFAULT child list, the provided
             // fields, and the declaration-order boundary list.
@@ -2362,38 +2345,33 @@ public class ProjectLoweringTest {
             if (payload == null) {
                 return;
             }
-            checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
-                "the imported literal carries defaultOwner SHARED_FACTORY");
+            checkEq(ConstructionProvider.SHARED_FACTORY, payload.constructionProvider(),
+                "the imported literal carries constructionProvider SHARED_FACTORY");
             checkEq(facts.interfaceEntry().constructionEntry(),
                 payload.classFactoryRef(),
                 "the literal carries the owner's interface constructionEntry as its "
                     + "factory reference");
-            check(payload.classDefaultOpIds().isEmpty(),
-                "the SHARED_FACTORY literal carries an empty classDefaultOpIds list "
-                    + "(the defaults transfer to the owner's factory)");
             checkEq(ownerLayout, payload.layout(),
                 "the payload layout is the owner unit's layout, resolved through the "
                     + "in-project interface facts");
-            checkEq(List.of("x"), payload.providedFields().stream()
+            checkEq(List.of("x", "y"), payload.providedFields().stream()
                     .map(KindPayload.ProvidedField::name).toList(),
                 "the provided fields stay in literal order");
             checkEq(List.of("x", "y"), payload.fieldBoundaries().stream()
                     .map(KindPayload.FieldBoundary::field).toList(),
                 "the field boundaries run in declaration order");
             checkEq(List.of(BoundaryKind.CLASS_LITERAL_FIELD,
-                    BoundaryKind.CLASS_DEFAULT_FIELD),
+                    BoundaryKind.CLASS_LITERAL_FIELD),
                 payload.fieldBoundaries().stream()
                     .map(KindPayload.FieldBoundary::kind).toList(),
-                "the provided field is a literal boundary and the omitted defaulted "
-                    + "field a default boundary");
+                "both provided fields carry literal boundaries");
             SemanticOp defaultBoundary = opOf(app,
                 payload.fieldBoundaries().get(1).boundaryOpId());
             check(defaultBoundary != null
                     && defaultBoundary.payload()
                         instanceof KindPayload.BoundaryPayload boundary
-                    && boundary.input().equals(facts.factoryResult()),
-                "the omitted defaulted field's boundary wires the owner factory op's "
-                    + "result ValueId (the in-project factory reference)");
+                    && boundary.input().equals(payload.providedFields().get(1).valueOpId()),
+                "the second boundary uses the second provided value, not provider metadata");
 
             // Repeats are deterministic: the same accumulation and walk
             // produce the byte-identical dependent unit.
@@ -2425,10 +2403,9 @@ public class ProjectLoweringTest {
                 : opOf(util, segmentFactoryOpId);
             KindPayload.ClassNewPayload segment = constructions.get(SEGMENT);
             check(segment != null && segmentEntry != null && segmentLayout != null
-                    && segment.defaultOwner() == DefaultOwner.SHARED_FACTORY
+                    && segment.constructionProvider() == ConstructionProvider.SHARED_FACTORY
                     && segment.classFactoryRef().equals(
                         segmentEntry.constructionEntry())
-                    && segment.classDefaultOpIds().isEmpty()
                     && segment.layout().equals(segmentLayout)
                     && segmentFactoryOp != null
                     && segmentFactoryOp.kind() == SemanticOpKind.CLASS_FACTORY,
@@ -2448,8 +2425,7 @@ public class ProjectLoweringTest {
                     segmentEntry, segmentLayout, segmentFactoryOpId, segmentResult));
             }
             check(ClassConstructionValidator.validate(app, result.tableOf(APP),
-                    result.registryOf(APP), new JsonDefaultChildTable(Map.of()),
-                    project.index().modules().get(APP),
+                    result.registryOf(APP), project.index().modules().get(APP),
                     inProjectFacts).isEmpty(),
                 "the dependent unit passes the class-construction validator with the "
                     + "in-project facts");
@@ -2543,11 +2519,11 @@ public class ProjectLoweringTest {
             if (alphaLiteral == null || betaLiteral == null) {
                 return;
             }
-            checkEq(DefaultOwner.SHARED_FACTORY, alphaLiteral.defaultOwner(),
+            checkEq(ConstructionProvider.SHARED_FACTORY, alphaLiteral.constructionProvider(),
                 "the imported alpha literal carries SHARED_FACTORY");
             checkEq(alphaEntry, alphaLiteral.classFactoryRef(),
                 "the alpha literal references the alpha provider's construction entry");
-            checkEq(DefaultOwner.SHARED_FACTORY, betaLiteral.defaultOwner(),
+            checkEq(ConstructionProvider.SHARED_FACTORY, betaLiteral.constructionProvider(),
                 "the imported beta literal carries SHARED_FACTORY");
             checkEq(betaEntry, betaLiteral.classFactoryRef(),
                 "the beta literal references the beta provider's construction entry");
@@ -2652,7 +2628,7 @@ public class ProjectLoweringTest {
                         && op.payload() instanceof KindPayload.ClassNewPayload payload
                         && payload.classId().equals(irId)) {
                     irConstructions++;
-                    checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
+                    checkEq(ConstructionProvider.SHARED_FACTORY, payload.constructionProvider(),
                         "every sibling construction transfers to the provider factory");
                     if (payload.classFactoryRef() != null) {
                         constructionCounts.merge(payload.classFactoryRef(), 1,
@@ -2701,15 +2677,15 @@ public class ProjectLoweringTest {
         Path proj = Files.createTempDirectory("project-lowering-crossing");
         try {
             writeFileIn(proj, "src/other.deal", """
-                export class Point { nick: number = 1; }
+                export class Point { nick: number; }
                 """);
             writeFileIn(proj, "src/app.deal", """
                 import * as other from "./other";
 
-                class Point { nick: string = ""; }
+                class Point { nick: string; }
 
                 export function main(): null {
-                  let y: other.Point = {};
+                  let y: other.Point = {nick: 1};
                   let p: Point = y;
                   let s: string = p.nick;
                   return null;
@@ -2766,7 +2742,7 @@ public class ProjectLoweringTest {
                     continue;
                 }
                 if (payload.classId().equals(irId)) {
-                    checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
+                    checkEq(ConstructionProvider.SHARED_FACTORY, payload.constructionProvider(),
                         "every imported declaration literal transfers to its"
                             + " provider factory");
                     shared++;
@@ -2778,7 +2754,7 @@ public class ProjectLoweringTest {
                             + "provider's layout");
                 } else if (payload.classId().equals(localId)) {
                     local++;
-                    checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
+                    checkEq(ConstructionProvider.LOCAL, payload.constructionProvider(),
                         "the declared-return literal stays LOCAL");
                     checkEq(app.classLayouts().get(localId), payload.layout(),
                         "the declared-return literal carries the unit's own"
@@ -2819,8 +2795,8 @@ public class ProjectLoweringTest {
         Path proj = Files.createTempDirectory("project-lowering-unrep");
         try {
             writeFileIn(proj, "src/a@b.deal", """
-                export class Item { value: number = 1; }
-                export function make(): Item { return {}; }
+                export class Item { value: number; }
+                export function make(): Item { return {value: 1}; }
                 """);
             writeFileIn(proj, "src/app.deal", """
                 import * as a from "./a@b";
@@ -2846,20 +2822,20 @@ public class ProjectLoweringTest {
      * argument literal must be laid out by the parameter's declaration.
      */
     private static final String NESTED_CALL_IR_SOURCE = """
-        export class Ir { a: number = 7; }
+        export class Ir { a: number; }
         export function g(x: Ir): Ir { return x; }
         """;
 
     private static final String NESTED_CALL_APP_SOURCE = """
         import * as ir from "./ir";
 
-        class Ir { b: string = "local"; }
+        class Ir { b: string; }
 
-        function f(x: ir.Ir): Ir { return {}; }
+        function f(x: ir.Ir): Ir { return {b: "local"}; }
 
         export function main(): null {
-          let p: Ir = f(ir.g({}));
-          let n: number = ir.g({}).a;
+          let p: Ir = f(ir.g({a: 7}));
+          let n: number = ir.g({a: 7}).a;
           if (n !== 7) { throw { code: "WRONG_N", message: "n" }; }
           if (p.b !== "local") { throw { code: "WRONG_B", message: "b" }; }
           return null;
@@ -2948,17 +2924,17 @@ public class ProjectLoweringTest {
      */
     private static final String NESTED_FIELD_IR_SOURCE = """
         import * as codec from "./codec";
-        export class Ir { inner: codec.Ir = {}; a: number = 7; }
+        export class Ir { inner: codec.Ir; a: number; }
         """;
 
     private static final String NESTED_FIELD_CODEC_SOURCE = """
-        export class Ir { b: number = 93; }
+        export class Ir { b: number; }
         """;
 
     private static final String NESTED_FIELD_APP_SOURCE = """
         import * as ir from "./m/ir";
         export function main(): null {
-          let x: ir.Ir = { inner: {} };
+          let x: ir.Ir = { inner: {b: 93}, a: 7 };
           let b: number = x.inner.b;
           if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
           let a: number = x.a;
@@ -3063,18 +3039,18 @@ public class ProjectLoweringTest {
      */
     private static final String TRANSITIVE_IR_SOURCE = """
         import * as codec from "./codec";
-        export class Part { z: string = "ir"; }
-        export class Outer { inner: codec.Part = {}; }
+        export class Part { z: string; }
+        export class Outer { inner: codec.Part; }
         """;
 
     private static final String TRANSITIVE_CODEC_SOURCE = """
-        export class Part { b: number = 93; }
+        export class Part { b: number; }
         """;
 
     private static final String TRANSITIVE_APP_SOURCE = """
         import * as ir from "./m/ir";
         export function main(): null {
-          let x: ir.Outer = { inner: {} };
+          let x: ir.Outer = { inner: {b: 93} };
           let b: number = x.inner.b;
           if (b !== 93) { throw { code: "WRONG_B", message: "b" }; }
           return null;
@@ -3572,7 +3548,7 @@ public class ProjectLoweringTest {
                     check(literal != null, "the Wrap.p default lowers one "
                         + "CLASS_NEW of the identity (" + label + ")");
                     if (literal != null) {
-                        checkEq(DefaultOwner.SHARED_FACTORY, literal.defaultOwner(),
+                        checkEq(ConstructionProvider.SHARED_FACTORY, literal.constructionProvider(),
                             "the default literal constructs the imported "
                                 + "plan-bearing declaration (" + label + ")");
                         checkEq("a", literal.layout().fields().get(0).name(),
@@ -3657,7 +3633,7 @@ public class ProjectLoweringTest {
                         continue;
                     }
                     constructions++;
-                    checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
+                    checkEq(ConstructionProvider.LOCAL, payload.constructionProvider(),
                         "the local Ir construction carries the unit's own defaults ("
                             + label + ")");
                     checkEq(null, payload.classFactoryRef(),
@@ -3753,7 +3729,7 @@ public class ProjectLoweringTest {
                         continue;
                     }
                     constructionSeen = true;
-                    checkEq(DefaultOwner.SHARED_FACTORY, payload.defaultOwner(),
+                    checkEq(ConstructionProvider.SHARED_FACTORY, payload.constructionProvider(),
                         "the contextually declared construction transfers to the "
                             + "annotation provider's factory (" + label + ")");
                     checkEq(codecEntry, payload.classFactoryRef(),
@@ -3859,8 +3835,8 @@ public class ProjectLoweringTest {
                         }
                         if (payload.classId().equals(irId)) {
                             shared++;
-                            checkEq(DefaultOwner.SHARED_FACTORY,
-                                payload.defaultOwner(),
+                            checkEq(ConstructionProvider.SHARED_FACTORY,
+                                payload.constructionProvider(),
                                 "the imported construction transfers to the ir"
                                     + " provider (" + label + ")");
                             checkEq(irEntry, payload.classFactoryRef(),
@@ -3871,7 +3847,7 @@ public class ProjectLoweringTest {
                                     + "provider's layout (" + label + ")");
                         } else if (payload.classId().equals(localIr)) {
                             local++;
-                            checkEq(DefaultOwner.LOCAL, payload.defaultOwner(),
+                            checkEq(ConstructionProvider.LOCAL, payload.constructionProvider(),
                                 "the local construction stays LOCAL (" + label + ")");
                             checkEq(null, payload.classFactoryRef(),
                                 "the local construction references no provider ("
@@ -3919,10 +3895,10 @@ public class ProjectLoweringTest {
             + "its argument literal's construction beside a same-named "
             + "local declaration --");
         String app = "import * as ir from \"./ir\";\n\n"
-            + "class Ir { a: number = 5; }\n\n"
+            + "class Ir { a: number; }\n\n"
             + "export function main(): null {\n"
             + "  let f: (x: ir.Ir) => number = ir.useIr;\n"
-            + "  let n: number = f({});\n"
+            + "  let n: number = f({a: 7});\n"
             + "  if (n !== 7) { throw { code: \"WRONG_N\", message: \"n\" }; }\n"
             + "  return null;\n"
             + "}\n";
@@ -3956,7 +3932,7 @@ public class ProjectLoweringTest {
                         || !payload.classId().equals(irId)) {
                     continue;
                 }
-                if (payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                if (payload.constructionProvider() == ConstructionProvider.SHARED_FACTORY) {
                     shared++;
                     checkEq(irEntry, payload.classFactoryRef(),
                         "the function-typed callee's argument literal references "
@@ -4013,7 +3989,7 @@ public class ProjectLoweringTest {
                         && op.payload()
                             instanceof KindPayload.ClassNewPayload payload
                         && payload.classId().equals(irId)
-                        && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                        && payload.constructionProvider() == ConstructionProvider.SHARED_FACTORY) {
                     shared++;
                     checkEq(irEntry, payload.classFactoryRef(),
                         "the control's construction references the sole "
@@ -4116,8 +4092,8 @@ public class ProjectLoweringTest {
                         }
                         case KindPayload.ClassNewPayload ctor -> {
                             if (ctor.classId().equals(irId)
-                                    && ctor.defaultOwner()
-                                        == DefaultOwner.SHARED_FACTORY) {
+                                    && ctor.constructionProvider()
+                                        == ConstructionProvider.SHARED_FACTORY) {
                                 shared++;
                                 checkEq(irEntry, ctor.classFactoryRef(),
                                     "the " + label + " argument literal names "
@@ -4305,7 +4281,7 @@ public class ProjectLoweringTest {
 
     private static void testDeclarationClassConstruction() throws Exception {
         System.out.println("-- a host declaration class literal resolves to the "
-            + "seed and lowers CLASS_NEW(HOST_DEFAULTS) through the one project "
+            + "seed and lowers CLASS_NEW(HOST_DECLARATION) through the one project "
             + "entry --");
         RealProject project = compileProject(HOST_CLASS_APP_SOURCE, Map.of(),
             Map.of());
@@ -4327,8 +4303,8 @@ public class ProjectLoweringTest {
             }
             check(result.seeds().registrationFor(ENDPOINT) != null
                     && result.seeds().registrationFor(ENDPOINT).owner()
-                        == DefaultOwner.HOST_DEFAULTS,
-                "the declared host class resolves in the seeds under HOST_DEFAULTS");
+                        == ConstructionProvider.HOST_DECLARATION,
+                "the declared host class resolves in the seeds under HOST_DECLARATION");
             LoweredModuleUnit app = result.project().modules().get(APP);
             check(app != null, "the app unit is in the closure");
             if (app == null) {
@@ -4348,12 +4324,10 @@ public class ProjectLoweringTest {
                 (KindPayload.ClassNewPayload) classNew.payload();
             checkEq(ENDPOINT, payload.classId(),
                 "the CLASS_NEW classId is the declared host class identity");
-            checkEq(DefaultOwner.HOST_DEFAULTS, payload.defaultOwner(),
-                "the CLASS_NEW defaultOwner is HOST_DEFAULTS");
+            checkEq(ConstructionProvider.HOST_DECLARATION, payload.constructionProvider(),
+                "the CLASS_NEW constructionProvider is HOST_DECLARATION");
             check(payload.classFactoryRef() == null,
                 "the host construction carries the null factory ref");
-            check(payload.classDefaultOpIds().isEmpty(),
-                "the host construction carries empty classDefaultOpIds");
             checkEq(result.seeds().registrationFor(ENDPOINT).layout(),
                 payload.layout(),
                 "the payload's layout is the registered declaration layout");
@@ -4367,8 +4341,8 @@ public class ProjectLoweringTest {
                     + "defaults are data, never in-project default expressions)");
             check(!payload.layout().fields().isEmpty()
                     && payload.layout().fields().stream().allMatch(field ->
-                        field.defaultOwner() == DefaultOwner.HOST_DEFAULTS),
-                "the registered declaration layout carries the HOST_DEFAULTS "
+                        field.constructionProvider() == ConstructionProvider.HOST_DECLARATION),
+                "the registered declaration layout carries the HOST_DECLARATION "
                     + "field owner");
 
             // The composed per-unit chain re-run with the seeds: the unified
@@ -4378,7 +4352,6 @@ public class ProjectLoweringTest {
                     comparisonFacts(project),
                     app.classBindingFacts(),
                     result.registryOf(APP),
-                    new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of(),
                     result.seeds().registrations());
             check(failure.isEmpty(),
@@ -4396,7 +4369,7 @@ public class ProjectLoweringTest {
                 SemanticIrValidator.validate(app, standaloneFacts);
             assertMutationRule("the standalone host construction", standalone,
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE,
-                "no provider context", "defaultOwner HOST_DEFAULTS");
+                "no provider context", "constructionProvider HOST_DECLARATION");
             check(standalone.isPresent() && java.util.Objects.equals(
                     RawOrigin.of(classNew.origin()).diagnosticRange(),
                     standalone.get().range()),
@@ -4412,7 +4385,7 @@ public class ProjectLoweringTest {
             Optional<CompilerDiagnostic> seedView =
                 SemanticLowerer.validateProjectUnit(app, app.bodyTable(),
                     standaloneFacts, app.classBindingFacts(), result.registryOf(APP),
-                    app.jsonDefaults(), project.index().modules().get(APP), Map.of(),
+                    project.index().modules().get(APP), Map.of(),
                     Map.of());
             check(seedView.isPresent()
                     && seedView.get().message().contains(
@@ -4427,7 +4400,7 @@ public class ProjectLoweringTest {
 
     private static void testBuiltinErrorConstruction() throws Exception {
         System.out.println("-- a builtin Error literal constructs through the one "
-            + "project entry: CLASS_NEW(BUILTIN_DEFAULTS) over the compiler-owned "
+            + "project entry: CLASS_NEW(BUILTIN_ERROR) over the compiler-owned "
             + "layout --");
         RealProject project = compileProject(ERROR_APP_SOURCE, Map.of(), Map.of());
         try {
@@ -4466,12 +4439,10 @@ public class ProjectLoweringTest {
                     .classId(), "the CLASS_NEW classId is the builtin Error class");
             KindPayload.ClassNewPayload payload =
                 (KindPayload.ClassNewPayload) classNew.payload();
-            checkEq(DefaultOwner.BUILTIN_DEFAULTS, payload.defaultOwner(),
-                "the CLASS_NEW defaultOwner is BUILTIN_DEFAULTS");
+            checkEq(ConstructionProvider.BUILTIN_ERROR, payload.constructionProvider(),
+                "the CLASS_NEW constructionProvider is BUILTIN_ERROR");
             check(payload.classFactoryRef() == null,
                 "the builtin Error construction carries the null factory ref");
-            check(payload.classDefaultOpIds().isEmpty(),
-                "the builtin Error construction carries empty classDefaultOpIds");
             checkEq(ClassLayout.BUILTIN_ERROR, payload.layout(),
                 "the payload's layout is the compiler-owned builtin Error layout");
             checkEq(List.of("code", "message"),
@@ -4496,7 +4467,6 @@ public class ProjectLoweringTest {
                     comparisonFacts(project),
                     app.classBindingFacts(),
                     result.registryOf(APP),
-                    new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of());
             check(failure.isEmpty(),
                 "the composed chain accepts the builtin Error unit: "
@@ -4588,7 +4558,6 @@ public class ProjectLoweringTest {
                     comparisonFacts(project),
                     corrupted.classBindingFacts(),
                     new ClassFactoryRegistry(Map.of()),
-                    new JsonDefaultChildTable(Map.of()),
                     project.index().modules().get(APP), Map.of());
             check(failure.isPresent(),
                 "the corrupted unit fails the composed chain");
@@ -4779,7 +4748,6 @@ public class ProjectLoweringTest {
         checkEq(RawUnit.fromTyped(unit), reparsed, what + "every unit fact round-trips");
         checkEq(unit.bodyTable(), reparsed.bodyTable(), what + "both membership directions survive");
         checkEq(unit.classFactories(), reparsed.classFactories(), what + "factory registry survives");
-        checkEq(unit.jsonDefaults(), reparsed.jsonDefaults(), what + "JSON-default rows survive");
         checkEq(unit.classBindingFacts(), reparsed.classBindingFacts(),
             what + "parameter/import facts survive");
         checkEq(unit, RawUnitMaterializer.materialize(reparsed),
@@ -4894,7 +4862,7 @@ public class ProjectLoweringTest {
         for (SemanticOp op : app.ops()) {
             if (op.kind() == SemanticOpKind.CLASS_NEW
                     && op.payload() instanceof KindPayload.ClassNewPayload payload
-                    && payload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                    && payload.constructionProvider() == ConstructionProvider.SHARED_FACTORY) {
                 sharedConstruction = true;
             }
             if (op.kind() == SemanticOpKind.CALL
@@ -4996,7 +4964,7 @@ public class ProjectLoweringTest {
         check(SemanticLowerer.validateProjectUnit(baselineApp,
                 baselineApp.bodyTable(), baselineFacts,
                 baselineApp.classBindingFacts(), baselineApp.classFactories(),
-                baselineApp.jsonDefaults(), appInterface, noSharedFactories, seeds)
+                appInterface, noSharedFactories, seeds)
                 .isEmpty(),
             "the exact owned companion views admit through the composed production "
                 + "admission");
@@ -5007,7 +4975,6 @@ public class ProjectLoweringTest {
                 new ClassBindingFacts(baselineApp.classBindingFacts().parameters(),
                     baselineApp.classBindingFacts().importAliases()),
                 new ClassFactoryRegistry(baselineApp.classFactories().factories()),
-                new JsonDefaultChildTable(baselineApp.jsonDefaults().defaultChildren()),
                 appInterface, noSharedFactories, seeds).isEmpty(),
             "content-equal detached companion views admit (the unit's owned records "
                 + "are consumed)");
@@ -5018,23 +4985,18 @@ public class ProjectLoweringTest {
         parameters.add(new BindingId(9_000_001));
         Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>(baselineApp.classFactories().factories());
         factories.put(new ClassFactoryId(9_000_001), new OpId(APP, 9_000_001));
-        Map<OpId, List<OpId>> defaults = new LinkedHashMap<>(baselineApp.jsonDefaults().defaultChildren());
-        defaults.put(new OpId(APP, 9_000_002), List.of());
         record ViewCase(String name, StructuredBodyTable table, ClassBindingFacts bindings,
-                        ClassFactoryRegistry factories, JsonDefaultChildTable defaults) { }
+                        ClassFactoryRegistry factories) { }
         for (ViewCase row : List.of(
                 new ViewCase("body table", new StructuredBodyTable(Map.of(), Map.of()),
-                    baselineApp.classBindingFacts(), baselineApp.classFactories(), baselineApp.jsonDefaults()),
+                    baselineApp.classBindingFacts(), baselineApp.classFactories()),
                 new ViewCase("binding facts", baselineApp.bodyTable(),
                     new ClassBindingFacts(parameters, baselineApp.classBindingFacts().importAliases()),
-                    baselineApp.classFactories(), baselineApp.jsonDefaults()),
+                    baselineApp.classFactories()),
                 new ViewCase("class-factory registry", baselineApp.bodyTable(),
-                    baselineApp.classBindingFacts(), new ClassFactoryRegistry(factories), baselineApp.jsonDefaults()),
-                new ViewCase("JSON-default table", baselineApp.bodyTable(),
-                    baselineApp.classBindingFacts(), baselineApp.classFactories(), new JsonDefaultChildTable(defaults)))) {
+                    baselineApp.classBindingFacts(), new ClassFactoryRegistry(factories)))) {
             Optional<CompilerDiagnostic> mismatch = SemanticLowerer.validateProjectUnit(baselineApp,
-                row.table(), baselineFacts, row.bindings(), row.factories(), row.defaults(),
-                appInterface, noSharedFactories, seeds);
+                row.table(), baselineFacts, row.bindings(), row.factories(), appInterface, noSharedFactories, seeds);
             expectProjectAdmissionFailure(mismatch, SemanticLowerer.PROJECT_VIEW_MISMATCH, row.name(),
                 "a differing supplied " + row.name() + " view rejects through E6005");
         }
@@ -5182,11 +5144,11 @@ public class ProjectLoweringTest {
         }
         ClassRegistrationSeeds.ClassRegistration endpointSeed =
             parsed.classSeeds().registrationFor(ENDPOINT);
-        check(endpointSeed != null && endpointSeed.owner() == DefaultOwner.HOST_DEFAULTS,
+        check(endpointSeed != null && endpointSeed.owner() == ConstructionProvider.HOST_DECLARATION,
             "the seeds inverse keeps the declared class registration and its owner");
         ClassRegistrationSeeds.ClassRegistration errorSeed =
             parsed.classSeeds().registrationFor(BUILTIN_ERROR);
-        check(errorSeed != null && errorSeed.owner() == DefaultOwner.BUILTIN_DEFAULTS
+        check(errorSeed != null && errorSeed.owner() == ConstructionProvider.BUILTIN_ERROR
                 && errorSeed.layout().equals(ClassLayout.BUILTIN_ERROR),
             "the seeds inverse keeps the compiler-owned builtin Error registration");
         List<LoweredModuleUnit> units = List.copyOf(lowered.modules().values());
@@ -5417,14 +5379,14 @@ public class ProjectLoweringTest {
             // (1) Checked reassembly: the internally consistent seed-owner
             // mutation (the registration owner and every field owner) passes
             // the index/seed rule, yet the module document's referring
-            // CLASS_NEW still carries HOST_DEFAULTS, so the join rejects.
+            // CLASS_NEW still carries HOST_DECLARATION, so the join rejects.
             SemanticIrDumper.ProjectDump dump = SemanticIrDumper.dumpProject(lowered);
             List<byte[]> documents = documentsOf(dump);
             check(ClassConstructionValidator.checkProjectSeedCoherence(
                     lowered.interfaceIndex(), lowered.classSeeds()).isEmpty(),
                 "the unmutated index and seeds cohere under the index/seed rule");
             expectReassemblyFailure(manifestWithSeedOwnerAndFieldOwners(dump.manifest(),
-                "Endpoint", "BUILTIN_DEFAULTS"), documents,
+                "Endpoint", "BUILTIN_ERROR"), documents,
                 "a manifest whose seed registration owner and field owners are both "
                     + "mutated to another declaration owner rejects against the "
                     + "module document's referring CLASS_NEW");
@@ -5438,7 +5400,7 @@ public class ProjectLoweringTest {
             // at checked reassembly (assertion (1)).
             expectProjectAdmissionFailure(SemanticIrValidator.validateText(
                     asText(manifestWithSeedOwnerAndFieldOwners(
-                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "BUILTIN_DEFAULTS")),
+                        text.getBytes(StandardCharsets.UTF_8), "Endpoint", "BUILTIN_ERROR")),
                     facts),
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE,
                 "carries a layout that differs from the resolved layout",
@@ -5459,7 +5421,7 @@ public class ProjectLoweringTest {
             ExecutableLoweredProject ownerMutated = new ExecutableLoweredProject(
                 lowered.semanticProfile(), lowered.interfaceIndex(), lowered.modules(),
                 lowered.entryModule(),
-                withSeedOwner(lowered.classSeeds(), ENDPOINT, DefaultOwner.BUILTIN_DEFAULTS));
+                withSeedOwner(lowered.classSeeds(), ENDPOINT, ConstructionProvider.BUILTIN_ERROR));
             expectProjectAdmissionFailure(SemanticIrValidator.validate(ownerMutated, facts),
                 ClassConstructionValidator.CONSTRUCTION_COHERENCE,
                 "carries a layout that differs from the resolved layout",
@@ -5592,7 +5554,7 @@ public class ProjectLoweringTest {
         RealProject imported = compileProject("""
             import * as cfg from "host/cfg";
             export function main(): null { return null; }
-            """, Map.of("src/util.deal", "export class Point { x: number = 0; }",
+            """, Map.of("src/util.deal", "export class Point { x: number; }",
                 "src/cfg.d.deal", """
                     import * as u from "util";
                     export class Endpoint { point: u.Point; }
@@ -5671,7 +5633,7 @@ public class ProjectLoweringTest {
         for (ClassLayout.FieldLayout field : registration.layout().fields()) {
             fields.add(field.name().equals(fieldName)
                 ? new ClassLayout.FieldLayout(field.name(), descriptor, field.required(),
-                    field.defaultOwner())
+                    field.constructionProvider())
                 : field);
         }
         registrations.put(classId, new ClassRegistrationSeeds.ClassRegistration(
@@ -5712,7 +5674,7 @@ public class ProjectLoweringTest {
      * seed/module join.
      */
     private static ClassRegistrationSeeds withSeedOwner(ClassRegistrationSeeds seeds,
-            ClassId classId, DefaultOwner owner) {
+            ClassId classId, ConstructionProvider owner) {
         Map<ClassId, ClassRegistrationSeeds.ClassRegistration> registrations =
             new LinkedHashMap<>(seeds.registrations());
         ClassRegistrationSeeds.ClassRegistration registration =
@@ -5812,11 +5774,11 @@ public class ProjectLoweringTest {
                 }
             }
             if (SemanticOpKind.CLASS_NEW.name().equals(op.kind())) {
-                CanonicalJson.Value owner = payloadField(op.payload(), "defaultOwner");
+                CanonicalJson.Value owner = payloadField(op.payload(), "constructionProvider");
                 if (owner instanceof CanonicalJson.Str str
-                        && (DefaultOwner.SHARED_FACTORY.name().equals(str.value())
-                            || DefaultOwner.HOST_DEFAULTS.name().equals(str.value())
-                            || DefaultOwner.BUILTIN_DEFAULTS.name().equals(str.value()))) {
+                        && (ConstructionProvider.SHARED_FACTORY.name().equals(str.value())
+                            || ConstructionProvider.HOST_DECLARATION.name().equals(str.value())
+                            || ConstructionProvider.BUILTIN_ERROR.name().equals(str.value()))) {
                     return true;
                 }
             }
@@ -5986,7 +5948,7 @@ public class ProjectLoweringTest {
             String className, String owner) {
         return mutateSeed(manifest, className, row -> mutateSeedFields(
             withEntry(row, "owner", CanonicalJson.str(owner)),
-            field -> withEntry(field, "defaultOwner", CanonicalJson.str(owner))));
+            field -> withEntry(field, "constructionProvider", CanonicalJson.str(owner))));
     }
 
     /** The manifest with one seed field's canonical descriptor text replaced. */
@@ -6187,12 +6149,12 @@ public class ProjectLoweringTest {
                 "the closure payload and the function record carry the same ordered "
                     + "generation-pinned captures");
             check(util.classFactories().factories().size() == 1
-                    && util.jsonDefaults().defaultChildren().size() == 1,
-                "the class module carries its factory registry and its JSON-default children");
+                    && util.ops().stream().filter(op -> op.kind() == SemanticOpKind.JSON_FROM_CLASS).count() == 1,
+                "the class module carries its factory registry and structural JSON operation");
             boolean sharedFactory = false;
             for (SemanticOp op : app.ops()) {
                 if (op.payload() instanceof KindPayload.ClassNewPayload newPayload
-                        && newPayload.defaultOwner() == DefaultOwner.SHARED_FACTORY) {
+                        && newPayload.constructionProvider() == ConstructionProvider.SHARED_FACTORY) {
                     sharedFactory = true;
                 }
             }
@@ -6386,11 +6348,11 @@ public class ProjectLoweringTest {
                     .iterator().next();
                 OpId classDefault = null;
                 for (SemanticOp op : util.ops()) {
-                    if (op.kind() == SemanticOpKind.CLASS_DEFAULT) {
+                    if (op.kind() == SemanticOpKind.JSON_FROM_CLASS) {
                         classDefault = op.opId();
                     }
                 }
-                check(classDefault != null, "the fixture carries a CLASS_DEFAULT op");
+                check(classDefault != null, "the fixture carries a non-factory JSON op");
                 if (classDefault != null) {
                     Map<ClassFactoryId, OpId> factories = new LinkedHashMap<>(
                         util.classFactories().factories());
@@ -6411,37 +6373,15 @@ public class ProjectLoweringTest {
                 SemanticOp factoryOp = opOf(util, factoryOpId);
                 KindPayload.ClassFactoryPayload factoryPayload =
                     (KindPayload.ClassFactoryPayload) factoryOp.payload();
-                List<OpId> reordered =
-                    new ArrayList<>(factoryPayload.classDefaultOpIds());
-                java.util.Collections.reverse(reordered);
                 LoweredModuleUnit mutated = replaceOpWith(util, factoryOp,
                     rebuildOp(factoryOp, new KindPayload.ClassFactoryPayload(
-                        factoryPayload.classId(), reordered,
-                        factoryPayload.callerOpRef())));
+                        new ClassId(util.moduleId().path(), "Absent"), factoryPayload.callerOpRef())));
                 SemanticOp rebuilt = opOf(mutated, factoryOpId);
                 checkEq(ContractSnapshotCanonicalizer.digest(rebuilt.contract()),
                     rebuilt.contract().canonicalDigest(),
                     "the retargeted factory op carries its recomputed snapshot digest");
-                expectClassGraphMutationRejects("a reordered factory default child",
-                    lowered, facts, mutated, "FACTORY_COHERENCE", "not @src/util.deal/Point.x");
-            }
-            // Mutation (12): reorder a JSON-default row's class-default
-            // children (the class facts).
-            {
-                OpId jsonFromClass = util.jsonDefaults().defaultChildren().keySet()
-                    .iterator().next();
-                List<OpId> children =
-                    util.jsonDefaults().childrenOf(jsonFromClass);
-                Map<OpId, List<OpId>> rows = new LinkedHashMap<>(
-                    util.jsonDefaults().defaultChildren());
-                List<OpId> reordered = new ArrayList<>(children);
-                java.util.Collections.swap(reordered, 0, reordered.size() - 1);
-                rows.put(jsonFromClass, reordered);
-                LoweredModuleUnit mutated = mutateUnit(util,
-                    copy -> copy.defaults = new JsonDefaultChildTable(rows));
-                expectClassGraphMutationRejects("a reordered JSON-default child row",
-                    lowered, facts, mutated, "JSON_LAYOUT_COHERENCE",
-                    "not @src/util.deal/Point.x");
+                expectClassGraphMutationRejects("a factory names an undeclared class",
+                    lowered, facts, mutated, "FACTORY_COHERENCE", "classId");
             }
             // Mutation (13): make the carried constructionEntry disagree with
             // the registry (the class facts).
@@ -6470,8 +6410,8 @@ public class ProjectLoweringTest {
                         new ClassLayout(ClassId.ERROR, List.of(
                             new ClassLayout.FieldLayout("code",
                                 RuntimeDescriptor.String.INSTANCE, true,
-                                DefaultOwner.BUILTIN_DEFAULTS))),
-                        DefaultOwner.BUILTIN_DEFAULTS));
+                                ConstructionProvider.BUILTIN_ERROR))),
+                        ConstructionProvider.BUILTIN_ERROR));
                 ExecutableLoweredProject mutatedProject = new ExecutableLoweredProject(
                     lowered.semanticProfile(), lowered.interfaceIndex(),
                     lowered.modules(), lowered.entryModule(),
@@ -6598,7 +6538,6 @@ public class ProjectLoweringTest {
         List<SemanticOp> ops;
         StructuredBodyTable body;
         ClassFactoryRegistry factories;
-        JsonDefaultChildTable defaults;
         ClassBindingFacts bindingFacts;
 
         UnitMutation(LoweredModuleUnit unit) {
@@ -6607,7 +6546,6 @@ public class ProjectLoweringTest {
             ops = new ArrayList<>(unit.ops());
             body = unit.bodyTable();
             factories = unit.classFactories();
-            defaults = unit.jsonDefaults();
             bindingFacts = unit.classBindingFacts();
         }
     }
@@ -6620,7 +6558,7 @@ public class ProjectLoweringTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             copy.functions, unit.moduleInit(), unit.exportPlan(), copy.bindings,
-            copy.ops, copy.body, copy.factories, copy.defaults, copy.bindingFacts);
+            copy.ops, copy.body, copy.factories, copy.bindingFacts);
     }
 
     /** Another block of the unit's membership table. */
@@ -6735,7 +6673,7 @@ public class ProjectLoweringTest {
         assertSameFailure(what + " project surfaces", typedProject, textProject);
         Optional<CompilerDiagnostic> composed = SemanticLowerer.validateProjectUnit(mutated,
             mutated.bodyTable(), facts, mutated.classBindingFacts(), mutated.classFactories(),
-            mutated.jsonDefaults(), lowered.interfaceIndex().modules().get(mutated.moduleId()),
+            lowered.interfaceIndex().modules().get(mutated.moduleId()),
             Map.of(), lowered.classSeeds().registrations());
         assertSameFailure(what + " composed production admission", typedProject, composed);
     }

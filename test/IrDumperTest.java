@@ -275,14 +275,14 @@ public class IrDumperTest {
 
     static void testClassDeclaration() {
         System.out.print("  testClassDeclaration... ");
-        String source = "class Point { x: number = 0; y?: number; }";
+        String source = "class Point { x: number; y?: number; }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "class Point", "class header");
         assertContains(ir, "field x: number", "field x");
         assertContains(ir, "field y?: number", "optional field y");
-        assertContains(ir, "[boundary: class-default]", "class-default boundary");
+        assertNotContains(ir, "class-default", "structural declaration has no initializer boundary");
         System.out.println("OK");
     }
 
@@ -339,7 +339,7 @@ public class IrDumperTest {
     static void testSpecTypeDescriptors() {
         System.out.print("  testSpecTypeDescriptors... ");
         String source = """
-            class User { name: string = ""; }
+            class User { name: string; }
             function f(a: number[], b: number|null): null {
                 let u: User = { name: "test" };
                 return;

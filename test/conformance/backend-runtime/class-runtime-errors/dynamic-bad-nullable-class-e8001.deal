@@ -5,7 +5,7 @@
 
 import * as json from "std/json";
 
-class Box { value: number = 0; }
+class Box { value: number; }
 
 export function test_dynamic_bad_nullable_class(): Box | null {
   let holder: table = { item: json.parse("{\"value\":\"bad\"}") };

@@ -4,7 +4,7 @@
 // @features: parser, semicolon, line-break, member-access, v1.2
 
 class Box {
-  value: number = 1;
+  value: number;
 }
 
 export function main(): null {

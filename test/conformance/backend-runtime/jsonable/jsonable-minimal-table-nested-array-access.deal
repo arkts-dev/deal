@@ -4,7 +4,7 @@
 // @features: jsonable, tables, arrays, diagnostics
 
 // @jsonable
-export class Wrap { data: table = {}; }
+export class Wrap { data: table; }
 
 export function test_jsonable_minimal_table_nested_array_access(): null {
   let w: Wrap | null = Wrap$fromJson("{\"data\":{\"values\":[[1,2],[3,4]]}}");

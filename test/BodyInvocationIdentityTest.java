@@ -43,7 +43,6 @@ import deal.semantic.ir.FunctionExecutionBinding;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.ClassBindingFacts;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
@@ -266,9 +265,7 @@ public class BodyInvocationIdentityTest {
 
     private static final String SLOT_WRITTEN_EXPRESSION_SOURCE = """
         class Box {
-          run: () => null = function(): null {
-            return null;
-          };
+          run: () => null;
         }
 
         export function main(): null {
@@ -1202,7 +1199,6 @@ public class BodyInvocationIdentityTest {
                 invocation().capabilityRegistryHash()),
             ClassBindingFacts.empty(),
             result.registryOf(unit.moduleId()),
-            new JsonDefaultChildTable(Map.of()),
             project.interfaceIndex().modules().get(unit.moduleId()),
             Map.of());
     }
@@ -1388,7 +1384,7 @@ public class BodyInvocationIdentityTest {
             unit.requiredCapabilities(), unit.constructCoverage(),
             unit.classLayouts(), unit.functions(), unit.moduleInit(),
             unit.exportPlan(), unit.functionBindings(), ops, unit.bodyTable(),
-            unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
+            unit.classFactories(), unit.classBindingFacts());
     }
 
     // =========================================================================

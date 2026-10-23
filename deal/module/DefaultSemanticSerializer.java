@@ -375,9 +375,8 @@ public final class DefaultSemanticSerializer {
         }
 
         /**
-         * Serializes one planned class: completes every entry default,
-         * validates the provisional occurrence data, and produces the
-         * three projections.
+         * Serializes structural class fields, rejects executable occurrence
+         * data on declarations, and produces deterministic metadata projections.
          */
         private SerializedDefaultClass serializeClass(String sourcePath,
                 PlannedDefaultClass planned) {
@@ -388,35 +387,8 @@ public final class DefaultSemanticSerializer {
             if (classScope == null) {
                 return null;
             }
-            List<CompilerClassDefaultEntry> completedEntries =
-                new ArrayList<>();
-            List<Site> classSites = new ArrayList<>();
-            Set<SemanticResourceIdentity> classSeen = new LinkedHashSet<>();
-            Set<SemanticResourceIdentity> occurrenceIdentities =
-                occurrenceIdentitiesOf(planned.occurrences());
-
-            for (CompilerClassDefaultEntry entry : plan.orderedFields()) {
-                if (failed) {
-                    return null;
-                }
-                if (entry.defaultExpression() == null) {
-                    completedEntries.add(entry);
-                    continue;
-                }
-                CompletedDefault completed = serializeDefault(input,
-                    plan.classIdentity().className(), entry,
-                    planned.occurrences(), occurrenceIdentities,
-                    classScope);
-                if (completed == null) {
-                    return null;
-                }
-                completedEntries.add(completed.entry());
-                for (Site site : completed.sites()) {
-                    if (classSeen.add(site.identity())) {
-                        classSites.add(site);
-                    }
-                }
-            }
+            List<CompilerClassDefaultEntry> completedEntries = plan.orderedFields();
+            List<Site> classSites = List.of();
             if (failed) {
                 return null;
             }
@@ -439,40 +411,26 @@ public final class DefaultSemanticSerializer {
                 SemanticIdentityContent.moduleIdentityDigest(
                     plan.declaringSemanticModuleIdentity());
 
-            // The entries are an ordered JSON array of per-entry
-            // objects in class source order (D2 orderedFields), never a
-            // name-keyed object: CanonicalJson key-sorts object
-            // entries, which would lose the pinned entry order and let
-            // order-only plan variants share one planDigest (D6/D8).
+            // Arrays preserve declaration order; canonical object key sorting
+            // must not make field-order-only changes share one digest.
             List<CanonicalJson.Value> planEntries = new ArrayList<>();
             List<CanonicalJson.Value> semanticEntries =
                 new ArrayList<>();
             for (CompilerClassDefaultEntry entry : completedEntries) {
-                CanonicalJson.Value defaultContent = entry
-                    .defaultExpression() == null
-                    ? CanonicalJson.nullValue()
-                    : parsedDefaultContent(entry);
-                if (failed) {
-                    return null;
-                }
                 planEntries.add(CanonicalJson.obj(
                     CanonicalJson.e("name",
                         CanonicalJson.str(entry.name())),
                     CanonicalJson.e("runtimeTypeDescriptor",
                         CanonicalJson.str(entry.runtimeTypeDescriptor())),
                     CanonicalJson.e("optional",
-                        CanonicalJson.bool(entry.optional())),
-                    CanonicalJson.e("canonicalDefaultContent",
-                        defaultContent)));
+                        CanonicalJson.bool(entry.optional()))));
                 semanticEntries.add(CanonicalJson.obj(
                     CanonicalJson.e("name",
                         CanonicalJson.str(entry.name())),
                     CanonicalJson.e("runtimeTypeDescriptor",
                         CanonicalJson.str(entry.runtimeTypeDescriptor())),
                     CanonicalJson.e("optional",
-                        CanonicalJson.bool(entry.optional())),
-                    CanonicalJson.e("canonicalDefaultContent",
-                        defaultContent)));
+                        CanonicalJson.bool(entry.optional()))));
             }
             String canonicalPlanContent = CanonicalJson.serializeText(
                 CanonicalJson.obj(
@@ -501,26 +459,6 @@ public final class DefaultSemanticSerializer {
         }
 
         /**
-         * The stored canonical default content re-parsed into its
-         * structured value (the single canonical JSON facility's exact
-         * round-trip: re-serializing reproduces the stored text
-         * byte-for-byte).
-         */
-        private CanonicalJson.Value parsedDefaultContent(
-                CompilerClassDefaultEntry entry) {
-            try {
-                return CanonicalJson.parse(entry.defaultExpression()
-                    .canonicalSemanticContent());
-            } catch (RuntimeException defect) {
-                fail("the canonical default content of field '"
-                    + entry.name() + "' cannot be re-parsed: "
-                    + defect.getMessage(), entry.defaultExpression()
-                        .sourceRange());
-                return null;
-            }
-        }
-
-        /**
          * The E4 canonical descriptor text of a canonical class
          * identity (the plan's public identity).
          */
@@ -542,9 +480,7 @@ public final class DefaultSemanticSerializer {
         // Default expression serialization
         // =================================================================
 
-        private record CompletedDefault(CompilerClassDefaultEntry entry,
-                                        List<Site> sites) {
-        }
+
 
         /**
          * Serializes one default expression: collects and validates the
@@ -552,55 +488,7 @@ public final class DefaultSemanticSerializer {
          * canonical content and semantic digest, and completes the
          * ordered digest-bearing runtime resources.
          */
-        private CompletedDefault serializeDefault(
-                DefaultSerializerModuleInput input, String className,
-                CompilerClassDefaultEntry entry,
-                List<DefaultResourceOccurrence> classOccurrences,
-                Set<SemanticResourceIdentity> occurrenceIdentities,
-                SymbolTable classScope) {
-            ResolvedDefaultExpression expr = entry.defaultExpression();
-            if (!(expr.semanticIr() instanceof DefaultIrNode root)) {
-                fail("the default of field '" + entry.name()
-                    + "' of class '" + className
-                    + "' has no typed evaluator IR root",
-                    expr.sourceRange());
-                return null;
-            }
-            List<Site> sites = new ArrayList<>();
-            Set<SemanticResourceIdentity> seen = new LinkedHashSet<>();
-            collectSites(root, classOccurrences, occurrenceIdentities,
-                false, sites, seen);
-            if (failed) {
-                return null;
-            }
-            Set<Site> siteSet = new LinkedHashSet<>(sites);
-            String content = serializeDefaultRoot(root, input, siteSet,
-                occurrenceIdentities, classScope);
-            if (failed) {
-                return null;
-            }
-            String digest =
-                RuntimeResourceReference.providerContractDigestOf(content);
-            Set<RuntimeResourceReference> resources =
-                new LinkedHashSet<>();
-            for (Site site : sites) {
-                String providerDigest = digestFor(site.identity(),
-                    providerKindOf(site.kind()));
-                if (providerDigest == null) {
-                    return null;
-                }
-                resources.add(new RuntimeResourceReference(site.kind(),
-                    site.identity(), providerDigest, site.range()));
-            }
-            ResolvedDefaultExpression completed =
-                expr.withCanonicalSemantics(content, digest, resources);
-            return new CompletedDefault(
-                new CompilerClassDefaultEntry(entry.name(),
-                    entry.resolvedFieldType(),
-                    entry.runtimeTypeDescriptor(), entry.optional(),
-                    completed),
-                sites);
-        }
+
 
         /**
          * Walks the IR in pre-order (the consuming construct before
@@ -741,20 +629,7 @@ public final class DefaultSemanticSerializer {
          * checker resolved them. The root range is always
          * behavior-affecting (the E3001 anchor).
          */
-        private String serializeDefaultRoot(DefaultIrNode root,
-                DefaultSerializerModuleInput input, Set<Site> siteSet,
-                Set<SemanticResourceIdentity> occurrenceIdentities,
-                SymbolTable declarationScope) {
-            SymbolTable scope = declarationScope != null
-                ? declarationScope : new SymbolTable();
-            CanonicalNode node = serializeNode(root, input, siteSet,
-                occurrenceIdentities, true, scope);
-            if (failed) {
-                return null;
-            }
-            return new CanonicalDefaultSemantics(SERIALIZER_VERSION,
-                node).canonicalText();
-        }
+
 
         // =================================================================
         // Canonical node and statement production

@@ -36,7 +36,6 @@ import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ClassRegistrationSeeds;
 import deal.semantic.ir.ClassBindingFacts;
 import deal.semantic.ir.ClassFactoryRegistry;
-import deal.semantic.ir.JsonDefaultChildTable;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.LoweringContextHash;
 import deal.semantic.ir.ModuleId;
@@ -181,7 +180,7 @@ public class DynamicResolutionIrTest {
             declared, new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
             bindings, ops, membership(ops, bindings),
             new ClassFactoryRegistry(Map.of()),
-            new JsonDefaultChildTable(Map.of()), ClassBindingFacts.empty());
+            ClassBindingFacts.empty());
     }
 
     /**
@@ -259,7 +258,6 @@ public class DynamicResolutionIrTest {
                     blocks.add(p.bodyBlock());
                 }
             }
-            case KindPayload.ClassDefaultPayload p -> blocks.add(p.defaultBlock());
             case KindPayload.FunctionAdaptPayload p -> {
                 if (p.source() instanceof AdaptSourceRef.Thunk thunk) {
                     blocks.add(thunk.blockId());
@@ -310,8 +308,7 @@ public class DynamicResolutionIrTest {
             unit.moduleId(), interfaceHash, unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.jsonDefaults(),
-            unit.classBindingFacts());
+            unit.ops(), unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
     private static void assertPass(Optional<CompilerDiagnostic> diagnostic, String what) {

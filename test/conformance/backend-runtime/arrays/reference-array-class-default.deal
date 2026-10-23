@@ -1,12 +1,12 @@
 // @spec: Arrays
-// @description: A class field may use number[] and receive a number[] default value.
+// @description: A required number[] class field receives an explicit value and retains its length.
 // @expected: runtime-ok
-// @features: number[], classes, defaults
+// @features: number[], classes
 
-class Packet { payload: number[] = [0, 0]; }
+class Packet { payload: number[]; }
 
 export function main(): null {
-  let packet: Packet = {};
-  if (packet.payload.length !== 2) { throw { code: "TEST_FAIL", message: "number[] class default mismatch" }; }
+  let packet: Packet = {payload: [0, 0]};
+  if (packet.payload.length !== 2) { throw { code: "TEST_FAIL", message: "number[] class field mismatch" }; }
   return null;
 }

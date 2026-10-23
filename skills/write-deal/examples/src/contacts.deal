@@ -1,9 +1,9 @@
 import * as check from "./check";
 
 class Contact {
-  name: string = "";
+  name: string;
   nick?: string;
-  active: boolean = true;
+  active: boolean;
 }
 
 function displayName(contact: Contact): string {
@@ -25,8 +25,8 @@ function activeNames(contacts: Contact[]): string[] {
 }
 
 export function exercise(): null {
-  let ada: Contact = { name: "Ada", nick: "countess" };
-  let grace: Contact = { name: "Grace" };
+  let ada: Contact = { name: "Ada", nick: "countess", active: true };
+  let grace: Contact = { name: "Grace", active: true };
   let inactive: Contact = { name: "Inactive", active: false };
   let contacts: Contact[] = [ada, grace, inactive];
   let names: string[] = activeNames(contacts);

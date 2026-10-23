@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: classes, nullable, type-system
 
-class Box { value: number = 0; }
+class Box { value: number; }
 
 export function test_dynamic_null_to_nullable_class(): null {
   let holder: table = { item: null };

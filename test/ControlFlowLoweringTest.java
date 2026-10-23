@@ -1661,7 +1661,7 @@ public class ControlFlowLoweringTest {
             seed.classLayouts(), Map.of(f, new deal.semantic.ir.LoweredFunction(f, signature, List.of(), functionRoot),
                 g, new deal.semantic.ir.LoweredFunction(g, signature, List.of(), otherRoot)), seed.moduleInit(),
             seed.exportPlan(), seed.functionBindings(), seedOps, rebuildTable(seedBlocks),
-            seed.classFactories(), seed.jsonDefaults(), seed.classBindingFacts());
+            seed.classFactories(), seed.classBindingFacts());
         SemanticLowerer.LoweringResult lowered = new SemanticLowerer.LoweringResult(withFunctions,
             withFunctions.bodyTable(), produced.diagnostics());
         check(!lowered.hasErrors(), "validator source seed lowers: " + lowered.diagnostics());
@@ -1801,7 +1801,7 @@ public class ControlFlowLoweringTest {
         List<KindPayload> payloads = List.of(
             new KindPayload.ModuleInitPayload(MODULE, List.of(), lowered.unit().moduleInit().initBlock()),
             new KindPayload.ExternalEntryPayload("export", function, sig, false, missing, null),
-            new KindPayload.ClassFactoryPayload(new deal.semantic.ir.ClassId(MODULE.path(), "Box"), List.of(), missing),
+            new KindPayload.ClassFactoryPayload(new deal.semantic.ir.ClassId(MODULE.path(), "Box"), missing),
             new KindPayload.CallbackInvokePayload(new ValueId(999), sig, List.of(), missing),
             new KindPayload.EntryInvokePayload(MODULE, function));
         List<SemanticOpKind> kinds = List.of(SemanticOpKind.MODULE_INIT, SemanticOpKind.EXTERNAL_ENTRY,
@@ -1851,7 +1851,7 @@ public class ControlFlowLoweringTest {
             seed.loweringContextHash(), seed.requiredCapabilities(),
             seed.constructCoverage(), seed.classLayouts(), functions, seed.moduleInit(),
             seed.exportPlan(), seed.functionBindings(), seed.ops(), seed.bodyTable(),
-            seed.classFactories(), seed.jsonDefaults(), seed.classBindingFacts());
+            seed.classFactories(), seed.classBindingFacts());
         Optional<CompilerDiagnostic> typed = ControlFlowValidator.validate(unit, unit.bodyTable());
         assertControlE6005(typed, "CONTROL_BLOCK_TREE",
             "the body block BlockId(100) of function FunctionId(0) is not a block of the table");
@@ -1978,7 +1978,7 @@ public class ControlFlowLoweringTest {
             unit.moduleId(), unit.interfaceHash(), unit.loweringContextHash(),
             unit.requiredCapabilities(), unit.constructCoverage(), unit.classLayouts(),
             unit.functions(), unit.moduleInit(), unit.exportPlan(), unit.functionBindings(),
-            ops, table, unit.classFactories(), unit.jsonDefaults(), unit.classBindingFacts());
+            ops, table, unit.classFactories(), unit.classBindingFacts());
     }
 
     private static StructuredBodyTable rebuildTable(Map<BlockId, List<OpId>> blocks) {

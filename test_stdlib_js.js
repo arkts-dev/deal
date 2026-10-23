@@ -719,7 +719,7 @@ test("json.stringify rejects a root class value at the declared table parameter"
   const defaults = function() {
     return { ["name"]: "default-name", ["opt"]: rt.MISSING, ["nick"]: null };
   };
-  const inst = rt.makeClass("User", "@app.main/User", defaults, { ["name"]: "x" }, "f.js", 9, 4);
+  const inst = rt.classPlan("@app.main/User", [{name:"name", descriptor:"string", optional:false}], {name:"x"}, "f.js", 9, 4);
   // A class instance is its own carrier kind, never a table: the declared
   // (table)->string entry check rejects it with the shared typed-boundary
   // tuple (E8001 "expected table", expected "table"), exactly like the
@@ -754,7 +754,7 @@ test("json.stringify rejects a builtin Error instance at the declared table para
 
 test("json.stringify rejects class instances inside table content", function() {
   const defaults = function() { return { ["name"]: "n" }; };
-  const inst = rt.makeClass("User", "@app.main/User", defaults, { ["name"]: "x" }, "f.js", 1, 1);
+  const inst = rt.classPlan("@app.main/User", [{name:"name", descriptor:"string", optional:false}], {name:"x"}, "f.js", 1, 1);
   const nested = rt.makeTable({ u: inst });
   assertErrorMessage(function() { json.stringify.$f(nested, "f.js", 1, 1); }, "E8001",
     "unsupported type for JSON encoding: table");

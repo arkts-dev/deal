@@ -144,9 +144,7 @@ public final class RuntimeDeclarationProjection {
                     }
                     fields.add(new RuntimeDeclarationSurface
                         .RuntimeDeclaredField(seedField.name(),
-                            seedField.descriptor(), seedField.required(),
-                            declaredField.declaration().defaultExpr()
-                                .isPresent()));
+                            seedField.descriptor(), seedField.required()));
                 }
                 classes.put(declaredClass.name(),
                     new RuntimeDeclarationSurface.RuntimeDeclaredClass(

@@ -27,16 +27,4 @@ public record SharedFactoryFacts(
         }
     }
 
-    /** The declared-default fact of one interface field, fail-closed on absence. */
-    public boolean hasDeclaredDefault(String fieldName) {
-        Objects.requireNonNull(fieldName, "fieldName must not be null");
-        for (FieldInterface field : interfaceEntry.fields()) {
-            if (field.name().equals(fieldName)) {
-                return field.hasDefault();
-            }
-        }
-        throw new IllegalArgumentException(
-            "field '" + fieldName + "' is not declared in the interface entry of "
-                + classId + " (a fact defect, never inferred)");
-    }
 }

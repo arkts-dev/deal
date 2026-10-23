@@ -4,7 +4,7 @@
 // @features: arrays, classes, chained-access
 
 class Box {
-  value: number = 0;
+  value: number;
 }
 
 function box(v: number): Box { return { value: v }; }

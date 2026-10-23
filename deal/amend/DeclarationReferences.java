@@ -35,7 +35,7 @@ final class DeclarationReferences {
         switch (node) {
             case ExportDeclaration n -> statement(n.declaration(), scope);
             case FunctionDeclaration n -> function(n.params(), n.returnType(), n.body(), scope);
-            case ClassDeclaration n -> n.fields().forEach(f -> { type(f.type()); f.defaultExpr().ifPresent(e -> expression(e, scope)); });
+            case ClassDeclaration n -> n.fields().forEach(f -> type(f.type()));
             case Block n -> {
                 var local = new HashSet<>(scope);
                 n.statements().forEach(s -> statement(s, local));

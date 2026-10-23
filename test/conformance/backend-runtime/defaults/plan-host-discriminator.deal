@@ -1,7 +1,7 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: v1.2 host-class discriminator: an imported host-declared class constructs through the preserved defaults-map entry (alias.ServerConfig_defaults over __rt.class_) — the emitter reads and exports no <C>_plan for host classes, and the constructed instance crosses the host boundary through a declared function parameter.
+// @description: Host class construction uses structural metadata and explicit values; its exact nominal instance crosses a declared host parameter.
 // @expected: runtime-ok
-// @features: modules, host-abi, classes, defaults
+// @features: modules, host-abi, classes, construction
 
 import * as cfg from "host/cfg";
 
