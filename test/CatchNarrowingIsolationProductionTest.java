@@ -37,15 +37,18 @@ import java.util.stream.Stream;
  * Error value through both a declaration transfer and the error's message
  * field, and each one is usable as its refined type after the catch;
  * nested catches, nested blocks, renamed and unrefined catches, a
- * reassigned catch binding and a parameter refinement keep the outer
- * refinement, each with the exact sidecar transcript. The rejected forms
- * — the Error binding transferred to a string or an int target, an outer
- * binding assigned inside the catch, and an awaited resumption inside the
- * catch — are compiled through the same pipeline on every backend and must
- * fail with exactly one E3001 at the pinned identifier range with no
- * published artifact: a checker that let an outer refinement type the
- * catch binding accepts the unsound transfer, and one that resurrected a
- * cleared refinement rejects a valid Error read.</p>
+ * reassigned catch binding, a try/catch nested inside an enclosing try
+ * block that reassigns its own catch binding, and a parameter refinement
+ * keep the outer refinement, each with the exact sidecar transcript. The
+ * rejected forms — the Error binding transferred to a string or an int
+ * target, an outer binding assigned inside the catch, an awaited
+ * resumption inside the catch, an awaited resumption inside the try block,
+ * and a try-block assignment inside a nested try/catch — are compiled
+ * through the same pipeline on every backend and must fail with exactly
+ * one E3001 at the pinned identifier range with no published artifact: a
+ * checker that let an outer refinement type the catch binding accepts the
+ * unsound transfer, and one that resurrected a cleared refinement rejects
+ * a valid Error read.</p>
  */
 public final class CatchNarrowingIsolationProductionTest {
 
@@ -429,7 +432,24 @@ public final class CatchNarrowingIsolationProductionTest {
                 export function main(): null {
                   return null;
                 }
-                """, "E3001", 13, 24, 1, "Cannot assign int | null to int"));
+                """, "E3001", 13, 24, 1, "Cannot assign int | null to int"),
+            new Rejection("try-block assignment inside a nested try",
+                """
+                export function main(): null {
+                  let e: int | null = 1;
+                  if (e !== null) {
+                    try {
+                      try {
+                        e = null;
+                      } catch (err) {
+                      }
+                      let unsound: int = e;
+                    } catch (outer) {
+                    }
+                  }
+                  return null;
+                }
+                """, "E3001", 9, 26, 1, "Cannot assign int | null to int"));
     }
 
     private static void testRejections(Path root) throws Exception {

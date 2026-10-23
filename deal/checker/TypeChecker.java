@@ -1425,6 +1425,13 @@ public final class TypeChecker {
     private void checkTryStatement(TryStatement ts) {
         boolean savedInsideTry = insideTry;
         tryAssignments.push(newBindingAssignmentSet());
+        // The try statement's own catch scope is current here
+        // (walkStatement enters scopeMap's entry before dispatch), so the
+        // code after the catch block lives in that scope's parent. The
+        // revert below tests visibility there, never in the catch scope.
+        SymbolTable catchScope = scopeMap.get(ts);
+        SymbolTable afterCatchScope = catchScope != null && catchScope.parent() != null
+            ? catchScope.parent() : currentScope;
         insideTry = true;
 
         walkStatement(ts.tryBlock());
@@ -1454,7 +1461,7 @@ public final class TypeChecker {
 
         narrowing.popShadowFrame();
 
-        closeTryAssignments(tryAssignments.pop());
+        closeTryAssignments(tryAssignments.pop(), afterCatchScope);
     }
 
     /**
@@ -1464,16 +1471,26 @@ public final class TypeChecker {
      * type). The recorded bindings propagate to an enclosing try statement's
      * frame — a re-narrowing later inside that try block must not outlive
      * the enclosing catch — and each binding still visible after the
-     * try/catch loses its narrowed entry. A binding recorded inside the try
-     * block whose scope ended with the block never invalidates the
-     * same-named enclosing binding, which the try did not assign.
+     * try/catch loses its narrowed entry.
+     *
+     * <p>Visibility is tested in {@code afterCatchScope}, the scope that
+     * receives the code after the catch block, so a binding whose scope
+     * ends inside the try statement is never mistaken for the same-named
+     * enclosing binding the try did not assign: a try-block declaration
+     * and, decisively, the try's own catch binding (a fresh Error binding
+     * of the catch scope) are dead there, so reassigning the catch binding
+     * inside this try's catch block never drops the enclosing binding's
+     * refinement. Resolving in the catch scope would resolve that catch
+     * binding to itself and invalidate the entry the catch scope just
+     * restored.</p>
      */
-    private void closeTryAssignments(Set<Symbol> assigned) {
+    private void closeTryAssignments(Set<Symbol> assigned,
+            SymbolTable afterCatchScope) {
         if (!tryAssignments.isEmpty()) {
             tryAssignments.peek().addAll(assigned);
         }
         for (Symbol binding : assigned) {
-            if (resolveVisibleBinding(binding.name()) == binding) {
+            if (resolveVisibleBinding(afterCatchScope, binding.name()) == binding) {
                 narrowing.invalidate(binding.name());
             }
         }
@@ -3132,7 +3149,18 @@ public final class TypeChecker {
      * inside a shadowing initializer targets the enclosing binding.
      */
     private Symbol resolveVisibleBinding(String name) {
-        Symbol sym = currentScope.resolve(name);
+        return resolveVisibleBinding(currentScope, name);
+    }
+
+    /**
+     * The same declaration-order resolution started in {@code scope} instead
+     * of the current scope: a fact that must hold after a scope closes (the
+     * try/catch revert) resolves in the scope that receives the following
+     * code, so a binding declared inside the closed construct never stands
+     * in for a same-named enclosing binding.
+     */
+    private Symbol resolveVisibleBinding(SymbolTable scope, String name) {
+        Symbol sym = scope.resolve(name);
         for (PendingScope ps : pendingScopes) {
             if (sym != null && ps.scope != null
                     && ps.remaining.contains(name)

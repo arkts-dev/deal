@@ -1,5 +1,5 @@
 // @spec: Error handling — try / catch; Nullable semantics
-// @description: The catch identifier is a new Error binding, so a same-named outer null refinement never types it and the catch scope's exit restores that refinement: int-, string- and null-refined outer bindings read their own catch Error value and can be read as their refined type after the catch, nested catches, nested blocks, renamed and unrefined catches and a reassigned catch binding keep the outer refinement, and a parameter refinement behaves like a local one
+// @description: The catch identifier is a new Error binding, so a same-named outer null refinement never types it and the catch scope's exit restores that refinement: int-, string- and null-refined outer bindings read their own catch Error value and can be read as their refined type after the catch, nested catches, nested blocks, renamed and unrefined catches and a reassigned catch binding keep the outer refinement, a try/catch nested inside an enclosing try block keeps it while its own catch binding is reassigned, and a parameter refinement behaves like a local one
 // @expected: runtime-ok
 // @features: error-handling, try-catch, nullable, narrowing, shadowing, blocks, parameters
 
@@ -163,6 +163,28 @@ function checkCatchAssignment(): null {
   return null;
 }
 
+function checkNestedTryCatchAssignment(): null {
+  let e: int | null = 19;
+  if (e !== null) {
+    try {
+      try {
+        throw { code: "C_NESTED_INNER", message: "nested inner" };
+      } catch (e) {
+        e = { code: "C_NESTED_REPLACED", message: "nested replaced" };
+        let message: string = e.message;
+        expectTrue("the reassigned nested catch binding",
+          message === "nested replaced");
+      }
+      let afterInner: int = e;
+      expectTrue("the outer refinement after the nested catch", afterInner === 19);
+    } catch (outer) {
+    }
+    let afterOuter: int = e;
+    expectTrue("the outer refinement after the outer catch", afterOuter === 19);
+  }
+  return null;
+}
+
 function checkParameterBinding(e: int | null): null {
   if (e !== null) {
     try {
@@ -189,6 +211,7 @@ export function main(): null {
   checkRenamedCatch();
   checkNoRefinement();
   checkCatchAssignment();
+  checkNestedTryCatchAssignment();
   checkParameterBinding(17);
   console.log("OK");
   return null;

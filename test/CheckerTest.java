@@ -5426,6 +5426,76 @@ public class CheckerTest {
                 shadowIf == null ? List.of() : shadowIf.thenBlock().statements(), 1)),
             "the outer refinement survives a try-block shadowing declaration");
 
+        // -- A try/catch nested inside an enclosing try block reassigns only
+        //    its own catch binding: the try/catch revert closes in the scope
+        //    that receives the code after the catch, never in the catch
+        //    scope (where the catch binding resolves to itself and would
+        //    invalidate the entry the catch scope just restored), so the
+        //    same-named outer refinement survives the inner catch and the
+        //    outer catch.
+        CheckerOutput nestedCatchAssignment = checkProgram(
+            "export function main(): null {" +
+            "  let e: int | null = 1;" +
+            "  if (e !== null) {" +
+            "    try {" +
+            "      try { throw { code: \"C_IN\", message: \"in\" }; }" +
+            "      catch (e) { e = { code: \"C_RE\", message: \"re\" }; }" +
+            "      let afterInner: int = e;" +
+            "    } catch (outer) { }" +
+            "    let afterOuter: int = e;" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertNoErrors(nestedCatchAssignment,
+            "a nested catch-binding reassignment keeps the outer refinement");
+        IfStatement nestedIf = findStatement(nestedCatchAssignment.program()
+            .statements(), IfStatement.class);
+        TryStatement enclosingTry = nestedIf == null ? null
+            : findStatement(nestedIf.thenBlock(), TryStatement.class);
+        check(Types.equals(Type.Int.INSTANCE, readTypeAt(nestedCatchAssignment,
+                enclosingTry == null ? List.of()
+                    : enclosingTry.tryBlock().statements(), 1)),
+            "the outer refinement is restored after the nested catch, got "
+                + (enclosingTry == null ? null : readTypeAt(nestedCatchAssignment,
+                    enclosingTry.tryBlock().statements(), 1)));
+        check(Types.equals(Type.Int.INSTANCE, readTypeAt(nestedCatchAssignment,
+                nestedIf == null ? List.of() : nestedIf.thenBlock().statements(), 1)),
+            "the outer refinement survives the enclosing catch, got "
+                + (nestedIf == null ? null : readTypeAt(nestedCatchAssignment,
+                    nestedIf.thenBlock().statements(), 1)));
+
+        // -- The same nesting under a string refinement: the reassigned catch
+        //    binding is never the outer string either.
+        CheckerOutput nestedString = checkProgram(
+            "export function main(): null {" +
+            "  let text: string | null = \"outer\";" +
+            "  if (text !== null) {" +
+            "    try {" +
+            "      try { throw { code: \"C_IN\", message: \"in\" }; }" +
+            "      catch (text) { text = { code: \"C_RE\", message: \"re\" }; }" +
+            "      let afterInner: string = text;" +
+            "    } catch (outer) { }" +
+            "    let afterOuter: string = text;" +
+            "  }" +
+            "  return null;" +
+            "}");
+        assertNoErrors(nestedString,
+            "a nested catch-binding reassignment keeps a string refinement");
+        IfStatement stringIf = findStatement(nestedString.program().statements(),
+            IfStatement.class);
+        TryStatement stringTry = stringIf == null ? null
+            : findStatement(stringIf.thenBlock(), TryStatement.class);
+        check(Types.equals(Type.String.INSTANCE, readTypeAt(nestedString,
+                stringTry == null ? List.of() : stringTry.tryBlock().statements(), 1)),
+            "the string refinement is restored after the nested catch, got "
+                + (stringTry == null ? null : readTypeAt(nestedString,
+                    stringTry.tryBlock().statements(), 1)));
+        check(Types.equals(Type.String.INSTANCE, readTypeAt(nestedString,
+                stringIf == null ? List.of() : stringIf.thenBlock().statements(), 1)),
+            "the string refinement survives the enclosing catch, got "
+                + (stringIf == null ? null : readTypeAt(nestedString,
+                    stringIf.thenBlock().statements(), 1)));
+
         // -- The catch scope's exit never resurrects a refinement the
         //    language invalidated: an await clears it and an assignment to
         //    the enclosing binding removes it.

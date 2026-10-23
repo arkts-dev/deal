@@ -1,0 +1,54 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: A try/catch nested inside an enclosing try block reassigns only its own catch Error binding: the same-named outer int and string refinements stay readable after the inner catch and after the outer catch, for a local and a parameter binding alike
+// @expected: compile-ok
+// @features: error-handling, try-catch, nullable, narrowing, shadowing, assignment, nesting, parameters
+
+function probeParameter(e: int | null): int {
+  if (e !== null) {
+    try {
+      try {
+        throw { code: "C_PARAM_INNER", message: "parameter inner" };
+      } catch (e) {
+        e = { code: "C_PARAM_REPLACED", message: "parameter replaced" };
+        let message: string = e.message;
+      }
+      let afterInner: int = e;
+    } catch (outer) {
+    }
+    let afterOuter: int = e;
+  }
+  return 0;
+}
+
+export function main(): null {
+  let e: int | null = 21;
+  if (e !== null) {
+    try {
+      try {
+        throw { code: "C_INNER", message: "inner" };
+      } catch (e) {
+        e = { code: "C_REPLACED", message: "replaced" };
+        let message: string = e.message;
+      }
+      let afterInner: int = e;
+    } catch (outer) {
+    }
+    let afterOuter: int = e;
+  }
+  let text: string | null = "outer";
+  if (text !== null) {
+    try {
+      try {
+        throw { code: "C_TEXT", message: "text" };
+      } catch (text) {
+        text = { code: "C_TEXT_REPLACED", message: "text replaced" };
+        let replaced: string = text.message;
+      }
+      let afterInnerText: string = text;
+    } catch (outer) {
+    }
+    let afterOuterText: string = text;
+  }
+  probeParameter(3);
+  return null;
+}

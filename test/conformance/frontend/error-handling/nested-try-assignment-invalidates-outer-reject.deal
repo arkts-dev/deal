@@ -1,0 +1,19 @@
+// @spec: Error handling — try / catch; Nullable semantics
+// @description: A try-block assignment to the enclosing binding inside a nested try/catch still invalidates it: the revert closes in the scope that receives the code after the catch, so the read falls back to the declared nullable type and is rejected
+// @expected: compile-error E3001
+// @features: error-handling, try-catch, nullable, narrowing, assignment, nesting
+
+export function main(): null {
+  let e: int | null = 1;
+  if (e !== null) {
+    try {
+      try {
+        e = null;
+      } catch (err) {
+      }
+      let unsound: int = e;
+    } catch (outer) {
+    }
+  }
+  return null;
+}
