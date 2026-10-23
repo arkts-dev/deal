@@ -54,7 +54,7 @@ public class RuntimeTypeMatcherTest {
      * contract with its own failure text; the matcher must propagate the
      * hook's outcome unchanged.
      */
-    static final class TestModel implements RuntimeValueModel {
+    static class TestModel implements RuntimeValueModel {
         @Override public boolean isNull(Object value) {
             return value == null || value == NULL_VALUE;
         }
@@ -87,11 +87,27 @@ public class RuntimeTypeMatcherTest {
             if (value instanceof Boolean) return "boolean";
             if (value instanceof Double) return "number";
             if (value instanceof String) return "string";
-            if (value instanceof TableValue) return "table";
-            if (value instanceof ArrayValue) return "array";
-            if (value instanceof ClassValue) return "class";
+            if (value instanceof ClassValue c) return c.tag;
             if (value instanceof FnValue) return "function";
+            if (value instanceof ArrayValue) return "array";
+            if (value instanceof BytesValue) return "bytes";
+            if (value instanceof TableValue) return "table";
             return "unknown";
+        }
+    }
+
+    /**
+     * The Lua value mapping: every produced carrier is physically a table,
+     * so {@code type(v)} is {@code table} for all of them.  The canonical
+     * typed-boundary projection must still publish each carrier's own
+     * closed token (the carried class atom for a class instance), never the
+     * generic table label.
+     */
+    static final class LuaShapedModel extends TestModel {
+        @Override public boolean isTable(Object value) {
+            return value instanceof TableValue || value instanceof ClassValue
+                || value instanceof ArrayValue || value instanceof FnValue
+                || value instanceof BytesValue;
         }
     }
 
@@ -230,6 +246,7 @@ public class RuntimeTypeMatcherTest {
         testNullableRow();
         testFunctionRow();
         testBytesRow();
+        testActualProjectionPrecedence();
         testUnparsableRow();
         testRangePropagation();
         testNeverThrowsAndNoMutation();
@@ -257,7 +274,11 @@ public class RuntimeTypeMatcherTest {
         assertFailure("null", new TableValue(), "E8001", "expected null, got table", "null vs table");
         assertFailure("null", new ArrayValue(), "E8001", "expected null, got array", "null vs array");
         assertFailure("null", new ClassValue("Error"), "E8001",
-            "expected null, got class", "null vs class");
+            "expected null, got Error", "null vs builtin Error carrier publishes its atom");
+        assertFailure("null", new ClassValue("@x/y"), "E8001",
+            "expected null, got @x/y", "null vs class carrier publishes its atom");
+        assertFailure("null", new BytesValue(), "E8001",
+            "expected null, got bytes", "null vs bytes carrier publishes the closed bytes token");
         assertFailure("null", new FnValue("()->null"), "E8001",
             "expected null, got function", "null vs function");
     }
@@ -405,8 +426,12 @@ public class RuntimeTypeMatcherTest {
 
         assertPass("table", new TableValue(), "table passes");
         assertFailure("table", 1.0, "E8001", "expected table, got number", "table vs number");
-        assertFailure("table", new ClassValue("@x/y"), "E8001", "expected table, got class",
-            "table vs class");
+        assertFailure("table", new ClassValue("@x/y"), "E8001", "expected table, got @x/y",
+            "table vs class carrier publishes its atom");
+        assertFailure("table", new ClassValue("Error"), "E8001", "expected table, got Error",
+            "table vs builtin Error carrier publishes its atom");
+        assertFailure("table", new BytesValue(), "E8001", "expected table, got bytes",
+            "table vs bytes carrier publishes the closed bytes token");
         assertFailure("table", new ArrayValue(), "E8001", "expected table, got array",
             "table vs array");
         assertFailure("table", new FnValue("()->null"), "E8001", "expected table, got function",
@@ -610,6 +635,45 @@ public class RuntimeTypeMatcherTest {
             "bytes elements pass via the hook");
         assertFailure("[bytes]", new ArrayValue(new BytesValue(), new TableValue()), "E8003",
             "array element 2 type mismatch", "bytes hook failure becomes the element failure");
+    }
+
+    // =========================================================================
+    // typed-boundary actual projection: carrier identity precedes the generic
+    // table fallback (the Lua value mapping is table-shaped)
+    // =========================================================================
+
+    static void testActualProjectionPrecedence() {
+        System.out.println("-- typed-boundary actual projection precedence --");
+
+        LuaShapedModel model = new LuaShapedModel();
+        RuntimeTypeMatcher lua = new RuntimeTypeMatcher(model);
+        check(model.isTable(new ClassValue("@x/y")) && model.isTable(new BytesValue())
+                && model.isTable(new ArrayValue()) && model.isTable(new FnValue("()->null")),
+            "the Lua-shaped seam maps every carrier to a table (type(v) == table)");
+
+        Object[] values = {
+            new ClassValue("Error"), new ClassValue("@x/y"), new BytesValue(),
+            new ArrayValue(), new FnValue("()->null"), new TableValue()
+        };
+        String[] tokens = { "Error", "@x/y", "bytes", "array", "function", "table" };
+        for (int i = 0; i < values.length; i++) {
+            Object result = lua.check("null", values[i], null);
+            RuntimeCheckFailure f = failure(result);
+            String expected = "expected null, got " + tokens[i];
+            check(f != null && "E8001".equals(f.code()) && expected.equals(f.message()),
+                "table-shaped seam: " + tokens[i] + " publishes its own closed actual token");
+        }
+
+        // The bytes row itself keeps its hook-only route on the table-shaped
+        // seam: a real bytes carrier passes and a plain table keeps the
+        // hook's own failure outcome.
+        Object bytes = new BytesValue();
+        check(lua.check("bytes", bytes, null) == bytes,
+            "table-shaped seam: the bytes row still delegates to the hook alone");
+        RuntimeCheckFailure tableFailure = failure(lua.check("bytes", new TableValue(), null));
+        check(tableFailure != null
+                && "expected bytes, got table".equals(tableFailure.message()),
+            "table-shaped seam: the bytes row propagates the hook's own failure");
     }
 
     // =========================================================================

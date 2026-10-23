@@ -58,6 +58,13 @@ public interface RuntimeValueModel {
      * E6 owns the representation and predicate; until E6 lands, the
      * seam implementer supplies the hook implementation.</p>
      *
+     * <p>The hook is also the seam's only bytes fact, so the typed-boundary
+     * {@code {actual}} projection of a rejected value classifies the E6
+     * bytes carrier through it: an admitted outcome (the value itself, not
+     * a {@link RuntimeCheckFailure}) publishes the closed {@code bytes}
+     * token before any generic table fallback. A rejected value's row never
+     * consults another predicate, and this classification never changes the
+     * row's own outcome.</p>
      */
     Object checkBytes(Object value, RuntimeSourceLocation range);
 

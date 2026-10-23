@@ -167,17 +167,17 @@ public final class RuntimeTypeMatcher {
                 if (model.isNull(value)) {
                     return value;
                 }
-                return failure("E8001", "expected null, got " + actualKind(value), range);
+                return failure("E8001", "expected null, got " + actualKind(value, range), range);
             }
             case "boolean" -> {
                 if (model.isBoolean(value)) {
                     return value;
                 }
-                return failure("E8001", "expected boolean, got " + actualKind(value), range);
+                return failure("E8001", "expected boolean, got " + actualKind(value, range), range);
             }
             case "string" -> {
                 if (!model.isString(value)) {
-                    return failure("E8001", "expected string, got " + actualKind(value), range);
+                    return failure("E8001", "expected string, got " + actualKind(value, range), range);
                 }
                 if (hasUnpairedSurrogate(model.stringPayload(value))) {
                     // JVM-pinned sub-message (the JVM string representation
@@ -192,7 +192,7 @@ public final class RuntimeTypeMatcher {
                 if (model.isNumber(value)) {
                     return value;
                 }
-                return failure("E8001", "expected number, got " + actualKind(value), range);
+                return failure("E8001", "expected number, got " + actualKind(value, range), range);
             }
             case "int" -> {
                 return checkInt(value, range);
@@ -212,7 +212,7 @@ public final class RuntimeTypeMatcher {
                 if (model.isTable(value)) {
                     return value;
                 }
-                return failure("E8001", "expected table, got " + actualKind(value), range);
+                return failure("E8001", "expected table, got " + actualKind(value, range), range);
             }
             default -> {
                 // Unreachable through the strict parser, which yields only the
@@ -239,7 +239,7 @@ public final class RuntimeTypeMatcher {
      */
     private Object checkInt(Object value, RuntimeSourceLocation range) {
         if (!model.isNumber(value)) {
-            return failure("E8001", "expected int, got " + actualKind(value), range);
+            return failure("E8001", "expected int, got " + actualKind(value, range), range);
         }
         double payload = model.numberPayload(value);
         if (payload != payload) {
@@ -275,7 +275,7 @@ public final class RuntimeTypeMatcher {
         String tag = model.classIdentityText(value);
         if (tag == null) {
             return failure("E8001",
-                "expected instance of " + atomText + ", got " + actualKind(value), range);
+                "expected instance of " + atomText + ", got " + actualKind(value, range), range);
         }
         if (!tag.equals(atomText)) {
             return failure("E8001",
@@ -288,7 +288,7 @@ public final class RuntimeTypeMatcher {
      * the first failing index (1-based, as pinned). */
     private Object checkArray(DescriptorAst element, Object value, RuntimeSourceLocation range) {
         if (!model.isArray(value)) {
-            return failure("E8001", "expected array, got " + actualKind(value), range);
+            return failure("E8001", "expected array, got " + actualKind(value, range), range);
         }
         int length = model.arrayLength(value);
         for (int i = 0; i < length; i++) {
@@ -341,13 +341,30 @@ public final class RuntimeTypeMatcher {
     }
 
     /**
-     * A deterministic backend-kind description for the {@code {actual}}
-     * slots of the pinned messages, derived only from the seam's named
-     * predicates (never from value structure beyond them).  The order
-     * mirrors the Lua runtime's {@code type(v)} precedence for the
-     * overlapping table-family shapes (table before array/class/function).
+     * The typed-boundary {@code {actual}} projection of one failing check,
+     * derived only from the seam's named predicates (never from value
+     * structure beyond them): the closed tokens the shared typed-boundary
+     * contract publishes, never a target carrier label.  Scalars project
+     * their own tokens; a produced carrier projects its own closed token —
+     * a class instance (the builtin {@code Error} included) its carried
+     * canonical class atom, a function wrapper {@code function}, an array
+     * {@code array}, the E6 bytes carrier {@code bytes} — and only a plain
+     * backend table republishes {@code table}.
+     *
+     * <p>Carrier identity is read before the generic table predicate: a Lua
+     * value mapping is a table for {@code type(v)}, so a table-first order
+     * would republish every carrier as {@code table} and a class instance
+     * would never publish its carried atom.  The bytes classification is
+     * the E6-pinned {@code check_bytes(value, range)} hook itself (its
+     * {@code bytes | E8001} contract makes the admitted outcome the bytes
+     * fact); the seam carries no separate bytes predicate.  The bytes row
+     * still routes exclusively through that hook and consults no other
+     * predicate — this projection only classifies a value the row already
+     * rejected.  A value outside every seam predicate is a producer defect,
+     * so the defensive terminal is the seam's own {@code unknown} label,
+     * never a fabricated closed token.</p>
      */
-    private String actualKind(Object value) {
+    private String actualKind(Object value, RuntimeSourceLocation range) {
         if (model.isNull(value)) {
             return "null";
         }
@@ -360,17 +377,21 @@ public final class RuntimeTypeMatcher {
         if (model.isString(value)) {
             return "string";
         }
-        if (model.isTable(value)) {
-            return "table";
+        String classAtom = model.classIdentityText(value);
+        if (classAtom != null) {
+            return classAtom;
+        }
+        if (model.functionDescriptorText(value) != null) {
+            return "function";
         }
         if (model.isArray(value)) {
             return "array";
         }
-        if (model.classIdentityText(value) != null) {
-            return "class";
+        if (!(model.checkBytes(value, range) instanceof RuntimeCheckFailure)) {
+            return "bytes";
         }
-        if (model.functionDescriptorText(value) != null) {
-            return "function";
+        if (model.isTable(value)) {
+            return "table";
         }
         return "unknown";
     }
