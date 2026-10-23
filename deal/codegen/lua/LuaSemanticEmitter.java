@@ -79,8 +79,8 @@ public final class LuaSemanticEmitter {
             + "__okD, __chkD, "
             + "__instT, __fT, __eT, __jokT, __jresT, __jarmT, __jcparT, __jfactT, "
             + "__hbT, "
-            + "__dynC, __dynK, __dynM, __dynS, __dynSK, __dynA, __dynE, "
-            + "__tA, __okH, __errH, __oA";
+            + "__dynC, __dynK, __dynM, __dynN, __dynS, __dynSK, __dynA, "
+            + "__dynE, __tA, __okH, __errH, __oA";
 
     /**
      * The chunk's one factory store: every function factory
@@ -3266,6 +3266,8 @@ public final class LuaSemanticEmitter {
             out.append(", __m = ").append(payload.sourceSignature().paramTypes().size())
                 .append(", __csrc = ")
                 .append(luaString(payload.sourceSignature().canonicalSpecText()))
+                .append(", __tp = ").append(targetParameterCells(
+                    payload.targetSignature()))
                 .append(", [__dealCarrierKeys.sig] = ")
                 .append(luaString(descriptorText(payload.targetSignature())))
                 .append(", [__dealCarrierKeys.csig] = ")
@@ -3283,6 +3285,29 @@ public final class LuaSemanticEmitter {
             out.append("}\n");
             out.append(target).append("[__dealCarrierKeys.fn] = __adaptInvoke\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
+        }
+
+        /**
+         * The adapter's target-signature parameter cells: one
+         * {@code {descriptor text, static kind, canonical text}} triple per
+         * declared target parameter, which the D15 invocation protocol
+         * checks before the leading-M projection. The ignored trailing
+         * parameters of an arity extension are checked exactly like the
+         * forwarded leading ones (docs/spec-v1.3.md Arity extension
+         * adapter), so a host invocation of the published adapter value
+         * enforces the whole declared target signature.
+         */
+        private static String targetParameterCells(RuntimeDescriptor.Func target) {
+            StringBuilder cells = new StringBuilder("{");
+            for (RuntimeDescriptor parameter : target.paramTypes()) {
+                cells.append('{')
+                    .append(luaString(descriptorText(parameter))).append(", ")
+                    .append(luaString(staticKind(parameter))).append(", ")
+                    .append(containsFunction(parameter)
+                        ? luaString(parameter.canonicalSpecText()) : "nil")
+                    .append("},");
+            }
+            return cells.append('}').toString();
         }
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {
@@ -4583,6 +4608,22 @@ public final class LuaSemanticEmitter {
                 emitRecordedCellRun(op, recordedDealCell, "__resT", "    ");
             }
 
+            out.append("  elseif __dynSK == \"ADAPTER\" then\n");
+            // An adapter-valued source is an ordinary function value of its
+            // declared signature: run its own published D15 invocation with
+            // this call's arguments; the nested protocol resolves the
+            // adapter chain's statically fixed source and keeps each
+            // adapter's leading-M projection.
+            out.append("    __okT, __resT = pcall(__adaptInvoke, __dynS, ")
+                .append(origin).append(argList).append(")\n");
+            out.append("    if not __okT then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
+            out.append("      error(__resT, 0)\n");
+            out.append("    end\n");
+            if (callOwnedDealCell) {
+                emitRecordedCellRun(op, recordedDealCell, "__resT", "    ");
+            }
+
             out.append("  elseif __dynS[__dealCarrierKeys.it] ~= nil then\n");
             if (payload.parameterBoundaryOpIds().isEmpty()) {
                 // The leading-M projection of the runtime intrinsic source has
@@ -4610,6 +4651,41 @@ public final class LuaSemanticEmitter {
                 out.append("    end\n");
                 emitHostReturnCellRun(op, hostCell, "__atom");
             }
+            out.append("  elseif __dynS[__dealCarrierKeys.sid] ~= nil then\n");
+            // An adapted cataloged stdlib callable (a statically typed
+            // function value such as `json.parse`): the carrier's packed
+            // row invoker runs with this call's own context and the
+            // adapter's leading-M projection, exactly the dynamic HOST
+            // stdlib row, then the call's recorded HOST_TO_DEAL return cell
+            // admits the result. A dynamic table-produced value never
+            // carries the catalog row tag, so the exact signature check of
+            // the parameter cell remains the dynamic source's contract.
+            out.append("    __dynA = {").append(argTable).append("}\n");
+            out.append("    __okT, __resT = pcall(__dynS[__dealCarrierKeys.fn], ")
+                .append(luaString(op.kind().name())).append(", ")
+                .append(luaString(opKey(op.opId()))).append(", ")
+                .append(luaString(op.contract().canonicalDigest())).append(", ")
+                .append(luaString(parentKey(op.origin().parentOpId()))).append(", ")
+                .append(origin).append(", unpack(__dynA, 1, __dynC.__m))\n");
+            out.append("    if not __okT then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
+            out.append("      error(__resT, 0)\n");
+            out.append("    end\n");
+            emitHostReturnCellRun(op, hostCell, "__atom");
+            out.append("  elseif __dynSK == \"HOST\" then\n");
+            // An adapted host function value: the loaded surface entry's own
+            // .f calling convention with the adapter's leading-M projection,
+            // then the recorded HOST_TO_DEAL return cell.
+            out.append("    __dynA = {").append(argTable).append("}\n");
+            out.append("    __okT, __resT = pcall(__dynS.f, unpack(__dynA, 1, ")
+                .append("__dynC.__m), ").append(spanTripletArgs(op)).append(")\n");
+            out.append("    if not __okT then\n");
+            out.append("      __resT = __hostError(__resT, ").append(origin)
+                .append(")\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__resT)");
+            out.append("      error(__resT, 0)\n");
+            out.append("    end\n");
+            emitHostReturnCellRun(op, hostCell, "__atom");
             out.append("  else\n");
             out.append("    __dynC = __dynS\n");
             emitDynamicCarrierFailure(op, origin);
@@ -4794,6 +4870,22 @@ public final class LuaSemanticEmitter {
             out.append("    error(__chkB, 0)\n");
             out.append("  end\n");
             out.append("  __dynS = __chkB\n");
+            // An adapter-valued source is an ordinary function value of its
+            // declared signature: descend the adapter chain's published
+            // invocations (each level's own source-signature check and
+            // leading-M projection), so the task starts the statically fixed
+            // body or host operation at the end of the chain.
+            out.append("  __dynN = __dynC.__m\n");
+            out.append("  while __dynClass(__dynS) == \"ADAPTER\" do\n");
+            out.append("    __dynN = __dynS.__m\n");
+            out.append("    __okB, __chkB = pcall(__fncheck, __adaptSource(__dynS), ")
+                .append("__dynS.__csrc, ").append(origin).append(")\n");
+            out.append("    if not __okB then\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op, "__errtext(__chkB)");
+            out.append("      error(__chkB, 0)\n");
+            out.append("    end\n");
+            out.append("    __dynS = __chkB\n");
+            out.append("  end\n");
 
             out.append("  if __dynS[__dealCarrierKeys.it] ~= nil then\n");
             if (recordedArgCount(payload, op) == 0) {
@@ -4832,7 +4924,7 @@ public final class LuaSemanticEmitter {
             out.append("    __modStack[#__modStack + 1] = __module\n");
             out.append("    __module = __dynM\n");
             out.append("    local __okA, __resA = pcall(__unfn(__dynS), unpack(")
-                .append(carrierArgs).append(", 1, __dynC.__m))\n");
+                .append(carrierArgs).append(", 1, __dynN))\n");
             out.append("    __module = __modStack[#__modStack]\n");
             out.append("    __modStack[#__modStack] = nil\n");
             out.append("    if not __okA then error(__resA, 0) end\n");
@@ -12907,16 +12999,52 @@ local function __adaptSource(w)
   elseif w[__dealCarrierKeys.mode] == 1 then return w.__cell[1]
   else return w.__thunk() end
 end
--- The D15 adapter invocation protocol: resolve the source per the
--- closed capture mode (0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK),
--- the source-signature check, then the source invocation with the
--- leading M arguments only. A DEAL-body source owns its own frame (its
--- carrier wrapper pushes and pops it); the identical completion error
--- propagates unchanged.
+-- The D15 adapter invocation protocol: the target signature's
+-- parameter cells (the ignored trailing parameters of an arity
+-- extension included — docs/spec-v1.3.md Arity extension adapter), the
+-- source resolution per the closed capture mode (0 VALUE, 1
+-- SHARED_CELL, 2 REEVALUATE_THUNK), the source-signature check, then
+-- the source invocation with the leading M arguments only. A DEAL-body
+-- source owns its own frame (its carrier wrapper pushes and pops it);
+-- the identical completion error propagates unchanged.
 local function __adaptInvoke(w, origin, ...)
   local __cargs = {...}
+  -- The adapter's own wrapper admits every declared target parameter at
+  -- the invoking position, exactly like a function wrapper's parameter
+  -- checks: a DEAL call site's parameter cells already admitted the same
+  -- values (the repeated check is idempotent), while a host that invokes
+  -- the published adapter value directly has no cell of its own — this
+  -- wrapper is its only enforcement point, so a wrong-typed ignored
+  -- target argument fails closed instead of being dropped.
+  local __tp = w.__tp
+  if __tp ~= nil then
+    for __ti = 1, #__tp do
+      local __cell = __tp[__ti]
+      local __okP, __chkP = pcall(__bcheck, __cell[1], __cell[2],
+        __cargs[__ti], __cell[3])
+      if not __okP then
+        if type(__chkP) == "table" then __chkP.o = origin or "-" end
+        error(__chkP, 0)
+      end
+      __cargs[__ti] = __chkP
+    end
+  end
   local src = __adaptSource(w)
   __fncheck(src, w.__csrc, origin)
+  -- An adapter-valued source is an ordinary function value of its declared
+  -- signature (docs/spec-v1.3.md Function type compatibility): runtime
+  -- provenance as an adapter is not part of the type. Resolve the nested
+  -- adapter's own source and source-signature check the same way and keep
+  -- its own leading-M projection, so the invocation reaches the statically
+  -- fixed body, host or intrinsic class at the end of the chain — never an
+  -- unbound adapter protocol call and never a second unresolved wrapper.
+  local __count = w.__m
+  while type(src) == "table" and src[__dealCarrierKeys.mode] ~= nil do
+    __count = src.__m
+    local __inner = __adaptSource(src)
+    __fncheck(__inner, src.__csrc, origin)
+    src = __inner
+  end
   local __fid = nil
   if type(src) == "table" then __fid = src[__dealCarrierKeys.fid] end
   if type(src) == "function" then __fid = src[__dealCarrierKeys.fid] end
@@ -12939,7 +13067,33 @@ local function __adaptInvoke(w, origin, ...)
   -- expression), so only a real call origin is published.
   local __originPushed = origin ~= nil and origin ~= "-"
   if __originPushed then __callOrigins[#__callOrigins + 1] = origin end
-  local __okA, __vA = pcall(__unfn(src), unpack(__cargs, 1, w.__m))
+  local __fnv = __unfn(src)
+  local __okA, __vA
+  if type(src) == "table" and src[__dealCarrierKeys.sid] ~= nil then
+    -- A cataloged stdlib callable (a statically typed function value such
+    -- as `json.parse`) carries the packed row invoker: the D15 invocation
+    -- runs that row with the adapter's leading-M projection. The direct
+    -- form owns no DEAL call op (a host-facing bridge or an exported
+    -- callable), so the invocation context is the generic CALL label and
+    -- the absent project coordinates.
+    __okA, __vA = pcall(__fnv, "CALL", "-", "-", "-", origin or "-",
+      unpack(__cargs, 1, __count))
+  elseif type(__fnv) == "table" and type(__fnv.f) == "function" then
+    -- A loaded host surface entry carries its calling convention under .f
+    -- and takes the span triplet after its declared arguments (the
+    -- converged host-boundary call shape); the adapter forwards only its
+    -- own leading-M projection and reports the invoking call's origin.
+    local __hf, __hl, __hc = "-", 0, 0
+    if origin ~= nil and origin ~= "-" then
+      local __mf, __ml, __mc = string.match(origin, "^(.*):(%d+):(%d+)$")
+      if __mf ~= nil then
+        __hf, __hl, __hc = __mf, tonumber(__ml), tonumber(__mc)
+      end
+    end
+    __okA, __vA = pcall(__fnv.f, unpack(__cargs, 1, __count), __hf, __hl, __hc)
+  else
+    __okA, __vA = pcall(__fnv, unpack(__cargs, 1, __count))
+  end
   if __originPushed then __callOrigins[#__callOrigins] = nil end
   if __switched then __module = __savedModule end
   if not __okA then error(__vA, 0) end

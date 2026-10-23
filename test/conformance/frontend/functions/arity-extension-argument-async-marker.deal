@@ -1,0 +1,13 @@
+// @spec: Functions — Function type compatibility
+// @description: Arity extension requires an identical async marker at a parameter position — a sync argument never fills an async target
+// @expected: compile-error E5001
+// @features: functions, arity-extension, async-await, diagnostics
+
+function syncOne(x: int): int { return x; }
+
+function needAsyncPair(f: async (x: int, y: int) => int): int { return 1; }
+
+export function main(): null {
+  let r: int = needAsyncPair(syncOne);
+  return null;
+}

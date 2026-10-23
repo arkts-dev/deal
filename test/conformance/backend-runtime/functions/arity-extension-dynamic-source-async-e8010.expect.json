@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "backends": [
+    "luajit",
+    "jvm",
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-error",
+    "transcript": {
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected (int,int)->int, got (int)->int\",\"sourceFile\":\"backend-runtime/functions/arity-extension-dynamic-source-async-e8010.deal\",\"line\":8,\"column\":22,\"expected\":\"(int,int)->int\",\"actual\":\"(int)->int\"}\n",
+      "stderr": ""
+    },
+    "exitCode": 1,
+    "error": {
+      "code": "E8010",
+      "message": "function signature mismatch: expected (int,int)->int, got (int)->int",
+      "sourceFile": "backend-runtime/functions/arity-extension-dynamic-source-async-e8010.deal",
+      "line": 8,
+      "column": 22,
+      "expected": "(int,int)->int",
+      "actual": "(int)->int"
+    }
+  }
+}

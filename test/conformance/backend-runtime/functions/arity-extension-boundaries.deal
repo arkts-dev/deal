@@ -1,0 +1,71 @@
+// @spec: Functions — Function type compatibility; Arity extension adapter
+// @description: The arity-extension position boundaries beyond the primary corpus: a later RETURN than the function's first (and the adapted-first control), a class default that adapts although the declaring unit never constructs the class and a supplied-only construction beside it, a cross-module class default constructed only from the entry module, and cataloged stdlib callable sources at a longer parameter position and as an adapted callee.
+// @expected: runtime-ok
+// @features: functions, arity-extension, classes, stdlib
+
+import * as console from "std/console";
+import * as json from "std/json";
+import * as lib from "./arity-extension-boundaries-lib";
+
+class NeverBuilt {
+  pair: (x: int, y: int) => int = one;
+}
+
+class SuppliedOnly {
+  pair: (x: int, y: int) => int = one;
+}
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+function one(x: int): int { return x; }
+
+function exactPair(x: int, y: int): int { return x + y; }
+
+function pickPair(n: int): (x: int, y: int) => int {
+  if (n > 0) {
+    return exactPair;
+  }
+  return one;
+}
+
+function pickPairAdaptedFirst(n: int): (x: int, y: int) => int {
+  if (n > 0) {
+    return one;
+  }
+  return exactPair;
+}
+
+function needParse(f: (text: string, extra: int) => table): table {
+  return f("{}", 9);
+}
+
+export function main(): null {
+  check(pickPair(0)(5, 6) === 5,
+    "a later RETURN than the boundary's first adapts one-to-two");
+  check(pickPair(1)(5, 6) === 11,
+    "an early exact RETURN beside a later adapted RETURN stays exact");
+  check(pickPairAdaptedFirst(0)(5, 6) === 11,
+    "an adapted first RETURN beside a later exact RETURN stays exact");
+
+  let suppliedOnly: SuppliedOnly = { pair: exactPair };
+  check(suppliedOnly.pair(2, 3) === 5,
+    "a supplied-only construction leaves the adapted default wired");
+  let importedDefault: lib.Holder = {};
+  check(importedDefault.pair(4, 5) === 4,
+    "a cross-module default class field adapts one-to-two");
+
+  let parsed: table = needParse(json.parse);
+  check(json.stringify(parsed) === "{}",
+    "a cataloged stdlib callable adapts at a longer parameter position");
+  let parseWide: (text: string, extra: int) => table = json.parse;
+  check(json.stringify(parseWide("{}", 9)) === "{}",
+    "an adapter over a cataloged stdlib callable invokes its row");
+
+  console.log("OK");
+  return null;
+}

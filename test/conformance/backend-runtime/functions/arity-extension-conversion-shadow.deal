@@ -1,0 +1,150 @@
+// @spec: Functions — Function type compatibility; Arity extension adapter
+// @description: A lexically shadowed int/number/bytes name adapts the position's own binding value, never the compiler intrinsic: v1.3 name resolution places locals and parameters before the intrinsics, so the parameter, return, class supplied-field, class field-write, array literal and array write positions each add exactly one arity-extension adapter over the shadow's declared signature. Every expected value is the shadow's own result — an adapter over the intrinsic would convert or allocate instead.
+// @expected: runtime-ok
+// @features: functions, arity-extension, classes, arrays, intrinsics, name-resolution
+
+import * as console from "std/console";
+
+// The user callees the shadowed names hold. The unshadowed intrinsics are
+// (number)->int, (int)->number and (int)->bytes, so an adapter built over
+// one of them converts its leading argument or allocates a buffer.
+
+function pairSeven(x: number, y: number): int { return 7; }
+
+function numberSeven(x: int, y: int): number { return 7.5; }
+
+function pairBytes(x: int, y: int): bytes { return bytes(x + y); }
+
+// The exact triple-arity defaults the holders declare, and the assertion
+// helpers the positions call through.
+
+function tripleSeven(x: number, y: number, z: number): int { return 7; }
+
+function tripleNumber(x: int, y: int, z: int): number { return 7.5; }
+
+function tripleBytes(x: int, y: int, z: int): bytes { return bytes(x + y); }
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+class IntHolder {
+  pair: (x: number, y: number, z: number) => int = tripleSeven;
+}
+
+class NumberHolder {
+  value: (x: int, y: int, z: int) => number = tripleNumber;
+}
+
+class BytesHolder {
+  buffer: (x: int, y: int, z: int) => bytes = tripleBytes;
+}
+
+function needTripleInt(f: (x: number, y: number, z: number) => int): int {
+  return f(9.0, 9.0, 9.0);
+}
+
+function needTripleNumber(f: (x: int, y: int, z: int) => number): number {
+  return f(9, 9, 9);
+}
+
+function needTripleBytes(f: (x: int, y: int, z: int) => bytes): bytes {
+  return f(9, 9, 9);
+}
+
+// The return positions: each function's parameter is the shadowing name, so
+// the returned value is the parameter's function value, never the intrinsic.
+
+function widenInt(int: (x: number, y: number) => int):
+    (x: number, y: number, z: number) => int {
+  return int;
+}
+
+function widenNumber(number: (x: int, y: int) => number):
+    (x: int, y: int, z: int) => number {
+  return number;
+}
+
+function widenBytes(bytes: (x: int, y: int) => bytes):
+    (x: int, y: int, z: int) => bytes {
+  return bytes;
+}
+
+export function main(): null {
+  // --- the parameter positions --------------------------------------------
+  let int: (x: number, y: number) => int = pairSeven;
+  check(needTripleInt(int) === 7,
+    "the parameter position adapted the int intrinsic");
+
+  let number: (x: int, y: int) => number = numberSeven;
+  check(needTripleNumber(number) === 7.5,
+    "the parameter position adapted the number intrinsic");
+
+  let bytes: (x: int, y: int) => bytes = pairBytes;
+  check(needTripleBytes(bytes).length === 18,
+    "the parameter position adapted the bytes allocation intrinsic");
+
+  // --- the class supplied-field positions ---------------------------------
+  let intHolder: IntHolder = { pair: int };
+  check(needTripleInt(intHolder.pair) === 7,
+    "the supplied class field adapted the int intrinsic");
+  let numberHolder: NumberHolder = { value: number };
+  check(needTripleNumber(numberHolder.value) === 7.5,
+    "the supplied class field adapted the number intrinsic");
+  let bytesHolder: BytesHolder = { buffer: bytes };
+  check(needTripleBytes(bytesHolder.buffer).length === 18,
+    "the supplied class field adapted the bytes allocation intrinsic");
+
+  // --- the class field-write positions ------------------------------------
+  intHolder.pair = int;
+  check(needTripleInt(intHolder.pair) === 7,
+    "the class field write adapted the int intrinsic");
+  numberHolder.value = number;
+  check(needTripleNumber(numberHolder.value) === 7.5,
+    "the class field write adapted the number intrinsic");
+  bytesHolder.buffer = bytes;
+  check(needTripleBytes(bytesHolder.buffer).length === 18,
+    "the class field write adapted the bytes allocation intrinsic");
+
+  // --- the array literal positions ---------------------------------------
+  let ints: ((x: number, y: number, z: number) => int)[] = [int];
+  check(ints[0](9.0, 9.0, 9.0) === 7,
+    "the array literal adapted the int intrinsic");
+  let numbers: ((x: int, y: int, z: int) => number)[] = [number];
+  check(numbers[0](9, 9, 9) === 7.5,
+    "the array literal adapted the number intrinsic");
+  let buffers: ((x: int, y: int, z: int) => bytes)[] = [bytes];
+  check(buffers[0](9, 9, 9).length === 18,
+    "the array literal adapted the bytes allocation intrinsic");
+
+  // --- the array write positions -----------------------------------------
+  let writtenInts: ((x: number, y: number, z: number) => int)[] = [tripleSeven];
+  writtenInts[0] = int;
+  check(writtenInts[0](9.0, 9.0, 9.0) === 7,
+    "the array write adapted the int intrinsic");
+  let writtenNumbers: ((x: int, y: int, z: int) => number)[] = [tripleNumber];
+  writtenNumbers[0] = number;
+  check(writtenNumbers[0](9, 9, 9) === 7.5,
+    "the array write adapted the number intrinsic");
+  let writtenBuffers: ((x: int, y: int, z: int) => bytes)[] = [tripleBytes];
+  writtenBuffers[0] = bytes;
+  check(writtenBuffers[0](9, 9, 9).length === 18,
+    "the array write adapted the bytes allocation intrinsic");
+
+  // --- the return positions ----------------------------------------------
+  let widenedInt: (x: number, y: number, z: number) => int = widenInt(int);
+  check(widenedInt(9.0, 9.0, 9.0) === 7,
+    "the return position adapted the int intrinsic");
+  let widenedNumber: (x: int, y: int, z: int) => number = widenNumber(number);
+  check(widenedNumber(9, 9, 9) === 7.5,
+    "the return position adapted the number intrinsic");
+  let widenedBytes: (x: int, y: int, z: int) => bytes = widenBytes(bytes);
+  check(widenedBytes(9, 9, 9).length === 18,
+    "the return position adapted the bytes allocation intrinsic");
+
+  console.log("OK");
+  return null;
+}

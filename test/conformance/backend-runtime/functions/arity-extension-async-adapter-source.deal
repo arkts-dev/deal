@@ -1,0 +1,48 @@
+// @spec: Functions — Function type compatibility; Arity extension adapter
+// @description: An async function value whose declared type is itself an adapter's adapts at a wider async position: the assignment control makes the position's source an assigned binding cell, the adapter-of-adapter invocation descends each level's own leading-M projection, the async marker and the ignored target parameters are preserved, and every adapted invocation completes with the innermost source's result.
+// @expected: runtime-ok
+// @features: functions, arity-extension, async-await
+
+import * as console from "std/console";
+
+function check(condition: boolean, message: string): null {
+  if (!condition) {
+    throw { code: "TEST_FAIL", message: message };
+  }
+  return null;
+}
+
+async function base(x: int): int { return x + 40; }
+
+async function zero(): int { return 41; }
+
+async function widen(): async (x: int) => int {
+  let inner: async (x: int) => int = zero;
+  return inner;
+}
+
+export async function test_arity_extension_async_adapter_source(): int {
+  let source: async (x: int) => int = zero;
+  let handed: async (x: int) => int = zero;
+  source = handed;
+  let widened: async (x: int, y: int) => int = source;
+  let first: int = await widened(1, 2);
+  check(first === 41, "an assigned adapter-valued async source descends its chain");
+
+  let exact: async (x: int) => int = base;
+  let widenedExact: async (x: int, y: int) => int = exact;
+  let second: int = await widenedExact(1, 2);
+  check(second === 41, "the exact async source control adapts once");
+
+  let returned: async (x: int) => int = await widen();
+  let widenedReturned: async (x: int, y: int) => int = returned;
+  let third: int = await widenedReturned(1, 2);
+  check(third === 41, "a zero-to-one adapter value returned from an async function adapts");
+
+  console.log("ASYNC ADAPTER SOURCE OK");
+  return first + second + third;
+}
+
+export function main(): null {
+  return null;
+}

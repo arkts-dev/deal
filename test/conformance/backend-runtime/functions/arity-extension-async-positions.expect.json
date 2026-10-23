@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "backends": ["luajit", "jvm", "js"],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "ASYNC OK\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

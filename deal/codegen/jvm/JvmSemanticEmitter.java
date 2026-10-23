@@ -625,15 +625,20 @@ public final class JvmSemanticEmitter {
                         case KindPayload.TryCatchPayload payload ->
                             fields.add(cell(payload.catchBinding(), 0));
                         case KindPayload.AsyncStartPayload payload -> {
-                            // An indirect callee names a closure identity that
-                            // the op emits no result for (a value-carried
-                            // invocation over an identity-preserving load, or
-                            // the nested source start of an adapter-over-async
-                            // task): its slot field must exist even when no op
-                            // of the closure carries it as a result or operand.
-                            if (payload.callee()
-                                    instanceof KindPayload.CallCallee.Indirect indirect) {
-                                fields.add(slot(indirect.callee()));
+                            // A callee identity the op emits no result for (a
+                            // value-carried invocation over an
+                            // identity-preserving load, the nested source start
+                            // of an adapter-over-async task, or that start's
+                            // runtime-resolved source carrier): its slot field
+                            // must exist even when no op of the closure carries
+                            // it as a result or operand.
+                            switch (payload.callee()) {
+                                case KindPayload.CallCallee.Indirect indirect ->
+                                    fields.add(slot(indirect.callee()));
+                                case KindPayload.CallCallee.Dynamic dynamic ->
+                                    fields.add(slot(dynamic.callee()));
+                                default -> {
+                                }
                             }
                         }
                         default -> {
@@ -2917,8 +2922,33 @@ public final class JvmSemanticEmitter {
             out.append(", ").append(payload.sourceSignature().paramTypes().size())
                 .append(", ")
                 .append(javaString(payload.sourceSignature().canonicalSpecText()))
+                .append(", ").append(targetParameterCells(payload.targetSignature()))
                 .append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
+        }
+
+        /**
+         * The adapter's target-signature parameter cells: the
+         * {@code {descriptor, static kind, canonical}} triple of every
+         * declared target parameter, which
+         * {@code JvmRuntime.invokeAdapter} admits before the leading-M
+         * projection. The ignored trailing parameters of an arity extension
+         * are checked exactly like the forwarded leading ones
+         * (docs/spec-v1.3.md Arity extension adapter), so a host that
+         * invokes the published adapter value directly enforces the whole
+         * declared target signature.
+         */
+        private static String targetParameterCells(RuntimeDescriptor.Func target) {
+            StringBuilder cells = new StringBuilder("new JvmRuntime.TargetCell[] {");
+            for (RuntimeDescriptor parameter : target.paramTypes()) {
+                cells.append("new JvmRuntime.TargetCell(")
+                    .append(javaString(descriptorText(parameter))).append(", ")
+                    .append(javaString(staticKind(parameter))).append(", ")
+                    .append(containsFunction(parameter)
+                        ? javaString(parameter.canonicalSpecText()) : "null")
+                    .append("), ");
+            }
+            return cells.append('}').toString();
         }
 
         private String adaptValueExpr(AdaptSourceRef.Value value) {
@@ -3856,6 +3886,22 @@ public final class JvmSemanticEmitter {
                 .append(" = JvmRuntime.fnCheck(JvmRuntime.adapterSource(__ad")
                 .append(id).append("), __ad").append(id).append(".sourceSpec, ")
                 .append(javaString(originOf(op))).append(");\n");
+            // An adapter-valued source is an ordinary function value of its
+            // declared signature: descend the adapter chain's own source
+            // resolution, source-signature check and leading-M projection
+            // before the runtime class dispatch.
+            out.append(indent(indent + 1)).append("int __an").append(id)
+                .append(" = __ad").append(id).append(".arity;\n");
+            out.append(indent(indent + 1)).append("while (__src").append(id)
+                .append(" instanceof JvmRuntime.AdapterValue __na").append(id)
+                .append(") {\n");
+            out.append(indent(indent + 2)).append("__src").append(id)
+                .append(" = JvmRuntime.fnCheck(JvmRuntime.adapterSource(__na")
+                .append(id).append("), __na").append(id).append(".sourceSpec, ")
+                .append(javaString(originOf(op))).append(");\n");
+            out.append(indent(indent + 2)).append("__an").append(id)
+                .append(" = __na").append(id).append(".arity;\n");
+            out.append(indent(indent + 1)).append("}\n");
             out.append(indent(indent + 1)).append("if (__src").append(id)
                 .append(" instanceof JvmRuntime.Intrinsic __ii").append(id)
                 .append(") {\n");
@@ -3898,11 +3944,68 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent + 2)).append(result).append(" = ")
                     .append(dynamicAdmitted).append(";\n");
             }
+            // A cataloged stdlib callable carries the packed row-invoker
+            // calling convention: the adapter dispatches it through the
+            // catalog entry with its leading-M projection, exactly the
+            // dynamic HOST stdlib row, then the call's recorded
+            // HOST_TO_DEAL return cell admits the result. The source is a
+            // statically typed function value (`std.parse`), so the
+            // position's adaptation is the arity extension, never a
+            // permissive runtime signature match.
+            out.append(indent(indent + 1)).append("} else if (__src").append(id)
+                .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
+            out.append(indent(indent + 2)).append("try {\n");
+            out.append(indent(indent + 3)).append(result)
+                .append(" = JvmRuntime.invokeStdlibCallable((JvmRuntime."
+                    + "StdlibFunctionValue) __src").append(id).append(", ")
+                .append(javaString(op.kind().name())).append(", ")
+                .append(javaString(opKey(op.opId()))).append(", ")
+                .append(javaString(op.contract().canonicalDigest())).append(", ")
+                .append(javaString(parentKey(op.origin().parentOpId()))).append(", ")
+                .append(javaString(originOf(op))).append(", "
+                    + "java.util.Arrays.copyOfRange(new Object[]{ ")
+                .append(argList).append(" }, 0, __an").append(id)
+                .append("));\n");
+            out.append(indent(indent + 2)).append("} catch (JvmRuntime.DealError __se")
+                .append(id).append(") {\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "JvmRuntime.errtext(__se" + id + ")", indent + 3);
+            out.append(indent(indent + 3)).append("throw __se").append(id)
+                .append(";\n");
+            out.append(indent(indent + 2)).append("}\n");
+            String stdlibAdmitted = emitHostCellRun(op, hostCell, result,
+                indent + 2);
+            out.append(indent(indent + 2)).append(result).append(" = ")
+                .append(stdlibAdmitted).append(";\n");
+            out.append(indent(indent + 1)).append("} else if (__src").append(id)
+                .append(" instanceof JvmRuntime.FunctionValue __hf").append(id)
+                .append(" && __hf").append(id).append(".fid == null) {\n");
+            // A host-origin function value (the source is a loaded host
+            // surface entry): its own published invoker carries the
+            // declared parameter/return checks; the adapter forwards only
+            // its leading-M projection and the recorded HOST_TO_DEAL cell
+            // admits the result.
+            out.append(indent(indent + 2)).append("try {\n");
+            out.append(indent(indent + 3)).append(result).append(" = __hf")
+                .append(id).append(".fn.invoke(java.util.Arrays.copyOfRange("
+                    + "new Object[]{ ").append(argList).append(" }, 0, __an")
+                .append(id).append("));\n");
+            out.append(indent(indent + 2)).append("} catch (JvmRuntime.DealError __he")
+                .append(id).append(") {\n");
+            emitFailureEvent(op.opId(), op.kind().name(), op,
+                "JvmRuntime.errtext(__he" + id + ")", indent + 3);
+            out.append(indent(indent + 3)).append("throw __he").append(id)
+                .append(";\n");
+            out.append(indent(indent + 2)).append("}\n");
+            String hostAdmitted = emitHostCellRun(op, hostCell, result,
+                indent + 2);
+            out.append(indent(indent + 2)).append(result).append(" = ")
+                .append(hostAdmitted).append(";\n");
             out.append(indent(indent + 1)).append("} else if (__src").append(id)
                 .append(" instanceof JvmRuntime.FunctionValue) {\n");
             emitDynamicBodyInvoke(op, "__src" + id, result,
                 "java.util.Arrays.copyOfRange(new Object[]{ " + argList
-                    + " }, 0, __ad" + id + ".arity)", id, indent + 2);
+                    + " }, 0, __an" + id + ")", id, indent + 2);
             if (callOwnedDealCell) {
                 emitRecordedCellRun(op, recordedDealCell, result, "__cr" + id,
                     indent + 2);
@@ -4134,6 +4237,24 @@ public final class JvmSemanticEmitter {
                 .append(adapter).append("), ").append(adapter)
                 .append(".sourceSpec, ").append(javaString(originOf(op)))
                 .append(");\n");
+            // An adapter-valued source is an ordinary function value of its
+            // declared signature: descend its own published invocation
+            // chain (source resolution, source-signature check and
+            // leading-M projection) before the task resolves the source's
+            // runtime class.
+            String sourceArity = "__dn" + id;
+            out.append(indent(indent + 1)).append("int ").append(sourceArity)
+                .append(" = ").append(adapter).append(".arity;\n");
+            out.append(indent(indent + 1)).append("while (").append(source)
+                .append(" instanceof JvmRuntime.AdapterValue __na").append(id)
+                .append(") {\n");
+            out.append(indent(indent + 2)).append(source)
+                .append(" = JvmRuntime.fnCheck(JvmRuntime.adapterSource(__na")
+                .append(id).append("), __na").append(id).append(".sourceSpec, ")
+                .append(javaString(originOf(op))).append(");\n");
+            out.append(indent(indent + 2)).append(sourceArity)
+                .append(" = __na").append(id).append(".arity;\n");
+            out.append(indent(indent + 1)).append("}\n");
 
             out.append(indent(indent + 1)).append("if (").append(source)
                 .append(" instanceof JvmRuntime.Intrinsic __ii").append(id)
@@ -4168,6 +4289,10 @@ public final class JvmSemanticEmitter {
                 .append(" == null) {\n");
             emitDynamicCarrierFailure(op, source, indent + 2);
             out.append(indent(indent + 1)).append("}\n");
+            out.append(indent(indent + 1)).append("final Object __df").append(id)
+                .append(" = ").append(source).append(";\n");
+            out.append(indent(indent + 1)).append("final int __dfn").append(id)
+                .append(" = ").append(sourceArity).append(";\n");
             out.append(indent(indent + 1)).append("JvmRuntime.startBodyTaskInstance(")
                 .append(token.tokenId()).append(", \"DEAL_BODY_TASK\", () -> {\n");
             out.append(indent(indent + 2)).append("String __prevM = "
@@ -4179,20 +4304,20 @@ public final class JvmSemanticEmitter {
             if (callOwnedTaskCell) {
                 out.append(indent(indent + 3)).append("Object __dv").append(id)
                     .append(" = ")
-                    .append("((JvmRuntime.FunctionValue) ").append(source)
+                    .append("((JvmRuntime.FunctionValue) __df").append(id)
                     .append(").fn.invoke(java.util.Arrays.copyOfRange(new Object[]{ ")
-                    .append(String.join(", ", args)).append(" }, 0, ")
-                    .append(adapter).append(".arity));\n");
+                    .append(String.join(", ", args)).append(" }, 0, __dfn")
+                    .append(id).append("));\n");
                 emitRecordedCellRun(op, recordedTaskCell, "__dv" + id, "__vc" + id,
                     indent + 3);
                 out.append(indent(indent + 3)).append("return __dv").append(id)
                     .append(";\n");
             } else {
                 out.append(indent(indent + 3)).append("return "
-                    + "((JvmRuntime.FunctionValue) ").append(source)
+                    + "((JvmRuntime.FunctionValue) __df").append(id)
                     .append(").fn.invoke(java.util.Arrays.copyOfRange(new Object[]{ ")
-                    .append(String.join(", ", args)).append(" }, 0, ")
-                    .append(adapter).append(".arity));\n");
+                    .append(String.join(", ", args)).append(" }, 0, __dfn")
+                    .append(id).append("));\n");
             }
             out.append(indent(indent + 2)).append("} finally {\n");
             out.append(indent(indent + 3)).append("MODULE = __prevM;\n");

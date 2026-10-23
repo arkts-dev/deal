@@ -1511,29 +1511,172 @@ public class BindingsValidationTest {
     }
 
     private static void testNoAdapterAtBoundaryNegative() {
-        // An adapter result wired directly into a non-position boundary
-        // op (a function return): typed boundary positions never adapt.
+        // The closed creation-wiring rule: an adapter result is the direct
+        // input of exactly the adapted position's own cell and of no other
+        // typed boundary. A stdlib return crossing alone is rejected
+        // outright, a crossing beside an agreeing position cell is rejected
+        // too, and a class default's published result admits no consumer
+        // beyond its own CLASS_DEFAULT_FIELD construction cells.
         BindingId x = nextBindingId();
         ValueId adapterResult = nextValue();
+        FunctionAllocationIdentity identity = new FunctionAllocationIdentity(
+            adapterResult.id());
         SemanticOp alloc = allocOp(x, INIT_BLOCK, 0);
         SemanticOp initValue = constInt();
         SemanticOp init = initOp(x, 0, (ValueId) initValue.result());
         SemanticOp adapt = adaptOp(CaptureMode.SHARED_CELL,
             new AdaptSourceRef.SharedCell(x, 0), SIG1, SIG2, null, List.of(), List.of(),
             adapterResult);
-        SemanticOp returnBoundary = boundaryOp(BoundaryKind.FUNCTION_RETURN, SIG2,
+        SemanticOp crossing = boundaryOp(BoundaryKind.STDLIB_RETURN, SIG2,
             adapterResult);
         LoweredModuleUnit unit = unit(Map.of(),
-            Map.of(new FunctionAllocationIdentity(adapterResult.id()),
+            Map.of(identity,
                 new FunctionExecutionBinding.AdapterBinding(adapt.opId(),
                     CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(x, 0), SIG1,
                     SIG2)),
-            List.of(alloc, initValue, init, adapt, returnBoundary));
+            List.of(alloc, initValue, init, adapt, crossing));
         StructuredBodyTable table = tableOf(Map.of(INIT_BLOCK,
-            List.of(alloc, initValue, init, adapt, returnBoundary)));
-        assertE6005(BindingsProductionValidator.validate(unit, table), "NO_ADAPTER_AT_BOUNDARY",
-            "an adapter result wired into a FUNCTION_RETURN boundary op",
-            "FUNCTION_RETURN");
+            List.of(alloc, initValue, init, adapt, crossing)));
+        assertE6005(BindingsProductionValidator.validate(unit, table),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "an adapter result wired into a STDLIB_RETURN crossing",
+            "STDLIB_RETURN", "not the adapted position's own cell");
+
+        // A second consumer of the same adapter result: the variable
+        // position's own chain agrees, and the stdlib return crossing beside
+        // it still fails closed.
+        BindingId store = nextBindingId();
+        ValueId assignedAdapter = nextValue();
+        FunctionAllocationIdentity assignedIdentity = new FunctionAllocationIdentity(
+            assignedAdapter.id());
+        SemanticOp storeAlloc = allocOp(store, INIT_BLOCK, 0);
+        SemanticOp storeInitValue = constInt();
+        SemanticOp storeInit = initOp(store, 0, (ValueId) storeInitValue.result());
+        SemanticOp assignedAdapt = adaptOp(CaptureMode.SHARED_CELL,
+            new AdaptSourceRef.SharedCell(store, 0), SIG1, SIG2, null, List.of(),
+            List.of(), assignedAdapter);
+        SemanticOp assignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT, SIG2,
+            assignedAdapter);
+        SemanticOp commit = storeOp(store, 0, assignedAdapter);
+        SemanticOp sideCrossing = boundaryOp(BoundaryKind.STDLIB_RETURN, SIG2,
+            assignedAdapter);
+        LoweredModuleUnit unitCrossing = unit(Map.of(),
+            Map.of(assignedIdentity,
+                new FunctionExecutionBinding.AdapterBinding(assignedAdapt.opId(),
+                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(store, 0),
+                    SIG1, SIG2)),
+            List.of(storeAlloc, storeInitValue, storeInit, assignedAdapt, assignment,
+                commit, sideCrossing));
+        StructuredBodyTable tableCrossing = tableOf(Map.of(INIT_BLOCK,
+            List.of(storeAlloc, storeInitValue, storeInit, assignedAdapt, assignment,
+                commit, sideCrossing)));
+        assertE6005(BindingsProductionValidator.validate(unitCrossing, tableCrossing),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "an adapter result whose agreeing assignment cell is joined by a "
+                + "STDLIB_RETURN crossing",
+            "STDLIB_RETURN", "not the adapted position's own cell");
+
+        // The class-default publisher: no construction is required in the
+        // declaring unit, but a stdlib return crossing of the published
+        // result is still not a position cell.
+        ValueId defaultAdapter = nextValue();
+        FunctionAllocationIdentity defaultIdentity = new FunctionAllocationIdentity(
+            defaultAdapter.id());
+        BlockId defaultBlock = nextBlock();
+        SemanticOp defaultAdapt = adaptOp(CaptureMode.SHARED_CELL,
+            new AdaptSourceRef.SharedCell(x, 0), SIG1, SIG2, null, List.of(), List.of(),
+            defaultAdapter);
+        SemanticOp classDefault = op(SemanticOpKind.CLASS_DEFAULT,
+            new KindPayload.ClassDefaultPayload(new ClassId("mod.binding", "C"),
+                "handler", defaultBlock),
+            defaultAdapter, SIG2, FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp defaultCrossing = boundaryOp(BoundaryKind.STDLIB_RETURN, SIG2,
+            defaultAdapter);
+        LoweredModuleUnit unitDefault = unit(Map.of(),
+            Map.of(defaultIdentity,
+                new FunctionExecutionBinding.AdapterBinding(defaultAdapt.opId(),
+                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(x, 0), SIG1,
+                    SIG2)),
+            List.of(alloc, initValue, init, defaultAdapt, classDefault, defaultCrossing));
+        StructuredBodyTable tableDefault = tableOf(Map.ofEntries(
+            Map.entry(INIT_BLOCK, List.of(alloc, initValue, init, defaultAdapt,
+                classDefault, defaultCrossing)),
+            Map.entry(defaultBlock, List.of())));
+        assertE6005(BindingsProductionValidator.validate(unitDefault, tableDefault),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "a class-default adapter published beside a STDLIB_RETURN crossing",
+            "STDLIB_RETURN", "CLASS_DEFAULT_FIELD");
+
+        // The variable position's own chain is closed by adjacency: a
+        // VARIABLE_ASSIGNMENT cell that consumes the adapter result but is
+        // not the op immediately following the adapter in its own block is
+        // not the position's own chain — the commit that follows it does
+        // not make it one.
+        BindingId displaced = nextBindingId();
+        ValueId displacedAdapter = nextValue();
+        FunctionAllocationIdentity displacedIdentity = new FunctionAllocationIdentity(
+            displacedAdapter.id());
+        SemanticOp displacedAlloc = allocOp(displaced, INIT_BLOCK, 0);
+        SemanticOp displacedInitValue = constInt();
+        SemanticOp displacedInit = initOp(displaced, 0,
+            (ValueId) displacedInitValue.result());
+        SemanticOp displacedAdapt = adaptOp(CaptureMode.SHARED_CELL,
+            new AdaptSourceRef.SharedCell(displaced, 0), SIG1, SIG2, null, List.of(),
+            List.of(), displacedAdapter);
+        SemanticOp displacedFiller = constInt();
+        SemanticOp displacedAssignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT, SIG2,
+            displacedAdapter);
+        SemanticOp displacedCommit = storeOp(displaced, 0, displacedAdapter);
+        LoweredModuleUnit unitDisplaced = unit(Map.of(),
+            Map.of(displacedIdentity,
+                new FunctionExecutionBinding.AdapterBinding(displacedAdapt.opId(),
+                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(displaced, 0),
+                    SIG1, SIG2)),
+            List.of(displacedAlloc, displacedInitValue, displacedInit, displacedAdapt,
+                displacedFiller, displacedAssignment, displacedCommit));
+        StructuredBodyTable tableDisplaced = tableOf(Map.of(INIT_BLOCK,
+            List.of(displacedAlloc, displacedInitValue, displacedInit, displacedAdapt,
+                displacedFiller, displacedAssignment, displacedCommit)));
+        assertE6005(BindingsProductionValidator.validate(unitDisplaced, tableDisplaced),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "an adapter result whose variable cell is not its immediate successor",
+            "immediately following", "VARIABLE_ASSIGNMENT");
+
+        // The adjacent cell alone is not the chain either: the position's
+        // single commit must follow the cell immediately, storing the
+        // adapter result.
+        BindingId uncommitted = nextBindingId();
+        ValueId uncommittedAdapter = nextValue();
+        FunctionAllocationIdentity uncommittedIdentity =
+            new FunctionAllocationIdentity(uncommittedAdapter.id());
+        SemanticOp uncommittedAlloc = allocOp(uncommitted, INIT_BLOCK, 0);
+        SemanticOp uncommittedInitValue = constInt();
+        SemanticOp uncommittedInit = initOp(uncommitted, 0,
+            (ValueId) uncommittedInitValue.result());
+        SemanticOp uncommittedAdapt = adaptOp(CaptureMode.SHARED_CELL,
+            new AdaptSourceRef.SharedCell(uncommitted, 0), SIG1, SIG2, null, List.of(),
+            List.of(), uncommittedAdapter);
+        SemanticOp uncommittedAssignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT,
+            SIG2, uncommittedAdapter);
+        SemanticOp uncommittedFiller = constInt();
+        SemanticOp uncommittedStore = storeOp(uncommitted, 0, uncommittedAdapter);
+        LoweredModuleUnit unitUncommitted = unit(Map.of(),
+            Map.of(uncommittedIdentity,
+                new FunctionExecutionBinding.AdapterBinding(uncommittedAdapt.opId(),
+                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(uncommitted, 0),
+                    SIG1, SIG2)),
+            List.of(uncommittedAlloc, uncommittedInitValue, uncommittedInit,
+                uncommittedAdapt, uncommittedAssignment, uncommittedFiller,
+                uncommittedStore));
+        StructuredBodyTable tableUncommitted = tableOf(Map.of(INIT_BLOCK,
+            List.of(uncommittedAlloc, uncommittedInitValue, uncommittedInit,
+                uncommittedAdapt, uncommittedAssignment, uncommittedFiller,
+                uncommittedStore)));
+        assertE6005(BindingsProductionValidator.validate(unitUncommitted,
+                tableUncommitted),
+            "NO_ADAPTER_AT_BOUNDARY",
+            "an adapter result whose variable cell is not followed by its commit",
+            "commit", "adapter result");
     }
 
     private static void testBindingInitOnceNegatives() {

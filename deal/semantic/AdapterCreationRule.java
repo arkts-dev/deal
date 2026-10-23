@@ -6,6 +6,7 @@ import deal.semantic.ir.FailureContractRegistry;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
+import deal.semantic.ir.SemanticOpKind;
 import deal.types.Type;
 import deal.types.Types;
 
@@ -17,9 +18,12 @@ import java.util.Optional;
 public final class AdapterCreationRule {
 
     /**
-     * The closed creation-rule position kinds: the two variable
-     * positions (the only positions whose classification can admit the
-     * adaptation arm) and the typed-boundary position (never adapts).
+     * The closed creation-rule position kinds: the statically typed
+     * function-value positions whose classification can admit the
+     * adaptation arm (the two variable positions, the parameter and
+     * return positions, the class field/default positions, and the array
+     * literal/write positions) and the typed-boundary position (never
+     * adapts).
      */
     public enum PositionKind {
 
@@ -28,6 +32,32 @@ public final class AdapterCreationRule {
 
         /** An assignment target ({@code VARIABLE_ASSIGNMENT}). */
         VARIABLE_ASSIGNMENT_TARGET,
+
+        /**
+         * A call-argument position ({@code FUNCTION_PARAMETER}, and the
+         * cross-module {@code EXTERNAL_PARAMETER} and stdlib
+         * {@code STDLIB_PARAMETER} cells).
+         */
+        PARAMETER,
+
+        /** A {@code return} expression position ({@code FUNCTION_RETURN}). */
+        RETURN,
+
+        /**
+         * A class field construction position ({@code CLASS_LITERAL_FIELD}
+         * for a supplied field, {@code CLASS_DEFAULT_FIELD} for a
+         * default).
+         */
+        CLASS_FIELD,
+
+        /** An array element write ({@code ARRAY_ELEMENT_ASSIGNMENT}). */
+        ARRAY_ELEMENT_WRITE,
+
+        /** An array literal element position ({@code ARRAY_LITERAL_ELEMENT}). */
+        ARRAY_LITERAL_ELEMENT,
+
+        /** A class field write ({@code CLASS_FIELD_ASSIGNMENT}). */
+        CLASS_FIELD_WRITE,
 
         /** Every other {@link BoundaryKind} — never adapts. */
         TYPED_BOUNDARY
@@ -80,7 +110,14 @@ public final class AdapterCreationRule {
         VARIABLE_ASSIGNMENT_BOUNDARY,
 
         /** The inferred declaration's {@code BINDING_INIT} op (no boundary). */
-        BINDING_INIT
+        BINDING_INIT,
+
+        /**
+         * The statically typed position's own boundary op (the parameter,
+         * return, class field/default and array literal/write cells — no
+         * variable chain exists there).
+         */
+        POSITION_BOUNDARY
     }
 
     /**
@@ -245,9 +282,30 @@ public final class AdapterCreationRule {
      * The closed position-kind map over the 28 {@link BoundaryKind}
      * values: {@code VARIABLE_DECLARATION} → {@code VARIABLE_INITIALIZER},
      * {@code VARIABLE_ASSIGNMENT} → {@code VARIABLE_ASSIGNMENT_TARGET},
-     * and every other kind → {@code TYPED_BOUNDARY}. The map is total
-     * and closed — an unknown kind cannot be expressed and there is no
-     * fallback member.
+     * {@code FUNCTION_PARAMETER} → {@code PARAMETER},
+     * {@code FUNCTION_RETURN} → {@code RETURN},
+     * {@code CLASS_LITERAL_FIELD}/{@code CLASS_DEFAULT_FIELD} →
+     * {@code CLASS_FIELD}, {@code ARRAY_ELEMENT_ASSIGNMENT} →
+     * {@code ARRAY_ELEMENT_WRITE}, {@code ARRAY_LITERAL_ELEMENT} →
+     * {@code ARRAY_LITERAL_ELEMENT}, {@code CLASS_FIELD_ASSIGNMENT} →
+     * {@code CLASS_FIELD_WRITE}, and every other kind →
+     * {@code TYPED_BOUNDARY}. The map is total and closed — an unknown
+     * kind cannot be expressed and there is no fallback member.
+     *
+     * <p>The adaptation positions are exactly the statically typed
+     * function-value positions of a checked program: the declaration and
+     * assignment positions, the call-argument ({@code FUNCTION_PARAMETER},
+     * {@code EXTERNAL_PARAMETER}, {@code STDLIB_PARAMETER}) and
+     * {@code return} ({@code FUNCTION_RETURN}) positions, the class
+     * field construction ({@code CLASS_LITERAL_FIELD},
+     * {@code CLASS_DEFAULT_FIELD}) and write
+     * ({@code CLASS_FIELD_ASSIGNMENT}) positions, and the array literal
+     * ({@code ARRAY_LITERAL_ELEMENT}) and write
+     * ({@code ARRAY_ELEMENT_ASSIGNMENT}) positions. Every other kind is a
+     * crossing of a value that no checked signature pair describes — a
+     * host/external/stdlib crossing, a runtime read, a JSON walk, a
+     * refinement — and stays a typed boundary that validates the exact
+     * descriptor.</p>
      *
      */
     public static PositionKind positionKindOf(BoundaryKind kind) {
@@ -255,37 +313,88 @@ public final class AdapterCreationRule {
         return switch (kind) {
             case VARIABLE_DECLARATION -> PositionKind.VARIABLE_INITIALIZER;
             case VARIABLE_ASSIGNMENT -> PositionKind.VARIABLE_ASSIGNMENT_TARGET;
-            case CLASS_FIELD_ASSIGNMENT, ARRAY_ELEMENT_ASSIGNMENT, BYTE_ELEMENT_ASSIGNMENT,
+            case FUNCTION_PARAMETER, EXTERNAL_PARAMETER, STDLIB_PARAMETER ->
+                PositionKind.PARAMETER;
+            case FUNCTION_RETURN -> PositionKind.RETURN;
+            case CLASS_LITERAL_FIELD, CLASS_DEFAULT_FIELD -> PositionKind.CLASS_FIELD;
+            case ARRAY_ELEMENT_ASSIGNMENT -> PositionKind.ARRAY_ELEMENT_WRITE;
+            case ARRAY_LITERAL_ELEMENT -> PositionKind.ARRAY_LITERAL_ELEMENT;
+            case CLASS_FIELD_ASSIGNMENT -> PositionKind.CLASS_FIELD_WRITE;
+            case BYTE_ELEMENT_ASSIGNMENT,
                  ARRAY_ELEMENT_READ, BYTE_ELEMENT_READ,
-                 ARRAY_ELEMENT_DELETE, ARRAY_LITERAL_ELEMENT, FUNCTION_PARAMETER,
-                 FUNCTION_RETURN, ASYNC_COMPLETION, CLASS_LITERAL_FIELD, CLASS_DEFAULT_FIELD,
+                 ARRAY_ELEMENT_DELETE, ASYNC_COMPLETION,
                  UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CONTEXTUAL_TABLE_READ,
                  IMPORTED_MEMBER_READ, MODULE_EXPORT, HOST_TO_DEAL, DEAL_TO_HOST,
-                 STDLIB_PARAMETER, STDLIB_RETURN, EXTERNAL_PARAMETER, EXTERNAL_RETURN,
+                 STDLIB_RETURN, EXTERNAL_RETURN,
                  JSON_FROM_FIELD, JSON_TO_FIELD, NARROWED_READ ->
                 PositionKind.TYPED_BOUNDARY;
         };
     }
 
     /**
-     * True exactly for the two variable positions — the only positions
-     * whose classification admits the adaptation arm (B6: boundaries
-     * never adapt).
+     * The parent-aware position-kind map: the same closed classifier with
+     * the two shared cell kinds resolved by the cell's parent operation —
+     * a return position is the cell its own {@code RETURN} runs
+     * ({@code EXTERNAL_RETURN} for a sync {@code EXTERNAL_ENTRY} and for a
+     * retained-ABI external call, {@code DEAL_TO_HOST} for a callback
+     * entry), and a host-declared parameter position is the
+     * {@code DEAL_TO_HOST} parameter cell its {@code CALL}/{@code
+     * ASYNC_START} invocation runs. A statically typed return or call
+     * position is decided by the source/target signature pair, never by the
+     * boundary kind the invocation shape selected: a compatible shorter
+     * function value adapts at an exported, cross-module or callback
+     * return and at a host-declared call parameter exactly as it does at
+     * the same-module cells, while the position's own cell keeps its exact
+     * descriptor check. Every other kind keeps {@link #positionKindOf}.
+     */
+    public static PositionKind positionKindOf(BoundaryKind kind,
+                                              SemanticOpKind parentOpKind) {
+        Objects.requireNonNull(kind, "kind must not be null");
+        Objects.requireNonNull(parentOpKind, "parentOpKind must not be null");
+        return switch (kind) {
+            case EXTERNAL_RETURN -> PositionKind.RETURN;
+            case DEAL_TO_HOST -> switch (parentOpKind) {
+                case RETURN -> PositionKind.RETURN;
+                case CALL, ASYNC_START -> PositionKind.PARAMETER;
+                default -> PositionKind.TYPED_BOUNDARY;
+            };
+            default -> positionKindOf(kind);
+        };
+    }
+
+    /**
+     * True exactly for the variable positions — the positions whose own
+     * boundary belongs to a {@code [value, boundary, commit]} variable
+     * chain.
      *
      */
     public static boolean variablePosition(BoundaryKind kind) {
-        return positionKindOf(kind) != PositionKind.TYPED_BOUNDARY;
+        PositionKind positionKind = positionKindOf(kind);
+        return positionKind == PositionKind.VARIABLE_INITIALIZER
+            || positionKind == PositionKind.VARIABLE_ASSIGNMENT_TARGET;
     }
 
     /**
      * True iff the position's classification admits the adaptation arm:
-     * {@code VARIABLE_DECLARATION} and {@code VARIABLE_ASSIGNMENT} only
-     * (B6 — the classifier admits no adaptation arm for any other
-     * {@link BoundaryKind}).
+     * the statically typed function-value positions of
+     * {@link #positionKindOf} except {@link PositionKind#TYPED_BOUNDARY}
+     * (a crossing no checked signature pair describes never adapts).
      *
      */
     public static boolean admitsAdaptation(BoundaryKind kind) {
-        return variablePosition(kind);
+        return positionKindOf(kind) != PositionKind.TYPED_BOUNDARY;
+    }
+
+    /**
+     * True iff the parent-aware position kind admits the adaptation arm
+     * (the same predicate over {@link #positionKindOf(BoundaryKind,
+     * SemanticOpKind)}: a host-declared call parameter or an exported,
+     * cross-module and callback return cell admits it, every other
+     * host/external crossing does not).
+     */
+    public static boolean admitsAdaptation(BoundaryKind kind,
+                                           SemanticOpKind parentOpKind) {
+        return positionKindOf(kind, parentOpKind) != PositionKind.TYPED_BOUNDARY;
     }
 
     // =========================================================================
@@ -384,14 +493,13 @@ public final class AdapterCreationRule {
 
     /**
      * Classifies one function-typed position of the closed position set:
-     * the two variable positions run the closed variable decision (B6 —
-     * exact → direct store, assignable-but-not-exact → one adaptation
-     * candidate with the derived signatures, the proof fact, the wiring
-     * point, and the producer facts; non-assignable → the recorded
-     * E8010 failure expectation); every other position is a typed
-     * boundary (never adapts — direct flow with the recorded E8010
-     * expectation for any function-typed mismatch including
-     * {@code M < N}).
+     * every adaptation position runs the closed position decision (exact
+     * → direct store, assignable-but-not-exact → one adaptation candidate
+     * with the derived signatures, the proof fact, the wiring point, and
+     * the producer facts; non-assignable → the recorded E8010 failure
+     * expectation); every other position is a typed boundary (never
+     * adapts — direct flow with the recorded E8010 expectation for any
+     * function-typed mismatch including {@code M < N}).
      *
      */
     public static PositionClassification classify(BoundaryKind kind, Type sourceType,
@@ -402,27 +510,27 @@ public final class AdapterCreationRule {
                                                       .FunctionValueMaterialization>
                                                       producerFacts) {
         Objects.requireNonNull(kind, "kind must not be null");
-        if (variablePosition(kind)) {
-            return classifyVariablePosition(kind, sourceType, targetType, proof,
+        if (admitsAdaptation(kind)) {
+            return classifyAdaptationPosition(kind, sourceType, targetType, proof,
                 wiringPoint, producerFacts);
         }
         return classifyBoundaryPosition(kind, sourceType, targetType);
     }
 
     /**
-     * The closed variable-position classification (B6): the closed
+     * The closed adaptation-position classification (B6): the closed
      * decision plus, for the {@code ADAPT} arm, the single derived
      * adaptation candidate — the source signature from the source
-     * expression's checked type, the target signature from the declared
-     * binding signature, the recorded proof fact for the shape-map
-     * child (B7), the prepared wiring point, and the producer facts of
-     * a host/external source (the registry child's T4 seam) — and, for
-     * the {@code NON_ASSIGNABLE} arm, the recorded
+     * expression's checked type, the target signature from the
+     * position's declared signature, the recorded proof fact for the
+     * shape-map child (B7), the prepared wiring point, and the producer
+     * facts of a host/external source (the registry child's T4 seam) —
+     * and, for the {@code NON_ASSIGNABLE} arm, the recorded
      * {@code FUNCTION_SIGNATURE} E8010 failure expectation at the
      * position's own boundary.
      *
      */
-    public static PositionClassification classifyVariablePosition(
+    public static PositionClassification classifyAdaptationPosition(
             BoundaryKind kind, Type sourceType, Type targetType,
             Optional<BindingImmutabilityProof> proof, WiringPoint wiringPoint,
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts) {
@@ -434,8 +542,9 @@ public final class AdapterCreationRule {
         Objects.requireNonNull(producerFacts, "producerFacts must not be null");
         PositionKind positionKind = positionKindOf(kind);
         if (positionKind == PositionKind.TYPED_BOUNDARY) {
-            throw new IllegalArgumentException("the variable-position classifier admits "
-                + "exactly VARIABLE_DECLARATION and VARIABLE_ASSIGNMENT; got " + kind);
+            throw new IllegalArgumentException("the adaptation-position classifier admits "
+                + "every statically typed function-value position and no typed "
+                + "boundary; got " + kind);
         }
         Disposition disposition = variableDisposition(sourceType, targetType);
         return switch (disposition) {
@@ -462,17 +571,55 @@ public final class AdapterCreationRule {
     }
 
     /**
+     * The closed adaptation-position classification over the position's
+     * own signatures (the class field/default and array write positions
+     * carry the declared target as a runtime descriptor rather than a
+     * checked {@link Type}): the closed descriptor decision — exact →
+     * {@link Disposition#DIRECT_STORE}, assignable-but-not-exact →
+     * {@link Disposition#ADAPT} with the recorded candidate,
+     * non-assignable → {@link Disposition#NON_ASSIGNABLE} with the
+     * recorded E8010 expectation.
+     *
+     */
+    public static PositionClassification classifyAdaptationPosition(
+            BoundaryKind kind, RuntimeDescriptor.Func sourceSignature,
+            RuntimeDescriptor.Func targetSignature, WiringPoint wiringPoint) {
+        Objects.requireNonNull(kind, "kind must not be null");
+        Objects.requireNonNull(sourceSignature, "sourceSignature must not be null");
+        Objects.requireNonNull(targetSignature, "targetSignature must not be null");
+        Objects.requireNonNull(wiringPoint, "wiringPoint must not be null");
+        PositionKind positionKind = positionKindOf(kind);
+        if (positionKind == PositionKind.TYPED_BOUNDARY) {
+            throw new IllegalArgumentException("the adaptation-position classifier admits "
+                + "every statically typed function-value position and no typed "
+                + "boundary; got " + kind);
+        }
+        if (sourceSignature.equals(targetSignature)) {
+            return new PositionClassification(positionKind, kind,
+                Disposition.DIRECT_STORE, Optional.empty(), Optional.empty());
+        }
+        if (assignableButNotExact(sourceSignature, targetSignature)) {
+            AdaptationCandidate candidate = new AdaptationCandidate(sourceSignature,
+                targetSignature, Optional.empty(), wiringPoint, Optional.empty());
+            return new PositionClassification(positionKind, kind, Disposition.ADAPT,
+                Optional.of(candidate), Optional.empty());
+        }
+        return new PositionClassification(positionKind, kind, Disposition.NON_ASSIGNABLE,
+            Optional.empty(), Optional.of(e8010Expectation(kind)));
+    }
+
+    /**
      * The closed typed-boundary-position classification (B6):
      * {@link Disposition#BOUNDARY_DIRECT} always — the classifier admits
-     * no adaptation arm for any {@link BoundaryKind} other than
-     * {@code VARIABLE_DECLARATION}/{@code VARIABLE_ASSIGNMENT} — with
-     * the recorded {@code FUNCTION_SIGNATURE} E8010 failure expectation
-     * for a function-typed position whose source/target pair is any
-     * mismatch including {@code M < N} (the executed rejection is E4's
-     * boundary machinery — the closed boundary-assignment table's
-     * descriptor-kind rule — pinned by the
-     * {@code jvm-fv-sig-check-return-error} behavior; this classifier
-     * records the expectation only).
+     * no adaptation arm for any {@link PositionKind#TYPED_BOUNDARY}
+     * position (a host/external/stdlib crossing, a runtime read, a JSON
+     * walk or a refinement) — with the recorded
+     * {@code FUNCTION_SIGNATURE} E8010 failure expectation for a
+     * function-typed position whose source/target pair is any mismatch
+     * including {@code M < N} (the executed rejection is E4's boundary
+     * machinery — the closed boundary-assignment table's descriptor-kind
+     * rule — pinned by the {@code jvm-fv-sig-check-return-error}
+     * behavior; this classifier records the expectation only).
      *
      */
     public static PositionClassification classifyBoundaryPosition(BoundaryKind kind,
@@ -481,10 +628,10 @@ public final class AdapterCreationRule {
         Objects.requireNonNull(kind, "kind must not be null");
         Objects.requireNonNull(sourceType, "sourceType must not be null");
         Objects.requireNonNull(targetType, "targetType must not be null");
-        if (variablePosition(kind)) {
+        if (admitsAdaptation(kind)) {
             throw new IllegalArgumentException("the boundary-position classifier admits "
-                + "every BoundaryKind except VARIABLE_DECLARATION and "
-                + "VARIABLE_ASSIGNMENT; got " + kind);
+                + "every typed-boundary BoundaryKind and no adaptation position; got "
+                + kind);
         }
         boolean expectation = targetType instanceof Type.Func
             && !Types.equals(sourceType, targetType);

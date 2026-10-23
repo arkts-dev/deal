@@ -5381,8 +5381,31 @@ public final class SemanticLowerer {
                     captureCollectors.size());
                 defaultContexts.push(context);
                 ValueId produced;
+                boolean adaptedDefault = positionAdapts(defaultExpr,
+                    defaultPlan.descriptor());
                 try {
-                    produced = lowerExpression(defaultExpr, slot);
+                    if (adaptedDefault) {
+                        // A class field default is a statically typed
+                        // function-value position: exactly one
+                        // arity-extension adapter over the default
+                        // expression's value is the default's published
+                        // result, so every construction's
+                        // CLASS_DEFAULT_FIELD cell validates the field's
+                        // declared descriptor exactly and the instance
+                        // stores the adapted value (docs/spec-v1.3.md
+                        // Function type compatibility; Arity extension
+                        // adapter). The CLASS_DEFAULT op is the position's
+                        // own publisher: the adapter is wired there, so the
+                        // declaring unit admits it even when this unit
+                        // contains no construction (the exported default
+                        // and a cross-module construction consume the
+                        // published result, never a construction-site cell).
+                        produced = lowerPositionAdapter(defaultExpr,
+                            (RuntimeDescriptor.Func) defaultPlan.descriptor(),
+                            () -> lowerExpression(defaultExpr, slot));
+                    } else {
+                        produced = lowerExpression(defaultExpr, slot);
+                    }
                     if (!produced.equals(slot)) {
                         op = buildOp(opId, SemanticOpKind.CLASS_DEFAULT,
                             new KindPayload.ClassDefaultPayload(classId, field.name(),
@@ -5401,6 +5424,10 @@ public final class SemanticLowerer {
                     defaultContexts.pop();
                     popBlockParent();
                     popBlock();
+                }
+                if (adaptedDefault) {
+                    recordPositionAdapterAt(produced, opId,
+                        BoundaryKind.CLASS_DEFAULT_FIELD);
                 }
                 if (!field.optional()) {
                     classDefaultOpIds.add(opId);
@@ -5945,10 +5972,33 @@ public final class SemanticLowerer {
             }
             List<KindPayload.ProvidedField> providedFields = new ArrayList<>();
             Map<String, ValueId> providedValues = new LinkedHashMap<>();
+            Map<String, ExpressionNode> providedExpressions = new LinkedHashMap<>();
+            Map<String, RuntimeDescriptor> fieldDescriptors = new LinkedHashMap<>();
+            for (deal.semantic.ir.ClassLayout.FieldLayout field : layout.fields()) {
+                fieldDescriptors.put(field.name(), field.descriptor());
+            }
             for (Property property : literal.properties()) {
-                ValueId value = lowerExpression(property.value());
+                RuntimeDescriptor fieldDescriptor =
+                    fieldDescriptors.get(property.name());
+                ValueId value;
+                if (fieldDescriptor != null
+                        && positionAdapts(property.value(), fieldDescriptor)) {
+                    // A supplied class field is a statically typed
+                    // function-value position: exactly one arity-extension
+                    // adapter over the supplied value, so the
+                    // CLASS_LITERAL_FIELD cell validates the field's declared
+                    // descriptor exactly and the instance stores the adapted
+                    // value (docs/spec-v1.3.md Function type compatibility;
+                    // Arity extension adapter).
+                    value = lowerPositionAdapter(property.value(),
+                        (RuntimeDescriptor.Func) fieldDescriptor,
+                        () -> lowerExpression(property.value()));
+                } else {
+                    value = lowerExpression(property.value());
+                }
                 providedFields.add(new KindPayload.ProvidedField(property.name(), value));
                 providedValues.put(property.name(), value);
+                providedExpressions.put(property.name(), property.value());
             }
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -5969,9 +6019,16 @@ public final class SemanticLowerer {
                     // property's value span.
                     SemanticOp child = buildFieldBoundary(BoundaryKind.CLASS_LITERAL_FIELD,
                         field.descriptor(), provided, literal.span(), opId);
+                    recordPositionAdapterAt(provided, child.opId(),
+                        BoundaryKind.CLASS_LITERAL_FIELD);
                     boundaries.add(new KindPayload.FieldBoundary(field.name(),
                         BoundaryKind.CLASS_LITERAL_FIELD, child.opId()));
                     children.add(child);
+                    if (creationRuleAnalysis) {
+                        recordPositionClassification(BoundaryKind.CLASS_LITERAL_FIELD,
+                            producedType(providedExpressions.get(field.name())),
+                            field.descriptor(), child.opId());
+                    }
                     continue;
                 }
                 if (defaultOwner == DefaultOwner.SHARED_FACTORY) {
@@ -6226,7 +6283,7 @@ public final class SemanticLowerer {
         private void lowerDeclaredInitializer(VariableDeclaration decl, BindingId binding,
                                               BindingCoreIncarnation incarnation) {
             if ((shapeMapAnalysis || e7Calls) && declaredTypeOf(decl) instanceof Type.Func) {
-                Type sourceType = checkedType(decl.initializer());
+                Type sourceType = producedType(decl.initializer());
                 if (AdapterCreationRule.variableDisposition(sourceType,
                         declaredTypeOf(decl)) == AdapterCreationRule.Disposition.ADAPT) {
                     // The shape-map child's adapted declaration (B6-B9):
@@ -6409,7 +6466,7 @@ public final class SemanticLowerer {
          */
         private void lowerAdaptedDeclInitializer(VariableDeclaration decl, BindingId binding,
                                                  BindingCoreIncarnation incarnation) {
-            Type.Func sourceType = (Type.Func) checkedType(decl.initializer());
+            Type.Func sourceType = (Type.Func) producedType(decl.initializer());
             Type.Func targetType = (Type.Func) declaredTypeOf(decl);
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
@@ -6606,6 +6663,195 @@ public final class SemanticLowerer {
         }
 
         /**
+         * The recorded creation facts of the position adapters this walk
+         * created, keyed by the adapter identity: a call-argument position
+         * builds its own boundary after the argument list, so the
+         * emission fact is recorded when that boundary is built (see
+         * {@link #recordPositionAdapterAt}).
+         */
+        private final Map<Long, PositionAdapterFacts> positionAdapterFacts =
+            new LinkedHashMap<>();
+
+        /** One position adapter's creation facts (the emission-record inputs). */
+        private record PositionAdapterFacts(OpId adaptOpId, CaptureMode mode,
+                                            AdaptSourceRef sourceRef,
+                                            RuntimeDescriptor.Func sourceSignature,
+                                            RuntimeDescriptor.Func targetSignature,
+                                            BindingImmutabilityProof proof) {
+        }
+
+        /**
+         * True exactly when the given statically typed function-value
+         * position adapts: the position adaptation runs (the E7 call and
+         * project lowering), the position's checked target descriptor is
+         * a function descriptor, the source expression produces a function
+         * value ({@link #producedType(ExpressionNode)}) and the pair
+         * re-derives as assignable-but-not-exact — identical async marker
+         * and return type, {@code M < N} with exactly equal leading M
+         * parameter types (docs/spec-v1.3.md Function type compatibility).
+         * Any other pair is the position's own typed-boundary check's
+         * (exact pass, or the recorded E8010 rejection).
+         */
+        private boolean positionAdapts(ExpressionNode value, RuntimeDescriptor target) {
+            if (!(shapeMapAnalysis || e7Calls)
+                    || !(target instanceof RuntimeDescriptor.Func targetSignature)) {
+                return false;
+            }
+            if (!(producedType(value) instanceof Type.Func sourceType)) {
+                return false;
+            }
+            // A binding whose tracked identity is already an adapter's is an
+            // ordinary function value of its declared signature
+            // (docs/spec-v1.3.md Function type compatibility): runtime
+            // provenance as an adapter is not part of the type, so a
+            // position whose target signature is wider adapts it like any
+            // other compatible function value. The adapter protocol
+            // resolves such a source through its own published invocation
+            // at the same leading-M projection, never by stacking a second
+            // unresolved wrapper.
+            return ContainerPayloadDescriptors.resultDescriptorOf(sourceType)
+                    instanceof RuntimeDescriptor.Func sourceSignature
+                && AdapterCreationRule.assignableButNotExact(sourceSignature,
+                    targetSignature);
+        }
+
+        /**
+         * Emits exactly one {@code FUNCTION_ADAPT} op for one statically
+         * typed function-value position (the spec's arity extension
+         * adapter) over the position's own value: the closed position-mode
+         * map selects the mode from checker facts (a binding reference
+         * reads its dominant incarnation's cell per invocation; every
+         * other source is the position's materialized value, evaluated
+         * exactly once at its source position), and the adapter's result is
+         * the value the position's own boundary validates and the consumer
+         * observes. The adapter projects its leading M arguments, so the
+         * ignored target parameters are never forwarded. The source shape is
+         * the position's own classification: a lexically shadowing local,
+         * parameter, enclosing-block or module-level binding precedes the
+         * compiler intrinsics (docs/spec-v1.3.md §Name resolution), so the
+         * adapted operand is the position's own value — the shadowing binding
+         * for a shadowed {@code int}/{@code number}/{@code bytes} name, the
+         * seeded intrinsic identity only for a genuinely unshadowed intrinsic
+         * at this position.
+         */
+        private ValueId lowerPositionAdapter(ExpressionNode value,
+                                             RuntimeDescriptor.Func targetSignature,
+                                             java.util.function.Supplier<ValueId> lower) {
+            Type.Func sourceType = (Type.Func) producedType(value);
+            RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
+                ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
+            Optional<BindingImmutabilityProof> proof = sourceProofOf(value);
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
+                value, this::isConversionIntrinsicNameAt);
+            CaptureMode mode = AdapterShapeMap.selectPositionMode(shape, proof);
+            AdaptSourceRef sourceRef;
+            List<ValueId> operands;
+            List<RuntimeDescriptor> operandTypes;
+            BindingImmutabilityProof payloadProof = null;
+            if (mode == CaptureMode.SHARED_CELL) {
+                // The binding arm: zero evaluation and zero loads at
+                // creation; the adapter reads the dominant incarnation's
+                // cell per invocation, exactly the declaration and
+                // assignment positions' arm.
+                sourceRef = lowerAdapterSharedCellSource(value);
+                operands = List.of();
+                operandTypes = List.of();
+            } else {
+                ValueId operand;
+                if (shape == AdapterShapeMap.SourceShape.INTRINSIC_FUNCTION_VALUE) {
+                    // The seeded intrinsic function value is the operand
+                    // (no function-typed load of the intrinsic binding).
+                    String name = ((IdentifierExpr) value).name();
+                    operand = intrinsicIdentities.get(name);
+                    if (operand == null) {
+                        throw new IllegalStateException("the intrinsic identity of '"
+                            + name + "' was not seeded at module-init top (producer "
+                            + "defect)");
+                    }
+                } else {
+                    operand = lower.get();
+                }
+                if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE) {
+                    payloadProof = proof.orElseThrow(() ->
+                        new IllegalStateException("the closed shape map selects VALUE "
+                            + "over a binding only with the recorded proof (producer "
+                            + "defect)"));
+                }
+                sourceRef = new AdaptSourceRef.Value(operand);
+                operands = List.of(operand);
+                operandTypes = List.of(sourceSignature);
+            }
+            EmittedAdapter adapter = emitFunctionAdapt(mode, sourceRef, sourceSignature,
+                targetSignature, payloadProof, operands, operandTypes, value.span());
+            positionAdapterFacts.put(adapter.identity().id(), new PositionAdapterFacts(
+                adapter.opId(), mode, sourceRef, sourceSignature, targetSignature,
+                payloadProof));
+            return adapter.identity();
+        }
+
+        /**
+         * Records one position adapter's emission fact at the position's
+         * own boundary (its single consumer): the shaped fact surface's one
+         * record per emitted adapter, in emission order. A value that is no
+         * position adapter records nothing.
+         */
+        private void recordPositionAdapterAt(ValueId input, OpId boundaryOpId,
+                                             BoundaryKind boundaryKind) {
+            PositionAdapterFacts facts = positionAdapterFacts.remove(input.id());
+            if (facts == null) {
+                return;
+            }
+            recordAdapterEmission(facts.adaptOpId(), input, facts.mode(), facts.sourceRef(),
+                facts.sourceSignature(), facts.targetSignature(), facts.proof(),
+                boundaryOpId, boundaryKind);
+        }
+
+        /**
+         * One call-argument position: a statically typed parameter position
+         * whose argument is either the argument's own lowering
+         * ({@code asCallArgument} keeps the declared-callee contextual-read
+         * handling) or exactly one arity-extension adapter over it. The
+         * adapter is created at the argument's own position, so the
+         * argument's evaluation order and its once-only effects are
+         * unchanged. The position is the callee's checked parameter
+         * descriptor — the same descriptor a host-declared parameter cell
+         * carries — so a compatible shorter DEAL function value adapts
+         * before a host crossing exactly as it does at a same-module,
+         * cross-module or stdlib parameter; the host parameter cell then
+         * validates the adapter's exact target signature, and a dynamic
+         * host- or table-produced value keeps that exact check.
+         */
+        private ValueId lowerParameterArgument(CallExpr call, int index,
+                                               boolean asCallArgument) {
+            ExpressionNode argument = call.args().get(index);
+            RuntimeDescriptor target = callParameterDescriptor(call, index);
+            if (target == null || !positionAdapts(argument, target)) {
+                return asCallArgument ? lowerCallArgument(argument) : lowerExpression(argument);
+            }
+            return lowerPositionAdapter(argument, (RuntimeDescriptor.Func) target,
+                () -> asCallArgument ? lowerCallArgument(argument)
+                    : lowerExpression(argument));
+        }
+
+        /**
+         * The checked callee signature's parameter descriptor at the given
+         * argument index — the checker's own parameter type for the
+         * position (the type every argument's assignability was decided
+         * against) — or {@code null} when the position carries no
+         * function-typed parameter descriptor.
+         */
+        private RuntimeDescriptor callParameterDescriptor(CallExpr call, int index) {
+            Type calleeType = checkedType(call.callee());
+            if (!(calleeType instanceof Type.Func)
+                    || !(ContainerPayloadDescriptors.resultDescriptorOf(calleeType)
+                        instanceof RuntimeDescriptor.Func signature)
+                    || index >= signature.paramTypes().size()) {
+                return null;
+            }
+            return signature.paramTypes().get(index);
+        }
+
+        /**
          * Records one adapter emission fact (the shape-map child's fact
          * surface): the emitted op's identity, the fresh adapter
          * allocation identity, the closed-map mode and source reference
@@ -6652,7 +6898,7 @@ public final class SemanticLowerer {
                 // the boundary machinery's).
                 return;
             }
-            Type sourceType = checkedType(decl.initializer());
+            Type sourceType = producedType(decl.initializer());
             Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts =
                 sourceProducerFactsOf(value);
@@ -6661,7 +6907,7 @@ public final class SemanticLowerer {
                     AdapterCreationRule.WiringTargetKind.VARIABLE_DECLARATION_BOUNDARY)
                 : new AdapterCreationRule.WiringPoint(initOp,
                     AdapterCreationRule.WiringTargetKind.BINDING_INIT);
-            creationClassifications.add(AdapterCreationRule.classifyVariablePosition(
+            creationClassifications.add(AdapterCreationRule.classifyAdaptationPosition(
                 BoundaryKind.VARIABLE_DECLARATION, sourceType, targetType, proof,
                 wiringPoint, producerFacts));
         }
@@ -6689,11 +6935,11 @@ public final class SemanticLowerer {
                 // window.
                 return;
             }
-            Type sourceType = checkedType(assignment.value());
+            Type sourceType = producedType(assignment.value());
             Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts =
                 sourceProducerFactsOf(value);
-            creationClassifications.add(AdapterCreationRule.classifyVariablePosition(
+            creationClassifications.add(AdapterCreationRule.classifyAdaptationPosition(
                 BoundaryKind.VARIABLE_ASSIGNMENT, sourceType, targetType, proof,
                 new AdapterCreationRule.WiringPoint(boundaryOp,
                     AdapterCreationRule.WiringTargetKind.VARIABLE_ASSIGNMENT_BOUNDARY),
@@ -6715,6 +6961,49 @@ public final class SemanticLowerer {
                                                   Type targetType) {
             creationClassifications.add(
                 AdapterCreationRule.classifyBoundaryPosition(kind, sourceType, targetType));
+        }
+
+        /**
+         * The closed position classification of one statically typed
+         * function-value position (creation-rule-analysis mode): the
+         * adaptation-position classifier over the position's checked source
+         * type and declared target type, with the position's own boundary op
+         * as its wiring point (an exact pair records the direct store, an
+         * assignable-but-not-exact pair the single candidate this walk
+         * adapted). Zero emission.
+         */
+        private void recordPositionClassification(BoundaryKind kind, Type sourceType,
+                                                  Type targetType, ValueId value,
+                                                  OpId boundaryOpId) {
+            if (!(targetType instanceof Type.Func)) {
+                return;
+            }
+            creationClassifications.add(AdapterCreationRule.classifyAdaptationPosition(
+                kind, sourceType, targetType, Optional.empty(),
+                new AdapterCreationRule.WiringPoint(boundaryOpId,
+                    AdapterCreationRule.WiringTargetKind.POSITION_BOUNDARY),
+                sourceProducerFactsOf(value)));
+        }
+
+        /**
+         * The closed position classification of one statically typed
+         * function-value position whose declared target signature is carried
+         * as a runtime descriptor (the class field/default and array write
+         * cells; creation-rule-analysis mode).
+         */
+        private void recordPositionClassification(BoundaryKind kind, Type sourceType,
+                                                  RuntimeDescriptor targetDescriptor,
+                                                  OpId boundaryOpId) {
+            if (!(targetDescriptor instanceof RuntimeDescriptor.Func targetSignature)
+                    || !(sourceType instanceof Type.Func sourceTypeFunc)
+                    || !(ContainerPayloadDescriptors.resultDescriptorOf(sourceTypeFunc)
+                        instanceof RuntimeDescriptor.Func sourceSignature)) {
+                return;
+            }
+            creationClassifications.add(AdapterCreationRule.classifyAdaptationPosition(
+                kind, sourceSignature, targetSignature,
+                new AdapterCreationRule.WiringPoint(boundaryOpId,
+                    AdapterCreationRule.WiringTargetKind.POSITION_BOUNDARY)));
         }
 
         /**
@@ -8899,7 +9188,7 @@ public final class SemanticLowerer {
             }
             Type targetType = checkedType(target);
             if ((shapeMapAnalysis || e7Calls) && targetType instanceof Type.Func) {
-                Type sourceType = checkedType(assignment.value());
+                Type sourceType = producedType(assignment.value());
                 if (AdapterCreationRule.variableDisposition(sourceType, targetType)
                         == AdapterCreationRule.Disposition.ADAPT) {
                     // The shape-map child's adapted assignment (B6-B9):
@@ -9195,6 +9484,19 @@ public final class SemanticLowerer {
          * descriptor with input = the checked RHS value, and the commit
          * appends exactly when the normalize computed
          * {@code index == length} (the append idiom's standard shape).
+         * A function-typed element position whose RHS is assignable but
+         * not exact commits the arity-extension adapter instead: the
+         * materialized RHS keeps its own child position (evaluated after
+         * the receiver and the key) and the adapter follows it
+         * ({@code [containerOp, keyOp, rhsOp, FUNCTION_ADAPT adapterOp,
+         * lengthOp, normalizeOp, boundaryOp, commitOp]}), so the boundary
+         * input and the commit's stored value are the adapter's result; a
+         * binding source adapts over its cell instead (zero evaluation at
+         * the position) and the adapter is the value child itself
+         * ({@code [containerOp, keyOp, FUNCTION_ADAPT adapterOp,
+         * lengthOp, normalizeOp, boundaryOp, commitOp]}). Every child is
+         * named through {@link #chainChildOp(ValueId)}, so a child
+         * produced inside a selected block stays under its structure op.
          */
         private ValueId lowerArrayIndexAssign(AssignmentExpr assignment, IndexExpr index,
                                               Type.Array arrayType) {
@@ -9215,12 +9517,38 @@ public final class SemanticLowerer {
             OpId normalizeOp;
             OpId boundaryOp;
             OpId commitOp;
+            OpId adapterOp = null;
+            OpId rhsOp = null;
             try {
                 ValueId container = lowerOperand(index.array());
                 containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
                 keyOp = chainChildOp(key);
-                value = lowerExpression(assignment.value(), slot);
+                if (positionAdapts(assignment.value(), elementDescriptor)) {
+                    // The array element write is a statically typed
+                    // function-value position: the RHS value keeps its own
+                    // chain position (it is evaluated after the receiver and
+                    // the key), and exactly one arity-extension adapter over
+                    // it is the chain's committed value, so the
+                    // ARRAY_ELEMENT_ASSIGNMENT cell validates the element
+                    // descriptor exactly and the array stores the adapted
+                    // value (docs/spec-v1.3.md Function type compatibility;
+                    // Arity extension adapter). A binding source adapts over
+                    // its dominant incarnation's cell (zero evaluation at the
+                    // position), so the chain then carries the adapter alone.
+                    OpId[] materialized = new OpId[1];
+                    value = lowerPositionAdapter(assignment.value(),
+                        (RuntimeDescriptor.Func) elementDescriptor,
+                        () -> {
+                            ValueId rhs = lowerExpression(assignment.value(), slot);
+                            materialized[0] = chainChildOp(rhs);
+                            return rhs;
+                        });
+                    adapterOp = chainChildOp(value);
+                    rhsOp = materialized[0];
+                } else {
+                    value = lowerExpression(assignment.value(), slot);
+                }
                 valueOp = chainChildOp(value);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
                     new KindPayload.ArrayLengthPayload(container), index.span(),
@@ -9240,6 +9568,10 @@ public final class SemanticLowerer {
                             CANONICAL_RUNTIME_VALIDATION_ID)),
                     index.span(), FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT,
                     SourceOriginKind.SYNTHETIC, chainOpId);
+                if (adapterOp != null) {
+                    recordPositionAdapterAt(value, boundaryOp,
+                        BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT);
+                }
                 commitOp = emitNullOp(SemanticOpKind.INDEX_WRITE,
                     new KindPayload.IndexWritePayload(container, normalizedSlot, value),
                     index.span(), FailurePolicyId.NO_DEAL_FAILURE,
@@ -9250,21 +9582,25 @@ public final class SemanticLowerer {
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
                 SourceOriginKind.USER, anchor, currentParent());
+            List<OpId> chainChildren;
+            if (adapterOp != null && rhsOp != null) {
+                // [receiver, key, RHS value, FUNCTION_ADAPT adapter,
+                // length, normalize, ARRAY_ELEMENT_ASSIGNMENT, commit]
+                chainChildren = List.of(containerOp, keyOp, rhsOp, adapterOp, lengthOp,
+                    normalizeOp, boundaryOp, commitOp);
+            } else {
+                // [receiver, key, committed value (the adapter for a binding
+                // source), length, normalize, ARRAY_ELEMENT_ASSIGNMENT,
+                // commit]
+                chainChildren = List.of(containerOp, keyOp, valueOp, lengthOp, normalizeOp,
+                    boundaryOp, commitOp);
+            }
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
-                new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT,
-                    List.of(containerOp, keyOp, valueOp, lengthOp, normalizeOp, boundaryOp,
-                        commitOp)),
+                new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT, chainChildren),
                 value, elementDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
-            if (creationRuleAnalysis && elementDescriptor instanceof RuntimeDescriptor.Func) {
-                // A function-typed array element position: a typed
-                // boundary position never adapts (B6) — the walk's
-                // direct value flow into the ARRAY_ELEMENT_ASSIGNMENT
-                // boundary slot is the wiring E4's boundary producer
-                // consumes; the classifier records the closed
-                // classification (and the E8010 expectation for a
-                // mismatched pair — the executed check is E4's).
-                recordBoundaryClassification(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
-                    checkedType(assignment.value()), arrayType.element());
+            if (creationRuleAnalysis) {
+                recordPositionClassification(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
+                    producedType(assignment.value()), arrayType.element(), value, boundaryOp);
             }
             return value;
         }
@@ -9405,10 +9741,36 @@ public final class SemanticLowerer {
             OpId containerOp;
             OpId valueOp;
             OpId commitOp;
+            OpId adapterOp = null;
+            OpId rhsOp = null;
+            OpId fieldBoundaryOp = null;
             try {
                 ValueId container = lowerExpression(access.object());
                 containerOp = chainChildOp(container);
-                value = lowerExpression(assignment.value(), slot);
+                if (classCore && positionAdapts(assignment.value(), declaredDescriptor)) {
+                    // The class field write is a statically typed
+                    // function-value position: exactly one arity-extension
+                    // adapter over the RHS is the committed value, so the
+                    // CLASS_FIELD_ASSIGNMENT cell validates the declared
+                    // field descriptor exactly and the field stores the
+                    // adapted value (docs/spec-v1.3.md Function type
+                    // compatibility; Arity extension adapter). A binding
+                    // source adapts over its dominant incarnation's cell
+                    // (zero evaluation at the position), so the chain then
+                    // carries the adapter alone.
+                    OpId[] materialized = new OpId[1];
+                    value = lowerPositionAdapter(assignment.value(),
+                        (RuntimeDescriptor.Func) declaredDescriptor,
+                        () -> {
+                            ValueId rhs = lowerExpression(assignment.value(), slot);
+                            materialized[0] = chainChildOp(rhs);
+                            return rhs;
+                        });
+                    adapterOp = chainChildOp(value);
+                    rhsOp = materialized[0];
+                } else {
+                    value = lowerExpression(assignment.value(), slot);
+                }
                 valueOp = chainChildOp(value);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_WRITE,
                     new KindPayload.FieldWritePayload(container, classId, access.field(),
@@ -9423,13 +9785,17 @@ public final class SemanticLowerer {
                                 CANONICAL_RUNTIME_VALIDATION_ID)),
                         access.span(), descriptorKindPolicy(classDescriptor),
                         SourceOriginKind.SYNTHETIC, commitOp);
-                    emitNullOp(SemanticOpKind.BOUNDARY,
+                    fieldBoundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
                         new KindPayload.BoundaryPayload(BoundaryKind.CLASS_FIELD_ASSIGNMENT,
                             declaredDescriptor, value,
                             new BoundaryRealization.RuntimeValidation(
                                 CANONICAL_RUNTIME_VALIDATION_ID)),
                         access.span(), descriptorKindPolicy(declaredDescriptor),
                         SourceOriginKind.SYNTHETIC, commitOp);
+                    if (adapterOp != null) {
+                        recordPositionAdapterAt(value, fieldBoundaryOp,
+                            BoundaryKind.CLASS_FIELD_ASSIGNMENT);
+                    }
                 }
             } finally {
                 chainParents.pop();
@@ -9437,10 +9803,23 @@ public final class SemanticLowerer {
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(assignment.span()),
                 SourceOriginKind.USER, anchor, currentParent());
+            List<OpId> chainChildren;
+            if (adapterOp != null && rhsOp != null) {
+                // [receiver, RHS value, FUNCTION_ADAPT adapter, FIELD_WRITE commit]
+                chainChildren = List.of(containerOp, rhsOp, adapterOp, commitOp);
+            } else {
+                // [receiver, committed value (the adapter for a binding
+                // source), FIELD_WRITE commit]
+                chainChildren = List.of(containerOp, valueOp, commitOp);
+            }
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
-                new KindPayload.AssignPayload(AssignTargetKind.CLASS_FIELD,
-                    List.of(containerOp, valueOp, commitOp)),
+                new KindPayload.AssignPayload(AssignTargetKind.CLASS_FIELD, chainChildren),
                 value, fieldDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+            if (creationRuleAnalysis && classCore) {
+                recordPositionClassification(BoundaryKind.CLASS_FIELD_ASSIGNMENT,
+                    producedType(assignment.value()), declaredDescriptor,
+                    fieldBoundaryOp != null ? fieldBoundaryOp : commitOp);
+            }
             return value;
         }
 
@@ -10237,8 +10616,12 @@ public final class SemanticLowerer {
             // order — the declared signature is the single authority for
             // operand and boundary descriptors alike.
             List<ValueId> args = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                // A stdlib parameter position is a statically typed
+                // parameter position like any other: an assignable-but-
+                // not-exact function argument takes its arity-extension
+                // adapter before the parameter cell validates it.
+                args.add(lowerParameterArgument(call, i, false));
             }
             List<RuntimeDescriptor> parameterDescriptors = entry.parameterDescriptors();
             if (args.size() != parameterDescriptors.size()) {
@@ -10277,7 +10660,10 @@ public final class SemanticLowerer {
          * Builds one BOUNDARY child whose origin carries the given source
          * id — the declaration-owned cross-module parameter cell's origin
          * is the callee's file (P3), while the op belongs to the caller's
-         * unit. A {@code null} source id is the emitting module's own.
+         * unit. A {@code null} source id is the emitting module's own. A
+         * function-typed parameter cell whose input is a position adapter
+         * records that adapter's emission fact here — the position's own
+         * boundary is the adapter's single consumer.
          */
         private SemanticOp buildChildBoundary(BoundaryKind kind, RuntimeDescriptor descriptor,
                                               ValueId input, Span span, String originSourceId,
@@ -10285,6 +10671,7 @@ public final class SemanticLowerer {
             FailurePolicyId policy = descriptorKindPolicy(descriptor);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
+            recordPositionAdapterAt(input, opId, kind);
             SourceOrigin origin = new SourceOrigin(
                 originSourceId != null ? originSourceId : sourceId, toSourceSpan(span),
                 SourceOriginKind.SYNTHETIC, anchor, parent);
@@ -10486,8 +10873,9 @@ public final class SemanticLowerer {
             context.callSiteUsed = true;
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerCallArgument(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -10699,8 +11087,9 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, false));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -10863,7 +11252,16 @@ public final class SemanticLowerer {
             };
         }
 
-        /** The pinned host-call parameter cells: DEAL_TO_HOST + HOST_PARAMETER. */
+        /**
+         * The pinned host-call parameter cells: DEAL_TO_HOST + HOST_PARAMETER.
+         * A function-typed position adapter built for its argument records its
+         * emission fact here: this cell is the adapted position's own
+         * boundary (the invocation-projection agreement the bindings validator
+         * admits), exactly like a {@code FUNCTION_PARAMETER} cell, so the
+         * shape-map fact surface carries one record per emitted
+         * {@code FUNCTION_ADAPT} op instead of leaving the position's pending
+         * entry unclaimed.
+         */
         private void hostParameterBoundaries(RuntimeDescriptor.Func descriptor,
                 List<ValueId> args, CallExpr call, OpId callOpId,
                 List<SemanticOp> parameterBoundaryOps, List<OpId> parameterBoundaryIds) {
@@ -10871,6 +11269,8 @@ public final class SemanticLowerer {
                 SemanticOp boundary = buildChildBoundaryWithPolicy(
                     BoundaryKind.DEAL_TO_HOST, descriptor.paramTypes().get(i),
                     FailurePolicyId.HOST_PARAMETER, args.get(i), call.span(), callOpId);
+                recordPositionAdapterAt(args.get(i), boundary.opId(),
+                    BoundaryKind.DEAL_TO_HOST);
                 parameterBoundaryOps.add(boundary);
                 parameterBoundaryIds.add(boundary.opId());
             }
@@ -11003,7 +11403,7 @@ public final class SemanticLowerer {
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
             boolean declaredBodyCallee =
                 binding instanceof FunctionExecutionBinding.LoweredBody;
-            for (ExpressionNode argument : call.args()) {
+            for (int i = 0; i < call.args().size(); i++) {
                 // A resolved declared body keeps the declared-callee
                 // contextual-argument handling: the argument walk defers a
                 // contextual table member read's kind check to the callee's
@@ -11012,8 +11412,8 @@ public final class SemanticLowerer {
                 // #lowerDirectCall}. Every other binding kind resolves its
                 // own parameter boundaries at the call site and keeps the
                 // read's own check.
-                args.add(declaredBodyCallee
-                    ? lowerCallArgument(argument) : lowerExpression(argument));
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, declaredBodyCallee));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11264,10 +11664,20 @@ public final class SemanticLowerer {
                                 adapter.sourceSignature(), result, call.span(), callOpId);
                             returnBoundaryOpId = hostCrossing.opId();
                         }
-                        case FunctionExecutionBinding.AdapterBinding nested ->
-                            throw new ConstructUnlowered("nested adapter source of '"
-                                + calleeName + "' (adapter-of-adapter invocation is "
-                                + "ISSUE-0531's)", call.span());
+                        case FunctionExecutionBinding.AdapterBinding ignored -> {
+                            // An adapter-valued source: runtime provenance as
+                            // an adapter is not part of the type, so the
+                            // outer adapter resolves to its own source's
+                            // execution class at execution (the closed D15
+                            // protocol descends the chain). The recorded cell
+                            // is the host source's family cell, exactly the
+                            // runtime-resolved source arm; a DEAL-body source
+                            // runs its own single return cell inside the
+                            // body and adds no caller-side cell.
+                            hostCrossing = emitHostReturnBoundary(
+                                adapter.sourceSignature(), result, call.span(), callOpId);
+                            returnBoundaryOpId = hostCrossing.opId();
+                        }
                     }
                 }
                 case FunctionExecutionBinding.HostFunction host -> {
@@ -11568,8 +11978,9 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerCallArgument(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11822,8 +12233,9 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, false));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -11926,8 +12338,9 @@ public final class SemanticLowerer {
             RuntimeDescriptor.Func signature = context.signature;
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerCallArgument(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12072,8 +12485,9 @@ public final class SemanticLowerer {
             }
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerCallArgument(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, true));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12255,12 +12669,16 @@ public final class SemanticLowerer {
          * captured cells.
          *
          * <p>A runtime-resolved source — a retained declaration-site
-         * operand (the {@code VALUE} capture mode), or a materialized source
+         * operand (the {@code VALUE} capture mode), a materialized source
          * whose producing registration is the producer rule's
-         * {@code DynamicFunctionValue} — records the runtime-resolved nested
-         * shape instead: the nested source start's callee is the
-         * {@code Dynamic} value identity the adapter protocol resolves at
-         * execution (the retained operand), and its recorded task cell is
+         * {@code DynamicFunctionValue}, or an adapter-valued source (whose own
+         * published invocation chain selects the execution class at each
+         * invocation) — records the runtime-resolved nested shape instead: the
+         * nested source start's callee is the {@code Dynamic} value identity
+         * the adapter protocol resolves at
+         * execution (the retained operand, or the scratch identity the outer
+         * task publishes the resolved adapter source under), and its recorded
+         * task cell is
          * the single caller-side {@code FUNCTION_RETURN} the closed dynamic
          * resolution applies to a resolved DEAL body. The source's own class
          * — a DEAL body, a host surface entry, a retained-ABI external, or a
@@ -12284,18 +12702,32 @@ public final class SemanticLowerer {
             // source start names that runtime identity (never a static
             // body/token/return-cell shape it does not have). A retained
             // declaration-site operand (the {@code VALUE} capture mode) is
-            // never a registered function identity, and a materialized
-            // source registers the producer rule's
-            // {@code DynamicFunctionValue}.
+            // never a registered function identity, a materialized source
+            // registers the producer rule's
+            // {@code DynamicFunctionValue}, and an adapter-valued source
+            // descends its own published invocation chain at execution
+            // exactly like the synchronous D15 protocol (runtime provenance
+            // as an adapter is not part of the value's type): its nested
+            // start carries the scratch identity the outer task publishes the
+            // resolved source under, because the adapter identity itself is a
+            // statically classified callee the closed Dynamic-callee rule
+            // reserves for the runtime arms.
+            boolean nestedAdapterSource =
+                source instanceof FunctionExecutionBinding.AdapterBinding;
             boolean runtimeResolved = source == null
-                || source instanceof FunctionExecutionBinding.DynamicFunctionValue;
-            ValueId runtimeSourceIdentity = runtimeResolved ? sourceIdentity : null;
+                || source instanceof FunctionExecutionBinding.DynamicFunctionValue
+                || nestedAdapterSource;
+            ValueId runtimeSourceIdentity = !runtimeResolved ? null
+                : nestedAdapterSource
+                    ? ids.nextValueId(module, nextOrdinal++, 0)
+                    : sourceIdentity;
             RuntimeDescriptor.Func target = adapter.targetSignature();
             RuntimeDescriptor.Func sourceSignature = adapter.sourceSignature();
             List<ValueId> args = new ArrayList<>();
             List<RuntimeDescriptor> argTypes = new ArrayList<>();
-            for (ExpressionNode argument : call.args()) {
-                args.add(lowerExpression(argument));
+            for (int i = 0; i < call.args().size(); i++) {
+                ExpressionNode argument = call.args().get(i);
+                args.add(lowerParameterArgument(call, i, false));
                 argTypes.add(ContainerPayloadDescriptors.resultDescriptorOf(
                     checkedType(argument)));
             }
@@ -12451,9 +12883,14 @@ public final class SemanticLowerer {
                         external.exportName(), calleeToken);
                     nestedSource = AsyncStartSource.EXTERNAL;
                 }
-                case FunctionExecutionBinding.AdapterBinding nestedAdapter ->
-                    throw new ConstructUnlowered("nested adapter source of '" + calleeName
-                        + "' (adapter-of-adapter invocation is ISSUE-0531's)", call.span());
+                case FunctionExecutionBinding.AdapterBinding ignored ->
+                    // An adapter-valued source is the runtime-resolved arm: its
+                    // own published invocation chain selects the execution
+                    // class at each invocation, so the lowering never records a
+                    // statically fixed nested-source shape for it.
+                    throw new IllegalStateException("the adapter-valued async source of '"
+                        + calleeName + "' reaches the statically fixed source arm"
+                        + " (producer defect)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     if (sourceSignature.paramTypes().size()
@@ -12571,8 +13008,24 @@ public final class SemanticLowerer {
                     statement.span());
             }
             ValueId value;
+            boolean adaptedPosition = false;
             if (statement.expr().isPresent()) {
-                value = lowerExpression(statement.expr().get());
+                ExpressionNode expr = statement.expr().get();
+                RuntimeDescriptor declaredReturn = context.signature.returnType();
+                if (positionAdapts(expr, declaredReturn)) {
+                    // The return position's arity extension: exactly one
+                    // adapter over the returned value, so the function's
+                    // single FUNCTION_RETURN boundary validates the
+                    // adapted value's exact target signature and the
+                    // caller observes a value of the declared return
+                    // type.
+                    adaptedPosition = true;
+                    value = lowerPositionAdapter(expr,
+                        (RuntimeDescriptor.Func) declaredReturn,
+                        () -> lowerExpression(expr));
+                } else {
+                    value = lowerExpression(expr);
+                }
             } else {
                 if (!(context.signature.returnType() instanceof RuntimeDescriptor.Null)) {
                     throw new ConstructUnlowered("bare return in a function whose return "
@@ -12589,6 +13042,10 @@ public final class SemanticLowerer {
             SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(statement.span()),
                 SourceOriginKind.USER, anchor, currentParent());
             ensureReturnBoundary(context, value, statement.span(), returnOpId);
+            if (adaptedPosition) {
+                recordPositionAdapterAt(value, context.returnBoundaryOpId,
+                    returnBoundaryKind(context));
+            }
             emit(buildOp(returnOpId, SemanticOpKind.RETURN,
                 new KindPayload.ReturnPayload(value, context.functionId,
                     context.invocationOpId(), context.returnBoundaryOpId),
@@ -14074,8 +14531,18 @@ public final class SemanticLowerer {
             RuntimeDescriptor elementDescriptor =
                 containerElementDescriptor(arrayType.element(), literal.span());
             List<ValueId> values = new ArrayList<>();
+            Type elementType = arrayType.element();
             for (ExpressionNode element : literal.elements()) {
-                values.add(lowerExpression(element));
+                // An element position is a statically typed function-value
+                // position: a compatible shorter function takes its
+                // arity-extension adapter here, before the element cell
+                // validates the element (docs/spec-v1.3.md Function type
+                // compatibility), so the element boundary sees the exact
+                // element descriptor and the array holds the adapted value.
+                values.add(positionAdapts(element, elementDescriptor)
+                    ? lowerPositionAdapter(element, (RuntimeDescriptor.Func) elementDescriptor,
+                        () -> lowerExpression(element))
+                    : lowerExpression(element));
             }
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -14090,6 +14557,8 @@ public final class SemanticLowerer {
                             CANONICAL_RUNTIME_VALIDATION_ID)),
                     literal.elements().get(i).span(), FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR,
                     SourceOriginKind.SYNTHETIC, opId);
+                recordPositionAdapterAt(values.get(i), child.opId(),
+                    BoundaryKind.ARRAY_LITERAL_ELEMENT);
                 boundaryIds.add(child.opId());
                 children.add(child);
             }
@@ -14103,15 +14572,15 @@ public final class SemanticLowerer {
                 emit(child);
             }
             if (creationRuleAnalysis && elementDescriptor instanceof RuntimeDescriptor.Func) {
-                // Function-typed array literal element positions: typed
-                // boundary positions never adapt (B6) — the direct
-                // value flow into each ARRAY_LITERAL_ELEMENT boundary
-                // slot is the wiring E4's boundary producer consumes;
-                // the classifier records the closed classifications in
-                // element order.
+                // Function-typed array literal element positions: the
+                // closed position classification over each element's
+                // checked source type and the literal's element type (the
+                // classifier records the adaptation candidate exactly for
+                // the positions this walk adapted).
                 for (int i = 0; i < literal.elements().size(); i++) {
-                    recordBoundaryClassification(BoundaryKind.ARRAY_LITERAL_ELEMENT,
-                        checkedType(literal.elements().get(i)), arrayType.element());
+                    recordPositionClassification(BoundaryKind.ARRAY_LITERAL_ELEMENT,
+                        producedType(literal.elements().get(i)), elementType,
+                        values.get(i), boundaryIds.get(i));
                 }
             }
             return result;
@@ -15298,6 +15767,40 @@ public final class SemanticLowerer {
                     + "defect — never an invented op)", expr.span());
             }
             return type;
+        }
+
+        /**
+         * The checked type of the value one source expression actually
+         * produces at a statically typed function-value position (the
+         * signature the position's adapter records and validates the
+         * consumed source against). Every expression produces its own
+         * checked type except an assignment expression, which the checker
+         * types by its right-hand side while the lowering commits the
+         * <em>target-typed</em> value: the assignment position's own cell
+         * ({@code VARIABLE_ASSIGNMENT}, {@code ARRAY_ELEMENT_ASSIGNMENT} or
+         * {@code CLASS_FIELD_ASSIGNMENT}) admits exactly the target
+         * binding/field/element descriptor, so an assignable-but-not-exact
+         * function value is adapted by that assignment and an exact one
+         * stores directly — either way the result carries the target type.
+         * Classifying such a source by the right-hand side's static type
+         * would adapt an already target-typed value a second time: the
+         * position's source-signature check would compare the shorter
+         * right-hand side signature with the wider value the assignment
+         * actually produced. The recursion covers a nested assignment
+         * source, which produces the target-typed value of its own
+         * position. A non-function target (a table member, a nullable
+         * function field, a bytes slot) stores the right-hand side as it
+         * is, so the expression keeps its own checked type there.
+         */
+        private Type producedType(ExpressionNode expr) {
+            if (expr instanceof AssignmentExpr assignment) {
+                Type targetType = checkedType(assignment.target());
+                if (targetType instanceof Type.Func
+                        && producedType(assignment.value()) instanceof Type.Func) {
+                    return targetType;
+                }
+            }
+            return checkedType(expr);
         }
 
         /**

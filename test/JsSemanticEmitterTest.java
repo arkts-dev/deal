@@ -141,6 +141,7 @@ public class JsSemanticEmitterTest {
             testAwaitedFailureTransport(tmpRoot);
             testAsyncExportAbiAndEntryLegs(tmpRoot);
             testCallbackCrossing(tmpRoot);
+            testCallbackReturnAdaptation(tmpRoot);
             testDynamicCalleeDispatch(tmpRoot);
             testAdapterPerExecutionSource(tmpRoot);
             testHostParameterCellAndDeferredReads(tmpRoot);
@@ -3572,6 +3573,68 @@ public class JsSemanticEmitterTest {
                 + run.output());
         check(run.output().contains("\"located\":true"),
             "the crossing failure carries the cell's own origin: "
+                + run.output());
+    }
+
+    /**
+     * The callback entry's return position (ISSUE-0877): a compatible
+     * shorter function value returned by an exported callback adapts to the
+     * declared function return type, and the published callback wrapper
+     * hands the host a working function value whose ignored declared
+     * parameters are never forwarded.
+     */
+    private static void testCallbackReturnAdaptation(Path tmpRoot)
+            throws Exception {
+        System.out.println("-- the callback return position adapts a shorter"
+            + " function value and publishes a working host value --");
+        Path root = Files.createTempDirectory(tmpRoot, "callback-return");
+        Fixture fixture = compileFixture(root, """
+            function one(x: int): int { return x; }
+
+            export function cb(): (x: int, y: int) => int {
+              return one;
+            }
+
+            export function main(): null { return null; }
+            """, Map.of(), Map.of(), Set.of("cb"));
+        Path out = stage(fixture, "callback-return", false);
+        Files.writeString(out.resolve("driver.js"), """
+            const app = require("./app.js");
+            const out = {};
+            const f = app.cb.$f();
+            out.kind = typeof f;
+            out.callable = f !== null && typeof f === "object"
+              && typeof f.$f === "function";
+            if (out.callable) {
+              out.value = f.$f(7, 8);
+              out.second = f.$f(3, 4);
+              try {
+                out.bad = f.$f(7, "bad");
+              } catch (e) {
+                out.bad = { code: e.code, expected: e.expected };
+              }
+            }
+            console.log(JSON.stringify(out));
+            """, StandardCharsets.UTF_8);
+        NodeRun run = runNode(out, "driver.js");
+        checkEq(0, run.status(), "the callback return driver exits 0: "
+            + run.output());
+        check(run.output().contains("\"kind\":\"object\""),
+            "the callback return publishes the host function carrier: "
+                + run.output());
+        check(run.output().contains("\"callable\":true"),
+            "the published callback value carries the DEAL function wrapper: "
+                + run.output());
+        check(run.output().contains("\"value\":7"),
+            "the adapted callback return invokes with its leading parameters: "
+                + run.output());
+        check(run.output().contains("\"second\":3"),
+            "the returned adapter is a reusable working value: "
+                + run.output());
+        check(run.output().contains(
+                "\"bad\":{\"code\":\"E8001\",\"expected\":\"int\"}"),
+            "the published adapter admits its ignored target parameter, so the "
+                + "host's wrong-typed trailing argument fails closed: "
                 + run.output());
     }
 

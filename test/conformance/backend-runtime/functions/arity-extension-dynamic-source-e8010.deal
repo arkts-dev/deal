@@ -1,0 +1,14 @@
+// @spec: Functions — Arity extension adapter
+// @description: A table-produced function value keeps the exact typed-boundary check: a carried shorter signature never silently adapts at a parameter cell, and the pinned E8010 tuple names the declared parameter signature and the value's own carried signature.
+// @expected: runtime-error E8010
+// @features: functions, arity-extension, descriptors, runtime-errors
+
+function one(x: int): int { return x; }
+
+function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+
+export function main(): null {
+  let holder: table = { f: one };
+  let r: int = needPair(holder.f);
+  return null;
+}

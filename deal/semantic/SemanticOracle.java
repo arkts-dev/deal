@@ -1015,6 +1015,39 @@ public final class SemanticOracle {
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
             new IdentityHashMap<>();
         /**
+         * The SHARED_CELL source cell one adapter value captured at its
+         * creation: the emitters' adapters hold the cell object itself (a
+         * Lua cell table, a JVM cell array), so an adapter created over an
+         * invocation's parameter or local cell keeps that cell after the
+         * invocation returns, exactly as the allocation-time capture does. A
+         * cell that is not allocated yet at creation stays unrecorded and
+         * resolves by name at invocation.
+         */
+        final IdentityHashMap<Value, Cell> adapterSourceCells =
+            new IdentityHashMap<>();
+        /**
+         * The materialized source value one adapter value captured at its
+         * creation (the VALUE source mode): the emitters' wrappers resolve
+         * their source once and hold that value, so an adapter over an
+         * invocation's own expression result (an assignment expression's
+         * produced value, a call result) keeps the value it consumed after
+         * the creating invocation returns, exactly as the emitted carriers
+         * do. A source the creation state has not published yet stays
+         * unrecorded and resolves by value id at invocation.
+         */
+        final IdentityHashMap<Value, Value> adapterSourceValues =
+            new IdentityHashMap<>();
+        /**
+         * The most recent adapter identity each {@code FUNCTION_ADAPT} op
+         * published. A static adapter callee records the binding inline and
+         * no callee value of its own, so the adapter arm resolves the
+         * creation's published identity here and reaches the same cell
+         * capture — a closure that escapes with an adapter over its
+         * invocation's parameter cell keeps reading that cell per
+         * invocation, exactly as the emitted carriers' upvalue does.
+         */
+        final Map<OpId, Value> adapterValuesByOp = new LinkedHashMap<>();
+        /**
          * The per-run published export surfaces (M3): one recorded
          * published value per {@code (module, name)} of the run, written
          * exactly once by the owning module's {@code EXPORT_PUBLISH} — the
@@ -4422,17 +4455,14 @@ public final class SemanticOracle {
                     resolveDynamicCalleeBinding(dynamic.callee());
             };
             // The runtime callee value when the callee is value-carried
-            // (the INDIRECT and DYNAMIC arms): the resolved body's closure
+            // (the INDIRECT and DYNAMIC arms) or a statically resolved adapter
+            // (whose creation identity the adapter arm needs for its
+            // creation-site cell capture): the resolved body's closure
             // allocation carries the captured cells an escaped closure's
             // body reads, so the invocation installs them as the body's
-            // capture overlay. A static callee records no runtime value.
-            Value calleeValue = switch (payload.callee()) {
-                case KindPayload.CallCallee.Static ignored -> null;
-                case KindPayload.CallCallee.Indirect indirect ->
-                    valueOf(indirect.callee());
-                case KindPayload.CallCallee.Dynamic dynamic ->
-                    valueOf(dynamic.callee());
-            };
+            // capture overlay. Every other static callee records no runtime
+            // value.
+            Value calleeValue = calleeValueOf(op);
             Value returned;
             activeCallOrigins.addLast(op.origin());
             try {
@@ -4442,7 +4472,7 @@ public final class SemanticOracle {
                     case FunctionExecutionBinding.LoweredBody body ->
                         invokeLoweredBody(op, payload, body, checkedArgs, calleeValue);
                     case FunctionExecutionBinding.AdapterBinding adapter ->
-                        invokeAdapter(op, payload, adapter, checkedArgs);
+                        invokeAdapter(op, payload, adapter, checkedArgs, calleeValue);
                     case FunctionExecutionBinding.HostFunction host ->
                         invokeHostBindingWithBoundary(op, payload, host, checkedArgs);
                     case FunctionExecutionBinding.HostFunctionValue hostValue ->
@@ -4629,15 +4659,21 @@ public final class SemanticOracle {
             pushParamCells(state, bodyBlock, paramCount, args, captures);
         }
 
-        /** The D15 adapter invocation protocol (source class statically fixed). */
+        /**
+         * The D15 adapter invocation protocol (source class statically fixed):
+         * the adapter's own target-parameter cells, the source resolution with
+         * the adapter-valued-source descent, and the innermost level's
+         * leading-M projection.
+         */
         private Value invokeAdapter(SemanticOp op, KindPayload.CallPayload payload,
                                     FunctionExecutionBinding.AdapterBinding adapter,
-                                    List<Value> checkedArgs) {
-            int m = adapter.sourceSignature().paramTypes().size();
-            Value sourceValue = loadAdapterSource(op, adapter);
-            checkAdapterSourceSignature(op, adapter, sourceValue);
-            FunctionExecutionBinding sourceBinding = resolveBindingOfValue(sourceValue);
-            List<Value> leading = List.copyOf(checkedArgs.subList(0, m));
+                                    List<Value> checkedArgs, Value adapterValue) {
+            AdapterChain chain = resolveAdapterChain(op, adapterValue, adapter,
+                admitAdapterTargetParameters(op, adapter, checkedArgs));
+            int m = chain.leadingCount();
+            List<Value> leading = chain.leading();
+            Value sourceValue = chain.sourceValue();
+            FunctionExecutionBinding sourceBinding = chain.binding();
             return switch (sourceBinding) {
                 case FunctionExecutionBinding.LoweredBody body ->
                     runOwnedBodyBlock(body.functionId(), body.blockId(), m, leading,
@@ -4670,8 +4706,9 @@ public final class SemanticOracle {
                         BoundaryContext.none());
                 }
                 case FunctionExecutionBinding.AdapterBinding nested ->
-                    throw new IllegalStateException("adapter-of-adapter invocation is "
-                        + "outside the statically-resolved slice (ISSUE-0531)");
+                    throw new IllegalStateException("the adapter chain descent "
+                        + "resolved a nested adapter binding for " + nested.adaptOpId()
+                        + " (producer defect)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     Value value = invokeIntrinsicValue(op, intrinsic, leading);
@@ -4683,11 +4720,99 @@ public final class SemanticOracle {
             };
         }
 
+        /**
+         * One adapter invocation's resolved source: the value the innermost
+         * level's closed capture mode produced, that level's registered
+         * execution binding, and its leading-parameter projection count.
+         */
+        private record AdapterChain(Value sourceValue,
+                                    FunctionExecutionBinding binding,
+                                    int leadingCount,
+                                    List<Value> leading) {
+        }
+
+        /**
+         * The adapter's own target-signature parameter cells at the invoking
+         * position: every declared target parameter is admitted through the
+         * typed-boundary row its descriptor selects — the ignored trailing
+         * parameters of an arity extension included
+         * (docs/spec-v1.3.md Arity extension adapter: the wrapper checks the
+         * parameter it ignores). A DEAL call site's parameter cells already
+         * admitted the same values (the repeated check is idempotent); a host
+         * that invokes the published adapter value directly (a host-declared
+         * function parameter or a callback's adapted return) has no cell of
+         * its own, so this is its only enforcement point and a wrong-typed
+         * ignored argument fails closed instead of being dropped. The
+         * admitted values replace the received ones, so an {@code int}
+         * position's normalization reaches the projection and an absent
+         * argument admits as the internal missing value.
+         */
+        private List<Value> admitAdapterTargetParameters(SemanticOp op,
+                FunctionExecutionBinding.AdapterBinding adapter, List<Value> args) {
+            List<RuntimeDescriptor> parameters = adapter.targetSignature().paramTypes();
+            List<Value> admitted = new ArrayList<>(parameters.size());
+            for (int i = 0; i < parameters.size(); i++) {
+                RuntimeDescriptor descriptor = parameters.get(i);
+                Value arg = i < args.size() ? args.get(i)
+                    : Value.MissingValue.INSTANCE;
+                FailurePolicyId policy = descriptor instanceof RuntimeDescriptor.Func
+                    ? FailurePolicyId.FUNCTION_SIGNATURE
+                    : FailurePolicyId.TYPE_DESCRIPTOR;
+                BoundaryOutcome outcome = BoundaryExecutor.check(policy, descriptor,
+                    viewOfValue(arg), BoundaryContext.none());
+                switch (outcome) {
+                    case BoundaryOutcome.Pass pass ->
+                        admitted.add(valueOfView(pass.value(), arg));
+                    case BoundaryOutcome.Fail fail ->
+                        throw DealFailure.of(fail.failure(), op.origin(),
+                            List.copyOf(frames));
+                }
+            }
+            return admitted;
+        }
+
+        /**
+         * The D15 source resolution with the adapter-valued-source descent
+         * (docs/spec-v1.3.md Function type compatibility): a resolved source
+         * whose own binding is an adapter is an ordinary function value of its
+         * declared signature — runtime provenance as an adapter is not part of
+         * the type — so the invocation descends that level's own published
+         * source with its own source-signature check and keeps that level's
+         * leading-M projection. The chain ends at the statically fixed body,
+         * host, external or intrinsic class the emitters reach, never at an
+         * unbound adapter protocol call and never at a second unresolved
+         * wrapper.
+         */
+        private AdapterChain resolveAdapterChain(SemanticOp op, Value adapterValue,
+                FunctionExecutionBinding.AdapterBinding adapter,
+                List<Value> admittedArgs) {
+            Value sourceValue = loadAdapterSource(adapterValue, adapter);
+            checkAdapterSourceSignature(op, adapter, sourceValue);
+            FunctionExecutionBinding binding = resolveBindingOfValue(sourceValue);
+            int m = adapter.sourceSignature().paramTypes().size();
+            while (binding instanceof FunctionExecutionBinding.AdapterBinding nested) {
+                m = nested.sourceSignature().paramTypes().size();
+                Value nestedValue = sourceValue;
+                sourceValue = loadAdapterSource(nestedValue, nested);
+                checkAdapterSourceSignature(op, nested, sourceValue);
+                binding = resolveBindingOfValue(sourceValue);
+            }
+            if (m > admittedArgs.size()) {
+                throw new IllegalStateException("the adapter chain's innermost "
+                    + "source projects " + m + " leading argument(s) of "
+                    + admittedArgs.size() + " admitted at " + op.opId()
+                    + " (producer defect)");
+            }
+            return new AdapterChain(sourceValue, binding, m,
+                List.copyOf(admittedArgs.subList(0, m)));
+        }
+
         private Value executeDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
                                          FunctionExecutionBinding binding,
                                          List<Value> checkedArgs, Value calleeValue) {
             if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
-                return executeDynamicAdapterCall(op, payload, adapter, checkedArgs);
+                return executeDynamicAdapterCall(op, payload, adapter, checkedArgs,
+                    calleeValue);
             }
             DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(binding);
             ReturnBoundarySelection selection = DynamicReturnBoundaryProtocol.select(
@@ -4714,19 +4839,16 @@ public final class SemanticOracle {
         private Value executeDynamicAdapterCall(SemanticOp op,
                 KindPayload.CallPayload payload,
                 FunctionExecutionBinding.AdapterBinding adapter,
-                List<Value> checkedArgs) {
-            int m = adapter.sourceSignature().paramTypes().size();
-            Value sourceValue = loadAdapterSource(op, adapter);
-            checkAdapterSourceSignature(op, adapter, sourceValue);
-            FunctionExecutionBinding sourceBinding = resolveBindingOfValue(sourceValue);
-            if (sourceBinding instanceof FunctionExecutionBinding.AdapterBinding) {
-                throw new IllegalStateException("adapter-of-adapter invocation is "
-                    + "outside the statically-resolved slice (ISSUE-0531)");
-            }
+                List<Value> checkedArgs, Value adapterValue) {
+            AdapterChain chain = resolveAdapterChain(op, adapterValue, adapter,
+                admitAdapterTargetParameters(op, adapter, checkedArgs));
+            int m = chain.leadingCount();
+            Value sourceValue = chain.sourceValue();
+            FunctionExecutionBinding sourceBinding = chain.binding();
             DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(sourceBinding);
             ReturnBoundarySelection selection = DynamicReturnBoundaryProtocol.select(
                 payload.dynamicReturnBoundary(), kind);
-            List<Value> leading = List.copyOf(checkedArgs.subList(0, m));
+            List<Value> leading = chain.leading();
             return switch (selection) {
                 case ReturnBoundarySelection.CalleeReturn ignored -> {
                     FunctionExecutionBinding.LoweredBody body =
@@ -4877,13 +4999,35 @@ public final class SemanticOracle {
                 + "' (producer defect)");
         }
 
-        /** The D15 source load: VALUE retains, SHARED_CELL re-reads, THUNK re-executes. */
-        private Value loadAdapterSource(SemanticOp op,
+        /**
+         * The D15 source load: VALUE retains, SHARED_CELL re-reads, THUNK
+         * re-executes. The adapter's own {@code FUNCTION_ADAPT} op owns the
+         * load: its thunk block's membership row and captured cells belong to
+         * the unit that created the adapter, so a nested level of an adapter
+         * chain resolves its own source in its own unit exactly as the
+         * emitters' per-chunk thunk re-executor does. A SHARED_CELL source
+         * reads the cell the creation site captured when the adapter value
+         * carries one (an invocation's parameter or local cell outlives the
+         * invocation that allocated it), otherwise the cell its
+         * binding/generation names at invocation.
+         */
+        private Value loadAdapterSource(Value adapterValue,
                                         FunctionExecutionBinding.AdapterBinding adapter) {
             return switch (adapter.sourceRef()) {
-                case AdaptSourceRef.Value value -> valueOf(value.value());
+                case AdaptSourceRef.Value value -> {
+                    // The materialized value the creation site captured (the
+                    // emitters' wrapper holds its resolved source), or the
+                    // current state's publication of that value id when the
+                    // creation state recorded none.
+                    Value captured = adapterValue == null
+                        ? null : adapterSourceValues.get(adapterValue);
+                    yield captured != null ? captured : valueOf(value.value());
+                }
                 case AdaptSourceRef.SharedCell cell -> {
-                    Cell loaded = cellOf(cell.binding(), cell.generation(), false);
+                    Cell captured = adapterValue == null
+                        ? null : adapterSourceCells.get(adapterValue);
+                    Cell loaded = captured != null ? captured
+                        : cellOf(cell.binding(), cell.generation(), false);
                     if (loaded == null || !loaded.initialized) {
                         throw new IllegalStateException("the adapter's SHARED_CELL load "
                             + "of an uninitialized cell " + cell.binding() + "#"
@@ -4891,7 +5035,8 @@ public final class SemanticOracle {
                     }
                     yield loaded.value;
                 }
-                case AdaptSourceRef.Thunk thunk -> runThunkBlock(op, thunk);
+                case AdaptSourceRef.Thunk thunk ->
+                    runThunkBlock(stateOf(adapter.adaptOpId()), thunk);
             };
         }
 
@@ -4909,8 +5054,7 @@ public final class SemanticOracle {
         }
 
         /** The REEVALUATE_THUNK source re-execution (side effects repeat per invoke). */
-        private Value runThunkBlock(SemanticOp invocation, AdaptSourceRef.Thunk thunk) {
-            UnitState state = stateOf(invocation.opId());
+        private Value runThunkBlock(UnitState state, AdaptSourceRef.Thunk thunk) {
             List<OpId> ops = state.table.blockOps().get(thunk.blockId());
             if (ops == null) {
                 throw new IllegalStateException("the adapter thunk block "
@@ -5190,7 +5334,16 @@ public final class SemanticOracle {
          * FUNCTION_ADAPT creation (D15): SUCCESS publishes a fresh
          * adapter identity of the target signature; creation evaluates no
          * thunk and reads no binding (VALUE's single operand already
-         * completed).
+         * completed). A SHARED_CELL source records the cell object the
+         * creation site resolves, the emitters' allocation-time capture: the
+         * adapter keeps reading that cell per invocation, so an adapter over
+         * an invocation's parameter or local cell keeps it after the
+         * invocation returns. A VALUE source records the materialized value
+         * the creation site already published, the emitters' wrapper holding
+         * its resolved source from creation: an adapter over an invocation's
+         * own expression result (an assignment expression's produced value,
+         * a call result) keeps that value after the invocation returns
+         * instead of re-reading a value id the finished activation owned.
          */
         private String executeFunctionAdapt(SemanticOp op) {
             KindPayload.FunctionAdaptPayload payload =
@@ -5198,6 +5351,18 @@ public final class SemanticOracle {
             Value.AdapterValue adapter = new Value.AdapterValue(payload.targetSignature());
             FunctionExecutionBinding binding = resolveBindingOf((ValueId) op.result());
             bindingsByValue.put(adapter, binding);
+            adapterValuesByOp.put(op.opId(), adapter);
+            if (payload.source() instanceof AdaptSourceRef.SharedCell cell) {
+                Cell captured = cellOf(cell.binding(), cell.generation(), false);
+                if (captured != null) {
+                    adapterSourceCells.put(adapter, captured);
+                }
+            } else if (payload.source() instanceof AdaptSourceRef.Value source) {
+                Value captured = valueOf(source.value());
+                if (captured != null) {
+                    adapterSourceValues.put(adapter, captured);
+                }
+            }
             return publish(op, adapter);
         }
 
@@ -5240,15 +5405,10 @@ public final class SemanticOracle {
                     resolveDynamicCalleeBinding(dynamic.callee());
             };
             // The runtime callee value of a value-carried async start (the
-            // dynamic and indirect arms): the resolved body's closure
-            // allocation installs its captured cells for the task.
-            Value calleeValue = switch (payload.callee()) {
-                case KindPayload.CallCallee.Static ignored -> null;
-                case KindPayload.CallCallee.Indirect indirect ->
-                    valueOf(indirect.callee());
-                case KindPayload.CallCallee.Dynamic dynamic ->
-                    valueOf(dynamic.callee());
-            };
+            // dynamic and indirect arms) and of a statically resolved adapter
+            // start (its creation identity, for the creation-site cell
+            // capture).
+            Value calleeValue = calleeValueOf(op);
             AsyncTokenId token = (AsyncTokenId) op.result();
             if (payload.callee() instanceof KindPayload.CallCallee.Dynamic) {
                 executeDynamicAsyncStart(op, binding, checkedArgs, token, calleeValue);
@@ -5314,7 +5474,8 @@ public final class SemanticOracle {
                 FunctionExecutionBinding binding, List<Value> checkedArgs,
                 AsyncTokenId token, Value calleeValue) {
             if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
-                executeDynamicAdapterAsyncStart(op, adapter, checkedArgs, token);
+                executeDynamicAdapterAsyncStart(op, adapter, checkedArgs, token,
+                    calleeValue);
                 return;
             }
             DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(binding);
@@ -5364,16 +5525,13 @@ public final class SemanticOracle {
 
         private void executeDynamicAdapterAsyncStart(SemanticOp op,
                 FunctionExecutionBinding.AdapterBinding adapter,
-                List<Value> checkedArgs, AsyncTokenId token) {
-            int m = adapter.sourceSignature().paramTypes().size();
-            Value sourceValue = loadAdapterSource(op, adapter);
-            checkAdapterSourceSignature(op, adapter, sourceValue);
-            FunctionExecutionBinding sourceBinding = resolveBindingOfValue(sourceValue);
-            if (sourceBinding instanceof FunctionExecutionBinding.AdapterBinding) {
-                throw new IllegalStateException("adapter-of-adapter invocation is "
-                    + "outside the statically-resolved slice (ISSUE-0531)");
-            }
-            List<Value> leading = List.copyOf(checkedArgs.subList(0, m));
+                List<Value> checkedArgs, AsyncTokenId token, Value adapterValue) {
+            AdapterChain chain = resolveAdapterChain(op, adapterValue, adapter,
+                admitAdapterTargetParameters(op, adapter, checkedArgs));
+            int m = chain.leadingCount();
+            Value sourceValue = chain.sourceValue();
+            FunctionExecutionBinding sourceBinding = chain.binding();
+            List<Value> leading = chain.leading();
             DynamicResolutionKind kind = DynamicReturnBoundaryProtocol.kindOf(sourceBinding);
             switch (kind) {
                 case DEAL_BODY -> {
@@ -5520,9 +5678,12 @@ public final class SemanticOracle {
         /**
          * The callee value of one invocation (sync CALL or ASYNC_START): the
          * value identity the callee names — the dynamic callee's carrier whose
-         * own registration resolved the class, or the indirect arm's tracked
-         * identity; a static binding has no value identity of its own. A
-         * closure body invocation installs this value's captured cells.
+         * own registration resolved the class, the indirect arm's tracked
+         * identity, or the published identity of a statically resolved
+         * adapter callee (a Static callee records no value of its own, but the
+         * adapter arm needs the creation's identity to reach the cell it
+         * captured at creation). A closure body invocation installs this
+         * value's captured cells.
          */
         private Value calleeValueOf(SemanticOp op) {
             KindPayload.CallCallee callee = switch (op.payload()) {
@@ -5538,8 +5699,32 @@ public final class SemanticOracle {
                     valueOf(indirect.callee());
                 case KindPayload.CallCallee.Dynamic dynamic ->
                     valueOf(dynamic.callee());
-                case KindPayload.CallCallee.Static ignored -> null;
+                case KindPayload.CallCallee.Static staticCallee ->
+                    staticAdapterValue(staticCallee.binding());
             };
+        }
+
+        /**
+         * The published identity of one statically resolved adapter callee,
+         * or {@code null} for every other binding kind. The op's own current
+         * activation wins (a re-executed adapter publishes its own identity in
+         * the invocation overlay), and the last creation is the fallback that
+         * reaches an adapter whose creating invocation has already returned —
+         * the escaped-closure shape.
+         */
+        private Value staticAdapterValue(FunctionExecutionBinding binding) {
+            if (!(binding instanceof FunctionExecutionBinding.AdapterBinding adapter)) {
+                return null;
+            }
+            UnitState owner = units.get(adapter.adaptOpId().module());
+            SemanticOp adaptOp = owner == null ? null : owner.opsById.get(adapter.adaptOpId());
+            if (adaptOp != null && adaptOp.result() instanceof ValueId id) {
+                Value published = valueOf(id);
+                if (published != null) {
+                    return published;
+                }
+            }
+            return adapterValuesByOp.get(adapter.adaptOpId());
         }
 
         private Value runTaskBodyWithRecordedCell(SemanticOp op,
@@ -5569,7 +5754,7 @@ public final class SemanticOracle {
          */
         private Value runAdapterOverAsyncTask(SemanticOp op,
                 FunctionExecutionBinding.AdapterBinding adapter, List<Value> checkedArgs) {
-            Value sourceValue = loadAdapterSource(op, adapter);
+            Value sourceValue = loadAdapterSource(calleeValueOf(op), adapter);
             checkAdapterSourceSignature(op, adapter, sourceValue);
             SemanticOp nested = nestedAsyncStartOf(op);
             // The nested source start of a declared body source is
@@ -5577,11 +5762,21 @@ public final class SemanticOracle {
             // under the nested start's own callee identity, so the source
             // body task installs the resolved source closure's
             // creation-site captured cells instead of reconstructing a
-            // factory at the call site.
-            if (nested.payload() instanceof KindPayload.AsyncStartPayload start
-                    && start.callee()
-                        instanceof KindPayload.CallCallee.Indirect indirect) {
-                putValue(indirect.callee(), sourceValue);
+            // factory at the call site. The runtime-resolved source start
+            // publishes the same resolved carrier under its Dynamic callee
+            // identity, so the runtime class dispatch descends an
+            // adapter-valued source exactly like the emitted wrappers.
+            if (nested.payload() instanceof KindPayload.AsyncStartPayload start) {
+                switch (start.callee()) {
+                    case KindPayload.CallCallee.Indirect indirect ->
+                        putValue(indirect.callee(), sourceValue);
+                    case KindPayload.CallCallee.Dynamic dynamic ->
+                        putValue(dynamic.callee(), sourceValue);
+                    default -> {
+                        // A statically fixed nested source carries its own
+                        // callee binding and reads no runtime carrier here.
+                    }
+                }
             }
             execute(nested);
             return Value.NullValue.INSTANCE;
@@ -6016,12 +6211,13 @@ public final class SemanticOracle {
                         }
                     }
                     case FunctionExecutionBinding.AdapterBinding adapter -> {
-                        int m = adapter.sourceSignature().paramTypes().size();
-                        Value sourceValue = loadAdapterSource(callback, adapter);
-                        checkAdapterSourceSignature(callback, adapter, sourceValue);
-                        FunctionExecutionBinding sourceBinding =
-                            resolveBindingOfValue(sourceValue);
-                        List<Value> leading = List.copyOf(checked.subList(0, m));
+                        AdapterChain chain = resolveAdapterChain(callback,
+                            valueOf(payload.function()), adapter,
+                            admitAdapterTargetParameters(callback, adapter, checked));
+                        int m = chain.leadingCount();
+                        Value sourceValue = chain.sourceValue();
+                        FunctionExecutionBinding sourceBinding = chain.binding();
+                        List<Value> leading = chain.leading();
                         yield switch (sourceBinding) {
                             case FunctionExecutionBinding.IntrinsicFunction intrinsic ->
                                 throw intrinsicExecutionDefect(intrinsic);
@@ -6059,9 +6255,9 @@ public final class SemanticOracle {
                                     value, BoundaryContext.none());
                             }
                             case FunctionExecutionBinding.AdapterBinding nested ->
-                                throw new IllegalStateException("adapter-of-adapter "
-                                    + "invocation is outside the statically-resolved "
-                                    + "slice (ISSUE-0531)");
+                                throw new IllegalStateException("the adapter chain "
+                                    + "descent resolved a nested adapter binding for "
+                                    + nested.adaptOpId() + " (producer defect)");
                             case FunctionExecutionBinding.DynamicFunctionValue dynamic ->
                                 throw dynamicFunctionValueDefect(dynamic);
                         };
