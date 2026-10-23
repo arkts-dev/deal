@@ -12,31 +12,31 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-async function base(x: int): int { return x + 40; }
+async function base(x: number): number { return x + 40; }
 
-async function zero(): int { return 41; }
+async function zero(): number { return 41; }
 
-async function widen(): async (x: int) => int {
-  let inner: async (x: int) => int = zero;
+async function widen(): async (x: number) => number {
+  let inner: async (x: number) => number = zero;
   return inner;
 }
 
-export async function test_arity_extension_async_adapter_source(): int {
-  let source: async (x: int) => int = zero;
-  let handed: async (x: int) => int = zero;
+export async function test_arity_extension_async_adapter_source(): number {
+  let source: async (x: number) => number = zero;
+  let handed: async (x: number) => number = zero;
   source = handed;
-  let widened: async (x: int, y: int) => int = source;
-  let first: int = await widened(1, 2);
+  let widened: async (x: number, y: number) => number = source;
+  let first: number = await widened(1, 2);
   check(first === 41, "an assigned adapter-valued async source descends its chain");
 
-  let exact: async (x: int) => int = base;
-  let widenedExact: async (x: int, y: int) => int = exact;
-  let second: int = await widenedExact(1, 2);
+  let exact: async (x: number) => number = base;
+  let widenedExact: async (x: number, y: number) => number = exact;
+  let second: number = await widenedExact(1, 2);
   check(second === 41, "the exact async source control adapts once");
 
-  let returned: async (x: int) => int = await widen();
-  let widenedReturned: async (x: int, y: int) => int = returned;
-  let third: int = await widenedReturned(1, 2);
+  let returned: async (x: number) => number = await widen();
+  let widenedReturned: async (x: number, y: number) => number = returned;
+  let third: number = await widenedReturned(1, 2);
   check(third === 41, "a zero-to-one adapter value returned from an async function adapts");
 
   console.log("ASYNC ADAPTER SOURCE OK");

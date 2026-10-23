@@ -4,8 +4,8 @@
 // @features: tables, dynamic-read, literals, classes, computed-key
 
 class Box {
-  n: int = 0;
-  m: int = 0;
+  n: number;
+  m: number;
 }
 
 export function main(): null {

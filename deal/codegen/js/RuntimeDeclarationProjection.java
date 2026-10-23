@@ -69,7 +69,7 @@ public final class RuntimeDeclarationProjection {
             CanonicalModuleIdentity identity = identities.get(moduleId);
 
             // Declared exports: ascending Java String name order (the
-            // pinned v1.3 declared-export order), each an exact structural
+            // pinned v1.4 declared-export order), each an exact structural
             // descriptor of the resolved declared type.
             Map<String, RuntimeDescriptor> exports = new LinkedHashMap<>();
             for (String name : new TreeMap<>(facts.exports()).keySet()) {

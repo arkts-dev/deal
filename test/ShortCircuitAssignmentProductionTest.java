@@ -747,7 +747,7 @@ public final class ShortCircuitAssignmentProductionTest {
             case CLASS_FIELD -> children.get(1);
             case TABLE_SLOT -> children.size() == 3
                 ? children.get(1) : children.get(2);
-            case ARRAY_SLOT, BYTES_SLOT -> children.get(2);
+            case ARRAY_SLOT -> children.get(2);
         };
     }
 

@@ -336,7 +336,7 @@ public class JsonableHelperProductionDriveTest {
                 materialized);
         }
         String entryStem = moduleNameOf(entryCorpus.getFileName().toString());
-        String dealJson = "{\n  \"languageVersion\": \"1.3\",\n"
+        String dealJson = "{\n  \"languageVersion\": \"1.4\",\n"
             + "  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n"
             + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
@@ -1510,7 +1510,7 @@ public class JsonableHelperProductionDriveTest {
                 + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(root.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"],\n"
+                "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n",
                 StandardCharsets.UTF_8);
             Project project = new Project(root, src, src.resolve("plain.deal"), "plain",
@@ -1547,7 +1547,7 @@ public class JsonableHelperProductionDriveTest {
                     + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(missing.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"],\n"
+                "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n",
                 StandardCharsets.UTF_8);
             Project project = new Project(missing, src, src.resolve("app.deal"), "app",
@@ -1825,7 +1825,7 @@ public class JsonableHelperProductionDriveTest {
                             + "export function main(): null {\n  return null;\n}\n",
                         StandardCharsets.UTF_8);
                     Files.writeString(entryRoot.resolve("deal.json"),
-                        "{\n  \"languageVersion\": \"1.3\",\n"
+                        "{\n  \"languageVersion\": \"1.4\",\n"
                             + "  \"moduleRoots\": [\"src\"],\n"
                             + "  \"output\": \"out\",\n"
                             + "  \"backend\": \""
@@ -1926,7 +1926,7 @@ public class JsonableHelperProductionDriveTest {
         Path entryFile = srcRoot.resolve(moduleName + ".deal");
         Files.writeString(entryFile, source, StandardCharsets.UTF_8);
         Files.writeString(root.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.3\",\n"
+            "{\n  \"languageVersion\": \"1.4\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n  \"output\": \"out\",\n"
                 + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
                 + "\"\n}\n", StandardCharsets.UTF_8);
@@ -2782,7 +2782,7 @@ public class JsonableHelperProductionDriveTest {
         injections.put("legacy profile", "// @profile: legacy-safe-number\n" + raw);
         injections.put("unknown profile", "// @profile: no-such-profile\n" + raw);
         injections.put("duplicate metadata",
-            "// @profile: deal-v1.3-int32\n// @profile: deal-v1.3-int32\n" + raw);
+            "// @profile: deal-v1.4-int32\n// @profile: deal-v1.4-int32\n" + raw);
         injections.put("removed v1.2 profile",
             "// @profile: deal-v1.2-int32\n" + raw);
         // The declaration after the 40-line metadata window and the
@@ -2799,7 +2799,7 @@ public class JsonableHelperProductionDriveTest {
         injections.put("empty profile on line 41",
             profilePadding(40) + "// @profile:\n" + raw);
         injections.put("cross-boundary duplicate",
-            "// @profile: deal-v1.3-int32\n" + profilePadding(39)
+            "// @profile: deal-v1.4-int32\n" + profilePadding(39)
                 + "// @profile: legacy-safe-number\n" + raw);
         // The canonical metadata reader (windowProfileDeclarations)
         // segments source lines on \R, not only on CR/LF: a declaration
@@ -2823,8 +2823,8 @@ public class JsonableHelperProductionDriveTest {
                 "// padding" + terminator + "// @profile: no-such-profile\n"
                     + raw);
             injections.put("duplicate metadata after " + name,
-                "// @profile: deal-v1.3-int32\n// padding" + terminator
-                    + "// @profile: deal-v1.3-int32\n" + raw);
+                "// @profile: deal-v1.4-int32\n// padding" + terminator
+                    + "// @profile: deal-v1.4-int32\n" + raw);
             check(ConformanceHarnessMetadata.windowProfileDeclarations(
                     "// padding" + terminator
                         + "// @profile: legacy-safe-number\n" + raw, fixturePath)

@@ -16,8 +16,8 @@ function checkClearedIterable(): null {
   let clear: () => null = function(): null { s = null; return null; };
   if (s !== null) {
     clear();
-    let visits: int = 0;
-    let caught: int = 0;
+    let visits: number = 0;
+    let caught: number = 0;
     try {
       for (let c: string of s) {
         visits = visits + 1;
@@ -45,8 +45,8 @@ function checkClearedParameter(s: string | null): null {
   let clear: () => null = function(): null { s = null; return null; };
   if (s !== null) {
     clear();
-    let visits: int = 0;
-    let caught: int = 0;
+    let visits: number = 0;
+    let caught: number = 0;
     try {
       for (let c: string of s) {
         visits = visits + 1;
@@ -69,7 +69,7 @@ function checkOnceAdmittedAndEmpty(): null {
   if (s !== null) {
     let replace: () => null = function(): null { s = "xy"; return null; };
     replace();
-    let visits: int = 0;
+    let visits: number = 0;
     let seen: string = "";
     for (let c: string of s) {
       s = null;
@@ -82,7 +82,7 @@ function checkOnceAdmittedAndEmpty(): null {
   }
   let empty: string | null = "";
   if (empty !== null) {
-    let visits: int = 0;
+    let visits: number = 0;
     for (let c: string of empty) {
       visits = visits + 1;
     }
@@ -96,7 +96,7 @@ function checkOnceAdmittedAndEmpty(): null {
 function checkUnicodeScalars(): null {
   let astral: string | null = "aé中😀b";
   if (astral !== null) {
-    let scalars: int = 0;
+    let scalars: number = 0;
     let seen: string = "";
     for (let c: string of astral) {
       scalars = scalars + 1;
@@ -108,7 +108,7 @@ function checkUnicodeScalars(): null {
   }
   let combining: string | null = "éx";
   if (combining !== null) {
-    let scalars: int = 0;
+    let scalars: number = 0;
     let seen: string = "";
     for (let c: string of combining) {
       scalars = scalars + 1;
@@ -129,7 +129,7 @@ function checkFreshCapturedBindings(): null {
       function(): string { return ""; },
       function(): string { return ""; }
     ];
-    let index: int = 0;
+    let index: number = 0;
     for (let c: string of source) {
       captured[index] = function(): string { return c; };
       index = index + 1;
@@ -174,8 +174,8 @@ async function checkAsyncAdmission(s: string | null): null {
   let clear: () => null = function(): null { s = null; return null; };
   if (s !== null) {
     clear();
-    let visits: int = 0;
-    let caught: int = 0;
+    let visits: number = 0;
+    let caught: number = 0;
     try {
       for (let c: string of s) {
         visits = visits + 1;
@@ -197,7 +197,7 @@ export async function test_async_string_iterable_admission(): null {
   await checkAsyncAdmission("x");
   let s: string | null = "abcde";
   let seen: string = "";
-  let visits: int = 0;
+  let visits: number = 0;
   if (s !== null) {
     for (let c: string of s) {
       let echoed: string = await echoText(c);

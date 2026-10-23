@@ -1341,14 +1341,6 @@ record NumValue(double value) implements Value {
                 ownedChildren = new HashSet<>(structuralOwned);
                 ChainOperandCompletion.registerChainOperandOwners(unit,
                     structuralOwned, ownedChildren);
-                // The detached CLASS_DEFAULT ops are members of exactly
-                // their own default blocks; those blocks execute only
-                // under their triggering CLASS_NEW/CLASS_FACTORY arm, so
-                // the walk skip set keeps the default ops out of any
-                // block run (their own events are the owner arm's).
-                for (SemanticOp op : unit.ops()) {
-
-                }
                 for (SemanticOp op : unit.ops()) {
                     if (op.payload() instanceof KindPayload.TryCatchPayload tryCatch) {
                         catchBindings.add(tryCatch.catchBinding());
@@ -1834,7 +1826,7 @@ record NumValue(double value) implements Value {
          * so an earlier declaration's closure captures the cell by
          * identity even when the publishing group op runs later in the
          * same module init (the declaration-order-independent forward
-         * reference: docs/spec-v1.3.md §Name resolution — Declaration order,
+         * reference: docs/spec-v1.4.md §Name resolution — Declaration order,
          * C1 body coverage). The
          * group op's publication phase still writes the member closures
          * into these pre-created cells in one ordered sequence (phase 0's
@@ -2408,7 +2400,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
 
         // =========================================================================
         // The class-construction ops (CLASSES step 8, E5 core):
-        // CLASS_DEFAULT/CLASS_NEW/CLASS_FACTORY delegation to the closed
+        // CLASS_NEW/CLASS_FACTORY delegation to the closed
         // {@link ClassOpsExecutor} (construction order, factory transfer,
         // field presence) — no ad-hoc fork of the pinned D16 order.
         // =========================================================================
@@ -5962,7 +5954,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
          * reading is a contemporary epoch-millisecond value (outside the
          * signed32 range), so the declared {@code number} return boundary
          * admits it unchanged — the same semantic outcome the real
-         * targets produce for their own clock readings (v1.3).
+         * targets produce for their own clock readings (v1.4).
          */
         private static final long ORACLE_CLOCK_MILLIS = 1_700_000_000_000L;
 
@@ -6193,7 +6185,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
             // expected/actual, frames and cause unchanged and catching the
             // rethrown error again is the identical Error value. The
             // binding is a fresh mutable lexical binding per catch
-            // execution (docs/spec-v1.3.md §Closures and captured
+            // execution (docs/spec-v1.4.md §Closures and captured
             // variables, §try / catch), so the cell is allocated here and
             // never reused: a closure created in an earlier catch captured
             // that execution's cell and keeps observing its own caught

@@ -24,7 +24,7 @@ import java.util.Objects;
  * string, so the comment and the sidecar never disagree — the recorder is
  * the single source-map authority of one production emission.</p>
  *
- * <p>The v1.3 default debugging artifacts install one recorder on every
+ * <p>The v1.4 default debugging artifacts install one recorder on every
  * successful production emission: the emitted source comments and the
  * staged sidecars come from this single recorder, and the accepted
  * {@code --source-map} request spelling selects nothing. Only a direct

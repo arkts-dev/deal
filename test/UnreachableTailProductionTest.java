@@ -124,7 +124,7 @@ public class UnreachableTailProductionTest {
     }
 
     private static final String DEAL_JSON =
-        "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"],\n"
+        "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n";
 
     private static CompilerInvocation productionInvocation() {
@@ -208,7 +208,7 @@ public class UnreachableTailProductionTest {
         Map<ConstructKind, List<SemanticOpKind>> coverage =
             manifests.manifests().get(0).constructCoverage();
         SemanticLowerer.LoweringResult lowering =
-            SemanticLowerer.lowerModuleFullProgram(input, SemanticProfile.DEAL_V1_3_INT32,
+            SemanticLowerer.lowerModuleFullProgram(input, SemanticProfile.DEAL_V1_4_BINARY64,
                 coverage, INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
         // A clean result is the full lowering stack's acceptance: the

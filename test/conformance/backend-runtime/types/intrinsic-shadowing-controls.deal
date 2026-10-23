@@ -1,5 +1,5 @@
 // @spec: Variables — Scope
-// @description: A direct call of a lexically shadowed int/number name dispatches the local, parameter, enclosing-block or catch binding the position resolves, never the ordinary module callable (v1.3 name resolution: locals, parameters and enclosing scopes precede module bindings and ordinary module callables). Each case pins its exact expected value, the shadow's current-value dispatch, once-only callee/argument effects, the captured callee, and the module callables beside the shadowed and intrinsic arity-adapted alias controls.
+// @description: A direct call of a lexically shadowed int/number name dispatches the local, parameter, enclosing-block or catch binding the position resolves, never the ordinary module callable (v1.4 name resolution: locals, parameters and enclosing scopes precede module bindings and ordinary module callables). Each case pins its exact expected value, the shadow's current-value dispatch, once-only callee/argument effects, the captured callee, and the module callables beside the shadowed and intrinsic arity-adapted alias controls.
 // @expected: runtime-ok
 // @features: variables, name-resolution, shadowing, intrinsics, side-effects
 

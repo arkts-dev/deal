@@ -115,7 +115,7 @@ public final class ContainerPayloadDescriptors {
      * one of the two derivations — {@code module}, {@code capability
      * CONTAINERS_AND_STRINGS}, {@code validatorRule
      * DESCRIPTOR_UNREPRESENTABLE}, {@code semanticProfile
-     * DEAL_V1_3_INT32}, {@code irVersion deal.semantic-ir/2}, and the
+     * DEAL_V1_4_BINARY64}, {@code irVersion deal.semantic-ir/2}, and the
      * {@code ContainerPayloadDescriptors} origin. The unit-production
      * seam (the stage's claiming seam, C5) converts the returned detail
      * into the E6005 diagnostic through
@@ -130,7 +130,7 @@ public final class ContainerPayloadDescriptors {
             module.path(),
             SemanticCapability.CONTAINERS_AND_STRINGS,
             DESCRIPTOR_UNREPRESENTABLE,
-            SemanticProfile.DEAL_V1_3_INT32,
+            SemanticProfile.DEAL_V1_4_BINARY64,
             LoweredModuleUnit.FORMAT_VERSION,
             "ContainerPayloadDescriptors " + DESCRIPTOR_UNREPRESENTABLE
                 + " (" + defect.getMessage() + ")");

@@ -1,5 +1,5 @@
 {
-  "languageVersion": "1.3",
+  "languageVersion": "1.4",
   "moduleRoots": ["."],
   "backend": "luajit",
   "externals": {

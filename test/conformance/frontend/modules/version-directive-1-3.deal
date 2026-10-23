@@ -1,7 +1,7 @@
 // @spec: Modules, declarations, standard library, and host ABI
 // @description: Declaration files require no source-level version directive
 // @expected: compile-ok
-// @features: modules, declarations, directives, v1.3
+// @features: modules, declarations, directives, v1.4
 
 import * as Api from "./support/version_1_3";
 export function main(): null { return null; }

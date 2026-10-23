@@ -32,7 +32,7 @@ import java.util.Objects;
  * }</pre>
  *
  * <p>{@code sourceMap} is the internal rendering selection, not a public
- * no-map mode: the v1.3 default debugging artifacts are always produced by
+ * no-map mode: the v1.4 default debugging artifacts are always produced by
  * the public compile, and an ineffective selection is an internal
  * comparison rendering whose artifacts carry no source comment and no
  * mapping list while keeping every embedded runtime location.</p>

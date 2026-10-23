@@ -1,7 +1,7 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: A @jsonable table field accepts only a JSON object: the empty array is a validation failure that makes fromJson return null, while the empty object and a keyed object decode and roundtrip (v1.3)
+// @description: A @jsonable table field accepts only a JSON object: the empty array is a validation failure that makes fromJson return null, while the empty object and a keyed object decode and roundtrip (v1.4)
 // @expected: runtime-ok
-// @features: jsonable, table, fromJson, v1.3
+// @features: jsonable, table, fromJson, v1.4
 
 // @jsonable
 export class Wrapper {
@@ -9,7 +9,7 @@ export class Wrapper {
 }
 
 export function test_table_field_rejects_json_array(): null {
-  // docs/spec-v1.3.md:695: a table field's fromJson accepts only a JSON
+  // docs/spec-v1.4.md:695: a table field's fromJson accepts only a JSON
   // object, so [] is a validation failure and the helper returns null.
   let rejected: Wrapper | null = Wrapper$fromJson("{\"data\":[]}");
   if (rejected !== null) {

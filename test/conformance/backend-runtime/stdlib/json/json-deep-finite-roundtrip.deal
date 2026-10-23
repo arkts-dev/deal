@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: json.parse/json.stringify round-trip a finite 600-level nesting without any fixed depth cap (v1.3)
+// @description: json.parse/json.stringify round-trip a finite 600-level nesting without any fixed depth cap (v1.4)
 // @expected: runtime-ok
-// @features: stdlib, json, deep, v1.3
+// @features: stdlib, json, deep, v1.4
 
 import * as json from "std/json";
 

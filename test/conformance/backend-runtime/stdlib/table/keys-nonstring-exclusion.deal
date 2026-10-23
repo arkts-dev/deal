@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/table.d.deal
 // @description: std/table.keys returns the table's string keys: a key spelled with decimal digits is an ordinary string key (never an array index), so it appears in keys() and a string-key delete removes it
 // @expected: runtime-ok
-// @features: stdlib, table, v1.3
+// @features: stdlib, table, v1.4
 
 import * as tables from "std/table";
 

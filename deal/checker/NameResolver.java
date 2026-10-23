@@ -265,7 +265,7 @@ public final class NameResolver {
 
         // F2: Circular import detection — check if the IMPORTED module
         // is already being resolved (not the importing module). Every
-        // import cycle is a compile-time error (v1.3); the
+        // import cycle is a compile-time error (v1.4); the
         // orchestrator's phase-2 complete-graph admission owns the
         // production rejection, and this recursion guard keeps the
         // frontend entrypoints fail-closed when a resolver recurses.

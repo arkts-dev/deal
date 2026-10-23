@@ -14,7 +14,7 @@ import java.util.Objects;
  * its deterministic canonical-JSON digest. The registry records which
  * capabilities exist for which targets — it selects no semantics, no
  * promotion and no compatibility arm; the sole
- * {@code DEAL_V1_3_INT32} profile executes every capability.
+ * {@code DEAL_V1_4_BINARY64} profile executes every capability.
  */
 public final class CapabilityRegistry {
 

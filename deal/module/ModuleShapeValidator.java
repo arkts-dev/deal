@@ -108,9 +108,8 @@ public final class ModuleShapeValidator {
 
     /**
      * Recurses into the nested statement contexts of a top-level
-     * declaration: function bodies and class field default expressions
-     * (which may contain function expressions).  Import declarations have
-     * no nested contexts at all.
+     * declaration: function bodies, including nested function expressions.
+     * Structural class and import declarations have no executable contexts.
      */
     private static void checkTopLevelBody(StatementNode stmt,
                                           List<CompilerDiagnostic> diagnostics,

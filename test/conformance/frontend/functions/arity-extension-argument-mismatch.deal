@@ -3,11 +3,11 @@
 // @expected: compile-error E5001
 // @features: functions, arity-extension, diagnostics
 
-function takesNumber(x: number): int { return 1; }
+function takesNumber(x: string): number { return 1; }
 
-function needPair(f: (x: int, y: int) => int): int { return f(1, 2); }
+function needPair(f: (x: number, y: number) => number): number { return f(1, 2); }
 
 export function main(): null {
-  let r: int = needPair(takesNumber);
+  let r: number = needPair(takesNumber);
   return null;
 }

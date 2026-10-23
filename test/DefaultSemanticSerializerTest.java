@@ -236,7 +236,7 @@ public class DefaultSemanticSerializerTest {
     }
 
     private static final String MANIFEST = """
-        {"languageVersion":"1.3","moduleRoots":["src"],"backend":"luajit","output":"build"}
+        {"languageVersion":"1.4","moduleRoots":["src"],"backend":"luajit","output":"build"}
         """;
 
     private static String digestOf(String content) {
@@ -532,7 +532,7 @@ public class DefaultSemanticSerializerTest {
 
     private static void testHostAndJsonWrapperProviders() throws Exception {
         String manifest = """
-            {"languageVersion":"1.3","moduleRoots":["src"],"backend":"luajit","output":"build",
+            {"languageVersion":"1.4","moduleRoots":["src"],"backend":"luajit","output":"build",
              "externals":{"host/cfg":{"declaration":"bindings/cfg.d.deal"}}}
             """;
         Compile compile = new Compile(Map.of("deal.json", manifest, "src/main.deal", """

@@ -741,7 +741,7 @@ public final class Lexer {
     // =========================================================================
 
     /**
-     * Reads a backtick-delimited template literal (v1.3 template lexical
+     * Reads a backtick-delimited template literal (v1.4 template lexical
      * states).
      *
      * <p>The lexeme is the raw content between the backticks (backticks not

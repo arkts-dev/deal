@@ -253,13 +253,6 @@ public final class JsSemanticEmitter {
          */
         private final Map<ModuleId, Set<ClassId>> jsonableClassesByModule =
             new LinkedHashMap<>();
-        /** Per-owning-module {@code CLASS_DEFAULT} ops: a canonical class
-         * identity may cover same-named declarations of sibling modules,
-         * and each declaring unit's plan uses that unit's own default ops
-         * (the plan-bearing declaration's layout and its declaration's
-         * defaults agree). */
-        private final Map<ModuleId, Map<ClassId, Map<String, SemanticOp>>>
-            classDefaultOps = new LinkedHashMap<>();
         /** Emitted {@code $fields} descriptor arrays, by class identity. */
         private final Map<ClassId, String> classFieldsExprs =
             new LinkedHashMap<>();
@@ -268,8 +261,6 @@ public final class JsSemanticEmitter {
             new LinkedHashMap<>();
         /** The call-site span parameter names of the closure being emitted. */
         private String currentCallSpan;
-        /** The {@code CLASS_DEFAULT} op currently emitted as a detached thunk. */
-        private OpId currentDefaultOp;
         /**
          * The canonical async token's owning start op per token id (the
          * op whose result is the {@link AsyncTokenId.Canonical}).
@@ -490,7 +481,7 @@ public final class JsSemanticEmitter {
          * project's declaration-module registration layouts), the
          * interface index's exported-class entries with their recorded
          * construction entries, the generated JSON-helper declarations per
-         * unit, and each class field's {@code CLASS_DEFAULT} child. A
+         * unit. A
          * canonical identity may cover two declarations (a
          * harness-synthesized pair) with different fields, so the declared
          * layouts stay per declaration and the cross-module JSON surface
@@ -701,15 +692,6 @@ public final class JsSemanticEmitter {
                     + " layout for the class " + classId + " (producer defect)");
             }
             return layout;
-        }
-
-        /** One class field's recorded {@code CLASS_DEFAULT} op, or null. */
-        private SemanticOp defaultOpOf(ClassId classId, String field) {
-            Map<ClassId, Map<String, SemanticOp>> moduleOps =
-                classDefaultOps.get(currentModule);
-            Map<String, SemanticOp> byField = moduleOps == null ? null
-                : moduleOps.get(classId);
-            return byField == null ? null : byField.get(field);
         }
 
         /** The classes exported by one module, in interface declaration order. */
@@ -1004,8 +986,7 @@ public final class JsSemanticEmitter {
          * Emits one block's ops (no braces; the caller owns the scope). When
          * {@code postponedEntries} is non-null, the block's ENTRY_INVOKE
          * delegations are collected there instead of emitted (the module-init
-         * body runs them after the class machinery) and the current detached
-         * class-default op is skipped (its thunk owns it).
+         * body runs them after the structural class registration).
          */
         private void emitOps(LoweredModuleUnit unit, BlockId block,
                              List<SemanticOp> postponedEntries) {
@@ -1017,8 +998,7 @@ public final class JsSemanticEmitter {
                     + " this)");
             }
             for (OpId opId : members) {
-                if (ownedChildren.contains(opId) || skippedOps.contains(opId)
-                        || opId.equals(currentDefaultOp)) {
+                if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
                     continue;
                 }
                 SemanticOp op = opsById.get(opId);
@@ -1834,7 +1814,7 @@ private void emitBindingLoad(SemanticOp op) {
             // return value the body's own RETURN cell checked.
             String keyword = function.descriptor().isAsync() ? "async " : "";
             // The emitted function expression keeps the lowered function's
-            // original source name (docs/spec-v1.3.md §Source maps and
+            // original source name (docs/spec-v1.4.md §Source maps and
             // debugging: a stack trace names both the generated function and
             // the original source function). The generated half is the
             // deterministic "<sourceName>$f" spelling of the retained JS
@@ -3484,26 +3464,12 @@ private void emitBindingLoad(SemanticOp op) {
         }
 
         // =====================================================================
-        // Classes: layouts, defaults, factories, construction, fields, JSON
+        // Classes: layouts, providers, construction, fields, JSON
         // =====================================================================
 
-        /**
-         * The module-init class machinery: one per-attempt default thunk per
-         * recorded {@code CLASS_DEFAULT} op, one private factory entry per
-         * registered construction entry, and the public class surface
-         * (META, the full-construction {@code C$new}, and the hidden
-         * {@code C$fields} descriptor export of a {@code @jsonable} class).
-         * Creating the closures executes no default and no construction; the
-         * per-attempt thunks give every construction (and every nested or
-         * reentrant attempt) a fresh scope, so an inner attempt never
-         * overwrites an outer attempt's operands. Ordinary captures of the
-         * surrounding module cells stay live.
-         */
+        /** Registers exact declaring providers, structural plans and JSON metadata. */
         private void emitClassMachinery(LoweredModuleUnit unit) {
             boolean emitted = false;
-            for (SemanticOp op : unit.ops()) {
-
-            }
             ClassFactoryRegistry registry = registries.get(unit.moduleId());
             if (registry != null) {
                 for (Map.Entry<ClassFactoryId, OpId> entry
@@ -3546,13 +3512,8 @@ private void emitBindingLoad(SemanticOp op) {
                     emit("$rt.publishModule(" + jsString(modulePath) + ", "
                         + jsString(name) + ", { $kind: \"class\", $classname: "
                         + jsString(classId.text()) + " });");
-                    // The public constructor keeps the retained plan phase
-                    // order (the host-provided object's extra-key scan, then
-                    // the omitted required defaults, then validation) — the
-                    // surface's provided set is host-supplied, while the
-                    // recorded CLASS_NEW arms render the shared construction
-                    // phase order (defaults, extra-key scan, declaration-order
-                    // boundaries) for the source literals the checker admits.
+                    // Host-provided values use the same required-presence and
+                    // declaration-order structural validation as source values.
                     emit("$rt.publishModule(" + jsString(modulePath) + ", "
                         + jsString(name + "$new") + ", (provided, $file, $line,"
                         + " $column) => $rt.classPlan("
@@ -3611,24 +3572,7 @@ private void emitBindingLoad(SemanticOp op) {
             return null;
         }
 
-        /**
-         * One detached class-default thunk: the recorded default block as a
-         * fresh-scope arrow created at module load and invoked once per
-         * construction attempt. The result is the {@code CLASS_DEFAULT} op's
-         * own value slot; the thunk runs no boundary of its own (the
-         * constructor's {@code CLASS_DEFAULT_FIELD} child admits the value at
-         * its recorded origin).
-         */
-
-
-        /**
-         * One private class-factory entry: the owner module's defaults-only
-         * transfer. The entry runs every omitted required-present default in
-         * declaration order (a caller-provided field is skipped), returns the
-         * internal defaults-filled transfer value and tags nothing — the
-         * caller performs the public construction. Registration executes no
-         * default.
-         */
+        /** One private declaring-provider entry; the caller publishes the instance. */
         private void emitClassFactoryEntry(LoweredModuleUnit unit,
                                            ClassFactoryId factoryId,
                                            SemanticOp factoryOp) {
@@ -3640,7 +3584,7 @@ private void emitBindingLoad(SemanticOp op) {
             // The factory entry is the owner module's own wrapper group:
             // it maps to the class's recorded local declaration site.
             beginMappedGroup(factoryOp);
-            emit("// The defaults-only factory transfer of "
+            emit("// The declaring provider transfer of "
                 + payload.classId().text() + ".");
             emit("$rt.registerFactory(" + jsString(unit.moduleId().path()) + ", "
                 + factoryId.id() + ", ($provided) => {");
@@ -3655,7 +3599,7 @@ private void emitBindingLoad(SemanticOp op) {
         /**
          * One class's constructor plan over the published plan shape: the
          * declaration-order fields with their canonical descriptors and the
-         * per-field default evaluators. It is the {@code C$new} full
+         * required-presence flags. It is the {@code C$new} full
          * construction's input (the retained public constructor ABI); the
          * plan entries carry no private layout identifier and no target
          * grammar.
@@ -4342,9 +4286,6 @@ private void emitBindingLoad(SemanticOp op) {
                 + " registration of the project closure (producer defect)");
         }
 
-        /** One construction's recorded {@code CLASS_DEFAULT} child. */
-        private SemanticOp requireDefaultChild(SemanticOp op, ClassId classId,
-                                               OpId defaultOpId) { throw new IllegalArgumentException("class field initializers are not supported"); }
 
         /** One op's boundary child of the given kind, or a fail-closed defect. */
         private SemanticOp requireBoundaryChild(SemanticOp op, BoundaryKind kind) {

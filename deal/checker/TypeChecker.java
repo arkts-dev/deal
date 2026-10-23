@@ -152,7 +152,7 @@ public final class TypeChecker {
     // -- Saved pre-loop narrowing states of the open loops: a loop body
     //    is checked under a fresh narrowing state, so an await inside a
     //    body must invalidate the enclosing function's saved states too
-    //    (docs/spec-v1.3.md §Nullable semantics: after an await every
+    //    (docs/spec-v1.4.md §Nullable semantics: after an await every
     //    narrowed variable of the enclosing async function reverts to
     //    its declared type, and a loop exit must not restore an entry
     //    the suspension invalidated). The stack is swapped at function
@@ -878,7 +878,7 @@ public final class TypeChecker {
         // following statements of its block. Only the declaration's own
         // scope stops treating it as pending — an inner block's
         // same-name declaration never makes an enclosing scope's pending
-        // declaration visible early (docs/spec-v1.3.md §Name resolution —
+        // declaration visible early (docs/spec-v1.4.md §Name resolution —
         // Declaration order: a let declaration is visible only after its declaration
         // and only in its own block).
         for (PendingScope ps : pendingScopes) {
@@ -920,7 +920,7 @@ public final class TypeChecker {
                     // was laid out by that declaration, so a later
                     // boundary crossing to a distinct same-named
                     // declaration must still be E3019
-                    // (docs/spec-v1.3.md §Nominal typing and
+                    // (docs/spec-v1.4.md §Nominal typing and
                     // §Equality and comparison operand rules: class types
                     // are equal by declared class symbol only).
                     Symbol sym = currentScope.resolve(vd.name());
@@ -1072,7 +1072,7 @@ public final class TypeChecker {
             // definitely returns via return statements requires the catch
             // block to definitely return or throw, independently of the
             // enclosing body's termination and of its return type
-            // (docs/spec-v1.3.md §try / catch). The deficient catch block
+            // (docs/spec-v1.4.md §try / catch). The deficient catch block
             // carries the diagnostic even when a later statement returns;
             // when the composite rule fires, the whole-body falloff
             // diagnostic is redundant and stays suppressed.
@@ -1213,7 +1213,7 @@ public final class TypeChecker {
     private void checkWhileStatement(WhileStatement ws) {
         // F6: The loop-condition boolean requirement is not a
         // contextual-read position: the closed admission list
-        // (docs/spec-v1.3.md "Reading table fields") has no loop row, so
+        // (docs/spec-v1.4.md "Reading table fields") has no loop row, so
         // the condition checks with no expected type and a
         // `while (t.flag)` read is E3003 at the read. The boolean
         // requirement itself is unchanged for every non-read condition.
@@ -1712,7 +1712,7 @@ public final class TypeChecker {
 
     private Type checkBinary(BinaryExpr bin) {
         // A composite operator's operands do not inherit the enclosing
-        // position's expected type: the v1.3 admission list admits a direct
+        // position's expected type: the v1.4 admission list admits a direct
         // table read in its own position (`return t.flag && true` is not a
         // `return E` whose whole E is the read), so the operands check with
         // no expected type and a nested read is E3003 at the operand.
@@ -1905,7 +1905,7 @@ public final class TypeChecker {
         // Intrinsic call? The callee's own visible binding decides: a
         // lexically shadowing local, parameter or enclosing-block binding
         // — and a same-block `let` that is not declared yet
-        // (docs/spec-v1.3.md §Name resolution — Declaration order) —
+        // (docs/spec-v1.4.md §Name resolution — Declaration order) —
         // precedes the root intrinsic, exactly as checkIdentifier
         // resolved the callee expression's type above.
         if (call.callee() instanceof IdentifierExpr id) {
@@ -2073,7 +2073,7 @@ public final class TypeChecker {
         //
         // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
         // be narrowed before its fields are read. Narrowing is supported
-        // only for local variables and parameters (docs/spec-v1.3.md
+        // only for local variables and parameters (docs/spec-v1.4.md
         // §Nullable semantics — "No property-path narrowing"), so a
         // plain identifier receiver is narrowed by the null-narrowing
         // analysis inside its guarded branch and an unguarded read — a
@@ -2108,7 +2108,7 @@ public final class TypeChecker {
                         // read result is the canonical T | null wrap, so a
                         // field declared null reads as null (null | null is
                         // null) and the forbidden Nullable<Null> form is
-                        // never built (docs/spec-v1.3.md §Field access).
+                        // never built (docs/spec-v1.4.md §Field access).
                         fieldType = Types.nullableOrSelf(fieldType);
                     }
                     return fieldType;
@@ -2158,7 +2158,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
 
         // A-D10 (assignment-delete-address-chains): table index
-        // write/delete keys must have static type string (docs/spec-v1.3.md
+        // write/delete keys must have static type string (docs/spec-v1.4.md
         // §Writing table fields and §Deletion). The F5 "allow any index
         // type and skip further checks" skip is superseded by the static string-key gate.
         if (arrayType instanceof Type.Table) {
@@ -2997,7 +2997,7 @@ public final class TypeChecker {
 
     /**
      * Resolves a name to the binding the declaration-order rules make
-     * visible at the current statement (docs/spec-v1.3.md §Name resolution —
+     * visible at the current statement (docs/spec-v1.4.md §Name resolution —
      * Declaration order and §Scope): a let declaration is visible only after its
      * declaration, so a reference from inside the declaring block's
      * earlier statements (a forward or self reference) resolves against

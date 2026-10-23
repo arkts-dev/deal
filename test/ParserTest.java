@@ -228,7 +228,7 @@ public class ParserTest {
         // 'null' as a BuiltinType array primary (ISSUE-0879)
         testNullArrayElementTypeSuffixes();
 
-        // @deal-version file directive value validation (DEAL v1.3)
+        // @deal-version file directive value validation (DEAL v1.4)
         testDealVersionDirectives();
 
         testDeclarationFileJsonableNoEffect();
@@ -245,7 +245,7 @@ public class ParserTest {
     }
 
     // =========================================================================
-    // @deal-version file directive value validation (DEAL v1.3)
+    // @deal-version file directive value validation (DEAL v1.4)
     // =========================================================================
 
     static void testDealVersionDirectives() {
@@ -880,7 +880,7 @@ public class ParserTest {
     }
 
     /**
-     * v1.3 Semicolon rules (docs/spec-v1.3.md Syntactic grammar): every
+     * v1.4 Semicolon rules (docs/spec-v1.4.md Syntactic grammar): every
      * production carrying {@code ';'} consumes one — imports, class fields,
      * variable/expression/return/break/continue/delete/throw statements and
      * the C-style for separators. Block-ending productions (blocks,
@@ -888,7 +888,7 @@ public class ParserTest {
      * and carry no added requirement.
      */
     static void testSemicolonStrictness() {
-        System.out.println("-- Semicolon rules (v1.3) --");
+        System.out.println("-- Semicolon rules (v1.4) --");
 
         // Let before a following statement.
         ParseResult beforeStatement = parse("export function main(): null {\n"
@@ -955,7 +955,7 @@ public class ParserTest {
     }
 
     /**
-     * The v1.3 Syntactic grammar has no empty-statement production: a
+     * The v1.4 Syntactic grammar has no empty-statement production: a
      * statement-position {@code ';'} is outside {@code Program},
      * {@code Statement*}, and {@code Block}. Both the module top level and
      * a block report E1059 at the semicolon's own scalar range — including
@@ -963,7 +963,7 @@ public class ParserTest {
      * while every required terminator stays owned by its production.
      */
     static void testStraySemicolonRejected() {
-        System.out.println("-- Stray statement-position ';' (v1.3 grammar) --");
+        System.out.println("-- Stray statement-position ';' (v1.4 grammar) --");
 
         // Top level: a bare ';' produces no statement.
         ParseResult bare = parse(";");
@@ -1265,9 +1265,9 @@ public class ParserTest {
     }
 
     static void testExponentiationRejected() {
-        System.out.println("-- Exponentiation rejection (v1.3) --");
+        System.out.println("-- Exponentiation rejection (v1.4) --");
 
-        // '**' is not in the v1.3 operator set, so it lexes as two '*'
+        // '**' is not in the v1.4 operator set, so it lexes as two '*'
         // tokens and the second one has no operand (E1037). No POW node
         // can enter the AST.
         ParseResult r = parse("let a: int = 2 ** 3;");
@@ -1612,9 +1612,9 @@ public class ParserTest {
     }
 
     static void testTemplateRawBackslashText() {
-        System.out.println("-- Template Literal: raw backslash text (v1.3) --");
+        System.out.println("-- Template Literal: raw backslash text (v1.4) --");
 
-        // v1.3 TemplateText has no escape mechanism: the backslash and the
+        // v1.4 TemplateText has no escape mechanism: the backslash and the
         // character after it are ordinary text.
         ParseResult r = parse("let x = `hello \\q world`;");
         assertNoParseErrors(r, "raw backslash is ordinary TemplateText");
@@ -2071,7 +2071,7 @@ public class ParserTest {
         assertNoParseErrors(r1, "with semicolon");
         assertStmtCount(r1.program(), 1, "with semicolon");
 
-        // v1.3 requires the terminator: a statement followed by '}' is
+        // v1.4 requires the terminator: a statement followed by '}' is
         // E1053 (the statement still parses for recovery).
         ParseResult r2 = parse("{ let x: int = 1 }");
         assertParseError(r2, "E1053", "without semicolon before }");

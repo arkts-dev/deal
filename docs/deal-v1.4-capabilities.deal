@@ -1,4 +1,4 @@
-// DEAL v1.3 capability demo: one module that exercises the active
+// DEAL v1.4 capability demo: one module that exercises the active
 // language and standard library surface. Compile it with any supported
 // production backend and run its exported main:
 //   deal compile src/main.deal --backend luajit|jvm|js --output <dir>
@@ -213,7 +213,7 @@ export function demo_summary(): string {
   assertBoolean(tableScore > 7, "table score mismatch");
   assertBoolean(mathScore === 25, "math score mismatch");
   assertBoolean(functionScore === 97, "function score mismatch");
-  console.log("DEAL v1.3 capabilities demo");
+  console.log("DEAL v1.4 capabilities demo");
   return `${selected}|${stringsResult}|${classesResult}|${jsonResult}|${errorCode}`;
 }
 

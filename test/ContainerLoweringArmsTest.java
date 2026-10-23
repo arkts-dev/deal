@@ -140,7 +140,7 @@ public class ContainerLoweringArmsTest {
 
     private static SemanticIrValidator.ComparisonFacts facts() {
         return new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
-            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
     }
 
     private static SemanticLowerer.ModuleLowerer lowerer(CheckResult checks) {
@@ -1433,8 +1433,8 @@ public class ContainerLoweringArmsTest {
             what + " detail capability CONTAINERS_AND_STRINGS");
         check(SemanticLowerer.CONSTRUCT_UNLOWERED.equals(detail.validatorRule()),
             what + " detail validatorRule CONSTRUCT_UNLOWERED");
-        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_3_INT32,
-            what + " detail semanticProfile DEAL_V1_3_INT32");
+        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_4_BINARY64,
+            what + " detail semanticProfile DEAL_V1_4_BINARY64");
         check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
             what + " detail irVersion deal.semantic-ir/2");
         check(("SemanticLowerer " + SemanticLowerer.CONSTRUCT_UNLOWERED + " ("
@@ -1477,7 +1477,7 @@ public class ContainerLoweringArmsTest {
             // The module-level seam: exactly the pinned LoweringFailureDetail,
             // no unit, never a reroute.
             SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(
-                moduleOf(indexRead), SemanticProfile.DEAL_V1_3_INT32, Map.of(),
+                moduleOf(indexRead), SemanticProfile.DEAL_V1_4_BINARY64, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.hasErrors() && result.unit() == null,
@@ -2018,7 +2018,7 @@ public class ContainerLoweringArmsTest {
             ConstructKind.ARRAY_OBJECT_LITERAL, ConstructKind.ARRAY_OBJECT_LITERAL.mappedOpKinds(),
             ConstructKind.SCALAR_LITERAL, ConstructKind.SCALAR_LITERAL.mappedOpKinds());
         LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(),
-            SemanticProfile.DEAL_V1_3_INT32, INTERFACE_HASH, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, INTERFACE_HASH, REGISTRY_HASH);
         // The slice opens value frames for the parameters without lowering
         // the declaration arm, so its binding cells are absent; the
         // common-admission head is the applicable closed-rule gate of this
@@ -2195,7 +2195,7 @@ public class ContainerLoweringArmsTest {
             ConstructKind.IF_WHILE_FOR_FOR_OF, ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the positionable spine lowers to a validated unit: " + (first == null ? "null"
@@ -2240,7 +2240,7 @@ public class ContainerLoweringArmsTest {
 
         // Determinism: a fresh lowering produces byte-identical dumps.
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),
             "the repeated lowering validates again");
@@ -2258,7 +2258,7 @@ public class ContainerLoweringArmsTest {
             new LinkedHashMap<>(coverage);
         overCoverage.put(ConstructKind.CALL, ConstructKind.CALL.mappedOpKinds());
         SemanticLowerer.LoweringResult uncovered = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(uncovered != null && uncovered.hasErrors() && uncovered.unit() == null,
             "a recorded CALL row without a produced op fails hard with no unit");

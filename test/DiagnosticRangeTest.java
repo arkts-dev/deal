@@ -1623,7 +1623,7 @@ public class DiagnosticRangeTest {
      * must not shift the scalar coordinate system — cannot pass on a
      * code-only or start-only verdict. Both raw adapted sources are
      * compiled through the real frontend pipeline
-     * ({@link #frontendErrors}) with the corpus metadata's v1.3 profile
+     * ({@link #frontendErrors}) with the corpus metadata's v1.4 profile
      * and the classification headers stripped exactly as the corpus gate
      * does.
      */
@@ -1764,7 +1764,7 @@ public class DiagnosticRangeTest {
     /**
      * The single-profile compile-pin execution: the pinned
      * {@code unary-minus-string-reject} subject, mutated with the removed
-     * out-of-range int literal, is rejected by the sole v1.3 parse contract
+     * out-of-range int literal, is rejected by the sole v1.4 parse contract
      * with E1036 — never the pinned legacy E3007. A pin authored for the
      * removed legacy acceptance is therefore rejected field-exact by the
      * registered drive over the mutated scratch corpus, and there is no
@@ -1773,7 +1773,7 @@ public class DiagnosticRangeTest {
      */
     private static void testV12CompilePinProfileDiscrimination()
             throws Exception {
-        System.out.println("-- the compile-pin execution runs the sole v1.3"
+        System.out.println("-- the compile-pin execution runs the sole v1.4"
             + " contract (a removed legacy literal is rejected, never"
             + " accepted) --");
         Path corpus = Path.of("test", "conformance");

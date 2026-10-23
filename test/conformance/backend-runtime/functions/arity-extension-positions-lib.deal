@@ -1,7 +1,7 @@
 // @expected: companion
 // @description: Classified support module — the cross-module arity-extension positions fixture's library: a declared parameter position of a longer function type and a shorter exported function value, so both the cross-module parameter cell and the local parameter cell receive arity-extended values.
-export function one(x: int): int { return x; }
+export function one(x: number): number { return x; }
 
-export function needPair(f: (x: int, y: int) => int): int { return f(5, 6); }
+export function needPair(f: (x: number, y: number) => number): number { return f(5, 6); }
 
-export function returnPair(): (x: int, y: int) => int { return one; }
+export function returnPair(): (x: number, y: number) => number { return one; }

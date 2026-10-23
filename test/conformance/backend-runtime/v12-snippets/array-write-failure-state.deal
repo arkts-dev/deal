@@ -1,7 +1,7 @@
 // @spec: Runtime execution model
 // @description: Corner-case subject array-write-failure-state — the invalid write evaluates receiver, index and RHS once in that order before the E8002 bounds rejection, publishes no write and preserves alias/length/value; the append then succeeds. (basis: Arrays; Operational semantics summary, rule 3)
 // @expected: runtime-ok
-// @features: v1.3, runtime, corner-case
+// @features: v1.4, runtime, corner-case
 
 import * as c from "std/console";
 export function main(): null {

@@ -3,20 +3,20 @@
 // @expected: compile-error E3001
 // @features: error-handling, try-catch, async-await, nullable, narrowing
 
-async function echoInt(value: int): int {
+async function echoInt(value: number): number {
   return value;
 }
 
-async function probe(e: int | null): int {
+async function probe(e: number | null): number {
   if (e !== null) {
     try {
       throw { code: "C_AWAIT", message: "await" };
     } catch (e) {
       let captured: Error = e;
-      let resumed: int = await echoInt(1);
+      let resumed: number = await echoInt(1);
       let afterResume: Error = e;
     }
-    let unsound: int = e;
+    let unsound: number = e;
   }
   return 0;
 }

@@ -1,7 +1,7 @@
 // @spec: Classes — @jsonable toJson
-// @description: @jsonable toJson serializes a finite 600-level table chain (no fixed depth cap) and duplicates a shared acyclic child (an alias is not a cycle) (v1.3)
+// @description: @jsonable toJson serializes a finite 600-level table chain (no fixed depth cap) and duplicates a shared acyclic child (an alias is not a cycle) (v1.4)
 // @expected: runtime-ok
-// @features: jsonable, toJson, deep, alias, v1.3
+// @features: jsonable, toJson, deep, alias, v1.4
 
 import * as json from "std/json";
 

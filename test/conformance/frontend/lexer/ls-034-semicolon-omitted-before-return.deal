@@ -1,5 +1,5 @@
 // @spec: Lexical elements
-// @description: A variable declaration must end with its semicolon; omitting it before return is E1053 (v1.3 Semicolon rules)
+// @description: A variable declaration must end with its semicolon; omitting it before return is E1053 (v1.4 Semicolon rules)
 // @expected: compile-error E1053
 // @features: parser, semicolon, variable-declaration, return
 

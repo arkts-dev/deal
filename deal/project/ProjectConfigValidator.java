@@ -40,7 +40,7 @@ public final class ProjectConfigValidator {
      *
      */
     public static Outcome validate(StrictJsonDocument document) {
-        // 1. languageVersion — required, exactly the JSON string "1.3".
+        // 1. languageVersion — required, exactly the JSON string "1.4".
         if (document.root() == null) {
             return failure("deal.json: missing required member 'languageVersion'",
                 DOCUMENT_START);
@@ -56,11 +56,11 @@ public final class ProjectConfigValidator {
                 rangeOf(document, rootObj));
         }
         if (!(languageVersionValue instanceof StrictJsonValue.StringVal languageVersion)) {
-            return failure("deal.json: 'languageVersion' must be the JSON string \"1.3\"",
+            return failure("deal.json: 'languageVersion' must be the JSON string \"1.4\"",
                 rangeOf(document, languageVersionValue));
         }
-        if (!"1.3".equals(languageVersion.value())) {
-            return failure("deal.json: 'languageVersion' must be exactly \"1.3\", got: '"
+        if (!"1.4".equals(languageVersion.value())) {
+            return failure("deal.json: 'languageVersion' must be exactly \"1.4\", got: '"
                     + languageVersion.value() + "'",
                 rangeOf(document, languageVersionValue));
         }
@@ -130,16 +130,16 @@ public final class ProjectConfigValidator {
             output = new ManifestString(outputString.value(), rangeOf(document, outputValue));
         }
 
-        // 5. stdlib — exactly "1.3"; absence defaults to "1.3".
-        String stdlib = "1.3";
+        // 5. stdlib — exactly "1.4"; absence defaults to "1.4".
+        String stdlib = "1.4";
         StrictJsonValue stdlibValue = rootMembers.get("stdlib");
         if (stdlibValue != null) {
             if (!(stdlibValue instanceof StrictJsonValue.StringVal stdlibString)) {
                 return failure("deal.json: 'stdlib' must be a string",
                     rangeOf(document, stdlibValue));
             }
-            if (!"1.3".equals(stdlibString.value())) {
-                return failure("deal.json: 'stdlib' must be exactly \"1.3\", got: '"
+            if (!"1.4".equals(stdlibString.value())) {
+                return failure("deal.json: 'stdlib' must be exactly \"1.4\", got: '"
                         + stdlibString.value() + "'",
                     rangeOf(document, stdlibValue));
             }

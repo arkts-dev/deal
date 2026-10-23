@@ -1,6 +1,6 @@
 "use strict";
 
-// DEAL Runtime Library v1.3 — JavaScript backend (deal/runtime.js).
+// DEAL Runtime Library v1.4 — JavaScript backend (deal/runtime.js).
 // The single hand-written CommonJS runtime module exporting $rt, the JS
 // analog of deal/runtime.lua (js-backend-runtime D1-D9, pinned by
 // js-backend-runtime-artifact), plus the shared D9 JSON conversion and
@@ -26,7 +26,7 @@
 // generated code spells none of them bare (js-backend-architecture D2). Object and
 // String are not in the capture list and may be spelled bare inside this
 // trusted file. The native JSON object is not captured: the conforming
-// scanner and the canonical text encoder are the runtime's own (DEAL v1.3
+// scanner and the canonical text encoder are the runtime's own (DEAL v1.4
 // exact JSON).
 const $process = process;
 const $console = console;
@@ -352,7 +352,7 @@ function $parseNullable($d, $cps, $st) {
 }
 
 // async? "(" (descriptor ("," descriptor)*)? ")" "->" descriptor.
-// No rest-parameter arm exists in DEAL v1.3.
+// No rest-parameter arm exists in DEAL v1.4.
 function $parseFunction($d, $cps, $st, $isAsync) {
   $st.$pos++; // consume '('
   const $params = [];
@@ -513,7 +513,7 @@ function $isPlainObject($v) {
   return $proto === Object.prototype || $proto === null;
 }
 
-// ===== Exact JSON (DEAL v1.3) — scanner, classification, marks, text
+// ===== Exact JSON (DEAL v1.4) — scanner, classification, marks, text
 // encoder, and shape conversion =====
 // The members std/json and the @jsonable runtime walkers share:
 // jsonParseText is the conforming RFC-8259 scanner (exact decimal
@@ -2482,7 +2482,7 @@ const $rt = {
     return $jsonNullTables.has(v);
   },
 
-  // ===== Exact JSON members (DEAL v1.3 JSON number classification) =====
+  // ===== Exact JSON members (DEAL v1.4 JSON number classification) =====
 
   // jsonParseText: the conforming RFC-8259 scanner over one string — the
   // decode open of std/json.parse and the @jsonable fromJson walkers. It
@@ -2819,7 +2819,7 @@ const $rt = {
   },
 
   // arrayElementCheck: the ARRAY_ELEMENT_DESCRIPTOR cell of one array
-  // literal element (docs/spec-v1.3.md Runtime diagnostics: E8003 is
+  // literal element (docs/spec-v1.4.md Runtime diagnostics: E8003 is
   // "array element type check failed"). The element's descriptor check
   // runs first and its admitted value is the element the literal stores;
   // a failing element is reported as the E8003 row with the 1-based
@@ -3177,7 +3177,7 @@ const $rt = {
   // 1. The trailing (file, line, column) span triple the emitted call
   //    shape appends is split off; a direct call without it is
   //    defensive misuse and runs the checks with an absent span.
-  // 2. Exact arity — v1.3 has no rest parameters: E8010 "expected at
+  // 2. Exact arity — v1.4 has no rest parameters: E8010 "expected at
   //    least N arguments, got M" / "expected N arguments, got M" (the
   //    reference's arms).
   // 3. Each parameter checks against the declared parameter descriptor
@@ -3301,7 +3301,7 @@ const $rt = {
   // contract, host-async-bad; a valid completion delivers the checked
   // value, host-async-ok). A rejected operation propagates natively at
   // the await site. Source code can only observe the operation through
-  // await (spec-v1.3:1704).
+  // await (spec-v1.4:1704).
   //
   // Converged awaited-call span (ISSUE-0599): an awaited emitted call
   // appends a second trailing span triplet — the await expression's

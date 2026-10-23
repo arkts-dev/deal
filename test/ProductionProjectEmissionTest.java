@@ -359,7 +359,7 @@ public class ProductionProjectEmissionTest {
      * ProductionProjectEmission with.
      */
     private static CompilerInvocation fixtureInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -499,7 +499,7 @@ public class ProductionProjectEmissionTest {
      * {@code REEVALUATE_THUNK} capture mode (the source expression is
      * re-executed on every invocation, so the source value's execution class
      * is selected at execution) — assigned to a longer target signature
-     * (docs/spec-v1.3.md §Function type compatibility: M &lt;= N with the
+     * (docs/spec-v1.4.md §Function type compatibility: M &lt;= N with the
      * extra target parameters accepted and silently ignored; §Arity
      * extension adapter). The production lowering produces the adapter from
      * the call result and the invocation records the closed dynamic
@@ -548,7 +548,7 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The module-level declaration-order shapes (docs/spec-v1.3.md §Name
+     * The module-level declaration-order shapes (docs/spec-v1.4.md §Name
      * resolution: {@code class} and {@code function} declarations are
      * hoisted within the module, function bodies may reference classes
      * declared later in the same module, and class fields may reference
@@ -878,7 +878,7 @@ public class ProductionProjectEmissionTest {
 
     /**
      * Class-default construction terminated by the fields the literals provide:
-     * a provided field skips its default (docs/spec-v1.3.md §Construction), so
+     * a provided field skips its default (docs/spec-v1.4.md §Construction), so
      * the self-referential {@code Self} and the mutually defaulting {@code A}/
      * {@code B} pair each construct only the shape their literal supplied and
      * never re-enter their own default.
@@ -1273,9 +1273,9 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The two v1.3 source shapes the integrated JS route rejected before
+     * The two v1.4 source shapes the integrated JS route rejected before
      * rendering (acceptance remediation of the JS production migration):
-     * docs/spec-v1.3.md §Name resolution, Declaration order requires a
+     * docs/spec-v1.4.md §Name resolution, Declaration order requires a
      * function body — and a class field — to reference a class declared
      * later in the same module, and the arity-extension adapter of
      * §Function type compatibility admits a call-result source that is
@@ -1536,7 +1536,7 @@ public class ProductionProjectEmissionTest {
      * The declaration-order shapes through the public production route: an
      * earlier function body constructs a literal of a later-declared class
      * and of a later-declared class whose omitted required field default
-     * calls a module function (docs/spec-v1.3.md §Name resolution). The one
+     * calls a module function (docs/spec-v1.4.md §Name resolution). The one
      * production lowering resolves both from the hoisted structural
      * declaration facts; the complete set stages and publishes, and the
      * published CommonJS artifact executes both constructions under Node.
@@ -2467,7 +2467,7 @@ public class ProductionProjectEmissionTest {
         Path luaOutRepeat = fixture.root().resolve("lua-out-repeat");
         DefaultLuaRun defaultRun;
         {
-            // LuaJIT: the chunk named for the entry module, the v1.3 default
+            // LuaJIT: the chunk named for the entry module, the v1.4 default
             // source-map sidecar of every constituent source, and the
             // complete runtime/stdlib deployment copies.
             PublicationStager luaStager = PublicationStager.forRoot(luaOut);
@@ -3685,7 +3685,7 @@ public class ProductionProjectEmissionTest {
             + "is identical, and a failing run preserves the previous set "
             + "byte-for-byte --");
 
-        // (1) LuaJIT: the accepted --source-map spelling emits the v1.3
+        // (1) LuaJIT: the accepted --source-map spelling emits the v1.4
         // default debugging artifacts — the artifact's source comments and
         // each constituent module's sidecar mapping agree with the real
         // artifact and source coordinates, and no warning text is printed.
@@ -4052,7 +4052,7 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The v1.3 default source-map recorder of one published emission: the
+     * The v1.4 default source-map recorder of one published emission: the
      * same per-module display names the production arm builds
      * ({@code ProductionProjectEmission#sourceMapRecorder}), so a direct
      * public-emitter call reproduces the published artifact's source

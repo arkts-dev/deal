@@ -1351,7 +1351,7 @@ end)
 
 -- ==================== Direct helpers: depth constant ====================
 
-test("no fixed JSON depth constant remains (v1.3)", function()
+test("no fixed JSON depth constant remains (v1.4)", function()
   assert(__rt._JSON_MAX_DEPTH == nil)
 end)
 
@@ -1977,7 +1977,7 @@ test("decode matrix: empty object document decodes as the defaulted instance", f
   assert(from_obj[__K.kind] == "class")
   assert(from_obj[__K.classname] == "C")
   -- A decoded array carrier records the private array/order marks even at
-  -- length zero, so [] is never an empty object document (v1.3).
+  -- length zero, so [] is never an empty object document (v1.4).
   assert(__rt.json_from_json("C", { [__K.a] = true, [__K.n] = 0 }, fields) == nil)
 end)
 

@@ -14,7 +14,7 @@ public final class CompilerProfileProvider {
 
     /**
      * The sole invocation-resolution entry: {@code PUBLIC_BUILD} semantics
-     * with the single {@link SemanticProfile#DEAL_V1_3_INT32} profile, the
+     * with the single {@link SemanticProfile#DEAL_V1_4_BINARY64} profile, the
      * release-owned state, the recorded registry digest, and the derived
      * release-state hash. This is the entry point {@code deal/Main.java}
      * and the harnesses use; no caller can select a profile, a purpose or
@@ -24,7 +24,7 @@ public final class CompilerProfileProvider {
                                              CapabilityRegistry registry) {
         Objects.requireNonNull(releaseState, "releaseState must not be null");
         Objects.requireNonNull(registry, "registry must not be null");
-        return construct(SemanticProfile.DEAL_V1_3_INT32, releaseState, registry);
+        return construct(SemanticProfile.DEAL_V1_4_BINARY64, releaseState, registry);
     }
 
     /**

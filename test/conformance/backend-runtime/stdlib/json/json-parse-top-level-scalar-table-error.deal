@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: json.parse rejects a top-level scalar at the declared (string)->table return with E8001 expected table (the decoded scalar, actual string) — one uniform outcome on the shared oracle and all three production lanes (v1.3)
+// @description: json.parse rejects a top-level scalar at the declared (string)->table return with E8001 expected table (the decoded scalar, actual string) — one uniform outcome on the shared oracle and all three production lanes (v1.4)
 // @expected: runtime-error E8001
-// @features: stdlib, json, v1.3
+// @features: stdlib, json, v1.4
 
 import * as json from "std/json";
 

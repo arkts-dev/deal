@@ -142,7 +142,7 @@ public class DiagnosticClassificationTest {
         triggers.put("E1003", "\"unterminated");
         triggers.put("E1004", "/* unterminated block comment");
         // Module top level allows only declarations: executable
-        // fragments live inside main() (docs/spec-v1.3.md
+        // fragments live inside main() (docs/spec-v1.4.md
         // §Statement/expression separation and §Test suite basis),
         // so the trigger still exercises the pinned code.
         String inMain = "export function main(): null { %s return null; }";

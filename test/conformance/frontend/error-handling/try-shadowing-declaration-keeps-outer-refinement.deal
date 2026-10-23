@@ -4,14 +4,14 @@
 // @features: error-handling, try-catch, nullable, narrowing, shadowing, blocks
 
 export function main(): null {
-  let e: int | null = 1;
+  let e: number | null = 1;
   if (e !== null) {
     try {
       let e: string = "inner";
       let inner: string = e;
     } catch (err) {
     }
-    let afterCatch: int = e;
+    let afterCatch: number = e;
   }
   return null;
 }

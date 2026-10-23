@@ -1,5 +1,5 @@
 // @spec: Syntactic grammar — Semicolon rules
-// @description: A statement's required semicolon may not be omitted before the next statement (v1.3 Semicolon rules)
+// @description: A statement's required semicolon may not be omitted before the next statement (v1.4 Semicolon rules)
 // @expected: compile-error E1053
 // @features: parser, semicolon, statement-boundary
 

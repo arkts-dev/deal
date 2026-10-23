@@ -1571,7 +1571,7 @@ public final class DefaultIrRecorderTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.3.md &sect;Name resolution — Declaration order), exactly like the
+     * (docs/spec-v1.4.md &sect;Name resolution — Declaration order), exactly like the
      * checker's {@code resolveVisibleBinding} — so the literal keeps
      * the enclosing binding's declared provider, never the
      * not-yet-visible inner declaration's annotation and never the

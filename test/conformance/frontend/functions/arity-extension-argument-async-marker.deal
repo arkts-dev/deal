@@ -3,11 +3,11 @@
 // @expected: compile-error E5001
 // @features: functions, arity-extension, async-await, diagnostics
 
-function syncOne(x: int): int { return x; }
+function syncOne(x: number): number { return x; }
 
-function needAsyncPair(f: async (x: int, y: int) => int): int { return 1; }
+function needAsyncPair(f: async (x: number, y: number) => number): number { return 1; }
 
 export function main(): null {
-  let r: int = needAsyncPair(syncOne);
+  let r: number = needAsyncPair(syncOne);
   return null;
 }

@@ -1,5 +1,5 @@
 // @spec: Arrays — Byte indexing and buffer semantics
-// @description: Nested number[] closure (ISSUE-0160 container step): number[][][] reads and writes at depth through the shared nested-array carriers, append growth with alias visibility at the outer level, the number[][] | null outer null and value, the ((number[] | null)[])[] deep composition with null and real innermost elements, and the strict v1.3 array-read bounds E8002 for the nested past-end and negative-index shapes
+// @description: Nested number[] closure (ISSUE-0160 container step): number[][][] reads and writes at depth through the shared nested-array carriers, append growth with alias visibility at the outer level, the number[][] | null outer null and value, the ((number[] | null)[])[] deep composition with null and real innermost elements, and the strict v1.4 array-read bounds E8002 for the nested past-end and negative-index shapes
 // @expected: runtime-ok
 // @features: number[], arrays, nullable, runtime, v1.2
 
@@ -78,7 +78,7 @@ export function test_array_nested_arrays(): null {
   } else {
     throw { code: "TEST_FAIL", message: "deep composition value element lost" };
   }
-  // Nested past-end read: the strict v1.3 array bounds failure E8002 at
+  // Nested past-end read: the strict v1.4 array bounds failure E8002 at
   // the read expression, never a null flowing into the element-typed
   // boundary.
   try {

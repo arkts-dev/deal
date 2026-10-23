@@ -155,7 +155,7 @@ public class ControlFlowLoweringTest {
     /** The foundation detector's recorded coverage rows for the slice. */
     private static Map<ConstructKind, List<SemanticOpKind>> detectedCoverage(
             CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -184,7 +184,7 @@ public class ControlFlowLoweringTest {
 
     private static SemanticLowerer.LoweringResult lower(CheckedSlice slice,
             Map<ConstructKind, List<SemanticOpKind>> coverage) {
-        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32,
+        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64,
             coverage, INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -204,7 +204,7 @@ public class ControlFlowLoweringTest {
     private static SemanticLowerer.LoweringResult lowerFullProgram(CheckedSlice slice) {
         SemanticLowerer.FullProgramE7Result result =
             SemanticLowerer.lowerModuleFullProgramE7(moduleOf(slice),
-                SemanticProfile.DEAL_V1_3_INT32, detectedCoverage(slice),
+                SemanticProfile.DEAL_V1_4_BINARY64, detectedCoverage(slice),
                 INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)), Map.of(), Set.of());
         return result == null ? null : result.lowering();
@@ -388,9 +388,6 @@ public class ControlFlowLoweringTest {
                 }
                 case WhileStatement whileStatement ->
                     collectThrowStatements(whileStatement.body().statements(),
-                        found);
-                case ForStatement forStatement ->
-                    collectThrowStatements(forStatement.body().statements(),
                         found);
                 case ForOfStatement forOfStatement ->
                     collectThrowStatements(forOfStatement.body().statements(),
@@ -861,7 +858,7 @@ public class ControlFlowLoweringTest {
             return;
         }
         SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModuleFullProgram(
-            moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32, detectedCoverage(slice),
+            moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64, detectedCoverage(slice),
             INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(result != null && !result.hasErrors(),
@@ -1239,7 +1236,7 @@ public class ControlFlowLoweringTest {
 
     /**
      * The catch variable is an ordinary mutable lexical binding of the
-     * full-program walk (docs/spec-v1.3.md §Closures and captured
+     * full-program walk (docs/spec-v1.4.md §Closures and captured
      * variables, §try / catch): its catch-block BINDING_ALLOC is the
      * incarnation a direct assignment commits, a closure created in the
      * catch block records the capture (the capture-driven cell kind makes
@@ -2040,7 +2037,7 @@ public class ControlFlowLoweringTest {
             rule + " is named as the validator rule; got \"" + d.message() + "\"");
         check(d.message().startsWith("Common semantic lowering failed")
                 && d.message().contains("module 'main'")
-                && d.message().contains("semanticProfile DEAL_V1_3_INT32")
+                && d.message().contains("semanticProfile DEAL_V1_4_BINARY64")
                 && d.message().contains("irVersion deal.semantic-ir/2")
                 && d.diagnosticCode().phase() == DiagnosticCode.Phase.BACKEND_LOWERING,
             rule + " full diagnostic projection fields");

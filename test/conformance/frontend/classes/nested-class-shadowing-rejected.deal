@@ -1,7 +1,7 @@
 // @spec: Classes — Class identity
-// @description: A nested class declaration is rejected before class-identity assignment checking (v1.3 module-level class rule); retain the original shadowing and assignment subject.
+// @description: A nested class declaration is rejected before class-identity assignment checking (v1.4 module-level class rule); retain the original shadowing and assignment subject.
 // @expected: compile-error E1057
-// @features: classes, identity, diagnostics, v1.3
+// @features: classes, identity, diagnostics, v1.4
 
 class A { n: number; }
 

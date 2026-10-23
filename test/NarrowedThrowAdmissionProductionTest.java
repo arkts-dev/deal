@@ -25,7 +25,7 @@ import java.util.stream.Stream;
  * the throw machinery consumes it, on every production backend and through
  * every production async invoker.
  *
- * <p>docs/spec-v1.3.md Nullable semantics keeps calls non-invalidating on
+ * <p>docs/spec-v1.4.md Nullable semantics keeps calls non-invalidating on
  * purpose, so a capturing closure can clear the binding while the refinement
  * claim still holds. The {@code THROW} operand is a consumed value like the
  * arithmetic operand, condition, index receiver/key, table member receiver,
@@ -81,7 +81,7 @@ public final class NarrowedThrowAdmissionProductionTest {
     /** The controls fixture's declared export and its return type. */
     private static final String CAUGHT_EXPORT = "test_async_throw_caught";
 
-    private static final String CAUGHT_DESCRIPTOR = "int";
+    private static final String CAUGHT_DESCRIPTOR = "number";
 
     /** The canonical tuple of the cleared-binding admission. */
     private static final String EXPECTED_CODE = "E8001";
@@ -511,7 +511,7 @@ public final class NarrowedThrowAdmissionProductionTest {
             case LuaJitAsyncExportInvoker.Result.Value value -> {
                 checkEq(CAUGHT_DESCRIPTOR, value.returnDescriptor(), backend
                     + ": the caught async control's completion descriptor");
-                checkEq("1", value.valueJson(), backend + ": the caught async "
+                checkEq(1.0, Double.parseDouble(value.valueJson()), backend + ": the caught async "
                     + "control completes with its own value");
             }
             case LuaJitAsyncExportInvoker.Result.DealError error -> fail(backend
@@ -522,7 +522,7 @@ public final class NarrowedThrowAdmissionProductionTest {
             case JvmAsyncExportInvoker.Result.Value value -> {
                 checkEq(CAUGHT_DESCRIPTOR, value.returnDescriptor(), backend
                     + ": the caught async control's completion descriptor");
-                checkEq("1", value.valueJson(), backend + ": the caught async "
+                checkEq(1.0, Double.parseDouble(value.valueJson()), backend + ": the caught async "
                     + "control completes with its own value");
             }
             case JvmAsyncExportInvoker.Result.DealError error -> fail(backend

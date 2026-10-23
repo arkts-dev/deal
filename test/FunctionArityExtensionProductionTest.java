@@ -21,7 +21,6 @@ import deal.semantic.ir.AdaptSourceRef;
 import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.CaptureMode;
 import deal.semantic.ir.FunctionExecutionBinding;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.LoweredModuleUnit;
@@ -49,7 +48,7 @@ import java.util.stream.Stream;
  * shorter function value is adapted at every statically typed
  * function-value position, so the position's own boundary validates the
  * adapted value's exact target signature instead of rejecting a
- * source-compatible assignment (docs/spec-v1.3.md Function type
+ * source-compatible assignment (docs/spec-v1.4.md Function type
  * compatibility; Arity extension adapter).
  *
  * <p>The three published artifacts run the corpus fixtures' own exact
@@ -81,8 +80,7 @@ public final class FunctionArityExtensionProductionTest {
 
     /**
      * The boundary corpus: a later adapted RETURN than the function's first,
-     * a class default that adapts with no construction in the declaring unit,
-     * a supplied-only construction, a cross-module class default, and
+     * supplied-field adapters in local and cross-module construction, and
      * cataloged stdlib callable sources.
      */
     private static final String BOUNDARIES =
@@ -113,8 +111,8 @@ public final class FunctionArityExtensionProductionTest {
      * The conversion-shadow corpus: a function-typed {@code int},
      * {@code number} or {@code bytes} shadow is the adapted operand at the
      * parameter, return, class supplied-field, class field-write, array
-     * literal and array write positions — never the compiler intrinsic the
-     * module root also binds (docs/spec-v1.3.md §Name resolution).
+     * literal and array write positions, using ordinary lexical bindings
+     * with no compiler intrinsic seeds (docs/spec-v1.4.md §Name resolution).
      */
     private static final String CONVERSION_SHADOW =
         "arity-extension-conversion-shadow";
@@ -175,15 +173,15 @@ public final class FunctionArityExtensionProductionTest {
      * declared function parameter positions.
      */
     private static final String HOST_DECLARATION_SOURCE = """
-        export function one(x: int): int;
+        export function one(x: number): number;
 
-        export function usePair(f: (x: int, y: int) => int): int;
+        export function usePair(f: (x: number, y: number) => number): number;
 
-        export function useTriple(f: (x: int, y: int, z: int) => int): int;
+        export function useTriple(f: (x: number, y: number, z: number) => number): number;
 
-        export function useParse(f: (text: string, extra: int) => table): table;
+        export function useParse(f: (text: string, extra: number) => table): table;
 
-        export function useIntTable(f: (x: int, y: table) => int): int;
+        export function useIntTable(f: (x: number, y: table) => number): number;
         """;
 
     /** The subject's LuaJIT host implementation. */
@@ -233,24 +231,24 @@ public final class FunctionArityExtensionProductionTest {
     /** The subject's JVM host implementation (the declared wrapper shapes). */
     private static final String HOST_JAVA_SOURCE = """
         final class HostArity_extension_host {
-          public static Object one(int x) {
-            return Integer.valueOf(x);
+          public static Object one(double x) {
+            return Double.valueOf(x);
           }
 
-          public static Object usePair($DealRt.Fn2_I_I_R_I f) {
-            return Integer.valueOf(f.invoke(5, 9));
+          public static Object usePair($DealRt.Fn2_N_N_R_N f) {
+            return Double.valueOf(f.invoke(5, 9));
           }
 
-          public static Object useTriple($DealRt.Fn3_I_I_I_R_I f) {
-            return Integer.valueOf(f.invoke(5, 9, 13));
+          public static Object useTriple($DealRt.Fn3_N_N_N_R_N f) {
+            return Double.valueOf(f.invoke(5, 9, 13));
           }
 
-          public static Object useParse($DealRt.Fn2_S_I_R_$table f) {
+          public static Object useParse($DealRt.Fn2_S_N_R_$table f) {
             return f.invoke("{}", 9);
           }
 
-          public static Object useIntTable($DealRt.Fn2_I_$table_R_I f) {
-            return Integer.valueOf(f.invoke(5, "bad"));
+          public static Object useIntTable($DealRt.Fn2_N_$table_R_N f) {
+            return Double.valueOf(f.invoke(5, "bad"));
           }
         }
         """;
@@ -263,11 +261,11 @@ public final class FunctionArityExtensionProductionTest {
     private static final String HOST_DYNAMIC_SOURCE = """
         import * as host from "host/arity_extension_host";
 
-        function one(x: int): int { return x; }
+        function one(x: number): number { return x; }
 
         export function main(): null {
           let holder: table = { f: one };
-          let r: int = host.usePair(holder.f);
+          let r: number = host.usePair(holder.f);
           return null;
         }
         """;
@@ -284,18 +282,21 @@ public final class FunctionArityExtensionProductionTest {
 
     /**
      * The emission-fact subject: a host-declared parameter position beside a
-     * class-default position, in a library module exported by nothing and
+     * supplied-field position, in a library module exported by nothing and
      * calling no function-typed parameter — the per-module project walk this
      * test drives then needs no callee module facts.
      */
     private static final String HOST_PARAMETER_FACT_SOURCE = """
         import * as host from "host/arity_extension_host";
 
-        function one(x: int): int { return x; }
+        function one(x: number): number { return x; }
 
         class Holder {
-          pair: (x: int, y: int) => int = one;
-          n: int = host.usePair(one);
+          pair: (x: number, y: number) => number;
+          n: number;
+        }
+        function make(): Holder {
+          return {pair: one, n: host.usePair(one)};
         }
         """;
 
@@ -304,7 +305,7 @@ public final class FunctionArityExtensionProductionTest {
      * wrapper admits every declared target parameter, so the host that
      * invokes the published adapter value with a wrong-typed ignored
      * (trailing) argument fails closed with the typed-boundary row instead
-     * of silently dropping the argument (docs/spec-v1.3.md Arity extension
+     * of silently dropping the argument (docs/spec-v1.4.md Arity extension
      * adapter: the wrapper checks the parameter it ignores). The declared
      * parameter is {@code table} so the JVM host ABI's declared function
      * wrapper can hand a non-table value to the trailing position.
@@ -312,10 +313,10 @@ public final class FunctionArityExtensionProductionTest {
     private static final String HOST_TARGET_PARAMETER_SOURCE = """
         import * as host from "host/arity_extension_host";
 
-        function oneInt(x: int): int { return x; }
+        function oneInt(x: number): number { return x; }
 
         export function main(): null {
-          let r: int = host.useIntTable(oneInt);
+          let r: number = host.useIntTable(oneInt);
           if (r !== 5) {
             throw { code: "TEST_FAIL", message: "the adapted host parameter ran" };
           }
@@ -339,9 +340,9 @@ public final class FunctionArityExtensionProductionTest {
           return null;
         }
 
-        function one(x: int): int { return x; }
+        function one(x: number): number { return x; }
 
-        function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+        function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
         export function main(): null {
           check(needPair(host.one) === 3,
@@ -352,7 +353,7 @@ public final class FunctionArityExtensionProductionTest {
             "a host-origin shorter function value adapts at a host parameter");
           check(host.useTriple(one) === 5,
             "a one-to-three host parameter adapts and ignores the target parameters");
-          let pair: (x: int, y: int) => int = one;
+          let pair: (x: number, y: number) => number = one;
           check(host.usePair(pair) === 5,
             "an exact adapted value stores directly at a host parameter");
           check(host.useTriple(pair) === 5,
@@ -530,16 +531,12 @@ public final class FunctionArityExtensionProductionTest {
                 wiredKinds.merge(boundary.kind(), 1, Integer::sum);
                 continue;
             }
-            checkEq(SemanticOpKind.CLASS_DEFAULT, wiring.kind(), "a non-boundary "
-                + "emission wiring target is the class default's own publisher");
-            checkEq(emission.adapterIdentity(), wiring.result(), "the class "
-                + "default publisher publishes the adapter identity");
-            wiredKinds.merge(emission.wiringBoundaryKind(), 1, Integer::sum);
+            check(false, "every structural position adapter wires a boundary");
         }
         checkEq(1, wiredKinds.getOrDefault(BoundaryKind.DEAL_TO_HOST, 0),
             "the host-declared parameter position owns one recorded emission");
-        checkEq(1, wiredKinds.getOrDefault(BoundaryKind.CLASS_DEFAULT_FIELD, 0),
-            "the class default position keeps its recorded emission");
+        checkEq(1, wiredKinds.getOrDefault(BoundaryKind.CLASS_LITERAL_FIELD, 0),
+            "the supplied class field position keeps its recorded emission");
     }
 
     /** The completion the async position corpus proves. */
@@ -547,9 +544,9 @@ public final class FunctionArityExtensionProductionTest {
 
     /** The rejection control's exact tuple. */
     private static final String E8010_MESSAGE =
-        "function signature mismatch: expected (int,int)->int, got (int)->int";
-    private static final String E8010_EXPECTED = "(int,int)->int";
-    private static final String E8010_ACTUAL = "(int)->int";
+        "function signature mismatch: expected (number,number)->number, got (number)->number";
+    private static final String E8010_EXPECTED = "(number,number)->number";
+    private static final String E8010_ACTUAL = "(number)->number";
 
     private static int passed = 0;
     private static int failed = 0;
@@ -679,7 +676,7 @@ public final class FunctionArityExtensionProductionTest {
     private static Project writeProjectSource(Path root, String source,
             Map<String, String> externals) throws Exception {
         StringBuilder json = new StringBuilder(
-            "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\"]");
+            "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"]");
         if (!externals.isEmpty()) {
             json.append(",\"externals\":{");
             boolean first = true;
@@ -857,7 +854,7 @@ public final class FunctionArityExtensionProductionTest {
             Files.readString(artifact, StandardCharsets.UTF_8));
         assertAsyncCompletion("luajit", new LuaJitAsyncExportInvoker().invoke(
             new AsyncExportInvocationRequest(artifact,
-                "test_arity_extension_async", "int")));
+                "test_arity_extension_async", "number")));
     }
 
     /**
@@ -888,7 +885,7 @@ public final class FunctionArityExtensionProductionTest {
         check(result instanceof LuaJitAsyncExportInvoker.Result.Value,
             lane + ": the adapted async positions complete a value: " + result);
         if (result instanceof LuaJitAsyncExportInvoker.Result.Value value) {
-            checkEq(ASYNC_COMPLETION, value.valueJson(), lane
+            checkEq(Double.parseDouble(ASYNC_COMPLETION), Double.parseDouble(value.valueJson()), lane
                 + ": the adapted async completion (one-to-two 101, zero-to-one 7, "
                 + "awaited 102, sync 4 and the ignored-argument 106)");
         }
@@ -917,7 +914,7 @@ public final class FunctionArityExtensionProductionTest {
         Path artifact = project.out().resolve(ENTRY_MODULE + ".lua");
         LuaJitAsyncExportInvoker.Result result = new LuaJitAsyncExportInvoker()
             .invoke(new AsyncExportInvocationRequest(artifact,
-                "test_arity_extension_dynamic_source_async_e8010", "int"));
+                "test_arity_extension_dynamic_source_async_e8010", "number"));
         assertDealError("luajit", result instanceof LuaJitAsyncExportInvoker.Result.DealError
                 ? (LuaJitAsyncExportInvoker.Result.DealError) result : null,
             project.entry().toAbsolutePath().toString(),
@@ -992,11 +989,11 @@ public final class FunctionArityExtensionProductionTest {
             artifacts.className() + ".class");
         JvmAsyncExportInvoker.Result result = new JvmAsyncExportInvoker().invoke(
             new AsyncExportInvocationRequest(entryClass,
-                "test_arity_extension_async", "int"));
+                "test_arity_extension_async", "number"));
         check(result instanceof JvmAsyncExportInvoker.Result.Value,
             "jvm: the adapted async positions complete a value: " + result);
         if (result instanceof JvmAsyncExportInvoker.Result.Value value) {
-            checkEq(ASYNC_COMPLETION, value.valueJson(), "jvm: the adapted async "
+            checkEq(Double.parseDouble(ASYNC_COMPLETION), Double.parseDouble(value.valueJson()), "jvm: the adapted async "
                 + "completion (one-to-two 101, zero-to-one 7, awaited 102, sync 4 "
                 + "and the ignored-argument 106)");
         }
@@ -1023,7 +1020,7 @@ public final class FunctionArityExtensionProductionTest {
             artifacts.className() + ".class");
         JvmAsyncExportInvoker.Result result = new JvmAsyncExportInvoker().invoke(
             new AsyncExportInvocationRequest(entryClass,
-                "test_arity_extension_dynamic_source_async_e8010", "int"));
+                "test_arity_extension_dynamic_source_async_e8010", "number"));
         assertDealError("jvm", result instanceof JvmAsyncExportInvoker.Result.DealError
                 ? (JvmAsyncExportInvoker.Result.DealError) result : null,
             artifacts.project().entry().toAbsolutePath().toString(),
@@ -1183,7 +1180,7 @@ public final class FunctionArityExtensionProductionTest {
         }
         LuaJitAsyncExportInvoker.Result result = new LuaJitAsyncExportInvoker()
             .invoke(new AsyncExportInvocationRequest(artifact,
-                ASYNC_ADAPTER_SOURCE_EXPORT, "int"));
+                ASYNC_ADAPTER_SOURCE_EXPORT, "number"));
         assertAsyncAdapterSourceCompletion("luajit",
             result instanceof LuaJitAsyncExportInvoker.Result.Value value
                 ? value.valueJson() : null, result);
@@ -1196,7 +1193,7 @@ public final class FunctionArityExtensionProductionTest {
             artifacts.className() + ".class");
         JvmAsyncExportInvoker.Result result = new JvmAsyncExportInvoker().invoke(
             new AsyncExportInvocationRequest(entryClass,
-                ASYNC_ADAPTER_SOURCE_EXPORT, "int"));
+                ASYNC_ADAPTER_SOURCE_EXPORT, "number"));
         assertAsyncAdapterSourceCompletion("jvm",
             result instanceof JvmAsyncExportInvoker.Result.Value value
                 ? value.valueJson() : null, result);
@@ -1237,7 +1234,7 @@ public final class FunctionArityExtensionProductionTest {
 
     private static void assertAsyncAdapterSourceCompletion(String lane,
             String valueJson, Object result) {
-        checkEq(ASYNC_ADAPTER_SOURCE_COMPLETION, valueJson, lane + ": the async "
+        checkEq(Double.parseDouble(ASYNC_ADAPTER_SOURCE_COMPLETION), Double.parseDouble(valueJson), lane + ": the async "
             + "adapter-valued-source completion (the assigned one-to-two "
             + "chain, the exact control and the awaited zero-to-one adapter "
             + "value all resolve the innermost source's 41): " + result);
@@ -1543,7 +1540,7 @@ public final class FunctionArityExtensionProductionTest {
         checkEq("", run.stdout(), "js: the host dynamic-source control's stdout");
         check(run.stderr().startsWith("DEAL_ERROR_CODE: E8010 parameter 1 type "
                 + "mismatch: function signature mismatch: expected "
-                + "(int,int)->int, got (int)->int at "),
+                + "(number,number)->number, got (number)->number at "),
             "js: the host dynamic-source control's exact failure tuple: "
                 + run.stderr());
     }
@@ -1559,9 +1556,9 @@ public final class FunctionArityExtensionProductionTest {
      * {@code FUNCTION_RETURN}.
      */
     private static final String CALLBACK_RETURN_SOURCE = """
-        function one(x: int): int { return x; }
+        function one(x: number): number { return x; }
 
-        export function cb(): (x: int, y: int) => int {
+        export function cb(): (x: number, y: number) => number {
           return one;
         }
 
@@ -1579,7 +1576,7 @@ public final class FunctionArityExtensionProductionTest {
             Path root, String source, java.util.Set<String> callbacks)
             throws Exception {
         writeFile(root, "deal.json",
-            "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\"]}");
+            "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"]}");
         writeFile(root, "src/" + ENTRY_MODULE + ".deal", source);
         Path src = root.resolve("src");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -1601,11 +1598,9 @@ public final class FunctionArityExtensionProductionTest {
         }
         return SemanticLowerer.lowerProject(productionInvocation(),
             built.input(), built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
+            orchestrator.hostDeclarationSurface(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
-                built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), callbacks);
+                built.input().modules().get(0).ast().span()), callbacks);
     }
 
     /**
@@ -1643,9 +1638,9 @@ public final class FunctionArityExtensionProductionTest {
                     continue;
                 }
                 adapters++;
-                checkEq("(int)->int", adapt.sourceSignature().canonicalSpecText(),
+                checkEq("(number)->number", adapt.sourceSignature().canonicalSpecText(),
                     "callback return: the adapter's source signature");
-                checkEq("(int,int)->int", adapt.targetSignature().canonicalSpecText(),
+                checkEq("(number,number)->number", adapt.targetSignature().canonicalSpecText(),
                     "callback return: the adapter's target signature");
                 for (SemanticOp cell : unit.ops()) {
                     if (cell.kind() != SemanticOpKind.BOUNDARY
@@ -1747,11 +1742,9 @@ public final class FunctionArityExtensionProductionTest {
         }
         return SemanticLowerer.lowerProject(productionInvocation(), built.input(),
             built.index(), manifests.manifests(),
-            orchestrator.hostDeclarationSurface(), Map.of(), Map.of(),
+            orchestrator.hostDeclarationSurface(), Map.of(),
             BuiltinErrorDeclaration.synthesized(
-                built.input().modules().get(0).ast().span()),
-            List.of(IntrinsicKind.INT_CONVERT, IntrinsicKind.NUMBER_CONVERT,
-                IntrinsicKind.BYTES_NEW), java.util.Set.of());
+                built.input().modules().get(0).ast().span()), java.util.Set.of());
     }
 
     /**
@@ -1894,7 +1887,7 @@ public final class FunctionArityExtensionProductionTest {
                     deal.test.SemanticDifferentialHarness.Expectation.success(
                         "the async adapter-valued-source corpus",
                         List.of("ASYNC ADAPTER SOURCE OK"),
-                        "int:" + ASYNC_ADAPTER_SOURCE_COMPLETION),
+                        "num:" + Double.toHexString(Double.parseDouble(ASYNC_ADAPTER_SOURCE_COMPLETION))),
                     workspace, null);
             checkEq(3, verdict.runs().size(), "async adapter source: the parity "
                 + "case produces the three consumers: " + verdict.failures());
@@ -1905,7 +1898,7 @@ public final class FunctionArityExtensionProductionTest {
                     : verdict.runs()) {
                 check(run.terminal() instanceof
                         deal.semantic.SemanticRuntimeModel.Terminal.Success success
-                        && ("int:" + ASYNC_ADAPTER_SOURCE_COMPLETION)
+                        && ("num:" + Double.toHexString(Double.parseDouble(ASYNC_ADAPTER_SOURCE_COMPLETION)))
                             .equals(success.resultAtom()),
                     run.consumer() + ": the adapter chain completes the async "
                         + "export with the innermost source's 41: "
@@ -1925,33 +1918,33 @@ public final class FunctionArityExtensionProductionTest {
      * creating invocation returns.
      */
     private static final String ASSIGNMENT_SOURCE_ORACLE_SOURCE = """
-        function one(x: int): int { return x; }
+        function one(x: number): number { return x; }
 
-        function pairExact(x: int, y: int): int { return x + y; }
+        function pairExact(x: number, y: number): number { return x + y; }
 
-        function needPair(f: (x: int, y: int) => int): int { return f(5, 6); }
+        function needPair(f: (x: number, y: number) => number): number { return f(5, 6); }
 
-        function needTriple(f: (x: int, y: int, z: int) => int): int {
+        function needTriple(f: (x: number, y: number, z: number) => number): number {
           return f(5, 6, 7);
         }
 
-        function onceReturned(): (x: int, y: int) => int {
-          let f: (x: int, y: int) => int = pairExact;
+        function onceReturned(): (x: number, y: number) => number {
+          let f: (x: number, y: number) => number = pairExact;
           return (f = one);
         }
 
-        function returnedWide(): (x: int, y: int, z: int) => int {
-          let f: (x: int, y: int) => int = pairExact;
+        function returnedWide(): (x: number, y: number, z: number) => number {
+          let f: (x: number, y: number) => number = pairExact;
           return (f = one);
         }
 
         export function main(): null {
-          let f: (x: int, y: int) => int = pairExact;
-          let argument: int = needPair((f = one));
-          let widenedArgument: int = needTriple((f = one));
-          let escaped: (x: int, y: int) => int = onceReturned();
-          let escapingArgument: int = escaped(7, 8);
-          let returned: int = returnedWide()(5, 6, 7);
+          let f: (x: number, y: number) => number = pairExact;
+          let argument: number = needPair((f = one));
+          let widenedArgument: number = needTriple((f = one));
+          let escaped: (x: number, y: number) => number = onceReturned();
+          let escapingArgument: number = escaped(7, 8);
+          let returned: number = returnedWide()(5, 6, 7);
           if (argument !== 5 || widenedArgument !== 5 || escapingArgument !== 7
               || returned !== 5) {
             throw { code: "TEST_FAIL", message: "assignment-source value" };

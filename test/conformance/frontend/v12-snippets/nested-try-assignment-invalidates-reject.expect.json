@@ -4,7 +4,7 @@
   "diagnostic": {
     "code": "E3001",
     "line": 9,
-    "column": 18,
-    "message": "Cannot assign int | null to int"
+    "column": 21,
+    "message": "Cannot assign number | null to number"
   }
 }

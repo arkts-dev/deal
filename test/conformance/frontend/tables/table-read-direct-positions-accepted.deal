@@ -3,21 +3,21 @@
 // @expected: compile-ok
 // @features: tables, dynamic-read, contextual-target, template-literal, classes
 
-class Box { n: int = 0; }
+class Box { n: number; }
 
-function take(n: int): int { return n; }
+function take(n: number): number { return n; }
 
-function readN(t: table): int { return t.n; }
+function readN(t: table): number { return t.n; }
 
 export function main(): null {
   let t: table = { n: 1, flag: true, s: "a" };
-  let n: int = (t.n);
-  let computed: int = t["n"];
+  let n: number = (t.n);
+  let computed: number = t["n"];
   n = t.n;
   n = take(t.n);
   if (t.flag) { n = n + 1; }
   n = readN(t);
-  let xs: int[] = [n];
+  let xs: number[] = [n];
   let b: Box = { n: n };
   let bs: Box[] = [{ n: n }];
   let v: string = t.s;

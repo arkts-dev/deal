@@ -181,7 +181,7 @@ public final class ProductionProjectEmission {
         }
 
         // (4) The one emission per target — with the one source-map
-        // recorder (the v1.3 default debugging artifacts; the accepted
+        // recorder (the v1.4 default debugging artifacts; the accepted
         // {@code sourceMap} spelling selects nothing) — then the one
         // staged project artifact and its per-module source-map sidecars.
         // An emitter gap is E6005 SHARED_EMITTER_COVERAGE and stages
@@ -424,7 +424,7 @@ public final class ProductionProjectEmission {
      * project-relative display source name ({@link SourceMapPaths}, the same
      * normalization the JavaScript orchestrator arm consumes), so the emitted
      * source comments and the staged sidecars carry one file spelling and a
-     * single mapping authority owns the emission. The v1.3 default debugging
+     * single mapping authority owns the emission. The v1.4 default debugging
      * artifacts always install it; the accepted {@code sourceMap} request
      * spelling does not select a recorder-less emission.
      */

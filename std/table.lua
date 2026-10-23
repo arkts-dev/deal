@@ -11,7 +11,7 @@ local __K = __rt.__keys
 local tablelib = {}
 
 --- Returns an array of the table's present string keys, each exactly
--- once (docs/spec-v1.3.md:1909–1912). A present null-valued key is a
+-- once (docs/spec-v1.4.md:1909–1912). A present null-valued key is a
 -- recorded key whose slot stores no value, so the key list follows the
 -- carrier's presence/order discipline, never the stored values: the
 -- recorded first-insertion order list [__K.order] first (the emitted

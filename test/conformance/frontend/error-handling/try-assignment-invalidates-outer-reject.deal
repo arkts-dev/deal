@@ -4,13 +4,13 @@
 // @features: error-handling, try-catch, nullable, narrowing, assignment
 
 export function main(): null {
-  let e: int | null = 1;
+  let e: number | null = 1;
   if (e !== null) {
     try {
       e = null;
     } catch (e) {
     }
-    let unsound: int = e;
+    let unsound: number = e;
   }
   return null;
 }

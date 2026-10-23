@@ -2396,7 +2396,7 @@ case "NUMBER_ADD" -> {
      * declared number {@code STDLIB_RETURN} boundary under the
      * descriptor-kind rule — a contemporary epoch-millisecond reading
      * (above the signed-32 range) crosses unchanged, never an algorithm
-     * failure and never an int terminal (v1.3). The two console ids are
+     * failure and never an int terminal (v1.4). The two console ids are
      * the row invoker's
      * ({@link #stdlibInvoke}), never this surface's. The {@code kind}
      * parameter is the invoking op's own event kind label (the direct
@@ -2549,7 +2549,7 @@ case "NUMBER_ADD" -> {
                     // STDLIB_RETURN boundary (descriptor-kind rule) admits
                     // the contemporary epoch-millisecond reading above the
                     // signed-32 range unchanged — no int terminal exists
-                    // (v1.3). The same observable the LuaJIT artifact and
+                    // (v1.4). The same observable the LuaJIT artifact and
                     // the oracle produce.
                     return Double.valueOf(System.currentTimeMillis());
                 }

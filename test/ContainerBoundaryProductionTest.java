@@ -623,7 +623,7 @@ public class ContainerBoundaryProductionTest {
     /**
      * The flat case (ISSUE-0768): a {@code number[]} class field decoded
      * from {@code [2147483648]} carries its slot's recorded number mark
-     * (the exact v1.3 classification: an integral mathematical value
+     * (the exact v1.4 classification: an integral mathematical value
      * outside signed32 is the number variant), so the same array admitted
      * to a {@code string[]} boundary projects the number actual token —
      * the oracle's retained NumValue and the JVM's retained Double alike
@@ -781,13 +781,16 @@ public class ContainerBoundaryProductionTest {
           f: (x: number) => number;
         }
 
-        function asString(x: number): string {
-          return "s";
-        }
-
         export function main(): null {
-          let holder: table = { g: asString };
-          let b: Box = { f: holder.g };
+          let inner: ((x: number) => number) | null = identity;
+          let clear: () => null = function(): null {
+            inner = null;
+            return null;
+          };
+          if (inner !== null) {
+            clear();
+            let b: Box = { f: inner };
+          }
           return null;
         }
         """;
@@ -835,10 +838,8 @@ public class ContainerBoundaryProductionTest {
 
         driveFocusedFailures(
             new FocusedFailure("class literal function field mismatch",
-                CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 15, 16,
-                new Tuple("E8010",
-                    "function signature mismatch: expected (number)->number, got (number)->string",
-                    "(number)->number", "(number)->string")),
+                CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 17, 18,
+                new Tuple("E8001", "expected function", "function", "null")),
             new FocusedFailure("class field assignment function mismatch",
                 CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, 16, 3,
                 new Tuple("E8010",
@@ -896,11 +897,10 @@ public class ContainerBoundaryProductionTest {
 
     /**
      * The recursive array position (ISSUE-0767): a class field declared
-     * {@code ((x: int) => int)[]} receives an array whose element is not a
-     * function (read from a dynamic table alias), so the field boundary's
-     * array recursion must project the canonical element text
-     * {@code (int)->int} in its E8003 row, never the internal
-     * {@code function(int;int)} dialect.
+     * {@code ((x: number) => number)[]} receives a typed array with a
+     * deleted element, so the field boundary's array recursion must project
+     * the canonical element text {@code (number)->number} and actual
+     * {@code nil} in its E8003 row, never the internal descriptor dialect.
      */
     private static final String CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE = """
         function identity(x: number): number {
@@ -912,8 +912,9 @@ public class ContainerBoundaryProductionTest {
         }
 
         export function main(): null {
-          let holder: table = { xs: [1] };
-          let b: Box = { fs: holder.xs };
+          let inner: ((x: number) => number)[] = [identity];
+          delete inner[0];
+          let b: Box = { fs: inner };
           return null;
         }
         """;
@@ -945,9 +946,9 @@ public class ContainerBoundaryProductionTest {
                     "function signature mismatch: expected (number)->number, got (number)->string",
                     "(number)->number", "(number)->string")),
             new FocusedFailure("class field function array element mismatch",
-                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 11, 16,
+                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 12, 16,
                 new Tuple("E8003", "array element 1 type mismatch",
-                    "(number)->number", "number")));
+                    "(number)->number", "nil")));
     }
 
     private record FocusedFailure(String label, String source, int line, int column,
@@ -1205,7 +1206,7 @@ public class ContainerBoundaryProductionTest {
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
-                unit.interfaceHash(), SemanticProfile.DEAL_V1_3_INT32,
+                unit.interfaceHash(), SemanticProfile.DEAL_V1_4_BINARY64,
                 ReleaseConfiguration.releaseCapabilityRegistry()
                     .capabilityRegistryHash()));
         check(gate.isEmpty(), spec.what() + ": the closed schema and bindings gates "

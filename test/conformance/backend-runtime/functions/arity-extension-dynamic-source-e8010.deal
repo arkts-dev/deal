@@ -3,12 +3,12 @@
 // @expected: runtime-error E8010
 // @features: functions, arity-extension, descriptors, runtime-errors
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 
-function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
 export function main(): null {
   let holder: table = { f: one };
-  let r: int = needPair(holder.f);
+  let r: number = needPair(holder.f);
   return null;
 }

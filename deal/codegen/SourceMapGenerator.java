@@ -12,7 +12,7 @@ import java.util.List;
  * sidecar file after codegen completes.
  *
  * <p>Implements the generated-to-source sidecars required by
- * {@code docs/spec-v1.3.md} §Source maps and debugging. The JSON shape
+ * {@code docs/spec-v1.4.md} §Source maps and debugging. The JSON shape
  * below is this compiler's sidecar format, not a specification-defined schema:
  * <pre>{@code
  * {

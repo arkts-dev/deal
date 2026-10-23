@@ -24,7 +24,7 @@ public final class ConformanceHarnessMetadata {
      * executable profile and the metadata selects no semantic arm.
      */
     public static final String PRODUCTION_PROFILE_DECLARATION =
-        "deal-v1.3-int32";
+        "deal-v1.4-int32";
 
     private ConformanceHarnessMetadata() { }
 

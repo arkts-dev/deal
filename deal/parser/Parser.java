@@ -305,7 +305,7 @@ public final class Parser {
             case DELETE    -> parseDeleteStatement();
             case TRY       -> parseTryStatement();
             case THROW     -> parseThrowStatement();
-            // The v1.3 Syntactic grammar has no empty-statement
+            // The v1.4 Syntactic grammar has no empty-statement
             // production: Program ::= ImportDeclaration*
             // TopLevelDeclaration*, Statement* and Block ::= '{'
             // Statement* '}'. A ';' in statement position is therefore
@@ -918,7 +918,7 @@ public final class Parser {
         if (tt == TokenType.IDENTIFIER) {
             Token first = advance();
 
-            // Qualified type: exactly one '.' level (v1.3 Type grammar:
+            // Qualified type: exactly one '.' level (v1.4 Type grammar:
             // PrimaryType ::= Identifier | Identifier '.' Identifier).
             if (peek().type() == TokenType.DOT) {
                 Token dot = advance();
@@ -927,7 +927,7 @@ public final class Parser {
                 if (nameToken == null) {
                     return new NamedType(spanOf(first), first.lexeme());
                 }
-                // Overqualification (A.B.C) is outside the v1.3 type
+                // Overqualification (A.B.C) is outside the v1.4 type
                 // grammar: reject at the second '.' and consume the
                 // remaining qualifier segments for recovery.
                 if (peek().type() == TokenType.DOT) {
@@ -1315,7 +1315,7 @@ public final class Parser {
      * odd-indexed parts are interpolated expressions.
      *
      * <p>{@link TemplateScanner} owns the TemplateText/interpolation split
-     * (v1.3 lexical grammar): TemplateText is verbatim (no escape
+     * (v1.4 lexical grammar): TemplateText is verbatim (no escape
      * processing; a backslash and a bare {@code '}'} are ordinary text),
      * while an interpolation admits expression, comment, quoted-string and
      * nested template-literal rules. Each interpolation is sub-lexed
@@ -1547,8 +1547,8 @@ public final class Parser {
         // nested merge points ran inside the sub-parser).
         diagnostics.addAll(subParser.diagnostics);
 
-        // 7. v1.3: an interpolation contains exactly one complete
-        //    expression (docs/spec-v1.3.md lexical grammar). A leftover
+        // 7. v1.4: an interpolation contains exactly one complete
+        //    expression (docs/spec-v1.4.md lexical grammar). A leftover
         //    token after the parsed expression is E1042 at that token's
         //    rebased position.
         if (expr != null && subParser.peek().type() != TokenType.EOF) {
@@ -1835,7 +1835,7 @@ public final class Parser {
     }
 
     /**
-     * The v1.3 statement-terminator requirement: every production whose
+     * The v1.4 statement-terminator requirement: every production whose
      * grammar carries a {@code ';'} must consume it. Reports E1053 at the
      * next token when the statement ended without one; suppressed when the
      * statement already reported a diagnostic so recovery does not cascade.
@@ -1877,7 +1877,7 @@ public final class Parser {
     }
 
     /**
-     * Enforces the v1.3 statement terminator for the statement that just
+     * Enforces the v1.4 statement terminator for the statement that just
      * ended (Syntactic grammar: every production carrying {@code ';'}
      * consumes one). Block-ending productions (blocks, if/while/for/try,
      * function and class declarations) end at {@code '}'} and carry no

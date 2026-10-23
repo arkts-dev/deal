@@ -1,7 +1,7 @@
 // @spec: Type system — null and table/array values
-// @description: The language null stays distinct from the table and array values: a null read as a table or as an array takes the shared E8001 kind boundary instead of being admitted as an empty container, while a real empty table and a real empty array are admitted (v1.3)
+// @description: The language null stays distinct from the table and array values: a null read as a table or as an array takes the shared E8001 kind boundary instead of being admitted as an empty container, while a real empty table and a real empty array are admitted (v1.4)
 // @expected: runtime-ok
-// @features: tables, arrays, null, runtime-errors, v1.3
+// @features: tables, arrays, null, runtime-errors, v1.4
 
 import * as json from "std/json";
 

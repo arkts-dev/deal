@@ -664,7 +664,7 @@ public final class OutputConfigResolverTest {
             Path proj = Files.createDirectories(tmpDir.resolve("combined-proj"));
             Files.createDirectories(proj.resolve("out"));
             Path manifestFile = proj.resolve("deal.json");
-            String json = "{\"languageVersion\":\"1.3\",\"backend\":\"jvm\","
+            String json = "{\"languageVersion\":\"1.4\",\"backend\":\"jvm\","
                 + "\"output\":\"out/dir\"}";
             Files.write(manifestFile, json.getBytes(StandardCharsets.UTF_8));
 
@@ -710,7 +710,7 @@ public final class OutputConfigResolverTest {
             // Minimal manifest (absent backend/output) -> pinned defaults.
             StrictManifestParser.StrictManifestParseResult minimal =
                 StrictManifestParser.parse(manifestFile.toString(),
-                    "{\"languageVersion\":\"1.3\"}");
+                    "{\"languageVersion\":\"1.4\"}");
             check(minimal.failure() == null, "T2 parses the minimal manifest");
             ProjectManifest minimalManifest = minimal.manifest();
             OutputConfigResolver.Resolution r3 = OutputConfigResolver.resolve(

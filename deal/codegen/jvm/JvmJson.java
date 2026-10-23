@@ -664,9 +664,8 @@ public final class JvmJson {
         }
         if (descriptor.startsWith("@")) {
             // The nested @jsonable class decode (K-D8 step 6): the nested
-            // class's own plan drives the same phase order and its omitted
-            // required-present defaults run their recorded CLASS_DEFAULT
-            // thunks. The nested value is a JSON object, exactly the root
+            // class's structural plan validates every required key.
+            // The nested value is a JSON object, exactly the root
             // gate's own shape: an array value of any length, the empty
             // array included, is a validation failure.
             if (!(raw instanceof JvmRuntime.Table document)) {
@@ -697,7 +696,7 @@ public final class JvmJson {
             }
             case "table" -> {
                 // A table field accepts only a JSON object
-                // (docs/spec-v1.3.md:695): an array-shaped value of any
+                // (docs/spec-v1.4.md:695): an array-shaped value of any
                 // length, the empty array included, is a rejection —
                 // never an empty table.
                 return raw instanceof JvmRuntime.Table ? toLanguage(raw) : FAIL;
@@ -739,9 +738,8 @@ public final class JvmJson {
     /**
      * The nested @jsonable class decode of one JSON object (K-D8 step 6,
      * the same phase order as the top walk): the nested extra-key gate,
-     * provided decode in declaration order, the nested plan's recorded
-     * defaults for omitted required-present fields (skip-provided), the
-     * final descriptor validation, and the tagged instance. Returns
+     * required-presence checks, declaration-order decode, final descriptor
+     * validation, and the tagged instance. Returns
      * {@code null} on any walk failure (language null), a producer defect
      * when no plan resolves for the declared identity.
      */

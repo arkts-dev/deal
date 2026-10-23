@@ -652,14 +652,14 @@ public final class SemanticLowerer {
         if (defect instanceof ConstructUnlowered unlowered) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CONTAINERS_AND_STRINGS, CONSTRUCT_UNLOWERED,
-                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_4_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CONSTRUCT_UNLOWERED + " (" + unlowered.construct() + ")");
         }
 
         if (defect instanceof RetainedAbiDeferred deferred) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CLASSES, RETAINED_ABI_DEFERRED,
-                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_4_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + RETAINED_ABI_DEFERRED + " (class "
                     + deferred.classId() + " — the RETAINED_ABI derivation is E10's)");
         }
@@ -2655,7 +2655,7 @@ public final class SemanticLowerer {
 
         /**
          * The complete module-level class layout surface, computed
-         * before any body walk (docs/spec-v1.3.md §Name resolution,
+         * before any body walk (docs/spec-v1.4.md §Name resolution,
          * Declaration order: a function body and a class field may
          * reference a class declared later in the same module). One entry
          * per module-level class declaration, in declaration order, with
@@ -3008,7 +3008,7 @@ public final class SemanticLowerer {
          * (keyed by binding identity, first incarnation wins). A
          * function-typed binding whose declaring scope names it is mutable:
          * a read observes the current binding, never the allocation the
-         * declaration's initializer produced (docs/spec-v1.3.md §Closures
+         * declaration's initializer produced (docs/spec-v1.4.md §Closures
          * and captured variables — captured variables are captured by
          * binding, not by value).
          */
@@ -3920,7 +3920,7 @@ public final class SemanticLowerer {
                         // The function-allocation identity of the hoisted
                         // module-level function is pre-allocated here so a
                         // capture of a later-declared module function
-                        // (B1; docs/spec-v1.3.md §Name resolution,
+                        // (B1; docs/spec-v1.4.md §Name resolution,
                         // Declaration order) — a
                         // function-typed load inside an earlier closure
                         // body — can publish the identity the cell will
@@ -4331,7 +4331,7 @@ public final class SemanticLowerer {
 
         /**
          * Registers every module-level class declaration's layout before
-         * any body walk (docs/spec-v1.3.md §Name resolution, Declaration
+         * any body walk (docs/spec-v1.4.md §Name resolution, Declaration
          * order): a function body or class field may construct a class
          * declared later in the same module, so a class-literal in an
          * earlier function body must resolve the module's own layout even
@@ -5586,8 +5586,7 @@ public final class SemanticLowerer {
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(value);
-            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
-                value, this::isConversionIntrinsicNameAt);
+            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(value);
             CaptureMode mode = AdapterShapeMap.selectPositionMode(shape, proof);
             AdaptSourceRef sourceRef;
             List<ValueId> operands;
@@ -5602,20 +5601,7 @@ public final class SemanticLowerer {
                 operands = List.of();
                 operandTypes = List.of();
             } else {
-                ValueId operand;
-                if (shape == AdapterShapeMap.SourceShape.INTRINSIC_FUNCTION_VALUE) {
-                    // The seeded intrinsic function value is the operand
-                    // (no function-typed load of the intrinsic binding).
-                    String name = ((IdentifierExpr) value).name();
-                    operand = intrinsicIdentities.get(name);
-                    if (operand == null) {
-                        throw new IllegalStateException("the intrinsic identity of '"
-                            + name + "' was not seeded at module-init top (producer "
-                            + "defect)");
-                    }
-                } else {
-                    operand = lower.get();
-                }
+                ValueId operand = lower.get();
                 if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE) {
                     payloadProof = proof.orElseThrow(() ->
                         new IllegalStateException("the closed shape map selects VALUE "
@@ -12253,7 +12239,7 @@ public final class SemanticLowerer {
             catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding,
                 bindingScopes.size()));
             // The catch variable is an ordinary mutable lexical binding of
-            // the catch block's scope (docs/spec-v1.3.md §try / catch): it
+            // the catch block's scope (docs/spec-v1.4.md §try / catch): it
             // enters the walk's binding environment in its own frame so a
             // direct assignment resolves its cell and a closure created in
             // the catch body registers it as a capture — the catch entry's
@@ -13269,7 +13255,7 @@ public final class SemanticLowerer {
          * (declared {@code T | null}, read as {@code T}), the
          * {@code NARROWED_READ} validation of that read.
          *
-         * <p>docs/spec-v1.3.md Nullable semantics keeps calls
+         * <p>docs/spec-v1.4.md Nullable semantics keeps calls
          * non-invalidating on purpose, so a capturing closure call can
          * leave the binding null while the refinement claim still holds;
          * the consumer then receives a value its checked type does not
@@ -13622,7 +13608,7 @@ public final class SemanticLowerer {
          * position resolves to, or {@code null} when the position's
          * binding is not that intrinsic — the position-resolved
          * classifier the intrinsic-call arm and the adapted-source shape
-         * share. Resolution follows docs/spec-v1.3.md §Name resolution:
+         * share. Resolution follows docs/spec-v1.4.md §Name resolution:
          * the walk's own binding environment is the declaration-order
          * exact per-position fact (a {@code let} is registered only after
          * its own initializer, so an initializer reading the shadowed

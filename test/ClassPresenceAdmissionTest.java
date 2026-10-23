@@ -71,7 +71,7 @@ public final class ClassPresenceAdmissionTest {
         Path root = Files.createTempDirectory("deal-class-presence-admission-");
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"), """
-            {"languageVersion":"1.3","moduleRoots":["src"],"backend":"js","output":"out"}
+            {"languageVersion":"1.4","moduleRoots":["src"],"backend":"js","output":"out"}
             """);
         Files.writeString(root.resolve("src/model.deal"), """
             export class Shared { required: number; nullable: string | null; optional?: number; }

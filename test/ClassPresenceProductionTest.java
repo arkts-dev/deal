@@ -109,8 +109,8 @@ public final class ClassPresenceProductionTest {
             }
             """);
         Files.writeString(project.resolve("deal.json"), """
-            {"languageVersion":"1.3","moduleRoots":["src"],"output":"out",
-             "backend":"js","stdlib":"1.3","dependencies":{},
+            {"languageVersion":"1.4","moduleRoots":["src"],"output":"out",
+             "backend":"js","stdlib":"1.4","dependencies":{},
              "externals":{"host/record":{"declaration":"bindings/record.d.deal"}}}
             """);
         String javaCommand = Path.of(System.getProperty("java.home"), "bin/java").toString();

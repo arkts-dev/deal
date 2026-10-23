@@ -27,7 +27,7 @@ import java.util.stream.Stream;
  * dispatches the binding the call position resolves — the local, the
  * parameter, the enclosing-block or the catch binding — on every
  * backend, and only the genuinely unshadowed name lowers to the
- * conversion/allocation intrinsic (docs/spec-v1.3.md §Name resolution:
+ * conversion/allocation intrinsic (docs/spec-v1.4.md §Name resolution:
  * locals, parameters and enclosing scopes precede module and import
  * bindings, which precede the compiler intrinsics).
  *
@@ -604,7 +604,7 @@ public final class IntrinsicShadowingProductionTest {
      * shadowing {@code int} binding is the ordinary E2002, and calling an
      * import alias named {@code bytes} is the imported module value's
      * not-callable E3008 instead of the allocation intrinsic
-     * (docs/spec-v1.3.md §Name resolution — module/import bindings
+     * (docs/spec-v1.4.md §Name resolution — module/import bindings
      * precede the compiler intrinsics, and same-scope redeclaration stays
      * an error).
      */

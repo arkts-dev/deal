@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: A contextual table read used as a std/json.stringify argument is runtime-checked against the declared (table) parameter: the decoded JSON array, the decoded JSON null and a class instance read out of a table take the shared E8001 expected-table boundary and never reach the encoder (v1.3)
+// @description: A contextual table read used as a std/json.stringify argument is runtime-checked against the declared (table) parameter: the decoded JSON array, the decoded JSON null and a class instance read out of a table take the shared E8001 expected-table boundary and never reach the encoder (v1.4)
 // @expected: runtime-ok
-// @features: stdlib, json, v1.3
+// @features: stdlib, json, v1.4
 
 import * as json from "std/json";
 

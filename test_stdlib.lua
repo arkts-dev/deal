@@ -500,8 +500,8 @@ test("table.keys preserves the deterministic iteration order of the current stat
     "order mismatch: " .. table.concat(keys, ","))
 end)
 
-test("table.keys returns a chunk table carrier's present-null key (v1.3)", function()
-  -- docs/spec-v1.3.md:1909–1912 — each present string key once,
+test("table.keys returns a chunk table carrier's present-null key (v1.4)", function()
+  -- docs/spec-v1.4.md:1909–1912 — each present string key once,
   -- null-valued keys included. The chunk table carrier records a present
   -- null as an ordered presence key whose slot stores no value, so the
   -- key list is the carrier's recorded order, never a walk of the stored
@@ -521,7 +521,7 @@ test("table.keys returns a chunk table carrier's present-null key (v1.3)", funct
     "the sentinel member is a present key: " .. table.concat(sentinelKeys, ","))
 end)
 
-test("table.keys keeps a decoded object carrier's present-null member (v1.3)", function()
+test("table.keys keeps a decoded object carrier's present-null member (v1.4)", function()
   -- A decoded std/json object stores a present null as the runtime's null
   -- sentinel, so the member is a present key of the table (the
   -- specification pins no order for keys).
@@ -906,7 +906,7 @@ local function assert_json_error(fn, needle)
   return err
 end
 
-test("json.parse classifies exact decimal lexemes (v1.3)", function()
+test("json.parse classifies exact decimal lexemes (v1.4)", function()
   -- The lexeme's mathematical value decides the number/number variant before
   -- binary64 rounding. The direct realization records that decision in
   -- the decoded graph's per-slot __K.nK marks, so the canonical text of
@@ -946,7 +946,7 @@ test("json.parse classifies exact decimal lexemes (v1.3)", function()
     "an out-of-range integer token converts to binary64")
 end)
 
--- The decoded-graph variant record (DEAL v1.3): the direct realization
+-- The decoded-graph variant record (DEAL v1.4): the direct realization
 -- keeps the exact classification per slot at every depth, exactly the
 -- emitted LuaJIT prelude's parse marks, the shared JVM runtime's boxed
 -- variant and the JS runtime's recorded variant. A number-variant leaf is
@@ -956,7 +956,7 @@ end)
 -- bound), 0.1 (the shortest round-tripping decimal), 1e20 (the pinned
 -- exponent form) and 2147483647.00000001 (a fractional token that rounds
 -- to an integral binary64 value yet stays the number variant).
-test("json.parse records the exact number/number variant in the decoded graph (v1.3)", function()
+test("json.parse records the exact number/number variant in the decoded graph (v1.4)", function()
   local function roundtrip(text)
     return json.stringify.f(json.parse.f(text))
   end
@@ -996,12 +996,12 @@ test("json.parse records the exact number/number variant in the decoded graph (v
   assert(parsed[__K.nK].v == true, "the encode leaves the mark in place")
 end)
 
--- The chunk table carrier's present-null member (DEAL v1.3): the emitted
+-- The chunk table carrier's present-null member (DEAL v1.4): the emitted
 -- JSON_PARSE graph records a present null object member as a presence/order
 -- key with no stored value, and the shared table carrier may also hold the
 -- __NULL sentinel. Both forms are a JSON null member; a raw nil slot the
 -- presence map does not record is the missing value and never becomes null.
-test("json.stringify keeps a present-null member of a chunk table carrier (v1.3)", function()
+test("json.stringify keeps a present-null member of a chunk table carrier (v1.4)", function()
   local __rt = require("deal.runtime")
   local carrier = {[__K.t] = true, [__K.keys] = { n = true, x = true },
     [__K.order] = { "n", "x" }, x = 1}
@@ -1022,7 +1022,7 @@ test("json.stringify keeps a present-null member of a chunk table carrier (v1.3)
       .. json.stringify.f({ v = nested }))
 end)
 
-test("json.parse rejects decoded-key duplicates at the second key (v1.3)", function()
+test("json.parse rejects decoded-key duplicates at the second key (v1.4)", function()
   local err = assert_json_error(function() json.parse.f('{"a":1,"a":2}') end,
     "JSON parse error at position 8: duplicate key")
   assert(err.expected == nil and err.actual == nil,
@@ -1034,7 +1034,7 @@ test("json.parse rejects decoded-key duplicates at the second key (v1.3)", funct
   assert(ok.a == 1 and ok.b == 2, "distinct decoded keys stay accepted")
 end)
 
-test("json.stringify rejects a path-local cycle with the closed arm (v1.3)", function()
+test("json.stringify rejects a path-local cycle with the closed arm (v1.4)", function()
   local cyc = {}
   cyc.self = cyc
   assert_json_error(function() json.stringify.f(cyc) end,
@@ -1050,7 +1050,7 @@ end)
 -- mark pair is the emitted chunk's own array carrier pair (the array mark
 -- and the logical length), which is also what the LuaJIT host projection
 -- writes for a declared T[] host parameter.
-test("json.parse marks every decoded array, empty arrays included (v1.3)", function()
+test("json.parse marks every decoded array, empty arrays included (v1.4)", function()
   local parsed = json.parse.f('{"empty":[],"one":[1],"deep":{"nested":[[],{"k":1}]}}')
   assert(parsed.empty[__K.a] == true, "an empty decoded array carries the array mark")
   assert(parsed.empty[__K.n] == 0, "an empty decoded array records the zero length")
@@ -1067,7 +1067,7 @@ test("json.parse marks every decoded array, empty arrays included (v1.3)", funct
     "an object nested in an array stays a plain table")
 end)
 
-test("json.stringify encodes nested decoded arrays, empty arrays included (v1.3)", function()
+test("json.stringify encodes nested decoded arrays, empty arrays included (v1.4)", function()
   -- The defect: a decoded nested empty array was indistinguishable from {},
   -- so the encoder produced {"items":{}} where every other lane and the
   -- compiled LuaJIT lane produce {"items":[]}.
@@ -1090,7 +1090,7 @@ test("json.stringify encodes nested decoded arrays, empty arrays included (v1.3)
     "the round-trip keeps the nested empty array mark")
 end)
 
-test("json.stringify encodes the emitted chunk array carrier as an array (v1.3)", function()
+test("json.stringify encodes the emitted chunk array carrier as an array (v1.4)", function()
   -- The carrier a declared T[] host parameter crosses into DEAL as, and the
   -- carrier an emitted chunk constructs: the private array mark, the logical
   -- length, the per-slot variant marks, and the elements. The encoder reads
@@ -1121,7 +1121,7 @@ end)
 -- the integer text, the number variant the canonical decimal text (the
 -- same Double.toString spelling the emitted prelude, the JVM and the JS
 -- runtime publish) — instead of enumerating k/d as an object.
-test("json.stringify projects a numeric-variant carrier to its number (v1.3)", function()
+test("json.stringify projects a numeric-variant carrier to its number (v1.4)", function()
   local function carrier(kind, value)
     return { [__K.jn] = true, k = kind, d = value }
   end
@@ -1169,7 +1169,7 @@ end)
 -- table-object marks entirely) and uses the per-slot variant marks, so a
 -- chunk table serializes as the JSON object it stands for rather than an
 -- object of private carrier fields.
-test("json.stringify encodes the chunk table carrier over its user keys (v1.3)", function()
+test("json.stringify encodes the chunk table carrier over its user keys (v1.4)", function()
   local carrier = { [__K.t] = true,
     [__K.keys] = { b = true, a = true },
     [__K.order] = { "b", "a" }, b = 2, a = 1 }
@@ -1227,7 +1227,7 @@ end)
 -- of a marked slot — never the private carrier keys as members (the
 -- defect encoded the key/order maps as "table: 0x..." members and the
 -- number-variant slot through the number spelling).
-test("json.stringify encodes a chunk-written plain table with variant marks (v1.3)", function()
+test("json.stringify encodes a chunk-written plain table with variant marks (v1.4)", function()
   local written = { [__K.keys] = { x = true, y = true, z = true },
     [__K.order] = { "x", "y", "z" },
     [__K.nK] = { x = true, z = true },
@@ -1450,7 +1450,7 @@ test("json.parse normalizes -0 to 0", function()
   assert(1 / z == -math.huge, "normalized zero divides to +Infinity")
 end)
 
--- The closed unsupported-carrier rejection (v1.3): every produced carrier
+-- The closed unsupported-carrier rejection (v1.4): every produced carrier
 -- renders the JSON_STRINGIFY_UNSUPPORTED arm's own text with the closed
 -- carrier-kind token instead of encoding private carrier fields. A carrier
 -- is rejected at the declared (table) parameter cell first; a carrier
@@ -1539,7 +1539,7 @@ test("json.stringify rejects the absent marker with the closed nil token", funct
   assert(err.actual == "nil", "absent marker actual token, got: " .. tostring(err.actual))
 end)
 
--- A missing array slot is never JSON null (v1.3): only __rt.__NULL is the
+-- A missing array slot is never JSON null (v1.4): only __rt.__NULL is the
 -- null carrier. A deleted element of a decoded array leaves a hole the
 -- encoder must reject through the closed unsupported/nil arm — exactly the
 -- emitted chunk's missing-slot arm and the JVM/JS walks — instead of
@@ -1587,7 +1587,7 @@ end)
 -- carrier tagged with __fn/__f/__csig are rejected through the same
 -- closed arm with the same tokens, so the shipped std/json.lua and the
 -- emitted walker agree on every carrier form a caller can hand over.
-test("json.stringify rejects the emitted chunk carrier marks with the pinned arm (v1.3)", function()
+test("json.stringify rejects the emitted chunk carrier marks with the pinned arm (v1.4)", function()
   local __rt = require("deal.runtime")
   local carriers = {
     { name = "emitted class instance", actual = "table",
@@ -1620,7 +1620,7 @@ end)
 -- ISSUE-0830: a DEAL table may carry any string key. A user table whose
 -- keys spell the internal carrier vocabulary is a plain JSON-shaped table on
 -- every consumer — it neither forges a carrier nor loses its own keys.
-test("a user table with carrier-like string keys encodes as data (v1.3)", function()
+test("a user table with carrier-like string keys encodes as data (v1.4)", function()
   local __rt = require("deal.runtime")
   local forged = {
     __kind = "class", __classname = "Error", __c = true, __id = "@m/C",

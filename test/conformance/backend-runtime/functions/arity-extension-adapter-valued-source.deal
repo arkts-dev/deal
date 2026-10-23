@@ -6,11 +6,11 @@
 import * as console from "std/console";
 
 class Marker {
-  count: int = 0;
+  count: number;
 }
 
 class Holder {
-  pair: (x: int, y: int) => int = one;
+  pair: (x: number, y: number) => number;
 }
 
 function check(condition: boolean, message: string): null {
@@ -20,82 +20,82 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 
-function zero(): int { return 41; }
+function zero(): number { return 41; }
 
-function needTriple(f: (x: int, y: int, z: int) => int): int { return f(1, 2, 3); }
+function needTriple(f: (x: number, y: number, z: number) => number): number { return f(1, 2, 3); }
 
-function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
-function passTriple(f: (x: int, y: int, z: int) => int): int { return f(4, 5, 6); }
+function passTriple(f: (x: number, y: number, z: number) => number): number { return f(4, 5, 6); }
 
-function bump(marker: Marker): int {
+function bump(marker: Marker): number {
   marker.count = marker.count + 1;
   return 2;
 }
 
-function widenPair(f: (x: int, y: int) => int): (x: int, y: int, z: int) => int {
-  let widened: (x: int, y: int, z: int) => int = f;
-  f = function(x: int, y: int): int { return x + y; };
+function widenPair(f: (x: number, y: number) => number): (x: number, y: number, z: number) => number {
+  let widened: (x: number, y: number, z: number) => number = f;
+  f = function(x: number, y: number): number { return x + y; };
   return widened;
 }
 
-function widenZero(f: () => int): (x: int, y: int) => int {
+function widenZero(f: () => number): (x: number, y: number) => number {
   return f;
 }
 
-function escapingCall(f: (x: int, y: int) => int): () => int {
-  let widened: (x: int, y: int, z: int) => int = f;
-  f = function(x: int, y: int): int { return x + y; };
-  let call: () => int = function(): int { return widened(7, 8, 9); };
+function escapingCall(f: (x: number, y: number) => number): () => number {
+  let widened: (x: number, y: number, z: number) => number = f;
+  f = function(x: number, y: number): number { return x + y; };
+  let call: () => number = function(): number { return widened(7, 8, 9); };
   return call;
 }
 
 export function main(): null {
   // --- a parameter position over an adapted binding ------------------------
-  let pair: (x: int, y: int) => int = one;
+  let pair: (x: number, y: number) => number = one;
   check(needTriple(pair) === 1, "an adapted binding adapts again at a parameter");
   check(passTriple(pair) === 4,
     "the second adapter forwards only the declared source's leading parameters");
 
   // --- a class-field source -----------------------------------------------
-  let holder: Holder = {};
+  let holder: Holder = {pair: one};
   check(needTriple(holder.pair) === 1, "an adapted field value adapts at a parameter");
 
   // --- an array-element source --------------------------------------------
-  let pairs: ((x: int, y: int) => int)[] = [one];
+  let pairs: ((x: number, y: number) => number)[] = [one];
   check(needTriple(pairs[0]) === 1, "an adapted array element adapts at a parameter");
 
   // --- a return position ---------------------------------------------------
-  let widened: (x: int, y: int, z: int) => int = widenPair(pair);
+  let widened: (x: number, y: number, z: number) => number = widenPair(pair);
   check(widened(7, 8, 9) === 15,
     "an adapter over an escaping parameter cell reads the cell's assigned value");
-  let call: () => int = escapingCall(pair);
+  let call: () => number = escapingCall(pair);
   check(call() === 15,
     "a static adapter callee in an escaped closure reads its captured cell");
 
   // --- an assignment position ---------------------------------------------
-  let assigned: (x: int, y: int, z: int) => int = one;
+  let assigned: (x: number, y: number, z: number) => number = one;
   assigned = pair;
   check(assigned(8, 9, 10) === 8, "an adapted value adapts at an assignment position");
 
   // --- a zero-to-one chain -------------------------------------------------
-  let zeroValue: () => int = zero;
-  let oneWide: (x: int) => int = zeroValue;
-  let twoWide: (x: int, y: int) => int = oneWide;
+  let zeroValue: () => number = zero;
+  let oneWide: (x: number) => number = zeroValue;
+  let twoWide: (x: number, y: number) => number = oneWide;
   check(twoWide(9, 10) === 41, "a zero-to-one chain keeps each level's marker");
 
   // --- once-only evaluation of the ignored target argument -----------------
-  let marker: Marker = {};
-  let short: (x: int, y: int) => int = one;
-  let wide: (x: int, y: int, z: int) => int = short;
+  let marker: Marker = {count: 0};
+  let short: (x: number, y: number) => number = one;
+  let wide: (x: number, y: number, z: number) => number = short;
   check(wide(3, bump(marker), 9) === 3,
     "the ignored third parameter is evaluated and never forwarded");
   check(marker.count === 1, "the ignored third parameter evaluates exactly once");
 
   // --- an exact adapted value keeps its own working identity ---------------
-  let exact: (x: int, y: int) => int = pair;
+  let exact: (x: number, y: number) => number = pair;
   check(needPair(exact) === 3, "an exact target stores the adapted value directly");
 
   console.log("OK");

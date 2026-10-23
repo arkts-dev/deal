@@ -1,7 +1,6 @@
 package deal.semantic;
 
 import deal.module.CompilationOrchestrator;
-import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ResolvedImport;
 import deal.semantic.ir.SemanticIdAllocator;
@@ -100,8 +99,6 @@ public final class EmissionFactWalk {
             true, true, built.index().modules().get(module.moduleId()), Map.of());
         lowerer.setModuleImports(module.imports());
         lowerer.setRegistrationSeeds(ClassRegistrationSeeds.builtinErrorOnly());
-        lowerer.setDeclaredConversionIntrinsics(List.of(IntrinsicKind.INT_CONVERT,
-            IntrinsicKind.NUMBER_CONVERT, IntrinsicKind.BYTES_NEW));
         lowerer.setE7Facts(module.exports(), Map.of(), Set.of());
         try {
             lowerer.lowerProjectModule(module.ast().statements());

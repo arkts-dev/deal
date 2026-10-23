@@ -6,16 +6,16 @@
 import * as console from "std/console";
 
 class Marker {
-  count: int = 0;
+  count: number;
 }
 
 class Holder {
-  pair: (x: int, y: int) => int = pairExact;
-  widened: (x: int, y: int, z: int) => int = tripleExact;
+  pair: (x: number, y: number) => number;
+  widened: (x: number, y: number, z: number) => number;
 }
 
 class Sink {
-  pair: (x: int, y: int) => int = pairExact;
+  pair: (x: number, y: number) => number;
 }
 
 // The class-default position over an assignment expression: construct a
@@ -24,7 +24,7 @@ class Sink {
 // source value is that produced two-arity adapter and the wider default
 // target adapts it once more.
 class WideDefault {
-  widened: (x: int, y: int, z: int) => int = (sink().pair = one);
+  widened: (x: number, y: number, z: number) => number;
 }
 
 function check(condition: boolean, message: string): null {
@@ -34,48 +34,48 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 
-function pairExact(x: int, y: int): int { return x + y; }
+function pairExact(x: number, y: number): number { return x + y; }
 
-function tripleExact(x: int, y: int, z: int): int { return x + y + z; }
+function tripleExact(x: number, y: number, z: number): number { return x + y + z; }
 
-function makeOne(marker: Marker): (x: int) => int {
+function makeOne(marker: Marker): (x: number) => number {
   marker.count = marker.count + 1;
   return one;
 }
 
 function sink(): Sink {
-  let s: Sink = {};
+  let s: Sink = {pair: pairExact};
   return s;
 }
 
-function needPair(f: (x: int, y: int) => int): int { return f(5, 6); }
+function needPair(f: (x: number, y: number) => number): number { return f(5, 6); }
 
-function needTriple(f: (x: int, y: int, z: int) => int): int { return f(5, 6, 7); }
+function needTriple(f: (x: number, y: number, z: number) => number): number { return f(5, 6, 7); }
 
-function returnedPair(): (x: int, y: int) => int {
-  let f: (x: int, y: int) => int = pairExact;
+function returnedPair(): (x: number, y: number) => number {
+  let f: (x: number, y: number) => number = pairExact;
   return (f = one);
 }
 
-function returnedWide(): (x: int, y: int, z: int) => int {
-  let f: (x: int, y: int) => int = pairExact;
+function returnedWide(): (x: number, y: number, z: number) => number {
+  let f: (x: number, y: number) => number = pairExact;
   return (f = one);
 }
 
 // A value position materializes its source once: the returned adapter's
 // assignment expression runs at the return, and a later invocation reads
 // the materialized value instead of re-executing the assignment.
-function onceReturned(marker: Marker): (x: int, y: int) => int {
-  let singles: ((x: int) => int)[] = [one];
+function onceReturned(marker: Marker): (x: number, y: number) => number {
+  let singles: ((x: number) => number)[] = [one];
   return (singles[0] = makeOne(marker));
 }
 
 export function main(): null {
   // The call-argument position: the produced value is the assignment's own
   // target-typed adapter, so the exact parameter accepts it unchanged.
-  let f: (x: int, y: int) => int = pairExact;
+  let f: (x: number, y: number) => number = pairExact;
   check(needPair((f = one)) === 5,
     "an assignment-expression argument is the produced target-typed value");
   check(f(5, 6) === 5,
@@ -84,10 +84,10 @@ export function main(): null {
     "an assignment-expression argument adapts again only at a wider parameter");
 
   // The declaration initializer and variable assignment positions.
-  let declared: (x: int, y: int) => int = (f = one);
+  let declared: (x: number, y: number) => number = (f = one);
   check(declared(3, 4) === 3,
     "a declaration initializer over an assignment expression adapts once");
-  let assigned: (x: int, y: int) => int = pairExact;
+  let assigned: (x: number, y: number) => number = pairExact;
   assigned = (f = one);
   check(assigned(3, 4) === 3,
     "a variable assignment over an assignment expression adapts once");
@@ -105,7 +105,7 @@ export function main(): null {
     "a supplied field over an assignment expression adapts once");
   check(supplied.widened(5, 6, 7) === 5,
     "a wider supplied field adapts the produced value once more");
-  let written: Holder = {};
+  let written: Holder = {pair: pairExact, widened: tripleExact};
   written.pair = (f = one);
   check(written.pair(5, 6) === 5,
     "a class field write over an assignment expression adapts once");
@@ -114,26 +114,26 @@ export function main(): null {
     "a wider class field write adapts the produced value once more");
 
   // The class-default position over an assignment expression.
-  let defaulted: WideDefault = {};
+  let defaulted: WideDefault = {widened: (sink().pair = one)};
   check(defaulted.widened(5, 6, 7) === 5,
     "a class default over an assignment expression adapts the produced value");
 
   // The array literal element and array element write positions.
-  let pairs: ((x: int, y: int) => int)[] = [(f = one)];
+  let pairs: ((x: number, y: number) => number)[] = [(f = one)];
   check(pairs[0](5, 6) === 5,
     "an array literal element over an assignment expression adapts once");
   pairs[0] = (f = one);
   check(pairs[0](5, 6) === 5,
     "an array element write over an assignment expression adapts once");
-  let triples: ((x: int, y: int, z: int) => int)[] = [tripleExact];
+  let triples: ((x: number, y: number, z: number) => number)[] = [tripleExact];
   triples[0] = (f = one);
   check(triples[0](5, 6, 7) === 5,
     "a wider array element write adapts the produced value once more");
 
   // The once-only materialization of a value position's assignment
   // expression.
-  let marker: Marker = {};
-  let once: (x: int, y: int) => int = onceReturned(marker);
+  let marker: Marker = {count: 0};
+  let once: (x: number, y: number) => number = onceReturned(marker);
   check(marker.count === 1,
     "the value position evaluates its assignment expression once");
   check(once(5, 6) === 5,
@@ -146,7 +146,7 @@ export function main(): null {
   // A nested assignment chain: the outer position's source is the middle
   // assignment's produced target-typed value, not its shorter right-hand
   // side.
-  let nested: (x: int, y: int, z: int) => int = (f = (declared = one));
+  let nested: (x: number, y: number, z: number) => number = (f = (declared = one));
   check(nested(5, 6, 7) === 5,
     "a nested assignment chain produces and adapts the inner target-typed value");
 

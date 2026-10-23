@@ -8,11 +8,11 @@ import * as json from "std/json";
 import * as lib from "./arity-extension-boundaries-lib";
 
 class NeverBuilt {
-  pair: (x: int, y: int) => int = one;
+  pair: (x: number, y: number) => number;
 }
 
 class SuppliedOnly {
-  pair: (x: int, y: int) => int = one;
+  pair: (x: number, y: number) => number;
 }
 
 function check(condition: boolean, message: string): null {
@@ -22,25 +22,25 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 
-function exactPair(x: int, y: int): int { return x + y; }
+function exactPair(x: number, y: number): number { return x + y; }
 
-function pickPair(n: int): (x: int, y: int) => int {
+function pickPair(n: number): (x: number, y: number) => number {
   if (n > 0) {
     return exactPair;
   }
   return one;
 }
 
-function pickPairAdaptedFirst(n: int): (x: int, y: int) => int {
+function pickPairAdaptedFirst(n: number): (x: number, y: number) => number {
   if (n > 0) {
     return one;
   }
   return exactPair;
 }
 
-function needParse(f: (text: string, extra: int) => table): table {
+function needParse(f: (text: string, extra: number) => table): table {
   return f("{}", 9);
 }
 
@@ -55,14 +55,14 @@ export function main(): null {
   let suppliedOnly: SuppliedOnly = { pair: exactPair };
   check(suppliedOnly.pair(2, 3) === 5,
     "a supplied-only construction leaves the adapted default wired");
-  let importedDefault: lib.Holder = {};
+  let importedDefault: lib.Holder = {pair: lib.one};
   check(importedDefault.pair(4, 5) === 4,
     "a cross-module default class field adapts one-to-two");
 
   let parsed: table = needParse(json.parse);
   check(json.stringify(parsed) === "{}",
     "a cataloged stdlib callable adapts at a longer parameter position");
-  let parseWide: (text: string, extra: int) => table = json.parse;
+  let parseWide: (text: string, extra: number) => table = json.parse;
   check(json.stringify(parseWide("{}", 9)) === "{}",
     "an adapter over a cataloged stdlib callable invokes its row");
 

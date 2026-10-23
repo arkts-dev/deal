@@ -1,7 +1,7 @@
 // @expected: companion
 // @description: Classified support module — the arity-extension boundary fixture's library: a shorter exported function value and an exported class whose function-valued default adapts in this declaring unit (constructed only from the entry module).
-export function one(x: int): int { return x; }
+export function one(x: number): number { return x; }
 
 export class Holder {
-  pair: (x: int, y: int) => int = one;
+  pair: (x: number, y: number) => number;
 }

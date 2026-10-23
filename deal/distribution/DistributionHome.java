@@ -21,7 +21,7 @@ import java.util.Optional;
  * <p><b>Resolution order, pinned (D3):</b></p>
  * <ol>
  *   <li><b>Project-local surface</b> — {@code <manifestDir>/std} when
- *       present (the pinned v1.3 override surface; unchanged
+ *       present (the pinned v1.4 override surface; unchanged
  *       precedence).</li>
  *   <li><b>Language distribution</b> — classpath resources
  *       ({@code std/<m>.d.deal}, {@code std/<m>.lua},
@@ -368,7 +368,7 @@ public final class DistributionHome {
 
     private Optional<ResolvedSurface> probeStdlibSurface() {
         // Tier 1: the project-local surface — <manifestDir>/std when it
-        // exists as a directory (the pinned v1.3 override surface).
+        // exists as a directory (the pinned v1.4 override surface).
         Path projectStd = resolveBase(manifestDirectoryText, "std");
         if (projectStd != null && Files.isDirectory(projectStd)) {
             return Optional.of(new ResolvedSurface(TIER_PROJECT_LOCAL,

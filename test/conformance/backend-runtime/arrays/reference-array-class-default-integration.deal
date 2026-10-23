@@ -83,7 +83,8 @@ export async function test_array_class_default_integration(): number {
   let providedCaught: boolean = false;
   let target: PlanBox = a;
   try {
-    target = {buf: holderBad.b, nested: [[0]], deep: [[[0]]], made: host.makeArray(2),
+    let supplied: number[] = holderBad.b;
+    target = {buf: supplied, nested: [[0]], deep: [[[0]]], made: host.makeArray(2),
       shared: host.sharedArray(), syncFn: identity, asyncFn: echoAsync};
   } catch (e) {
     providedCaught = e.code === "E8001";
@@ -91,12 +92,12 @@ export async function test_array_class_default_integration(): number {
   if (!providedCaught) {
     throw { code: "TEST_FAIL", message: "dynamic provided-value read did not raise E8001" };
   }
-  if (host.callCount() !== 3 || target !== a) {
+  if (host.callCount() !== 2 || target !== a) {
     throw { code: "TEST_FAIL", message: "failed boundary lost effects or published a partial instance" };
   }
   // A clean attempt after the failures still constructs correctly.
   let c2: PlanBox = makeBox();
-  if (c2.buf.length !== 2 || host.callCount() !== 4) {
+  if (c2.buf.length !== 2 || host.callCount() !== 3) {
     throw { code: "TEST_FAIL", message: "post-failure attempt did not construct cleanly" };
   }
   let encoded: string = json.stringify({ box: a.buf });

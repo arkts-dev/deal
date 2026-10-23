@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DEAL v1.3 template-literal structure scanner (docs/spec-v1.3.md lexical
+ * DEAL v1.4 template-literal structure scanner (docs/spec-v1.4.md lexical
  * grammar).
  *
  * <pre>

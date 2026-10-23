@@ -186,7 +186,7 @@ public class DynamicFunctionValueGateTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -250,7 +250,7 @@ public class DynamicFunctionValueGateTest {
         LoweredModuleUnit unit = lowerer.buildUnit(
             fixture.manifests().get(0).constructCoverage(),
             fixture.module().imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            SemanticProfile.DEAL_V1_3_INT32,
+            SemanticProfile.DEAL_V1_4_BINARY64,
             fixture.index().interfaceIndexDigest(), REGISTRY_HASH,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         return new RawLowering(unit, lowerer.bodyTable(), lowerer.pinnedWriteFacts());
@@ -439,8 +439,8 @@ public class DynamicFunctionValueGateTest {
             StructuredBodyTable table) {
         Map<FunctionId, LoweredFunction> declared = new LinkedHashMap<>(functions);
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_3_INT32, MODULE, INTERFACE_HASH,
-            LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH),
+            SemanticProfile.DEAL_V1_4_BINARY64, MODULE, INTERFACE_HASH,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH),
             Set.of(), Map.of(), Map.of(), declared,
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), registry, ops,
             table,
@@ -484,7 +484,7 @@ public class DynamicFunctionValueGateTest {
 
     private static SemanticIrValidator.ComparisonFacts facts(LoweredModuleUnit unit) {
         return new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
     }
 
     private static void assertBindingsPass(Optional<CompilerDiagnostic> failure, String what) {

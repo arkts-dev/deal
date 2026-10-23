@@ -72,7 +72,7 @@ public final class CompilationOrchestrator {
     private final boolean verbose;
     private final boolean dumpIr;
     /**
-     * The v1.3 default debugging-artifacts fact: every successful backend
+     * The v1.4 default debugging-artifacts fact: every successful backend
      * compilation emits source comments and one version-1 per-source map
      * sidecar per constituent module. The accepted {@code --source-map} /
      * {@code sourceMap} constructor spellings remain part of the CLI and
@@ -127,7 +127,7 @@ public final class CompilationOrchestrator {
     /**
      * The release-owned compiler invocation resolved at compile start
      * (foundation F1/F8): every compile carries the one
-     * {@code DEAL_V1_3_INT32} profile, the release state, and the derived
+     * {@code DEAL_V1_4_BINARY64} profile, the release state, and the derived
      * release-state hash, resolved through {@link CompilerProfileProvider};
      * the verbose report prints the recorded facts but the recording
      * location is the invocation's immutable {@code releaseStateHash}
@@ -319,7 +319,7 @@ public final class CompilationOrchestrator {
     /**
      * Test-only isolated-phase overload; see the 6-argument form. Both the
      * {@code sourceMap} and {@code sourceMapExplicit} spellings are accepted
-     * request surface only: the v1.3 default emits source comments and
+     * request surface only: the v1.4 default emits source comments and
      * sidecars for every successful compilation, so neither selects an
      * emission mode.
      */
@@ -451,12 +451,12 @@ public final class CompilationOrchestrator {
             entryDir.resolve("deal.json").normalize().toString(),
             entryDirText,
             entryDirText,
-            "1.3",
+            "1.4",
             roots,
             output,
             backend.cliName(),
             externals,
-            "1.3",
+            "1.4",
             surface,
             stdlibDeclarationFiles,
             syntheticDeploymentIdentity(entryDir));
@@ -545,7 +545,7 @@ public final class CompilationOrchestrator {
      * {@link CompilerProfileProvider} from
      * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
      * capability registry (A2 — the single release-owned selection point;
-     * the profile is the sole {@code DEAL_V1_3_INT32}, foundation F1/F4).
+     * the profile is the sole {@code DEAL_V1_4_BINARY64}, foundation F1/F4).
      * It is the only invocation constructor — the orchestrator never
      * constructs an invocation itself.
      */
@@ -837,13 +837,9 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
-            // Phase-0 parsing runs the sole v1.3 parse contract: the
-            // E1036 int32 gate and the -2147483648 immediate-token
-            // special case. The lexer's directive events flow in through
-            // the events-carrying constructor
-            // (fixed-name-directive-events D1), so file-directive
-            // evaluation and declaration binding run exactly as in
-            // production.
+            // Phase-0 parsing uses the sole v1.4 grammar and binary64
+            // literal admission. The lexer's directive events reach the
+            // same declaration-binding path as every production parse.
             Parser parser = new Parser(lex.tokens(), sourcePath,
                 lex.directiveEvents());
             ParseResult parseResult = parser.parse();
@@ -1911,7 +1907,7 @@ public final class CompilationOrchestrator {
      * {@link ProductionProjectEmission#run} over the compile's declared
      * inputs — the one project lowering, the pre-emission closure guard,
      * the one production emission (with the project's source comments and
-     * {@code .deal.map.json} sidecars, the v1.3 default), and the one
+     * {@code .deal.map.json} sidecars, the v1.4 default), and the one
      * staged production artifact set plus the target's complete
      * runtime/stdlib deployment copies (LuaJIT and JVM stage one project
      * artifact; JavaScript stages one CommonJS artifact per implementation

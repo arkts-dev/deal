@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: json.stringify rejects an object key that is not a Unicode scalar sequence through the closed JSON_STRINGIFY_UNSUPPORTED arm (v1.3)
+// @description: json.stringify rejects an object key that is not a Unicode scalar sequence through the closed JSON_STRINGIFY_UNSUPPORTED arm (v1.4)
 // @expected: runtime-error E8001
-// @features: stdlib, json, host-abi, unicode, runtime-errors, v1.3
+// @features: stdlib, json, host-abi, unicode, runtime-errors, v1.4
 
 import * as host from "host/jsonabletable";
 import * as json from "std/json";

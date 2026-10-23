@@ -159,7 +159,7 @@ public final class LuaSemanticEmitter {
             declarationSurface, null);
     }
     /**
-     * The source-mapping production entry (the v1.3 default debugging
+     * The source-mapping production entry (the v1.4 default debugging
      * artifacts): identical emission to the overload above with one
      * {@link SourceMapRecorder} installed, so every mapped op entry emits its
      * source comment before the generated statement group and records the
@@ -1133,18 +1133,6 @@ public final class LuaSemanticEmitter {
                 }
             }
 
-            // The detached class-default functions (E5): one per
-            // CLASS_DEFAULT op — the default block's ops (the default op
-            // itself skipped) re-execute per invocation, returning the
-            // block's final producing value (the op's result slot), so
-            // every triggering construction gets a fresh default
-            // (mutable defaults allocate freshly per attempt). Each name
-            // is a field of the chunk-level factory store declared above:
-            // a construction inside a function body (or a re-executed
-            // thunk body) emits its `pcall(__factories.D<opId>)` call into
-            // the factory emitted before this block, so the field
-            // assignment keeps that reference resolvable at call time
-            // instead of a nil global.
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
 
@@ -1376,64 +1364,7 @@ public final class LuaSemanticEmitter {
                 + luaString(row.declaredDescriptor().canonicalSpecText());
         }
 
-        /**
-         * Emits one detached class-default function: the default block's
-         * ops in order (the CLASS_DEFAULT op itself skipped — its own
-         * events are the triggering CLASS_NEW/CLASS_FACTORY arm's) and
-         * the final producing value returned. The name is a field of the
-         * chunk-level factory store (see the preamble): the assignment
-         * form keeps the function reachable from every factory/
-         * construction body emitted before this statement.
-         */
 
-
-        /**
-         * The invocation-local save of one detached default attempt's
-         * state: the block's own slots and cells into this invocation's
-         * own local table, in bounded statement chunks (the LuaJIT
-         * per-statement name/expression limits).
-         */
-        private void emitDefaultStateSave(List<String> keys) {
-            out.append("  local __dSave = {}\n");
-            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
-                int end = Math.min(start + STATE_CHUNK, keys.size());
-                StringBuilder targets = new StringBuilder();
-                StringBuilder values = new StringBuilder();
-                for (int i = start; i < end; i++) {
-                    if (i > start) {
-                        targets.append(", ");
-                        values.append(", ");
-                    }
-                    targets.append("__dSave[").append(i + 1).append("]");
-                    values.append(keys.get(i));
-                }
-                out.append("  ").append(targets).append(" = ").append(values)
-                    .append("\n");
-            }
-        }
-
-        /**
-         * The matching default-invocation restore, executed on the success
-         * and the failure path alike: the enclosing attempt's operands
-         * return before the produced value is published.
-         */
-        private void emitDefaultStateRestore(List<String> keys) {
-            for (int start = 0; start < keys.size(); start += STATE_CHUNK) {
-                int end = Math.min(start + STATE_CHUNK, keys.size());
-                StringBuilder targets = new StringBuilder();
-                StringBuilder values = new StringBuilder();
-                for (int i = start; i < end; i++) {
-                    if (i > start) {
-                        targets.append(", ");
-                        values.append(", ");
-                    }
-                    targets.append(keys.get(i));
-                    values.append("__dSave[").append(i + 1).append("]");
-                }
-                out.append("  ").append(targets).append(" = ").append(values)
-                    .append("\n");
-            }
-        }
 
         /**
          * Emits one detached thunk re-executor for a FUNCTION_ADAPT op
@@ -2941,7 +2872,7 @@ public final class LuaSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.3.md §Name resolution
+         * forward reference of docs/spec-v1.4.md §Name resolution
          * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).
@@ -6893,7 +6824,7 @@ private void emitStdlib(SemanticOp op) {
 -- flat-layout class walk of the JSON_FROM_CLASS/JSON_TO_CLASS arms. The
 -- walk consumes the per-class plans the emitter records in __plans
 -- (classId -> plan: declaration-order fields with descriptor,
--- optionality, and the per-field CLASS_DEFAULT child metadata).
+-- optionality and required presence).
 -- Nested @jsonable class fields fail closed at emit time (a producer
 -- defect naming the nested shape), never silently. A table position and
 -- the descriptor-free table content accept a produced carrier and a
@@ -7275,8 +7206,6 @@ local function __jsonKnownField(plan, name)
   end
   return false
 end
--- One CLASS_DEFAULT child execution with its own START/terminal events
--- (the detached default op's recorded key/digest, parent "-").
 -- The language carrier of one parsed JSON subtree: the shared table
 -- carrier's full marker set — the presence map __keys, the
 -- first-insertion order list __order (the TABLE_NEW / JSON_PARSE
@@ -7435,7 +7364,7 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     if type(v) == "string" and __jsonValidUtf8(v) then return true, v end
     return false
   elseif kind == "table" then
-    -- A table field accepts only a JSON object (docs/spec-v1.3.md:695):
+    -- A table field accepts only a JSON object (docs/spec-v1.4.md:695):
     -- an array-shaped value of any length, the empty array included, is
     -- a validation failure — never an empty table.
     if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
@@ -7456,9 +7385,8 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     return __jsonDecodeRaw(inner, v, numberVariant)
   elseif kind == "class" then
     -- The nested @jsonable class decode (K-D8 step 6): the nested
-    -- class's own plan drives the same phase order, and its omitted
-    -- required-present defaults run their recorded CLASS_DEFAULT
-    -- functions. An unresolvable nested plan is a producer defect. The
+    -- class's structural plan drives validation. Missing required keys
+    -- reject; an unresolvable nested plan is a producer defect. The
     -- nested value is a JSON object, exactly the root gate's own shape:
     -- an array value of any length, the empty array included, is a
     -- validation failure, never an empty-object collapse.
@@ -7487,9 +7415,8 @@ local function __jsonInstanceOf(plan, fields, present, values)
   return inst
 end
 -- The class decode of one JSON object (K-D8): the extra-key gate in
--- document order, the provided-field decode in declaration order, the
--- omitted required-present defaults (their recorded CLASS_DEFAULT
--- functions), the final descriptor validation, and the tagged
+-- document order, required-presence checks, declaration-order decode,
+-- final descriptor validation, and the tagged
 -- instance. Shared by the top-level walk and the nested @jsonable class
 -- field decode (the nested plan's own walk).
 __jsonDecodeClass = function(plan, doc)
@@ -7592,7 +7519,7 @@ local function __jsonToClassOp(planName, root)
   -- plain Lua table (the LuaJIT value mapping's table value — a host-returned
   -- table, or one composed outside TABLE_NEW) is classified by its own keys:
   -- the dense 1..n integer form is an array and the string-keyed form an
-  -- object, exactly the JSON shape docs/spec-v1.3.md:728 admits. A value that
+  -- object, exactly the JSON shape docs/spec-v1.4.md:728 admits. A value that
   -- carries a private value-model carrier mark is never JSON-shaped content.
   local function __jsonContentCarrier(v)
     local kind = v[__dealCarrierKeys.kind]
@@ -7720,7 +7647,7 @@ local function __jsonToClassOp(planName, root)
         else
           -- An unmarked numeric leaf (a plain host table carries no
           -- per-slot marks) is JSON content only when it is finite: the
-          -- non-finite values are not JSON-shaped (docs/spec-v1.3.md:728)
+          -- non-finite values are not JSON-shaped (docs/spec-v1.4.md:728)
           -- and take the closed typed-boundary failure at their own
           -- position, exactly like the JVM/JS walks' finite check.
           if element ~= element or element == math.huge
@@ -10167,7 +10094,7 @@ return __isClassAtom, __isDescriptorText
 end)()
 -- The closed host inner-reason vocabulary (P2 item 3, P4): the texts the
 -- declared inner-reason arms produce — the typed-boundary kind text, the
--- int refinement, the signed32 range, the two host string-carrier texts,
+-- two host string-carrier texts,
 -- the function signature, the class identity, and the array-element
 -- mismatch. Every accepted spelling is read from the serialized __arms
 -- entry of the arm that owns it — its template and the literal segments
@@ -10228,9 +10155,7 @@ __checkInnerReason = (function()
     end
     return table.concat(parts)
   end
-  -- The arms whose declared templates are fixed texts: the int
-  -- refinements, the signed32 range, and the two host string-carrier
-  -- texts.
+  -- The fixed-template host string-carrier arms.
   local fixedTemplateArms = {"HOST_STRING_INVALID_UTF8",
     "HOST_STRING_SURROGATE"}
   local function isClosedInnerReason(s)
@@ -11109,27 +11034,9 @@ local function __hostAtom(v)
   if t == "string" then return "str:"..__esc(v) end
   return "ref:"..__allocId(v)
 end
--- The host completion crossing's numeric variant materialization (the
--- AWAIT site's host-operation arm): the raw value a host operation
--- completed its future with keeps its own numeric variant — an integral
--- finite value inside the signed32 range is the int carrier, every other
--- numeric value the number carrier — materialized as the value model's
--- variant carrier so every later container mark (__numKey), read-side
--- materialization (__readVar), typed projection, trace atom and JSON
--- spelling observes the host value's own variant, exactly like the
--- oracle's Int/Num carrier and the shared JVM runtime's preserved boxed
--- Long/Double (an Integer settles onto the int carrier; a Long and a
--- Double keep their own). The int carrier stays inside the signed32
--- range the cell trusts it for: a fractional, nonfinite, or
--- out-of-range integral value is the number carrier, so the int cell's
--- own ladder still selects the refinement and E8004 range arms. A value
--- that already carries its variant (the model's own carrier) and every
--- non-number value cross unchanged. A host value is classified by its
--- own variant, never by the declared completion descriptor beside the
--- position: a plain number returned for a declared completion is the int
--- carrier when it is an in-range integral value. Chunk-global like the
--- other emitted helper functions (never a chunk-level local: the emitted
--- module-init walk spends nearly the whole 200-local budget).
+-- Host numeric completions retain binary64 values in the semantic number
+-- carrier, including signed zero and nonfinite values. Descriptor admission
+-- occurs before normalization. Chunk-global to preserve Lua's local budget.
 __hostNumVar = function(v)
   if type(v) ~= "number" then return v end
   return {[__dealCarrierKeys.jn] = true, k = "number", d = v}
@@ -11880,14 +11787,6 @@ local function __subseqIndexOf(hay, needle, from)
   end
   return -1
 end
--- The one exact decimal classification of the RFC-8259 numeric lexemes
--- (DEAL v1.3 JSON number classification): a token denotes the signed32
--- integer value exactly when its mathematical decimal value is integral
--- and inside [-2147483648, 2147483647]; every other token denotes the
--- binary64 value of the standard conversion. Coefficient digits, fraction
--- scale, and exponent combine with bounded magnitude comparisons (a very
--- long exponent saturates), so no machine overflow and no input cap can
--- change the decision, and '-0'/-0.0 normalize to the integer 0.
 -- The in-target realization of the closed stdlib table: the parameter
 -- boundaries already ran, so the carriers are boundary-admitted (valid
 -- scalar strings, integral numbers, tables). The invoking op's event

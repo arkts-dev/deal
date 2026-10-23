@@ -4,7 +4,7 @@
 // @features: error-handling, try-catch, nullable, narrowing, shadowing
 
 export function main(): null {
-  let e: int | null = null;
+  let e: number | null = null;
   if (e === null) {
     try {
       throw { code: "C_NULL", message: "null refinement" };

@@ -236,7 +236,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             // Arrays / nullables, nested.
             "[number]", "?number", "[?number]", "?[number]", "[[number]]", "[?[?[?[table]]]]",
             "[table]", "?table", "[?table]", "?[table]",
-            // Spec examples (docs/spec-v1.3.md §Runtime type descriptor format).
+            // Spec examples (docs/spec-v1.4.md §Runtime type descriptor format).
             "?[@src/app/User]", "[?@src/app/User]", "(number,string)->boolean",
             "()->null", "async(number)->string",
             // Exact sync/async functions over table at depth.
@@ -254,7 +254,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             // Hyphens are legal component scalars; only contiguous -> is not.
             "@a-b/c",
             "@$external/pkg/Cls",
-            // The builtin Error atom is exactly the bare token (v1.3
+            // The builtin Error atom is exactly the bare token (v1.4
             // DescriptorV13), at every nesting depth.
             "Error", "?Error", "[Error]", "[?Error]", "(Error)->null",
             "async(Error)->[Error]", "(?[Error],Error)->Error",
@@ -269,7 +269,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
     // =========================================================================
 
     /**
-     * The v1.3 builtin-Error projection is one byte-exact text across the
+     * The v1.4 builtin-Error projection is one byte-exact text across the
      * layers: the descriptor constant, the identity assembly's registered
      * text, the resolver's projection, the semantic-IR ClassId, the
      * structural DescriptorService, and the interface text agree; both
@@ -1609,7 +1609,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
     /** The v1.1 dotted modulePath spelling of a class leaf:
      * {@code @<rootText[.relative...]|specifier>/<Name>}; the superseded
-     * {@code @$builtin/Error} spelling for the builtin (the canonical v1.3
+     * {@code @$builtin/Error} spelling for the builtin (the canonical v1.4
      * builtin atom is exactly {@code Error}). */
     private static String dottedModuleLeaf(Type.Class c) {
         CanonicalClassIdentity id = c.identity();
@@ -1959,7 +1959,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check(!"@host.cfg.ServerConfig".equals(hostText),
             "the dotted class-name shape @host.cfg.ServerConfig is never emitted");
 
-        // The builtin Error atom is the canonical v1.3 spelling; the
+        // The builtin Error atom is the canonical v1.4 spelling; the
         // superseded v1.2 spellings are never emitted or decoded.
         String builtinText = CLASS_BEARING_ENCODER.encode(
             new Type.Class("Error", BUILTIN_ERROR_IDENTITY));

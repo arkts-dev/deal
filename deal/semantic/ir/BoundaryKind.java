@@ -33,7 +33,7 @@ public enum BoundaryKind {
      * The operand/condition/value-consumer/throw-transfer position's
      * validation of one identifier read whose checked type is a
      * null-narrowing refinement of the binding's declared nullable type
-     * (declared {@code T | null}, read as {@code T}) — docs/spec-v1.3.md
+     * (declared {@code T | null}, read as {@code T}) — docs/spec-v1.4.md
      * Nullable semantics: narrowing is optimistic across calls, so an
      * indirect captured-binding mutation leaves the refined read's value
      * invalid and the consuming operator, index chain, table member

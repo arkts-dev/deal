@@ -21,7 +21,7 @@ public final class DefaultSemanticPlannerTest {
     }
 
     private static final String MANIFEST = """
-        {"languageVersion":"1.3","moduleRoots":["src"],
+        {"languageVersion":"1.4","moduleRoots":["src"],
          "backend":"luajit","output":"build"}
         """;
 
@@ -145,7 +145,7 @@ public final class DefaultSemanticPlannerTest {
     private static void hostDeclarations() throws Exception {
         Compile run = compile(Map.of(
             "deal.json", """
-                {"languageVersion":"1.3","moduleRoots":["src"],"backend":"luajit",
+                {"languageVersion":"1.4","moduleRoots":["src"],"backend":"luajit",
                  "output":"build","externals":{"host/cfg":
                    {"declaration":"bindings/cfg.d.deal"}}}
                 """,

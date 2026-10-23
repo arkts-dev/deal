@@ -80,11 +80,7 @@ public final class SharedValueSemantics {
 
     /**
      * This primitive's row projection for the binary selectors it
-     * implements: {@code INT32_ADD/SUB/MUL} → {@code INT32_RESULT};
-     * {@code INT32_DIV_TRUNC} →
-     * {@code INT32_DIVISOR_THEN_RESULT}; every covered
-     * {@code NUMBER_*} arithmetic and every covered
-     * {@code INT32_*}/{@code NUMBER_*} comparison →
+     * implements: every covered {@code NUMBER_*} arithmetic and comparison →
      * {@code NO_DEAL_FAILURE}. The single closed assignment stays the
      * validator's table ({@code SemanticIrValidator.binaryPolicy}); the
      * gate test asserts this projection agrees with that table for every
@@ -111,8 +107,7 @@ public final class SharedValueSemantics {
 
     /**
      * This primitive's row projection for the complete unary selector
-     * set: {@code INT32_NEG} → {@code INT32_RESULT};
-     * {@code NUMBER_NEG} → {@code NO_DEAL_FAILURE}; {@code BOOL_NOT} →
+     * set: {@code NUMBER_NEG} → {@code NO_DEAL_FAILURE}; {@code BOOL_NOT} →
      * {@code NO_DEAL_FAILURE} (logical negation never fails — the
      * pinned {@link #boolNot} row). The single closed assignment stays
      * the validator's rule ({@code SemanticIrValidator.unaryPolicy});

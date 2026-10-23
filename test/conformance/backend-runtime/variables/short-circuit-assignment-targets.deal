@@ -13,7 +13,7 @@ function boom(): boolean {
 }
 
 class Flags {
-  on: boolean = false;
+  on: boolean;
 }
 
 // A parameter target: the caller's value is irrelevant, the logical
@@ -36,15 +36,15 @@ function captureWriter(cell: boolean[]): () => boolean {
 }
 
 export function main(): null {
-  let calls: int = 0;
+  let calls: number = 0;
   let order: string = "";
   let array: boolean[] = [false];
 
   function effect(): boolean { calls = calls + 1; return true; }
   function markOrder(s: string): null { order = order + s; return null; }
   function pickReceiver(): boolean[] { markOrder("V"); return array; }
-  function pickIndex(): int { markOrder("K"); return 0; }
-  function pickKey(flag: boolean): int {
+  function pickIndex(): number { markOrder("K"); return 0; }
+  function pickKey(flag: boolean): number {
     if (!flag) {
       throw { code: "TEST_FAIL", message: "key argument lost the logical result" };
     }
@@ -120,7 +120,7 @@ export function main(): null {
   }
 
   // -- class field target
-  let flags: Flags = {};
+  let flags: Flags = {on: false};
   flags.on = true || boom();
   if (flags.on !== true || calls !== 5) {
     throw { code: "TEST_FAIL", message: "class field: skipped right operand or value" };

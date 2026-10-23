@@ -153,7 +153,7 @@ public class FunctionBindingRegistryTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClosureCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -163,7 +163,7 @@ public class FunctionBindingRegistryTest {
             return null;
         }
         return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -763,7 +763,7 @@ public class FunctionBindingRegistryTest {
             return;
         }
         SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
-            moduleOf(slice), SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH,
+            moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH,
             REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
         check(result.lowering().unit() == null && result.lowering().hasErrors(),
             "the member-access slice produces no unit (fail closed)");

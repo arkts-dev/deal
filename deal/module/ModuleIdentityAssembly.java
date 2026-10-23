@@ -27,7 +27,7 @@ public final class ModuleIdentityAssembly {
 
     /**
      * The pinned descriptor-text projection of the intrinsic
-     * {@code Error} class: exactly {@code Error} (the v1.3 canonical
+     * {@code Error} class: exactly {@code Error} (the v1.4 canonical
      * builtin class atom).
      */
     public static final String INTRINSIC_ERROR_DESCRIPTOR_TEXT = "Error";

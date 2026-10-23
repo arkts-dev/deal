@@ -1,5 +1,5 @@
 // @spec: Arrays — Byte indexing and buffer semantics
-// @description: The JVM number[] container layer (ISSUE-0160 step 2): number[][] and (number[] | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the strict v1.3 array-read bounds E8002 for the past-end and negative-index shapes of both element forms
+// @description: The JVM number[] container layer (ISSUE-0160 step 2): number[][] and (number[] | null)[] construct from literals, read and mutate buffers through the shared wrapper, append at i == length with identity-stable growth every alias observes, store and accept the DEAL null element in the OrNull form, and pin the strict v1.4 array-read bounds E8002 for the past-end and negative-index shapes of both element forms
 // @expected: runtime-ok
 // @features: number[], arrays, runtime, v1.2
 
@@ -58,7 +58,7 @@ export function test_array_array_container_ops(): null {
   } else {
     throw { code: "TEST_FAIL", message: "(number[] | null)[] value element lost on re-read" };
   }
-  // A past-end read of either element form is the strict v1.3 array
+  // A past-end read of either element form is the strict v1.4 array
   // bounds failure: E8002 at the read expression, never a language null
   // and never the element descriptor check.
   try {

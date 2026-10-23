@@ -119,7 +119,7 @@ public class AddressChainLoweringTest {
 
     private static SemanticIrValidator.ComparisonFacts facts() {
         return new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
-            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
     }
 
     private static SemanticLowerer.ModuleLowerer lowerer(CheckResult checks) {
@@ -1289,7 +1289,7 @@ public class AddressChainLoweringTest {
             ConstructKind.ASSIGNMENT, ConstructKind.ASSIGNMENT.mappedOpKinds(),
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
         LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(),
-            SemanticProfile.DEAL_V1_3_INT32, INTERFACE_HASH, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, INTERFACE_HASH, REGISTRY_HASH);
         // The manual chain slice lowers no declaration arm, so its binding
         // cells are absent; the common-admission head is the applicable
         // closed-rule gate of this partial slice (the complete admission of
@@ -1438,7 +1438,7 @@ public class AddressChainLoweringTest {
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the corpus lowers to a validated unit: " + (first == null ? "null"
@@ -1520,7 +1520,7 @@ public class AddressChainLoweringTest {
 
         // Determinism: a fresh lowering produces byte-identical dumps.
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),
             "the repeated lowering validates again");
@@ -1560,7 +1560,7 @@ public class AddressChainLoweringTest {
 
     private static LoweredModuleUnit protocolUnit(List<SemanticOp> ops) {
         LoweredModuleUnit unit = lowerer(checks(Map.of(), new SymbolTable()))
-            .buildUnit(Map.of(), List.of(), SemanticProfile.DEAL_V1_3_INT32,
+            .buildUnit(Map.of(), List.of(), SemanticProfile.DEAL_V1_4_BINARY64,
                 INTERFACE_HASH, REGISTRY_HASH);
         // The membership of the detached fixture ops: one block that is the
         // plan's init block (a root of the block tree), so the protocol and
@@ -1674,7 +1674,7 @@ public class AddressChainLoweringTest {
             }
             """);
         SemanticLowerer.ShapeMapCoreResult adapted = SemanticLowerer.lowerModuleShapeMapCore(moduleOf(adapterSource),
-            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(!adapted.lowering().hasErrors(), "adapter assignment lowers: " + adapted.lowering().diagnostics());
         if (!adapted.lowering().hasErrors()) {
@@ -1778,7 +1778,7 @@ public class AddressChainLoweringTest {
             String message = failure.get().message();
             check(message.startsWith("Common semantic lowering failed")
                     && message.contains("validatorRule " + rule + ",")
-                    && message.contains("semanticProfile DEAL_V1_3_INT32")
+                    && message.contains("semanticProfile DEAL_V1_4_BINARY64")
                     && message.contains("irVersion deal.semantic-ir/2")
                     && message.contains("AddressChainProtocol " + rule)
                     && message.contains(detail) && failure.get().severity().equals("error"),

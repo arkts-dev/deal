@@ -14,7 +14,7 @@ import java.util.Objects;
  * {@code src/app/user.deal} has the text {@code @src/app/user.deal/User}.
  * Two same-named sibling files therefore never share a class identity. The builtin {@code Error} class is the one
  * builtin nominal class (spec: user code must not declare a class named
- * {@code Error}); its module path is empty and its canonical v1.3 text is
+ * {@code Error}); its module path is empty and its canonical v1.4 text is
  * exactly {@code Error} (see {@link #ERROR}) — the one class atom without
  * the leading {@code @}. The superseded v1.2 spelling {@code @/Error} is
  * never produced and never decodes. Target class names never appear in

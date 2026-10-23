@@ -5,6 +5,6 @@
 
 export function main(): null {
   let t: table = { x: 1 };
-  let xs: int[] = [t["x"]];
+  let xs: number[] = [t["x"]];
   return null;
 }

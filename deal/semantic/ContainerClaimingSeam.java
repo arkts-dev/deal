@@ -317,7 +317,7 @@ public final class ContainerClaimingSeam {
                     if (failure == null) {
                         failure = new LoweringFailureDetail(module.path(), home,
                             OPERATION_OUTSIDE_CLAIMED_CAPABILITY,
-                            SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                            SemanticProfile.DEAL_V1_4_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
                             "ContainerClaimingSeam " + OPERATION_OUTSIDE_CLAIMED_CAPABILITY
                                 + " (active home row " + home + " fully evidenced by the "
                                 + "unit and left unclaimed)");

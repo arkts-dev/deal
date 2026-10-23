@@ -137,7 +137,7 @@ public class CheckedProjectBuilderTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -202,7 +202,7 @@ public class CheckedProjectBuilderTest {
                 entry, output, false, false, false, false, Backend.LUAJIT,
                 null, List.of(strippedDir),
                 Path.of("std").toAbsolutePath().normalize(), null,
-                CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+                CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry()));
             boolean ok = orchestrator.compile();
             check(ok, "declaration-only-import-compile.deal compiles through phase 3 + builder: "
@@ -685,7 +685,7 @@ public class CheckedProjectBuilderTest {
         check(message.contains("validatorRule INDEX_INTERNAL_ERROR_SENTINEL"),
             what + ": the payload validatorRule is INDEX_INTERNAL_ERROR_SENTINEL; got "
                 + message);
-        check(message.contains("semanticProfile DEAL_V1_3_INT32"),
+        check(message.contains("semanticProfile DEAL_V1_4_BINARY64"),
             what + ": the payload carries the invocation profile; got " + message);
         check(message.contains("irVersion deal.semantic-ir/2"),
             what + ": the payload carries the pinned IR version; got " + message);
@@ -800,7 +800,7 @@ public class CheckedProjectBuilderTest {
                     + "export class D { w: boolean; }\n"
                     + "export function main(): null { return null; }\n");
             Files.writeString(tmp.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n"
+                "{\n  \"languageVersion\": \"1.4\",\n"
                     + "  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"build\",\n"
                     + "  \"backend\": \"luajit\",\n"
@@ -913,7 +913,7 @@ public class CheckedProjectBuilderTest {
                 + "import * as time from \"std/time\";\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.3\",\n"
+            "{\n  \"languageVersion\": \"1.4\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n"
                 + "  \"output\": \"build\",\n"
                 + "  \"backend\": \"luajit\",\n"

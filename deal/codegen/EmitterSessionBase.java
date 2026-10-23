@@ -200,7 +200,7 @@ public abstract class EmitterSessionBase {
      * every mapped op entry emit its source comment before the generated
      * statement group and record the generated position in the owning
      * module's mapper; a null recorder emits no comment and no mapping, so
-     * the artifact bytes stay exactly the recorder-less bytes. The v1.3
+     * the artifact bytes stay exactly the recorder-less bytes. The v1.4
      * default debugging artifacts install the recorder on every production
      * emission, so no product compile is recorder-less.
      */

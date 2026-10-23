@@ -365,7 +365,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
         deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
             deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-            deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash", "context",
+            deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash", "context",
             java.util.Set.of(), Map.of(), Map.of(), Map.of(),
             new deal.semantic.ir.ModuleInitPlan(List.of(),
                 new deal.semantic.ir.BlockId(0)),
@@ -385,7 +385,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index, modules, entry,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index, modules, entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
             new LinkedHashMap<>();
@@ -2299,7 +2299,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, module, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, module, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -2779,7 +2779,7 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The nullable-inner invariant (docs/spec-v1.3.md §Runtime type descriptor format;
+     * The nullable-inner invariant (docs/spec-v1.4.md §Runtime type descriptor format;
      * {@code RuntimeDescriptor.Nullable}) holds in both descriptor
      * spellings: {@code ?null} / {@code ??inner} and the dialect
      * {@code nullable(null)} / {@code nullable(nullable(…))} fail closed at
@@ -3516,7 +3516,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
-        // literal spelling of a placeholder: docs/spec-v1.3.md
+        // literal spelling of a placeholder: docs/spec-v1.4.md
         // §Writing table fields permits arbitrary string keys, so the walk's fieldPath carries the key
         // verbatim and the arm's parameter substitution must publish it
         // byte-for-byte on every consumer — never a producer defect, never
@@ -4683,7 +4683,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(WALK_ID, walkLayout()),
                 Map.of(), new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 new deal.semantic.ir.ExportPlan(List.of()), Map.of(), ops,
@@ -4701,7 +4701,7 @@ public class FailureArmAuthorityTest {
                     List.of(), List.of(),
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         return new deal.semantic.ir.ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -5858,7 +5858,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), layouts, Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -5873,7 +5873,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index,
                 Map.of(entry, unit), entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         return new DispatchUnit(project, Map.of(entry, table), json.origin());

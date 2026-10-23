@@ -36,7 +36,7 @@ public class CorpusConformanceTest {
     private static final Set<String> requiredLegs = new java.util.TreeSet<>();
 
     private static final CompilerInvocation LANE_INVOCATION =
-        CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             ReleaseConfiguration.releaseCapabilityRegistry());
 
     // =========================================================================
@@ -251,7 +251,7 @@ public class CorpusConformanceTest {
                 .filter(c -> c.kind() == Kind.APPLICABLE).count();
             int companions = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.COMPANION).count();
-            System.out.println("=== DEAL v1.3 Production Corpus Conformance (JS / LuaJIT / JVM) ===");
+            System.out.println("=== DEAL v1.4 Production Corpus Conformance (JS / LuaJIT / JVM) ===");
             System.out.println("Root: " + conformanceRoot);
             System.out.println("Node: available (a missing node is a hard "
                 + "run failure, never a skip)");
@@ -444,7 +444,7 @@ public class CorpusConformanceTest {
 
             if (expected.isEmpty()) {
                 throw new IllegalStateException("no @expected tag in "
-                    + file + " — the v1.3 gate has no unclassified files");
+                    + file + " — the v1.4 gate has no unclassified files");
             }
 
             Path normalized = file.toAbsolutePath().normalize();
@@ -1036,7 +1036,7 @@ public class CorpusConformanceTest {
                 (corpusRelOf(test.path()) + "/main").replace('.', '/');
             Path outputRoot = projectRoot.resolve("out");
 
-            // 2. The production manifest: languageVersion "1.3" plus the
+            // 2. The production manifest: languageVersion "1.4" plus the
             // externals entries wiring every bare host/ import to its
             // host-fixtures declaration (the JvmConformanceTest
             // externals-wiring pattern).
@@ -1278,7 +1278,7 @@ public class CorpusConformanceTest {
      * {@code outputRoot}, with the repository root as the stdlib
      * directory (the JsE2eTest production-pipeline pattern). The
      * explicit {@link #LANE_INVOCATION} (the sole
-     * {@code DEAL_V1_3_INT32} release invocation) drives the
+     * {@code DEAL_V1_4_BINARY64} release invocation) drives the
      * compilation, so the emitted artifacts run the signed-32 gate from
      * runtime load and the shared stdlib-edge time fixture crosses the
      * declared number return of {@code nowMillis} unchanged (a
@@ -1323,7 +1323,7 @@ public class CorpusConformanceTest {
 
     /**
      * Writes the production project manifest ({@code deal.json}) into
-     * the temp project: {@code languageVersion "1.3"} always, plus the
+     * the temp project: {@code languageVersion "1.4"} always, plus the
      * externals map wiring every bare {@code host/<name>} import to the
      * copied {@code bindings/<name>.d.deal} declaration. A missing host
      * declaration or a manifest the harness generated that does not
@@ -1334,7 +1334,7 @@ public class CorpusConformanceTest {
             Path projectRoot, Set<String> hostNames)
             throws IOException {
         StringBuilder dealJson = new StringBuilder();
-        dealJson.append("{\n  \"languageVersion\": \"1.3\",\n");
+        dealJson.append("{\n  \"languageVersion\": \"1.4\",\n");
         dealJson.append("  \"moduleRoots\": [\"conformance\"],\n");
         dealJson.append("  \"output\": \"conformance/out\",\n");
         dealJson.append("  \"backend\": \"").append(backend()).append("\"");
@@ -2260,7 +2260,7 @@ function $snapshot($err) {
 
     private static void printReport(List<Outcome> sorted) {
         System.out.println();
-        System.out.println("=== DEAL v1.3 Production Corpus Conformance Summary ===");
+        System.out.println("=== DEAL v1.4 Production Corpus Conformance Summary ===");
 
         int ft = frontendTotal.get();
         int fp = frontendPassed.get();

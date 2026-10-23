@@ -106,8 +106,8 @@ public final class NumberProductionTest {
         Files.createDirectories(source.getParent());
         Files.writeString(source, SOURCE);
         Files.writeString(project.resolve("deal.json"), """
-            {"languageVersion":"1.3","moduleRoots":["src"],"output":"out",
-             "backend":"js","stdlib":"1.3","dependencies":{},"externals":{}}
+            {"languageVersion":"1.4","moduleRoots":["src"],"output":"out",
+             "backend":"js","stdlib":"1.4","dependencies":{},"externals":{}}
             """);
         String javaCommand = Path.of(System.getProperty("java.home"), "bin/java").toString();
         String javac = Path.of(System.getProperty("java.home"), "bin/javac").toString();

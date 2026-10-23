@@ -1,5 +1,5 @@
--- DEAL Standard Library: std/string — v1.3
--- Provides string manipulation functions per the v1.3 spec.
+-- DEAL Standard Library: std/string — v1.4
+-- Provides string manipulation functions per the v1.4 spec.
 -- String lengths and positions are measured in Unicode scalar values.
 
 local __rt = require("deal.runtime")
@@ -21,7 +21,7 @@ local function escape_replacement(s)
 end
 
 --- length(s: string): int
--- Returns the number of Unicode scalar values in the string (v1.3).
+-- Returns the number of Unicode scalar values in the string (v1.4).
 -- The trailing span triplet carries the call site (ISSUE-0598), so the
 -- dynamic-nonstring E8001 reports it byte-exact.
 stringlib.length = __rt.function_("(string)->number", function(s, file, line, column)
@@ -39,7 +39,7 @@ end)
 
 --- substring(s: string, start: int, end: int): string
 -- Returns the substring from start (0-based, inclusive) to end (exclusive),
--- with positions measured in Unicode scalar values (v1.3).
+-- with positions measured in Unicode scalar values (v1.4).
 -- start > end, start beyond the string, or end <= 0 produce the empty
 -- string; out-of-range end clamps to the string end.
 stringlib.substring = __rt.function_("(string,number,number)->string", function(s, start, end_, file, line, column)
@@ -143,7 +143,7 @@ stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep, f
   end
 
   if sep == "" then
-    -- Split into individual Unicode scalar values (v1.3).
+    -- Split into individual Unicode scalar values (v1.4).
     local cursor = 0
     while true do
       local next_cursor, ch = __rt.utf8_next(s, cursor)

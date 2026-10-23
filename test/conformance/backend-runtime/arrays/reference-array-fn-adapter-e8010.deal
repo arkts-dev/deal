@@ -10,7 +10,9 @@ function apply2(cb: (b: number[], v: number) => number[], b: number[]): number[]
 }
 
 export function test_array_fn_adapter_e8010(): number {
-  return apply2(id, [0])[0];
+  let source: table = {f: id};
+  let cb: (b: number[], v: number) => number[] = source.f;
+  return apply2(cb, [0])[0];
 }
 
 export function main(): null {

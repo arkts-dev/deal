@@ -77,7 +77,6 @@ public class RuntimeTypeMatcherTest {
             if (value instanceof ClassValue c) return c.tag;
             if (value instanceof FnValue) return "function";
             if (value instanceof ArrayValue) return "array";
-            if (value instanceof BytesValue) return "bytes";
             if (value instanceof TableValue) return "table";
             return "unknown";
         }
@@ -225,8 +224,6 @@ public class RuntimeTypeMatcherTest {
             "expected null, got Error", "null vs builtin Error carrier publishes its atom");
         assertFailure("null", new ClassValue("@x/y"), "E8001",
             "expected null, got @x/y", "null vs class carrier publishes its atom");
-        assertFailure("null", new BytesValue(), "E8001",
-            "expected null, got bytes", "null vs bytes carrier publishes the closed bytes token");
         assertFailure("null", new FnValue("()->null"), "E8001",
             "expected null, got function", "null vs function");
     }
@@ -316,8 +313,6 @@ public class RuntimeTypeMatcherTest {
             "table vs class carrier publishes its atom");
         assertFailure("table", new ClassValue("Error"), "E8001", "expected table, got Error",
             "table vs builtin Error carrier publishes its atom");
-        assertFailure("table", new BytesValue(), "E8001", "expected table, got bytes",
-            "table vs bytes carrier publishes the closed bytes token");
         assertFailure("table", new ArrayValue(), "E8001", "expected table, got array",
             "table vs array");
         assertFailure("table", new FnValue("()->null"), "E8001", "expected table, got function",

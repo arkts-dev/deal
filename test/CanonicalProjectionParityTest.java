@@ -1424,7 +1424,7 @@ public class CanonicalProjectionParityTest {
         switch (spec.corpusPath()) {
             case "source-location/036-runtime-source-array-oob" -> {
                 checkEq("array index out of bounds", oracle.message(), spec.what()
-                    + ": the strict v1.3 bounds text");
+                    + ": the strict v1.4 bounds text");
                 checkEq(null, oracle.expected(), spec.what()
                     + ": the bounds arm carries no expected token");
                 checkEq(null, oracle.actual(), spec.what()
@@ -7443,7 +7443,7 @@ public class CanonicalProjectionParityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash",
                 "context", Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(),
                     new deal.semantic.ir.BlockId(0)),
@@ -7461,7 +7461,7 @@ public class CanonicalProjectionParityTest {
                 deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
                 List.of(), deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
         tables.put(entry, new StructuredBodyTable(
@@ -8266,7 +8266,7 @@ public class CanonicalProjectionParityTest {
      */
     private static Seed lowerSeed(String source, String what) {
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_3_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_4_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
         CheckedSeed seed = checkedSeed(source, what, invocation);
         if (seed == null) {
@@ -8276,7 +8276,7 @@ public class CanonicalProjectionParityTest {
             .capabilityRegistryHash();
         ProjectInterfaceIndex index = seed.built().index();
         SemanticLowerer.LoweringResult lowering = SemanticLowerer.lowerModuleFullProgram(
-            seed.input(), deal.semantic.ir.SemanticProfile.DEAL_V1_3_INT32,
+            seed.input(), deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64,
             seed.manifests().manifests().get(0).constructCoverage(),
             index.interfaceIndexDigest(), registryHash,
             deal.semantic.ir.SemanticIdAllocator.over(List.of(MATRIX_MODULE)));
@@ -8707,15 +8707,15 @@ public class CanonicalProjectionParityTest {
         try {
             driveArrayLiteralElementFailure("the deleted-slot element",
                 ARRAY_LITERAL_WALK_ELEMENT_SOURCE,
-                workspace.resolve("deleted-slot"), "test.deal:4:22", 1, "[number]",
+                workspace.resolve("deleted-slot"), "test.deal:4:25", 1, "[number]",
                 "array");
             driveArrayLiteralElementFailure("the nested literal element",
                 ARRAY_LITERAL_NESTED_ELEMENT_SOURCE,
-                workspace.resolve("nested-literal"), "test.deal:4:25", 1, "[number]",
+                workspace.resolve("nested-literal"), "test.deal:4:28", 1, "[number]",
                 "array");
             driveArrayLiteralElementFailure("the second literal element",
                 ARRAY_LITERAL_SECOND_ELEMENT_SOURCE,
-                workspace.resolve("second-element"), "test.deal:4:30", 2, "[number]",
+                workspace.resolve("second-element"), "test.deal:4:33", 2, "[number]",
                 "array");
             driveArrayLiteralElementAdmission("the admitted element",
                 ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE,

@@ -24,7 +24,7 @@ import java.util.stream.Stream;
 /**
  * The catch-variable narrowing isolation regression (ISSUE-0888): the catch
  * identifier declares a fresh {@code Error} binding
- * (docs/spec-v1.3.md §try / catch), so a same-named outer binding's null
+ * (docs/spec-v1.4.md §try / catch), so a same-named outer binding's null
  * refinement never types the catch read and never overrides the catch
  * binding's own Error facts, while the catch scope's exit restores the
  * outer refinement the language did not invalidate (§Name resolution —
@@ -357,51 +357,51 @@ public final class CatchNarrowingIsolationProductionTest {
                   return null;
                 }
                 """, "E3001", 7, 29, 1, "Cannot assign Error to string"),
-            new Rejection("int-refined catch binding transferred to int",
+            new Rejection("number-refined catch binding transferred to number",
                 """
                 export function main(): null {
-                  let e: int | null = 1;
+                  let e: number | null = 1;
                   if (e !== null) {
                     try {
-                      throw { code: "C_INT", message: "int refinement" };
+                      throw { code: "C_INT", message: "number refinement" };
                     } catch (e) {
-                      let unsound: int = e;
+                      let unsound: number = e;
                     }
                   }
                   return null;
                 }
-                """, "E3001", 7, 26, 1, "Cannot assign Error to int"),
+                """, "E3001", 7, 29, 1, "Cannot assign Error to number"),
             new Rejection("enclosing binding assigned inside the catch",
                 """
                 export function main(): null {
-                  let value: int | null = 1;
+                  let value: number | null = 1;
                   if (value !== null) {
                     try {
                       throw { code: "C_SET_NULL", message: "set null" };
                     } catch (err) {
                       value = null;
                     }
-                    let unsound: int = value;
+                    let unsound: number = value;
                   }
                   return null;
                 }
-                """, "E3001", 9, 24, 5, "Cannot assign int | null to int"),
+                """, "E3001", 9, 27, 5, "Cannot assign number | null to number"),
             new Rejection("awaited resumption inside the catch",
                 """
-                async function echoInt(value: int): int {
+                async function echoInt(value: number): number {
                   return value;
                 }
 
-                async function probe(e: int | null): int {
+                async function probe(e: number | null): number {
                   if (e !== null) {
                     try {
                       throw { code: "C_AWAIT", message: "await" };
                     } catch (e) {
                       let captured: Error = e;
-                      let resumed: int = await echoInt(1);
+                      let resumed: number = await echoInt(1);
                       let afterResume: Error = e;
                     }
-                    let unsound: int = e;
+                    let unsound: number = e;
                   }
                   return 0;
                 }
@@ -409,22 +409,22 @@ public final class CatchNarrowingIsolationProductionTest {
                 export function main(): null {
                   return null;
                 }
-                """, "E3001", 14, 24, 1, "Cannot assign int | null to int"),
+                """, "E3001", 14, 27, 1, "Cannot assign number | null to number"),
             new Rejection("awaited resumption inside the try block",
                 """
-                async function echoInt(value: int): int {
+                async function echoInt(value: number): number {
                   return value;
                 }
 
-                async function probe(e: int | null): int {
+                async function probe(e: number | null): number {
                   if (e !== null) {
                     try {
-                      let resumed: int = await echoInt(1);
+                      let resumed: number = await echoInt(1);
                       throw { code: "C_AWAIT_TRY", message: "await" };
                     } catch (e) {
                       let captured: Error = e;
                     }
-                    let unsound: int = e;
+                    let unsound: number = e;
                   }
                   return 0;
                 }
@@ -432,24 +432,24 @@ public final class CatchNarrowingIsolationProductionTest {
                 export function main(): null {
                   return null;
                 }
-                """, "E3001", 13, 24, 1, "Cannot assign int | null to int"),
+                """, "E3001", 13, 27, 1, "Cannot assign number | null to number"),
             new Rejection("try-block assignment inside a nested try",
                 """
                 export function main(): null {
-                  let e: int | null = 1;
+                  let e: number | null = 1;
                   if (e !== null) {
                     try {
                       try {
                         e = null;
                       } catch (err) {
                       }
-                      let unsound: int = e;
+                      let unsound: number = e;
                     } catch (outer) {
                     }
                   }
                   return null;
                 }
-                """, "E3001", 9, 26, 1, "Cannot assign int | null to int"));
+                """, "E3001", 9, 29, 1, "Cannot assign number | null to number"));
     }
 
     private static void testRejections(Path root) throws Exception {

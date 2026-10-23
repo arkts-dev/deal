@@ -1,26 +1,26 @@
 // @spec: Error handling
 // @description: Corner-case subject try-binding-identity-accept — A try-local shadow declaration and an uncalled nested function body's write are not assignments to the enclosing binding, so the enclosing refinement survives the try/catch join in the non-null and the null branch. (basis: Narrowing across try/catch; Calls do not invalidate refinements)
 // @expected: compile-ok
-// @features: v1.3, frontend, accept-control
+// @features: v1.4, frontend, accept-control
 
 export function main(): null {
-  let n: int | null = 1;
+  let n: number | null = 1;
   if (n !== null) {
-    try { let n: int = 2; } catch (e) {}
-    let x: int = n;
+    try { let n: number = 2; } catch (e) {}
+    let x: number = n;
   }
-  let m: int | null = 1;
+  let m: number | null = 1;
   if (m === null) {
-    try { let m: int = 2; } catch (e) {}
+    try { let m: number = 2; } catch (e) {}
     let y: null = m;
   }
-  let p: int | null = 1;
+  let p: number | null = 1;
   if (p !== null) {
     try {
       let f: () => null = function(): null { p = null; return null; };
       function clear(): null { p = null; return null; }
     } catch (e) {}
-    let z: int = p;
+    let z: number = p;
   }
   return null;
 }

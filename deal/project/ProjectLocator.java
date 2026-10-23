@@ -42,8 +42,8 @@ public final class ProjectLocator {
     private ProjectLocator() {
     }
 
-    /** The exact v1.3 language version every published context carries. */
-    public static final String LANGUAGE_VERSION = "1.3";
+    /** The exact v1.4 language version every published context carries. */
+    public static final String LANGUAGE_VERSION = "1.4";
 
     /** The six spec-listed stdlib modules, in pinned order. */
     public static final List<String> SPEC_STDLIB_MODULES = List.of(
@@ -90,7 +90,7 @@ public final class ProjectLocator {
 
     /**
      * Locates, strictly reads/decodes/parses, converts, and validates the
-     * exact-v1.3 project configuration of {@code entryFile} and publishes
+     * exact-v1.4 project configuration of {@code entryFile} and publishes
      * one immutable {@link ProjectContext} — or exactly one structured
      * failure.
      *
@@ -261,7 +261,7 @@ public final class ProjectLocator {
                     List.of(new DiagnosticNote("stdlib module '" + overlapped
                         + "' is resolved as part of the language distribution rather"
                         + " than as a project external host module"
-                        + " (docs/spec-v1.3.md:1830)", null)));
+                        + " (docs/spec-v1.4.md:1830)", null)));
             }
 
             completedExternals.add(new ExternalEntry(spec.rawImportSpecifier(),
@@ -361,7 +361,7 @@ public final class ProjectLocator {
 
     /**
      * The pinned discovery E2010: the canonical synthetic range anchored
-     * at the entry-file value plus the v1.3-manifest note (zero
+     * at the entry-file value plus the v1.4-manifest note (zero
      * candidates) or one candidate-path note per discovered manifest
      * (multiple candidates), nearest ancestor first.
      */
@@ -373,8 +373,8 @@ public final class ProjectLocator {
         if (candidates.isEmpty()) {
             message = "deal: no deal.json project manifest found among the ancestor"
                 + " directories of entry file '" + describe(entryFile) + "'";
-            notes.add(new DiagnosticNote("a v1.3 project requires exactly one ancestor"
-                + " deal.json with languageVersion \"1.3\"", null));
+            notes.add(new DiagnosticNote("a v1.4 project requires exactly one ancestor"
+                + " deal.json with languageVersion \"1.4\"", null));
         } else {
             message = "deal: multiple deal.json project manifests found among the"
                 + " ancestor directories of entry file '" + describe(entryFile)
@@ -492,7 +492,7 @@ public final class ProjectLocator {
      * three-tier {@link DistributionHome} order
      * ({@code release-distribution-packaging-and-discovery} D3): the
      * project-local {@code <manifestDirectory>/std} directory first
-     * (the pinned v1.3 override surface), then the language
+     * (the pinned v1.4 override surface), then the language
      * distribution (the materialized classpath-resource {@code std/}
      * directory, then the {@code DEAL_HOME}/{@code deal.home}
      * filesystem {@code std/} directory), then the checkout

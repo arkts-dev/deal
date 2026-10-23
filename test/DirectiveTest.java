@@ -379,7 +379,7 @@ public class DirectiveTest {
     static void testVersionContract() {
         System.out.println("-- Declaration-version contract (D7) --");
 
-        for (String value : new String[]{"", "1.3", "1.4", "01.04", "2.0", "bad"}) {
+        for (String value : new String[]{"", "1.4", "1.4", "01.04", "2.0", "bad"}) {
             CompilerDiagnostic d = diagOf(fullDiags("// @deal-version " + value
                 + "\nexport class C {}"), "E1044");
             check(d != null, "removed @deal-version rejected regardless of argument");
@@ -490,7 +490,7 @@ public class DirectiveTest {
             Path srcDir = tmp.resolve("src");
             Files.createDirectories(srcDir);
             Files.writeString(tmp.resolve("deal.json"),
-                "{\"languageVersion\": \"1.3\"}\n");
+                "{\"languageVersion\": \"1.4\"}\n");
             Files.writeString(srcDir.resolve("main.deal"),
                 "// @spec: Lexical elements — comment semantics\n"
                     + "export function main(): null { return null; }\n");

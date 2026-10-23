@@ -73,8 +73,6 @@ public final class AdapterShapeMap {
                 + shape + " (producer defect — the payload's proof is present iff "
                 + "VALUE's operand is a binding load)");
         }
-        return shape == SourceShape.NON_IDENTIFIER_EXPRESSION
-            ? CaptureMode.REEVALUATE_THUNK : CaptureMode.VALUE;
     }
 
     /**

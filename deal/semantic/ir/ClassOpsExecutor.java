@@ -27,8 +27,7 @@ public final class ClassOpsExecutor {
      * ref, an unresolvable or mismatched layout, an unresolvable
      * provided-field prior step, a wrong-kind value, a boundary child of
      * the wrong kind or parentage, a child-count/order mismatch, an
-     * input-wiring mismatch, a {@code CLASS_DEFAULT} child of the wrong
-     * kind/policy/class, or a duplicate default child. Internal control
+     * input-wiring mismatch or a malformed field boundary. Internal control
      * flow — fail closed, never a DEAL projection and never a crash (the
      * validated-shapes-only discipline).
      */
@@ -1537,7 +1536,7 @@ public final class ClassOpsExecutor {
                     yield tableValue;
                 }
                 // A table field accepts only a JSON object
-                // (docs/spec-v1.3.md:695): an array-shaped value of any
+                // (docs/spec-v1.4.md:695): an array-shaped value of any
                 // length, the empty array included, is a validation
                 // failure — never an empty table.
                 throw new JsonFromFailure("expected table, got " + raw.actualKind());
@@ -2241,8 +2240,7 @@ public final class ClassOpsExecutor {
 
     /**
      * Requires the descriptor-kind rule on one field-boundary child (the
-     * pinned policy of the {@code CLASS_LITERAL_FIELD}/
-     * {@code CLASS_DEFAULT_FIELD} cells): {@code TYPE_DESCRIPTOR} for
+     * pinned policy of the {@code CLASS_LITERAL_FIELD} cells): {@code TYPE_DESCRIPTOR} for
      * non-function descriptors, {@code FUNCTION_SIGNATURE} for function
      * descriptors. A deviation would silently change the contract — fail
      * closed.

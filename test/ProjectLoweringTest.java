@@ -1173,11 +1173,11 @@ public class ProjectLoweringTest {
 
     private static SemanticIrValidator.ComparisonFacts comparisonFacts(RealProject project) {
         return new SemanticIrValidator.ComparisonFacts(project.index().interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
+            SemanticProfile.DEAL_V1_4_BINARY64, invocation().capabilityRegistryHash());
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -1216,8 +1216,8 @@ public class ProjectLoweringTest {
                 return;
             }
             ExecutableLoweredProject lowered = first.project();
-            checkEq(SemanticProfile.DEAL_V1_3_INT32, lowered.semanticProfile(),
-                "the project carries the DEAL_V1_3_INT32 profile");
+            checkEq(SemanticProfile.DEAL_V1_4_BINARY64, lowered.semanticProfile(),
+                "the project carries the DEAL_V1_4_BINARY64 profile");
             checkEq(List.of(UTIL, APP), List.copyOf(lowered.modules().keySet()),
                 "the project's module insertion order is the dependency order");
             checkEq(APP, lowered.entryModule(), "the entry module is present");
@@ -1677,7 +1677,7 @@ public class ProjectLoweringTest {
         CompilerDiagnostic diagnostic = FailureContractRegistry.e6005(
             new LoweringFailureDetail(APP.path(),
                 SemanticCapability.FOUNDATION_VALUES, "RESULT_BOUNDARY_TEST",
-                SemanticProfile.DEAL_V1_3_INT32, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_4_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
                 "ProjectLoweringTest"));
         expectIllegalArgument(() -> new SemanticLowerer.ProjectLoweringResult(
                 lowered, copiedTables, copiedRegistries, lowered.classSeeds(),
@@ -1776,7 +1776,7 @@ public class ProjectLoweringTest {
                 "the kind mismatch is one E6005");
             checkEq("Common semantic lowering failed: module 'app', capability"
                     + " MODULES, validatorRule NAMESPACE_REGISTRATION,"
-                    + " semanticProfile DEAL_V1_3_INT32, irVersion"
+                    + " semanticProfile DEAL_V1_4_BINARY64, irVersion"
                     + " deal.semantic-ir/2, origin NamespaceRegistrations record"
                     + " (the MODULE_IMPORT completion " + utilImport.opId()
                     + " of util carries the kind COMPILED but the module's"
@@ -4628,7 +4628,7 @@ public class ProjectLoweringTest {
                 }
             }
             ExecutableLoweredProject missing = new ExecutableLoweredProject(
-                SemanticProfile.DEAL_V1_3_INT32, project.index(), shortened, APP,
+                SemanticProfile.DEAL_V1_4_BINARY64, project.index(), shortened, APP,
                 result.project().classSeeds());
             Optional<CompilerDiagnostic> failure = SemanticIrValidator.validate(
                 missing, comparisonFacts(project));
@@ -4938,7 +4938,7 @@ public class ProjectLoweringTest {
         SemanticIrValidator.ComparisonFacts baselineFacts =
             new SemanticIrValidator.ComparisonFacts(
                 baseline.project().index().interfaceIndexDigest(),
-                SemanticProfile.DEAL_V1_3_INT32, invocation().capabilityRegistryHash());
+                SemanticProfile.DEAL_V1_4_BINARY64, invocation().capabilityRegistryHash());
         LoweredModuleUnit baselineApp = baselineLowered.modules().get(APP);
         check(baselineApp != null, "the baseline entry module is in the closure");
         if (baselineApp == null) {
@@ -5079,15 +5079,15 @@ public class ProjectLoweringTest {
             "the project text carries the interface index under its unchanged format");
         check(text.contains("\"classSeeds\":[{\"key\":"),
             "the project text carries the class registration seeds");
-        check(text.contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+        check(text.contains("\"semanticProfile\":\"DEAL_V1_4_BINARY64\""),
             "the project text carries the owner profile explicitly");
         check(!text.contains("DEAL_V1_2_INT32") && !text.contains("LEGACY_SAFE_INT"),
             "no removed profile value appears in the project transport");
         for (LoweredModuleUnit carried : lowered.modules().values()) {
-            checkEq(SemanticProfile.DEAL_V1_3_INT32, carried.semanticProfile(),
+            checkEq(SemanticProfile.DEAL_V1_4_BINARY64, carried.semanticProfile(),
                 "unit " + carried.moduleId() + " carries the owner profile");
             check(SemanticIrValidator.toUnitText(carried)
-                    .contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+                    .contains("\"semanticProfile\":\"DEAL_V1_4_BINARY64\""),
                 "unit " + carried.moduleId() + " transports the owner profile");
         }
         ContractSnapshotCanonicalizer.ParsedProject parsed =
@@ -5095,7 +5095,7 @@ public class ProjectLoweringTest {
                 (CanonicalJson.Obj) CanonicalJson.parse(text));
         checkEq("deal.semantic-ir/2", parsed.formatVersion(),
             "the parsed project keeps the /2 envelope");
-        checkEq("DEAL_V1_3_INT32", parsed.semanticProfile(),
+        checkEq("DEAL_V1_4_BINARY64", parsed.semanticProfile(),
             "the parsed project keeps the explicit semantic profile");
         checkEq("app", parsed.entryModule(),
             "the parsed project keeps the entry module");
@@ -5187,7 +5187,7 @@ public class ProjectLoweringTest {
         String manifestText = dump.manifestText();
         check(manifestText.contains("\"formatVersion\":\"deal.semantic-ir/2\"")
                 && manifestText.contains("\"entryModule\":\"app\"")
-                && manifestText.contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+                && manifestText.contains("\"semanticProfile\":\"DEAL_V1_4_BINARY64\""),
             "the manifest carries the project's formatVersion, entryModule and profile");
         check(manifestText.contains("\"interfaceIndex\":{\"formatVersion\":"
                 + "\"deal.semantic-interface/1\"")
@@ -5203,7 +5203,7 @@ public class ProjectLoweringTest {
                     && !module.text().contains("LEGACY_SAFE_INT"),
                 "no removed profile value appears in the dump of module "
                     + module.moduleId());
-            check(module.text().contains("\"semanticProfile\":\"DEAL_V1_3_INT32\""),
+            check(module.text().contains("\"semanticProfile\":\"DEAL_V1_4_BINARY64\""),
                 "the dump of module " + module.moduleId()
                     + " carries the owner profile explicitly");
         }
@@ -5228,7 +5228,7 @@ public class ProjectLoweringTest {
                 RawUnitMaterializer.materialize(raw));
         }
         Optional<CompilerDiagnostic> reassembledAdmission = SemanticIrValidator.validate(
-            new ExecutableLoweredProject(SemanticProfile.DEAL_V1_3_INT32,
+            new ExecutableLoweredProject(SemanticProfile.DEAL_V1_4_BINARY64,
                 reassembled.interfaceIndex(), reassembledModules,
                 new ModuleId(reassembled.entryModule()), reassembled.classSeeds()), facts);
         check(reassembledAdmission.isEmpty(),

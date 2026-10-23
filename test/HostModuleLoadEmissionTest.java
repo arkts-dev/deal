@@ -550,7 +550,7 @@ public class HostModuleLoadEmissionTest {
         """;
 
     private static final String CARRIER_METADATA_DEAL_JSON = """
-        {"languageVersion": "1.3", "backend": "luajit",
+        {"languageVersion": "1.4", "backend": "luajit",
          "moduleRoots": ["src"], "output": "out",
          "externals": {
            "host/carrier": {"declaration": "bindings/carrier.d.deal"},
@@ -597,7 +597,7 @@ public class HostModuleLoadEmissionTest {
 
     private static CompilerInvocation harnessInvocation() {
         return CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_3_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_4_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
     }
 
@@ -1967,7 +1967,7 @@ public class HostModuleLoadEmissionTest {
           let ns: (number | null)[] = intsDoc.ns;
 
           let cfgDoc: table = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
-          let count: int = cfgDoc.count;
+          let count: number = cfgDoc.count;
           let ratio: number = cfgDoc.ratio;
           let cfg: host.Cfg = { count: count, ratio: ratio };
 
@@ -6516,7 +6516,7 @@ public class HostModuleLoadEmissionTest {
             String app, String host, String label,
             Map<String, String> extraSources) throws Exception {
         writeFileIn(root, "deal.json", """
-            {"languageVersion": "1.3", "backend": "luajit",
+            {"languageVersion": "1.4", "backend": "luajit",
              "moduleRoots": ["src"], "output": "out",
              "externals": {"host/%s":
                {"declaration": "bindings/%s.d.deal"}}}

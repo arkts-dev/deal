@@ -1216,13 +1216,13 @@ public class SharedStdlibSemanticsTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_4_BINARY64,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -1251,7 +1251,7 @@ public class SharedStdlibSemanticsTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));

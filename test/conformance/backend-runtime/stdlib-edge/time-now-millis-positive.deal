@@ -1,5 +1,5 @@
 // @spec: Standard library declarations — std/time
-// @description: std/time.nowMillis returns epoch milliseconds as number — the v1.3 number return crosses the declared boundary unchanged (no int terminal)
+// @description: std/time.nowMillis returns epoch milliseconds as number — the v1.4 number return crosses the declared boundary unchanged (no int terminal)
 // @expected: runtime-ok
 // @features: stdlib, time
 

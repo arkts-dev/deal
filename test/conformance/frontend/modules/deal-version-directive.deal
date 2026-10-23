@@ -1,7 +1,7 @@
 // @spec: Modules, declarations, standard library, and host ABI — Package manifest
 // @description: File-version directives are rejected; the project manifest owns the version
 // @expected: compile-error E1044
-// @features: directives, modules, v1.3
+// @features: directives, modules, v1.4
 
 // @deal-version 1.3
 

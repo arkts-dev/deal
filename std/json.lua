@@ -1,7 +1,7 @@
 -- DEAL Standard Library: std/json
 -- Provides JSON encoding and decoding (simple pure-Lua implementation).
 --
--- Unicode conformance (v1.3, RFC 8259): parse accepts exactly the section 7
+-- Unicode conformance (v1.4, RFC 8259): parse accepts exactly the section 7
 -- escape set (" \ / b f n r t u), \uXXXX must carry exactly four hex digits
 -- and decodes to UTF-8, surrogate pairs combine to one supplementary scalar,
 -- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
@@ -9,7 +9,7 @@
 --
 -- Exact decimal classification, decoded-key duplicates, the declared
 -- (string)->table parse exit, and stringify
--- shape rejection (DEAL v1.3): parse classifies the numeric lexeme's
+-- shape rejection (DEAL v1.4): parse classifies the numeric lexeme's
 -- exact mathematical decimal value before any binary64 rounding — an
 -- integral value inside [-2147483648, 2147483647] becomes DEAL int
 -- (-0/-0.0 normalize to 0) and every other lexeme becomes number. The
@@ -44,7 +44,7 @@
 -- decoded array or null never masquerades as a table return. Nested
 -- containers and the top-level scalar results keep their representation.
 --
--- Decoded arrays keep their array shape (DEAL v1.3 JSON containers): every
+-- Decoded arrays keep their array shape (DEAL v1.4 JSON containers): every
 -- array the parser completes carries the private array carrier pair — the
 -- array mark and the array's logical length — that the emitted chunk and
 -- the LuaJIT host projection write, so a nested array, empty arrays
@@ -184,24 +184,12 @@ local function escape(s, file, line, column)
   end))
 end
 
--- The exact decimal classification of one grammar-valid RFC-8259
--- numeric lexeme (DEAL v1.3): a token denotes the signed32 integer value
--- exactly when its mathematical decimal value is integral and inside
--- [-2147483648, 2147483647]; every other token denotes the binary64
--- value. Coefficient digits, fraction scale, and exponent combine with
--- bounded magnitude comparisons (a very long exponent saturates), so no
--- machine overflow and no input cap can change the decision; -0/-0.0
--- normalize to the integer 0.
 -- The canonical decimal spelling (Java Double.toString parity) of one
 -- finite binary64 value: the shortest round-tripping digit string, the
 -- closest such decimal, and the even last digit when the value is exactly
 -- equidistant — the same spelling the emitted prelude (__sfNumText), the
 -- JVM JvmJson.numberText and the JS $numText publish. The JSON stringify
--- walker uses it for a number-variant slot and a number-variant carrier,
--- so an int-variant value keeps its integer spelling and a number-variant
--- value keeps one fractional digit (1.0, not 1) — the recorded variant
--- survives the text. Plain unmarked numbers keep the module's own
--- spelling (the existing %.17g encoding).
+-- walker uses it for binary64 values; either signed zero serializes as 0.
 local function json_num_parts(rep)
   local mant, e = string.match(rep, "^(%d+%.?%d*)e([%+%-]?%d+)$")
   if mant then

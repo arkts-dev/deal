@@ -15,7 +15,7 @@ async function failAsync(): boolean {
 async function okAsync(): boolean { return true; }
 
 class Flags {
-  on: boolean = false;
+  on: boolean;
 }
 
 export async function awaitedShortCircuitAssignments(): null {
@@ -29,7 +29,7 @@ export async function awaitedShortCircuitAssignments(): null {
   flag = true && await okAsync();
   if (flag !== true) { throw { code: "TEST_FAIL", message: "await: selected AND result" }; }
 
-  let box: Flags = {};
+  let box: Flags = {on: false};
   box.on = true || await failAsync();
   if (box.on !== true) { throw { code: "TEST_FAIL", message: "await: skipped class field" }; }
   box.on = false || await okAsync();

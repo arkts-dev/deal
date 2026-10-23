@@ -6,7 +6,7 @@
 import * as console from "std/console";
 
 class Marker {
-  count: int = 0;
+  count: number;
 }
 
 function check(condition: boolean, message: string): null {
@@ -16,41 +16,41 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 
-async function asyncOne(x: int): int { return x + 100; }
+async function asyncOne(x: number): number { return x + 100; }
 
-async function asyncZero(): int { return 7; }
+async function asyncZero(): number { return 7; }
 
-async function widenAsync(): async (x: int, y: int) => int {
-  let source: async (x: int) => int = asyncOne;
+async function widenAsync(): async (x: number, y: number) => number {
+  let source: async (x: number) => number = asyncOne;
   return source;
 }
 
-function bumpMarker(marker: Marker): int {
+function bumpMarker(marker: Marker): number {
   marker.count = marker.count + 1;
   return 1;
 }
 
-export async function test_arity_extension_async(): int {
-  let source: async (x: int) => int = asyncOne;
-  let widened: async (x: int, y: int) => int = source;
-  let first: int = await widened(1, 2);
+export async function test_arity_extension_async(): number {
+  let source: async (x: number) => number = asyncOne;
+  let widened: async (x: number, y: number) => number = source;
+  let first: number = await widened(1, 2);
 
-  let zeroSource: async () => int = asyncZero;
-  let oneWide: async (x: int) => int = zeroSource;
-  let second: int = await oneWide(5);
+  let zeroSource: async () => number = asyncZero;
+  let oneWide: async (x: number) => number = zeroSource;
+  let second: number = await oneWide(5);
 
-  let returned: async (x: int, y: int) => int = await widenAsync();
-  let third: int = await returned(2, 3);
+  let returned: async (x: number, y: number) => number = await widenAsync();
+  let third: number = await returned(2, 3);
 
-  let syncShort: (x: int) => int = one;
-  let syncWide: (x: int, y: int) => int = syncShort;
-  let fourth: int = syncWide(4, 5);
+  let syncShort: (x: number) => number = one;
+  let syncWide: (x: number, y: number) => number = syncShort;
+  let fourth: number = syncWide(4, 5);
 
-  let marker: Marker = {};
-  let markerWide: async (x: int, y: int) => int = source;
-  let fifth: int = await markerWide(6, bumpMarker(marker));
+  let marker: Marker = {count: 0};
+  let markerWide: async (x: number, y: number) => number = source;
+  let fifth: number = await markerWide(6, bumpMarker(marker));
   check(marker.count === 1, "the ignored async target argument evaluates exactly once");
 
   check(first === 101, "a declaration adaptation keeps the async marker");

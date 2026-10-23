@@ -3,9 +3,9 @@
 // @expected: compile-error E5003
 // @features: functions, arity-extension, diagnostics
 
-function two(a: int, b: int): int { return a + b; }
+function two(a: number, b: number): number { return a + b; }
 
-function makeOne(): (x: int) => int { return two; }
+function makeOne(): (x: number) => number { return two; }
 
 export function main(): null {
   return null;

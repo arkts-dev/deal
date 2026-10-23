@@ -96,7 +96,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"
@@ -105,7 +105,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JVM = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "jvm"
@@ -448,7 +448,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.3.md §Name resolution — Declaration order) — so the constructed
+     * (docs/spec-v1.4.md §Name resolution — Declaration order) — so the constructed
      * literal keeps the enclosing binding's declared provider. The
      * pre-fix recorder resolved the not-yet-visible inner declaration,
      * so the same-named sibling's class was constructed and the
@@ -484,7 +484,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JS = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "js"
@@ -493,7 +493,7 @@ public class ProductionDispatchTest {
 
     private static final String HOST_DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit",
@@ -623,7 +623,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_NEWLINE_ROOT = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src\\nline"],
           "output": "out",
           "backend": "luajit"
@@ -637,7 +637,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_UNICODE_ROOT = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src\\\\u000aline"],
           "output": "out",
           "backend": "luajit"
@@ -652,7 +652,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_CONTROL_ROOT = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src\\u0007\\u000b\\u000c\\u001fline"],
           "output": "out",
           "backend": "luajit"
@@ -1099,13 +1099,13 @@ public class ProductionDispatchTest {
             "the harness metadata resolves the one release-owned production "
                 + "invocation (no purpose or profile selection)");
         checkEq(productionInvocation(),
-            CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+            CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
                 CapabilityRegistry.releaseRegistry()),
             "every resolution over the one release state and registry "
                 + "produces the same record");
         check(productionInvocation().semanticProfile()
-                == SemanticProfile.DEAL_V1_3_INT32,
-            "the production invocation carries the single DEAL_V1_3_INT32 "
+                == SemanticProfile.DEAL_V1_4_BINARY64,
+            "the production invocation carries the single DEAL_V1_4_BINARY64 "
                 + "profile");
     }
 
@@ -1153,7 +1153,7 @@ public class ProductionDispatchTest {
                 "the published set carries no per-module sibling: "
                     + artifacts);
             check(artifacts.contains("main.deal.map.json"),
-                "the production set carries the v1.3 default per-source "
+                "the production set carries the v1.4 default per-source "
                     + "source-map sidecar: " + artifacts);
 
             ProcessOutcome run = runProcess(out, "luajit", "main.lua");
@@ -1658,8 +1658,8 @@ public class ProductionDispatchTest {
         try {
             write(project, "deal.json", """
                 {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
+                  "languageVersion": "1.4",
+                  "stdlib": "1.4",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -1746,8 +1746,8 @@ public class ProductionDispatchTest {
             try {
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.3",
-                      "stdlib": "1.3",
+                      "languageVersion": "1.4",
+                      "stdlib": "1.4",
                       "moduleRoots": ["src"],
                       "dependencies": {},
                       "externals": {"model": {"declaration": "bindings/model.d.deal"}},
@@ -1834,8 +1834,8 @@ public class ProductionDispatchTest {
                 String label = name + " " + backend;
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.3",
-                      "stdlib": "1.3",
+                      "languageVersion": "1.4",
+                      "stdlib": "1.4",
                       "moduleRoots": ["src"],
                       "dependencies": {},
                       "externals": {},
@@ -2151,7 +2151,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer crossing (review 0005; ISSUE-0809 review
      * cycle 2): the assignment inside a shadowing let's own initializer
      * targets the enclosing binding (the pending declaration is not
-     * visible there, docs/spec-v1.3.md §Name resolution — Declaration
+     * visible there, docs/spec-v1.4.md §Name resolution — Declaration
      * order), so the constructed literal carries that binding's declared
      * provider — the enclosing annotation names {@code ir} even when the
      * not-yet-visible inner declaration names the same-named sibling
@@ -2617,7 +2617,7 @@ public class ProductionDispatchTest {
 
         Path removed = Files.createTempDirectory("production-dispatch-native-rejected-");
         try {
-            write(removed, "deal.json", "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
+            write(removed, "deal.json", "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
             write(removed, "src/main.deal", "// @extern-c\nexport function main(): null { return null; }\n");
             for (String backend : List.of("js", "luajit", "jvm")) {
                 ProjectOutcome rejected = runProductionCli("compile",
@@ -2731,7 +2731,7 @@ public class ProductionDispatchTest {
             String expectedMessage = "FRONTEND".equals(capability) ? originText : "Common semantic lowering failed: module '"
                 + offendingModule + "', capability " + capability
                 + ", validatorRule " + rule
-                + ", semanticProfile DEAL_V1_3_INT32, irVersion deal.semantic-ir/2"
+                + ", semanticProfile DEAL_V1_4_BINARY64, irVersion deal.semantic-ir/2"
                 + ", origin " + originText;
             String humanLine = offending + ":" + startLine + ":" + startColumn
                 + "-" + endLine + ":" + endColumn + ": ERROR " + expectedCode + ": "
@@ -2949,7 +2949,7 @@ public class ProductionDispatchTest {
      * toolchains with the declared {@code number} return crossing
      * unchanged — the direct call, the stored/adapted function value, and
      * the cross-module import all carry contemporary epoch-millisecond
-     * readings above the signed-32 range (v1.3 — no int terminal).
+     * readings above the signed-32 range (v1.4 — no int terminal).
      */
     private static void checkTimeNowMillisCoverage() throws Exception {
         Path project = Files.createTempDirectory("production-dispatch-time-");
@@ -4343,12 +4343,12 @@ public class ProductionDispatchTest {
 
 
     // =========================================================================
-    // ISSUE-0786: the strict v1.3 array-read contract on the three
+    // ISSUE-0786: the strict v1.4 array-read contract on the three
     // production artifacts
     // =========================================================================
 
     /**
-     * The v1.3 ArrayReadV13 flight on the three real production artifacts:
+     * The v1.4 ArrayReadV13 flight on the three real production artifacts:
      * one module asserts, under its own TEST_FAIL guards, receiver-then-index
      * single evaluation, the E8002 bounds gate at the read expression with
      * the prior receiver/index effects retained, the empty and
@@ -4487,7 +4487,7 @@ public class ProductionDispatchTest {
         """;
 
     private static void testArrayReadV13ProductionDrive() throws Exception {
-        System.out.println("-- the v1.3 array-read contract on the three "
+        System.out.println("-- the v1.4 array-read contract on the three "
             + "production artifacts --");
         for (String backend : List.of("js", "luajit", "jvm")) {
             Path project = Files.createTempDirectory(
@@ -4502,15 +4502,15 @@ public class ProductionDispatchTest {
                 ProjectOutcome compile = productionCompile(project, "src/main.deal",
                     "out");
                 check(compile.exitCode() == 0, "the " + backend
-                    + " v1.3 array-read compile succeeds: " + compile.stderr());
+                    + " v1.4 array-read compile succeeds: " + compile.stderr());
                 if (compile.exitCode() != 0) {
                     continue;
                 }
                 Path out = project.resolve("out");
                 switch (backend) {
-                    case "js" -> checkSiblingJsRun("v1.3 array read", out);
-                    case "luajit" -> checkSiblingLuaRun("v1.3 array read", out);
-                    default -> checkSiblingJvmRun("v1.3 array read", project, out);
+                    case "js" -> checkSiblingJsRun("v1.4 array read", out);
+                    case "luajit" -> checkSiblingLuaRun("v1.4 array read", out);
+                    default -> checkSiblingJvmRun("v1.4 array read", project, out);
                 }
             } finally {
                 deleteRecursively(project);
@@ -4519,7 +4519,7 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
-    // The std/json decode carriers at the declared (table) parameter (v1.3)
+    // The std/json decode carriers at the declared (table) parameter (v1.4)
     // =========================================================================
 
     /**
@@ -4763,7 +4763,7 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
-    // The closed SQRT_NEGATIVE arm at math.sqrt(-1.0) (v1.3)
+    // The closed SQRT_NEGATIVE arm at math.sqrt(-1.0) (v1.4)
     // =========================================================================
 
     /**
@@ -4840,7 +4840,7 @@ public class ProductionDispatchTest {
                 // {@code conformance} at the corpus-relative path the
                 // sidecar pins, so the artifact's own source coordinate and
                 // the class identity are the published fixture's.
-                write(project, "deal.json", "{\n  \"languageVersion\": \"1.3\","
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.4\","
                     + "\n  \"moduleRoots\": [\"conformance\"],"
                     + "\n  \"output\": \"out\","
                     + "\n  \"backend\": \"" + backend + "\"\n}\n");
@@ -5189,7 +5189,7 @@ public class ProductionDispatchTest {
                 "boundary-corpus-" + export + "-" + backend + "-");
             try {
                 write(project, entryRel, source);
-                write(project, "deal.json", "{\n  \"languageVersion\": \"1.3\","
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.4\","
                     + "\n  \"moduleRoots\": [\"conformance\"],"
                     + "\n  \"output\": \"out\","
                     + "\n  \"backend\": \"" + backend + "\"\n}\n");
@@ -5350,7 +5350,7 @@ public class ProductionDispatchTest {
     // =========================================================================
 
     /**
-     * The v1.3 deployment-completeness contract through the public CLI in a
+     * The v1.4 deployment-completeness contract through the public CLI in a
      * child JVM whose distribution surface is exactly the assembled classpath
      * resource root (the process CWD is the project, so the checkout dev
      * fallback cannot repair it): a distribution that provides the runtime but
@@ -5759,8 +5759,8 @@ public class ProductionDispatchTest {
                 "// @profile: no-such-profile\n" + raw, "no-such-profile",
                 "non-production @profile 'no-such-profile'"),
             new Injection("duplicate metadata",
-                "// @profile: deal-v1.3-int32\n// @profile: deal-v1.3-int32\n"
-                    + raw, "deal-v1.3-int32",
+                "// @profile: deal-v1.4-int32\n// @profile: deal-v1.4-int32\n"
+                    + raw, "deal-v1.4-int32",
                 "duplicate corpus classification metadata"),
             new Injection("removed v1.2 profile",
                 "// @profile: deal-v1.2-int32\n" + raw, "deal-v1.2-int32",
@@ -6332,9 +6332,9 @@ public class ProductionDispatchTest {
             if (produced == null) {
                 return;
             }
-            checkEq(SemanticProfile.DEAL_V1_3_INT32,
+            checkEq(SemanticProfile.DEAL_V1_4_BINARY64,
                 produced.semanticProfile(),
-                "the produced project is the sole v1.3 profile");
+                "the produced project is the sole v1.4 profile");
             check(produced.modules().containsKey(produced.entryModule()),
                 "the produced project carries its entry module");
             check(containsReturnOp(produced),
@@ -6371,7 +6371,7 @@ public class ProductionDispatchTest {
         try {
             write(js, "deal.json", """
                 {
-                  "languageVersion": "1.3",
+                  "languageVersion": "1.4",
                   "moduleRoots": ["src"],
                   "output": "out",
                   "backend": "js"
@@ -6589,13 +6589,13 @@ public class ProductionDispatchTest {
      * literal element is not the position's own expression.
      */
     private static final String NESTED_ARRAY_LITERAL_READ_REJECT =
-        "export function f(): int {let t: table = {n:1};"
-            + " let xs: int[] = [t.n]; return xs[0];}\n";
+        "export function f(): number {let t: table = {n:1};"
+            + " let xs: number[] = [t.n]; return xs[0];}\n";
 
     /** The same admission's class literal field value. */
     private static final String NESTED_CLASS_LITERAL_READ_REJECT =
-        "class Box {n: int = 0;}\n"
-            + "export function f(): int {let t: table = {n:1};"
+        "class Box {n: number;}\n"
+            + "export function f(): number {let t: table = {n:1};"
             + " let b: Box = {n:t.n}; return b.n;}\n";
 
     /** The same admission's template interpolation part. */
@@ -6605,13 +6605,13 @@ public class ProductionDispatchTest {
 
     /** The computed form of the nested array literal element. */
     private static final String NESTED_COMPUTED_LITERAL_READ_REJECT =
-        "export function f(): int {let t: table = {n:1};"
-            + " let xs: int[] = [t[\"n\"]]; return xs[0];}\n";
+        "export function f(): number {let t: table = {n:1};"
+            + " let xs: number[] = [t[\"n\"]]; return xs[0];}\n";
 
     /** The computed form of the class literal field value. */
     private static final String NESTED_COMPUTED_CLASS_READ_REJECT =
-        "class Box {n: int = 0;}\n"
-            + "export function f(): int {let t: table = {n:1};"
+        "class Box {n: number;}\n"
+            + "export function f(): number {let t: table = {n:1};"
             + " let b: Box = {n:t[\"n\"]}; return b.n;}\n";
 
     /** The computed form of the template interpolation part. */
@@ -6628,18 +6628,18 @@ public class ProductionDispatchTest {
      */
     private static final String LEGAL_NESTED_LITERAL_DIRECT_READS = """
         import * as c from "std/console";
-        class Box {n: int = 0;}
-        function take(n: int): int {return n;}
-        function readN(t: table): int {return t.n;}
+        class Box {n: number;}
+        function take(n: number): number {return n;}
+        function readN(t: table): number {return t.n;}
         export function main(): null {
          let t: table = {n: 1, flag: true, s: "a"};
-         let n: int = (t.n);
-         let computed: int = t["n"];
+         let n: number = (t.n);
+         let computed: number = t["n"];
          n = t.n;
          n = take(t.n) + n;
          if (t.flag) {n = n + 1;}
          n = n + readN(t);
-         let xs: int[] = [n];
+         let xs: number[] = [n];
          let b: Box = {n: n};
          let bs: Box[] = [{n: n}];
          let v: string = t.s;
@@ -6671,11 +6671,11 @@ public class ProductionDispatchTest {
             checkCornerCaseReject(backend, "nested-array-literal-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_ARRAY_LITERAL_READ_REJECT),
-                "E3003", "src/subject.deal", 1, 66, 1, 69, null);
+                "E3003", "src/subject.deal", 1, 72, 1, 75, null);
             checkCornerCaseReject(backend, "nested-class-literal-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_CLASS_LITERAL_READ_REJECT),
-                "E3003", "src/subject.deal", 2, 65, 2, 68, null);
+                "E3003", "src/subject.deal", 2, 68, 2, 71, null);
             checkCornerCaseReject(backend, "nested-template-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_TEMPLATE_READ_REJECT),
@@ -6683,11 +6683,11 @@ public class ProductionDispatchTest {
             checkCornerCaseReject(backend, "nested-computed-literal-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_COMPUTED_LITERAL_READ_REJECT),
-                "E3003", "src/subject.deal", 1, 66, 1, 72, null);
+                "E3003", "src/subject.deal", 1, 72, 1, 78, null);
             checkCornerCaseReject(backend, "nested-computed-class-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_COMPUTED_CLASS_READ_REJECT),
-                "E3003", "src/subject.deal", 2, 65, 2, 71, null);
+                "E3003", "src/subject.deal", 2, 68, 2, 74, null);
             checkCornerCaseReject(backend, "nested-computed-template-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_COMPUTED_TEMPLATE_READ_REJECT),
@@ -6852,7 +6852,7 @@ public class ProductionDispatchTest {
                     declaration);
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.3",
+                      "languageVersion": "1.4",
                       "moduleRoots": ["src"],
                       "output": "out",
                       "backend": "%s",
@@ -7125,7 +7125,7 @@ public class ProductionDispatchTest {
                 try {
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.3",
+                          "languageVersion": "1.4",
                           "moduleRoots": ["src"],
                           "output": "out",
                           "backend": "%s",
@@ -7342,7 +7342,7 @@ public class ProductionDispatchTest {
                     }
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.3",
+                          "languageVersion": "1.4",
                           "moduleRoots": ["src"],
                           "output": "out",
                           "backend": "%s"%s

@@ -36,7 +36,7 @@ import java.util.Objects;
  * (arrays, nullables, and sync/async function signatures included). The
  * {@code "@" ...} class production remains the sole form for every other
  * class identity; the reserved {@code $builtin} namespace never forms a
- * class atom in v1.3 (the superseded v1.2 spellings {@code @/Error} and
+ * class atom in v1.4 (the superseded v1.2 spellings {@code @/Error} and
  * {@code @$builtin/Error} are rejected, never decoded).</p>
  *
  * <p>A component is a non-empty maximal scalar run that is not
@@ -110,7 +110,7 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /**
      * The reserved first component of the superseded v1.2 builtin
-     * descriptor namespace.  No v1.3 class atom carries it; the builtin
+     * descriptor namespace.  No v1.4 class atom carries it; the builtin
      * {@code Error} class is exactly {@link #ERROR_DESCRIPTOR}.
      */
     private static final String BUILTIN_NAMESPACE_COMPONENT = "$builtin";
@@ -567,14 +567,14 @@ public final class CanonicalRuntimeTypeDescriptor {
                 }
                 if (!hasSeparator
                         && component.equals(BUILTIN_NAMESPACE_COMPONENT)) {
-                    // The superseded v1.2 builtin namespace: no v1.3 class
+                    // The superseded v1.2 builtin namespace: no v1.4 class
                     // atom carries it, and the builtin Error class is
                     // exactly the bare "Error" token.
                     return new DescriptorSyntaxError(
                         componentStart,
                         DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM,
                         "the reserved '" + BUILTIN_NAMESPACE_COMPONENT
-                            + "' descriptor namespace forms no v1.3 class atom "
+                            + "' descriptor namespace forms no v1.4 class atom "
                             + "at scalar offset " + componentStart);
                 }
                 if (pos < cps.length && cps[pos] == '/') {

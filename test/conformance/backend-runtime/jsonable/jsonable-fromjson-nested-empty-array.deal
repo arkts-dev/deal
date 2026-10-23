@@ -1,7 +1,7 @@
 // @spec: Classes — @jsonable fromJson nested class values
-// @description: A nested @jsonable class value — a class field and every class-array element — accepts only a JSON object: a nested "[]", the empty array included, is a validation failure returning null on every lane, never a defaulted nested instance (v1.3)
+// @description: A nested @jsonable class value — a class field and every class-array element — accepts only a JSON object: a nested "[]", the empty array included, is a validation failure returning null on every lane, never a defaulted nested instance (v1.4)
 // @expected: runtime-ok
-// @features: jsonable, fromJson, nested-class, validation, v1.3
+// @features: jsonable, fromJson, nested-class, validation, v1.4
 
 // @jsonable
 export class Child {

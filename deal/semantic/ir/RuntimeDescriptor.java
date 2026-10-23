@@ -208,7 +208,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * spec's {@code T | null} type, so it is canonicalized at construction:
      * an already-nullable descriptor is its own wrap, and the {@code null}
      * descriptor is too, because {@code null | null} is {@code null}
-     * ({@code docs/spec-v1.3.md} §Field access — an optional {@code n?:
+     * ({@code docs/spec-v1.4.md} §Field access — an optional {@code n?:
      * null} field's read yields language {@code null}). The forbidden
      * {@code ?null} form is therefore never constructed by a read-result
      * path, and no consumer has to normalize it.

@@ -761,7 +761,7 @@ public class JsBackendTest {
      * {@code console.log("async-extended-argument-order")} output retained —
      * is published through the public {@code deal compile} entry under the
      * v1.2 manifest (the emitted artifact carries the
-     * {@code DEAL_V1_3_INT32} selector), and a real node process then
+     * {@code DEAL_V1_4_BINARY64} selector), and a real node process then
      * requires the published artifact and invokes the export through the
      * production host ABI {@code $rt.invokeAsyncExport}. The subject's own
      * output is the only stdout write, so the node transcript is the
@@ -949,7 +949,7 @@ public class JsBackendTest {
         Path root = Files.createTempDirectory("jstest_corner_case_" + name + "_");
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.4\", \"moduleRoots\": [\"src\"],"
                 + " \"output\": \"out\", \"backend\": \"js\"}\n",
             StandardCharsets.UTF_8);
         Files.writeString(root.resolve("src/helper.deal"), helperSource,
@@ -979,7 +979,7 @@ public class JsBackendTest {
         boolean v12Profile = !Files.readString(out.resolve("main.js"),
             StandardCharsets.UTF_8).contains("setInt32Mode");
         check(v12Profile, name + ": the published artifact carries no profile"
-            + " switch under the sole v1.3 profile");
+            + " switch under the sole v1.4 profile");
         Files.writeString(out.resolve("corner_host.js"), CORNER_CASE_HOST_SOURCE,
             StandardCharsets.UTF_8);
         ProductionNodeRun run = runNodeSplit(out, "corner_host.js",
@@ -1044,7 +1044,7 @@ public class JsBackendTest {
      * public JS surface: the two-module project (the entry imports the
      * companion module) is published through the public {@code deal
      * compile} entry under the v1.2 manifest — the emitted artifact
-     * carries the {@code DEAL_V1_3_INT32} selector — and a real node
+     * carries the {@code DEAL_V1_4_BINARY64} selector — and a real node
      * process then requires the published entry and invokes the exported
      * wrappers exactly as the package's exported-wrapper host does:
      * {@code main} first, then the throwing exported {@code run} under
@@ -1351,7 +1351,7 @@ public class JsBackendTest {
         try {
             Files.createDirectories(root.resolve("src"));
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\": \"1.3\","
+                "{\"languageVersion\": \"1.4\","
                     + " \"moduleRoots\": [\"src\"],"
                     + " \"output\": \"out\","
                     + " \"backend\": \"js\"}\n",
@@ -1505,7 +1505,7 @@ public class JsBackendTest {
 
         StrictManifestParser.StrictManifestParseResult ok =
             StrictManifestParser.parse("deal.json",
-                "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
+                "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
         check(ok.manifest() != null && ok.failure() == null,
             "deal.json backend js parses strictly: " + ok.failure());
         if (ok.manifest() != null) {
@@ -1514,8 +1514,8 @@ public class JsBackendTest {
         }
 
         for (String bad : new String[] {
-                "{\"languageVersion\": \"1.3\", \"backend\": \"  Js \"}",
-                "{\"languageVersion\": \"1.3\", \"backend\": \"wasm\"}"}) {
+                "{\"languageVersion\": \"1.4\", \"backend\": \"  Js \"}",
+                "{\"languageVersion\": \"1.4\", \"backend\": \"wasm\"}"}) {
             StrictManifestParser.StrictManifestParseResult r =
                 StrictManifestParser.parse("deal.json", bad);
             check(r.manifest() == null && r.failure() != null,
@@ -1540,7 +1540,7 @@ public class JsBackendTest {
         // A valid strict manifest without a backend field: the CLI
         // alias is the backend-selection authority.
         Files.writeString(proj.resolve("deal.json"),
-            "{\"languageVersion\": \"1.3\", \"moduleRoots\": [\"src\"]}\n",
+            "{\"languageVersion\": \"1.4\", \"moduleRoots\": [\"src\"]}\n",
             StandardCharsets.UTF_8);
         Path entry = proj.resolve("src/cli_js_main.deal");
         Files.writeString(entry, """
@@ -1823,8 +1823,8 @@ public class JsBackendTest {
             "the structural layout keys the required field by its raw name");
         check(!js.contains("// Class default @Main/Main.deal/Point.nick"),
             "the absent optional field has no default evaluator");
-        check(js.contains("// The defaults-only factory transfer of @Main/Main.deal/Public."),
-            "the exported class publishes its defaults-only factory transfer");
+        check(js.contains("// The declaring provider transfer of @Main/Main.deal/Public."),
+            "the exported class publishes its declaring-provider transfer");
         check(js.contains("$rt.classPlan(\"@Main/Main.deal/Public\", $pPublic, "
             + "provided, $file, $line, $column)"),
             "Public$new constructs through $rt.classPlan over the plan list");
@@ -1958,7 +1958,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: cross-module @jsonable fields references and roundtrip --");
 
         writeFile("xjson_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
         writeFile("xjson_proj/src/lib_a.deal", """
             // @jsonable
             export class Inner {
@@ -2066,7 +2066,7 @@ public class JsBackendTest {
         Frontend f = compileFrontend(source, tag + ".deal");
         String expected = source.contains("export class") ? "E1050" : "E1057";
         check(f.errors().stream().anyMatch(d -> d.code().equals(expected)),
-            tag + ": v1.3 rejects local class/export placement: " + f.errors());
+            tag + ": v1.4 rejects local class/export placement: " + f.errors());
         check(f.errors().stream().noneMatch(d -> d.code().equals("E3019")),
             tag + ": placement rejection precedes nominal typing");
     }
@@ -2157,7 +2157,7 @@ public class JsBackendTest {
                     + "module-qualified class plan");
         }
 
-        // Neither export nor @jsonable permits a local class in v1.3.
+        // Neither export nor @jsonable permits a local class in v1.4.
         assertLocalClassRejected("""
             export function test(): number {
               // @jsonable
@@ -2535,7 +2535,7 @@ public class JsBackendTest {
     }
 
     /**
-     * The v1.3 array-read emission pin: the IIFE binds the receiver before
+     * The v1.4 array-read emission pin: the IIFE binds the receiver before
      * the checked index, enforces the strict bounds gate E8002 "array index
      * out of bounds" for {@code < 0} and {@code >= length} at the read
      * expression, and only then reads the element. A read that evaluated
@@ -2880,7 +2880,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: host ABI end-to-end under node (ISSUE-0328) --");
 
         writeFile("hostjs_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\",\n"
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\",\n"
             + " \"externals\": {\"host/cfg\": {\"declaration\": "
             + "\"bindings/cfg.d.deal\"}}}\n");
         writeFile("hostjs_proj/bindings/cfg.d.deal", """
@@ -3185,7 +3185,7 @@ public class JsBackendTest {
         // (2) The full orchestrator project: two same-file aliases and one
         // cross-unit import of one resolved host file.
         writeFile("occ_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\",\n"
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\",\n"
             + " \"externals\": {\"host/echo\": {\"declaration\": "
             + "\"../bindings/echo.d.deal\"}}}\n");
         writeFile("occ_proj/bindings/echo.d.deal", """
@@ -3323,7 +3323,7 @@ public class JsBackendTest {
         // the earlier implementation read the provider/declaration order
         // on these paths.
         writeFile("ord_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\",\n"
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\",\n"
             + " \"externals\": {\"host/ord\": {\"declaration\": "
             + "\"../bindings/ord.d.deal\"}}}\n");
         writeFile("ord_proj/bindings/ord.d.deal", """
@@ -3506,7 +3506,7 @@ public class JsBackendTest {
         }
 
         // The default compile (no explicit spelling) fires no warning and
-        // writes the same sidecar: the v1.3 default debugging artifacts are
+        // writes the same sidecar: the v1.4 default debugging artifacts are
         // unconditional.
         Path outputDir2 = tmpDir.resolve("build/sm_js2");
         ByteArrayOutputStream captured2 = new ByteArrayOutputStream();
@@ -3599,7 +3599,7 @@ public class JsBackendTest {
             + " signed-32 gate from runtime load in every module --");
 
         writeFile("js_int32_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
         writeFile("js_int32_proj/src/app/lib.deal",
             "export function ping(): string { return \"pong\"; }");
         writeFile("js_int32_proj/src/app/main.deal",
@@ -3617,7 +3617,7 @@ public class JsBackendTest {
 
         StrictManifestParser.StrictManifestParseResult strictJs =
             StrictManifestParser.parse("deal.json",
-                "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
+                "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
         check(strictJs.manifest() != null && strictJs.failure() == null,
             "int32 plumb deal.json backend js parses strictly: "
                 + strictJs.failure());
@@ -3627,7 +3627,7 @@ public class JsBackendTest {
         }
 
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
-            ReleaseState.V1_3_ACTIVE, CapabilityRegistry.releaseRegistry());
+            ReleaseState.V1_4_ACTIVE, CapabilityRegistry.releaseRegistry());
 
         CompilationOrchestrator active = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, false, Backend.JS,
@@ -4042,7 +4042,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: async([number])->[number] across a module boundary --");
 
         writeFile("arrayx_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
         writeFile("arrayx_proj/src/array_closure_lib.deal", """
             export function syncId(b: number[]): number[] {
               return b;
@@ -4124,7 +4124,7 @@ public class JsBackendTest {
                     + "through the recorded export call");
         }
 
-        if (nodeAvailable) {
+        {
             // The driver exercises the production module surface: it
             // requires the compiled entry and runs the two exported
             // bridges (sync and async) through their wrappers — the
@@ -4153,8 +4153,6 @@ public class JsBackendTest {
                     + "across the real module boundary with content-"
                     + "asserted array mutation: exit " + nrc
                     + ", output '" + nout + "'");
-        } else {
-            skipNode("[number] closure module-boundary node run");
         }
     }
 
@@ -4283,7 +4281,7 @@ public class JsBackendTest {
                     "[number] equality emits native identity comparison");
             }
         }
-        if (nodeAvailable) {
+        {
             NodeResult eqRun = runDealArtifact(eqPrepared);
             check(eqRun.exitCode() == 0 && eqRun.output().equals("1"),
                 "[number] identity equality executes real reference identity "
@@ -5471,7 +5469,7 @@ public class JsBackendTest {
             + " completions project read carriers --");
 
         writeFile("carrier_proj/deal.json", """
-            {"languageVersion": "1.3", "backend": "js",
+            {"languageVersion": "1.4", "backend": "js",
              "moduleRoots": ["src"], "output": "out",
              "externals": {"host/probe": {"declaration": "bindings/probe.d.deal"}}}
             """);
@@ -5626,7 +5624,7 @@ public class JsBackendTest {
             + " carrier-complete --");
 
         writeFile("hostparam_proj/deal.json", """
-            {"languageVersion": "1.3", "backend": "js",
+            {"languageVersion": "1.4", "backend": "js",
              "moduleRoots": ["src"], "output": "out",
              "externals": {
                "host/rest_join": {"declaration": "bindings/rest_join.d.deal"},
@@ -5855,7 +5853,7 @@ public class JsBackendTest {
             + " the decoded carriers --");
 
         writeFile("completion_proj/deal.json", """
-            {"languageVersion": "1.3", "backend": "js",
+            {"languageVersion": "1.4", "backend": "js",
              "moduleRoots": ["src"], "output": "out"}
             """);
         writeFile("completion_proj/src/main.deal", """
@@ -6329,7 +6327,7 @@ public class JsBackendTest {
 
         writeFile("js_proj/deal.json", """
             {
-              "languageVersion": "1.3",
+              "languageVersion": "1.4",
               "backend": "js"
             }""");
         writeFile("js_proj/src/orch_main.deal", """
@@ -6419,7 +6417,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: nested module artifacts and relative requires --");
 
         writeFile("nest_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
         writeFile("nest_proj/src/app/lib.deal",
             "export function tag(): string { return \"nested-module-ok\"; }");
         writeFile("nest_proj/src/app/main.deal", """
@@ -6481,7 +6479,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: no-partial-artifact on rejection --");
 
         writeFile("rej_proj/deal.json",
-            "{\"languageVersion\": \"1.3\", \"backend\": \"js\","
+            "{\"languageVersion\": \"1.4\", \"backend\": \"js\","
                 + " \"moduleRoots\": [\"src\"], \"externals\": {"
                 + " \"ffi\": {\"declaration\": \"src/ffi.d.deal\""
                 + "}}}");
@@ -6543,7 +6541,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_backend_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"js\"\n}\n",
+                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\"\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(projectDir.resolve("main.deal"),
                 "export function main(): null { return null; }\n",
@@ -6573,7 +6571,7 @@ public class JsBackendTest {
 
             // An unknown backend stays a configuration error (E2010).
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n"
+                "{\n  \"languageVersion\": \"1.4\",\n"
                     + "  \"backend\": \"python\"\n}\n",
                 StandardCharsets.UTF_8);
             ProjectLocator.LocateResult badResult = ProjectLocator.locate(
@@ -6592,7 +6590,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_cli_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"js\",\n"
+                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
@@ -6715,8 +6713,8 @@ public class JsBackendTest {
         try {
             Files.writeString(projectDir.resolve("deal.json"), """
                 {
-                  "languageVersion": "1.3",
-                  "stdlib": "1.3",
+                  "languageVersion": "1.4",
+                  "stdlib": "1.4",
                   "moduleRoots": ["src"],
                   "backend": "js",
                   "output": "build/js",
@@ -6813,7 +6811,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_deploy_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"js\",\n"
+                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
@@ -6870,7 +6868,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_reject_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.3\",\n  \"backend\": \"js\",\n"
+                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"],\n"
                     + "  \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi.d.deal\"}}\n}\n",

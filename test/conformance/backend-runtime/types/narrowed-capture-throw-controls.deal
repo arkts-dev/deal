@@ -15,7 +15,7 @@ function expectCaught(e: Error, what: string, code: string, message: string): nu
   return null;
 }
 
-function expectEqual(what: string, actual: int, expected: int): null {
+function expectEqual(what: string, actual: number, expected: number): null {
   if (actual !== expected) {
     throw { code: "CONTROL_FAIL", message: what + " changed the value" };
   }
@@ -165,7 +165,7 @@ export function main(): null {
   }
 
   // The operand expression completes exactly once per throw.
-  let calls: int = 0;
+  let calls: number = 0;
   let make: () => Error = function(): Error {
     calls = calls + 1;
     return { code: "ONCE", message: "once" };
@@ -187,7 +187,7 @@ export function main(): null {
 // The async operand: the awaited statement keeps the same clearing capture,
 // and the cleared binding's throw is admitted as the catchable canonical
 // DEAL error inside the async body (never an infrastructure failure).
-export async function test_async_throw_caught(): int {
+export async function test_async_throw_caught(): number {
   let tag: string = await settle("async");
   expectTrue("the await completed", tag === "async");
   let e: Error | null = { code: "ASYNC", message: "async" };

@@ -288,16 +288,12 @@ public final class BindingsProductionValidator {
         final Set<BlockId> functionRoots = new LinkedHashSet<>();
         /** The thunk region roots. */
         final Set<BlockId> thunkRoots = new LinkedHashSet<>();
-        /** The default-block region roots. */
-        final Set<BlockId> defaultRoots = new LinkedHashSet<>();
         /** The module-init region root. */
         final BlockId moduleRoot;
         /** The detaching op of every function-body region root. */
         final Map<BlockId, SemanticOp> detachingOfFunction = new LinkedHashMap<>();
         /** The detaching op of every thunk region root (the FUNCTION_ADAPT op). */
         final Map<BlockId, SemanticOp> detachingOfThunk = new LinkedHashMap<>();
-        /** The detaching op of every default-block region root (the CLASS_DEFAULT op). */
-        final Map<BlockId, SemanticOp> detachingOfDefault = new LinkedHashMap<>();
         /** The generation-pinned captures of every function-body region root
          * (LoweredFunction record; each entry names the creation-site
          * incarnation of the captured binding). */
@@ -863,32 +859,6 @@ public final class BindingsProductionValidator {
                 }
                 return resolved;
             }
-            if (defaultRoots.contains(root)) {
-                List<Allocation> candidates = captureCandidates(binding, site);
-                if (!candidates.isEmpty()) {
-                    return dominantCaptureAllocation(binding, site)
-                        .map(allocation -> new ResolvedCapture(allocation.op,
-                            allocation.generation));
-                }
-                SemanticOp detaching = detachingOfDefault.get(root);
-                BlockId moduleSite = detaching == null ? null : blockOf(detaching.opId());
-                if (moduleSite != null) {
-                    List<Allocation> moduleCandidates = new ArrayList<>();
-                    Set<BlockId> visibleBlocks = visibleBlocks(moduleSite);
-                    for (Allocation allocation : moduleAllocations(binding)) {
-                        if (visibleBlocks.contains(allocation.block)) {
-                            moduleCandidates.add(allocation);
-                        }
-                    }
-                    Optional<Allocation> dominant = dominantAmong(moduleCandidates);
-                    if (dominant.isPresent()) {
-                        return dominant.map(allocation -> new ResolvedCapture(
-                            allocation.op, allocation.generation));
-                    }
-                }
-
-                return Optional.empty();
-            }
             return dominantCaptureAllocation(binding, site)
                 .map(allocation -> new ResolvedCapture(allocation.op,
                     allocation.generation));
@@ -957,23 +927,6 @@ public final class BindingsProductionValidator {
                     return new Resolution(null, false);
                 }
                 return new Resolution(resolved.get().op, false);
-            }
-            if (defaultRoots.contains(root)) {
-                List<Allocation> matches = visibleAllocations(binding, generation, site);
-                if (matches.size() == 1) {
-                    return new Resolution(matches.get(0).op, false);
-                }
-                if (matches.size() > 1) {
-                    return new Resolution(null, false);
-                }
-                List<Allocation> moduleMatches = moduleAllocations(binding, generation);
-                if (moduleMatches.size() == 1) {
-                    return new Resolution(moduleMatches.get(0).op, false);
-                }
-                if (moduleMatches.size() > 1) {
-                    return new Resolution(null, false);
-                }
-                return new Resolution(null, true);
             }
             List<Allocation> matches = visibleAllocations(binding, generation, site);
             return matches.size() == 1
@@ -1961,22 +1914,6 @@ public final class BindingsProductionValidator {
                 generation, site, root, model.detachingOfThunk, false,
                 visited);
         }
-        if (model.defaultRoots.contains(root)) {
-            if (allocation.block != null
-                    && (model.regionBlocks.getOrDefault(root, List.of())
-                        .contains(allocation.block) || root.equals(allocation.block))) {
-                return model.writeDominates(write, site);
-            }
-            if (allocation.block != null && model.regionRoot.get(allocation.block) != null
-                    && model.regionRoot.get(allocation.block)
-                        .equals(model.regionRoot.get(model.moduleRoot))) {
-                // The module-level arm: default execution happens only at
-                // construction sites after module init completes.
-                return true;
-            }
-
-            return true;
-        }
         // Any other region root (e.g., a CALL body block): plain dominance
         // within that region.
         return model.writeDominates(write, site);
@@ -2690,7 +2627,7 @@ public final class BindingsProductionValidator {
         BoundaryKind.FUNCTION_PARAMETER, BoundaryKind.EXTERNAL_PARAMETER,
         BoundaryKind.STDLIB_PARAMETER, BoundaryKind.FUNCTION_RETURN,
         BoundaryKind.EXTERNAL_RETURN, BoundaryKind.DEAL_TO_HOST,
-        BoundaryKind.CLASS_LITERAL_FIELD, BoundaryKind.CLASS_DEFAULT_FIELD,
+        BoundaryKind.CLASS_LITERAL_FIELD,
         BoundaryKind.ARRAY_LITERAL_ELEMENT, BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
         BoundaryKind.CLASS_FIELD_ASSIGNMENT);
 
@@ -2729,20 +2666,11 @@ public final class BindingsProductionValidator {
      *       stored value is the adapter result;</li>
      *   <li>{@code CLASS_LITERAL_FIELD}: the boundary is one of its
      *       {@code CLASS_NEW}'s field cells and the supplied field's value
-     *       is the adapter result;</li>
-     *   <li>{@code CLASS_DEFAULT_FIELD}: the boundary is one of its
-     *       {@code CLASS_NEW}'s field cells and its input is the default's
-     *       published result, which is the adapter result.</li>
+     *       is the adapter result.</li>
      * </ul>
      *
-     * <p>Two positions agree through their own records rather than a
-     * boundary op's single input: a class default is published by the
-     * declaring unit's {@code CLASS_DEFAULT} op (the position's own
-     * publisher), so a class with an adapting default is admitted even
-     * when that unit contains no construction — a same-unit omission, a
-     * cross-module shared-factory default and a supplied-only construction
-     * consume the published result; and each {@code RETURN} records its
-     * own returned value plus the function's single return boundary cell,
+     * <p>Each {@code RETURN} records its own returned value plus the
+     * function's single return boundary cell,
      * so an adapted return that is not the source-first {@code RETURN} is
      * still a position consumer.</p>
      *
@@ -2752,9 +2680,7 @@ public final class BindingsProductionValidator {
      * host/external return or crossing, a callback cell, an array/table
      * element read or delete, a JSON field, a refinement, and every other
      * kind — makes the unit invalid IR even when one position cell also
-     * agrees, and the class-default publisher admits no boundary consumer
-     * beyond its own {@code CLASS_DEFAULT_FIELD} construction cells (its
-     * declaring unit may legitimately contain none). After the position's
+     * agrees. After the position's
      * own cell the adapter identity is an ordinary function value:
      * loads/reads/passes/returns preserve it, so a later load's boundary of
      * any kind may legitimately name the same identity, and those ordinary
@@ -2767,15 +2693,6 @@ public final class BindingsProductionValidator {
                     || !(op.result() instanceof ValueId adapterValue)) {
                 continue;
             }
-            // The class-default position's own publisher: the CLASS_DEFAULT
-            // op result is the adapted value's published identity, so the
-            // declaring unit's admission never depends on a construction
-            // existing there. A same-unit omission construction's
-            // CLASS_DEFAULT_FIELD cell, a cross-module construction's
-            // shared-factory default and a supplied-only construction all
-            // consume the published value; none of them is the adapter's
-            // only wiring point, and no construction is required.
-            boolean classDefault = classDefaultPublisher(model, adapterValue);
             List<SemanticOp> consumers = new ArrayList<>();
             Set<OpId> consumerIds = new LinkedHashSet<>();
             for (SemanticOp candidate : model.unit.ops()) {
@@ -2808,12 +2725,6 @@ public final class BindingsProductionValidator {
             }
             SemanticOp next = model.nextOpInBlock(op);
             if (consumers.isEmpty()) {
-                if (classDefault) {
-                    // The class-default position's own publisher: zero
-                    // boundary consumers is complete (the construction may
-                    // live in another unit, or none may exist).
-                    continue;
-                }
                 if (next != null && next.kind() == SemanticOpKind.BINDING_INIT
                         && next.payload() instanceof KindPayload.BindingInitPayload init
                         && adapterValue.equals(init.value())) {
@@ -2832,38 +2743,17 @@ public final class BindingsProductionValidator {
                 BoundaryKind kind =
                     ((KindPayload.BoundaryPayload) candidate.payload()).kind();
                 boolean admitted = ADAPTER_POSITION_BOUNDARIES.contains(kind)
-                    && adapterPositionAdmits(model, candidate, kind)
-                    && (!classDefault || kind == BoundaryKind.CLASS_DEFAULT_FIELD);
+                    && adapterPositionAdmits(model, candidate, kind);
                 if (!admitted) {
                     return fail(op, model, NO_ADAPTER_AT_BOUNDARY,
                         "the FUNCTION_ADAPT result " + adapterValue + " of op "
                         + op.opId() + " is the direct input of " + consumers.size()
                         + " typed-boundary op(s) and the " + kind + " boundary op "
                         + candidate.opId() + " is not the adapted position's own "
-                        + (classDefault
-                            ? "cell (a class default's published result wires only its "
-                                + "own CLASS_DEFAULT_FIELD construction cells)"
-                            : "cell (an adapter result is created at a statically typed "
-                                + "function-value position — the variable "
-                                + "declaration/assignment, parameter, return, class "
-                                + "field/default, class field write and array "
-                                + "literal/write cells — and is then the direct input of "
-                                + "that position's own cell only, never of a "
-                                + "host/external crossing, a runtime read, or any other "
-                                + "typed boundary)"));
+                        + "cell (an adapter result must wire to its own statically typed "
+                        + "value position, never a runtime read or unrelated crossing)");
                 }
                 positionCells.add(candidate);
-            }
-            if (classDefault) {
-                // Every consumer is one of the class-default position's own
-                // construction cells: their published-default agreement is
-                // the position's consumer check.
-                Optional<CompilerDiagnostic> agreement =
-                    checkAdapterPositionAgreement(model, op, adapterValue, positionCells);
-                if (agreement.isPresent()) {
-                    return agreement;
-                }
-                continue;
             }
             Optional<CompilerDiagnostic> failure =
                 checkAdapterPositionAgreement(model, op, adapterValue, positionCells);
@@ -2872,28 +2762,6 @@ public final class BindingsProductionValidator {
             }
         }
         return Optional.empty();
-    }
-
-    /**
-     * True exactly when the adapter result is the published value of a
-     * {@code CLASS_DEFAULT} op in the same unit: the class-default
-     * position's own publisher. The default expression's evaluation is
-     * owned by the declaring unit's declaration walk, so a class whose
-     * function-valued default adapts needs no construction in that unit
-     * (a same-unit omission, a cross-module construction and a
-     * supplied-only construction consume the published result). Its closed
-     * consumer set is that publisher's own boundary consumers: none, or the
-     * unit's {@code CLASS_DEFAULT_FIELD} construction cells.
-     */
-    private static boolean classDefaultPublisher(Model model, ValueId adapterValue) {
-        for (SemanticOp candidate : model.unit.ops()) {
-            if (candidate.kind() == SemanticOpKind.CLASS_DEFAULT
-                    && candidate.payload() instanceof KindPayload.ClassDefaultPayload
-                    && adapterValue.equals(candidate.result())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -3077,19 +2945,6 @@ public final class BindingsProductionValidator {
                 }
                 return "no CLASS_NEW construction supplies the adapted value through the "
                     + "CLASS_LITERAL_FIELD cell " + cell.opId();
-            }
-            case CLASS_DEFAULT_FIELD -> {
-                for (SemanticOp candidate : model.unit.ops()) {
-                    if (candidate.kind() == SemanticOpKind.CLASS_NEW
-                            && candidate.payload() instanceof KindPayload.ClassNewPayload
-                                construction
-                            && construction.fieldBoundaries().stream().anyMatch(
-                                field -> field.boundaryOpId().equals(cell.opId()))) {
-                        return null;
-                    }
-                }
-                return "no CLASS_NEW construction publishes the adapted default through the "
-                    + "CLASS_DEFAULT_FIELD cell " + cell.opId();
             }
             default -> {
                 return "the " + kind + " kind is no adaptation position";

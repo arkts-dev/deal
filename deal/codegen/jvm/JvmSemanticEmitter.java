@@ -111,7 +111,7 @@ public final class JvmSemanticEmitter {
     }
 
     /**
-     * The source-mapping production entry (the v1.3 default debugging
+     * The source-mapping production entry (the v1.4 default debugging
      * artifacts): identical emission to the overload above with one
      * {@link SourceMapRecorder} installed, so every mapped op entry emits its
      * source comment before the generated statement group and records the
@@ -660,12 +660,6 @@ public final class JvmSemanticEmitter {
                     }
                 }
             }
-            // The detached class-default methods (E5): one per
-            // CLASS_DEFAULT op — the default block's ops (the default op
-            // itself skipped) re-execute per invocation, returning the
-            // block's final producing value (the op's result slot), so
-            // every triggering construction gets a fresh default
-            // (mutable defaults allocate freshly per attempt).
 
             // The generated class carriers (E5): one static nested class
             // per ClassId of the resolution context with per-field value
@@ -961,8 +955,7 @@ public final class JvmSemanticEmitter {
 
         /**
          * Emits one class's JSON plan: the declaration-order fields with
-         * descriptor, optionality, static result kind, and the per-field
-         * CLASS_DEFAULT child metadata (key, digest, thunk) of the
+         * descriptor, optionality and static result kind of the
          * JSON_FROM_CLASS walk; the plan instantiates the generated
          * carrier.
          */
@@ -2778,7 +2771,7 @@ public final class JvmSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.3.md §Name resolution
+         * forward reference of docs/spec-v1.4.md §Name resolution
          * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).
@@ -3586,7 +3579,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 2)).append("__an").append(id)
                 .append(" = __na").append(id).append(".arity;\n");
             out.append(indent(indent + 1)).append("}\n");
-            out.append(indent(indent + 1)).append("if (__src").append(id)
             // A cataloged stdlib callable carries the packed row-invoker
             // calling convention: the adapter dispatches it through the
             // catalog entry with its leading-M projection, exactly the
@@ -3595,7 +3587,7 @@ public final class JvmSemanticEmitter {
             // statically typed function value (`std.parse`), so the
             // position's adaptation is the arity extension, never a
             // permissive runtime signature match.
-            out.append(indent(indent + 1)).append("} else if (__src").append(id)
+            out.append(indent(indent + 1)).append("if (__src").append(id)
                 .append(" instanceof JvmRuntime.StdlibFunctionValue) {\n");
             out.append(indent(indent + 2)).append("try {\n");
             out.append(indent(indent + 3)).append(result)

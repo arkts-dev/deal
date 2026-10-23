@@ -7,11 +7,11 @@ import * as console from "std/console";
 import * as lib from "./arity-extension-positions-lib";
 
 class Marker {
-  count: int = 0;
+  count: number;
 }
 
 class Dispatch {
-  pair: (x: int, y: int) => int = one;
+  pair: (x: number, y: number) => number;
 }
 
 function check(condition: boolean, message: string): null {
@@ -21,34 +21,34 @@ function check(condition: boolean, message: string): null {
   return null;
 }
 
-function one(x: int): int { return x; }
+function one(x: number): number { return x; }
 
-function zero(): int { return 41; }
+function zero(): number { return 41; }
 
-function twice(x: int): int { return x * 2; }
+function twice(x: number): number { return x * 2; }
 
-function needPair(f: (x: int, y: int) => int): int { return f(3, 4); }
+function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
-function callOne(g: (x: int) => int, v: int): int { return g(v); }
+function callOne(g: (x: number) => number, v: number): number { return g(v); }
 
-function returnPair(): (x: int, y: int) => int { return one; }
+function returnPair(): (x: number, y: number) => number { return one; }
 
-function returnZero(): (x: int) => int { return zero; }
+function returnZero(): (x: number) => number { return zero; }
 
-export function returnExportedPair(): (x: int, y: int) => int { return one; }
+export function returnExportedPair(): (x: number, y: number) => number { return one; }
 
-function nextShort(marker: Marker): (x: int) => int {
+function nextShort(marker: Marker): (x: number) => number {
   marker.count = marker.count + 1;
   return one;
 }
 
-function pickOne(): (x: int) => int { return one; }
+function pickOne(): (x: number) => number { return one; }
 
-function makeAdder(base: int): (x: int) => int {
-  return function(x: int): int { return base + x; };
+function makeAdder(base: number): (x: number) => number {
+  return function(x: number): number { return base + x; };
 }
 
-function bumpMarker(marker: Marker): int {
+function bumpMarker(marker: Marker): number {
   marker.count = marker.count + 1;
   return 1;
 }
@@ -56,14 +56,14 @@ function bumpMarker(marker: Marker): int {
 export function main(): null {
   // --- parameter positions -------------------------------------------------
   check(needPair(one) === 3, "a direct call argument adapts one-to-two");
-  let short: (x: int) => int = one;
+  let short: (x: number) => number = one;
   check(needPair(short) === 3, "a binding-reference argument adapts one-to-two");
-  let callee: (f: (x: int, y: int) => int) => int = needPair;
+  let callee: (f: (x: number, y: number) => number) => number = needPair;
   check(callee(one) === 3, "an indirect (dynamic) call argument adapts one-to-two");
   check(callee(short) === 3, "an indirect call argument adapts a binding source");
   check(callOne(zero, 9) === 41,
     "a zero-to-one argument adaptation ignores its target parameter");
-  check(callOne(nextShort({}), 5) === 5,
+  check(callOne(nextShort({count: 0}), 5) === 5,
     "a call-result argument adaptation keeps the produced value");
   let holder: Dispatch = { pair: one };
   check(needPair(holder.pair) === 3, "a class-field argument keeps its adapted value");
@@ -85,58 +85,58 @@ export function main(): null {
   // --- class field construction and write positions ------------------------
   let supplied: Dispatch = { pair: one };
   check(supplied.pair(7, 8) === 7, "a supplied class field adapts one-to-two");
-  let defaulted: Dispatch = {};
+  let defaulted: Dispatch = {pair: one};
   check(defaulted.pair(2, 3) === 2, "a default class field adapts one-to-two");
   supplied.pair = twice;
   check(supplied.pair(6, 7) === 12, "a class field write stores the adapted value");
   check(supplied.pair(2, 3) === 4, "the written field keeps the adapted value");
-  let computedField: Dispatch = {};
+  let computedField: Dispatch = {pair: one};
   computedField.pair = pickOne();
   check(computedField.pair(4, 5) === 4,
     "a class field write adapts a call-result value");
 
   // --- array literal and array write positions -----------------------------
-  let literals: ((x: int) => int)[] = [zero];
+  let literals: ((x: number) => number)[] = [zero];
   check(literals[0](9) === 41, "an array literal element adapts zero-to-one");
   check(literals.length === 1, "the adapted element keeps the array length");
-  let writes: ((x: int) => int)[] = [zero];
+  let writes: ((x: number) => number)[] = [zero];
   writes[0] = one;
   check(writes[0](9) === 9, "an array element write stores the adapted value");
   check(writes.length === 1, "the adapted write keeps the array length");
-  let computedWrites: ((x: int, y: int) => int)[] = [twice];
+  let computedWrites: ((x: number, y: number) => number)[] = [twice];
   computedWrites[0] = pickOne();
   check(computedWrites[0](3, 4) === 3,
     "an array element write adapts a call-result value");
   check(computedWrites.length === 1, "the call-result write keeps the array length");
 
   // --- nested and function-expression sources ------------------------------
-  let nested: ((x: int, y: int) => int)[] = [one];
+  let nested: ((x: number, y: number) => number)[] = [one];
   check(nested[0](8, 9) === 8, "a nested function-typed element adapts");
-  let literalSource: (x: int, y: int) => int = function(x: int): int { return x + 1; };
+  let literalSource: (x: number, y: number) => number = function(x: number): number { return x + 1; };
   check(literalSource(4, 5) === 5, "a function-expression source adapts");
-  check(needPair(function(x: int): int { return x * 3; }) === 9,
+  check(needPair(function(x: number): number { return x * 3; }) === 9,
     "a function-expression argument adapts");
   check(needPair(makeAdder(10)) === 13,
     "a closure-capturing call-result argument keeps its capture through the adapter");
 
   // --- variable declaration and assignment controls ------------------------
-  let declared: (x: int, y: int) => int = one;
+  let declared: (x: number, y: number) => number = one;
   check(declared(11, 12) === 11, "a declaration control adapts one-to-two");
-  let assigned: (x: int, y: int) => int = one;
+  let assigned: (x: number, y: number) => number = one;
   assigned = twice;
   check(assigned(5, 6) === 10, "an assignment control adapts one-to-two");
-  let exact: (x: int) => int = one;
+  let exact: (x: number) => number = one;
   check(exact(13) === 13, "an exact-signature declaration stores directly");
-  let nullableExact: ((x: int) => int) | null = exact;
+  let nullableExact: ((x: number) => number) | null = exact;
   check(nullableExact !== null, "an exact nullable function position keeps its value");
 
   // --- evaluation order and once-only effects ------------------------------
-  let order: Marker = {};
+  let order: Marker = {count: 0};
   check(needPair(nextShort(order)) === 3, "the argument's adapted value is invoked");
   check(order.count === 1, "the argument's source expression evaluates exactly once");
-  let extraMarker: Marker = {};
-  let extras: (x: int) => int = one;
-  let widenedCall: (x: int, y: int) => int = extras;
+  let extraMarker: Marker = {count: 0};
+  let extras: (x: number) => number = one;
+  let widenedCall: (x: number, y: number) => number = extras;
   check(widenedCall(1, bumpMarker(extraMarker)) === 1,
     "the ignored target argument is evaluated and never forwarded");
   check(extraMarker.count === 1, "the ignored target argument evaluates exactly once");

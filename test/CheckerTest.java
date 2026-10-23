@@ -166,7 +166,7 @@ public class CheckerTest {
         Path project = root.resolve(name);
         Files.createDirectories(project.resolve("src"));
         Files.writeString(project.resolve("deal.json"),
-            "{\"languageVersion\":\"1.3\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
+            "{\"languageVersion\":\"1.4\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
         Path entry = project.resolve("src/main.deal");
         Files.writeString(entry, source);
         return entry;
@@ -1289,7 +1289,7 @@ public class CheckerTest {
 
     static void testWhileConditionContextualTyping() {
         System.out.println("-- F6: While condition contextual typing --");
-        // The v1.3 admission list is closed (docs/spec-v1.3.md "Reading
+        // The v1.4 admission list is closed (docs/spec-v1.4.md "Reading
         // table fields"): a loop condition requires boolean checking but
         // grants no contextual-read permission, so a table read in the
         // condition is E3003 at the read while the boolean requirement
@@ -1323,7 +1323,7 @@ public class CheckerTest {
 
     /**
      * The retained corner-case frontend contracts (ISSUE-0815 subjects
-     * 9-11 plus their legal controls): the closed v1.3 contextual table-read
+     * 9-11 plus their legal controls): the closed v1.4 contextual table-read
      * admission rejects the loop-condition and composite-operand reads with
      * E3003 at the read, the try/catch-local obligation rejects a
      * definitely-returning try with a fallthrough catch with E5002 at the
@@ -1423,10 +1423,10 @@ public class CheckerTest {
 
         // Array literal element (dotted).
         CheckerOutput arrayElement = checkProgram(
-            "let t: table = {x:1}; let xs: int[] = [t.x];");
+            "let t: table = {x:1}; let xs: number[] = [t.x];");
         assertError(arrayElement, "E3003",
             "array literal element table read rejects E3003");
-        checkExactRange(arrayElement, "E3003", 1, 40, 1, 43,
+        checkExactRange(arrayElement, "E3003", 1, 43, 1, 46,
             "the array element read carries its own exact range");
         checkNoCode(arrayElement, "E3011",
             "the rejected element is not re-reported as a mixed literal");
@@ -1434,19 +1434,19 @@ public class CheckerTest {
         // Computed array literal element: the static string key grants no
         // admission either.
         CheckerOutput computedElement = checkProgram(
-            "let t: table = {x:1}; let xs: int[] = [t[\"x\"]];");
+            "let t: table = {x:1}; let xs: number[] = [t[\"x\"]];");
         assertError(computedElement, "E3003",
             "computed array literal element table read rejects E3003");
-        checkExactRange(computedElement, "E3003", 1, 40, 1, 46,
+        checkExactRange(computedElement, "E3003", 1, 43, 1, 49,
             "the computed element read carries its own exact range");
 
         // Class literal field value.
         CheckerOutput classField = checkProgram(
-            "class Box {n: int = 0;} let t: table = {x:1};"
+            "class Box {n: number;} let t: table = {x:1};"
                 + " let b: Box = {n:t.x};");
         assertError(classField, "E3003",
             "class literal field table read rejects E3003");
-        checkExactRange(classField, "E3003", 1, 63, 1, 66,
+        checkExactRange(classField, "E3003", 1, 62, 1, 65,
             "the class literal field read carries its own exact range");
         checkNoCode(classField, "E4003",
             "the rejected field value is not re-reported as a field type mismatch");
@@ -1454,21 +1454,21 @@ public class CheckerTest {
         // Computed class literal field value: the static string key grants
         // no admission either.
         CheckerOutput computedField = checkProgram(
-            "class Box {n: int = 0;} let t: table = {x:1};"
+            "class Box {n: number;} let t: table = {x:1};"
                 + " let b: Box = {n:t[\"x\"]};");
         assertError(computedField, "E3003",
             "computed class literal field table read rejects E3003");
-        checkExactRange(computedField, "E3003", 1, 63, 1, 69,
+        checkExactRange(computedField, "E3003", 1, 62, 1, 68,
             "the computed field read carries its own exact range");
 
         // A class literal nested in an array literal keeps the read's own
         // diagnostic at the read.
         CheckerOutput nestedClass = checkProgram(
-            "class Box {n: int = 0;} let t: table = {x:1};"
+            "class Box {n: number;} let t: table = {x:1};"
                 + " let bs: Box[] = [{n:t.x}];");
         assertError(nestedClass, "E3003",
             "a read nested two literals deep rejects E3003");
-        checkExactRange(nestedClass, "E3003", 1, 67, 1, 70,
+        checkExactRange(nestedClass, "E3003", 1, 66, 1, 69,
             "the doubly nested read carries its own exact range");
 
         // Template interpolation: the part's string requirement is not a
@@ -1506,30 +1506,30 @@ public class CheckerTest {
             + " intermediates stay admitted --");
 
         assertNoErrors(checkProgram(
-            "function take(n: int): int {return n;}"
-                + " function readN(t: table): int {return t.n;}"
+            "function take(n: number): number {return n;}"
+                + " function readN(t: table): number {return t.n;}"
                 + " let t: table = {n:1, flag:true};"
-                + " let a: int = (t.n); a = t.n; a = take(t.n);"
+                + " let a: number = (t.n); a = t.n; a = take(t.n);"
                 + " if (t.flag) {a = 1;} a = readN(t);"),
             "the five direct positions (parenthesized initializer included)"
                 + " stay admitted");
 
         assertNoErrors(checkProgram(
-            "let t: table = {n:1}; let c: int = t[\"n\"];"),
+            "let t: table = {n:1}; let c: number = t[\"n\"];"),
             "the direct computed read stays admitted");
 
         assertNoErrors(checkProgram(
-            "class Box {n: int = 0;} let t: table = {n:1, s:\"a\"};"
-                + " let v: int = t.n; let xs: int[] = [v];"
+            "class Box {n: number;} let t: table = {n:1, s:\"a\"};"
+                + " let v: number = t.n; let xs: number[] = [v];"
                 + " let b: Box = {n: v}; let bs: Box[] = [{n: v}];"
                 + " let sv: string = t.s; let s: string = `v${sv}`;"),
             "a typed intermediate inside literals, contextual class/array"
                 + " construction and an ordinary template stay admitted");
 
         assertNoErrors(checkProgram(
-            "class Box {n: int = 0;} let t: table = {x:1};"
-                + " let xs: int[] = [0]; xs[0] = t.x;"
-                + " let b: Box = {}; b.n = t.x;"),
+            "class Box {n: number;} let t: table = {x:1};"
+                + " let xs: number[] = [0]; xs[0] = t.x;"
+                + " let b: Box = {n:0}; b.n = t.x;"),
             "an assignment value is a direct position: the array-element"
                 + " and class-field write values stay admitted");
     }
@@ -1731,7 +1731,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: the supported null narrowing is binding-based
-     * only (docs/spec-v1.3.md §Nullable semantics — "No property-path
+     * only (docs/spec-v1.4.md §Nullable semantics — "No property-path
      * narrowing"), so a nullable member-path receiver stays rejected even
      * after a {@code path !== null} test, and an assignment to a narrowed
      * binding invalidates its refinement (the later dereference is
@@ -1773,7 +1773,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: only the declaration-owning scope clears its
-     * pending let name (docs/spec-v1.3.md §Name resolution — Declaration order and §Scope),
+     * pending let name (docs/spec-v1.4.md §Name resolution — Declaration order and §Scope),
      * so an inner block's same-name declaration never makes an enclosing
      * block's later declaration visible to an earlier reference.
      */
@@ -1798,7 +1798,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a shadowing declaration's initializer is checked
      * before the outer refinement is cleared, so it reads the enclosing
-     * binding with its current narrowing (docs/spec-v1.3.md §Name resolution —
+     * binding with its current narrowing (docs/spec-v1.4.md §Name resolution —
      * Declaration order and §Nullable semantics).
      */
     static void testShadowingInitializerReadsEnclosingNarrowing() {
@@ -1819,7 +1819,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: an await inside a shadowing block invalidates the
      * enclosing async function's refinements together with the snapshot a
-     * shadowing declaration removed (docs/spec-v1.3.md §Nullable
+     * shadowing declaration removed (docs/spec-v1.4.md §Nullable
      * semantics): the block exit must not resurrect the invalidated
      * refinement. The no-await block exit still restores it, and an await
      * inside a nested function body stays scoped to that function.
@@ -1951,7 +1951,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: an assignment inside a shadowing declaration's
-     * initializer targets the enclosing binding (docs/spec-v1.3.md
+     * initializer targets the enclosing binding (docs/spec-v1.4.md
      * §Name resolution — Declaration order), so its gate is the enclosing binding's
      * declared type — never the not-yet-visible inner declaration's type.
      */
@@ -1986,7 +1986,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a loop-local declaration of the same name is a
      * distinct binding, so the loop back-edge invalidates only the
-     * bindings actually assigned in the body (docs/spec-v1.3.md §Nullable
+     * bindings actually assigned in the body (docs/spec-v1.4.md §Nullable
      * semantics): the enclosing refinement survives, while an assignment
      * to the enclosing binding still invalidates it.
      */
@@ -2025,7 +2025,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: an if without else propagates the
      * invalidation an assignment or an await inside its then arm applied
-     * (docs/spec-v1.3.md §Nullable semantics: an assignment invalidates
+     * (docs/spec-v1.4.md §Nullable semantics: an assignment invalidates
      * the refinement and an await invalidates every refinement of the
      * enclosing async function), while a harmless arm leaves the incoming
      * refinement intact. Both the with-else and the without-else joins
@@ -2110,7 +2110,7 @@ public class CheckerTest {
      * ISSUE-0717 review cycle 3: a shadowing declaration's saved
      * refinement survives an if/else join inside the shadowing block but
      * is never restored when a path invalidated it with an await
-     * (docs/spec-v1.3.md §Nullable semantics).
+     * (docs/spec-v1.4.md §Nullable semantics).
      */
     static void testShadowStateSurvivesBranch() {
         System.out.println("-- the shadow snapshot survives a branch join "
@@ -2160,7 +2160,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: the for-of back-edge invalidates every
      * binding assigned in the body exactly like while and C-style for
-     * (docs/spec-v1.3.md §Nullable semantics), and a same-named
+     * (docs/spec-v1.4.md §Nullable semantics), and a same-named
      * iteration binding is a distinct binding that leaves the enclosing
      * refinement intact.
      */
@@ -2210,10 +2210,10 @@ public class CheckerTest {
             + "bindings, never same-named declarations --");
         CheckerOutput shadow = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
-            "    try { let n: int = 2; } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    try { let n: number = 2; } catch (e) {}\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2224,10 +2224,10 @@ public class CheckerTest {
 
         CheckerOutput shadowAssigned = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
-            "    try { let n: int = 2; n = 3; } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    try { let n: number = 2; n = 3; } catch (e) {}\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2238,9 +2238,9 @@ public class CheckerTest {
 
         CheckerOutput nullBranch = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n === null) {\n" +
-            "    try { let n: int = 2; } catch (e) {}\n" +
+            "    try { let n: number = 2; } catch (e) {}\n" +
             "    let x: null = n;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2252,10 +2252,10 @@ public class CheckerTest {
 
         CheckerOutput direct = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { n = null; } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2266,11 +2266,11 @@ public class CheckerTest {
 
         CheckerOutput otherBinding = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
-            "  let m: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
+            "  let m: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { m = null; } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2295,12 +2295,12 @@ public class CheckerTest {
             + "region never reverts the enclosing refinement --");
         CheckerOutput expression = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
             "      let f: () => null = function(): null { n = null; return null; };\n" +
             "    } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2311,12 +2311,12 @@ public class CheckerTest {
 
         CheckerOutput declaration = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
             "      function clear(): null { n = null; return null; }\n" +
             "    } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2327,12 +2327,12 @@ public class CheckerTest {
 
         CheckerOutput called = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  let clear: () => null = function(): null { n = null; return null; };\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
             "      clear();\n" +
-            "      let x: int = n;\n" +
+            "      let x: number = n;\n" +
             "    } catch (e) {}\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2345,7 +2345,7 @@ public class CheckerTest {
 
         CheckerOutput nestedTryBody = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try {\n" +
             "      function outer(): null {\n" +
@@ -2353,7 +2353,7 @@ public class CheckerTest {
             "        return null;\n" +
             "      }\n" +
             "    } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2375,10 +2375,10 @@ public class CheckerTest {
             + "enclosing try region --");
         CheckerOutput nestedBlock = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { try { n = null; } catch (e) {} } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2389,10 +2389,10 @@ public class CheckerTest {
 
         CheckerOutput nestedCatch = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { try { } catch (e) { n = null; } } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2403,10 +2403,10 @@ public class CheckerTest {
 
         CheckerOutput nestedShadow = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
-            "    try { try { let n: int = 2; } catch (e) {} } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    try { try { let n: number = 2; } catch (e) {} } catch (e) {}\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2417,10 +2417,10 @@ public class CheckerTest {
 
         CheckerOutput nestedControlFlow = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { if (true) { while (false) { n = null; } } } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2431,10 +2431,10 @@ public class CheckerTest {
 
         CheckerOutput loopRegion = checkProgram(
             "export function main(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { while (false) { n = null; } } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
@@ -2446,10 +2446,10 @@ public class CheckerTest {
         CheckerOutput awaitRegion = checkProgram(
             "async function tick(): null { return null; }\n" +
             "async function run(): null {\n" +
-            "  let n: int | null = 1;\n" +
+            "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
-            "    try { let n: int = 2; await tick(); } catch (e) {}\n" +
-            "    let x: int = n;\n" +
+            "    try { let n: number = 2; await tick(); } catch (e) {}\n" +
+            "    let x: number = n;\n" +
             "  }\n" +
             "  return null;\n" +
             "}\n" +
@@ -2462,7 +2462,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review cycle 3: a C-style for's loop-head let is visible
-     * only after its declaration (docs/spec-v1.3.md §Name resolution — Declaration order;
+     * only after its declaration (docs/spec-v1.4.md §Name resolution — Declaration order;
      * the loop desugars to block-local scope plus a while loop): its
      * initializer resolves to an enclosing binding, a self reference is
      * E2001, and the loop-head shadow ends with the loop.
@@ -2514,7 +2514,7 @@ public class CheckerTest {
             Path crossing = root.resolve("crossing");
             Files.createDirectories(crossing.resolve("src"));
             Files.writeString(crossing.resolve("deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.4\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(crossing.resolve("src/a.deal"),
                 "export class Item { value: number; }\n"
@@ -2546,7 +2546,7 @@ public class CheckerTest {
             Path control = root.resolve("control");
             Files.createDirectories(control.resolve("src"));
             Files.writeString(control.resolve("deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.4\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(control.resolve("src/a.deal"),
                 "export class Item { value: number; }\n"
@@ -5348,7 +5348,6 @@ public class CheckerTest {
                 });
             }
             case WhileStatement ws -> children.add(ws.body().statements());
-            case ForStatement fs -> children.add(fs.body().statements());
             case ForOfStatement fos -> children.add(fos.body().statements());
             case TryStatement ts -> {
                 children.add(ts.tryBlock().statements());
@@ -5397,37 +5396,37 @@ public class CheckerTest {
         //    catch read, and the refinement is restored after the catch.
         String intRefined =
             "export function main(): null {" +
-            "  let e: int | null = 1;" +
+            "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C_INT\", message: \"c\" }; }" +
             "    catch (e) { let captured: Error = e; }" +
-            "    let afterCatch: int = e;" +
+            "    let afterCatch: number = e;" +
             "  }" +
             "  return null;" +
             "}";
         CheckerOutput out = checkProgram(intRefined);
-        assertNoErrors(out, "the catch Error read under an int refinement");
+        assertNoErrors(out, "the catch Error read under an number refinement");
         IfStatement refinedIf = findStatement(out.program().statements(), IfStatement.class);
-        check(refinedIf != null, "the int-refinement source carries its if statement");
+        check(refinedIf != null, "the number-refinement source carries its if statement");
         TryStatement tryStatement = refinedIf == null ? null
             : findStatement(refinedIf.thenBlock(), TryStatement.class);
-        check(tryStatement != null, "the int-refinement source carries its try statement");
+        check(tryStatement != null, "the number-refinement source carries its try statement");
         if (tryStatement != null) {
             check(Types.equals(errorType, readTypeAt(out,
                     tryStatement.catchBlock().statements(), 0)),
                 "the catch read's checked type is the Error class type, got "
                     + readTypeAt(out, tryStatement.catchBlock().statements(), 0));
         }
-        check(Types.equals(Type.Int.INSTANCE, readTypeAt(out,
+        check(Types.equals(Type.Number.INSTANCE, readTypeAt(out,
                 refinedIf == null ? List.of() : refinedIf.thenBlock().statements(), 1)),
-            "the int refinement is restored after the catch scope exits, got "
+            "the number refinement is restored after the catch scope exits, got "
                 + (refinedIf == null ? null : readTypeAt(out,
                     refinedIf.thenBlock().statements(), 1)));
 
         // -- The null refinement is the same distinct binding.
         CheckerOutput nullRefined = checkProgram(
             "export function main(): null {" +
-            "  let e: int | null = null;" +
+            "  let e: number | null = null;" +
             "  if (e === null) {" +
             "    try { throw { code: \"C_NULL\", message: \"n\" }; }" +
             "    catch (e) { let captured: Error = e; }" +
@@ -5459,31 +5458,31 @@ public class CheckerTest {
         //    outer int either.
         CheckerOutput intTransfer = checkProgram(
             "export function main(): null {" +
-            "  let e: int | null = 1;" +
+            "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C_INT\", message: \"i\" }; }" +
-            "    catch (e) { let unsound: int = e; }" +
+            "    catch (e) { let unsound: number = e; }" +
             "  }" +
             "  return null;" +
             "}");
         assertErrorMessage(intTransfer, "E3001",
-            "Cannot assign Error to int",
-            "an int-refined catch binding is not an int");
+            "Cannot assign Error to number",
+            "an number-refined catch binding is not an number");
 
         // -- A try-block declaration shadows a distinct binding, so the
         //    outer refinement survives the try/catch.
         CheckerOutput tryShadow = checkProgram(
             "export function main(): null {" +
-            "  let e: int | null = 1;" +
+            "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { let e: string = \"inner\"; } catch (err) { }" +
-            "    let afterCatch: int = e;" +
+            "    let afterCatch: number = e;" +
             "  }" +
             "  return null;" +
             "}");
         assertNoErrors(tryShadow, "a try-block shadowing declaration keeps the outer refinement");
         IfStatement shadowIf = findStatement(tryShadow.program().statements(), IfStatement.class);
-        check(Types.equals(Type.Int.INSTANCE, readTypeAt(tryShadow,
+        check(Types.equals(Type.Number.INSTANCE, readTypeAt(tryShadow,
                 shadowIf == null ? List.of() : shadowIf.thenBlock().statements(), 1)),
             "the outer refinement survives a try-block shadowing declaration");
 
@@ -5496,14 +5495,14 @@ public class CheckerTest {
         //    outer catch.
         CheckerOutput nestedCatchAssignment = checkProgram(
             "export function main(): null {" +
-            "  let e: int | null = 1;" +
+            "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try {" +
             "      try { throw { code: \"C_IN\", message: \"in\" }; }" +
             "      catch (e) { e = { code: \"C_RE\", message: \"re\" }; }" +
-            "      let afterInner: int = e;" +
+            "      let afterInner: number = e;" +
             "    } catch (outer) { }" +
-            "    let afterOuter: int = e;" +
+            "    let afterOuter: number = e;" +
             "  }" +
             "  return null;" +
             "}");
@@ -5513,13 +5512,13 @@ public class CheckerTest {
             .statements(), IfStatement.class);
         TryStatement enclosingTry = nestedIf == null ? null
             : findStatement(nestedIf.thenBlock(), TryStatement.class);
-        check(Types.equals(Type.Int.INSTANCE, readTypeAt(nestedCatchAssignment,
+        check(Types.equals(Type.Number.INSTANCE, readTypeAt(nestedCatchAssignment,
                 enclosingTry == null ? List.of()
                     : enclosingTry.tryBlock().statements(), 1)),
             "the outer refinement is restored after the nested catch, got "
                 + (enclosingTry == null ? null : readTypeAt(nestedCatchAssignment,
                     enclosingTry.tryBlock().statements(), 1)));
-        check(Types.equals(Type.Int.INSTANCE, readTypeAt(nestedCatchAssignment,
+        check(Types.equals(Type.Number.INSTANCE, readTypeAt(nestedCatchAssignment,
                 nestedIf == null ? List.of() : nestedIf.thenBlock().statements(), 1)),
             "the outer refinement survives the enclosing catch, got "
                 + (nestedIf == null ? null : readTypeAt(nestedCatchAssignment,
@@ -5561,35 +5560,35 @@ public class CheckerTest {
         //    language invalidated: an await clears it and an assignment to
         //    the enclosing binding removes it.
         CheckerOutput awaited = checkProgram(
-            "async function g(): int { return 5; }" +
-            "async function f(e: int | null): int {" +
+            "async function g(): number { return 5; }" +
+            "async function f(e: number | null): number {" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C_AWAIT\", message: \"a\" }; }" +
-            "    catch (e) { let captured: Error = e; let resumed: int = await g(); }" +
-            "    let unsound: int = e;" +
+            "    catch (e) { let captured: Error = e; let resumed: number = await g(); }" +
+            "    let unsound: number = e;" +
             "  }" +
             "  return 0;" +
             "}");
-        assertErrorMessage(awaited, "E3001", "Cannot assign int | null to int",
+        assertErrorMessage(awaited, "E3001", "Cannot assign number | null to number",
             "an await inside the catch never resurrects the outer refinement");
         CheckerOutput outerAssigned = checkProgram(
             "export function main(): null {" +
-            "  let value: int | null = 1;" +
+            "  let value: number | null = 1;" +
             "  if (value !== null) {" +
             "    try { throw { code: \"C_SET\", message: \"s\" }; }" +
             "    catch (err) { value = null; }" +
-            "    let unsound: int = value;" +
+            "    let unsound: number = value;" +
             "  }" +
             "  return null;" +
             "}");
-        assertErrorMessage(outerAssigned, "E3001", "Cannot assign int | null to int",
+        assertErrorMessage(outerAssigned, "E3001", "Cannot assign number | null to number",
             "a catch-block assignment to the enclosing binding invalidates its refinement");
 
         // -- The resolver's own fact: the catch identifier is a distinct
         //    binding declared with the Error type.
         String source =
             "export function main(): null {" +
-            "  let e: int | null = 1;" +
+            "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C\", message: \"c\" }; }" +
             "    catch (e) { let captured: Error = e; }" +
@@ -5958,7 +5957,7 @@ public class CheckerTest {
         }
         try {
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\":\"1.3\",\"backend\":\"luajit\","
+                "{\"languageVersion\":\"1.4\",\"backend\":\"luajit\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.createDirectories(root.resolve("src"));
             // z is a's import dependency: buildCheckOrder is

@@ -157,14 +157,14 @@ public class StdlibCallLoweringTest {
 
     /** The fixed common-shadow invocation of the carrier tests. */
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     /** The validated-lowering facts of the checked project (R-PROFILE). */
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_3_INT32,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_4_BINARY64,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -209,7 +209,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));
@@ -239,7 +239,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgramE7(subject,
-            SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
+            SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds), Map.of(), Set.of());
@@ -345,7 +345,7 @@ public class StdlibCallLoweringTest {
         check(SemanticIrValidator.stdlibPolicy(StdlibFunctionId.TIME_NOW_MILLIS)
                 == FailurePolicyId.NO_DEAL_FAILURE,
             "stdlibPolicy(TIME_NOW_MILLIS) = NO_DEAL_FAILURE — the declared number "
-                + "boundary admits every reading and no number terminal exists (v1.3)");
+                + "boundary admits every reading and no number terminal exists (v1.4)");
         check(StdlibFunctionCatalog.lookup("std.time", "nowMillis")
                 .map(entry -> entry.function() == StdlibFunctionId.TIME_NOW_MILLIS
                     && entry.parameterDescriptors().isEmpty())
@@ -1181,12 +1181,12 @@ public class StdlibCallLoweringTest {
                 moduleIds.add(module.moduleId());
             }
             SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));
             SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_3_INT32, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));
@@ -1307,7 +1307,7 @@ public class StdlibCallLoweringTest {
             // STDLIB_CALL(TIME_NOW_MILLIS) with zero parameter boundaries,
             // one STDLIB_RETURN on the declared number under the
             // descriptor-kind rule, and the NO_DEAL_FAILURE algorithm
-            // policy at the call origin (v1.3 — no int terminal).
+            // policy at the call origin (v1.4 — no int terminal).
             SemanticLowerer.LoweringResult lowering = lowerSubject(checked, "lib", manifests);
             check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
                 "the forced lowering of the time module produces a validated unit: "

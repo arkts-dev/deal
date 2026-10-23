@@ -4,7 +4,7 @@
 // skips test/conformance/host-fixtures/ entirely.
 // Host fixture declaration for the three-lane arity-extended
 // adapter-over-async conformance test (luajit-host-carrier-projection D8
-// V2 (c), docs/spec-v1.3.md:1001-1013): the source signature carries the
+// V2 (c), docs/spec-v1.4.md:1001-1013): the source signature carries the
 // declared class and function parameters, and the arity-extended target
 // adds one parameter the host never receives.
 

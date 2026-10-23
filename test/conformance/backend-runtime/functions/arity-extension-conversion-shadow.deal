@@ -9,20 +9,20 @@ import * as console from "std/console";
 // (number)->int, (int)->number and (int)->bytes, so an adapter built over
 // one of them converts its leading argument or allocates a buffer.
 
-function pairSeven(x: number, y: number): int { return 7; }
+function pairSeven(x: number, y: number): number { return 7; }
 
-function numberSeven(x: int, y: int): number { return 7.5; }
+function numberSeven(x: number, y: number): number { return 7.5; }
 
-function pairBytes(x: int, y: int): bytes { return bytes(x + y); }
+function pairBytes(x: number, y: number): number[] { return [x + y]; }
 
 // The exact triple-arity defaults the holders declare, and the assertion
 // helpers the positions call through.
 
-function tripleSeven(x: number, y: number, z: number): int { return 7; }
+function tripleSeven(x: number, y: number, z: number): number { return 7; }
 
-function tripleNumber(x: int, y: int, z: int): number { return 7.5; }
+function tripleNumber(x: number, y: number, z: number): number { return 7.5; }
 
-function tripleBytes(x: int, y: int, z: int): bytes { return bytes(x + y); }
+function tripleBytes(x: number, y: number, z: number): number[] { return [x + y]; }
 
 function check(condition: boolean, message: string): null {
   if (!condition) {
@@ -32,59 +32,59 @@ function check(condition: boolean, message: string): null {
 }
 
 class IntHolder {
-  pair: (x: number, y: number, z: number) => int = tripleSeven;
+  pair: (x: number, y: number, z: number) => number;
 }
 
 class NumberHolder {
-  value: (x: int, y: int, z: int) => number = tripleNumber;
+  value: (x: number, y: number, z: number) => number;
 }
 
 class BytesHolder {
-  buffer: (x: int, y: int, z: int) => bytes = tripleBytes;
+  buffer: (x: number, y: number, z: number) => number[];
 }
 
-function needTripleInt(f: (x: number, y: number, z: number) => int): int {
+function needTripleInt(f: (x: number, y: number, z: number) => number): number {
   return f(9.0, 9.0, 9.0);
 }
 
-function needTripleNumber(f: (x: int, y: int, z: int) => number): number {
+function needTripleNumber(f: (x: number, y: number, z: number) => number): number {
   return f(9, 9, 9);
 }
 
-function needTripleBytes(f: (x: int, y: int, z: int) => bytes): bytes {
+function needTripleBytes(f: (x: number, y: number, z: number) => number[]): number[] {
   return f(9, 9, 9);
 }
 
 // The return positions: each function's parameter is the shadowing name, so
 // the returned value is the parameter's function value, never the intrinsic.
 
-function widenInt(int: (x: number, y: number) => int):
-    (x: number, y: number, z: number) => int {
+function widenInt(int: (x: number, y: number) => number):
+    (x: number, y: number, z: number) => number {
   return int;
 }
 
-function widenNumber(number: (x: int, y: int) => number):
-    (x: int, y: int, z: int) => number {
+function widenNumber(number: (x: number, y: number) => number):
+    (x: number, y: number, z: number) => number {
   return number;
 }
 
-function widenBytes(bytes: (x: int, y: int) => bytes):
-    (x: int, y: int, z: int) => bytes {
+function widenBytes(bytes: (x: number, y: number) => number[]):
+    (x: number, y: number, z: number) => number[] {
   return bytes;
 }
 
 export function main(): null {
   // --- the parameter positions --------------------------------------------
-  let int: (x: number, y: number) => int = pairSeven;
+  let int: (x: number, y: number) => number = pairSeven;
   check(needTripleInt(int) === 7,
     "the parameter position adapted the int intrinsic");
 
-  let number: (x: int, y: int) => number = numberSeven;
+  let number: (x: number, y: number) => number = numberSeven;
   check(needTripleNumber(number) === 7.5,
     "the parameter position adapted the number intrinsic");
 
-  let bytes: (x: int, y: int) => bytes = pairBytes;
-  check(needTripleBytes(bytes).length === 18,
+  let bytes: (x: number, y: number) => number[] = pairBytes;
+  check(needTripleBytes(bytes)[0] === 18,
     "the parameter position adapted the bytes allocation intrinsic");
 
   // --- the class supplied-field positions ---------------------------------
@@ -95,7 +95,7 @@ export function main(): null {
   check(needTripleNumber(numberHolder.value) === 7.5,
     "the supplied class field adapted the number intrinsic");
   let bytesHolder: BytesHolder = { buffer: bytes };
-  check(needTripleBytes(bytesHolder.buffer).length === 18,
+  check(needTripleBytes(bytesHolder.buffer)[0] === 18,
     "the supplied class field adapted the bytes allocation intrinsic");
 
   // --- the class field-write positions ------------------------------------
@@ -106,43 +106,43 @@ export function main(): null {
   check(needTripleNumber(numberHolder.value) === 7.5,
     "the class field write adapted the number intrinsic");
   bytesHolder.buffer = bytes;
-  check(needTripleBytes(bytesHolder.buffer).length === 18,
+  check(needTripleBytes(bytesHolder.buffer)[0] === 18,
     "the class field write adapted the bytes allocation intrinsic");
 
   // --- the array literal positions ---------------------------------------
-  let ints: ((x: number, y: number, z: number) => int)[] = [int];
+  let ints: ((x: number, y: number, z: number) => number)[] = [int];
   check(ints[0](9.0, 9.0, 9.0) === 7,
     "the array literal adapted the int intrinsic");
-  let numbers: ((x: int, y: int, z: int) => number)[] = [number];
+  let numbers: ((x: number, y: number, z: number) => number)[] = [number];
   check(numbers[0](9, 9, 9) === 7.5,
     "the array literal adapted the number intrinsic");
-  let buffers: ((x: int, y: int, z: int) => bytes)[] = [bytes];
-  check(buffers[0](9, 9, 9).length === 18,
+  let buffers: ((x: number, y: number, z: number) => number[])[] = [bytes];
+  check(buffers[0](9, 9, 9)[0] === 18,
     "the array literal adapted the bytes allocation intrinsic");
 
   // --- the array write positions -----------------------------------------
-  let writtenInts: ((x: number, y: number, z: number) => int)[] = [tripleSeven];
+  let writtenInts: ((x: number, y: number, z: number) => number)[] = [tripleSeven];
   writtenInts[0] = int;
   check(writtenInts[0](9.0, 9.0, 9.0) === 7,
     "the array write adapted the int intrinsic");
-  let writtenNumbers: ((x: int, y: int, z: int) => number)[] = [tripleNumber];
+  let writtenNumbers: ((x: number, y: number, z: number) => number)[] = [tripleNumber];
   writtenNumbers[0] = number;
   check(writtenNumbers[0](9, 9, 9) === 7.5,
     "the array write adapted the number intrinsic");
-  let writtenBuffers: ((x: int, y: int, z: int) => bytes)[] = [tripleBytes];
+  let writtenBuffers: ((x: number, y: number, z: number) => number[])[] = [tripleBytes];
   writtenBuffers[0] = bytes;
-  check(writtenBuffers[0](9, 9, 9).length === 18,
+  check(writtenBuffers[0](9, 9, 9)[0] === 18,
     "the array write adapted the bytes allocation intrinsic");
 
   // --- the return positions ----------------------------------------------
-  let widenedInt: (x: number, y: number, z: number) => int = widenInt(int);
+  let widenedInt: (x: number, y: number, z: number) => number = widenInt(int);
   check(widenedInt(9.0, 9.0, 9.0) === 7,
     "the return position adapted the int intrinsic");
-  let widenedNumber: (x: int, y: int, z: int) => number = widenNumber(number);
+  let widenedNumber: (x: number, y: number, z: number) => number = widenNumber(number);
   check(widenedNumber(9, 9, 9) === 7.5,
     "the return position adapted the number intrinsic");
-  let widenedBytes: (x: int, y: int, z: int) => bytes = widenBytes(bytes);
-  check(widenedBytes(9, 9, 9).length === 18,
+  let widenedBytes: (x: number, y: number, z: number) => number[] = widenBytes(bytes);
+  check(widenedBytes(9, 9, 9)[0] === 18,
     "the return position adapted the bytes allocation intrinsic");
 
   console.log("OK");

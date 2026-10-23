@@ -1,7 +1,7 @@
 // @spec: Classes — @jsonable table fields
-// @description: @jsonable table fields roundtrip JSON object values; a decoded table leaf keeps its exact decimal variant, so a negative magnitude below the signed32 lower bound stays the number variant and a long zero-padded exponent whose value is small stays the int variant (v1.3)
+// @description: @jsonable table fields roundtrip JSON object values; a decoded table leaf keeps its exact decimal variant, so a negative magnitude below the signed32 lower bound stays the number variant and a long zero-padded exponent whose value is small stays the int variant (v1.4)
 // @expected: runtime-ok
-// @features: jsonable, table, roundtrip, v1.3
+// @features: jsonable, table, roundtrip, v1.4
 
 // @jsonable
 export class Wrapper {

@@ -34,7 +34,7 @@ import java.util.stream.Stream;
  * backend.
  *
  * <p>DEAL's {@code Error} is a builtin nominal class whose values compare by
- * reference identity (docs/spec-v1.3.md, "Error type" and the {@code ===}
+ * reference identity (docs/spec-v1.4.md, "Error type" and the {@code ===}
  * semantics), so {@code throw}/{@code catch} must transport the thrown
  * instance itself, never a replacement carrier: {@code caught === original},
  * a field write through either alias is visible through the other, and the

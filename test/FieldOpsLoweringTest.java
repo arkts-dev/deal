@@ -125,7 +125,7 @@ public class FieldOpsLoweringTest {
 
     /** The foundation detector's project facts of the slice (index + coverage). */
     private static PipelineSlice pipeline(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -178,7 +178,7 @@ public class FieldOpsLoweringTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClassCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, pipeline.coverage(), pipeline.interfaceHash(),
+            SemanticProfile.DEAL_V1_4_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
             REGISTRY_HASH, pipeline.ownInterface(),
             SemanticIdAllocator.over(List.of(MODULE)));
     }
@@ -1226,7 +1226,7 @@ public class FieldOpsLoweringTest {
             "the two repetitions produce byte-identical SemanticIrDumper dumps");
         check(SemanticIrValidator.validate(first.lowering().unit(),
                 new SemanticIrValidator.ComparisonFacts(first.lowering().unit().interfaceHash(),
-                    SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH)).isEmpty(),
+                    SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH)).isEmpty(),
             "the field-op-bearing unit passes the closed SemanticIrValidator");
     }
 

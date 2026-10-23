@@ -1,7 +1,7 @@
 // @spec: Type system
 // @description: Binary64 literals and copied number values preserve negative zero through reciprocal arithmetic.
 // @expected: runtime-ok
-// @features: v1.3, runtime, corner-case
+// @features: v1.4, runtime, corner-case
 
 import * as c from "std/console";
 export function main(): null {

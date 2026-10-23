@@ -6,7 +6,7 @@ import deal.source.ScalarSourceCursor;
  * The scalar rebasing map of one template interpolation.
  *
  * <p>An interpolation expression is sub-lexed verbatim from the template's
- * raw content (v1.3 already forbids escape processing in TemplateText and
+ * raw content (v1.4 already forbids escape processing in TemplateText and
  * admits the normal quoted-string rules inside the interpolation), so the
  * sub-lexed decoded scalar {@code d} is exactly raw scalar
  * {@code expressionStartRawScalarIndex + d}. The map owns that identity

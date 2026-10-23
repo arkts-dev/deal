@@ -1,7 +1,7 @@
 // @spec: Type system — Class identity and array values
-// @description: Carrier identity is nominal and cannot be forged by table keys: a table carrying the internal class/array/function mark names is rejected at every declared carrier boundary, while the real carriers and a table with the same keys at a table boundary are admitted (v1.3)
+// @description: Carrier identity is nominal and cannot be forged by table keys: a table carrying the internal class/array/function mark names is rejected at every declared carrier boundary, while the real carriers and a table with the same keys at a table boundary are admitted (v1.4)
 // @expected: runtime-ok
-// @features: tables, classes, arrays, functions, runtime-errors, v1.3
+// @features: tables, classes, arrays, functions, runtime-errors, v1.4
 
 import * as json from "std/json";
 

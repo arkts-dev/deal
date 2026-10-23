@@ -192,7 +192,7 @@ public final class Types {
 
     /**
      * The canonical nullable wrap of one type — the spec's {@code T | null}
-     * type ({@code docs/spec-v1.3.md} §Types: {@code T | null}
+     * type ({@code docs/spec-v1.4.md} §Types: {@code T | null}
      * canonicalizes to {@code Nullable<T>}). The wrap canonicalizes its inner
      * type at construction, so an already-nullable type is its own wrap and
      * so is {@code null} itself: {@code null | null} is {@code null}, which

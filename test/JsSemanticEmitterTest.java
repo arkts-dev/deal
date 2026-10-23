@@ -366,7 +366,7 @@ public class JsSemanticEmitterTest {
 
     private static CompilerInvocation invocation() {
         return CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_3_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -3437,9 +3437,9 @@ public class JsSemanticEmitterTest {
             + " function value and publishes a working host value --");
         Path root = Files.createTempDirectory(tmpRoot, "callback-return");
         Fixture fixture = compileFixture(root, """
-            function one(x: int): int { return x; }
+            function one(x: number): number { return x; }
 
-            export function cb(): (x: int, y: int) => int {
+            export function cb(): (x: number, y: number) => number {
               return one;
             }
 
@@ -3480,7 +3480,7 @@ public class JsSemanticEmitterTest {
             "the returned adapter is a reusable working value: "
                 + run.output());
         check(run.output().contains(
-                "\"bad\":{\"code\":\"E8001\",\"expected\":\"int\"}"),
+                "\"bad\":{\"code\":\"E8001\",\"expected\":\"number\"}"),
             "the published adapter admits its ignored target parameter, so the "
                 + "host's wrong-typed trailing argument fails closed: "
                 + run.output());

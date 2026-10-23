@@ -136,7 +136,7 @@ public class FailClosedGuardRetargetingTest {
     }
 
     private static CompilerInvocation harnessInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -409,7 +409,7 @@ public class FailClosedGuardRetargetingTest {
 
     private static final String MANIFEST = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"

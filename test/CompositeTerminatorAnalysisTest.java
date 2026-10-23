@@ -1147,7 +1147,7 @@ public class CompositeTerminatorAnalysisTest {
         CheckedModuleInput module = built.input().modules().get(0);
         SemanticLowerer.FullProgramE7Result e7 =
             SemanticLowerer.lowerModuleFullProgramE7(module,
-                SemanticProfile.DEAL_V1_3_INT32,
+                SemanticProfile.DEAL_V1_4_BINARY64,
                 manifests.manifests().get(0).constructCoverage(),
                 built.index().interfaceIndexDigest(),
                 productionInvocation().capabilityRegistryHash(),

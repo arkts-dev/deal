@@ -12,7 +12,7 @@
 # against private distribution copies carrying the fault under test.
 #
 # Legs:
-#   1. resource set        the matched v1.3 resource set is present
+#   1. resource set        the matched v1.4 resource set is present
 #   2. backend execution   compile, inspect the published set, and execute
 #                          the smoke project on luajit, jvm and js
 #   3. runtime failure     a thrown Error exits nonzero with its code
@@ -283,7 +283,7 @@ leg "leg 3/9 runtime failures are rejected"
 
 FAILURE_PROJECT="$SCRATCH/runtime-failure"
 mkdir -p "$FAILURE_PROJECT/src"
-printf '%s\n' '{"languageVersion": "1.3", "moduleRoots": ["src"], "backend": "luajit"}' \
+printf '%s\n' '{"languageVersion": "1.4", "moduleRoots": ["src"], "backend": "luajit"}' \
   >"$FAILURE_PROJECT/deal.json"
 printf '%s\n' \
   'export function main(): null {' \
@@ -327,7 +327,7 @@ leg "leg 4/9 old versions are rejected"
 OLD_PROJECT="$SCRATCH/old-version"
 mkdir -p "$OLD_PROJECT"
 cp -R "$ROOT/test/release/smoke-project/." "$OLD_PROJECT/"
-printf '%s\n' '{"languageVersion": "1.2", "backend": "luajit"}' \
+printf '%s\n' '{"languageVersion": "1.3", "backend": "luajit"}' \
   >"$OLD_PROJECT/deal.json"
 OLD_OUT="$SCRATCH/old-version-out"
 OLD_LOG="$SCRATCH/old-version.log"
@@ -335,14 +335,14 @@ status=0
 compile "$DIST" "$OLD_PROJECT" "$OLD_PROJECT/src/main.deal" luajit \
   "$OLD_OUT" "$OLD_LOG" || status=$?
 if [ "$status" -eq 0 ]; then
-  fail "a languageVersion 1.2 manifest was accepted"
+  fail "a languageVersion 1.3 manifest was accepted"
 fi
 if ! grep -q 'E2010' "$OLD_LOG"; then
   cat "$OLD_LOG" >&2
-  fail "the rejected 1.2 manifest did not report E2010"
+  fail "the rejected 1.3 manifest did not report E2010"
 fi
 if [ -d "$OLD_OUT" ] && [ -n "$(ls -A "$OLD_OUT" 2>/dev/null)" ]; then
-  fail "the rejected 1.2 manifest published artifacts"
+  fail "the rejected 1.3 manifest published artifacts"
 fi
 
 old_declaration=$(private_dist old-declaration-version)

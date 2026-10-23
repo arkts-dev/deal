@@ -620,9 +620,6 @@ public final class SharedStdlibSemantics {
         };
     }
 
-    /** The signed32 gate ({@code INT32_RESULT}): success publishes the int, overflow E8004. */
-
-
     // =========================================================================
     // Console (D5): byte-exact one-effect contract over the injected sink
     // =========================================================================
@@ -1554,7 +1551,7 @@ public final class SharedStdlibSemantics {
         }
 
         Value parseNumber() {
-            // The exact decimal classification (DEAL v1.3): the lexeme
+            // The exact decimal classification (DEAL v1.4): the lexeme
             // denotes an Int exactly when its mathematical value is
             // rounded to binary64; every numeric lexeme denotes
             // the binary64 value of the standard conversion.
@@ -1628,7 +1625,7 @@ public final class SharedStdlibSemantics {
      * its single terminal is the declared {@code number}
      * {@code STDLIB_RETURN} boundary under the descriptor-kind rule: a
      * contemporary epoch-millisecond reading (above the signed-32 range)
-     * crosses unchanged, and no int terminal exists (v1.3). Policy
+     * crosses unchanged, and no int terminal exists (v1.4). Policy
      * {@code NO_DEAL_FAILURE}; the reading itself never fails.
      *
      */

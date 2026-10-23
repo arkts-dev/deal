@@ -484,7 +484,7 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "template leading interpolation");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "${greeting} world", 1, 1);
 
-        // v1.3: TemplateText has no escape mechanism — a backslash is
+        // v1.4: TemplateText has no escape mechanism — a backslash is
         // ordinary text and does not shield a following backtick.
         r = tokenize("`a\\`b`");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\", 1, 1);
@@ -1404,7 +1404,7 @@ public class LexerTest {
     }
 
     // =========================================================================
-    // @deal-version directive event tests (DEAL v1.3 file directives)
+    // @deal-version directive event tests (DEAL v1.4 file directives)
     // =========================================================================
 
     static void testDealVersionDirectives() {

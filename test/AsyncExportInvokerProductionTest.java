@@ -774,7 +774,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String EXTERNALS_HEADER = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s",
@@ -786,7 +786,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String PLAIN_MANIFEST = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s"
@@ -1068,7 +1068,7 @@ public class AsyncExportInvokerProductionTest {
                         && failure.getMessage().contains(
                             "cyclic value cannot be encoded as JSON"),
                     backend + ": the cycle rejection is the pinned closed cycle"
-                        + " arm (v1.3): " + failure.getMessage());
+                        + " arm (v1.4): " + failure.getMessage());
             } finally {
                 deleteRecursively(cyclic.root());
             }
@@ -1125,7 +1125,7 @@ public class AsyncExportInvokerProductionTest {
                         "{\"xs\":[1.0E17,1.0E-320,0]}"), result,
                     backend + ": parsed exponent and signed-zero leaves keep"
                         + " their canonical text (5.0 form and -0.0 classify as"
-                        + " number by the v1.3 exact rule): " + result);
+                        + " number by the v1.4 exact rule): " + result);
                 assertNoInternalKeys(backend, valueJson(result));
             } finally {
                 deleteRecursively(exponents.root());

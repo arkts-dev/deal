@@ -46,11 +46,11 @@ public class LuaJitChunkLocalBoundTest {
 
     private static final String DEAL_JSON = """
         {
-          "languageVersion": "1.3",
+          "languageVersion": "1.4",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit",
-          "stdlib": "1.3"
+          "stdlib": "1.4"
         }
         """;
 

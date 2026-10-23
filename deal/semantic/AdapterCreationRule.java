@@ -44,9 +44,8 @@ public final class AdapterCreationRule {
         RETURN,
 
         /**
-         * A class field construction position ({@code CLASS_LITERAL_FIELD}
-         * for a supplied field, {@code CLASS_DEFAULT_FIELD} for a
-         * default).
+         * A supplied class field construction position
+         * ({@code CLASS_LITERAL_FIELD}).
          */
         CLASS_FIELD,
 
@@ -279,12 +278,12 @@ public final class AdapterCreationRule {
     // =========================================================================
 
     /**
-     * The closed position-kind map over the 28 {@link BoundaryKind}
+     * The closed position-kind map over the {@link BoundaryKind}
      * values: {@code VARIABLE_DECLARATION} → {@code VARIABLE_INITIALIZER},
      * {@code VARIABLE_ASSIGNMENT} → {@code VARIABLE_ASSIGNMENT_TARGET},
      * {@code FUNCTION_PARAMETER} → {@code PARAMETER},
      * {@code FUNCTION_RETURN} → {@code RETURN},
-     * {@code CLASS_LITERAL_FIELD}/{@code CLASS_DEFAULT_FIELD} →
+     * {@code CLASS_LITERAL_FIELD} →
      * {@code CLASS_FIELD}, {@code ARRAY_ELEMENT_ASSIGNMENT} →
      * {@code ARRAY_ELEMENT_WRITE}, {@code ARRAY_LITERAL_ELEMENT} →
      * {@code ARRAY_LITERAL_ELEMENT}, {@code CLASS_FIELD_ASSIGNMENT} →
@@ -297,8 +296,7 @@ public final class AdapterCreationRule {
      * assignment positions, the call-argument ({@code FUNCTION_PARAMETER},
      * {@code EXTERNAL_PARAMETER}, {@code STDLIB_PARAMETER}) and
      * {@code return} ({@code FUNCTION_RETURN}) positions, the class
-     * field construction ({@code CLASS_LITERAL_FIELD},
-     * {@code CLASS_DEFAULT_FIELD}) and write
+     * supplied-field construction ({@code CLASS_LITERAL_FIELD}) and write
      * ({@code CLASS_FIELD_ASSIGNMENT}) positions, and the array literal
      * ({@code ARRAY_LITERAL_ELEMENT}) and write
      * ({@code ARRAY_ELEMENT_ASSIGNMENT}) positions. Every other kind is a

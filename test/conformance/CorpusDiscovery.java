@@ -134,7 +134,7 @@ public final class CorpusDiscovery {
     }
 
     /**
-     * The v1.3 spec sections a {@code @spec} reference may start with —
+     * The v1.4 spec sections a {@code @spec} reference may start with —
      * the SPEC_HEADINGS gate (mirrors {@code test/ConformanceTest.java}).
      */
     private static final Set<String> SPEC_HEADINGS = Set.of(
@@ -262,14 +262,14 @@ public final class CorpusDiscovery {
             List<SidecarSchemaValidator.ClassificationFailure> failures) {
         if (expected.isEmpty()) {
             failure(failures, corpusPath, "@expected", "no @expected tag — the "
-                + "v1.3 gate has no unclassified skips; classify the file as a "
+                + "v1.4 gate has no unclassified skips; classify the file as a "
                 + "test or as '@expected: companion'");
             return null;
         }
         if (expected.equals("companion")) {
             if (!spec.isEmpty() && !validSpecReference(spec)) {
                 failure(failures, corpusPath, "@spec", "companion @spec '" + spec
-                    + "' does not reference a v1.3 spec section");
+                    + "' does not reference a v1.4 spec section");
                 return null;
             }
             return new Classification(Kind.COMPANION, null);
@@ -282,8 +282,8 @@ public final class CorpusDiscovery {
         }
         if (spec.isEmpty() || !validSpecReference(spec)) {
             failure(failures, corpusPath, "@spec", "missing or stale @spec '"
-                + spec + "' — the v1.3 gate requires every expectation to "
-                + "reference a v1.3 spec section");
+                + spec + "' — the v1.4 gate requires every expectation to "
+                + "reference a v1.4 spec section");
             return null;
         }
         if (expected.startsWith("compile-error ")
@@ -305,7 +305,7 @@ public final class CorpusDiscovery {
             return new Classification(Kind.RUNTIME_OK, null);
         }
         failure(failures, corpusPath, "@expected", "unknown @expected '"
-            + expected + "' — the v1.3 gate has no unclassified skips");
+            + expected + "' — the v1.4 gate has no unclassified skips");
         return null;
     }
 

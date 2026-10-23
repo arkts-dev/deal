@@ -381,8 +381,7 @@ public final class CheckedProjectBuilder {
      * records, carrying the checker-resolved class identity (the
      * descriptor-text identity, never the private deployment wiring key),
      * fields rendered via the pinned {@code TypeNode → CanonicalTypeText}
-     * grammar with {@code optional}/{@code nullable} from the record and
-     * {@code hasDefault} from {@code defaultExpr} presence.
+     * grammar with {@code optional}/{@code nullable} from the record.
      */
     private static List<ClassInterface> buildImplementationClasses(ModuleFact fact,
                                                                    CanonicalTypeText.Context context,
@@ -502,9 +501,8 @@ public final class CheckedProjectBuilder {
     /**
      * The pinned {@code FieldInterface} derivation from a
      * {@code ClassField} record: {@code {name, declaredType, optional,
-     * nullable, hasDefault}} with {@code declaredType} via the pinned
-     * TypeNode grammar, {@code optional}/{@code nullable} from the record,
-     * and {@code hasDefault} from {@code defaultExpr} presence.
+     * nullable}} with {@code declaredType} via the pinned
+     * TypeNode grammar and {@code optional}/{@code nullable} from the record.
      */
     private static FieldInterface buildFieldInterface(ClassField field,
                                                       CanonicalTypeText.Context context) {

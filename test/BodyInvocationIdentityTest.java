@@ -446,7 +446,7 @@ public class BodyInvocationIdentityTest {
         }
         CheckedModuleInput module = built.input().modules().get(0);
         SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModuleFullProgram(
-            module, SemanticProfile.DEAL_V1_3_INT32,
+            module, SemanticProfile.DEAL_V1_4_BINARY64,
             manifests.manifests().get(0).constructCoverage(),
             built.index().interfaceIndexDigest(),
             invocation().capabilityRegistryHash(),
@@ -996,7 +996,7 @@ public class BodyInvocationIdentityTest {
             String registryHash, String subject) {
         Optional<CompilerDiagnostic> diagnostic = SemanticIrValidator.validate(
             unit, new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-                SemanticProfile.DEAL_V1_3_INT32, registryHash));
+                SemanticProfile.DEAL_V1_4_BINARY64, registryHash));
         check(diagnostic.isPresent(),
             subject + ": the validator rejects the seeded unit");
         if (diagnostic.isPresent()) {
@@ -1195,7 +1195,7 @@ public class BodyInvocationIdentityTest {
         return SemanticLowerer.validateProjectUnit(unit, result.tableOf(unit.moduleId()),
             new SemanticIrValidator.ComparisonFacts(
                 project.interfaceIndex().interfaceIndexDigest(),
-                SemanticProfile.DEAL_V1_3_INT32,
+                SemanticProfile.DEAL_V1_4_BINARY64,
                 invocation().capabilityRegistryHash()),
             ClassBindingFacts.empty(),
             result.registryOf(unit.moduleId()),
@@ -1245,7 +1245,7 @@ public class BodyInvocationIdentityTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 

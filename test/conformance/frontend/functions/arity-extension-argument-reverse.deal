@@ -3,11 +3,11 @@
 // @expected: compile-error E5001
 // @features: functions, arity-extension, diagnostics
 
-function two(a: int, b: int): int { return a + b; }
+function two(a: number, b: number): number { return a + b; }
 
-function needOne(f: (x: int) => int): int { return f(1); }
+function needOne(f: (x: number) => number): number { return f(1); }
 
 export function main(): null {
-  let r: int = needOne(two);
+  let r: number = needOne(two);
   return null;
 }

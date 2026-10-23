@@ -288,14 +288,14 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testMinimalManifestDefaults() {
-        String json = "{\"languageVersion\":\"1.3\"}";
+        String json = "{\"languageVersion\":\"1.4\"}";
         ProjectManifest manifest = checkSuccess(json);
         if (manifest == null) {
             return;
         }
-        check(manifest.languageVersion().equals("1.3"), "languageVersion pinned '1.3'");
+        check(manifest.languageVersion().equals("1.4"), "languageVersion pinned '1.4'");
         check(manifest.backend().equals("luajit"), "absent backend defaults to 'luajit'");
-        check(manifest.stdlib().equals("1.3"), "absent stdlib defaults to '1.3'");
+        check(manifest.stdlib().equals("1.4"), "absent stdlib defaults to '1.4'");
         check(manifest.moduleRoots().isEmpty(), "absent moduleRoots is the empty list");
         check(manifest.output() == null, "absent output stays absent (OutputConfigResolver duty)");
         check(manifest.dependencies() == null, "absent dependencies stays absent");
@@ -304,12 +304,12 @@ public final class StrictManifestParserTest {
                 && manifest.ranges().containsKey("languageVersion"),
             "ranges maps only the present member");
         checkManifestRange("languageVersion value range", json,
-            manifest.ranges().get("languageVersion"), "\"1.3\"", 0);
+            manifest.ranges().get("languageVersion"), "\"1.4\"", 0);
     }
 
     private static void testFullManifestValuesAndKinds() {
-        String json = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\",\"lib\"],"
-            + "\"output\":\"build/out\",\"backend\":\"jvm\",\"stdlib\":\"1.3\","
+        String json = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\",\"lib\"],"
+            + "\"output\":\"build/out\",\"backend\":\"jvm\",\"stdlib\":\"1.4\","
             + "\"dependencies\":{\"a\":1,\"sub\":{\"x\":\"y\\n\"},\"arr\":[true,false,null]},"
             + "\"externals\":{"
             + "\"host/a\":{\"declaration\":\"bindings/a.d.deal\"},"
@@ -387,18 +387,18 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testStrictEscapeSet() {
-        String unicode = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\\u0073rc\"]}";
+        String unicode = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\\u0073rc\"]}";
         ProjectManifest manifest = checkSuccess(unicode);
         check(manifest != null && manifest.moduleRoots().get(0).value().equals("src"),
             "\\u0073rc strictly decodes to 'src' (permissive values never used)");
 
-        String pair = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\\uD83D\\uDE00\"]}";
+        String pair = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\\uD83D\\uDE00\"]}";
         manifest = checkSuccess(pair);
         check(manifest != null
                 && manifest.moduleRoots().get(0).value().equals("\uD83D\uDE00"),
             "surrogate-pair escape decodes to one supplementary scalar");
 
-        String specials = "{\"languageVersion\":\"1.3\",\"moduleRoots\":"
+        String specials = "{\"languageVersion\":\"1.4\",\"moduleRoots\":"
             + "[\"a\\bb\",\"c\\fd\",\"e\\tf\",\"g\\nh\",\"i\\rj\",\"k\\\"l\",\"m\\\\n\",\"o\\/p\"]}";
         manifest = checkSuccess(specials);
         if (manifest != null) {
@@ -412,35 +412,35 @@ public final class StrictManifestParserTest {
             check(manifest.moduleRoots().get(7).value().equals("o/p"), "\\/ valid and decoded");
         }
 
-        String hex = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\\u0041\"]}";
+        String hex = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\\u0041\"]}";
         manifest = checkSuccess(hex);
         check(manifest != null && manifest.moduleRoots().get(0).value().equals("A"),
             "\\u0041 decodes to 'A'");
 
-        String fffd = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\\uFFFD\"]}";
+        String fffd = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\\uFFFD\"]}";
         manifest = checkSuccess(fffd);
         check(manifest != null && manifest.moduleRoots().get(0).value().equals("\uFFFD"),
             "a literal \\uFFFD escape remains valid and decodes to U+FFFD");
 
         // Defective escapes fail at the escape's range (backslash through
         // the offending scalar, or the token end).
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\x\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\x\"]}",
             "invalid escape sequence in string", "\\x", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\u00G0\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\u00G0\"]}",
             "invalid escape sequence in string", "\\u00G", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\u00\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\u00\"]}",
             "invalid escape sequence in string", "\\u00\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\uD800\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\uD800\"]}",
             "invalid escape sequence in string", "\\uD800", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\uDC00\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\uDC00\"]}",
             "invalid escape sequence in string", "\\uDC00", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\uD800\\u0041\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\uD800\\u0041\"]}",
             "invalid escape sequence in string", "\\uD800", 0);
-        String trailingBackslash = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"abc\\";
+        String trailingBackslash = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"abc\\";
         checkFailure(trailingBackslash, "invalid escape sequence in string", "\\", 0);
 
         // Escape defects inside a KEY fail at the escape's range too.
-        checkFailure("{\"language\\xVersion\":\"1.3\"}",
+        checkFailure("{\"language\\xVersion\":\"1.4\"}",
             "invalid escape sequence in member key", "\\x", 0);
     }
 
@@ -449,27 +449,27 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testDuplicateMembersRecursively() {
-        String topLevel = "{\"languageVersion\":\"1.3\",\"languageVersion\":\"1.3\"}";
+        String topLevel = "{\"languageVersion\":\"1.4\",\"languageVersion\":\"1.4\"}";
         checkFailure(topLevel, "duplicate member 'languageVersion'",
             "\"languageVersion\"", 1);
 
-        String externalsEntry = "{\"languageVersion\":\"1.3\",\"externals\":"
+        String externalsEntry = "{\"languageVersion\":\"1.4\",\"externals\":"
             + "{\"m\":{\"declaration\":\"a.d.deal\",\"declaration\":\"b.d.deal\"}}}";
         checkFailure(externalsEntry, "duplicate member 'declaration'", "\"declaration\"", 1);
 
-        String dependencies = "{\"languageVersion\":\"1.3\",\"dependencies\":"
+        String dependencies = "{\"languageVersion\":\"1.4\",\"dependencies\":"
             + "{\"a\":1,\"a\":2}}";
         checkFailure(dependencies, "duplicate member 'a'", "\"a\"", 1);
 
-        String deepDependencies = "{\"languageVersion\":\"1.3\",\"dependencies\":"
+        String deepDependencies = "{\"languageVersion\":\"1.4\",\"dependencies\":"
             + "{\"outer\":{\"inner\":{\"k\":1,\"k\":2}}}}";
         checkFailure(deepDependencies, "duplicate member 'k'", "\"k\"", 1);
 
         // Duplicate detection compares strictly decoded keys, so a
         // differently spelled key that decodes to the same string still
         // collides at the second key's range.
-        String decodedDuplicate = "{\"languageVersion\":\"1.3\","
-            + "\"\\u006canguageVersion\":\"1.3\"}";
+        String decodedDuplicate = "{\"languageVersion\":\"1.4\","
+            + "\"\\u006canguageVersion\":\"1.4\"}";
         checkFailure(decodedDuplicate, "duplicate member 'languageVersion'",
             "\"\\u006canguageVersion\"", 0);
     }
@@ -488,21 +488,21 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testStrictNumbers() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"n\":01}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"n\":01}}",
             "strict JSON grammar", "01", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"n\":1.}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"n\":1.}}",
             "strict JSON grammar", "1.", 1);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"n\":-.5}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"n\":-.5}}",
             "strict JSON grammar", "-.5", 0);
         ProjectManifest manifest = checkSuccess(
-            "{\"languageVersion\":\"1.3\",\"dependencies\":{\"n\":1e5}}");
+            "{\"languageVersion\":\"1.4\",\"dependencies\":{\"n\":1e5}}");
         check(manifest != null
                 && manifest.dependencies().members().get("n")
                     instanceof StrictJsonValue.NumberVal number
                 && number.sourceText().equals("1e5"),
             "1e5 is a valid strict number, preserved exactly");
         manifest = checkSuccess(
-            "{\"languageVersion\":\"1.3\",\"dependencies\":{\"n\":-0.5e-3}}");
+            "{\"languageVersion\":\"1.4\",\"dependencies\":{\"n\":-0.5e-3}}");
         check(manifest != null
                 && manifest.dependencies().members().get("n")
                     instanceof StrictJsonValue.NumberVal number2
@@ -511,15 +511,15 @@ public final class StrictManifestParserTest {
     }
 
     private static void testLiteralExactness() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"b\":tru,}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"b\":tru,}}",
             "expected literal 'false'", "tru,}", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"b\":fals}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"b\":fals}}",
             "expected literal 'false'", "fals}", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"b\":nul}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"b\":nul}}",
             "expected literal 'null'", "nul}", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":{\"b\":truex}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":{\"b\":truex}}",
             "invalid JSON", "x", 0);
-        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.3\","
+        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.4\","
             + "\"dependencies\":{\"t\":true,\"f\":false,\"n\":null}}");
         check(manifest != null
                 && manifest.dependencies().members().get("t")
@@ -536,17 +536,17 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testUnknownMembers() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"permissions\":[]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"permissions\":[]}",
             "unknown member 'permissions'", "\"permissions\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"limits\":{}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"limits\":{}}",
             "unknown member 'limits'", "\"limits\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoot\":[\"src\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoot\":[\"src\"]}",
             "unknown member 'moduleRoot'", "\"moduleRoot\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a.d.deal\",\"foo\":1}}}",
             "unknown member 'foo' in externals entry", "\"foo\"", 0);
         // A strictly decoded alias of a legacy member is still unknown.
-        checkFailure("{\"languageVersion\":\"1.3\",\"perm\\u0069ssions\":[]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"perm\\u0069ssions\":[]}",
             "unknown member 'permissions'", "\"perm\\u0069ssions\"", 0);
     }
 
@@ -571,9 +571,12 @@ public final class StrictManifestParserTest {
         checkFailure(" \n\t\r ", "missing required member 'languageVersion'", null, 0);
         checkFailure("{\"languageVersion\":1}", "must be the JSON string", "1", 0);
         checkFailure("{\"languageVersion\":null}", "must be the JSON string", "null", 0);
-        checkFailure("{\"languageVersion\":\"1.1\"}", "must be exactly \"1.3\"", "\"1.1\"", 0);
-        checkFailure("{\"languageVersion\":\"1.2\"}", "must be exactly \"1.3\"", "\"1.2\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3 \"}", "must be exactly \"1.3\"", "\"1.3 \"", 0);
+        checkFailure("{\"languageVersion\":\"1.1\"}", "must be exactly \"1.4\"", "\"1.1\"", 0);
+        checkFailure("{\"languageVersion\":\"1.2\"}", "must be exactly \"1.4\"", "\"1.2\"", 0);
+        checkFailure("{\"languageVersion\":\"1.3\"}", "must be exactly \"1.4\"", "\"1.3\"", 0);
+        checkFailure("{\"languageVersion\":\"1.4\",\"stdlib\":\"1.3\"}",
+            "must be exactly \"1.4\"", "\"1.3\"", 0);
+        checkFailure("{\"languageVersion\":\"1.3 \"}", "must be exactly \"1.4\"", "\"1.3 \"", 0);
         checkFailure("[]", "manifest root must be a JSON object", "[]", 0);
         checkFailure("\"x\"", "manifest root must be a JSON object", "\"x\"", 0);
         checkFailure("1", "manifest root must be a JSON object", "1", 0);
@@ -582,43 +585,43 @@ public final class StrictManifestParserTest {
     }
 
     private static void testBackend() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":\"lua\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":\"lua\"}",
             "unsupported backend 'lua'", "\"lua\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":\"LuaJIT\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":\"LuaJIT\"}",
             "unsupported backend 'LuaJIT'", "\"LuaJIT\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":\" luajit\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":\" luajit\"}",
             "unsupported backend ' luajit'", "\" luajit\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":\"\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":\"\"}",
             "unsupported backend ''", "\"\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":\"clang\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":\"clang\"}",
             "unsupported backend 'clang'", "\"clang\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":1}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":1}",
             "'backend' must be a string", "1", 1);
         ProjectManifest manifest = checkSuccess(
-            "{\"languageVersion\":\"1.3\",\"backend\":\"jvm\"}");
+            "{\"languageVersion\":\"1.4\",\"backend\":\"jvm\"}");
         check(manifest != null && manifest.backend().equals("jvm"), "backend 'jvm' valid");
-        manifest = checkSuccess("{\"languageVersion\":\"1.3\",\"backend\":\"luajit\"}");
+        manifest = checkSuccess("{\"languageVersion\":\"1.4\",\"backend\":\"luajit\"}");
         check(manifest != null && manifest.backend().equals("luajit"),
             "backend 'luajit' valid");
-        manifest = checkSuccess("{\"languageVersion\":\"1.3\",\"backend\":\"js\"}");
+        manifest = checkSuccess("{\"languageVersion\":\"1.4\",\"backend\":\"js\"}");
         check(manifest != null && manifest.backend().equals("js"),
             "backend 'js' valid (ISSUE-0169 remediation, ISSUE-0471)");
     }
 
     private static void testModuleRoots() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":\"src\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":\"src\"}",
             "'moduleRoots' must be an array", "\"src\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":{\"src\":1}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":{\"src\":1}}",
             "'moduleRoots' must be an array", "{\"src\":1}", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[1,\"src\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[1,\"src\"]}",
             "'moduleRoots' entries must be strings", "1", 1);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\"]}",
             "must be a non-empty string", "\"\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\u0000b\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\u0000b\"]}",
             "must not contain NUL", "\"a\\u0000b\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"/src\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"/src\"]}",
             "must be relative", "\"/src\"", 0);
-        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.3\",\"moduleRoots\":"
+        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.4\",\"moduleRoots\":"
             + "[\"src\",\"lib\",\"lib/utils\",\"../shared\",\"C:\\\\foo\",\"a\\\\b\"]}");
         if (manifest != null) {
             check(manifest.moduleRoots().size() == 6, "six valid roots");
@@ -630,47 +633,47 @@ public final class StrictManifestParserTest {
                     && manifest.moduleRoots().get(5).value().equals("a\\b"),
                 "relative roots preserved exactly (backslash ordinary; ../ permitted)");
         }
-        manifest = checkSuccess("{\"languageVersion\":\"1.3\",\"moduleRoots\":[]}");
+        manifest = checkSuccess("{\"languageVersion\":\"1.4\",\"moduleRoots\":[]}");
         check(manifest != null && manifest.moduleRoots().isEmpty(),
             "an empty moduleRoots array is the empty list");
     }
 
     private static void testOutput() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"output\":5}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"output\":5}",
             "'output' must be a non-empty string", "5", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"output\":\"\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"output\":\"\"}",
             "'output' must be a non-empty string", "\"\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"output\":\"a\\u0000b\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"output\":\"a\\u0000b\"}",
             "must not contain NUL", "\"a\\u0000b\"", 0);
         ProjectManifest manifest = checkSuccess(
-            "{\"languageVersion\":\"1.3\",\"output\":\"./build/out\"}");
+            "{\"languageVersion\":\"1.4\",\"output\":\"./build/out\"}");
         check(manifest != null && manifest.output() != null
                 && manifest.output().value().equals("./build/out"),
             "relative ./ output form is schema-valid text");
-        manifest = checkSuccess("{\"languageVersion\":\"1.3\",\"output\":\"/abs/out\"}");
+        manifest = checkSuccess("{\"languageVersion\":\"1.4\",\"output\":\"/abs/out\"}");
         check(manifest != null && manifest.output() != null
                 && manifest.output().value().equals("/abs/out"),
             "absolute output form is schema-valid text");
     }
 
     private static void testStdlib() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"stdlib\":\"2.0\"}",
-            "'stdlib' must be exactly \"1.3\"", "\"2.0\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"stdlib\":1}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"stdlib\":\"2.0\"}",
+            "'stdlib' must be exactly \"1.4\"", "\"2.0\"", 0);
+        checkFailure("{\"languageVersion\":\"1.4\",\"stdlib\":1}",
             "'stdlib' must be a string", "1", 1);
         ProjectManifest manifest = checkSuccess(
-            "{\"languageVersion\":\"1.3\",\"stdlib\":\"1.3\"}");
-        check(manifest != null && manifest.stdlib().equals("1.3"), "stdlib '1.3' valid");
+            "{\"languageVersion\":\"1.4\",\"stdlib\":\"1.4\"}");
+        check(manifest != null && manifest.stdlib().equals("1.4"), "stdlib '1.4' valid");
     }
 
     private static void testDependencies() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":[]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":[]}",
             "'dependencies' must be a JSON object", "[]", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":\"x\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":\"x\"}",
             "'dependencies' must be a JSON object", "\"x\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"dependencies\":null}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"dependencies\":null}",
             "'dependencies' must be a JSON object", "null", 0);
-        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.3\","
+        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.4\","
             + "\"dependencies\":{\"deep\":{\"escaped\":\"\\u00e9\",\"n\":-1,\"b\":true}}}");
         check(manifest != null && manifest.dependencies() != null
                 && manifest.dependencies().members().get("deep")
@@ -686,42 +689,42 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testExternals() {
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":[\"a\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":[\"a\"]}",
             "'externals' must be an object", "[\"a\"]", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":5}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":5}",
             "'externals' must be an object", "5", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":\"x\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":\"x\"}",
             "'externals' must be an object", "\"x\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":{\"m\":\"x.d.deal\"}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":{\"m\":\"x.d.deal\"}}",
             "externals entry 'm' must be an object", "\"x.d.deal\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":{\"m\":{}}}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":{\"m\":{}}}",
             "missing required member 'declaration'", "{}", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":1}}}",
             "'declaration' must be a string", "1", 1);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"\"}}}",
             "must be a non-empty string", "\"\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a\\u0000.d.deal\"}}}",
             "must not contain NUL", "\"a\\u0000.d.deal\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a.deal\"}}}",
             "must be a host declaration file (.d.deal)", "\"a.deal\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a.d.deal\",\"nativeLibrary\":1}}}",
             "unknown member 'nativeLibrary'", "\"nativeLibrary\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"m\":{\"declaration\":\"a.d.deal\",\"nativeLibrary\":\"\"}}}",
             "unknown member 'nativeLibrary'", "\"nativeLibrary\"", 0);
-        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.3\","
+        ProjectManifest manifest = checkSuccess("{\"languageVersion\":\"1.4\","
             + "\"externals\":{\"m\":{\"declaration\":\"bindings/a.d.deal\"}}}");
         check(manifest != null && manifest.externals().size() == 1
                 && manifest.externals().get("m") != null
                 && manifest.externals().get("m").declaration().value()
                     .equals("bindings/a.d.deal"),
             "minimal externals entry valid");
-        manifest = checkSuccess("{\"languageVersion\":\"1.3\",\"externals\":{}}");
+        manifest = checkSuccess("{\"languageVersion\":\"1.4\",\"externals\":{}}");
         check(manifest != null && manifest.externals().isEmpty(),
             "an empty externals object is the empty map");
     }
@@ -731,24 +734,24 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testStructuralFaults() {
-        checkFailure("{\"languageVersion\"\u2028: \"1.3\"}",
+        checkFailure("{\"languageVersion\"\u2028: \"1.4\"}",
             "non-strict JSON whitespace", "\u2028", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\u0001b\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\u0001b\"]}",
             "raw control character in string", "\u0001", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\uD800\"]}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\uD800\"]}",
             "unpaired surrogate in string", "\uD800", 0);
-        String unclosed = "{\"languageVersion\":\"1.3\"";
+        String unclosed = "{\"languageVersion\":\"1.4\"";
         checkFailureAt(unclosed, "unclosed object", expectedEndRange(unclosed));
-        String missingComma = "{\"languageVersion\":\"1.3\" \"x\":1}";
+        String missingComma = "{\"languageVersion\":\"1.4\" \"x\":1}";
         checkFailureAt(missingComma, "expected ',' or container end",
             expectedZeroRange(missingComma, "\"x\"", 0));
-        checkFailure("{\"languageVersion\":\"1.3\",}", "expected string key", "}", 0);
+        checkFailure("{\"languageVersion\":\"1.4\",}", "expected string key", "}", 0);
         checkFailure("{\"languageVersion\" 1}", "expected ':'", "1", 0);
         checkFailure("{\"languageVersion\":}", "expected value", "}", 0);
-        checkFailure("{\"languageVersion\":\"1.3\"}#", "invalid JSON", "#", 0);
-        String trailing = "{\"languageVersion\":\"1.3\"} x";
+        checkFailure("{\"languageVersion\":\"1.4\"}#", "invalid JSON", "#", 0);
+        String trailing = "{\"languageVersion\":\"1.4\"} x";
         checkFailure(trailing, "after root value", "x", 0);
-        String trailingToken = "{\"languageVersion\":\"1.3\"} 1";
+        String trailingToken = "{\"languageVersion\":\"1.4\"} 1";
         checkFailureAt(trailingToken, "trailing content after root value",
             expectedZeroRange(trailingToken, "1", 1));
     }
@@ -758,16 +761,16 @@ public final class StrictManifestParserTest {
     // =========================================================================
 
     private static void testFailFastScanOrder() {
-        String escapeFirst = "{\"languageVersion\":\"1.3\",\"dependencies\":"
+        String escapeFirst = "{\"languageVersion\":\"1.4\",\"dependencies\":"
             + "{\"x\":\"\\q\",\"y\":01}}";
         checkFailure(escapeFirst, "invalid escape sequence in string", "\\q", 0);
-        String numberFirst = "{\"languageVersion\":\"1.3\",\"dependencies\":"
+        String numberFirst = "{\"languageVersion\":\"1.4\",\"dependencies\":"
             + "{\"y\":01,\"x\":\"\\q\"}}";
         checkFailure(numberFirst, "strict JSON grammar", "01", 0);
-        String faultAfterToken = "{\"languageVersion\":\"1.3\",\"dependencies\":"
+        String faultAfterToken = "{\"languageVersion\":\"1.4\",\"dependencies\":"
             + "{\"a\":01}\u2028}";
         checkFailure(faultAfterToken, "strict JSON grammar", "01", 0);
-        String faultBeforeToken = "{\"languageVersion\":\"1.3\",\"dependencies\":\u2028"
+        String faultBeforeToken = "{\"languageVersion\":\"1.4\",\"dependencies\":\u2028"
             + "{\"a\":01}}";
         checkFailure(faultBeforeToken, "non-strict JSON whitespace", "\u2028", 0);
     }
@@ -778,15 +781,15 @@ public final class StrictManifestParserTest {
             "'languageVersion' must be the JSON string", "1", 0);
         checkFailure("{\"output\":5,\"languageVersion\":1}",
             "'languageVersion' must be the JSON string", "1", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"backend\":\"clang\",\"moduleRoots\":\"x\"}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"backend\":\"clang\",\"moduleRoots\":\"x\"}",
             "unsupported backend 'clang'", "\"clang\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"/abs\"],\"output\":5}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"/abs\"],\"output\":5}",
             "'moduleRoots' entries must be relative", "\"/abs\"", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"output\":5,\"stdlib\":9}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"output\":5,\"stdlib\":9}",
             "'output' must be a non-empty string", "5", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"stdlib\":9,\"output\":5}",
+        checkFailure("{\"languageVersion\":\"1.4\",\"stdlib\":9,\"output\":5}",
             "'output' must be a non-empty string", "5", 0);
-        checkFailure("{\"languageVersion\":\"1.3\",\"externals\":"
+        checkFailure("{\"languageVersion\":\"1.4\",\"externals\":"
                 + "{\"b\":{\"declaration\":\"x.deal\"},\"a\":{\"declaration\":1}}}",
             "must be a host declaration file (.d.deal)", "\"x.deal\"", 0);
     }
@@ -799,7 +802,7 @@ public final class StrictManifestParserTest {
         // Referenced files do not exist on disk; the manifest path's
         // directory does not exist either. A successful parse proves the
         // parser performs no filesystem access.
-        String json = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"missing/root\"],"
+        String json = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"missing/root\"],"
             + "\"externals\":{\"host/x\":{\"declaration\":\"/no/such/file.d.deal\""
             + "}},\"output\":\"build/out\"}";
         StrictManifestParser.StrictManifestParseResult first = parse(json);
@@ -823,35 +826,35 @@ public final class StrictManifestParserTest {
 
     private static void testCompleteScalarRanges() {
         // Multi-line manifest: exact line/column pins.
-        String multiLine = "{\n  \"languageVersion\": \"1.3\",\n  \"moduleRoots\": [\"src\"]\n}";
+        String multiLine = "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"]\n}";
         checkFailure("{\n  \"languageVersion\": \"1.1\",\n  \"moduleRoots\": [\"src\"]\n}",
-            "must be exactly \"1.3\"", "\"1.1\"", 0);
+            "must be exactly \"1.4\"", "\"1.1\"", 0);
         StrictManifestParser.StrictManifestParseResult multiResult = parse(multiLine);
         check(multiResult.manifest() != null, "multi-line manifest parses");
         if (multiResult.manifest() != null) {
-            SourceScalarRange expected = expectedRange(multiLine, "\"1.3\"", 0);
+            SourceScalarRange expected = expectedRange(multiLine, "\"1.4\"", 0);
             check(expected.startLine() == 2 && expected.startColumn() == 22
                     && expected.endLine() == 2 && expected.endColumn() == 27,
                 "multi-line value range line/column recomputation sane");
             checkManifestRange("multi-line languageVersion range", multiLine,
-                multiResult.manifest().ranges().get("languageVersion"), "\"1.3\"", 0);
+                multiResult.manifest().ranges().get("languageVersion"), "\"1.4\"", 0);
         }
 
         // CRLF: two scalars per line break.
-        String crlf = "{\r\n  \"languageVersion\": \"1.3\"\r\n}";
+        String crlf = "{\r\n  \"languageVersion\": \"1.4\"\r\n}";
         StrictManifestParser.StrictManifestParseResult crlfResult = parse(crlf);
         check(crlfResult.manifest() != null, "CRLF manifest parses");
         if (crlfResult.manifest() != null) {
             checkManifestRange("CRLF languageVersion range", crlf,
-                crlfResult.manifest().ranges().get("languageVersion"), "\"1.3\"", 0);
-            SourceScalarRange expected = expectedRange(crlf, "\"1.3\"", 0);
+                crlfResult.manifest().ranges().get("languageVersion"), "\"1.4\"", 0);
+            SourceScalarRange expected = expectedRange(crlf, "\"1.4\"", 0);
             check(expected.startLine() == 2 && expected.startColumn() == 22,
                 "CRLF value range starts on line 2 (line break at CR)");
         }
 
         // Astral escape: the token's scalar range counts the escape
         // spelling, not the decoded scalar.
-        String astral = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\\uD83D\\uDE00rc\"]}";
+        String astral = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\\uD83D\\uDE00rc\"]}";
         StrictManifestParser.StrictManifestParseResult astralResult = parse(astral);
         check(astralResult.manifest() != null, "astral escape manifest parses");
         if (astralResult.manifest() != null) {
@@ -866,11 +869,11 @@ public final class StrictManifestParserTest {
         }
 
         // A failure range mid-line after an astral scalar stays exact.
-        String astralFail = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"\\uD83D\\uDE00\\x\"]}";
+        String astralFail = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"\\uD83D\\uDE00\\x\"]}";
         checkFailure(astralFail, "invalid escape sequence in string", "\\x", 0);
 
         // Tab escape token: 7 scalars.
-        String tab = "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"a\\tb\"]}";
+        String tab = "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"a\\tb\"]}";
         StrictManifestParser.StrictManifestParseResult tabResult = parse(tab);
         check(tabResult.manifest() != null
                 && tabResult.manifest().moduleRoots().get(0).value().equals("a\tb"),
@@ -883,10 +886,10 @@ public final class StrictManifestParserTest {
         // Every failure carries a complete SOURCE range with the scalar
         // length invariant; no failure is SYNTHETIC.
         String[] failures = {
-            "{\"languageVersion\":1.2}", "{\"languageVersion\":\"1.3\",\"backend\":\"clang\"}",
-            "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"/abs\"]}",
-            "{\"languageVersion\":\"1.3\",\"externals\":{\"m\":{\"declaration\":\"x.deal\"}}}",
-            "{\"languageVersion\":\"1.3\",\"dependencies\":{\"a\":01}}",
+            "{\"languageVersion\":1.2}", "{\"languageVersion\":\"1.4\",\"backend\":\"clang\"}",
+            "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"/abs\"]}",
+            "{\"languageVersion\":\"1.4\",\"externals\":{\"m\":{\"declaration\":\"x.deal\"}}}",
+            "{\"languageVersion\":\"1.4\",\"dependencies\":{\"a\":01}}",
         };
         for (String failure : failures) {
             CompilerDiagnostic diagnostic = parse(failure).failure();

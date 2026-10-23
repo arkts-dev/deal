@@ -1,5 +1,5 @@
 // @spec: Lexical elements
-// @description: A break statement must end with its semicolon; omitting it before a closing brace is E1053 (v1.3 Semicolon rules)
+// @description: A break statement must end with its semicolon; omitting it before a closing brace is E1053 (v1.4 Semicolon rules)
 // @expected: compile-error E1053
 // @features: parser, semicolon, break, loop
 

@@ -142,7 +142,7 @@ public class AdapterShapeMapPayloadTest {
             return null;
         }
         return SemanticLowerer.lowerModuleShapeMapCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 

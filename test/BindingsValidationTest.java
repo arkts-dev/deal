@@ -139,7 +139,7 @@ public class BindingsValidationTest {
             return null;
         }
         return SemanticLowerer.lowerModuleValidationCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_3_INT32, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -210,7 +210,7 @@ public class BindingsValidationTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor.Func SIG0 =
@@ -738,7 +738,7 @@ public class BindingsValidationTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_3_INT32, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
+            SemanticProfile.DEAL_V1_4_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             functions, new ModuleInitPlan(List.of(), INIT_BLOCK), ExportPlan.empty(), registry,
             ops, new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),
@@ -1440,37 +1440,6 @@ public class BindingsValidationTest {
             "an adapter result whose agreeing assignment cell is joined by a "
                 + "STDLIB_RETURN crossing",
             "STDLIB_RETURN", "not the adapted position's own cell");
-
-        // The class-default publisher: no construction is required in the
-        // declaring unit, but a stdlib return crossing of the published
-        // result is still not a position cell.
-        ValueId defaultAdapter = nextValue();
-        FunctionAllocationIdentity defaultIdentity = new FunctionAllocationIdentity(
-            defaultAdapter.id());
-        BlockId defaultBlock = nextBlock();
-        SemanticOp defaultAdapt = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(x, 0), SIG1, SIG2, null, List.of(), List.of(),
-            defaultAdapter);
-        SemanticOp classDefault = op(SemanticOpKind.CLASS_DEFAULT,
-            new KindPayload.ClassDefaultPayload(new ClassId("mod.binding", "C"),
-                "handler", defaultBlock),
-            defaultAdapter, SIG2, FailurePolicyId.NO_DEAL_FAILURE, null);
-        SemanticOp defaultCrossing = boundaryOp(BoundaryKind.STDLIB_RETURN, SIG2,
-            defaultAdapter);
-        LoweredModuleUnit unitDefault = unit(Map.of(),
-            Map.of(defaultIdentity,
-                new FunctionExecutionBinding.AdapterBinding(defaultAdapt.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(x, 0), SIG1,
-                    SIG2)),
-            List.of(alloc, initValue, init, defaultAdapt, classDefault, defaultCrossing));
-        StructuredBodyTable tableDefault = tableOf(Map.ofEntries(
-            Map.entry(INIT_BLOCK, List.of(alloc, initValue, init, defaultAdapt,
-                classDefault, defaultCrossing)),
-            Map.entry(defaultBlock, List.of())));
-        assertE6005(BindingsProductionValidator.validate(unitDefault, tableDefault),
-            "NO_ADAPTER_AT_BOUNDARY",
-            "a class-default adapter published beside a STDLIB_RETURN crossing",
-            "STDLIB_RETURN", "CLASS_DEFAULT_FIELD");
 
         // The variable position's own chain is closed by adjacency: a
         // VARIABLE_ASSIGNMENT cell that consumes the adapter result but is

@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
 // @description: JSON numbers preserve binary64 values, padded exponents and zero-sign serialization
 // @expected: runtime-ok
-// @features: stdlib, json, int, v1.2, v1.3
+// @features: stdlib, json, int, v1.2, v1.4
 
 import * as json from "std/json";
 import * as str from "std/string";

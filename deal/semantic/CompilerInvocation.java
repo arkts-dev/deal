@@ -8,7 +8,7 @@ import java.util.Objects;
 /**
  * The release-owned compiler invocation record (foundation F1; parent
  * D2): one project-wide semantic profile — the sole
- * {@code DEAL_V1_3_INT32} — one release state, the closed
+ * {@code DEAL_V1_4_BINARY64} — one release state, the closed
  * capability-registry digest, and the derived release-state hash.
  *
  * <p>The selectable inputs are {@code semanticProfile}, {@code releaseState}
@@ -25,7 +25,7 @@ import java.util.Objects;
  *
  * <p>There is exactly one executable semantic path. The record carries no
  * purpose, no alternate profile and no profile-selecting route: every
- * compiler entrypoint lowers and emits the one v1.3 production semantics
+ * compiler entrypoint lowers and emits the one v1.4 production semantics
  * for its selected backend.</p>
  */
 public record CompilerInvocation(

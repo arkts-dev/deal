@@ -66,7 +66,7 @@ public class DeclaredBodyCarrierProductionTest {
     private static final Set<String> RECURSION_CASES = Set.of(
         "direct-accum", "alias-accum", "direct-accum-fail", "alias-accum-fail", "seq-await");
     private static final String DEAL_JSON =
-        "{\"languageVersion\":\"1.3\",\"moduleRoots\":[\"src\"],"
+        "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"],"
             + "\"output\":\"out\",\"backend\":\"luajit\"}\n";
 
     private record FailurePin(String code, String anchor) {}

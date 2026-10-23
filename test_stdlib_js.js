@@ -379,7 +379,7 @@ test("table.keys returns the insertion-ordered string keys of a validated Map", 
   t2.set("2", "two");
   t2.set("1", "one");
   assertArrayEqual(table.keys.$f(t2, "f.js", 1, 1), ["2", "1"], "set order is insertion order");
-  // A present null-valued key is a present key (docs/spec-v1.3.md:1911).
+  // A present null-valued key is a present key (docs/spec-v1.4.md:1911).
   const t3 = rt.makeTable({ a: 1 });
   t3.set("n", null);
   assertArrayEqual(table.keys.$f(t3, "f.js", 1, 1), ["a", "n"],
@@ -406,7 +406,7 @@ test("json.parse rejects a top-level scalar, array, or null with E8001 expected 
   // (string)->table exit with the shared boundary executor's own tokens:
   // a decoded JSON array is the array carrier, a decoded JSON null is
   // language null — never admitted as plain Maps (the cross-lane
-  // uniform v1.3 outcome).
+  // uniform v1.4 outcome).
   const errArray = assertErrorMessage(function() { json.parse.$f("[1,2]", "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errArray.expected, "table", "top-level array expected token");
   assertEqual(errArray.actual, "array", "top-level array actual kind");
@@ -764,7 +764,7 @@ test("json.stringify rejects class instances inside table content", function() {
 });
 
 // ===========================================================================
-// Exact JSON number classification and decoded-key duplicates (v1.3)
+// Exact JSON number classification and decoded-key duplicates (v1.4)
 // ===========================================================================
 
 test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are number", function() {

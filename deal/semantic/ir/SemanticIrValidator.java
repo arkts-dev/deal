@@ -103,12 +103,12 @@ public final class SemanticIrValidator {
 
     /**
      * The only admitted unit profile name (S1): derived from the
-     * single-profile owner {@link SemanticProfile#DEAL_V1_3_INT32}, never a
+     * single-profile owner {@link SemanticProfile#DEAL_V1_4_BINARY64}, never a
      * duplicated spelling. A carried profile that is not the owner's value
      * rejects; the owner itself is the closed set of supported semantic
      * modes.
      */
-    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_3_INT32.name();
+    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_4_BINARY64.name();
 
     // =========================================================================
     // Comparison facts (validator contract Input)
@@ -2291,8 +2291,7 @@ public final class SemanticIrValidator {
 
     /**
      * The closed selector→policy rule for {@code UNARY} (parent
-     * "selector→policy is fixed"): {@code INT32_NEG} →
-     * {@code INT32_RESULT}; {@code NUMBER_NEG} and {@code BOOL_NOT} →
+     * "selector→policy is fixed"): {@code NUMBER_NEG} and {@code BOOL_NOT} →
      * {@code NO_DEAL_FAILURE}. This method is the single source of the
      * assignment: the value-semantics primitive's row projection and the
      * lowerer's policy stamping read this table (never a copy), and the
@@ -2305,11 +2304,8 @@ public final class SemanticIrValidator {
 
     /**
      * The closed selector→policy table for {@code BINARY} (parent
-     * "selector→policy is fixed"): {@code INT32_ADD/SUB/MUL} →
-     * {@code INT32_RESULT}; {@code INT32_DIV_TRUNC} →
-     * {@code INT32_DIVISOR_THEN_RESULT}; every {@code NUMBER_}* arithmetic
-     * and every {@code INT32_*}/{@code NUMBER_*}
-     * comparison → {@code NO_DEAL_FAILURE}. This method is the single
+     * "selector→policy is fixed"): binary64 arithmetic and admitted
+     * comparisons use {@code NO_DEAL_FAILURE}. This method is the single
      * source of the assignment: the value-semantics primitive's row
      * projection and the lowerer's policy stamping read this table (never
      * a copy), and the gate cross-check asserts the primitive's rows agree

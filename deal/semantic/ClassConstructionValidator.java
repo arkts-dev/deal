@@ -1257,8 +1257,6 @@ public final class ClassConstructionValidator {
                     + " has boundary children: the factory runs zero boundaries and "
                     + "zero return boundaries", factory);
             }
-            // classDefaultOpIds = exactly the required-present defaulted
-            // fields' CLASS_DEFAULT op ids in declaration order.
             ClassLayout layout = layoutContext.get(entry.classId());
             if (layout == null) {
                 return fail(FACTORY_COHERENCE, "exported class " + entry.classId()

@@ -1,7 +1,7 @@
 // @spec: Classes — @jsonable fromJson
-// @description: @jsonable fromJson returns null for a decoded-key duplicate document and keeps the exact decimal classification at an int field (v1.3)
+// @description: @jsonable fromJson returns null for a decoded-key duplicate document and keeps the exact decimal classification at an int field (v1.4)
 // @expected: runtime-ok
-// @features: jsonable, fromJson, duplicate-key, v1.3
+// @features: jsonable, fromJson, duplicate-key, v1.4
 
 // @jsonable
 export class Depth {

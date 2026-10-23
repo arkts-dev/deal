@@ -1,5 +1,5 @@
 // @spec: Lexical elements — Operators
-// @description: The v1.3 operator set has no exponentiation: '**' lexes as two '*' operators and the second one has no operand, so the removed-operator subject is rejected at admission (E1037). The v1.2 runtime subject (2 ** 1024 overflowing to infinity) is retained as a rejection control.
+// @description: The v1.4 operator set has no exponentiation: '**' lexes as two '*' operators and the second one has no operand, so the removed-operator subject is rejected at admission (E1037). The v1.2 runtime subject (2 ** 1024 overflowing to infinity) is retained as a rejection control.
 // @expected: compile-error E1037
 // @features: parser, operators, diagnostics, arithmetic
 

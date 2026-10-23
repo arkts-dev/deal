@@ -75,7 +75,7 @@ public class LoweringSupportTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -1124,10 +1124,10 @@ public class LoweringSupportTest {
         // start (S1) — the validator's pinned R-COVERAGE fact.
         LoweredModuleUnit unit = new LoweredModuleUnit(
             LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_3_INT32,
+            SemanticProfile.DEAL_V1_4_BINARY64,
             manifest.moduleId(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            LoweringContextHash.of(SemanticProfile.DEAL_V1_3_INT32,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64,
                 invocation().capabilityRegistryHash()),
             manifest.capabilities(),
             manifest.constructCoverage(),
@@ -1210,7 +1210,7 @@ public class LoweringSupportTest {
                 && message.contains("capability FOUNDATION_VALUES")
                 && message.contains("validatorRule "
                     + LoweringSupport.MANIFEST_INTERNAL_ERROR_SENTINEL)
-                && message.contains("semanticProfile DEAL_V1_3_INT32")
+                && message.contains("semanticProfile DEAL_V1_4_BINARY64")
                 && message.contains("irVersion " + LoweredModuleUnit.FORMAT_VERSION)
                 && message.contains("origin LoweringSupport "
                     + LoweringSupport.MANIFEST_INTERNAL_ERROR_SENTINEL),

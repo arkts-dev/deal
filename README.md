@@ -1,9 +1,18 @@
-# DEAL Compiler — AST and Type Representation
+# DEAL Compiler v1.4
 
-Shared data structures for the DEAL compiler: AST node hierarchy,
-internal type representation, type canonicalization, type equality,
-arity extension, source location tracking, sum-type helpers, and
-the Visitor interface.
+Compiler, semantic IR, runtimes and standard library for DEAL v1.4, targeting
+JavaScript, LuaJIT and JVM. The sole language authority is
+[`docs/spec-v1.4.md`](docs/spec-v1.4.md). Projects require
+`"languageVersion": "1.4"`; the standard-library version is also `"1.4"`.
+
+The language has binary64 `number` values and structural class declarations
+with explicitly supplied required fields. Removed source version directives,
+C-style loops, remainder, C FFI, bytes, integer/conversion intrinsics and class
+field initializers are not compatibility features.
+
+See [`skills/write-deal/SKILL.md`](skills/write-deal/SKILL.md) for authoring
+help and [`docs/deal-v1.4-capabilities.deal`](docs/deal-v1.4-capabilities.deal)
+for an executable example.
 
 ## Build and Test
 

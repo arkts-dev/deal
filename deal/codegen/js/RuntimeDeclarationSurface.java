@@ -26,7 +26,7 @@ import java.util.Objects;
  * RuntimeDeclaredClass { classId: ClassId, fields: ordered List<RuntimeDeclaredField> }
  * RuntimeDeclaredField {
  *   name: String, descriptor: RuntimeDescriptor,
- *   required: boolean, hasDefault: boolean
+ *   required: boolean
  * }
  * }</pre>
  *
@@ -39,7 +39,7 @@ import java.util.Objects;
  * the complete project before rendering; the renderer selects nothing and
  * rediscovers no path or name.</p>
  *
- * <p>{@code exports} carries the v1.3 pinned declared-export order — the
+ * <p>{@code exports} carries the v1.4 pinned declared-export order — the
  * ascending Java String order (the one name-sorted export
  * selection) — while class fields keep their declaration order and
  * HOST occurrences keep source order (the latter is not part of this

@@ -304,7 +304,7 @@ public class DynamicProducerRuleTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_3_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -372,7 +372,7 @@ public class DynamicProducerRuleTest {
         LoweredModuleUnit unit = lowerer.buildUnit(
             fixture.manifests().get(0).constructCoverage(),
             fixture.module().imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            SemanticProfile.DEAL_V1_3_INT32,
+            SemanticProfile.DEAL_V1_4_BINARY64,
             fixture.index().interfaceIndexDigest(), REGISTRY_HASH,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         return new RawLowering(unit, lowerer.bodyTable(), lowerer.pinnedWriteFacts());
@@ -384,7 +384,7 @@ public class DynamicProducerRuleTest {
 
     private static SemanticIrValidator.ComparisonFacts facts(LoweredModuleUnit unit) {
         return new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
     }
 
     /** The closed schema rules and the bindings production rules in one pass. */
@@ -1020,7 +1020,7 @@ public class DynamicProducerRuleTest {
         Optional<CompilerDiagnostic> schema = SemanticIrValidator.validate(lowered.project(),
             new SemanticIrValidator.ComparisonFacts(
                 lowered.project().interfaceIndex().interfaceIndexDigest(),
-                SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH));
+                SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH));
         check(schema.isEmpty(), "the two-module project passes the closed schema rules: "
             + schema.map(CompilerDiagnostic::message).orElse(""));
     }
@@ -1060,7 +1060,7 @@ public class DynamicProducerRuleTest {
             SemanticLowerer.ProjectLoweringResult lowered, String what) {
         SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
             lowered.project().interfaceIndex().interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_3_INT32, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
         Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(
             lowered.project(), facts);
         check(typed.isEmpty(), what + ": the closed schema rules admit the lowered "

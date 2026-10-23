@@ -294,9 +294,6 @@ public final class RuntimeTypeMatcher {
         if (model.isArray(value)) {
             return "array";
         }
-        if (!(model.checkBytes(value, range) instanceof RuntimeCheckFailure)) {
-            return "bytes";
-        }
         if (model.isTable(value)) {
             return "table";
         }

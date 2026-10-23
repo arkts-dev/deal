@@ -37,7 +37,7 @@ import java.util.stream.Stream;
  * catch-variable assignment commits its cell and a closure created in
  * the catch block captures the binding — by binding, with current-value
  * semantics — on all three backends
- * (docs/spec-v1.3.md §Closures and captured variables, §try / catch).
+ * (docs/spec-v1.4.md §Closures and captured variables, §try / catch).
  *
  * <p>All three published artifacts of the synchronous fixture run their own
  * postconditions from {@code main}, and the fixture's completion marker

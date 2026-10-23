@@ -1,5 +1,5 @@
 // @spec: Classes — @jsonable directive placement
-// @description: @jsonable attached to a non-export class is an incompatible attachment and a compile-time error (E1043) with no metadata and no generated helpers (v1.3 declaration directive attachment)
+// @description: @jsonable attached to a non-export class is an incompatible attachment and a compile-time error (E1043) with no metadata and no generated helpers (v1.4 declaration directive attachment)
 // @expected: compile-error E1043
 // @features: jsonable, directives, diagnostics
 
