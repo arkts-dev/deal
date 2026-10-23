@@ -625,15 +625,20 @@ public final class JvmSemanticEmitter {
                         case KindPayload.TryCatchPayload payload ->
                             fields.add(cell(payload.catchBinding(), 0));
                         case KindPayload.AsyncStartPayload payload -> {
-                            // An indirect callee names a closure identity that
-                            // the op emits no result for (a value-carried
-                            // invocation over an identity-preserving load, or
-                            // the nested source start of an adapter-over-async
-                            // task): its slot field must exist even when no op
-                            // of the closure carries it as a result or operand.
-                            if (payload.callee()
-                                    instanceof KindPayload.CallCallee.Indirect indirect) {
-                                fields.add(slot(indirect.callee()));
+                            // A callee identity the op emits no result for (a
+                            // value-carried invocation over an
+                            // identity-preserving load, the nested source start
+                            // of an adapter-over-async task, or that start's
+                            // runtime-resolved source carrier): its slot field
+                            // must exist even when no op of the closure carries
+                            // it as a result or operand.
+                            switch (payload.callee()) {
+                                case KindPayload.CallCallee.Indirect indirect ->
+                                    fields.add(slot(indirect.callee()));
+                                case KindPayload.CallCallee.Dynamic dynamic ->
+                                    fields.add(slot(dynamic.callee()));
+                                default -> {
+                                }
                             }
                         }
                         default -> {

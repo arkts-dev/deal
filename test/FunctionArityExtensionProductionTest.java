@@ -25,6 +25,7 @@ import deal.semantic.ir.IntrinsicKind;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.FailurePolicyId;
 import deal.semantic.ir.LoweredModuleUnit;
+import deal.semantic.ir.ParameterBoundaryMode;
 import deal.semantic.ir.SemanticIdAllocator;
 import deal.semantic.ir.SemanticOp;
 import deal.semantic.ir.SemanticOpKind;
@@ -144,6 +145,22 @@ public final class FunctionArityExtensionProductionTest {
      * literal and array write positions.
      */
     private static final int CONVERSION_SHADOW_ADAPTERS = 18;
+
+    /**
+     * The async adapter-valued-source corpus: an async function value whose
+     * declared type is itself an adapter's adapts at a wider awaited call
+     * position whose source is an assigned binding's cell (the
+     * {@code SHARED_CELL} adapter chain), so the invocation descends each
+     * level's published source with that level's leading-M projection and the
+     * async marker and ignored target parameters are preserved.
+     */
+    private static final String ASYNC_ADAPTER_SOURCE =
+        "arity-extension-async-adapter-source";
+
+    /** The async adapter-valued-source export and its completion value. */
+    private static final String ASYNC_ADAPTER_SOURCE_EXPORT =
+        "test_arity_extension_async_adapter_source";
+    private static final String ASYNC_ADAPTER_SOURCE_COMPLETION = "123";
 
     /** The host declaration's external specifier. */
     private static final String HOST_SPECIFIER = "host/arity_extension_host";
@@ -1146,6 +1163,87 @@ public final class FunctionArityExtensionProductionTest {
     }
 
     /**
+     * The async adapter-valued-source corpus on LuaJIT: the assigned
+     * adapter-valued binding is the wider awaited position's source, so the
+     * adapter-over-async task resolves the cell's adapter value and the
+     * dynamic source descent runs the innermost async body with the outer
+     * level's leading-M projection. The completion is the innermost source's
+     * own result, so a rejected or mis-projecting chain cannot pass.
+     */
+    private static void testLuaJitAsyncAdapterSource(Path root) throws Exception {
+        System.out.println("-- the LuaJIT async adapter-valued-source corpus --");
+        Project project = writeProject(root, ASYNC_ADAPTER_SOURCE);
+        assertProductionEmission(productionCompile(project, Backend.LUAJIT),
+            "luajit:" + ASYNC_ADAPTER_SOURCE);
+        Path artifact = project.out().resolve(ENTRY_MODULE + ".lua");
+        check(Files.isRegularFile(artifact), "luajit: the async adapter-source "
+            + "corpus stages the entry chunk " + artifact);
+        if (!Files.isRegularFile(artifact)) {
+            return;
+        }
+        LuaJitAsyncExportInvoker.Result result = new LuaJitAsyncExportInvoker()
+            .invoke(new AsyncExportInvocationRequest(artifact,
+                ASYNC_ADAPTER_SOURCE_EXPORT, "int"));
+        assertAsyncAdapterSourceCompletion("luajit",
+            result instanceof LuaJitAsyncExportInvoker.Result.Value value
+                ? value.valueJson() : null, result);
+    }
+
+    private static void testJvmAsyncAdapterSource(Path root) throws Exception {
+        System.out.println("-- the JVM async adapter-valued-source corpus --");
+        JvmArtifacts artifacts = compileJvm(root, ASYNC_ADAPTER_SOURCE);
+        Path entryClass = artifacts.classes().resolve(
+            artifacts.className() + ".class");
+        JvmAsyncExportInvoker.Result result = new JvmAsyncExportInvoker().invoke(
+            new AsyncExportInvocationRequest(entryClass,
+                ASYNC_ADAPTER_SOURCE_EXPORT, "int"));
+        assertAsyncAdapterSourceCompletion("jvm",
+            result instanceof JvmAsyncExportInvoker.Result.Value value
+                ? value.valueJson() : null, result);
+    }
+
+    /**
+     * The async adapter-valued-source corpus under {@code node}: the
+     * artifact's own export surface is awaited exactly like the shared lane
+     * contract does, so the fixture's own transcript and the completion value
+     * are observed once.
+     */
+    private static void testJsAsyncAdapterSource(Path root) throws Exception {
+        System.out.println("-- the JS async adapter-valued-source corpus under "
+            + "node --");
+        Project project = writeProject(root, ASYNC_ADAPTER_SOURCE);
+        assertProductionEmission(productionCompile(project, Backend.JS), "js:"
+            + ASYNC_ADAPTER_SOURCE);
+        writeFile(project.out(), "AsyncDriver.js", """
+            "use strict";
+            const $entry = require("./main.js");
+            (async () => {
+              const $target = $entry["%s"];
+              const $value = await $target.$f();
+              process.stdout.write("VALUE " + $value + "\\n");
+            })().catch(($e) => {
+              process.stdout.write("ERROR " + ($e && $e.message) + "\\n");
+              process.exitCode = 1;
+            });
+            """.formatted(ASYNC_ADAPTER_SOURCE_EXPORT));
+        ProcessOutcome run = runProcess(List.of("node", "AsyncDriver.js"),
+            project.out());
+        checkEq(0, run.exitCode(), "js: the async adapter-source driver exits "
+            + "zero: " + run.stdout() + run.stderr());
+        checkEq("ASYNC ADAPTER SOURCE OK\nVALUE " + ASYNC_ADAPTER_SOURCE_COMPLETION
+            + "\n", run.stdout(), "js: the adapter chain's own transcript and "
+            + "completion");
+    }
+
+    private static void assertAsyncAdapterSourceCompletion(String lane,
+            String valueJson, Object result) {
+        checkEq(ASYNC_ADAPTER_SOURCE_COMPLETION, valueJson, lane + ": the async "
+            + "adapter-valued-source completion (the assigned one-to-two "
+            + "chain, the exact control and the awaited zero-to-one adapter "
+            + "value all resolve the innermost source's 41): " + result);
+    }
+
+    /**
      * The LuaJIT conversion-shadow corpus: every position's adapter is built
      * over the shadowing binding the position resolves, so no adapter of the
      * corpus carries the seeded intrinsic identity, and the run's own exact
@@ -1738,6 +1836,87 @@ public final class FunctionArityExtensionProductionTest {
     }
 
     /**
+     * The async adapter-valued-source corpus on the oracle-driven async-entry
+     * parity case: the adapted wider awaited position's source is the assigned
+     * binding's cell, whose value is itself an adapter, so the lowered project
+     * carries a runtime-resolved nested source start (the closed Dynamic async
+     * arm) whose runtime class descent the oracle must execute exactly as the
+     * emitted LuaJIT and JVM artifacts do — the same events, the same
+     * transcript and the same completed {@code int} value.
+     */
+    private static void testAsyncAdapterSourceOracleParity(Path root)
+            throws Exception {
+        System.out.println("-- the async adapter-valued-source corpus on the "
+            + "oracle-driven async-entry parity case --");
+        Project project = writeProject(root, ASYNC_ADAPTER_SOURCE);
+        SemanticLowerer.ProjectLoweringResult lowering =
+            lowerCorpusProject(project);
+        check(lowering != null && !lowering.hasErrors()
+            && lowering.project() != null, "async adapter source: the corpus "
+            + "lowers with zero diagnostics: "
+            + (lowering == null ? "null" : lowering.diagnostics()));
+        if (lowering == null || lowering.hasErrors()
+                || lowering.project() == null) {
+            return;
+        }
+        int sharedCellAdapters = 0;
+        int dynamicNestedStarts = 0;
+        for (LoweredModuleUnit unit : lowering.project().modules().values()) {
+            for (SemanticOp op : unit.ops()) {
+                if (op.payload() instanceof KindPayload.FunctionAdaptPayload adapt
+                        && adapt.mode() == CaptureMode.SHARED_CELL
+                        && adapt.source() instanceof AdaptSourceRef.SharedCell) {
+                    sharedCellAdapters++;
+                }
+                if (op.kind() == SemanticOpKind.ASYNC_START
+                        && op.payload()
+                            instanceof KindPayload.AsyncStartPayload start
+                        && start.parameterBoundaryMode()
+                            == ParameterBoundaryMode.ELIDED_BY_ADAPTER
+                        && start.callee()
+                            instanceof KindPayload.CallCallee.Dynamic) {
+                    dynamicNestedStarts++;
+                }
+            }
+        }
+        check(sharedCellAdapters >= 1, "async adapter source: the corpus "
+            + "carries a SHARED_CELL adapter over the assigned binding cell; "
+            + "got " + sharedCellAdapters);
+        check(dynamicNestedStarts >= 1, "async adapter source: the wider "
+            + "awaited position records the runtime-resolved nested source "
+            + "start; got " + dynamicNestedStarts);
+        Path workspace = Files.createTempDirectory(root.getFileName().toString());
+        try {
+            deal.test.SemanticDifferentialHarness.Verdict verdict =
+                deal.test.SemanticDifferentialHarness.runAsyncEntry(
+                    lowering.project(), lowering.tables(),
+                    ASYNC_ADAPTER_SOURCE_EXPORT, List.of(),
+                    deal.test.SemanticDifferentialHarness.Expectation.success(
+                        "the async adapter-valued-source corpus",
+                        List.of("ASYNC ADAPTER SOURCE OK"),
+                        "int:" + ASYNC_ADAPTER_SOURCE_COMPLETION),
+                    workspace, null);
+            checkEq(3, verdict.runs().size(), "async adapter source: the parity "
+                + "case produces the three consumers: " + verdict.failures());
+            check(verdict.pass(), "async adapter source: the oracle and both "
+                + "shared artifacts agree event-for-event: " + verdict.failures()
+                + "\n" + verdict.report());
+            for (deal.semantic.SemanticRuntimeModel.ConsumerRun run
+                    : verdict.runs()) {
+                check(run.terminal() instanceof
+                        deal.semantic.SemanticRuntimeModel.Terminal.Success success
+                        && ("int:" + ASYNC_ADAPTER_SOURCE_COMPLETION)
+                            .equals(success.resultAtom()),
+                    run.consumer() + ": the adapter chain completes the async "
+                        + "export with the innermost source's 41: "
+                        + run.terminal());
+            }
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
+    /**
      * The assignment-expression-source oracle-parity subject: the same
      * produced-value shapes in a compact project — a call argument over an
      * assignment expression (exact and widened), a return position and an
@@ -1883,11 +2062,14 @@ public final class FunctionArityExtensionProductionTest {
             expectedByBackend(CONVERSION_SHADOW);
         Map<String, ExpectedExecution> assignmentSource =
             expectedByBackend(ASSIGNMENT_SOURCE);
+        Map<String, ExpectedExecution> asyncAdapterSource =
+            expectedByBackend(ASYNC_ADAPTER_SOURCE);
         Map<String, ExpectedExecution> hostParameter = hostParameterExpected();
         expectedByBackend(DYNAMIC_SOURCE_ASYNC);
         for (Map<String, ExpectedExecution> expected : List.of(positions,
                 asyncPositions, boundaries, dynamicSource, adapterValued,
-                conversionShadow, assignmentSource, hostParameter)) {
+                conversionShadow, assignmentSource, asyncAdapterSource,
+                hostParameter)) {
             for (ExpectedExecution execution : expected.values()) {
                 checkEq("", new String(execution.stderr(), StandardCharsets.UTF_8),
                     "every pinned lane carries an empty stderr");
@@ -1899,6 +2081,9 @@ public final class FunctionArityExtensionProductionTest {
             "the position corpus pins its exit code");
         checkEq("ASYNC OK\n", new String(asyncPositions.get("js").stdout(),
             StandardCharsets.UTF_8), "the async corpus pins its marker");
+        checkEq("ASYNC ADAPTER SOURCE OK\n", new String(
+            asyncAdapterSource.get("js").stdout(), StandardCharsets.UTF_8),
+            "the async adapter-valued-source corpus pins its marker");
         checkEq(1, dynamicSource.get("luajit").exitCode(),
             "the dynamic-source control pins its nonzero exit code");
         for (String fixture : List.of(DYNAMIC_SOURCE, DYNAMIC_SOURCE_ASYNC)) {
@@ -1969,6 +2154,12 @@ public final class FunctionArityExtensionProductionTest {
                 adapterValued.get("jvm"));
             testJsAdapterValuedSource(root.resolve("js-adapter-valued"),
                 adapterValued.get("js"));
+            testLuaJitAsyncAdapterSource(
+                root.resolve("luajit-async-adapter-source"));
+            testJvmAsyncAdapterSource(root.resolve("jvm-async-adapter-source"));
+            testJsAsyncAdapterSource(root.resolve("js-async-adapter-source"));
+            testAsyncAdapterSourceOracleParity(
+                root.resolve("async-adapter-source-parity"));
             testLuaJitConversionShadow(root.resolve("luajit-conversion-shadow"),
                 conversionShadow.get("luajit"));
             testJvmConversionShadow(root.resolve("jvm-conversion-shadow"),

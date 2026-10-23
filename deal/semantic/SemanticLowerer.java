@@ -12669,12 +12669,16 @@ public final class SemanticLowerer {
          * captured cells.
          *
          * <p>A runtime-resolved source — a retained declaration-site
-         * operand (the {@code VALUE} capture mode), or a materialized source
+         * operand (the {@code VALUE} capture mode), a materialized source
          * whose producing registration is the producer rule's
-         * {@code DynamicFunctionValue} — records the runtime-resolved nested
-         * shape instead: the nested source start's callee is the
-         * {@code Dynamic} value identity the adapter protocol resolves at
-         * execution (the retained operand), and its recorded task cell is
+         * {@code DynamicFunctionValue}, or an adapter-valued source (whose own
+         * published invocation chain selects the execution class at each
+         * invocation) — records the runtime-resolved nested shape instead: the
+         * nested source start's callee is the {@code Dynamic} value identity
+         * the adapter protocol resolves at
+         * execution (the retained operand, or the scratch identity the outer
+         * task publishes the resolved adapter source under), and its recorded
+         * task cell is
          * the single caller-side {@code FUNCTION_RETURN} the closed dynamic
          * resolution applies to a resolved DEAL body. The source's own class
          * — a DEAL body, a host surface entry, a retained-ABI external, or a
@@ -12698,12 +12702,25 @@ public final class SemanticLowerer {
             // source start names that runtime identity (never a static
             // body/token/return-cell shape it does not have). A retained
             // declaration-site operand (the {@code VALUE} capture mode) is
-            // never a registered function identity, and a materialized
-            // source registers the producer rule's
-            // {@code DynamicFunctionValue}.
+            // never a registered function identity, a materialized source
+            // registers the producer rule's
+            // {@code DynamicFunctionValue}, and an adapter-valued source
+            // descends its own published invocation chain at execution
+            // exactly like the synchronous D15 protocol (runtime provenance
+            // as an adapter is not part of the value's type): its nested
+            // start carries the scratch identity the outer task publishes the
+            // resolved source under, because the adapter identity itself is a
+            // statically classified callee the closed Dynamic-callee rule
+            // reserves for the runtime arms.
+            boolean nestedAdapterSource =
+                source instanceof FunctionExecutionBinding.AdapterBinding;
             boolean runtimeResolved = source == null
-                || source instanceof FunctionExecutionBinding.DynamicFunctionValue;
-            ValueId runtimeSourceIdentity = runtimeResolved ? sourceIdentity : null;
+                || source instanceof FunctionExecutionBinding.DynamicFunctionValue
+                || nestedAdapterSource;
+            ValueId runtimeSourceIdentity = !runtimeResolved ? null
+                : nestedAdapterSource
+                    ? ids.nextValueId(module, nextOrdinal++, 0)
+                    : sourceIdentity;
             RuntimeDescriptor.Func target = adapter.targetSignature();
             RuntimeDescriptor.Func sourceSignature = adapter.sourceSignature();
             List<ValueId> args = new ArrayList<>();
@@ -12866,10 +12883,14 @@ public final class SemanticLowerer {
                         external.exportName(), calleeToken);
                     nestedSource = AsyncStartSource.EXTERNAL;
                 }
-                case FunctionExecutionBinding.AdapterBinding nestedAdapter ->
-                    throw new ConstructUnlowered("nested adapter source of '" + calleeName
-                        + "' (adapter-of-adapter async invocation is ISSUE-0531's)",
-                        call.span());
+                case FunctionExecutionBinding.AdapterBinding ignored ->
+                    // An adapter-valued source is the runtime-resolved arm: its
+                    // own published invocation chain selects the execution
+                    // class at each invocation, so the lowering never records a
+                    // statically fixed nested-source shape for it.
+                    throw new IllegalStateException("the adapter-valued async source of '"
+                        + calleeName + "' reaches the statically fixed source arm"
+                        + " (producer defect)");
                 case FunctionExecutionBinding.IntrinsicFunction intrinsic -> {
 
                     if (sourceSignature.paramTypes().size()

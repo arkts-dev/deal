@@ -5762,11 +5762,21 @@ public final class SemanticOracle {
             // under the nested start's own callee identity, so the source
             // body task installs the resolved source closure's
             // creation-site captured cells instead of reconstructing a
-            // factory at the call site.
-            if (nested.payload() instanceof KindPayload.AsyncStartPayload start
-                    && start.callee()
-                        instanceof KindPayload.CallCallee.Indirect indirect) {
-                putValue(indirect.callee(), sourceValue);
+            // factory at the call site. The runtime-resolved source start
+            // publishes the same resolved carrier under its Dynamic callee
+            // identity, so the runtime class dispatch descends an
+            // adapter-valued source exactly like the emitted wrappers.
+            if (nested.payload() instanceof KindPayload.AsyncStartPayload start) {
+                switch (start.callee()) {
+                    case KindPayload.CallCallee.Indirect indirect ->
+                        putValue(indirect.callee(), sourceValue);
+                    case KindPayload.CallCallee.Dynamic dynamic ->
+                        putValue(dynamic.callee(), sourceValue);
+                    default -> {
+                        // A statically fixed nested source carries its own
+                        // callee binding and reads no runtime carrier here.
+                    }
+                }
             }
             execute(nested);
             return Value.NullValue.INSTANCE;
