@@ -1,5 +1,5 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: An @jsonable class helper's toJson accepts a host-returned plain Lua table at a table field, a plain table nested in a table carrier, the host table's own nested object and array members, and a table[] element holding a host table; the exact JSON text is identical on LuaJIT, JVM and JS. A self-referential host table takes the closed cycle arm, a non-finite numeric leaf of a host table (an object member, a nested plain table's member, an array element) takes the closed finite arm at its own path, and an object key that is not a Unicode scalar sequence takes the closed invalid-unicode arm naming the object's own path (v1.3)
+// @description: An @jsonable class helper's toJson accepts a host-returned plain Lua table at a table field, a plain table nested in a table carrier, the host table's own nested object and array members, a table[] element holding a host table, and the deployment's own std/json decode graph of an object with a fractional member (a host-returned decoded table carrying only the private per-slot numeric-variant marks beside its content keys) at a table field and a table[] element; the exact JSON text is identical on LuaJIT, JVM and JS. A self-referential host table takes the closed cycle arm, a non-finite numeric leaf of a host table (an object member, a nested plain table's member, an array element) takes the closed finite arm at its own path, and an object key that is not a Unicode scalar sequence takes the closed invalid-unicode arm naming the object's own path (v1.3)
 // @expected: runtime-ok
 // @features: classes, jsonable, toJson, tables, host-abi, v1.3
 
@@ -59,6 +59,22 @@ export function test_host_table_array_elements(): null {
   let text: string = TableElements$toJson(w);
   check(text === "{\"rows\":[{\"a\":1},{\"inner\":{\"a\":1},\"xs\":[10,20]}]}",
     "a table[] element holding a host table spells " + text);
+  return null;
+}
+
+export function test_host_parsed_table_field(): null {
+  let w: TableField = { data: host.makeParsed() };
+  let text: string = TableField$toJson(w);
+  check(text === "{\"data\":{\"v\":0.1,\"w\":1.0E17}}",
+    "the host std/json object at a table field spells " + text);
+  return null;
+}
+
+export function test_host_parsed_table_element(): null {
+  let w: TableElements = { rows: [host.makeParsed()] };
+  let text: string = TableElements$toJson(w);
+  check(text === "{\"rows\":[{\"v\":0.1,\"w\":1.0E17}]}",
+    "a table[] element holding the host std/json object spells " + text);
   return null;
 }
 

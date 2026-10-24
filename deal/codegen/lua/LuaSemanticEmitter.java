@@ -8986,7 +8986,18 @@ local function __jsonToClassOp(planName, root)
     local maxIndex = 0
     local objectKey = false
     for k, _ in pairs(v) do
-      if type(k) == "number" then
+      -- The per-slot numeric-variant marks (ISSUE-0900): the shipped
+      -- std/json decode graph records every number-variant slot in the
+      -- container's private [__nK] map, so that table-object key rides on a
+      -- plain host-returned object. It selects the spelling of a marked
+      -- slot only (__jsonContentMarks) and is never a member key, so the
+      -- form is classified by the remaining content keys — a marked
+      -- decoded object is the object its string keys name, and a marked
+      -- decoded array (the [__a] carrier, or the numeric-key form) stays
+      -- an array.
+      if k == __dealCarrierKeys.nK then
+        -- the private per-slot marks are not content
+      elseif type(k) == "number" then
         if k < 1 or k % 1 ~= 0 then return nil end
         if k > maxIndex then maxIndex = k end
       elseif type(k) == "string" then

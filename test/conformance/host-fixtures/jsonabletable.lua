@@ -2,10 +2,14 @@
 -- content conformance test (ISSUE-0868). Every declared table-typed return
 -- is a plain Lua table carrying the JSON-shaped data the class helper's
 -- toJson walk accepts: an object, an object with a nested object and an
--- array member, and a self-referential table for the closed cycle arm.
--- The closed arms' returns carry a non-finite numeric leaf, an invalid
--- UTF-8 object value and an invalid UTF-8 object key, the content shapes
--- the finite acyclic JSON domain excludes.
+-- array member, the deployed std/json decode graph (makeParsed, ISSUE-0900:
+-- the decoder's own table with only its per-slot numeric-variant marks
+-- besides the content keys), and a self-referential table for the closed
+-- cycle arm. The closed arms' returns carry a non-finite numeric leaf, an
+-- invalid UTF-8 object value and an invalid UTF-8 object key, the content
+-- shapes the finite acyclic JSON domain excludes.
+
+local json = require("std.json")
 
 local M = {}
 
@@ -15,6 +19,14 @@ end
 
 function M.makeNested()
   return { inner = { a = 1 }, xs = { 10, 20 } }
+end
+
+function M.makeParsed()
+  -- The deployment's own std/json decode: the returned table carries only
+  -- its content keys beside the decoder's private per-slot [__K.nK]
+  -- numeric-variant marks, so a class table field/element holding it walks
+  -- by the content keys and spells the marked slots by their variant.
+  return json.parse.f("{\"v\":0.1,\"w\":1e17}")
 end
 
 function M.makeCycle()

@@ -2,11 +2,13 @@
 // content conformance test (ISSUE-0868). Every declared table-typed return
 // is the JVM runtime table carrier carrying the JSON-shaped data the class
 // helper's toJson walk accepts: an object, an object with a nested object
-// and an array member, and a self-referential table for the closed cycle
-// arm. The closed arms' returns carry a non-finite numeric leaf, an
-// invalid (unpaired-surrogate) object value and an invalid
-// (unpaired-surrogate) object key, the content shapes the finite acyclic
-// JSON domain excludes.
+// and an array member, the deployment's own std/json decode graph
+// (makeParsed, ISSUE-0900: the JVM decoders' Table/Array carriers with the
+// boxed Long/Double numeric variants), and a self-referential table for
+// the closed cycle arm. The closed arms' returns carry a non-finite
+// numeric leaf, an invalid (unpaired-surrogate) object value and an
+// invalid (unpaired-surrogate) object key, the content shapes the finite
+// acyclic JSON domain excludes.
 
 final class HostJsonabletable {
   public static Object makeTable() {
@@ -25,6 +27,15 @@ final class HostJsonabletable {
     t.write("inner", inner);
     t.write("xs", xs);
     return t;
+  }
+
+  public static Object makeParsed() {
+    // The deployment's own std/json decode: the JVM runtime's real parse
+    // graph (a Table with its boxed Long/Double leaves), so the class walk
+    // receives exactly the container shape and numeric variants a
+    // host-returned decoded document carries.
+    return deal.codegen.jvm.JvmRuntime.stdlibInvoke("CALL", "JSON_PARSE",
+        "-", "-", "-", "-", new Object[] {"{\"v\":0.1,\"w\":1e17}"});
   }
 
   public static Object makeCycle() {
