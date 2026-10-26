@@ -695,11 +695,13 @@ public final class CompilationOrchestrator {
         }
 
         log("Phase 0: Module discovery and parsing");
-        discoverAndParse();
+        long phaseStarted = System.nanoTime();
+        try { discoverAndParse(); } finally { CompilationTiming.record("parse", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 1: Export signature extraction");
-        extractSignatures();
+        phaseStarted = System.nanoTime();
+        try { extractSignatures(); } finally { CompilationTiming.record("signatures", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         // DEAL v1.2 selected-entry rule: the entry module must export
@@ -713,7 +715,8 @@ public final class CompilationOrchestrator {
         this.dependencyOrder = List.copyOf(checkOrder);
 
         log("Phase 3: Type checking (" + checkOrder.size() + " modules)");
-        typeCheckAll(checkOrder);
+        phaseStarted = System.nanoTime();
+        try { typeCheckAll(checkOrder); } finally { CompilationTiming.record("typecheck", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         // Foundation phase (F2/F8): after phase 3 succeeds, the builder
@@ -722,22 +725,26 @@ public final class CompilationOrchestrator {
         // builder is strictly read-only over the checked facts; its E6005
         // diagnostics fail the compile exactly like frontend errors.
         log("Phase 3.5: Checked project and interface index");
-        buildCheckedProject(checkOrder);
+        phaseStarted = System.nanoTime();
+        try { buildCheckedProject(checkOrder); } finally { CompilationTiming.record("checked-project", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 3.6: Semantic requirement manifests");
-        computeRequirementManifests();
+        phaseStarted = System.nanoTime();
+        try { computeRequirementManifests(); } finally { CompilationTiming.record("requirements", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         // Phase 3.7 (route planning) is retired: the one production arm
         // consults no route plan, and no retained dispatch exists.
 
         log("Phase 3.8: Default planning and declaration default analysis");
-        planDefaultClasses();
+        phaseStarted = System.nanoTime();
+        try { planDefaultClasses(); } finally { CompilationTiming.record("construction-plans", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         log("Phase 3.85: Runtime dependency graph and plan publication");
-        evaluateDependencyGraph();
+        phaseStarted = System.nanoTime();
+        try { evaluateDependencyGraph(); } finally { CompilationTiming.record("dependency-plan", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
         enrichCheckedProjectProviders();
 
@@ -745,7 +752,8 @@ public final class CompilationOrchestrator {
 
         hostDeclarationSurface = produceHostDeclarationSurface();
         if (hasErrors) { printDiagnostics(); return false; }
-        codegenAll();
+        phaseStarted = System.nanoTime();
+        try { codegenAll(); } finally { CompilationTiming.record("codegen-total", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         // The IR dumps the compile generated in their existing phase-1/3
@@ -753,7 +761,8 @@ public final class CompilationOrchestrator {
         // dumps publish atomically with the artifact set. A rejection
         // never reaches this point, discards its pending dumps, and stages
         // nothing at all.
-        stageIrDumps();
+        phaseStarted = System.nanoTime();
+        try { stageIrDumps(); } finally { CompilationTiming.record("stage-ir", phaseStarted); }
         if (hasErrors) { printDiagnostics(); return false; }
 
         long elapsed = System.currentTimeMillis() - startTime;

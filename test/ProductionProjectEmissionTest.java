@@ -4455,6 +4455,19 @@ public class ProductionProjectEmissionTest {
 
     public static void main(String[] args) throws Exception {
         System.out.println("=== Production Project Emission Tests (ISSUE-0642) ===\n");
+        java.util.List<String> timing = new java.util.ArrayList<>();
+        try (var outer = deal.module.CompilationTiming.observe((phase, nanos) -> {
+            if (nanos < 0) throw new AssertionError("negative duration");
+            timing.add(phase);
+        })) {
+            deal.module.CompilationTiming.record("outer", System.nanoTime());
+            try (var inner = deal.module.CompilationTiming.observe((phase, nanos) -> { throw new IllegalStateException("observer fixture"); })) {
+                deal.module.CompilationTiming.record("ignored", System.nanoTime());
+            }
+            deal.module.CompilationTiming.record("restored", System.nanoTime());
+        }
+        deal.module.CompilationTiming.record("closed", System.nanoTime());
+        if (!timing.equals(java.util.List.of("outer", "restored"))) throw new AssertionError("timing isolation/restoration");
         ToolchainPreflight.require("node", "--version",
             "the real JS artifact drives");
         try (Fixture fixture = twoModuleFixture(APP_SOURCE);
