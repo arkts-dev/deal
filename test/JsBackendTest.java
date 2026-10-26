@@ -6118,7 +6118,6 @@ public class JsBackendTest {
     }
 
     private static void testLogicalAssignmentSelectedBlock() throws Exception {
-        if (!nodeAvailable) { skipNode("logical assignment selected block"); return; }
         NodeResult run = runDealNode("""
             class State { busy: boolean = false; other: boolean = false; }
             export function test(): int {
