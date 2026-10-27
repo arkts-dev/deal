@@ -105,11 +105,18 @@ static deal_error *deal_stub_start_error(void) {
 #elif DEAL_STUB_CASE == 7
 static deal_error *deal_stub_raise(void) {
     deal_error *cause = deal_error_create("E9002", "cause text", NULL);
+    /* The cause is a runtime intermediate across the next allocation, so it is
+     * rooted through the scoped root API before the outer Error is created
+     * (M5); the parent Error then stores it through the insertion barrier. */
+    deal_root_scope_push();
+    uint32_t cause_slot = deal_root_scope_hold(cause);
     deal_error *error = deal_error_create("E8010", DEAL_FIXTURE_MESSAGE,
                                           &fixture_origin);
     deal_error_set_expected(error, "string");
     deal_error_set_actual(error, "number");
     deal_error_set_cause(error, cause);
+    deal_root_scope_release(cause_slot);
+    deal_root_scope_pop();
     return error;
 }
 #endif

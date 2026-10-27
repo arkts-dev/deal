@@ -9,9 +9,18 @@
  * (STRING_EQ/NE/LT/LE/GT/GE) call (`llvm-native-codegen-cfg-ssa` C6): no
  * per-site comparison code exists anywhere else.
  *
- * The group's remaining entries (substring, split, replace, trim, the
- * validation entry every untyped boundary uses) arrive with the
- * runtime-boundaries-errors child, which extends this header.
+ * Text ingress (R2). A string that DEAL code holds at a declared `string`
+ * position is valid by construction, and every string arriving from an untyped
+ * boundary (a host crossing, a JSON decode, a boxed carrier read at a declared
+ * type) is validated as a Unicode scalar sequence at that boundary by
+ * `deal_text_is_scalar_sequence`. `deal_text_new` therefore accepts exactly a
+ * validated scalar sequence: malformed bytes never become an admitted
+ * `deal_string`, and a caller that skips its boundary check is reported as the
+ * deterministic invariant fault instead of publishing malformed text.
+ *
+ * The data `===` relation is declared here rather than in `value.h` because
+ * string equality is the one scalar-sequence comparison this group owns: the
+ * `text` group depends on `value`, never the other way round.
  */
 #ifndef DEAL_NATIVE_TEXT_H
 #define DEAL_NATIVE_TEXT_H
@@ -19,9 +28,18 @@
 #include "deal/native/deal_rt.h"
 
 /*
- * Builds a string from `length` bytes. The caller has already validated the
- * bytes as a Unicode scalar sequence at its untyped boundary (R2); this entry
- * copies them and caches the byte length, scalar count and hash.
+ * 1 when `bytes` is a well-formed UTF-8 sequence of Unicode scalar values
+ * (RFC 3629: no overlong form, no surrogate, nothing above U+10FFFF and no
+ * truncated sequence), 0 otherwise. A null `bytes` with a non-zero length is
+ * malformed, never empty.
+ */
+int deal_text_is_scalar_sequence(const void *bytes, size_t length);
+
+/*
+ * Builds a string from `length` validated bytes: this entry copies them and
+ * caches the byte length, scalar count and hash, so the storage is immutable.
+ * Bytes that are not a Unicode scalar sequence are an invariant fault (an
+ * untyped boundary validates first and raises its own arm).
  */
 deal_string *deal_text_new(const void *bytes, size_t length);
 
@@ -37,5 +55,16 @@ size_t deal_text_scalar_length(const deal_string *string);
 
 /* The cached content hash. */
 uint64_t deal_text_hash(const deal_string *string);
+
+/*
+ * The language `===` relation over two persistent data values (R2, spec
+ * `===`/`!==`): equal tags are required; `null` and `undefined` equal
+ * themselves only; numbers use binary64 equality (so NaN differs from itself
+ * and signed zeros are equal); booleans compare by value; strings compare by
+ * Unicode scalar sequence through `deal_text_compare`; arrays, records, class
+ * instances, function values and Errors compare by reference identity. No
+ * coercion, retagging or structural comparison happens here.
+ */
+int deal_data_same(const deal_data *a, const deal_data *b);
 
 #endif /* DEAL_NATIVE_TEXT_H */

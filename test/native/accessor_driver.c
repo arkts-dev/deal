@@ -121,10 +121,16 @@ int main(void) {
     deal_call_frame_push("native/accessors.deal#middle@F1");
     deal_call_frame_push("native/accessors.deal#inner@F2");
     deal_error *cause = deal_error_create("E9002", "root cause", NULL);
+    /* The cause is a runtime intermediate across the outer Error's allocation,
+     * so it is rooted through the scoped root API (M5). */
+    deal_root_scope_push();
+    uint32_t cause_slot = deal_root_scope_hold(cause);
     deal_error *error = deal_error_create("E8010", "carrying", &origin);
     deal_error_set_expected(error, "string");
     deal_error_set_actual(error, "number");
     deal_error_set_cause(error, cause);
+    deal_root_scope_release(cause_slot);
+    deal_root_scope_pop();
 
     present = deal_error_source_file(error, &text);
     result = observe_text(present, text);

@@ -1,53 +1,106 @@
 /*
  * deal/native/container.h — the `container` service group.
  *
- * Arrays and records (`llvm-native-runtime-value-model` R2). An array is
- * zero-based typed element storage with an exact element count and its emitted
- * element descriptor; a record is an insertion-ordered store of boxed values
- * keyed by a scalar-valid string, where storing `null` or `undefined` makes a
- * key present and deletion removes it, so `has` distinguishes absence from
- * every stored value. Source-language indexes are `number` and are validated
- * (finiteness, integrality, bounds) by the emitted code before any native
- * offset conversion; these entries take an already validated native index. The
- * C spelling `deal_table` is the retained internal name for a record, never a
- * source `table` type.
+ * Arrays and records (`llvm-native-runtime-value-model` R2, C3). An array is
+ * zero-based typed element storage with an exact element count and its recorded
+ * element layout; a record is an insertion-ordered store of boxed persistent
+ * data values keyed by a scalar-valid string, where storing `undefined` or
+ * `null` makes a key present and deletion removes it, so `has` distinguishes
+ * absence from every stored value. The C spelling `deal_table` is the retained
+ * internal name for a record, never a source `table` type.
  *
- * The group's entries land with the runtime-data child, which extends this
- * header; the host-visible container surface is H2's entries of `deal_rt.h`.
+ * Discrete positions (R2). Source indexes are `number`, so finiteness,
+ * integrality and bounds are validated by `deal_container_position` before any
+ * native offset conversion — native storage never rounds or truncates, negative
+ * zero addresses zero, an append writes at `length` and `length` answers the
+ * exact element count. A read requires `0..length-1`, a write requires
+ * `0..length`; a rejected position is reported, never converted, so a rejected
+ * write leaves the storage unchanged. A native index outside that range reaching
+ * these entries directly is an invariant fault, never a clamped or truncated
+ * access.
+ *
+ * Element storage (C3, M1). An array records the emitted element layout of its
+ * descriptor once, for its whole lifetime including an empty array and every
+ * alias, and stores the elements in one managed block of `capacity * stride`
+ * bytes. `deal_container_array_trace` walks exactly the managed references the
+ * element layout declares, so the collector's precise map never guesses. A
+ * reference element slot may legitimately hold the null or the undefined
+ * singleton (a nullable element type), so both the element walk and the element
+ * barrier are tag-aware and never treat a singleton as heap storage.
  */
 #ifndef DEAL_NATIVE_CONTAINER_H
 #define DEAL_NATIVE_CONTAINER_H
 
 #include "deal/native/deal_rt.h"
 
-/* A zero-based typed array with `length` slots and its emitted element layout. */
+/*
+ * Validates one source position against `length` native element slots (R2) and
+ * writes the native offset: the position must be finite, integral and, for a
+ * read, inside `0..length-1`; `allow_append` admits exactly `length`. Negative
+ * zero addresses zero. A rejected position answers 0 and writes nothing.
+ */
+int deal_container_position(double position, size_t length, int allow_append,
+                            size_t *offset);
+
+/* A zero-based array of `length` zero-initialized slots of `element_layout`. */
 deal_array *deal_container_array_new(uint32_t element_layout, size_t length);
 
-/* The exact element count and one element slot. */
+/* The exact element count (a `number` position never reports it truncated). */
 size_t deal_container_array_count(const deal_array *array);
+
+/* The element layout the array records for its whole lifetime (C3). */
+uint32_t deal_container_array_element_layout(const deal_array *array);
+
+/* The storage address of one present element (a typed slot, never a copy). */
 void *deal_container_array_element(const deal_array *array, size_t index);
 
-/* Stores one element through the insertion barrier (M2). */
-void deal_container_array_store(deal_array *array, size_t index, void *element);
+/*
+ * Copies one element into an existing slot and runs the insertion barrier for
+ * every managed reference the element layout declares (M2), exactly when the
+ * reference slot holds a managed payload. A rejected element leaves the storage
+ * unchanged; the caller has already validated the position and the element
+ * against the descriptor.
+ */
+void deal_container_array_store(deal_array *array, size_t index,
+                                const void *element);
 
-/* Appends one element, growing the storage when required. */
-void deal_container_array_append(deal_array *array, void *element);
+/* Appends one element at `length`, growing the element storage when required. */
+void deal_container_array_append(deal_array *array, const void *element);
 
-/* An empty insertion-ordered table. */
+/*
+ * Visits every managed reference of every present element in index and offset
+ * order, using the array's element layout (M1). A null slot and a nullish
+ * singleton are never visited.
+ */
+void deal_container_array_trace(const deal_array *array,
+                                deal_reference_visit visit, void *context);
+
+/* An empty insertion-ordered record. */
 deal_table *deal_container_table_new(void);
 
-/* The number of present keys. */
+/* The number of present keys (null- and undefined-valued keys included). */
 size_t deal_container_table_count(const deal_table *table);
 
-/* The value stored under `key`, or the null singleton when the key is absent. */
-deal_value deal_container_table_read(const deal_table *table, deal_string *key);
+/* The key at insertion order `index`, or NULL past the last present key. */
+deal_string *deal_container_table_key_at(const deal_table *table, size_t index);
 
-/* Stores one value through the insertion barrier; `null` stays present. */
-void deal_container_table_write(deal_table *table, deal_string *key,
-                                deal_value value);
+/*
+ * The value stored under `key`, or the `undefined` datum when the key is
+ * absent (R2's read projection). A present key holding `undefined` or `null`
+ * answers that stored value.
+ */
+deal_data deal_container_table_read(const deal_table *table, deal_string *key);
 
 /* 1 when the key is present (with any value, including null), else 0. */
 int deal_container_table_has(const deal_table *table, deal_string *key);
+
+/*
+ * Stores one value under `key` through the insertion barrier: an existing key
+ * keeps its first-insertion position, a new key is appended in creation order,
+ * and `undefined`/`null` stay present values.
+ */
+void deal_container_table_write(deal_table *table, deal_string *key,
+                                const deal_data *value);
 
 /* Removes the key when present; an absent key is not an error. */
 void deal_container_table_delete(deal_table *table, deal_string *key);

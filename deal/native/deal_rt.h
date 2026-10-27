@@ -31,7 +31,10 @@
  * `uint8_t`/`int`; `number` is `double`; `string`, `T[]`, the record
  * (`deal_table`, retained internal C name), class instances, function values
  * and `Error` are the opaque pointers below; the boxed carrier `deal_value`
- * exists only at the closed boundary set (R3, R11).
+ * exists only at the closed boundary set (R3, R11). A structurally constructed
+ * value is a `deal_value` carrier, a `deal_data` persistent tagged datum, a
+ * `deal_layout` metadata record or one of the outcome/argument records below;
+ * every other representation is opaque to every consumer.
  */
 #ifndef DEAL_NATIVE_DEAL_RT_H
 #define DEAL_NATIVE_DEAL_RT_H
@@ -214,6 +217,69 @@ typedef struct deal_module deal_module;
 typedef struct deal_export_entry deal_export_entry;
 
 /* =========================================================================
+ * The C3 value-surface records every group shares: the persistent tagged datum
+ * of an `unknown` position, the presence metadata of an optional slot and the
+ * three independent scalar-nullish tags. The emitted module constructs these
+ * values, so they are structural like `deal_value`; their entries are declared
+ * by their owning group header (`value.h`).
+ * ========================================================================= */
+
+/*
+ * The closed persistent data tags (R3). `missing`, `nothing`, invalid Unicode
+ * and async-operation presentations are deliberately absent: they are not
+ * `unknown` data, and an untyped boundary rejects them before it publishes
+ * managed data.
+ */
+typedef enum {
+    DEAL_DATA_UNDEFINED = 0,
+    DEAL_DATA_NULL = 1,
+    DEAL_DATA_BOOLEAN = 2,
+    DEAL_DATA_NUMBER = 3,
+    DEAL_DATA_STRING = 4,
+    DEAL_DATA_ARRAY = 5,
+    DEAL_DATA_TABLE = 6,
+    DEAL_DATA_CLASS = 7,
+    DEAL_DATA_FUNCTION = 8,
+    DEAL_DATA_ERROR = 9
+} deal_data_tag;
+
+/*
+ * One persistent tagged datum (C3): the tag, a reserved word that is always 0,
+ * the binary64 payload of `number` and the managed payload of the reference
+ * tags. `reference` is `NULL` for every non-managed tag, so the pair is safe to
+ * place in a precise reference-map slot and a tag-aware scan traces only real
+ * managed referents.
+ */
+typedef struct {
+    uint32_t tag;
+    uint32_t reserved;
+    double number;
+    void *reference;
+} deal_data;
+
+/*
+ * Presence metadata of one optional class field or record member (C3):
+ * absence is metadata, never a data value, so `absent` differs from
+ * present-undefined and present-null, which are data.
+ */
+typedef enum {
+    DEAL_PRESENCE_ABSENT = 0,
+    DEAL_PRESENCE_PRESENT = 1
+} deal_presence;
+
+/*
+ * The three independent tags of a scalar nullish position (C3): the stored base
+ * value, `null`, and `undefined`. They are distinct discriminants of one tagged
+ * struct, so no member is encoded through another and a base value never
+ * collides with a nullish tag.
+ */
+typedef enum {
+    DEAL_NULLISH_BASE = 0,
+    DEAL_NULLISH_NULL = 1,
+    DEAL_NULLISH_UNDEFINED = 2
+} deal_nullish_tag;
+
+/* =========================================================================
  * DiagnosticOriginProjection: the origin every runtime check, load, JSON and
  * error-materialization entry receives from generated code. `source_file` is
  * the file text as compiled (project-relative display name), `line` and
@@ -241,6 +307,13 @@ typedef struct { deal_error *error; double value; } deal_outcome_number;
 typedef struct { deal_error *error; uint8_t value; } deal_outcome_boolean;
 typedef struct { deal_error *error; deal_string *value; } deal_outcome_string;
 typedef struct { deal_error *error; void *value; } deal_outcome_reference;
+
+/*
+ * One reference visitor (M1, M5): a root-source slot, a static root or a
+ * reference-map walk target. It is shared by the `memory` and `container`
+ * groups, so it is declared with the C3 value-surface records.
+ */
+typedef void (*deal_reference_visit)(void *referent, void *context);
 
 /* =========================================================================
  * The service group entries, in dependency order

@@ -9,6 +9,7 @@
 #include "deal/native/entry.h"
 #include "deal/native/platform.h"
 
+#include <stddef.h>
 #include <string.h>
 
 /* =========================================================================
@@ -120,6 +121,23 @@ struct deal_error {
     deal_error *cause;
 };
 
+/*
+ * The Error instance is one managed object of its own runtime layout (M1): the
+ * runtime's text fields reach only platform-owned text, while the cause is a
+ * managed `deal_error *`, so the layout declares exactly that one
+ * managed-reference slot. A carrier, a root slot or a record member that holds
+ * an Error traces it like any other managed value (M5), and a cause reachable
+ * only through its parent Error stays marked (M1, `RootFrame`).
+ */
+static const uint32_t deal_error_reference_offsets[] = {
+    (uint32_t)offsetof(struct deal_error, cause)
+};
+
+static const deal_layout deal_error_layout = {
+    DEAL_LAYOUT_ERROR, 0u, sizeof(deal_error),
+    deal_error_reference_offsets, 1u
+};
+
 deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin) {
     if (code == NULL) {
@@ -128,7 +146,8 @@ deal_error *deal_error_create(const char *code, const char *message,
     if (message == NULL) {
         deal_platform_fault("error record: absent required message");
     }
-    deal_error *error = deal_platform_allocate(sizeof(*error));
+    deal_layout_define(&deal_error_layout);
+    deal_error *error = deal_alloc(DEAL_LAYOUT_ERROR, sizeof(*error));
     error->code = deal_platform_duplicate(code);
     error->message = deal_platform_duplicate(message);
     error->source_file = NULL;
@@ -177,6 +196,13 @@ void deal_error_set_actual(deal_error *error, const char *actual) {
 void deal_error_set_cause(deal_error *error, deal_error *cause) {
     if (error == NULL) {
         deal_platform_fault("error record: null error for the cause field");
+    }
+    /* The cause slot is a managed-reference slot of this record, so the store
+     * runs the insertion barrier (M2). An absent cause and a nullish singleton
+     * are not managed payloads and never shade anything. */
+    if (cause != NULL && !deal_value_is_null(cause)
+            && !deal_value_is_undefined(cause)) {
+        deal_store_barrier(error, cause);
     }
     error->cause = cause;
 }

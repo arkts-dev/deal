@@ -96,7 +96,10 @@ public final class LlvmTypeMapper {
         "deal_value_kind",
         "deal_failure_kind",
         "deal_host_completion_kind",
-        "deal_host_export_kind");
+        "deal_host_export_kind",
+        "deal_data_tag",
+        "deal_nullish_tag",
+        "deal_presence");
 
     /**
      * The published function-pointer typedefs; each is one code pointer,
@@ -105,7 +108,9 @@ public final class LlvmTypeMapper {
     private static final List<String> C_FUNCTION_POINTERS = List.of(
         "deal_host_function",
         "deal_host_async_function",
-        "deal_host_service");
+        "deal_host_service",
+        "deal_reference_visit",
+        "deal_root_source_scan");
 
     /**
      * The named record layouts this backend declares: the published runtime
@@ -118,6 +123,8 @@ public final class LlvmTypeMapper {
     private static Map<String, String> records() {
         Map<String, String> map = new LinkedHashMap<>();
         map.put("deal_value", "{ i32, i32 }");
+        map.put("deal_data", "{ i32, i32, double, i8* }");
+        map.put("deal_layout", "{ i32, i32, i64, i32*, i64 }");
         map.put("deal_origin", LlvmRuntimeAbi.ORIGIN_LAYOUT);
         map.put("deal_arm_record", LlvmRuntimeAbi.ARM_RECORD_LAYOUT);
         map.put("deal_arm_table", "{ i32, i32, %struct.deal_arm_record* }");
@@ -141,6 +148,7 @@ public final class LlvmTypeMapper {
                 "deal_string", "deal_array", "deal_table", "deal_object",
                 "deal_fn", "deal_error", "deal_async_op",
                 "deal_descriptor", "deal_completion_frame",
+                "deal_value_crossing",
                 "deal_host_completion", "deal_host_field", "deal_host_class",
                 "deal_host_export", "deal_host_module",
                 "deal_host_registry_entry", "deal_gc_statistics_record",

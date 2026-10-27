@@ -19,7 +19,11 @@
  * The `deal_error` record (R5, R9) carries the required-present `code` and
  * `message` fields, the origin (`deal_origin`, stored unchanged), the optional
  * `expected` and `actual` fields, the innermost-first frame snapshot and the
- * optional cause. An Error snapshots the shadow frame stack when it is
+ * optional cause. The instance itself is one managed object of the runtime's
+ * Error layout (`llvm-native-memory-management` M1), so a root slot, a record
+ * member or a carrier that holds it traces one real referent and the carried
+ * Error survives its propagation path (M5); its text fields stay
+ * platform-owned. An Error snapshots the shadow frame stack when it is
  * materialized; a rethrow reuses the instance and refreshes nothing. The
  * field-setting entries below write the record's own fields; the arm-driven
  * materialization entry that instantiates a template arrives with the
@@ -79,10 +83,14 @@ uint32_t deal_call_frame_depth(void);
  * stack at this call. `origin` is NULL for an Error that carries no origin
  * (a host-authored failure keeps the host's text with an absent origin).
  *
- * Staging note: the record's storage is platform memory today, because the
- * managed heap entry (`deal_alloc`, memory.h) belongs to the collector child.
- * The record layout and every entry of this header stay unchanged when the
- * collector registers the Error layout and routes this allocation through it.
+ * Storage: the record is one managed object of the runtime's `DEAL_LAYOUT_ERROR`
+ * layout, allocated through the managed heap entry (`deal_alloc`, memory.h), so
+ * its header carries the layout identity, its precise reference map covers the
+ * cause and addresses never change (M1). Reclaiming an unreachable Error is the
+ * collector child's; this group allocates and shapes the record and never
+ * scans the heap. The record's text fields stay platform memory, and a caller
+ * that holds an Error across a further allocating call roots it in a root slot
+ * or a scoped root (M5).
  */
 deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin);
@@ -90,6 +98,13 @@ deal_error *deal_error_create(const char *code, const char *message,
 /* The optional recorded fields; each stores a copy of the given text. */
 void deal_error_set_expected(deal_error *error, const char *expected);
 void deal_error_set_actual(deal_error *error, const char *actual);
+
+/*
+ * Records the cause. The cause slot is the record's one managed-reference
+ * slot, so the store runs the insertion barrier (M2); a NULL cause records no
+ * cause and a nullish singleton is never shaded as heap storage. A rethrow
+ * reuses the instance and leaves the stored cause unchanged.
+ */
 void deal_error_set_cause(deal_error *error, deal_error *cause);
 
 /*
