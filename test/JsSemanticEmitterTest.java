@@ -2774,10 +2774,7 @@ public class JsSemanticEmitterTest {
 
             export function toJsonFailure(): string {
               let item: Item = { v: 1, data: {} };
-              let f: (n: number) => number = function(n: number): number {
-                return n;
-              };
-              item.data.f = f;
+              item.data.f = "valid";
               let boom: (v: Item) => string = Item$toJson;
               return boom(item);
             }
@@ -2837,6 +2834,12 @@ public class JsSemanticEmitterTest {
             step("fieldWrites", () => app.fieldWrites.$f("d.js", 8, 8));
             step("jsonStates", () => app.jsonStates.$f("d.js", 9, 9));
             step("deep", () => app.deepChain.$f(600, "d.js", 10, 10));
+            const runtime = require("./deal/runtime.js");
+            const originalEncode = app.Item$toJson.$f;
+            app.Item$toJson.$f = function(value, ...origin) {
+              runtime.tableSet(value.data, "f", String.fromCharCode(0xD800));
+              return originalEncode(value, ...origin);
+            };
             try {
               app.toJsonFailure.$f("d.js", 11, 11);
               out.walk = "no-failure";
@@ -2844,6 +2847,7 @@ public class JsSemanticEmitterTest {
               out.walk = e.code + ":" + e.message + ":at=" + e.file + ":"
                 + e.line + ":" + e.column;
             }
+            app.Item$toJson.$f = originalEncode;
             try {
               app.toJsonCycle.$f("d.js", 12, 12);
               out.cycle = "no-failure";
@@ -2911,9 +2915,8 @@ public class JsSemanticEmitterTest {
             "a 600-link finite table chain inside a class table field"
                 + " encodes and re-decodes with no depth bound and the exact"
                 + " same text: " + report);
-        check(report.contains("\"walk\":\"E8001:value at data.f is not JSON"
-                + " serializable: function:at="),
-            "a non-JSON value in a declared table field raises the closed"
+        check(report.contains("\"walk\":\"E8001:unsupported type for JSON encoding: string:at="),
+            "fixture-only malformed Unicode in a declared Record field raises the closed"
                 + " walk tuple: " + report);
         check(report.contains("app.deal:" + failureLine + ":" + failureColumn),
             "the walk failure keeps the invoking call expression's own"

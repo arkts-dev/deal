@@ -1,7 +1,7 @@
 // @spec: Classes — JSON serialization (@jsonable)
-// @description: Generated @jsonable Record-field and Record[] walkers accept host-returned objects, nested arrays and decoded fractional graphs on all backends, retaining decoded numeric values. Cycles, nonfinite leaves and malformed keys take their distinct path-specific failure arms, independently from unknown-input stringify substitution rules.
+// @description: Generated Record content uses ordinary JSON omission, substitution and ordering rules; cycles fail encoding and malformed nested host data fails ingress.
 // @expected: runtime-ok
-// @features: classes, jsonable, toJson, tables, host-abi, v1.4
+// @features: classes, jsonable, toJson, tables, host-abi, v1.5
 
 import * as host from "host/jsonabletable";
 import * as json from "std/json";
@@ -87,38 +87,36 @@ export function test_host_parsed_table_element(): null {
 export function test_host_table_non_finite(): null {
   let infinite: TableField = { data: host.makeInfinite() };
   check(closedOutcome(infinite)
-      === "E8001|value at data.a is not JSON serializable: number",
-    "an infinite host-table member takes the closed finite arm: "
+      === "OK:{\"data\":{\"a\":null}}",
+    "an infinite host-table member becomes JSON null: "
       + closedOutcome(infinite));
   let nan: TableField = { data: host.makeNotANumber() };
   check(closedOutcome(nan)
-      === "E8001|value at data.a is not JSON serializable: number",
-    "a not-a-number host-table member takes the closed finite arm: "
+      === "OK:{\"data\":{\"a\":null}}",
+    "a NaN host-table member becomes JSON null: "
       + closedOutcome(nan));
   let nested: TableField = { data: host.makeNestedInfinite() };
   check(closedOutcome(nested)
-      === "E8001|value at data.inner.a is not JSON serializable: number",
-    "a non-finite leaf of a nested plain host table keeps its own path: "
+      === "OK:{\"data\":{\"inner\":{\"a\":null}}}",
+    "a nested non-finite leaf becomes JSON null: "
       + closedOutcome(nested));
   let elements: TableField = { data: host.makeInfiniteElements() };
-  check(closedOutcome(elements)
-      === "E8001|value at data.xs[0] is not JSON serializable: number",
-    "a non-finite element of an array-shaped host table keeps its index path: "
+  check(equivalent(TableField$toJson(elements), "{\"data\":{\"xs\":[null,2]}}"),
+    "a non-finite array element becomes JSON null: "
       + closedOutcome(elements));
   return null;
 }
 
 export function test_host_table_invalid_key(): null {
-  let bad: TableField = { data: host.makeBadKey() };
-  check(closedOutcome(bad)
-      === "E8001|value at data is not JSON serializable: invalid-unicode",
-    "an invalid-scalar host-table key names the object's own path: "
-      + closedOutcome(bad));
-  let nested: TableField = { data: host.makeNestedBadKey() };
-  check(closedOutcome(nested)
-      === "E8001|value at data.inner is not JSON serializable: invalid-unicode",
-    "an invalid-scalar key of a nested plain host table names that object: "
-      + closedOutcome(nested));
+  let rejected: boolean = false;
+  try { host.makeBadKey(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  check(rejected, "invalid root key rejects the host return");
+  rejected = false;
+  try { host.makeNestedBadKey(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  check(rejected, "invalid nested key rejects the host return");
+  rejected = false;
+  try { host.makeBadString(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  check(rejected, "invalid unread nested string rejects the host return");
   return null;
 }
 

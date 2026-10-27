@@ -226,7 +226,7 @@ public final class JvmRuntime {
 
     /** A dense array with the shared slot-space length. */
     public static final class Array {
-        public final List<Object> elements = new ArrayList<>();
+        public List<Object> elements = new ArrayList<>();
         public int length;
         public String elementDescriptor;
         /**
@@ -1386,6 +1386,30 @@ public final class JvmRuntime {
      * conversions only after the whole completion passed. A non-crossing
      * check never admits the boxed carrier.
      */
+    public static Object validateData(Object root, boolean completion) {
+        java.util.Set<Object> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        java.util.ArrayList<Object> pending = new java.util.ArrayList<>();
+        pending.add(root);
+        while (!pending.isEmpty()) {
+            Object value = pending.removeLast();
+            if (value == null || value == UNDEFINED || value == MISSING || value instanceof Boolean || value instanceof Number) continue;
+            if (value instanceof String text) {
+                if (!JvmJson.validScalars(text)) throw kindFailure("string", "invalid-unicode", completion);
+                continue;
+            }
+            if (!seen.add(value)) continue;
+            if (value instanceof Table table) {
+                for (var entry : table.entries.entrySet()) { pending.add(entry.getKey()); pending.add(entry.getValue()); }
+            } else if (value instanceof Array array) pending.addAll(array.elements);
+            else if (value instanceof ClassInstance instance) {
+                for (String key : instance.fieldNames()) if (instance.isPresent(key)) pending.add(instance.read(key));
+            } else if (!(value instanceof FunctionValue) && !(value instanceof ErrorValue)) {
+                throw kindFailure("unknown", "table", completion);
+            }
+        }
+        return root;
+    }
+
     private static Object bcheck(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
         if (v == MISSING) v = UNDEFINED;
@@ -1399,7 +1423,7 @@ public final class JvmRuntime {
             if (v instanceof String) return bcheck("string", "string", v, completion, null, hostCompletionCrossing);
             if (v == null || v == UNDEFINED || v instanceof Boolean || v instanceof Number
                     || v instanceof String || v instanceof Table || v instanceof Array
-                    || v instanceof FunctionValue || v instanceof ClassInstance || v instanceof ErrorValue) return v;
+                    || v instanceof FunctionValue || v instanceof ClassInstance || v instanceof ErrorValue) return validateData(v, completion);
             // A foreign JVM object has no DEAL static-kind authority.
             throw kindFailure("unknown", "table", completion);
         }
@@ -1445,7 +1469,7 @@ public final class JvmRuntime {
         }
         if ("record".equals(desc)) {
             if (v instanceof Table) {
-                return v;
+                return validateData(v, completion);
             }
             throw kindFailure("table", actual, completion);
         }
@@ -2283,6 +2307,12 @@ case "NUMBER_EQ" -> {
             case "NULLABLE_NE" -> {
                 return !nullableEquals(kindL, l, kindR, r);
             }
+            case "UNKNOWN_EQ" -> {
+                return nullableEquals(kindL, l, kindR, r);
+            }
+            case "UNKNOWN_NE" -> {
+                return !nullableEquals(kindL, l, kindR, r);
+            }
             case "REFERENCE_EQ" -> {
                 return l == r;
             }
@@ -2388,7 +2418,7 @@ case "NUMBER_ADD" -> {
      * event plus the {@link DealError} at the call origin (the same
      * conversion the arithmetic helpers perform).
      */
-    private static final class StdlibFailure extends RuntimeException {
+    static final class StdlibFailure extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
@@ -2837,6 +2867,7 @@ case "NUMBER_ADD" -> {
                 // realization is the only producer of the mark; a nested
                 // decoded array carries it too.
                 array.decodedArray = true;
+                array.elementDescriptor = "unknown";
                 return new Frame(true, null, array, null, ARRAY_FIRST);
             }
         }
@@ -3156,7 +3187,7 @@ case "NUMBER_ADD" -> {
      * first-insertion/index order and the first declaration-order
      * failure wins unchanged.
      */
-    private static void stringifyValue(StringBuilder out, Object value,
+    static void stringifyValue(StringBuilder out, Object value,
                                        java.util.Set<Object> path) {
         Deque<StringifyFrame> stack = new ArrayDeque<>();
         appendJsonValue(out, value, path, stack);

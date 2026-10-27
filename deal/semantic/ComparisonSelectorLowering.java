@@ -175,7 +175,7 @@ public final class ComparisonSelectorLowering {
                 case Type.Boolean ignored -> negated ? BinarySelector.BOOLEAN_NE
                     : BinarySelector.BOOLEAN_EQ;
                 case Type.Undefined ignored -> negated ? BinarySelector.UNDEFINED_NE : BinarySelector.UNDEFINED_EQ;
-                case Type.Unknown ignored -> throw new Defect("Unknown equality requires a nullish singleton operand");
+                case Type.Unknown ignored -> negated ? BinarySelector.UNKNOWN_NE : BinarySelector.UNKNOWN_EQ;
                 case Type.Void ignored -> throw new Defect("Void cannot be compared");
                 case Type.Null ignored -> negated ? BinarySelector.NULL_NE
                     : BinarySelector.NULL_EQ;

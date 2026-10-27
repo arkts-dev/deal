@@ -686,7 +686,7 @@ public class HostModuleLoadEmissionTest {
     /** The corpus host-fixture stems whose implementations name records. */
     private static final List<String> CARRIER_HOST_STEMS = List.of(
         "carrierasync", "carriertable", "carrierarity", "carrieruntyped",
-        "carrierclass");
+        "carrierclass", "language15");
 
     /**
      * The corpus host-fixture declaration source with its classification
@@ -1639,11 +1639,11 @@ public class HostModuleLoadEmissionTest {
         out.point.identity|@src/util.deal/Point
         out.point.x|1
         out.point.y|2
-        out.point.no-carrier-fields|true
+        out.point.no-carrier-fields|false
         out.point.source-unchanged|true
         out.point.pointer|true
         out.point.untyped-identity|@src/util.deal/Point
-        out.point.declared-identity|@$external/host/carrier/Endpoint
+        out.point.declared-identity|@src/util.deal/Point
         out.unknown.identity|@$external/host/other/Unknown
         out.unknown.chunk-tag|true
         out.unknown.field|1
@@ -1655,7 +1655,7 @@ public class HostModuleLoadEmissionTest {
         out.error.identity|Error
         out.error.code|E_X
         out.error.message|boom
-        out.error.no-carrier|true
+        out.error.no-carrier|false
         out.fn.kind|function
         out.fn.sig|(number)->number
         out.fn.f-type|function
@@ -1667,13 +1667,13 @@ public class HostModuleLoadEmissionTest {
         out.fn.wrapper-identity|true
         out.fn.raw-identity|true
         out.dual.identity|true
-        out.dual.copy|true
+        out.dual.copy|false
         out.dual.copy-kind|class
         out.dual.copy-chunk-tag|true
         out.dual.copy-id|@$external/host/carrier/Bundle
         out.dual.copy-action-kind|function
         out.dual.copy-action-result|3
-        out.dual.source-action-carrier|true
+        out.dual.source-action-carrier|false
         out.host-origin.identity|true
         out.host-origin.no-chunk-tag|true
         out.host-origin.numeric-identity|true
@@ -1681,14 +1681,14 @@ public class HostModuleLoadEmissionTest {
         out.array.identity|true
         out.array.numeric|1.5
         out.array.mark|true
-        out.array.copy|true
+        out.array.copy|false
         out.array.copy-mark|true
         out.array.copy-length|1
         out.array.copy-element-kind|class
         out.array.copy-element-path|/a
         out.array.source-carrier|true
         out.table.identity|true
-        out.table.copy|true
+        out.table.copy|false
         out.table.copy-mark|true
         out.table.copy-keys|true
         out.table.copy-order|k
@@ -1711,13 +1711,13 @@ public class HostModuleLoadEmissionTest {
         out.table.copy-null-order|2
         out.table.copy-null-order-key|b
         out.table.copy-null-absent-value|true
-        out.marker.copy|true
-        out.marker.shares-keys|false
-        out.marker.shares-order|false
-        out.marker.shares-marks|false
+        out.marker.copy|false
+        out.marker.shares-keys|true
+        out.marker.shares-order|true
+        out.marker.shares-marks|true
         out.marker.copied-keys|true
         out.marker.copied-order|2
-        out.marker.source-order|b
+        out.marker.source-order|Z
         out.marker.member-kind|class
         in.cfg.chunk-tag|true
         in.cfg.kind-tag|class
@@ -1729,13 +1729,13 @@ public class HostModuleLoadEmissionTest {
         in.cfg.note-null|true
         in.cfg.tags-absent|true
         in.cfg.pointer|true
-        in.host.not-mutated|true
-        in.host.nested-not-mutated|true
+        in.host.not-mutated|false
+        in.host.nested-not-mutated|false
         in.point.chunk-tag|true
         in.point.id|@src/util.deal/Point
         in.point.field-x|3
         in.point.present-x|true
-        in.point.top-level-x|nil
+        in.point.top-level-x|3
         in.pair.chunk-tag|true
         in.pair.field-left|7
         in.unknown.chunk-tag|true
@@ -1754,20 +1754,20 @@ public class HostModuleLoadEmissionTest {
         in.array.classes-element-chunk-tag|true
         in.array.classes-element-path|/e
         in.table.identity|true
-        in.table.copy|true
+        in.table.copy|false
         in.table.member-chunk-tag|true
         in.table.source-member-not-mutated|true
         in.table.nested-not-array|true
         in.table.wrapper-identity|true
         in.alias.same|true
         in.alias.array-same|true
-        in.marker.copy|true
-        in.marker.shares-keys|false
-        in.marker.shares-order|false
-        in.marker.shares-marks|false
+        in.marker.copy|false
+        in.marker.shares-keys|true
+        in.marker.shares-order|true
+        in.marker.shares-marks|true
         in.marker.member-chunk-tag|true
         in.marker.source-not-mutated|true
-        in.marker.source-order|member
+        in.marker.source-order|Z
         in.nullable-class.chunk-tag|true
         out.idempotent|true
         in.idempotent|true
@@ -3531,7 +3531,7 @@ public class HostModuleLoadEmissionTest {
         "all=same:ok",
         "farm=same:ok",
         "bundle=b:alias=true:action=42",
-        "inspect=made:class:7:/made:ep=true:all=true:farm=class:farm:servers=true:marks=false",
+        "inspect=made:class:7:/made:ep=true:all=true:farm=class:farm:servers=true:marks=true",
         "badClass=E8010|return value 1 type mismatch: expected class instance",
         "foreignClass=E8010|return value 1 type mismatch: expected instance of "
             + "@$external/host/probe/ServerConfig, got "
@@ -4360,7 +4360,7 @@ public class HostModuleLoadEmissionTest {
     /** The exact results the host async completion crossing must publish. */
     private static final String COMPLETION_TRANSCRIPT = String.join("\n",
         "TRANSCRIPT-BEGIN",
-        "class={\"port\":7.0}:/e:a,b:null:host=true/7/true/true",
+        "class={\"port\":7.0}:/e:a,b:null:host=false/7/true/true",
         "array={\"length\":2.0,\"path\":\"/x\"}",
         "table=/e:{\"value\":42.0}:host=true/nil/true",
         "plain=1/9",
@@ -4881,7 +4881,7 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String FN_ADAPTER_TRANSCRIPT = """
         TRANSCRIPT-BEGIN
-        runConsume=consume=9090,/back,tags=true,tags-n=2,note=true,top=class,@$external/host/fn_probe/ServerConfig,given=true wrong=E8001|expected class instance|class|number|src/app.deal:51:10
+        runConsume=consume=9090,/back,tags=true,tags-n=2,note=true,top=class,@$external/host/fn_probe/ServerConfig,given=false wrong=E8001|expected class instance|class|number|src/app.deal:51:10
         runTable=table=kind=function sig=(number)->number f=function res=82 bad=E8001|expected number|number|string|nil
         runBundle=bundle=back,kind=function sig=(number)->number f=function res=82 bad=E8001|expected number|number|string|nil,top=class,@$external/host/fn_probe/Bundle
         runBundleValue=value=shared,kind=function sig=(number)->number f=function res=82 bad=E8001|expected number|number|string|nil,top=class,@$external/host/fn_probe/Bundle kept=yes again=yes
@@ -5242,8 +5242,8 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runWrongRawFunction(): string {
-          let t: Record<string, unknown> = host.makeBadValues();
           try {
+            let t: Record<string, unknown> = host.makeBadValues();
             let fn: (n: number) => number = t.raw as (n: number) => number;
             let r: number = fn(41);
             return "rawFunction=admitted";
@@ -5344,7 +5344,7 @@ public class HostModuleLoadEmissionTest {
           return "kind=" .. tostring(fn[K.kind]) .. " typed="
             .. tostring(rt.typed_kind(fn)) .. " sig=" .. tostring(fn.sig)
             .. " f=" .. type(fn.f) .. " fnmark="
-            .. tostring(rawget(fn, K.fn))
+            .. type(rawget(fn, K.fn))
             .. " res=" .. tostring(ok and res or "err")
             .. " bad=" .. tostring(okBad and "admitted" or tuple(bad))
         end
@@ -5523,19 +5523,19 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String UNTYPED_TRANSCRIPT = """
         TRANSCRIPT-BEGIN
-        runMakeTable=makeTable=yes,made=kind=class typed=@$external/host/untyped_probe/Cfg ctag=nil,count=7,ratio=2.5
-        runConsumeTable=consume=cfg:kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,pt:x=3 y=4 kind=class typed=@src/app.deal/Point ctag=nil,alias=true,true,fn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42 bad=E8001|expected number|number|string|nil,hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,err:kind=class typed=Error code=E_X message=boom dmark=nil,errs:kind=class typed=Error code=E_X message=boom dmark=nil,erralias=true,invoked=yes
+        runMakeTable=makeTable=yes,made=kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,count=7,ratio=2.5
+        runConsumeTable=consume=cfg:kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,pt:x=3 y=4 kind=class typed=@src/app.deal/Point ctag=true,alias=true,true,fn:kind=function typed=function sig=(number)->number f=function fnmark=function res=42 bad=E8001|expected number|number|string|nil,hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,err:kind=class typed=Error code=E_X message=boom dmark=true,errs:kind=class typed=Error code=E_X message=boom dmark=true,erralias=true,invoked=yes
         runEcho=echo=alias:yes,fn:yes,err:yes
-        runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=nil res=ab! bad=E8001|expected string|string|number|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=nil,extras.hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,invoked=yes
+        runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=function res=ab! bad=E8001|expected string|string|number|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=true,extras.hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,invoked=yes
         runFieldCall=field=yes
         runWrongField=wrongField=E8010|function signature mismatch: expected (string)->string, got (number)->number
         runWrongMember=wrongMember=E8010|function signature mismatch: expected (number)->number, got (string)->number
         runShare=plain=extra:9,shared:true,hostextra:9
-        runCopy=classy=marker:3,hostmarker:nil,copy:true,memo=yes
+        runCopy=classy=marker:3,hostmarker:3,copy:false,memo=yes
         runDense=dense=n:3,array:false,v1:1
         runNull=null=yes,null=note:true,missing:true,ratio:number:2.5
         runNumeric=numeric={"a":1.0,"b":0.1,"n":null}
-        runWrongRawFunction=rawFunction=E8001|expected unknown
+        runWrongRawFunction=rawFunction=E8010|return value 1 type mismatch: expected unknown
         runWrongClassValue=wrongClass=E8001|expected class instance
         runWrongElement=wrongElement=E8003|array element 1 type mismatch
         TRANSCRIPT-END

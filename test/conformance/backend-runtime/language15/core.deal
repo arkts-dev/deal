@@ -205,15 +205,9 @@ export function main(): null {
   if (decodedArrays === null) { throw {code: "FAIL", message: "decoded arrays"}; }
   let arrayBox = decodedArrays as DecodedArrays;
   let dynamicFunctionBox: RecordBox = {data: {callback: fn}};
-  let dynamicFunctionRejected: boolean = false;
-  try { RecordBox$toJson(dynamicFunctionBox); }
-  catch (e) { if (e instanceof Error) { dynamicFunctionRejected = e.code === "E8001" && e.message === "value at data.callback is not JSON serializable: function"; } }
-  if (!dynamicFunctionRejected) { throw {code: "FAIL", message: "generated Record function rejection"}; }
+  if (RecordBox$toJson(dynamicFunctionBox) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record function omission"}; }
   let dynamicUndefinedBox: RecordBox = {data: {absent: undefined}};
-  let dynamicUndefinedRejected: boolean = false;
-  try { RecordBox$toJson(dynamicUndefinedBox); }
-  catch (e) { if (e instanceof Error) { dynamicUndefinedRejected = e.code === "E8001" && e.message === "value at data.absent is not JSON serializable: undefined"; } }
-  if (!dynamicUndefinedRejected) { throw {code: "FAIL", message: "generated Record undefined rejection"}; }
+  if (RecordBox$toJson(dynamicUndefinedBox) !== "{\"data\":{}}") { throw {code: "FAIL", message: "generated Record undefined omission"}; }
   let nonfiniteArrays: DecodedArrays = {numbers: [1 / 0, 0 / 0, -1 / 0], nested: [], nullish: []};
   if (DecodedArrays$toJson(nonfiniteArrays) !== "{\"numbers\":[null,null,null],\"nested\":[],\"nullish\":[]}") {
     throw {code: "FAIL", message: "generated declared nonfinite number array"};

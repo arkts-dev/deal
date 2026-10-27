@@ -1,0 +1,76 @@
+// @spec: Type system
+// @description: Unknown equality, stored undefined iteration and fresh while-guard refinements.
+// @expected: runtime-ok
+// @features: unknown, equality, narrowing, for-of
+
+class Item { value: number; }
+function equal(a: unknown, b: unknown): boolean {
+  if ((a === b) === (a !== b)) { throw {code: "FAIL", message: "equality complement"}; }
+  return a === b;
+}
+function require(value: boolean): void {
+  if (!value) { throw {code: "FAIL", message: "unknown equality or loop refinement"}; }
+}
+export function main(): null {
+  require(equal(undefined, undefined));
+  require(equal(null, null));
+  require(!equal(null, undefined));
+  require(equal(1, 1));
+  require(!equal(1, "1"));
+  require(equal("same", "same"));
+  require(!equal(true, 1));
+  require(equal(0, -0));
+  let nan: number = 0 / 0;
+  require(!equal(nan, nan));
+  let a: number[] = [1];
+  let b: number[] = [1];
+  require(equal(a, a));
+  require(!equal(a, b));
+  let r: Record<string, unknown> = { value: 1 };
+  let s: Record<string, unknown> = { value: 1 };
+  require(equal(r, r));
+  require(!equal(r, s));
+  let c: Item = { value: 1 };
+  let d: Item = { value: 1 };
+  require(equal(c, c));
+  require(!equal(c, d));
+  let f: () => void = function(): void {};
+  let g: () => void = function(): void {};
+  require(equal(f, f));
+  require(!equal(f, g));
+  let xs: (number | undefined)[] = [undefined, 1, undefined, 2];
+  let count: number = 0;
+  for (let value of xs) { count = count + 1; }
+  require(count === 4);
+  let us: unknown[] = [undefined, 1, undefined, 2];
+  for (let value of us) { count = count + 1; }
+  require(count === 8);
+  let x: unknown = 3;
+  while (typeof x === "number") {
+    let n: number = x;
+    if (n > 0) { x = n - 1; continue; }
+    x = "done";
+  }
+  let nullable: number | null = 2;
+  while (nullable !== null) {
+    let n: number = nullable;
+    require(n === 2);
+    nullable = null;
+  }
+  let instance: unknown = c;
+  while (instance instanceof Item) {
+    require(instance.value === 1);
+    instance = undefined;
+  }
+  let stale: unknown = 1;
+  let mutate: () => void = function(): void { stale = "changed"; };
+  let rejected: boolean = false;
+  while (typeof stale === "number") {
+    mutate();
+    try { let n: number = stale + 1; require(n === 2); }
+    catch (e) { if (e instanceof Error) { rejected = e.code === "E8001"; } }
+    break;
+  }
+  require(rejected);
+  return null;
+}

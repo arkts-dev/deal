@@ -788,7 +788,7 @@ end)
 
 test("json.stringify rejects raw foreign function roots at unknown ingress", function()
   local err = assert_error_code(function() json.stringify.f(function() end) end, "E8001")
-  assert(err.message == "unknown primitive type: unknown", "foreign function rejects at unknown boundary")
+  assert(err.message == "unsupported unknown ingress", "foreign function rejects at unknown boundary")
 end)
 
 test("json.parse with non-string raises error", function()
@@ -1330,11 +1330,11 @@ end)
 -- invalid-UTF-8 message).
 local function assert_invalid_scalar_stringify_error(fn, label, file, line, column)
   local err = assert_error_code(fn, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: string",
+  assert(err.message == "expected string, got UTF-16 surrogate code point"
+      or err.message == "expected string, got invalid UTF-8 encoding",
     label .. ": message " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table",
-    label .. ": expected " .. tostring(err.expected))
-  assert(err.actual == "string", label .. ": actual " .. tostring(err.actual))
+  assert(err.expected == "string", label .. ": expected " .. tostring(err.expected))
+  assert(err.actual == "invalid UTF-8 string", label .. ": actual " .. tostring(err.actual))
   if file ~= nil then
     assert(err.file == file and err.line == line and err.column == column,
       label .. ": the tuple carries the call-site triplet, got "
@@ -1470,11 +1470,11 @@ test("json.stringify omits tagged function members and yields undefined for thei
   assert(json.stringify.f(wrapper) == __rt.__UNDEFINED, "function root")
 end)
 
-test("json.stringify rejects a decoded async handle with the closed table token", function()
+test("json.stringify rejects an unread async handle at recursive ingress", function()
   local __rt = require("deal.runtime")
   local handle = __rt.async_start(function() return "done" end)
   local err = assert_error_code(function() json.stringify.f({ op = handle }) end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: table",
+  assert(err.message == "unsupported unknown ingress",
     "async handle message, got: " .. tostring(err.message))
   assert(err.actual == "table", "async handle actual token, got: " .. tostring(err.actual))
 end)

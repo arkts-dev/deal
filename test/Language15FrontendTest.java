@@ -75,6 +75,22 @@ public final class Language15FrontendTest {
         check("function f(x: unknown): void { if (typeof x === \"object\") { let y: Record<string, unknown> = x; } }", false);
         check("function f(x: unknown): void { if (typeof x === \"function\") { let y: () => void = x; } }", false);
         check("function f(): void { let r: Record<string, unknown> = {}; if (Object.hasOwn(r, \"x\")) { let value: number = r.x; } }", false);
+        check("function f(a: unknown, b: unknown): boolean { return a === b; }", true);
+        check("function f(x: unknown): void { while (typeof x === \"number\") { let y: number = x; x = \"done\"; } }", true);
+        check("function f(x: number | null): void { while (x !== null) { let y: number = x; x = null; } }", true);
+        check("function f(x: unknown): void { while (x instanceof Error) { let y: string = x.code; x = null; } }", true);
+        check("function f(x: unknown): void { while (typeof x === \"number\") { x = \"done\"; let y: number = x; } }", false);
+        check("async function tick(): Promise<void> {} async function f(x: unknown): Promise<void> { while (typeof x === \"number\") { await tick(); let y: number = x; } }", false);
+        check("function f(): void { let x: unknown | null | null = 1; }", false);
+        check("function f(): void { let x: (unknown | undefined) | undefined = 1; }", false);
+        check("function f(): void { let x: null | null | unknown = 1; }", false);
+        check("function f(): void { let x: (switch: number) => number; }", false);
+        check("function f(): void { let x: (undefined: number) => number; }", false);
+        check("function f(): void { let x: (x$y: number) => number; }", false);
+        check("function eval(): void {}", false);
+        check("function f(arguments: number): void {}", false);
+        check("class C { return: number; Object: number; undefined: number; switch: number; } function f(): void { let c: C = { return: 1, Object: 2, undefined: 3, switch: 4 }; let x: number = c.return; }", true);
+        check("function f(): void { let r: Record<string, unknown> = { delete: 1, as: 2, typeof: 3 }; let x: unknown = r.delete; }", true);
         System.out.println("Language15FrontendTest: passed");
     }
 }

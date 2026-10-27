@@ -1,0 +1,17 @@
+export function echo(value: unknown): unknown;
+export function undefinedValue(): undefined;
+export function nothing(): void;
+export function maybeNumber(value: number | undefined): number | undefined;
+export function maybeString(value: string | undefined): string | undefined;
+export function maybeBoolean(value: boolean | undefined): boolean | undefined;
+export function mutate(value: number[]): number[];
+export function fresh(): number[];
+export function mutateClass(value: unknown): unknown;
+export function classNumber(value: unknown): number;
+export function callback(value: () => void): void;
+export function asyncUnknown(): Promise<unknown>;
+export function asyncUndefined(): Promise<undefined>;
+export function asyncVoid(): Promise<void>;
+export function invalidNested(): Record<string, unknown>;
+export function opaque(): unknown;
+export function graph(): unknown;

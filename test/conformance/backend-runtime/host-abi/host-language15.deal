@@ -1,0 +1,75 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Unknown/nullish/void carriers, recursive ingress, cycles and original host alias identity.
+// @expected: runtime-ok
+// @features: host-abi, unknown, undefined, void, async, arrays
+import * as host from "host/language15";
+class Item { n: number; }
+function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "host v1.5 contract"}; } }
+function callback(): void {}
+export function test_sync(): void {
+  let values: number[] = [1, 2];
+  let original: unknown = values;
+  check(host.echo(original) === original);
+  let returned = host.mutate(values);
+  check(returned === values);
+  check(values[0] === 9);
+  returned[1] = 7;
+  check(values[1] === 7);
+  values[2] = 5;
+  check(host.mutate(values) === values);
+  check(returned[2] === 5);
+  delete values[1];
+  let visited: number = 0;
+  for (let value of returned) { visited = visited + 1; }
+  check(visited === 1);
+  let missing: boolean = false;
+  try { let value: number = returned[1]; } catch (e) { if (e instanceof Error) { missing = e.code === "E8001"; } }
+  check(missing);
+  returned[1] = 6;
+  check(values[1] === 6);
+  check(host.mutate(values) === values);
+  let item: Item = {n: 1};
+  original = item;
+  check(host.echo(original) === original);
+  check(host.mutateClass(original) === original);
+  check(item.n === 8);
+  item.n = 11;
+  check(host.classNumber(original) === 11);
+  let fresh = host.fresh();
+  let freshUnknown: unknown = fresh;
+  check((freshUnknown as number[])[0] === 4);
+  let wrongDescriptor: boolean = false;
+  try { let rejected = freshUnknown as unknown[]; } catch (e) { if (e instanceof Error) { wrongDescriptor = e.code === "E8001"; } }
+  check(wrongDescriptor);
+  original = callback;
+  check(host.echo(original) === original);
+  let record: Record<string, unknown> = {};
+  record.self = record;
+  original = record;
+  check(host.echo(original) === original);
+  check(host.undefinedValue() === undefined);
+  check(host.maybeNumber(undefined) === undefined);
+  check((host.maybeNumber(3) as number) === 3);
+  check(host.maybeString(undefined) === undefined);
+  check((host.maybeString("s") as string) === "s");
+  check(host.maybeBoolean(undefined) === undefined);
+  check((host.maybeBoolean(true) as boolean) === true);
+  host.nothing(); host.callback(callback);
+  let rejected: boolean = false;
+  try { host.invalidNested(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  check(rejected);
+  rejected = false;
+  try { host.opaque(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  check(rejected);
+  let graph = host.graph() as Record<string, unknown>;
+  check(graph.self === (graph as unknown));
+  check(graph.a === graph.b);
+}
+export async function test_async(): Promise<void> {
+  let value: unknown = await host.asyncUnknown();
+  check(value === undefined);
+  let absent: undefined = await host.asyncUndefined();
+  check(absent === undefined);
+  await host.asyncVoid();
+}
+export function main(): null { return null; }

@@ -264,26 +264,21 @@ public class JsonClassExecutorTest {
                 instanceof JsonStringify.Success s
                 && s.text().carrier().equals("{\"q\":\"a\\\"b\\n\",\"z\":2.0}"),
             "escaping and first-insertion order are literal-exact");
-        assertStringifyFailure(new Value.Number(Double.NaN), "f", "f", "number", false);
+        check(JsonClassAlgorithmAdapter.stringifier().stringify(new Value.Number(Double.NaN), "f")
+            instanceof JsonStringify.Success s && s.text().carrier().equals("null"), "nonfinite JSON substitution");
         Value function = new Value.Function(new RuntimeDescriptor.Func(List.of(),
             RuntimeDescriptor.Null.INSTANCE, false));
-        List<Value> unsupported = List.of(function,
-            instanceOf(layoutOf(POINT, field("x", INT, true)), Map.of("x", new Value.Number(1))),
-            Value.string("\uD800"), Value.Missing.INSTANCE);
-        List<String> tokens = List.of("function", "@corpus.json/Point", "invalid-unicode", "undefined");
-        for (int i = 0; i < unsupported.size(); i++) {
-            assertStringifyFailure(rawTable(Map.of("k", unsupported.get(i))),
-                "data", "data.k", tokens.get(i), false);
+        for (Value omitted : List.of(function, Value.Missing.INSTANCE, Value.Undefined.INSTANCE)) {
+            check(JsonClassAlgorithmAdapter.stringifier().stringify(rawTable(Map.of("k", omitted)), "data")
+                instanceof JsonStringify.Success s && s.text().carrier().equals("{}"), "object omission");
+            check(JsonClassAlgorithmAdapter.stringifier().stringify(new Value.Array(SemanticArray.of(omitted)), "data")
+                instanceof JsonStringify.Success s && s.text().carrier().equals("[null]"), "array substitution");
         }
-        SemanticTable<Value> dotted = new SemanticTable<>();
-        dotted.put("a", new Value.Array(SemanticArray.of(new Value.Number(1))));
-        dotted.put("a.0", function);
-        assertStringifyFailure(new Value.Table(dotted), "data", "data.a.0", "function", false);
-        dotted.put("a", new Value.Array(SemanticArray.of(function)));
-        dotted.put("a.0", new Value.Number(1));
-        assertStringifyFailure(new Value.Table(dotted), "data", "data.a[0]", "function", false);
-        assertStringifyFailure(rawTable(Map.of("a.0", new Value.Array(SemanticArray.of(function)))),
-            "data", "data.a.0[0]", "function", false);
+        var pointLayout = layoutOf(POINT, field("x", INT, true));
+        check(JsonClassAlgorithmAdapter.stringifier(Map.of(POINT, pointLayout)).stringify(
+            rawTable(Map.of("k", instanceOf(pointLayout, Map.of("x", new Value.Number(1))))), "data")
+            instanceof JsonStringify.Success s && s.text().carrier().equals("{\"k\":{\"x\":1.0}}"), "nested class JSON");
+        assertStringifyFailure(rawTable(Map.of("k", Value.string("\uD800"))), "data", "data.k", "invalid-unicode", false);
         SemanticTable<Value> cycle = new SemanticTable<>();
         cycle.put("self", new Value.Table(cycle));
         assertStringifyFailure(new Value.Table(cycle), "data", "data.self", "table", true);
@@ -649,17 +644,8 @@ public class JsonClassExecutorTest {
         Outcome<Value> productionTableFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, badTable), layouts, JsonClassAlgorithmAdapter.stringifier(),
             callOrigin);
-        check(productionTableFailure instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: function")
-                && failure.failure().origin().equals(callOrigin)
-                && !failure.failure().origin().equals(op.origin())
-                && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("function"),
-            "the production adapter's walk projects the function-in-table failure at "
-                + "data.k as the complete walk tuple (E8001, the function token as actual, "
-                + "no expected field, and the call origin)");
+        check(productionTableFailure instanceof Outcome.Success<Value>,
+            "generated Record JSON omits function properties");
 
         SemanticTable<Value> badClassData = new SemanticTable<>();
         badClassData.put("k", instanceOf(layoutOf(OTHER, field("x", INT, true)),
@@ -670,22 +656,13 @@ public class JsonClassExecutorTest {
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
             "tags", new Value.Array(SemanticArray.of(new Value.Number(0))),
             "data", new Value.Table(badClassData)));
+        var dynamicLayouts = new java.util.HashMap<>(layouts);
+        dynamicLayouts.put(OTHER, layoutOf(OTHER, field("x", INT, true)));
         Outcome<Value> productionClassFailure = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, classInTable), layouts,
-            JsonClassAlgorithmAdapter.stringifier(), callOrigin);
-        check(productionClassFailure instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().code() == DiagnosticCode.E8001
-                && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: @" + MOD.path()
-                        + "/Other")
-                && failure.failure().origin().equals(callOrigin)
-                && !failure.failure().origin().equals(op.origin())
-                && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals(
-                    "@" + MOD.path() + "/Other"),
-            "the production adapter's walk projects the class-in-table failure at data.k "
-                + "as the complete walk tuple (E8001, the carried canonical class atom as "
-                + "actual, no expected field, and the call origin)");
+            JsonClassAlgorithmAdapter.stringifier(dynamicLayouts), callOrigin);
+        check(productionClassFailure instanceof Outcome.Success<Value>,
+            "generated Record JSON encodes nested class fields");
 
         SemanticTable<Value> badInvalidData = new SemanticTable<>();
         badInvalidData.put("k", Value.string("\uD800"));
@@ -711,7 +688,7 @@ public class JsonClassExecutorTest {
                 + "as actual, no expected field, and the call origin)");
 
         SemanticTable<Value> badMissingData = new SemanticTable<>();
-        badMissingData.put("k", Value.Missing.INSTANCE);
+        badMissingData.put("k", Value.string("\uD800"));
         Value.Class missingInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
             "age", new Value.Number(1),
@@ -724,12 +701,12 @@ public class JsonClassExecutorTest {
         check(productionMissingFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: undefined")
+                    "value at data.k is not JSON serializable: invalid-unicode")
                 && failure.failure().origin().equals(callOrigin)
                 && !failure.failure().origin().equals(op.origin())
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("undefined"),
-            "the production adapter's walk projects the missing-in-table failure at "
+                && failure.failure().failure().actual().equals("invalid-unicode"),
+            "the production adapter's walk projects the invalid-string failure at "
                 + "data.k as the complete walk tuple (E8001, the typed-boundary undefined token "
                 + "as actual, no expected field, and the call origin)");
 
@@ -741,8 +718,7 @@ public class JsonClassExecutorTest {
         // data.a.0 (a table key always appends .key) at the call origin.
         SemanticTable<Value> dottedData = new SemanticTable<>();
         dottedData.put("a", new Value.Array(SemanticArray.of(new Value.Number(1))));
-        dottedData.put("a.0", new Value.Function(new RuntimeDescriptor.Func(List.of(),
-            RuntimeDescriptor.Null.INSTANCE, false)));
+        dottedData.put("a.0", Value.string("\uD800"));
         Value.Class dottedInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
             "age", new Value.Number(1),
@@ -754,7 +730,7 @@ public class JsonClassExecutorTest {
             callOrigin);
         check(dottedFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data.a.0 is not JSON serializable: function")
+                    "value at data.a.0 is not JSON serializable: invalid-unicode")
                 && failure.failure().origin().equals(callOrigin),
             "the production adapter's walk projects the dotted-key failure at data.a.0 "
                 + "(a table key always appends .key, never [0]) at the call origin");
@@ -764,9 +740,7 @@ public class JsonClassExecutorTest {
         // sibling key "a.0" also exists, the pinned path stays data.a[0]
         // (the segment spelling is the parent container's kind).
         SemanticTable<Value> dottedArrayWalkData = new SemanticTable<>();
-        dottedArrayWalkData.put("a", new Value.Array(SemanticArray.of(
-            new Value.Function(new RuntimeDescriptor.Func(List.of(),
-                RuntimeDescriptor.Null.INSTANCE, false)))));
+        dottedArrayWalkData.put("a", new Value.Array(SemanticArray.of(Value.string("\uD800"))));
         dottedArrayWalkData.put("a.0", new Value.Number(1));
         Value.Class dottedArrayInTable = instanceOf(point, Map.of(
             "name", Value.string("n"),
@@ -779,7 +753,7 @@ public class JsonClassExecutorTest {
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
         check(dottedArrayFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data.a[0] is not JSON serializable: function")
+                    "value at data.a[0] is not JSON serializable: invalid-unicode")
                 && failure.failure().origin().equals(callOrigin),
             "the production adapter's walk projects the array-element failure at "
                 + "data.a[0] even with a dotted sibling key present, at the call origin");
@@ -793,8 +767,7 @@ public class JsonClassExecutorTest {
         for (String key : List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b")) {
             String bracePath = "data." + key;
             SemanticTable<Value> braceData = new SemanticTable<>();
-            braceData.put(key, new Value.Function(new RuntimeDescriptor.Func(List.of(),
-                RuntimeDescriptor.Null.INSTANCE, false)));
+            braceData.put(key, Value.string("\uD800"));
             Value.Class braceInTable = instanceOf(point, Map.of(
                 "name", Value.string("n"),
                 "age", new Value.Number(1),
@@ -807,15 +780,15 @@ public class JsonClassExecutorTest {
             check(braceFailure instanceof Outcome.Failure<Value> failure
                     && failure.failure().failure().code() == DiagnosticCode.E8001
                     && failure.failure().failure().message().equals(
-                        "value at " + bracePath + " is not JSON serializable: function")
+                        "value at " + bracePath + " is not JSON serializable: invalid-unicode")
                     && failure.failure().origin().equals(callOrigin)
                     && failure.failure().failure().expected() == null
-                    && failure.failure().failure().actual().equals("function")
+                    && failure.failure().failure().actual().equals("invalid-unicode")
                     && bracePath.equals(
                         failure.failure().failure().metadata().get("fieldPath")),
                 "the production adapter's walk publishes the literal fieldPath '" + key
                     + "' (E8001, the exact message, the call origin, no expected "
-                    + "field, the function token, and the literal fieldPath metadata)");
+                    + "field, the invalid-Unicode token, and the literal fieldPath metadata)");
         }
 
         // A nested-class-field failure under a path: path "home.city".
@@ -871,7 +844,7 @@ public class JsonClassExecutorTest {
                     "value at  is not JSON serializable: number"),
             "a non-class root fails with its actual-kind token");
 
-        // A nonfinite declared number follows JSON encoding, unlike Record content.
+        // Declared numbers and Record numbers both use JSON null substitution.
         ClassLayout nanLayout = layoutOf(POINT, field("x", NUMBER, true));
         ValueId nanClassId = nextValue();
         SemanticOp nanOp = jsonToOp(nanLayout, nanClassId);
@@ -1048,11 +1021,11 @@ public class JsonClassExecutorTest {
             "a 600-deep mixed table/array subtree serializes");
 
         // The first failing position still decides the walk in walk order,
-        // never a preflight: a table whose first key holds a nonfinite
-        // number and whose second key holds a 600-deep chain fails at the
-        // earlier nonfinite position.
+        // never a preflight: a table whose first key holds invalid Unicode
+        // and whose second key holds a 600-deep chain fails at the
+        // earlier malformed string.
         SemanticTable<Value> earlierFailureThenDeep = new SemanticTable<>();
-        earlierFailureThenDeep.put("bad", new Value.Number(Double.NaN));
+        earlierFailureThenDeep.put("bad", Value.string("\uD800"));
         earlierFailureThenDeep.put("k", nestedTableChain(600));
         Value.Class shallowFailure = instanceOf(tableLayout,
             Map.of("data", new Value.Table(earlierFailureThenDeep)));
@@ -1066,22 +1039,21 @@ public class JsonClassExecutorTest {
         check(earlierPositionFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.bad is not JSON serializable: number")
+                    "value at data.bad is not JSON serializable: invalid-unicode")
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("number")
+                && failure.failure().failure().actual().equals("invalid-unicode")
                 && "data.bad".equals(
                     failure.failure().failure().metadata().get("fieldPath"))
                 && failure.failure().origin().equals(shallowFailureOrigin)
                 && !failure.failure().origin().equals(shallowFailureOp.origin()),
-            "a nonfinite value before a 600-deep chain fails the walk at the earlier "
+            "invalid Unicode before a 600-deep chain fails the walk at the earlier "
                 + "position with the pinned walk tuple and the supplied call origin");
 
-        // The same graph with the deep chain first now serializes: with no
-        // fixed cap there is no depth failure to precede the later
-        // nonfinite value.
+        // The deep chain serializes first: with no fixed cap there is no
+        // depth failure to precede the later malformed Unicode string.
         SemanticTable<Value> deepThenLaterFailure = new SemanticTable<>();
         deepThenLaterFailure.put("k", nestedTableChain(600));
-        deepThenLaterFailure.put("zbad", new Value.Number(Double.NaN));
+        deepThenLaterFailure.put("zbad", Value.string("\uD800"));
         Value.Class deepFirst = instanceOf(tableLayout,
             Map.of("data", new Value.Table(deepThenLaterFailure)));
         ValueId deepFirstClassId = nextValue();
@@ -1093,10 +1065,10 @@ public class JsonClassExecutorTest {
         check(deepFirstFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.zbad is not JSON serializable: number")
-                && failure.failure().failure().actual().equals("number"),
-            "a 600-deep chain before a nonfinite value keeps walk order and fails at "
-                + "the later nonfinite position (there is no depth bound to fire)");
+                    "value at data.zbad is not JSON serializable: invalid-unicode")
+                && failure.failure().failure().actual().equals("invalid-unicode"),
+            "a 600-deep chain before invalid Unicode keeps walk order and fails at "
+                + "the later malformed string (there is no depth bound to fire)");
     }
 
     // =========================================================================
@@ -1113,24 +1085,24 @@ public class JsonClassExecutorTest {
         SemanticOp op = jsonToOp(tableLayout, classId);
         Map<ClassId, ClassLayout> layouts = Map.of(POINT, tableLayout);
 
-        // The table-typed field holds the unsupported function under 'bad'
+        // The Record field holds malformed Unicode under 'bad'
         // and the table's own path-local re-entry under 'self': the first
         // failure precedes the cycle, so the walk (and the production
         // adapter's mapping of it) must select the walk arm at data.bad
         // without ever descending into the later cyclic contents.
         SemanticTable<Value> fnThenCycle = new SemanticTable<>();
         Value.Table fnThenCycleTable = new Value.Table(fnThenCycle);
-        fnThenCycle.put("bad", functionValue());
+        fnThenCycle.put("bad", invalidValue());
         fnThenCycle.put("self", fnThenCycleTable);
         JsonStringify adapterCarrier = JsonClassAlgorithmAdapter.stringifier()
             .stringify(fnThenCycleTable, "data");
         check(adapterCarrier instanceof JsonStringify.Failure failure
                 && !failure.cycle()
                 && failure.fieldPath().equals("data.bad")
-                && failure.actual().equals("function"),
-            "the production adapter's mapping of an unsupported value before a table "
+                && failure.actual().equals("invalid-unicode"),
+            "the production adapter's mapping of an invalid value before a table "
                 + "cycle publishes the walk arm's failure carrier at data.bad with the "
-                + "function token (never a mapping crash)");
+                + "invalid-Unicode token (never a mapping crash)");
         SourceOrigin tableCycleOrigin = nextOrigin(null);
         Value.Class fnThenCycleInstance = instanceOf(tableLayout,
             Map.of("data", fnThenCycleTable));
@@ -1140,16 +1112,16 @@ public class JsonClassExecutorTest {
         check(tableCycleWalk instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.bad is not JSON serializable: function")
+                    "value at data.bad is not JSON serializable: invalid-unicode")
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("function")
+                && failure.failure().failure().actual().equals("invalid-unicode")
                 && "data.bad".equals(
                     failure.failure().failure().metadata().get("fieldPath"))
                 && failure.failure().origin().equals(tableCycleOrigin)
                 && !failure.failure().origin().equals(op.origin()),
             "the production adapter's class walk renders the complete walk tuple for "
                 + "an unsupported value before a table cycle (E8001, the exact message "
-                + "at data.bad, no expected field, the function token, the literal "
+                + "at data.bad, no expected field, the invalid-Unicode token, the literal "
                 + "fieldPath metadata, and the supplied call origin, never the "
                 + "generated body's synthetic anchor)");
 
@@ -1158,7 +1130,7 @@ public class JsonClassExecutorTest {
         // containing table again.
         SemanticTable<Value> fnThenMixed = new SemanticTable<>();
         Value.Table fnThenMixedTable = new Value.Table(fnThenMixed);
-        fnThenMixed.put("bad", functionValue());
+        fnThenMixed.put("bad", invalidValue());
         fnThenMixed.put("mix", new Value.Array(
             SemanticArray.of(fnThenMixedTable)));
         JsonStringify mixedCarrier = JsonClassAlgorithmAdapter.stringifier()
@@ -1166,10 +1138,10 @@ public class JsonClassExecutorTest {
         check(mixedCarrier instanceof JsonStringify.Failure failure
                 && !failure.cycle()
                 && failure.fieldPath().equals("data.bad")
-                && failure.actual().equals("function"),
-            "the production adapter's mapping of an unsupported value before a mixed "
+                && failure.actual().equals("invalid-unicode"),
+            "the production adapter's mapping of an invalid value before a mixed "
                 + "table/array cycle publishes the walk arm's failure carrier at "
-                + "data.bad with the function token (never a mapping crash)");
+                + "data.bad with the invalid-Unicode token (never a mapping crash)");
         SourceOrigin mixedCycleOrigin = nextOrigin(null);
         Outcome<Value> mixedCycleWalk = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, instanceOf(tableLayout, Map.of("data", fnThenMixedTable))),
@@ -1177,16 +1149,16 @@ public class JsonClassExecutorTest {
         check(mixedCycleWalk instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.bad is not JSON serializable: function")
+                    "value at data.bad is not JSON serializable: invalid-unicode")
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("function")
+                && failure.failure().failure().actual().equals("invalid-unicode")
                 && "data.bad".equals(
                     failure.failure().failure().metadata().get("fieldPath"))
                 && failure.failure().origin().equals(mixedCycleOrigin)
                 && !failure.failure().origin().equals(op.origin()),
             "the production adapter's class walk renders the complete walk tuple for "
                 + "an unsupported value before a mixed table/array cycle (E8001, the "
-                + "exact message at data.bad, no expected field, the function token, "
+                + "exact message at data.bad, no expected field, the invalid-Unicode token, "
                 + "the literal fieldPath metadata, and the supplied call origin)");
 
         // The cycle-first control over the same graph shape: the re-entry
@@ -1197,7 +1169,7 @@ public class JsonClassExecutorTest {
         SemanticTable<Value> cycleThenFn = new SemanticTable<>();
         Value.Table cycleThenFnTable = new Value.Table(cycleThenFn);
         cycleThenFn.put("self", cycleThenFnTable);
-        cycleThenFn.put("zbad", functionValue());
+        cycleThenFn.put("zbad", invalidValue());
         JsonStringify cycleCarrier = JsonClassAlgorithmAdapter.stringifier()
             .stringify(cycleThenFnTable, "data");
         check(cycleCarrier instanceof JsonStringify.Failure failure
@@ -1224,7 +1196,7 @@ public class JsonClassExecutorTest {
                 + "origin)");
 
         // An array element failure before a cycle reached through a later
-        // element: element 0 holds the unsupported function, and element 1's
+        // element: element 0 holds malformed Unicode, and element 1's
         // table re-enters the containing array, so the first failure is the
         // element itself and the cyclic sibling behind it stays unreachable.
         ClassLayout arrayLayout = layoutOf(POINT,
@@ -1233,7 +1205,7 @@ public class JsonClassExecutorTest {
         SemanticOp arrayOp = jsonToOp(arrayLayout, arrayClassId);
         SemanticTable<Value> firstElement = new SemanticTable<>();
         Value.Table firstElementTable = new Value.Table(firstElement);
-        firstElement.put("bad", functionValue());
+        firstElement.put("bad", invalidValue());
         SemanticTable<Value> backReference = new SemanticTable<>();
         Value.Table backReferenceTable = new Value.Table(backReference);
         Value.Array elements = new Value.Array(
@@ -1246,9 +1218,9 @@ public class JsonClassExecutorTest {
             elementOrigin);
         check(elementWalk instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at data[0].bad is not JSON serializable: function")
+                    "value at data[0].bad is not JSON serializable: invalid-unicode")
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("function")
+                && failure.failure().failure().actual().equals("invalid-unicode")
                 && "data[0].bad".equals(
                     failure.failure().failure().metadata().get("fieldPath"))
                 && failure.failure().origin().equals(elementOrigin),
@@ -1265,7 +1237,7 @@ public class JsonClassExecutorTest {
         SemanticTable<Value> innerTable = new SemanticTable<>();
         Value.Table innerTableValue = new Value.Table(innerTable);
         Value.Array nestedArray = new Value.Array(
-            SemanticArray.of(functionValue(), innerTableValue));
+            SemanticArray.of(invalidValue(), innerTableValue));
         innerTable.put("x", nestedArray);
         nestedTable.put("a", nestedArray);
         JsonStringify nestedCarrier = JsonClassAlgorithmAdapter.stringifier()
@@ -1273,10 +1245,10 @@ public class JsonClassExecutorTest {
         check(nestedCarrier instanceof JsonStringify.Failure failure
                 && !failure.cycle()
                 && failure.fieldPath().equals("data.a[0]")
-                && failure.actual().equals("function"),
+                && failure.actual().equals("invalid-unicode"),
             "the production adapter's mapping of an unsupported array element before "
                 + "a re-entered array container publishes the walk arm's failure "
-                + "carrier at data.a[0] with the function token");
+                + "carrier at data.a[0] with the invalid-Unicode token");
         SourceOrigin nestedOrigin = nextOrigin(null);
         Outcome<Value> nestedWalk = ClassOpsExecutor.executeJsonToClass(op,
             Map.of(classId, instanceOf(tableLayout, Map.of("data", nestedTableValue))),
@@ -1284,9 +1256,9 @@ public class JsonClassExecutorTest {
         check(nestedWalk instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.a[0] is not JSON serializable: function")
+                    "value at data.a[0] is not JSON serializable: invalid-unicode")
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("function")
+                && failure.failure().failure().actual().equals("invalid-unicode")
                 && "data.a[0]".equals(
                     failure.failure().failure().metadata().get("fieldPath"))
                 && failure.failure().origin().equals(nestedOrigin),
@@ -1312,14 +1284,14 @@ public class JsonClassExecutorTest {
         }
         SemanticTable<Value> deepTailRoot = new SemanticTable<>();
         Value.Table deepTailRootValue = new Value.Table(deepTailRoot);
-        deepTailRoot.put("bad", functionValue());
+        deepTailRoot.put("bad", invalidValue());
         deepTailRoot.put("later", deepTail);
         JsonStringify deepTailCarrier = JsonClassAlgorithmAdapter.stringifier()
             .stringify(deepTailRootValue, "data");
         check(deepTailCarrier instanceof JsonStringify.Failure failure
                 && !failure.cycle()
                 && failure.fieldPath().equals("data.bad")
-                && failure.actual().equals("function"),
+                && failure.actual().equals("invalid-unicode"),
             "the production adapter returns the selected walk-arm failure carrier at "
                 + "data.bad without traversing the 50,000-container cyclic tail "
                 + "behind it (never a mapping crash)");
@@ -1348,31 +1320,31 @@ public class JsonClassExecutorTest {
 
         // An unsupported value under the first inserted key, a 600-deep
         // table chain under the later key: the selected first failing
-        // position is data.bad (the walk arm's function token), never the
+        // position is data.bad (the walk arm's invalid-Unicode token), never the
         // later container.
         SemanticTable<Value> badThenDeep = new SemanticTable<>();
         Value.Table badThenDeepValue = new Value.Table(badThenDeep);
-        badThenDeep.put("bad", functionValue());
+        badThenDeep.put("bad", invalidValue());
         badThenDeep.put("later", nestedTableChain(600));
         checkIntegratedWalkFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", badThenDeepValue)), nextOrigin(null),
-            "value at data.bad is not JSON serializable: function", "function",
+            "value at data.bad is not JSON serializable: invalid-unicode", "invalid-unicode",
             "data.bad",
-            "an unsupported value before a deep finite table tail renders the walk arm "
+            "an invalid value before a deep finite table tail renders the walk arm "
                 + "at data.bad");
 
         // The same shape with the deep tail closed through a mixed
         // table/array chain.
         SemanticTable<Value> badThenMixed = new SemanticTable<>();
         Value.Table badThenMixedValue = new Value.Table(badThenMixed);
-        badThenMixed.put("bad", functionValue());
+        badThenMixed.put("bad", invalidValue());
         badThenMixed.put("later", nestedMixedChain(602));
         checkIntegratedWalkFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", badThenMixedValue)),
             nextOrigin(null),
-            "value at data.bad is not JSON serializable: function", "function",
+            "value at data.bad is not JSON serializable: invalid-unicode", "invalid-unicode",
             "data.bad",
-            "an unsupported value before a deep finite mixed table/array tail renders "
+            "an invalid value before a deep finite mixed table/array tail renders "
                 + "the walk arm at data.bad");
 
         // Cycle-first: the table field's own path-local re-entry under the
@@ -1414,12 +1386,12 @@ public class JsonClassExecutorTest {
         }
         SemanticTable<Value> deepTailRoot = new SemanticTable<>();
         Value.Table deepTailRootValue = new Value.Table(deepTailRoot);
-        deepTailRoot.put("bad", functionValue());
+        deepTailRoot.put("bad", invalidValue());
         deepTailRoot.put("later", deepTail);
         checkIntegratedWalkFailure(op, layouts, classId,
             instanceOf(tableLayout, Map.of("data", deepTailRootValue)),
             nextOrigin(null),
-            "value at data.bad is not JSON serializable: function", "function",
+            "value at data.bad is not JSON serializable: invalid-unicode", "invalid-unicode",
             "data.bad",
             "the integrated class walk returns the selected data.bad failure without "
                 + "traversing the 50,000-container cyclic tail behind it");
@@ -1502,10 +1474,9 @@ public class JsonClassExecutorTest {
         return carrier;
     }
 
-    /** The closed function carrier of the walk's unsupported-value positions. */
-    private static Value functionValue() {
-        return new Value.Function(new RuntimeDescriptor.Func(List.of(),
-            RuntimeDescriptor.Null.INSTANCE, false));
+    /** Malformed Unicode remains a rejected leaf after v1.5 JSON omission rules. */
+    private static Value invalidValue() {
+        return Value.string("\uD800");
     }
 
     private static Value.Class emptyNode() {

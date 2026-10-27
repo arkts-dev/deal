@@ -1,0 +1,60 @@
+// @spec: Standard library declarations — std/json.d.deal
+// @description: Persistent descriptors on dynamic JSON arrays and ordinary JSON rules inside generated Record fields.
+// @expected: runtime-ok
+// @features: jsonable, arrays, unknown, assertions
+import * as json from "std/json";
+
+// @jsonable
+export class Box { data: Record<string, unknown>; numbers: number[]; }
+class Child { payload: number; }
+function check(ok: boolean): void { if (!ok) { throw {code: "FAIL", message: "JSON value contract"}; } }
+function callback(): void {}
+function rejectsNumbers(value: unknown): boolean {
+  let rejected: boolean = false;
+  try { let numbers = value as number[]; }
+  catch (e) { if (e instanceof Error) { rejected = e.code === "E8001"; } }
+  return rejected;
+}
+function parsedArray(text: string): void {
+    let parsed = json.parse("{\"value\":" + text + "}");
+    let value: unknown = parsed["value"];
+    check(rejectsNumbers(value));
+    let items = value as unknown[];
+    check((items as unknown) === (value as unknown));
+    items[items.length] = "text";
+}
+export function main(): null {
+  parsedArray("[]"); parsedArray("[1]"); parsedArray("[null]");
+  let nested = json.parse("{\"inner\":[[]]}") as Record<string, unknown>;
+  let outer = nested.inner as unknown[];
+  check(rejectsNumbers(outer[0]));
+  let decoded = Box$fromJson("{\"data\":{\"inner\":[1]},\"numbers\":[1]}");
+  if (decoded === null) { throw {code: "FAIL", message: "decode"}; }
+  let box = decoded as Box;
+  check(rejectsNumbers(box.data.inner));
+  let numbers: unknown = box.numbers;
+  check((numbers as number[]) === box.numbers);
+  let wrong: boolean = false;
+  try { numbers as unknown[]; } catch (e) { if (e instanceof Error) { wrong = true; } }
+  check(wrong);
+  let child: Child = {payload: 4};
+  let data: Record<string, unknown> = {};
+  data.z = undefined;
+  data["2"] = "two";
+  data["1"] = "one";
+  data.callback = callback;
+  let items: unknown[] = [undefined, callback, 1 / 0, 0 / 0, -0];
+  data.items = items;
+  data.child = child;
+  let value: Box = {data: data, numbers: []};
+  let encoded = Box$toJson(value);
+  let round = json.stringify(json.parse(encoded));
+  check(round === json.stringify(json.parse("{\"data\":{\"1\":\"one\",\"2\":\"two\",\"items\":[null,null,null,null,0],\"child\":{\"payload\":4}},\"numbers\":[]}")));
+  let shared: Record<string, unknown> = {a: data, b: data};
+  json.stringify(shared);
+  data.cycle = data;
+  let cycle: boolean = false;
+  try { Box$toJson(value); } catch (e) { if (e instanceof Error) { cycle = e.code === "E8001"; } }
+  check(cycle);
+  return null;
+}

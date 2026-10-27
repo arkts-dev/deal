@@ -2454,7 +2454,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
                 ClassOpsExecutor.executeJsonToClass(op, priorValues,
                     jsonLayoutView(op, payload.layout().classId()),
-                    JsonClassAlgorithmAdapter.stringifier(), activeCallOriginOf(op));
+                    JsonClassAlgorithmAdapter.stringifier(classLayouts), activeCallOriginOf(op));
             return switch (outcome) {
                 case ClassOpsExecutor.Outcome.Success<ClassOpsExecutor.Value> success -> {
                     Value published = oracleValueOf(success.value());
@@ -3431,16 +3431,40 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
          * shallow classification view ({@link #shallowViewOfValue}).
          */
         private BoundaryValueView viewOfValue(Value value) {
+            return viewOfValue(value, new java.util.IdentityHashMap<>());
+        }
+
+        private BoundaryValueView viewOfValue(Value value,
+                java.util.IdentityHashMap<Value, BoundaryValueView> memo) {
+            BoundaryValueView prior = memo.get(value);
+            if (prior != null) return prior;
             if (value instanceof Value.ArrayValue array) {
                 List<Value> elements = array.elements();
                 IntFunction<BoundaryValueView> elementViews =
-                    index -> viewOfValue(elements.get(index));
+                    index -> viewOfValue(elements.get(index), memo);
                 BoundaryValueView view = array.decodedArray()
                     ? BoundaryValueView.ofLazyDecodedArray(elements.size(), elementViews)
                     : BoundaryValueView.ofLazyArray(elements.size(), elementViews);
-                return array.decodedArray() ? view : view.withArrayElementDescriptor(array.elementDescriptor());
+                view = view.withArrayElementDescriptor(array.elementDescriptor());
+                memo.put(value, view);
+                return view;
             }
-            return shallowViewOfValue(value);
+            BoundaryValueView view = shallowViewOfValue(value);
+            if (value instanceof Value.TableValue table) {
+                List<Value> children = new ArrayList<>();
+                for (var entry : table.entries().entrySet()) {
+                    children.add(new Value.StrValue(entry.getKey()));
+                    children.add(entry.getValue());
+                }
+                view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
+            } else if (value instanceof Value.ClassValue instance) {
+                List<Value> children = new ArrayList<>();
+                for (var field : instance.fields())
+                    if (field instanceof Value.ClassFieldState.Present present) children.add(present.value());
+                view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
+            }
+            memo.put(value, view);
+            return view;
         }
 
         /**
@@ -3485,9 +3509,9 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     BoundaryValueView.ofFunction(callable.descriptor());
                 case Value.HostEntryValue entry ->
                     BoundaryValueView.ofFunction(entry.descriptor());
-                case Value.ArrayValue array -> array.decodedArray()
+                case Value.ArrayValue array -> (array.decodedArray()
                     ? BoundaryValueView.ofDecodedArray(List.of())
-                    : BoundaryValueView.ofArray(List.of())
+                    : BoundaryValueView.ofArray(List.of()))
                         .withArrayElementDescriptor(array.elementDescriptor());
                 case Value.ClassValue classValue ->
                     BoundaryValueView.ofClass(classValue.classId().text());
@@ -5961,7 +5985,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
          * descriptor). The value only completes the oracle array record.
          */
         private static final RuntimeDescriptor JSON_CARRIER_ELEMENT_DESCRIPTOR =
-            new RuntimeDescriptor.Nullable(RuntimeDescriptor.Table.INSTANCE);
+            RuntimeDescriptor.Unknown.INSTANCE;
 
         /**
          * The injected console sink of a {@code CONSOLE_LOG}/

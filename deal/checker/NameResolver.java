@@ -329,7 +329,7 @@ public final class NameResolver {
         root.define(name, classSymbol);
 
         for (ClassField cf : cd.fields()) {
-            checkNoDollar(cf.name(), cf.span());
+            checkPropertyName(cf.name(), cf.span());
         }
 
         // D6: Add synthetic C$fromJson and C$toJson function symbols for @jsonable classes.
@@ -607,7 +607,7 @@ public final class NameResolver {
 
         // Class fields declare names and structural type annotations only.
         for (ClassField cf : cd.fields()) {
-            checkNoDollar(cf.name(), cf.span());
+            checkPropertyName(cf.name(), cf.span());
             rejectVoidDataAnnotation(cf.type());
         }
 
@@ -805,9 +805,13 @@ public final class NameResolver {
                 "case", "default", "const", "var", "new", "this", "super", "extends",
                 "implements", "interface", "package", "private", "protected", "public",
                 "static", "yield", "with", "debugger", "do", "finally", "in", "instanceof",
-                "typeof", "void").contains(name)) {
+                "typeof", "void", "eval", "arguments").contains(name)) {
             error(DiagnosticCode.E2008, "Reserved binding identifier '" + name + "'", span);
         }
+        checkPropertyName(name, span);
+    }
+
+    private void checkPropertyName(String name, Span span) {
         if (name.indexOf('$') >= 0) {
             error(DiagnosticCode.E2008, "Identifier '" + name + "' must not contain '$'", span);
         }
@@ -892,6 +896,14 @@ public final class NameResolver {
                 yield Types.array(elem);
             }
             case deal.ast.NullableType nt -> {
+                // Check the surface union before unknown absorbs its nullish members.
+                for (TypeNode nested = nt.innerType(); nested instanceof deal.ast.NullableType n;
+                        nested = n.innerType()) {
+                    if (n.undefinedMember() == nt.undefinedMember()) {
+                        error(DiagnosticCode.E3005, "Invalid nullable type: Duplicate nullish member", tn.span());
+                        yield Type.Error.INSTANCE;
+                    }
+                }
                 Type inner = resolveTypeNode(nt.innerType());
                 if (inner == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                 try {
@@ -904,6 +916,7 @@ public final class NameResolver {
             case deal.ast.FunctionType ft -> {
                 List<Type> paramTypes = new ArrayList<>();
                 for (FunctionTypeParam p : ft.params()) {
+                    checkNoDollar(p.name(), p.span());
                     Type pt = resolveTypeNode(p.type());
                     if (pt == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                     paramTypes.add(pt);

@@ -1,6 +1,6 @@
 # Semantic IR
 
-Define the executable backend-neutral contract. Admit no AST/checker objects; keep IDs, descriptors, payloads, ordering and serialization deterministic. Evolve lowering, validation, Oracle, emitters and tests together.
+Define backend-neutral execution. Exclude AST/checker objects; preserve deterministic IDs/descriptors/payloads/order/serialization. Evolve lowering, validation, Oracle, emitters and tests together.
 
 ## Admission
 
@@ -26,4 +26,4 @@ Carry the active semantic profile through constructors and guards. Recompute con
 
 Preserve closed failure arms and their location/token dialects, including the unlocated raw host-result shape. Never feed rendered table tokens into canonical descriptor parsing.
 
-Generated decoding preserves persistent array descriptors recursively, including empty arrays. Generic JSON omits object undefined/functions and substitutes null in arrays/nonfinite positions; declared numbers encode nonfinite as null. Dynamic Record-content walkers remain stricter. Preserve presence validation on decode and exact path-specific failures.
+Decode preserves persistent descriptors recursively, including empty arrays, presence checks and exact failure paths. Generic/generated Records omit object undefined/functions, null-substitute arrays/nonfinite numbers, order numeric keys first and encode nested classes; declared nonfinite numbers encode null. Unknown equality compares kinds/scalars/original identities without conversion. Validate Record/unknown ingress graphs, preserving supported cycles.

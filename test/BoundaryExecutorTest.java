@@ -1414,9 +1414,29 @@ public class BoundaryExecutorTest {
     // Runner
     // =========================================================================
 
+    private static void testRecursiveIngress() {
+        BoundaryValueView[] cycle = new BoundaryValueView[1];
+        cycle[0] = BoundaryValueView.of(ActualKind.TABLE)
+            .withDataChildren(1, i -> cycle[0]);
+        BoundaryOutcome valid = BoundaryExecutor.check(FailurePolicyId.HOST_SYNC_RETURN,
+            RuntimeDescriptor.Unknown.INSTANCE, cycle[0], BoundaryContext.none());
+        check(valid instanceof BoundaryOutcome.Pass pass && pass.value() == cycle[0],
+            "unknown ingress preserves a cyclic graph's original view");
+        BoundaryValueView invalid = BoundaryValueView.of(ActualKind.TABLE)
+            .withDataChildren(2, i -> i == 0 ? cycle[0]
+                : BoundaryValueView.ofArray(BoundaryValueView.ofInvalidUnicode(UnicodeScalars.Defect.SURROGATE)));
+        for (RuntimeDescriptor descriptor : List.of(RuntimeDescriptor.Unknown.INSTANCE, RuntimeDescriptor.Table.INSTANCE)) {
+            BoundaryOutcome outcome = BoundaryExecutor.check(FailurePolicyId.HOST_SYNC_RETURN,
+                descriptor, invalid, BoundaryContext.none());
+            check(outcome instanceof BoundaryOutcome.Fail,
+                "Record/unknown ingress rejects unread malformed leaves after a valid cycle");
+        }
+    }
+
     public static void main(String[] args) {
         System.out.println("=== Boundary Executor Test (ISSUE-0364, ISSUE-0233 D3) ===\n");
 
+        testRecursiveIngress();
         testT1DescriptorWiring();
         testGenericE8001EveryCanonicalKind();
         testInvalidStringMessage();

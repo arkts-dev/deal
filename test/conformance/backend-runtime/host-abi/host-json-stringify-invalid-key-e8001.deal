@@ -1,16 +1,11 @@
-// @spec: Standard library declarations — std/json.d.deal
-// @description: json.stringify rejects an object key that is not a Unicode scalar sequence through the closed JSON_STRINGIFY_UNSUPPORTED arm (v1.4)
-// @expected: runtime-error E8001
-// @features: stdlib, json, host-abi, unicode, runtime-errors, v1.4
-
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Malformed nested host keys reject ingress before json.stringify can observe them.
+// @expected: runtime-ok
+// @features: stdlib, json, host-abi, unicode, v1.5
 import * as host from "host/jsonabletable";
-import * as json from "std/json";
-
-export function test_json_stringify_invalid_key(): string {
-  let t: Record<string, unknown> = host.makeBadKey();
-  return json.stringify(t) as string;
+export function test_json_stringify_invalid_key(): void {
+  let rejected: boolean = false;
+  try { host.makeBadKey(); } catch (e) { if (e instanceof Error) { rejected = e.code === "E8010"; } }
+  if (!rejected) { throw {code: "FAIL", message: "malformed key published"}; }
 }
-
-export function main(): null {
-  return null;
-}
+export function main(): null { return null; }

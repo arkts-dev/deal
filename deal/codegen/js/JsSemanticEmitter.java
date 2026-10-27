@@ -1249,6 +1249,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + ") > 0)";
                 case STRING_GE -> "($rt.strCompare(" + left + ", " + right
                     + ") >= 0)";
+                case UNKNOWN_EQ -> "($rt.numOf(" + left + ") === $rt.numOf(" + right + "))";
+                case UNKNOWN_NE -> "($rt.numOf(" + left + ") !== $rt.numOf(" + right + "))";
                 case UNDEFINED_EQ, NULLABLE_UNDEFINED_EQ -> "(" + left + " === " + right + ")";
                 case UNDEFINED_NE, NULLABLE_UNDEFINED_NE -> "(" + left + " !== " + right + ")";
                 case NULL_EQ -> "(" + left + " === null)";
@@ -2883,14 +2885,13 @@ private void emitBindingLoad(SemanticOp op) {
                 String element = "$e" + op.opId().id();
                 // The iterable is read once; the increasing index reads the
                 // live position through the runtime's carrier split, and a
-                // missing or undefined position ends the iteration.
+                // missing position ends the iteration; stored undefined is data.
                 emit(label + ": for (let " + index + " = 0; ; " + index
                     + "++) {");
                 indent++;
+                emit("if (!$rt.arrayHas(" + iterable + ", " + index + ")) { break " + label + "; }");
                 emit("const " + element + " = $rt.arrayAt(" + iterable + ", "
                     + index + ");");
-                emit("if (" + element + " === $rt.undefined) { break " + label
-                    + "; }");
                 // The iteration binding is a mutable `let` cell declared
                 // once per iteration (the spec's fresh iteration binding
                 // captured by binding): a body assignment or a capture's

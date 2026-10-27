@@ -6266,9 +6266,8 @@ private void emitStdlib(SemanticOp op) {
             // absent/present-null states preserved, the host object never
             // mutated), a class-element array completion is the DEAL array
             // carrier with its exact elements/length/alias identity, a
-            // table completion keeps its identity where no member requires
-            // re-representation and otherwise takes one memoized copy with
-            // its class members bridged and its function members kept as
+            // table completion keeps its original identity, normalizing
+            // class members in place and keeping function members as
             // the runtime wrapper, a function completion keeps the wrapper,
             // and a numeric variant keeps its carrier. The bridge composes
             // no failure: the completion cell keeps its exact
@@ -7261,7 +7260,7 @@ local function __jsonToLanguage(v)
   local function pushContainer(source)
     if __jsonIsArray(source) then
       frames[#frames + 1] = {kind = "array", source = source,
-        out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = source[__dealCarrierKeys.n], [__dealCarrierKeys.nK] = {}}, index = 1}
+        out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = source[__dealCarrierKeys.n], [__dealCarrierKeys.nK] = {}, [__dealCarrierKeys.elementDescriptor] = "unknown"}, index = 1}
     else
       frames[#frames + 1] = {kind = "object", source = source,
         out = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}, [__dealCarrierKeys.nK] = {}}, index = 1}
@@ -7671,6 +7670,19 @@ local function __jsonToClassOp(planName, root)
     end
     table.sort(rest)
     for i = 1, #rest do keys[#keys + 1] = rest[i] end
+    local ranks = {}
+    for i = 1, #keys do ranks[keys[i]] = i end
+    local function index(key)
+      if key ~= "0" and not string.match(key, "^[1-9][0-9]*$") then return nil end
+      local n = tonumber(key)
+      if n ~= nil and n < 4294967295 then return n end
+    end
+    table.sort(keys, function(a, b)
+      local x, y = index(a), index(b)
+      if x ~= nil then return y == nil or x < y end
+      if y ~= nil then return false end
+      return ranks[a] < ranks[b]
+    end)
     return keys
   end
   local function __jsonContentMarks(v)
@@ -7689,8 +7701,10 @@ local function __jsonToClassOp(planName, root)
     -- alike (__jsonContentForm), while a produced value-model carrier
     -- keeps the closed unsupported-member failure at its own position.
     local function emitValue(element, elementPath, out, frames, marks, variant)
-      if element == __UNDEFINED or element == __MISSING then
-        return fail(elementPath, element)
+      if element == __UNDEFINED or element == __MISSING or type(element) == "function"
+          or (type(element) == "table" and (element[__dealCarrierKeys.fn] ~= nil or element[__dealCarrierKeys.kind] == "function")) then
+        out[#out + 1] = "null"
+        return true
       end
       if element == nil or element == __NULL
           or (__rtNull ~= nil and element == __rtNull) then
@@ -7709,7 +7723,7 @@ local function __jsonToClassOp(planName, root)
         -- oracle's Value.Int/Value.Number split.
         if variant then
           local text = __jsonNumText(element)
-          if text == nil then return fail(elementPath, element) end
+          if text == nil then text = "null" end
           out[#out + 1] = text
         else
           -- An unmarked numeric leaf (a plain host table carries no
@@ -7719,15 +7733,16 @@ local function __jsonToClassOp(planName, root)
           -- position, exactly like the JVM/JS walks' finite check.
           if element ~= element or element == math.huge
               or element == -math.huge then
-            return fail(elementPath, element)
+            out[#out + 1] = "null"
+            return true
           end
-          out[#out + 1] = tostring(element)
+          out[#out + 1] = element == 0 and "0" or tostring(element)
         end
         return true
       end
       if type(element) == "table" and element[__dealCarrierKeys.jn] then
         local text = __jsonNumText(element.d)
-        if text == nil then return fail(elementPath, element.d) end
+        if text == nil then text = "null" end
         out[#out + 1] = text
         return true
       end
@@ -7747,6 +7762,12 @@ local function __jsonToClassOp(planName, root)
       if element == __MISSING
           or (__rtMissing ~= nil and element == __rtMissing) then
         return fail(elementPath, element)
+      end
+      if element[__dealCarrierKeys.c] or element[__dealCarrierKeys.d] or element[__dealCarrierKeys.kind] == "class" then
+        if visited[element] then return cycle() end
+        local text = __factories.__jsonGeneric(element, visited)
+        out[#out + 1] = text
+        return true
       end
       if __jsonContentCarrier(element) then
         return fail(elementPath, element)
@@ -7821,7 +7842,7 @@ local function __jsonToClassOp(planName, root)
             -- any element descriptor, and the walk renders the missing
             -- token exactly like the oracle's Missing element and the
             -- shared JVM runtime's MISSING array slot.
-            return fail(elementPath, __MISSING)
+            element = __UNDEFINED
           end
           if i > 1 then out[#out + 1] = "," end
           if not emitValue(element, elementPath, out, frames, frame.marks,
@@ -7848,11 +7869,14 @@ local function __jsonToClassOp(planName, root)
           -- the non-scalar key into the message, so the failure names
           -- the object exactly as the JVM/JS walks do.
           if not __jsonValidUtf8(key) then return fail(frame.path, key) end
-          if i > 1 then out[#out + 1] = "," end
-          out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
-          if not emitValue(element, elementPath, out, frames, frame.marks,
-              frame.marks ~= nil and frame.marks[key] == true) then
-            return nil
+          local omit = element == __UNDEFINED or element == __MISSING or type(element) == "function"
+            or (type(element) == "table" and (element[__dealCarrierKeys.fn] ~= nil or element[__dealCarrierKeys.kind] == "function"))
+          if not omit then
+            if frame.emitted then out[#out + 1] = "," end
+            frame.emitted = true
+            out[#out + 1] = __QT .. __jsonEscapeString(key) .. __QT .. ":"
+            if not emitValue(element, elementPath, out, frames, frame.marks,
+                frame.marks ~= nil and frame.marks[key] == true) then return nil end
           end
         end
       end
@@ -8487,12 +8511,9 @@ local function __hostReturnCell(desc, v, origin, nothing)
   -- with its exact length and per-slot numeric marks, nested class fields
   -- and arrays project recursively, a runtime function wrapper and an
   -- already-DEAL value cross identically, the builtin Error instance maps
-  -- to the chunk __d carrier, and a declared table keeps its own identity
-  -- unless a class/function member needs re-representation (then it is a
-  -- memoized copy — the host object is never mutated). One memo per return
-  -- (the crossing memo the emitting site creates) makes two slots naming
-  -- one host instance one DEAL value and terminates a self-referential
-  -- host table.
+  -- to the chunk __d carrier. Admitted tables normalize in place and retain
+  -- original identity; private carrier metadata does not copy user data.
+  -- The crossing memo preserves sharing and terminates cyclic host graphs.
   local memo = __factories.__hostMemo
   if memo == nil then
     memo = {}
@@ -8553,8 +8574,10 @@ end
 -- carrier. The shape lookup and its missing-entry producer diagnostic are
 -- the bridge's; the cells and the return descriptor read here are the
 -- emitted declaration metadata, and one memo covers the whole invocation.
+__factories.__hostFunctionOrigins = setmetatable({}, {__mode = "k"})
 local function __hostFnArg(desc, inner, cells, origin, v)
   if type(v) ~= "table" then return v end
+  if origin ~= nil then __factories.__hostFunctionOrigins[v] = origin end
   if v[__dealCarrierKeys.kind] == "function" then return v end
   if v[__dealCarrierKeys.fn] == nil then return v end
   local carrier = v
@@ -8579,7 +8602,7 @@ local function __hostFnArg(desc, inner, cells, origin, v)
               local ok, checked = pcall(__bcheck, cell[1], cell[2], value,
                 cell[3])
               if not ok then
-                if type(checked) == "table" then checked.o = origin end
+                if type(checked) == "table" then checked.o = __factories.__hostFunctionOrigins[carrier] or origin end
                 error(checked, 0)
               end
               args[i] = checked
@@ -8686,16 +8709,52 @@ end
 -- declared cells stay the only failure authority (a missing function-shape
 -- entry is a plain producer diagnostic, never a language failure).
 __factories.__hostCarrierOut = function(desc, v, memo)
+  if memo ~= nil and not memo.__outDirection then
+    if memo.__outMemo == nil then memo.__outMemo = {__outDirection = true} end
+    memo = memo.__outMemo
+  end
   if type(v) ~= "table" then
     if v == nil then return __rt.__NULL end
     return v
   end
   if v == __NULL or v == __rt.__NULL then return __rt.__NULL end
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then return v end
-  if memo == nil then memo = {} end
+  if memo == nil then memo = {__outDirection = true} end
   local cached = memo[v]
   if cached ~= nil then return cached end
   if v[__dealCarrierKeys.jn] then return v.d end
+  if v[__dealCarrierKeys.d] then
+    v[__dealCarrierKeys.kind] = "class"; v[__dealCarrierKeys.classname] = "Error"
+    v.message = v.m
+    return v
+  end
+  if v[__dealCarrierKeys.c] then
+    v[__dealCarrierKeys.kind] = "class"; v[__dealCarrierKeys.classname] = v[__dealCarrierKeys.id]
+    memo[v] = v
+    local fields = v[__dealCarrierKeys.f]
+    if type(fields) ~= "table" then fields = v end
+    local declared = __factories.__hostClassFields[v[__dealCarrierKeys.id]] or {}
+    for key, member in pairs(fields) do
+      if type(key) == "string" then
+        v[key] = __factories.__hostCarrierOut(declared[key], member, memo)
+      end
+    end
+    -- One field store: retained host and DEAL aliases observe the same writes.
+    v[__dealCarrierKeys.f] = v
+    return v
+  end
+  if v[__dealCarrierKeys.fn] ~= nil then
+    local carrier = v
+    local sig = v[__dealCarrierKeys.csig] or v[__dealCarrierKeys.sig]
+    local shape = __factories.__hostFnShapes[sig]
+    if shape == nil then
+      error("the DEAL function signature '" .. tostring(sig) .. "' has no declared host parameter shape (a producer coverage defect)", 0)
+    end
+    local wrapper = __hostFnArg(sig, sig, shape.cells, nil, carrier)
+    v[__dealCarrierKeys.kind] = "function"; v.sig = sig; v.f = wrapper.f
+    memo[v] = v
+    return v
+  end
   local function baseOf(d)
     if d == nil then return nil end
     return (string.gsub(d, "^[?!]+", ""))
@@ -8922,8 +8981,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
       memo[v] = v
       return v
     end
-    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = n,
-      [__dealCarrierKeys.elementDescriptor] = v[__dealCarrierKeys.elementDescriptor]}
+    local out = v
     local sourceMarks = v[__dealCarrierKeys.nK]
     local marks = nil
     if type(sourceMarks) == "table" then
@@ -8968,8 +9026,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
       memo[v] = v
       return v
     end
-    local out = {[__dealCarrierKeys.t] = true,
-      [__dealCarrierKeys.keys] = {}, [__dealCarrierKeys.order] = {}}
+    local out = v
     local sourceMarks = v[__dealCarrierKeys.nK]
     local marks = nil
     if type(sourceMarks) == "table" then
@@ -8982,8 +9039,6 @@ __factories.__hostCarrierOut = function(desc, v, memo)
       -- The recorded presence is the authority, never the stored value: a
       -- present-null member is an ordered key whose copy slot stays nil,
       -- so the key is registered before the nil test.
-      out[__dealCarrierKeys.keys][key] = true
-      out[__dealCarrierKeys.order][#out[__dealCarrierKeys.order] + 1] = key
       if val == nil then return end
       out[key] = __factories.__hostCarrierOut(nil, val, memo)
       if type(val) == "table" and val[__dealCarrierKeys.jn]
@@ -9025,7 +9080,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
     memo[v] = v
     return v
   end
-  local out = {}
+  local out = v
   memo[v] = out
   for k, val in pairs(v) do
     if type(k) == "string" then
@@ -9062,6 +9117,9 @@ __factories.__hostCarrierOut = function(desc, v, memo)
 end
 
 __factories.__hostCarrierIn = function(desc, v, memo)
+  if type(v) == "table" and getmetatable(v) ~= nil
+      and rawget(v, __dealCarrierKeys.c) == nil and rawget(v, __dealCarrierKeys.d) == nil
+      and rawget(v, __dealCarrierKeys.kind) == nil then return v end
   if v == nil then return __NULL end
   if v == __rt.__NULL or v == __NULL then return __NULL end
   if type(v) ~= "table" then return v end
@@ -9101,7 +9159,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     local identity = v[__dealCarrierKeys.classname]
     if identity == nil then return v end
     if identity == "Error" then
-      local out = {[__dealCarrierKeys.d] = true, code = v.code, m = v.message}
+      local out = v
+      out[__dealCarrierKeys.d] = true; out.m = v.message
       memo[v] = out
       return out
     end
@@ -9123,9 +9182,11 @@ __factories.__hostCarrierIn = function(desc, v, memo)
       end
     end
     if kind == "deal" then
-      local out = {[__dealCarrierKeys.c] = true,
-        [__dealCarrierKeys.id] = identity,
-        [__dealCarrierKeys.f] = {}, [__dealCarrierKeys.p] = {}}
+      local out = v
+      out[__dealCarrierKeys.c] = true
+      out[__dealCarrierKeys.id] = identity
+      out[__dealCarrierKeys.f] = out
+      out[__dealCarrierKeys.p] = {}
       if v[__dealCarrierKeys.ptr] ~= nil then
         out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr]
       end
@@ -9141,9 +9202,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
       end
       return out
     end
-    local out = {[__dealCarrierKeys.kind] = "class",
-      [__dealCarrierKeys.classname] = identity,
-      [__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = identity}
+    local out = v
+    out[__dealCarrierKeys.c] = true; out[__dealCarrierKeys.id] = identity
     if v[__dealCarrierKeys.ptr] ~= nil then
       out[__dealCarrierKeys.ptr] = v[__dealCarrierKeys.ptr]
     end
@@ -9201,9 +9261,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
   end
   -- An inbound array carrier (the host echoed a DEAL value the outbound
   -- direction re-represented, so its elements are host-facing): a carrier
-  -- whose elements are already DEAL values keeps its identity, and one
-  -- holding a host representation takes one memoized copy with the same
-  -- carrier marks and per-slot numeric marks and its elements projected.
+  -- keeps its identity while host-facing elements normalize in place,
+  -- retaining carrier marks, numeric marks, sharing and cycles.
   if v[__dealCarrierKeys.a] ~= nil then
     local n = v[__dealCarrierKeys.n]
     if type(n) ~= "number" then n = #v end
@@ -9223,15 +9282,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
       memo[v] = v
       return v
     end
-    local out = {}
+    local out = v
     memo[v] = out
-    for k, val in pairs(v) do
-      if type(k) == "string" then
-        out[k] = val
-      elseif k ~= __dealCarrierKeys.nK then
-        out[k] = val
-      end
-    end
     local sourceMarks = v[__dealCarrierKeys.nK]
     if type(sourceMarks) == "table" then
       local marks = {}
@@ -9262,8 +9314,11 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     local nullableElement = elementDesc == "null"
       or string.sub(elementDesc, 1, 1) == "?"
     if present ~= length and not nullableElement then return v end
-    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0,
-      [__dealCarrierKeys.nK] = {}}
+    local out = v
+    out[__dealCarrierKeys.a] = true
+    out[__dealCarrierKeys.n] = 0
+    out[__dealCarrierKeys.nK] = {}
+    out[__dealCarrierKeys.elementDescriptor] = elementDesc
     memo[v] = out
     for i = 1, length do
       local element = v[i]
@@ -9285,7 +9340,7 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     memo[v] = v
     return v
   end
-  local out = {}
+  local out = v
   memo[v] = out
   for k, val in pairs(v) do
     if type(k) == "string" then
@@ -9295,9 +9350,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
       out[k] = val
     end
   end
-  -- The same fresh presence/order and per-slot numeric maps as the
-  -- outbound copy: a host table the DEAL side has written to carries its
-  -- own mutable marks, and the copied table must not share them.
+  -- Retain the original presence/order and numeric maps on the same
+  -- live table; no detached carrier or copy-back snapshot is introduced.
   local sourceKeys = v[__dealCarrierKeys.keys]
   if type(sourceKeys) == "table" then
     local keys = {}
@@ -10685,7 +10739,7 @@ local function __carrierKind(v)
   if v == __NULL then return "table" end
   local t = type(v)
   if t == "table" then
-    if v[__dealCarrierKeys.jn] then return "number" end
+    if rawget(v, __dealCarrierKeys.jn) then return "number" end
     return "table"
   end
   return t
@@ -11007,6 +11061,8 @@ local function __cmp(selector, kindL, l, kindR, r, side)
   if selector == "NULL_NE" then return false end
   if selector == "NULLABLE_EQ" then return l == r end
   if selector == "NULLABLE_NE" then return l ~= r end
+  if selector == "UNKNOWN_EQ" then return l == r end
+  if selector == "UNKNOWN_NE" then return l ~= r end
   if selector == "REFERENCE_EQ" then return l == r end
   if selector == "REFERENCE_NE" then return l ~= r end
   return false
@@ -12260,7 +12316,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       if c == 91 then
         advance()
         frames[#frames + 1] = {kind = "array",
-          value = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.da] = true}, state = 4}
+          value = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.da] = true, [__dealCarrierKeys.elementDescriptor] = "unknown"}, state = 4}
         return __OPENED
       end
       if c == 34 then return parseString() end
@@ -12402,7 +12458,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     end
     if omitted(__args[1]) then return __UNDEFINED end
     local out = {}
-    local path = {}
+    local path = __args[2] or {}
     -- The pinned STDLIB_CALL(JSON_STRINGIFY) rejection: the
     -- JSON_STRINGIFY_UNSUPPORTED arm's own render — its pinned expected
     -- text (the serialized arm table's p field) and the closed std/json
@@ -12797,6 +12853,10 @@ end
 -- algorithmic row delegates to __stdlib (the row identity and the
 -- invoking call's context travel through unchanged — one algorithm
 -- authority, never two).
+__factories.__jsonGeneric = function(value, path)
+  return __stdlib("JSON_STRINGIFY", "JSON_STRINGIFY", "-", "-", "-", "-", value, path)
+end
+
 local function __stdlibInvoke(kind, fn, opKey, digest, parent, origin, ...)
   if fn == "CONSOLE_LOG" then
     __consoleEffect("STDOUT", __consoleText(...))

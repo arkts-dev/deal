@@ -3383,27 +3383,25 @@ public class FailureArmAuthorityTest {
                 "note", 5L)));
         // A table-content carrier (an unsupported function value inside the
         // table-typed field): the closed function token at its pinned path.
-        cases.add(walkCase("function-in-table-content", "JSON_TO_WALK", "data.k",
-            "function",
+        cases.add(walkCase("invalid-string-in-table-content", "JSON_TO_WALK", "data.k",
+            "invalid-unicode",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkFunctionTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = function() end}",
+                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = \"\\237\\160\\128\"}",
                 "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 jvmFunctionTable(), "tags", jvmIntArray(1L))));
         // A table-content class instance: the carried canonical class atom at
         // its pinned path, never the class: IR/trace spelling.
-        cases.add(walkCase("class-in-table-content", "JSON_TO_WALK", "data.k",
-            FOREIGN_ID.text(),
+        cases.add(walkCase("invalid-unicode-nested-content", "JSON_TO_WALK", "data.k",
+            "invalid-unicode",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkClassTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "age", "1", "ratio", "0.5",
-                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = {[__dealCarrierKeys.c] = true, "
-                    + "[__dealCarrierKeys.id] = " + quote(FOREIGN_ID.text())
-                    + ", [__dealCarrierKeys.p] = {}, [__dealCarrierKeys.f] = {}}}",
+                "data", "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {k = true}, k = \"\\237\\160\\128\"}",
                 "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 jvmClassTable(), "tags", jvmIntArray(1L))));
@@ -3481,8 +3479,8 @@ public class FailureArmAuthorityTest {
         // arm at the earlier position (the oracle's adapter returns the
         // selected failure before the E8 seam is ever consulted, so the
         // cycle behind it is never traversed).
-        cases.add(walkCase("unsupported-before-table-cycle", "JSON_TO_WALK", "data.bad",
-            "function",
+        cases.add(walkCase("omitted-function-before-table-cycle", "JSON_TO_WALK_CYCLE", null,
+            null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkFunctionThenCyclicTable(), "tags", walkIntArray(1)),
@@ -3494,8 +3492,8 @@ public class FailureArmAuthorityTest {
         // a mixed table/array path: 'mix' holds an array whose element is
         // the containing table again, so the re-entry needle is the table
         // entered before the array.
-        cases.add(walkCase("unsupported-before-mixed-cycle", "JSON_TO_WALK", "data.bad",
-            "function",
+        cases.add(walkCase("omitted-function-before-mixed-cycle", "JSON_TO_WALK_CYCLE", null,
+            null,
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkFunctionThenMixedCycle(), "tags", walkIntArray(1)),
@@ -3525,7 +3523,7 @@ public class FailureArmAuthorityTest {
         // a placeholder reinterpretation.
         for (String key : List.of("{bad}", "{actual}", "{fieldPath}", "a}b", "a{b")) {
             cases.add(walkCase("brace-key-" + key, "JSON_TO_WALK",
-                "data." + key, "function",
+                "data." + key, "invalid-unicode",
                 Map.of("name", walkString("n"),
                     "age", new ClassOpsExecutor.Value.Number(1),
                     "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -4317,7 +4315,7 @@ public class FailureArmAuthorityTest {
     private static ClassOpsExecutor.Value walkFunctionTable(String key) {
         deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
             new deal.semantic.ir.SemanticTable<>();
-        table.put(key, walkFunction());
+        table.put(key, walkString("\uD800"));
         return new ClassOpsExecutor.Value.Table(table);
     }
 
@@ -4327,7 +4325,7 @@ public class FailureArmAuthorityTest {
 
     private static deal.codegen.jvm.JvmRuntime.Table jvmFunctionTable(String key) {
         deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
-        table.write(key, walkJvmFunction());
+        table.write(key, "\uD800");
         return table;
     }
 
@@ -4339,20 +4337,20 @@ public class FailureArmAuthorityTest {
      */
     private static String luaFunctionTable(String key) {
         return "{[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {[" + luaString(key) + "] = true}, ["
-            + luaString(key) + "] = function() end}";
+            + luaString(key) + "] = \"\\237\\160\\128\"}";
     }
 
     /** The drive's table-typed field holding one class instance under {@code k}. */
     private static ClassOpsExecutor.Value walkClassTable() {
         deal.semantic.ir.SemanticTable<ClassOpsExecutor.Value> table =
             new deal.semantic.ir.SemanticTable<>();
-        table.put("k", new ClassOpsExecutor.Value.Class(FOREIGN_ID, List.of()));
+        table.put("k", walkString("\uD800"));
         return new ClassOpsExecutor.Value.Table(table);
     }
 
     private static deal.codegen.jvm.JvmRuntime.Table jvmClassTable() {
         deal.codegen.jvm.JvmRuntime.Table table = new deal.codegen.jvm.JvmRuntime.Table();
-        table.write("k", new WalkInstance(FOREIGN_ID.text(), Map.of()));
+        table.write("k", "\uD800");
         return table;
     }
 
@@ -4970,8 +4968,14 @@ public class FailureArmAuthorityTest {
             (deal.codegen.jvm.JvmRuntime.Table) deal.codegen.jvm.JvmRuntime.stdlib(
                 "STDLIB_CALL", "JSON_PARSE", "op", "digest", "parent", origin,
                 new Object[] {"{\"values\":[null]}"});
-        deal.codegen.jvm.JvmRuntime.Array values =
+        deal.codegen.jvm.JvmRuntime.Array parsedValues =
             (deal.codegen.jvm.JvmRuntime.Array) decoded.read("values");
+        checkEq("unknown", parsedValues.elementDescriptor,
+            "JSON arrays retain their unknown element descriptor");
+        check(jvmFailure(() -> deal.codegen.jvm.JvmRuntime.bcheck("array(null)", "array", parsedValues)) != null,
+            "decoded arrays cannot assert a different descriptor even when elements match");
+        deal.codegen.jvm.JvmRuntime.Array values = new deal.codegen.jvm.JvmRuntime.Array(1);
+        values.elements.add(null);
         deal.codegen.jvm.JvmRuntime.DealError jvmPresent = jvmFailure(
             () -> deal.codegen.jvm.JvmRuntime.bcheck("array(number)", "array", values));
         check(jvmPresent != null,
@@ -5544,10 +5548,8 @@ public class FailureArmAuthorityTest {
                 "JSON_TO_WALK_CYCLE", null, null);
         }
 
-        // (4) An unsupported carrier before the table's own re-entry: the
-        // table holds a class instance under 'bad' before its re-entry under
-        // 'self', so the walk's first failure is the earlier position and the
-        // walk arm renders it (the cycle behind it stays untraversed).
+        // (4) A supported class before a table re-entry must serialize its
+        // fields, then reach and reject the cycle; class content is not a failure.
         {
             DispatchIds ids = new DispatchIds();
             deal.semantic.ir.ValueId table = ids.value();
@@ -5560,10 +5562,10 @@ public class FailureArmAuthorityTest {
             ops.addAll(construction.ops());
             ops.add(dispatchMemberWrite(ids, table, "bad", foreign.instance()));
             ops.add(dispatchMemberWrite(ids, table, "self", table));
-            checkDispatchCycleTuple("dispatch-unsupported-before-table-cycle",
+            checkDispatchCycleTuple("dispatch-class-before-table-cycle",
                 dispatchUnit(ids, ops, construction.instance(),
                     Map.of(WALK_ID, walkLayout(), FOREIGN_ID, foreignLayout())),
-                "JSON_TO_WALK", "data.bad", FOREIGN_ID.text());
+                "JSON_TO_WALK_CYCLE", null, null);
         }
 
         // (5) The cycle-first control over the same graph shape: the re-entry

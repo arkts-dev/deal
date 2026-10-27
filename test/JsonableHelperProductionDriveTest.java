@@ -2205,16 +2205,11 @@ public class JsonableHelperProductionDriveTest {
     }
 
     /**
-     * The class-instance-in-table-content negative (the three-consumer
-     * regression): a class instance inside an array nested in a table
-     * field is not JSON-shaped data, so the oracle, the LuaJIT artifact,
-     * and the JVM artifact all reject it with the pinned JSON_TO_WALK
-     * projection at the helper call origin — the descriptor-free table
-     * walk never serializes it.
+     * Nested class instances in Record content use ordinary JSON encoding
+     * on the Oracle and every real backend.
      */
-    private static void testTableClassInstanceRejection() throws Exception {
-        System.out.println("-- the table-content class-instance negative: all three "
-            + "consumers reject --");
+    private static void testTableClassInstanceEncoding() throws Exception {
+        System.out.println("-- nested Record class content encodes on every consumer --");
         String source = """
             // @jsonable
             export class Child {
@@ -2237,9 +2232,7 @@ public class JsonableHelperProductionDriveTest {
               return null;
             }
             """;
-        driveHelperFailure("table-class-instance", source, "Wrapper$toJson(w)",
-            "value at data.children[0] is not JSON serializable: @src/app.deal/Child",
-            "@src/app.deal/Child");
+        driveThreeConsumerParity("table-class-instance", source);
     }
 
     // =========================================================================
@@ -3467,7 +3460,7 @@ public class JsonableHelperProductionDriveTest {
         }
         testDynamicHelperOrigin();
         testHelperFunctionBindingInvocation();
-        testTableClassInstanceRejection();
+        testTableClassInstanceEncoding();
         driveExactHelperProgram("cross-owner-json-presence", """
             import * as Owner from "./owner";
             function nameDefault(): string { return "anon"; }

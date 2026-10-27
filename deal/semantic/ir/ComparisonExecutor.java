@@ -42,6 +42,18 @@ public final class ComparisonExecutor {
         Objects.requireNonNull(selector, "selector must not be null");
         Objects.requireNonNull(left, "left must not be null");
         Objects.requireNonNull(right, "right must not be null");
+        if (selector == BinarySelector.UNKNOWN_EQ || selector == BinarySelector.UNKNOWN_NE) {
+            boolean equal = switch (left) {
+                case ComparisonOperandView.Number n -> right instanceof ComparisonOperandView.Number r && n.value() == r.value();
+                case ComparisonOperandView.String s -> right instanceof ComparisonOperandView.String r && s.scalars().equals(r.scalars());
+                case ComparisonOperandView.Boolean b -> right instanceof ComparisonOperandView.Boolean r && b.value() == r.value();
+                case ComparisonOperandView.Ref ref -> right instanceof ComparisonOperandView.Ref r && referenceEquals(ref, r);
+                case ComparisonOperandView.Null ignored -> right instanceof ComparisonOperandView.Null;
+                case ComparisonOperandView.Undefined ignored -> isUndefined(right);
+                case ComparisonOperandView.Missing ignored -> isUndefined(right);
+            };
+            return selector == BinarySelector.UNKNOWN_EQ ? equal : !equal;
+        }
         if (selector == BinarySelector.UNDEFINED_EQ || selector == BinarySelector.UNDEFINED_NE
                 || selector == BinarySelector.NULLABLE_UNDEFINED_EQ || selector == BinarySelector.NULLABLE_UNDEFINED_NE) {
             boolean equal = isUndefined(left) && isUndefined(right);

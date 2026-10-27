@@ -365,6 +365,7 @@ final class JvmHostAbiEmission {
      */
     String carrierType(Type type, boolean nullable) {
         if (type instanceof Type.Nullable inner) {
+            if (inner.admitsUndefined()) return "java.lang.Object";
             return carrierType(inner.inner(), true);
         }
         if (nullable) {
@@ -372,6 +373,9 @@ final class JvmHostAbiEmission {
         }
         return switch (type) {
             case Type.Null ignored -> "java.lang.Object";
+            case Type.Unknown ignored -> "java.lang.Object";
+            case Type.Undefined ignored -> "java.lang.Object";
+            case Type.Void ignored -> "java.lang.Object";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "double";
@@ -447,6 +451,7 @@ final class JvmHostAbiEmission {
      * wrapper class, and a declared class to its synthesized record.
      */
     String paramClassLiteral(Type type) {
+        if (type instanceof Type.Nullable n && n.admitsUndefined()) return "java.lang.Object.class";
         boolean nullable = type instanceof Type.Nullable;
         Type inner = unwrapNullable(type);
         return switch (inner) {
@@ -882,6 +887,9 @@ final class JvmHostAbiEmission {
         // shared HOST_SYNC_RETURN_CELL composite (the same tuple the
         // oracle's NullValue and the LuaJIT artifact's null sentinel
         // render); only the absent marker selects the no-value arm.
+        if (ret instanceof Type.Void) {
+            out.append("    if (__r == JvmRuntime.MISSING) return JvmRuntime.UNDEFINED;\n");
+        }
         out.append("    if (__r == JvmRuntime.MISSING) {\n");
         emitNothingArm(out, desc);
         out.append("    }\n");
@@ -1087,6 +1095,7 @@ final class JvmHostAbiEmission {
         out.append("    java.lang.String inner = __hostBase(d);\n");
         out.append("    if (inner.startsWith(\"(\") || inner.startsWith(\"async(\")) return __hostFnCarrier(inner, v);\n");
         out.append("    if (inner.startsWith(\"[\")) return __hostArrayFromDeal(inner, v);\n");
+        out.append("    if (v == JvmRuntime.UNDEFINED) return v;\n");
         out.append("    if (inner.equals(\"number\")) return java.lang.Double.valueOf(((java.lang.Number) v).doubleValue());\n");
         out.append("    return v;\n");
         out.append("  }\n\n");
@@ -1211,17 +1220,19 @@ final class JvmHostAbiEmission {
      * The declared element-shape array crossings: DEAL-to-host materializes
      * the declared carrier from the production {@link JvmRuntime.Array}
      * slots (after the declared element cell admitted them), host-to-DEAL
-     * materializes the production array from the carrier, and a
-     * normal-return copy-back mirrors the host's element writes into the
-     * production array (a failed call copies nothing back). Every matcher
+     * exposes the original carrier through a live list view. Repeated
+     * crossings reuse the wrapper and backing storage; writes remain visible
+     * through retained aliases even when a host call fails. Every matcher
      * keys on the un-prefixed array descriptor, so a nullable declared
      * array position ({@code ?[T]}) crosses like its {@code [T]} form.
      */
     private void emitArrayCrossings(StringBuilder out) {
-        // DEAL -> host: the declared carrier materialized per crossing.
+        out.append("  static final java.util.IdentityHashMap<java.lang.Object, java.lang.Object> __hostArraysOut = new java.util.IdentityHashMap<>();\n");
+        out.append("  static final java.util.IdentityHashMap<java.lang.Object, JvmRuntime.Array> __hostArraysIn = new java.util.IdentityHashMap<>();\n");
         out.append("  static java.lang.Object __hostArrayFromDeal(java.lang.String d, java.lang.Object v) {\n");
         out.append("    if (v == null) return null;\n");
         out.append("    if (!(v instanceof JvmRuntime.Array __a)) return v;\n");
+        out.append("    if (__hostArraysOut.containsKey(v)) return __hostArraysOut.get(v);\n");
         for (Map.Entry<String, Type> entry : arrayElements.entrySet()) {
             String desc = entry.getKey();
             Type element = entry.getValue();
@@ -1234,7 +1245,10 @@ final class JvmHostAbiEmission {
                 .append(elementExtract(element,
                     "__i < __a.elements.size() ? __a.elements.get(__i) : null"))
                 .append("; }\n");
-            out.append("      return new $DealRt.").append(carrier).append("(__d);\n");
+            out.append("      $DealRt.").append(carrier).append(" __c = new $DealRt.").append(carrier).append("(__d);\n");
+            out.append("      __hostArraysOut.put(__a, __c); __hostArraysIn.put(__c, __a);\n");
+            emitArrayView(out, element, "__a", "__c");
+            out.append("      return __c;\n");
             out.append("    }\n");
         }
         out.append("    return v;\n");
@@ -1243,6 +1257,7 @@ final class JvmHostAbiEmission {
         out.append("  static JvmRuntime.Array __hostArrayToDeal(java.lang.String d, java.lang.Object v) {\n");
         out.append("    if (v == null) return null;\n");
         out.append("    if (v instanceof JvmRuntime.Array __a) return __a;\n");
+        out.append("    if (__hostArraysIn.containsKey(v)) return __hostArraysIn.get(v);\n");
         for (Map.Entry<String, Type> entry : arrayElements.entrySet()) {
             String desc = entry.getKey();
             Type element = entry.getValue();
@@ -1250,36 +1265,29 @@ final class JvmHostAbiEmission {
             out.append("    if (d.equals(").append(javaString(desc))
                 .append(") && v instanceof $DealRt.").append(carrier).append(" __c) {\n");
             out.append("      JvmRuntime.Array __r = new JvmRuntime.Array(__c.data.length);\n");
-            out.append("      for (int __i = 0; __i < __c.data.length; __i++) { __r.elements.add(")
-                .append(elementStore(element, "__c.data[__i]"))
-                .append("); }\n");
+            out.append("      __r.elementDescriptor = ").append(javaString(JvmSemanticEmitter.runtimeDescriptorText(DescriptorService.describe(element)))).append(";\n");
+            out.append("      __hostArraysIn.put(__c, __r); __hostArraysOut.put(__r, __c);\n");
+            emitArrayView(out, element, "__r", "__c");
             out.append("      return __r;\n");
             out.append("    }\n");
         }
         out.append("    throw JvmRuntime.fail(\"E8010\", \"host array value has no "
             + "declared carrier for \" + d, \"-\", d, null);\n");
         out.append("  }\n\n");
-        // The normal-return copy-back of a declared array parameter.
-        out.append("  static void __hostArrayCopyBack(java.lang.String d, "
-            + "java.lang.Object v, JvmRuntime.Array t) {\n");
-        out.append("    if (v == null || t == null) return;\n");
-        out.append("    if (v instanceof JvmRuntime.Array) return;\n");
-        out.append("    java.lang.String __key = __hostBase(d);\n");
-        for (Map.Entry<String, Type> entry : arrayElements.entrySet()) {
-            String desc = entry.getKey();
-            Type element = entry.getValue();
-            String carrier = arrayCarrier(element);
-            out.append("    if (__key.equals(").append(javaString(desc))
-                .append(") && v instanceof $DealRt.").append(carrier).append(" __c) {\n");
-            out.append("      for (int __i = 0; __i < __c.data.length && __i < t.length; __i++) {\n");
-            out.append("        while (t.elements.size() <= __i) t.elements.add(null);\n");
-            out.append("        t.elements.set(__i, ")
-                .append(elementStore(element, "__c.data[__i]")).append(");\n");
-            out.append("      }\n");
-            out.append("      return;\n");
-            out.append("    }\n");
-        }
-        out.append("  }\n\n");
+
+    }
+
+    private void emitArrayView(StringBuilder out, Type element, String array, String carrier) {
+        out.append("      ").append(array).append(".elements = new java.util.AbstractList<java.lang.Object>() {\n");
+        out.append("        final java.util.Map<java.lang.Integer, java.lang.Object> absent = new java.util.HashMap<>();\n");
+        out.append("        public int size() { return ").append(carrier).append(".data.length; }\n");
+        out.append("        public java.lang.Object get(int i) { java.util.Objects.checkIndex(i, size()); if (absent.containsKey(i)) return absent.get(i); return ").append(elementStore(element, carrier + ".data[i]")).append("; }\n");
+        out.append("        public java.lang.Object set(int i, java.lang.Object value) { java.lang.Object old = get(i); if (value == JvmRuntime.MISSING || value == JvmRuntime.UNDEFINED) { absent.put(i, value); return old; } absent.remove(i); ")
+            .append(carrier).append(".data[i] = ").append(elementExtract(element, "value")).append("; return old; }\n");
+        out.append("        public void add(int i, java.lang.Object value) { int n = size(); java.util.Objects.checkIndex(i, n + 1); ")
+            .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n + 1); ")
+            .append("java.lang.System.arraycopy(").append(carrier).append(".data, i, ").append(carrier).append(".data, i + 1, n - i); if (value != null) set(i, value); }\n");
+        out.append("      };\n");
     }
 
     /** The Java component type of one declared array element. */
@@ -1415,7 +1423,7 @@ final class JvmHostAbiEmission {
         // then settles the admitted value as the production Double.
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return JvmRuntime.validateData(v, false); throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
@@ -1817,6 +1825,7 @@ final class JvmHostAbiEmission {
     private String boxedParameter(Type param, String name) {
         boolean nullable = param instanceof Type.Nullable;
         Type inner = unwrapNullable(param);
+        if (nullable) return name;
         return switch (inner) {
 
             case Type.Number ignored -> "java.lang.Double.valueOf(" + name + ")";

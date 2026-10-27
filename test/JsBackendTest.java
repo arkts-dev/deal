@@ -1664,9 +1664,9 @@ public class JsBackendTest {
             }
             export function test(): number {
               let value: number = 1;
-              let eval: number = 2;
+              let localValue: number = 2;
               let h: Holder = { eval: 3 };
-              return value + eval + h.eval;
+              return value + localValue + h.eval;
             }
             """, "reserved");
         check(res != null && !res.hasErrors(), "reserved-word codegen clean: "
@@ -2598,11 +2598,8 @@ public class JsBackendTest {
             check(plain.source().contains("$rt.arrayAt("),
                 "the for-of element read routes through the carrier-agnostic "
                     + "element member");
-            check(plain.source().contains("if ($e87 === $rt.undefined) "
-                    + "{ break $L87; }")
-                    || plain.source().matches("(?s).*if \\(\\$e\\d+ === "
-                        + "\\$rt\\.undefined\\) \\{ break \\$L\\d+; \\}.*"),
-                "the for-of nil-stop comparison spells $rt.undefined");
+            check(plain.source().contains("if (!$rt.arrayHas("),
+                "for-of tests slot presence rather than a stored undefined value");
             String residual = plain.source().replace("$rt.undefined", "");
             if (residual.contains("undefined")) {
                 int idx = residual.indexOf("undefined");
@@ -2635,9 +2632,8 @@ public class JsBackendTest {
             check(js.contains("$rt.arrayAt("),
                 "the for-of element read routes through the carrier-agnostic "
                     + "element member despite the binding");
-            check(js.matches("(?s).*if \\(\\$e\\d+ === \\$rt\\.undefined\\)"
-                    + " \\{ break \\$L\\d+; \\}.*"),
-                "the for-of nil-stop spells $rt.undefined despite the binding");
+            check(js.contains("if (!$rt.arrayHas("),
+                "for-of uses the private presence operation despite source bindings");
             check(!js.contains("= undefined;") && !js.contains("=== undefined")
                     && !js.contains("!== undefined"),
                 "no write/compare site spells the bare host-global");
@@ -2655,12 +2651,12 @@ public class JsBackendTest {
     private static String shadowTestSource() {
         return """
             export function test(): number {
-              let eval: number = 7;
+              let localValue: number = 7;
               let xs: number[] = [1, 2, 3];
               delete xs[1];
               let n: number = 0;
               for (let x of xs) { n = n + 1; }
-              return eval + xs.length + n;
+              return localValue + xs.length + n;
             }
             """;
     }
@@ -5126,32 +5122,32 @@ public class JsBackendTest {
 
             export function test(): number {
               let t: Record<string, unknown> = json.parse("{\\"items\\":[[1,2],[3,4]]}");
-              let xs: number[][] = t.items as number[][];
-              let first: number[] = xs[0];
-              let alias: number[] = xs[0];
+              let xs: unknown[] = t.items as unknown[];
+              let first: unknown[] = xs[0] as unknown[];
+              let alias: unknown[] = xs[0] as unknown[];
               if (first !== alias) { return 0; }
               if (first.length !== 2) { return 0; }
               if (xs.length !== 2) { return 0; }
-              if (xs[1][0] !== 3) { return 0; }
+              if (((xs[1] as unknown[])[0] as number) !== 3) { return 0; }
               first[1] = 9;
-              if (alias[1] !== 9) { return 0; }
-              if (xs[0][1] !== 9) { return 0; }
+              if ((alias[1] as number) !== 9) { return 0; }
+              if (((xs[0] as unknown[])[1] as number) !== 9) { return 0; }
               if (!equivalent(json.stringify(t) as string, "{\\"items\\":[[1,9],[3,4]]}")) { return 0; }
               let emptyT: Record<string, unknown> = json.parse("{\\"items\\":[]}");
-              let empty: number[] = emptyT.items as number[];
+              let empty: unknown[] = emptyT.items as unknown[];
               if (empty.length !== 0) { return 0; }
               delete xs[0];
               if (xs.length !== 2) { return 0; }
               let deleted: boolean = false;
               try {
-                let gone: number[] = xs[0];
+                let gone: unknown[] = xs[0] as unknown[];
               } catch (e) {
                 if ((e as Error).code === "E8001" && (e as Error).message === "expected array") { deleted = true; }
               }
               if (!deleted) { return 0; }
               let caught: boolean = false;
               try {
-                let oob: number[] = xs[2];
+                let oob: unknown = xs[2];
               } catch (e) {
                 if ((e as Error).code === "E8002"
                     && (e as Error).message === "array index out of bounds") { caught = true; }
@@ -5206,41 +5202,41 @@ public class JsBackendTest {
             export function test(): number {
               let t: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
               let b: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              b.nums = t.values as number[];
+              b.nums = (Box$fromJson("{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
               if (!equivalent(Box$toJson(b), "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let n: Record<string, unknown> = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
               let c: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              c.tags = n.values as string[][];
+              c.tags = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).tags;
               if (!equivalent(Box$toJson(c), "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let alias: number[] = b.nums;
               alias[0] = 7;
               if (!equivalent(Box$toJson(b), "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let empty: Record<string, unknown> = json.parse("{\\"values\\":[]}");
               let e: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              e.nums = empty.values as number[];
+              e.nums = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
               if (!equivalent(Box$toJson(e), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let mixed: Record<string, unknown> = json.parse("{\\"values\\":[1,null]}");
               let m: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              m.maybe = mixed.values as (number | null)[];
+              m.maybe = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).maybe;
               if (!equivalent(Box$toJson(m), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               // A decoded array's number slots keep the graph's own
               // classification: 1, 1.0 and -0.0 are number-classified and
               // spell as integers, 1.5 keeps the number spelling.
               let numv: Record<string, unknown> = json.parse("{\\"values\\":[1,1.0,10]}");
               let nb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nb.ns = numv.values as number[];
+              nb.ns = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1.0,10],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).ns;
               if (!equivalent(Box$toJson(nb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let nfrac: Record<string, unknown> = json.parse("{\\"values\\":[1.5,-0.0]}");
               let fb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              fb.ns = nfrac.values as number[];
+              fb.ns = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,-0.0],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).ns;
               if (!equivalent(Box$toJson(fb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let nnull: Record<string, unknown> = json.parse("{\\"values\\":[1,null,2]}");
               let nm: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nm.nmaybe = nnull.values as (number | null)[];
+              nm.nmaybe = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}") as Box).nmaybe;
               if (!equivalent(Box$toJson(nm), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}")) { return 0; }
               let nnest: Record<string, unknown> = json.parse("{\\"values\\":[[1],[2,3]]}");
               let nn: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nn.nnested = nnest.values as number[][];
+              nn.nnested = (Box$fromJson("{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}") as Box).nnested;
               if (!equivalent(Box$toJson(nn), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}")) { return 0; }
               // A decoded slot carrying the number variant is a number in
               // the shared classification even when its double is
@@ -5248,7 +5244,7 @@ public class JsBackendTest {
               // lanes instead of re-rendering it as an number.
               let nv: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
               let vb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              vb.nums = nv.values as number[];
+              vb.nums = (Box$fromJson("{\\"nums\\":[2147483647.00000001],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}") as Box).nums;
               let intnum: string = "";
               try { intnum = Box$toJson(vb); }
               catch (e) { intnum = (e as Error).code + "|" + (e as Error).message; }
@@ -5318,30 +5314,43 @@ public class JsBackendTest {
             export class NBox {
               n: number;
             }
+            // @jsonable
+            export class NumericArrays {
+              values?: number[]; a?: number[]; b?: number[]; ys?: number[];
+            }
+            function declaredArrays(text: string): Record<string, unknown> {
+              let decoded = NumericArrays$fromJson(text) as NumericArrays;
+              let result: Record<string, unknown> = {};
+              if (Object.hasOwn(decoded, "values")) { result.values = decoded.values as number[]; }
+              if (Object.hasOwn(decoded, "a")) { result.a = decoded.a as number[]; }
+              if (Object.hasOwn(decoded, "b")) { result.b = decoded.b as number[]; }
+              if (Object.hasOwn(decoded, "ys")) { result.ys = decoded.ys as number[]; }
+              return result;
+            }
 
             export function test(): number {
               // (1) The committed write records the written value's own
               // variant: a decoded number-variant slot rewritten with an
               // number expression is an number slot afterwards.
-              let t1: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let t1: Record<string, unknown> = declaredArrays("{\\"values\\":[2147483647.00000001]}");
               let b: WBox = {nums: []};
               b.nums = t1.values as number[];
               let alias: number[] = b.nums;
               alias[0] = 7;
               if (!equivalent(WBox$toJson(b), "{\\"nums\\":[7]}")) { return 0; }
-              let t2: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let t2: Record<string, unknown> = declaredArrays("{\\"values\\":[2147483647.00000001]}");
               let xs2: number[] = t2.values as number[];
               xs2[0] = 7;
               if (!equivalent(json.stringify(t2) as string, "{\\"values\\":[7]}")) { return 0; }
               // A number-typed write sets the mark, so the slot spells the
               // canonical decimal text.
-              let t3: Record<string, unknown> = json.parse("{\\"values\\":[1]}");
+              let t3: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let xs3: number[] = t3.values as number[];
               xs3[0] = 1e21;
               if (!equivalent(json.stringify(t3) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
               // Delete then rewrite: the cleared mark never survives the
               // rewrite.
-              let t3b: Record<string, unknown> = json.parse("{\\"values\\":[1]}");
+              let t3b: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let nsb: number[] = t3b.values as number[];
               delete nsb[0];
               nsb[0] = 1e21;
@@ -5351,13 +5360,13 @@ public class JsBackendTest {
               // no-op (the carrier's numeric value, not the object, is
               // compared to the length) and an in-range carrier index
               // still commits exactly one slot.
-              let t3c: Record<string, unknown> = json.parse("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
+              let t3c: Record<string, unknown> = declaredArrays("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
               let xsA: number[] = t3c.a as number[];
               let xsB: number[] = t3c.b as number[];
               delete xsA[xsB[0]];
               if (xsA.length !== 2) { return 0; }
               if (!equivalent(json.stringify(t3c) as string, "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
-              let t3d: Record<string, unknown> = json.parse("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
+              let t3d: Record<string, unknown> = declaredArrays("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
               let xsC: number[] = t3d.a as number[];
               let xsD: number[] = t3d.b as number[];
               delete xsC[xsD[0]];
@@ -5375,14 +5384,14 @@ public class JsBackendTest {
 
               // (2) The element read materializes the slot's own variant at
               // the positions the declared kind cannot express.
-              let t4: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let t4: Record<string, unknown> = declaredArrays("{\\"values\\":[2147483647.00000001]}");
               let xs4: number[] = t4.values as number[];
               let ib: IBox = {n: 0};
               ib.n = xs4[0];
               let r1: string = "";
               try { r1 = IBox$toJson(ib); } catch (e) { r1 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(r1, "{\\"n\\":2147483647}")) { return 0; }
-              let t5: Record<string, unknown> = json.parse("{\\"values\\":[1]}");
+              let t5: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let xs5: number[] = t5.values as number[];
               let nb: NBox = {n: 0};
               nb.n = xs5[0];
@@ -5417,7 +5426,7 @@ public class JsBackendTest {
               // boundary (the plain path's v = v + 0), so number(-0.0) is
               // the number zero and the following number()/write spells 0.0
               // on every lane.
-              let tz: Record<string, unknown> = json.parse("{\\"ys\\":[1.5]}");
+              let tz: Record<string, unknown> = declaredArrays("{\\"ys\\":[1.5]}");
               let negZero: number[] = tz.ys as number[];
               negZero[0] = -0.0;
               let zn: number = (negZero[0]);
@@ -5427,13 +5436,13 @@ public class JsBackendTest {
               // (3) A deleted slot is the internal missing value: both
               // encode walks raise the closed nil failure; a genuinely
               // present null element keeps its JSON null slot.
-              let t6: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
+              let t6: Record<string, unknown> = declaredArrays("{\\"values\\":[1,2]}");
               let xs6: number[] = t6.values as number[];
               delete xs6[0];
               let d1: string = "";
               try { d1 = json.stringify(t6) as string; } catch (e) { d1 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(d1, "{\\"values\\":[null,2]}")) { return 0; }
-              let t7: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
+              let t7: Record<string, unknown> = declaredArrays("{\\"values\\":[1,2]}");
               let db: WBox = {nums: []};
               db.nums = t7.values as number[];
               let ys: number[] = db.nums;
@@ -5498,18 +5507,27 @@ public class JsBackendTest {
         writeFile("carrier_proj/src/main.deal", """
             import * as json from "std/json";
             import * as h from "host/probe";
+            // @jsonable
+            export class NumericHostData { xs?: number[]; ys?: (number | null)[]; }
+            function hostData(text: string): Record<string, unknown> {
+              let value = NumericHostData$fromJson(text) as NumericHostData;
+              let result: Record<string, unknown> = {};
+              if (Object.hasOwn(value, "xs")) { result.xs = value.xs as number[]; }
+              if (Object.hasOwn(value, "ys")) { result.ys = value.ys as (number | null)[]; }
+              return result;
+            }
 
             export function main(): null { return null; }
 
             export async function probe(): Promise<number> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[7.5,1]}");
+              let t: Record<string, unknown> = hostData("{\\"xs\\":[7.5,1]}");
               let xs: number[] = t.xs as number[];
               let count: number = 0;
               if (h.isNumber(xs[0])) { count = count + 1; }
               if (h.isNumber(xs[1])) { count = count + 2; }
               if (h.isInteger(xs[1])) { count = count + 4; }
               if (h.isAbsent(null)) { count = count + 8; }
-              let nt: Record<string, unknown> = json.parse("{\\"ys\\":[null]}");
+              let nt: Record<string, unknown> = hostData("{\\"ys\\":[null]}");
               let nys: (number | null)[] = nt.ys as (number | null)[];
               if (h.isAbsent(nys[0])) { count = count + 64; }
               let echoed: number = await h.echo(xs[0]);
@@ -5519,25 +5537,25 @@ public class JsBackendTest {
             }
 
             export async function run(): Promise<number> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[7.5]}");
+              let t: Record<string, unknown> = hostData("{\\"xs\\":[7.5]}");
               let xs: number[] = t.xs as number[];
               return xs[0];
             }
 
             export async function nested(): Promise<number[]> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1,7.5]}");
+              let t: Record<string, unknown> = hostData("{\\"xs\\":[1,7.5]}");
               let xs: number[] = t.xs as number[];
               return [xs[0], xs[1], 8.25];
             }
 
             export async function shared(): Promise<number[][]> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1]}");
+              let t: Record<string, unknown> = hostData("{\\"xs\\":[1]}");
               let xs: number[] = t.xs as number[];
               return [xs, xs];
             }
 
             export async function tabled(): Promise<Record<string, unknown>> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[7.5]}");
+              let t: Record<string, unknown> = hostData("{\\"xs\\":[7.5]}");
               let xs: number[] = t.xs as number[];
               let out: Record<string, unknown> = { x: xs[0] };
               return out;
@@ -5672,29 +5690,31 @@ public class JsBackendTest {
             import * as json from "std/json";
             import * as host from "host/rest_join";
             import * as cfg from "host/cfg";
+            // @jsonable
+            export class HostArrays { items?: string[]; nums?: (number | null)[]; ms?: number[]; tags?: string[]; }
 
             export function main(): null { return null; }
 
             export function run(): string {
               let t: Record<string, unknown> = json.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
-              let xs: string[] = t.items as string[];
+              let xs: string[] = (HostArrays$fromJson("{\\"items\\":[\\"a\\",\\"b\\"]}") as HostArrays).items as string[];
               let joined: string = host.join("-", xs);
               let shape: string = host.shape(xs);
               let empty: string[] = [];
               let joinedEmpty: string = host.join("+", empty);
 
               let u: Record<string, unknown> = json.parse("{\\"nums\\":[1,null,3]}");
-              let ns: (number | null)[] = u.nums as (number | null)[];
+              let ns: (number | null)[] = (HostArrays$fromJson("{\\"nums\\":[1,null,3]}") as HostArrays).nums as (number | null)[];
               let observed: string = host.observe(ns, ns);
 
               let v: Record<string, unknown> = json.parse("{\\"ms\\":[1e17,1.5]}");
-              let ms: number[] = v.ms as number[];
+              let ms: number[] = (HostArrays$fromJson("{\\"ms\\":[1e17,1.5]}") as HostArrays).ms as number[];
               let echoed: number[] = host.echoNumbers(ms);
               let box: Record<string, unknown> = { xs: echoed };
               let variants: string = json.stringify(box) as string;
 
               let w: Record<string, unknown> = json.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
-              let tags: string[] = w.tags as string[];
+              let tags: string[] = (HostArrays$fromJson("{\\"tags\\":[\\"x\\",\\"y\\"]}") as HostArrays).tags as string[];
               let sc: cfg.ServerConfig = { port: 7, endpoint: { path: "/p" },
                 tags: tags, note: null };
               let field: string = cfg.describe(sc);
@@ -5800,7 +5820,7 @@ public class JsBackendTest {
                 "empty=",
                 "shape=array:2:a,b",
                 "observed=array:3:1,null,3:same",
-                "variants={\"xs\":[1.0E17,1.5]}",
+                "variants={\"xs\":[100000000000000000,1.5]}",
                 "field=/p:7:x,y")),
             "a declared host parameter hands the host the declared DEAL value"
                 + " (native array, language null, preserved alias and number"
@@ -5887,23 +5907,23 @@ public class JsBackendTest {
               return json.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
             }
 
+            // @jsonable
+            export class CompletionArrays { xs: (number | null)[]; }
             export async function nullable(): Promise<(number | null)[]> {
-              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1,null]}");
-              let xs: (number | null)[] = t.xs as (number | null)[];
-              return xs;
+              return (CompletionArrays$fromJson("{\\"xs\\":[1,null]}") as CompletionArrays).xs;
             }
 
             export async function box(): Promise<C> {
               let t: Record<string, unknown> = json.parse("{\\"xs\\":[1]}");
-              let xs: number[] = t.xs as number[];
+              let xs: unknown[] = t.xs as unknown[];
               let c: C = {n: 0};
-              c.n = xs[0];
+              c.n = xs[0] as number;
               return c;
             }
 
             export async function aliased(): Promise<Record<string, unknown>> {
               let t: Record<string, unknown> = json.parse("{\\"xs\\":[1.5]}");
-              let xs: number[] = t.xs as number[];
+              let xs: unknown[] = t.xs as unknown[];
               return { a: xs, b: xs };
             }
             """);
@@ -6000,8 +6020,8 @@ public class JsBackendTest {
                 "decodedNullTable=false",
                 "decodedInt=2",
                 "decodedCheck=true",
-                "nullable=[1.0,null]",
-                "nullableArray=true",
+                "nullable=[1,null]",
+                "nullableArray=false",
                 "nullableLength=2",
                 "nullableSlot=null",
                 "nullableCheck=true",

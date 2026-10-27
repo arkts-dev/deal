@@ -388,7 +388,7 @@ public final class Parser {
     }
 
     private ClassField parseClassField() {
-        if (peek().type() != TokenType.IDENTIFIER) {
+        if (!isPropertyName(peek())) {
             error(DiagnosticCode.E1007, "Expected field name (identifier)", peek());
             advance();
             return null;
@@ -1201,7 +1201,7 @@ public final class Parser {
 
         while (true) {
             if (match(TokenType.DOT)) {
-                Token fieldToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1034,
+                Token fieldToken = expectPropertyName(DiagnosticCode.E1034,
                         "Expected field name after '.'");
                 if (fieldToken == null) break;
                 Span sp = spanBetween(expr.span(), spanOf(fieldToken));
@@ -1775,13 +1775,13 @@ public final class Parser {
         Token lbrace = advance();
         List<Property> properties = new ArrayList<>();
 
-        if (peek().type() == TokenType.IDENTIFIER) {
+        if (isPropertyName(peek())) {
             Property first = parseProperty();
             if (first != null) properties.add(first);
 
             while (match(TokenType.COMMA)) {
                 if (peek().type() == TokenType.RBRACE) break;
-                if (peek().type() != TokenType.IDENTIFIER) {
+                if (!isPropertyName(peek())) {
                     error(DiagnosticCode.E1038,
                         "Expected property name (identifier) in object literal", peek());
                     break;
@@ -1803,6 +1803,21 @@ public final class Parser {
         }
 
         return new ObjectLiteralExpr(spanBetween(lbrace, rbrace), List.copyOf(properties));
+    }
+
+    private static boolean isPropertyName(Token token) {
+        return switch (token.type()) {
+            case IDENTIFIER, LET, CLASS, FUNCTION, ASYNC, AWAIT, RETURN, IF, ELSE,
+                WHILE, FOR, OF, BREAK, CONTINUE, NULL, TRUE, FALSE, IMPORT, EXPORT,
+                FROM, DELETE, TYPEOF, INSTANCEOF, TRY, CATCH, THROW, AS -> true;
+            default -> false;
+        };
+    }
+
+    private Token expectPropertyName(DiagnosticCode code, String message) {
+        if (isPropertyName(peek())) return advance();
+        error(code, message, peek());
+        return null;
     }
 
     private Property parseProperty() {

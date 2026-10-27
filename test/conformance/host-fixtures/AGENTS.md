@@ -6,4 +6,4 @@ Classes carry declared structural fields; functions use documented wrappers; asy
 
 Hostile container/signature fixtures mutate only admitted carriers: preserve identity, executable body, persistent descriptors and unrelated slots so later boundary failures remain the subject. Oracle responders mirror mutations without production hooks. Batch drivers copy JVM fixtures under correctly named public classes; do not globally change shared lowercase-source visibility.
 
-Compare JSON numbers by value. Keep generic stringify distinct from generated Record-content rejection. Update matched companions together.
+Compare JSON numerically. Generated Records share generic omission/substitution/key-order/nested-class rules; reject unread malformed ingress before publication. Synchronize companions.

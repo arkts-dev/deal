@@ -13,8 +13,23 @@ public record BoundaryValueView(
     List<BoundaryValueView> elements,
     boolean decodedArrayMark,
     UnicodeScalars.Defect unicodeDefect,
-    RuntimeDescriptor arrayElementDescriptor
+    RuntimeDescriptor arrayElementDescriptor,
+    List<BoundaryValueView> dataChildren
 ) {
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+                             RuntimeDescriptor.Func functionSignature,
+                             List<BoundaryValueView> elements, boolean decodedArrayMark,
+                             UnicodeScalars.Defect unicodeDefect, RuntimeDescriptor arrayElementDescriptor) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark,
+            unicodeDefect, arrayElementDescriptor, List.of());
+    }
+
+    /** Lazy own data children for whole-graph ingress validation, including keys. */
+    public BoundaryValueView withDataChildren(int count, IntFunction<BoundaryValueView> producer) {
+        return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer));
+    }
+
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
                              RuntimeDescriptor.Func functionSignature,
                              List<BoundaryValueView> elements, boolean decodedArrayMark,
@@ -25,7 +40,7 @@ public record BoundaryValueView(
     public BoundaryValueView withArrayElementDescriptor(RuntimeDescriptor descriptor) {
         if (kind != ActualKind.ARRAY) throw new IllegalArgumentException("Only arrays carry element descriptors");
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, descriptor);
+            decodedArrayMark, unicodeDefect, descriptor, dataChildren);
     }
 
     /**
@@ -45,6 +60,8 @@ public record BoundaryValueView(
 
     public BoundaryValueView {
         Objects.requireNonNull(kind, "kind must not be null");
+        Objects.requireNonNull(dataChildren, "dataChildren must not be null");
+        if (!(dataChildren instanceof LazyElementViews)) dataChildren = List.copyOf(dataChildren);
         switch (kind) {
             case CLASS -> {
                 if (classId == null || classId.isEmpty()) {

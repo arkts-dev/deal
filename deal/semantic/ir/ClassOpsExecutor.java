@@ -1688,8 +1688,8 @@ public final class ClassOpsExecutor {
                 if (!(value instanceof Value.Number number)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                // Declared numbers follow JSON encoding, independently of the
-                // narrower dynamic Record-content seam and its path failures.
+                // Both declared numbers and dynamic Record leaves encode
+                // nonfinite values as JSON null.
                 if (!Double.isFinite(number.value())) yield "null";
                 yield seamText(op, stringifier, value, fieldPath, entered);
             }

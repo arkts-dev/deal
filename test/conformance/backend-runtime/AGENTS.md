@@ -7,7 +7,7 @@ CorpusConformanceTest owns discovery and parsed invocation plans: main runs once
 - Pin exact sibling declaration atoms with independently executed valid controls. Assertions use E8001; ordinary identity boundaries keep their own projections.
 - Supply all required class fields, including nullable/callable fields. Separate literals establish freshness; supplied references establish aliases. Failed construction preserves expression effects without publishing partial targets.
 - Preserve binary64, signed zero and nontrapping arithmetic. Compare JSON structures/decoded numbers, allowing roundtripping spelling differences except exact zero rules.
-- Generic stringify accepts supported unknown values: omit object undefined/functions, substitute null in arrays/nonfinite positions, return undefined for unrepresentable roots. Keep cycles, parse object-root rejection and stricter generated walkers independent.
+- Generic/generated Record JSON omits object undefined/functions, null-substitutes arrays/nonfinite numbers, and returns undefined for unrepresentable roots. Independently cover cycle rejection, declared-field ordering and parse object-root rejection.
 - Catch/Record reads remain unknown until checked extraction or supported refinement. Preserve shadowing, async invalidation and actual consuming-boundary negatives; do not assume unsupported post-termination narrowing.
 - Presence uses Object.hasOwn without value refinement. Distinguish absent/deleted undefined from present null and explicit undefined. Void bare/fallthrough completion is not explicit-null data.
 

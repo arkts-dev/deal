@@ -410,6 +410,38 @@ function __rt.typed_kind(v)
   return "table"
 end
 
+function __rt.validate_data(root, file, line, column)
+  local pending, seen = {root}, {}
+  local function reject(v)
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001", "unsupported unknown ingress",
+      file, line, column, "unknown", type(v)))
+  end
+  while #pending > 0 do
+    local v = table.remove(pending)
+    if v == __rt.__NULL or v == __rt.__UNDEFINED or v == __rt.__MISSING then
+    elseif type(v) == "string" then __rt.check_string(v, file, line, column)
+    elseif type(v) == "number" or type(v) == "boolean" then
+    elseif type(v) ~= "table" then reject(v)
+    elseif not seen[v] then
+      seen[v] = true
+      if getmetatable(v) ~= nil and rawget(v, __K.kind) == nil
+          and rawget(v, __K.c) == nil and rawget(v, __K.d) == nil
+          and rawget(v, __K.fn) == nil and rawget(v, __K.f) == nil then reject(v) end
+      local kind = __rt.typed_kind(v)
+      if kind == "async-operation" then reject(v) end
+      if kind ~= "function" and not rawget(v, __K.jn) then
+        for key, member in next, v do
+          if type(key) == "string" then
+            __rt.check_string(key, file, line, column)
+            pending[#pending + 1] = member
+          elseif type(key) == "number" then pending[#pending + 1] = member end
+        end
+      end
+    end
+  end
+  return root
+end
+
 function __rt.check_table(v, file, line, column)
   -- The strict table split: the language-null sentinel is not a table, the
   -- internal absent marker is not a table, and a produced carrier of
@@ -435,7 +467,7 @@ function __rt.check_table(v, file, line, column)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
       "expected table", file, line, column, "table", projected))
   end
-  return v
+  return __rt.validate_data(v, file, line, column)
 end
 
 -- ===== Composite type checks (canonical boundary) =====
@@ -817,12 +849,15 @@ local function check_canonical_ast(ast, v, file, line, column)
       error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "undefined"}, "E8001", "expected undefined",
         file, line, column, "undefined", __rt.typed_kind(v)))
     elseif name == "unknown" then
+      __rt.validate_data(v, file, line, column)
       if type(v) == "string" then return __rt.check_string(v, file, line, column) end
       local actual = __rt.typed_kind(v)
       if actual ~= "async-operation" and type(v) ~= "function" and type(v) ~= "thread" and type(v) ~= "userdata" and type(v) ~= "cdata" then
         if v == __rt.__MISSING then return __rt.__UNDEFINED end
-        return v
+        return __rt.validate_data(v, file, line, column)
       end
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001", "unsupported unknown ingress",
+        file, line, column, "unknown", actual))
     end
     error(__rt._err("E8001", "unknown primitive type: " .. name, file, line, column, nil, nil))
   elseif kind == "class" then
@@ -1190,6 +1225,8 @@ function __rt.from_lua_function(sig, raw_f)
             "async operation", r)
         end
       end
+    elseif ret_descriptor == "void" and nresults == 0 then
+      return __rt.__UNDEFINED
     elseif not is_null_ret then
       -- 2. Non-null declared return: require at least one result, then check
       -- every result against the declared descriptor.

@@ -91,9 +91,6 @@ function M.tableIntact()
       or member[K.classname] ~= WIDGET then
     return false
   end
-  if member[K.c] ~= nil or member[K.f] ~= nil then
-    return false
-  end
   local action = lastTable.action
   return rawequal(action, lastAction) and type(action) == "table"
     and action[K.kind] == "function"

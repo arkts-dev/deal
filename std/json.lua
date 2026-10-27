@@ -311,6 +311,7 @@ end
 -- decoded JSON member name can shadow or forge one.
 local function mark_decoded_array(arr, length)
   arr[__K.a] = true
+  arr[__K.elementDescriptor] = "unknown"
   arr[__K.n] = length
   return arr
 end

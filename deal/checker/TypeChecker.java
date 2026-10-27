@@ -1243,6 +1243,7 @@ public final class TypeChecker {
         NullNarrowing savedNarrowing = narrowing;
         loopSavedNarrowing.push(savedNarrowing);
         narrowing = new NullNarrowing();
+        narrowCondition(ws.condition(), true);
         loopDepth++;
         loopAssignments.push(newBindingAssignmentSet());
         walkStatement(ws.body());
@@ -1755,7 +1756,7 @@ public final class TypeChecker {
             boolean equalTypes = Types.equals(leftType, rightType);
             boolean nullableVsNull = isNullableOf(leftType, rightType)
                 || isNullableOf(rightType, leftType);
-            if ((equalTypes && !(leftType instanceof Type.Unknown) && !(leftType instanceof Type.Void)) || nullableVsNull) {
+            if ((equalTypes && !(leftType instanceof Type.Void)) || nullableVsNull) {
 
                 return Type.Boolean.INSTANCE;
             }

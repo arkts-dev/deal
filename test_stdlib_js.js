@@ -564,15 +564,17 @@ test("json.stringify omits undefined members and yields undefined for the root",
 });
 
 test("json.stringify rejects unpaired-surrogate string values with the closed unsupported tuple", function() {
-  assertUnsupportedStringifyTuple(function() {
+  const err = assertErrorMessage(function() {
     json.stringify.$f(rt.makeTable({ v: "\uD800" }), "f.js", 1, 1);
-  }, "string", "invalid scalar leaf");
+  }, "E8001", "expected string, got UTF-16 surrogate code point");
+  assertEqual(err.actual, "invalid UTF-8 string", "unread malformed leaf rejected at ingress");
 });
 
 test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and mixed-key array-marked)", function() {
   const plain = rt.makeTable({ ["\uD800"]: 1 });
-  assertUnsupportedStringifyTuple(function() { json.stringify.$f(plain, "f.js", 1, 1); },
-    "string", "invalid scalar key");
+  const err = assertErrorMessage(function() { json.stringify.$f(plain, "f.js", 1, 1); },
+    "E8001", "expected string, got UTF-16 surrogate code point");
+  assertEqual(err.actual, "invalid UTF-8 string", "malformed key rejected at ingress");
   // The array-marked Map comes from the shared decode conversion (the
   // declared parse exit rejects a top-level array, so the decode
   // producer is the runtime member). Generic stringify admits this carrier;
@@ -613,8 +615,10 @@ test("json round-trip: decoded arrays stringify but remain invalid at Record par
   assertEqual(err.expected, "table", "decoded array at a table parameter expected token");
   assertEqual(err.actual, "array", "decoded array at a table parameter actual kind");
   const strings = rt.jsonParseValue(["1", "2"], "f.js", 1, 1);
-  assertEqual(rt.checkArray("[string]", strings, "f.js", 1, 1), strings,
-    "the array boundary admits the decoded array unchanged");
+  assertEqual(rt.checkArray("[unknown]", strings, "f.js", 1, 1), strings,
+    "the persistent unknown array boundary admits the decoded array unchanged");
+  assertErrorMessage(() => rt.checkArray("[string]", strings, "f.js", 1, 1),
+    "E8001", "array element descriptor mismatch");
 });
 
 // The array-element arm's reference-kind projection (the decoded-array
@@ -628,7 +632,7 @@ test("json round-trip: decoded arrays stringify but remain invalid at Record par
 test("an array-element failure reports a decoded-array element as table", function() {
   const doc = json.parse.$f('{"values":[["x"],["y"]]}', "f.js", 1, 1);
   const err = assertErrorMessage(function() {
-    rt.checkType("[[record]]", doc.get("values"), "f.js", 10, 11);
+    rt.checkType("[[record]]", [doc.get("values").get("1")], "f.js", 10, 11);
   }, "E8003", "array element 1 type mismatch");
   assertEqual(err.expected, "[record]", "the failing element's descriptor");
   assertEqual(err.actual, "table", "the decoded-array element's reference kind");

@@ -482,7 +482,7 @@ public final class BoundaryExecutor {
             case RuntimeDescriptor.Undefined ignored -> view.kind() == ActualKind.UNDEFINED ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Void ignored -> view.kind() == ActualKind.UNDEFINED ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Unknown ignored -> switch (view.kind()) {
-                case NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> pass(view);
+                case NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> coreData(descriptor, view);
                 default -> kindFail(descriptor, view);
             };
             case RuntimeDescriptor.Null ignored ->
@@ -500,12 +500,36 @@ public final class BoundaryExecutor {
                             "invalid-unicode", 0, null)
                         : kindFail(descriptor, view);
             case RuntimeDescriptor.Table ignored ->
-                view.kind() == ActualKind.TABLE ? pass(view) : kindFail(descriptor, view);
+                view.kind() == ActualKind.TABLE ? coreData(descriptor, view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Class cls -> coreClass(cls, view);
             case RuntimeDescriptor.Array array -> coreArray(array, view);
             case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view);
             case RuntimeDescriptor.Func func -> coreFunc(func, view);
         };
+    }
+
+    /** Whole-value ingress validation; shared identities and cycles are admissible. */
+    private static CoreResult coreData(RuntimeDescriptor descriptor, BoundaryValueView root) {
+        var seen = java.util.Collections.newSetFromMap(
+            new java.util.IdentityHashMap<BoundaryValueView, Boolean>());
+        var pending = new java.util.ArrayDeque<BoundaryValueView>();
+        pending.push(root);
+        while (!pending.isEmpty()) {
+            BoundaryValueView view = pending.pop();
+            if (!seen.add(view)) continue;
+            switch (view.kind()) {
+                case NULL, UNDEFINED, MISSING, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> {}
+                case INVALID_UNICODE -> {
+                    return new CoreFail(FailureCase.INVALID_UNICODE, RuntimeDescriptor.String.INSTANCE,
+                        "invalid-unicode", 0, null);
+                }
+                default -> { return kindFail(descriptor, view); }
+            }
+            List<BoundaryValueView> children = view.kind() == ActualKind.ARRAY
+                ? view.elements() : view.dataChildren();
+            for (int i = children.size() - 1; i >= 0; i--) pending.push(children.get(i));
+        }
+        return pass(root);
     }
 
     /**

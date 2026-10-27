@@ -178,6 +178,7 @@ public final class JvmSemanticEmitter {
      *
      */
     static String checkedResultOf(Type declaredReturn, String expression) {
+        if (declaredReturn instanceof Type.Nullable n && n.admitsUndefined()) return expression;
         Type inner = declaredReturn instanceof Type.Nullable nullable
             ? nullable.inner() : declaredReturn;
         boolean nullable = declaredReturn instanceof Type.Nullable;
@@ -212,6 +213,7 @@ public final class JvmSemanticEmitter {
      *
      */
     static String productionValueOf(Type declaredReturn, String expression) {
+        if (declaredReturn instanceof Type.Nullable n && n.admitsUndefined()) return expression;
         Type inner = declaredReturn instanceof Type.Nullable nullable
             ? nullable.inner() : declaredReturn;
         boolean nullable = declaredReturn instanceof Type.Nullable;
@@ -4302,9 +4304,8 @@ public final class JvmSemanticEmitter {
                 indent);
         }
 
-        /** The projected argument names, array carriers, and array parameters of one host call. */
-        private record HostCallArguments(List<String> projected, List<String> carriers,
-            List<String> arrays, List<String> arrayCarriers) {
+        /** The checked, identity-preserving arguments of one host call. */
+        private record HostCallArguments(List<String> projected) {
         }
 
         /**
@@ -4316,9 +4317,6 @@ public final class JvmSemanticEmitter {
         private HostCallArguments emitHostArguments(SemanticOp op,
                 KindPayload.CallPayload payload, Type.Func declared, int indent) {
             List<String> projected = new ArrayList<>();
-            List<String> carriers = new ArrayList<>();
-            List<String> arrays = new ArrayList<>();
-            List<String> arrayCarriers = new ArrayList<>();
             int index = 1;
             for (OpId boundaryId : payload.parameterBoundaryOpIds()) {
                 SemanticOp boundary = opsById.get(boundaryId);
@@ -4354,25 +4352,15 @@ public final class JvmSemanticEmitter {
                     .append(" = __hostProjectArg(").append(javaString(desc))
                     .append(", ").append(checked).append(");\n");
                 projected.add(value);
-                if (declaredParameter != null
-                        && innerOf(declaredParameter) instanceof Type.Array) {
-                    // The copy-back target is the production array the
-                    // crossing materialized the carrier from, and the source
-                    // is the projected carrier the host method received.
-                    arrays.add(checked);
-                    carriers.add(desc);
-                    arrayCarriers.add(value);
-                }
                 index++;
             }
-            return new HostCallArguments(List.copyOf(projected), List.copyOf(carriers),
-                List.copyOf(arrays), List.copyOf(arrayCarriers));
+            return new HostCallArguments(List.copyOf(projected));
         }
 
         /**
          * The call half of one host arm: the invocation under the op's
          * FAILURE events, the declared return value's production
-         * projection, the normal-return copy-back of the declared array
+         * projection, and live alias preservation for the declared array
          * parameters, and the return boundary's events.
          */
         private void finishHostCall(SemanticOp op, KindPayload.CallPayload payload,
@@ -4414,13 +4402,6 @@ public final class JvmSemanticEmitter {
                         ? productionValueOf(declaredReturn, held)
                         : checkedResultOf(declaredReturn, held))
                     .append(";\n");
-            }
-            for (int i = 0; i < arguments.arrays().size(); i++) {
-                out.append(indent(indent)).append("__hostArrayCopyBack(")
-                    .append(javaString(arguments.carriers().get(i))).append(", ")
-                    .append(arguments.arrayCarriers().get(i))
-                    .append(", (JvmRuntime.Array) ")
-                    .append(arguments.arrays().get(i)).append(");\n");
             }
             SemanticOp returnBoundary = payload.returnBoundaryOpId() == null ? null
                 : opsById.get(payload.returnBoundaryOpId());

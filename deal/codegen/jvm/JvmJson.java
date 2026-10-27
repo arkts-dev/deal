@@ -737,6 +737,7 @@ public final class JvmJson {
     private static Object toLanguage(Object value) {
         if (value instanceof JvmRuntime.Array array) {
             JvmRuntime.Array out = new JvmRuntime.Array(0);
+            out.elementDescriptor = "unknown";
             for (Object element : array.elements) {
                 out.elements.add(element == JNULL ? null : toLanguage(element));
             }
@@ -1011,6 +1012,7 @@ public final class JvmJson {
         final List<String> keys;
         final String path;
         int index;
+        int emitted;
 
         EncodeFrame(JvmRuntime.Table table, List<String> keys, String path) {
             this.table = table;
@@ -1049,10 +1051,9 @@ public final class JvmJson {
                     if (escapedKey == null) {
                         throw new Projection(frame.path, actualToken(key));
                     }
-                    if (i > 0) {
-                        out.append(',');
-                    }
                     Object element = frame.table.entries.get(key);
+                    if (element == JvmRuntime.UNDEFINED || element == JvmRuntime.MISSING || element instanceof JvmRuntime.FunctionValue) continue;
+                    if (frame.emitted++ > 0) out.append(',');
                     String elementPath = frame.path.isEmpty() ? key
                         : frame.path + "." + key;
                     out.append('"').append(escapedKey).append('"').append(':');
@@ -1089,7 +1090,7 @@ public final class JvmJson {
     private static void appendDynamicValue(StringBuilder out, Object value, String path,
             java.util.IdentityHashMap<Object, Boolean> visited,
             java.util.Deque<EncodeFrame> stack) {
-        if (value == null || value == JNULL) {
+        if (value == null || value == JNULL || value == JvmRuntime.UNDEFINED || value == JvmRuntime.MISSING || value instanceof JvmRuntime.FunctionValue) {
             out.append("null");
             return;
         }
@@ -1099,10 +1100,7 @@ public final class JvmJson {
         }
         if (value instanceof Number numeric) {
             double number = numeric.doubleValue();
-            if (!Double.isFinite(number)) {
-                throw new Projection(path, actualToken(number));
-            }
-            out.append(number == 0 ? "0" : Double.toString(number));
+            out.append(!Double.isFinite(number) ? "null" : number == 0 ? "0" : Double.toString(number));
             return;
         }
         if (value instanceof String string) {
@@ -1122,7 +1120,7 @@ public final class JvmJson {
             // an object spells its keys exactly as they were inserted,
             // never in sorted order.
             stack.push(new EncodeFrame(table,
-                new ArrayList<>(table.entries.keySet()), path));
+                deal.semantic.ir.SemanticTable.ownKeyOrder(table.entries.keySet()), path));
             return;
         }
         if (value instanceof JvmRuntime.Array array) {
@@ -1131,6 +1129,17 @@ public final class JvmJson {
             }
             out.append('[');
             stack.push(new EncodeFrame(array, path));
+            return;
+        }
+        if (value instanceof JvmRuntime.ClassInstance instance) {
+            if (visited.containsKey(instance)) throw Projection.cycle(path);
+            java.util.Set<Object> active = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            active.addAll(visited.keySet());
+            try { JvmRuntime.stringifyValue(out, instance, active); }
+            catch (JvmRuntime.StdlibFailure failure) {
+                if (failure.armId == deal.semantic.ir.FailureArmId.JSON_TO_WALK_CYCLE) throw Projection.cycle(path);
+                throw new Projection(path, failure.actual);
+            }
             return;
         }
         throw new Projection(path, actualToken(value));

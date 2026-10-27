@@ -445,7 +445,7 @@ test("table fields accept only a JSON object", function() {
     "empty object for a table field");
 });
 
-test("class instances inside table fields are rejected by the walk arm", function() {
+test("class instances inside Record fields encode public fields", function() {
   const fields = [f("data", "table", false, false)];
   const thunk = () => ({ data: rt.makeTable({}) });
   const inner = rt.classPlan("@m/User", [{name:"name",descriptor:"string",optional:false}, {name:"nick",descriptor:"?string",optional:true}],
@@ -453,11 +453,8 @@ test("class instances inside table fields are rejected by the walk arm", functio
   const u = rt.jsonFromJson("@m/W", fields, '{"data":{"u":{}}}', ...LOC);
   assert(u !== null, "decode with a table field");
   u.data.set("u", inner);
-  // Table-field contents stay JSON-shaped: a class instance is not a
-  // JSON value and fails the walk arm at its position (never the D9 tag
-  // encoding).
-  assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "value at data.u is not JSON serializable: @m/User", "class inside table content");
+  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), '{"data":{"u":{"name":"Ada"}}}', "nested public class fields");
+  assertEqual(u.data.get("u"), inner, "nested class identity unchanged");
 });
 
 // =========================================================================
@@ -522,22 +519,20 @@ test("jsonToJson substitutes null for nonfinite number fields without mutation",
   assertEqual(u.x, -Infinity, "negative Infinity storage unchanged");
 });
 
-test("jsonToJson rejects function values inside Record fields without mutation", function() {
+test("jsonToJson omits function values inside Record fields without mutation", function() {
   const fields = [f("data", "table", false, false)];
   const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
   const fn = rt.function("()->null", function() { return null; });
   u.data.set("f", fn);
-  assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "value at data.f is not JSON serializable: function", "generated Record path failure");
+  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), '{"data":{}}', "function omitted");
   assertEqual(u.data.get("f"), fn, "function identity unchanged");
 });
 
-test("jsonToJson rejects missing Record members without mutating storage", function() {
+test("jsonToJson omits missing Record members without mutating storage", function() {
   const fields = [f("data", "table", false, false)];
   const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
   u.data.set("bad", rt.MISSING);
-  assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "value at data.bad is not JSON serializable: undefined", "generated Record absence failure");
+  assertEqual(rt.jsonToJson("@m/W", u, fields, ...LOC), '{"data":{}}', "missing member omitted");
   assertEqual(u.data.get("bad"), rt.MISSING, "missing carrier unchanged");
 });
 

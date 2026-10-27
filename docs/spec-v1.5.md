@@ -370,8 +370,8 @@ if (p.nick !== null) {
 Narrowing invalidation:
 
 - Direct assignment invalidates the binding's refinement.
-- Calls do not invalidate refinements. Indirect captured-binding mutation can therefore cause a later runtime type check to fail.
-- Narrowing does not cross function boundaries or loop back-edges.
+- Calls preserve refinements; indirect captured-binding mutation may cause subsequent runtime-check failure.
+- Narrowing cannot cross functions/back-edges. Each while-body entry, including after continue, receives fresh true-guard refinement; assignment/await invalidate normally, without body-to-guard propagation.
 - `await` invalidates all enclosing-function refinements.
 
 `typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/records/classes). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
@@ -417,16 +417,9 @@ Types must match exactly unless an explicit compatibility rule permits otherwise
 
 ### Equality and comparison operand rules
 
-Type equality:
+Type equality: identical canonical forms; classes by declaration symbol, functions by async marker/parameters/result.
 
-Two types are equal iff their canonical forms are identical. Class types are equal by declared class symbol only. Function types are equal by exact async marker, parameter list, and return type.
-
-Value equality: `===` and `!==` require equal types, except a nullish type may compare with its singleton members; `unknown` may compare with null or undefined.
-
-- Null and undefined each equal only themselves.
-- Booleans compare by value; numbers use IEEE 754 equality (`NaN === NaN` is false).
-- Strings compare by Unicode scalar-value sequence.
-- Arrays, records, classes and functions compare by reference identity.
+`===` requires equal types, except nullish types admit singleton comparisons and unknown admits null/undefined. Unknown pairs compare data without coercion, retagging or structural comparison. Different runtime kinds differ; null/undefined equal themselves only. Numbers use binary64 equality (NaN differs from itself; signed zeros equal), booleans compare by value, strings by Unicode scalar sequence, arrays/Records/classes/functions by reference identity. `!==` negates `===`.
 
 `==` and `!=` are not valid operators.
 
@@ -1001,7 +994,7 @@ Deletion removes an own key. Reads of absent keys yield undefined; present keys 
 
 ### Array type and semantics
 
-`T[]` is invariant in T and admits every data type as its element type. Its persistent element descriptor governs all writes, including through unknown extraction and host aliases.
+`T[]` is invariant in T, admits any data element type, and preserves element descriptors governing writes through unknown/host aliases. json.parse arrays, including nested/empty/Record descendants, retain unknown descriptors. C$fromJson fields and fresh host arrays admitted as T[] receive T descriptors after validation. Host-crossing arrays retain descriptors/identity. Assertions never infer/retag descriptors: parsed [1] cannot assert number[].
 
 ### Indexing
 
@@ -1454,13 +1447,13 @@ See [Backend contracts](#backend-contracts) for backend-specific representations
 
 #### Boundary checks
 
-Any value crossing from an untyped host context into DEAL is checked:
+Check every untyped host-to-DEAL crossing:
 
 ```ts
 let f: (x: number) => number = lib.f;
 ```
 
-Unknown preserves supported DEAL data identity, not arbitrary opaque host objects. Reject unsupported host ingress. Assertions use [Narrowing and checked assertions](#narrowing-and-checked-assertions); validation follows the [conformance contract](#backend-conformance-contract).
+Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects ingress before publication for malformed Unicode/unsupported leaves, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [validation](#backend-conformance-contract).
 
 
 #### Function ABI

@@ -514,24 +514,24 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let t: Record<string, unknown> = json.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
-          let xs: number[][] = t.values as number[][];
-          let first: number[] = xs[0];
-          let alias: number[] = xs[0];
+          let xs: unknown[] = t.values as unknown[];
+          let first: unknown[] = xs[0] as unknown[];
+          let alias: unknown[] = xs[0] as unknown[];
           if (first !== alias) {
             throw { code: "TEST_FAIL", message: "decoded identity" };
           }
-          let reread: number[][] = t.values as number[][];
+          let reread: unknown[] = t.values as unknown[];
           if (reread !== xs) {
             throw { code: "TEST_FAIL", message: "decoded member identity" };
           }
           if (first.length !== 2) {
             throw { code: "TEST_FAIL", message: "decoded length" };
           }
-          if (xs[1][0] !== 3) {
+          if (((xs[1] as unknown[])[0] as number) !== 3) {
             throw { code: "TEST_FAIL", message: "decoded indexing" };
           }
           first[1] = 9;
-          if (alias[1] !== 9) {
+          if ((alias[1] as number) !== 9) {
             throw { code: "TEST_FAIL", message: "decoded alias mutation" };
           }
           let encoded: string = json.stringify(t) as string;
@@ -705,7 +705,7 @@ public class ContainerBoundaryProductionTest {
         export function main(): null {
           let d: Ok | null = Ok$fromJson("{\\"values\\":{\\"xs\\":[[\\"a\\"]]}}");
           if (d !== null) {
-            let ys: string[][] = d.values.xs as string[][];
+            let ys: unknown[] = d.values.xs as unknown[];
             return null;
           }
           return null;

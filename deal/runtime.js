@@ -695,6 +695,7 @@ function $arrayFormIndex($key) {
 // they never denote a second language numeric type.
 const $jsonNumberMarks = new WeakMap();
 const $arrayDescriptors = new WeakMap();
+const $arrayDeleted = new WeakMap();
 
 function $markNumberVariant($container, $key) {
   let $marks = $jsonNumberMarks.get($container);
@@ -929,18 +930,7 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
     if ($isNumCarrier($value)) {
       return $value.d;
     }
-    if ($Array.isArray($value)) {
-      const $mapped = $seen.get($value);
-      if ($mapped !== $undefined) {
-        return $mapped;
-      }
-      const $copy = [];
-      $seen.set($value, $copy);
-      $carryMarks($value, $copy, false);
-      if ($arrayDescriptors.has($value)) $arrayDescriptors.set($copy, $arrayDescriptors.get($value));
-      $stack.push({ kind: 1, source: $value, copy: $copy, index: 0, keys: null });
-      return $copy;
-    }
+    if ($Array.isArray($value)) return $value;
     if ($value instanceof $Map) {
       // The decoded JSON null is the language null, not a table: it has
       // no content to copy, so it projects to the host null directly.
@@ -1000,20 +990,7 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
       $stack.push({ kind: 2, source: $value, copy: $copy, index: 0, keys: $keys });
       return $copy;
     }
-    if ($value !== null && typeof $value === "object"
-        && $value.$kind === "class") {
-      const $mapped = $seen.get($value);
-      if ($mapped !== $undefined) {
-        return $mapped;
-      }
-      const $copy = {};
-      $seen.set($value, $copy);
-      $carryMarks($value, $copy, false);
-      if ($classFieldOrder.has($value)) $classFieldOrder.set($copy, $classFieldOrder.get($value));
-      $stack.push({ kind: 3, source: $value, copy: $copy, index: 0,
-        keys: Object.keys($value) });
-      return $copy;
-    }
+    if ($value !== null && typeof $value === "object" && $value.$kind === "class") return $value;
     return $value;
   };
   const $root = $project($v);
@@ -2220,7 +2197,7 @@ function $jsonToValue($entry, $value, $path, $fieldPath, $file, $line, $column,
       // class instance, a stored function, an absent marker, an
       // invalid scalar, or a nonfinite leaf fails the walk arm at its
       // position.
-      return $encodeJsonText($value, $path, $file, $line, $column, true,
+      return $encodeJsonText($value, $path, $file, $line, $column, false,
         $fieldPath, false);
     case "class":
       if (typeof $value !== "object" || $value === null || $value.$kind !== "class") {
@@ -2512,6 +2489,7 @@ const $rt = {
   // (js-backend-runtime-artifact D2). No DEALError arm exists here.
   markJsonArrayTable: function $markJsonArrayTable(map) {
     $jsonArrayTables.add(map);
+    if (!$arrayDescriptors.has(map)) $arrayDescriptors.set(map, "unknown");
     return map;
   },
 
@@ -2711,6 +2689,30 @@ const $rt = {
   // never the plain-Map "table" label). Anything else — Array, plain
   // object, class instance, wrapper, primitives — keeps its own $kindOf
   // actual label.
+  validateData: function $validateData(value, file, line, column) {
+    const seen = new WeakSet(), pending = [value];
+    while (pending.length) {
+      const v = pending.pop();
+      if (v === null || v === $undefined || v === $MISSING) continue;
+      if (typeof v === "string") { $rt.checkString(v, file, line, column); continue; }
+      if (typeof v === "number" || typeof v === "boolean" || $isNumCarrier(v)) continue;
+      if (typeof v !== "object") $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", $kindOf(v));
+      if (seen.has(v)) continue;
+      seen.add(v);
+      if (v instanceof $Map) {
+        for (const [key, member] of v) { $rt.checkString(key, file, line, column); pending.push(member); }
+      } else if ($Array.isArray(v)) {
+        for (let i = 0; i < v.length; i++) if (Object.prototype.hasOwnProperty.call(v, i)) pending.push(v[i]);
+      } else if (v.$kind === "class") {
+        const fields = $classFieldOrder.get(v) || Object.keys(v).filter(key => key !== "$kind" && key !== "$classname");
+        for (const key of fields) if (Object.prototype.hasOwnProperty.call(v, key)) pending.push(v[key]);
+      } else if (v.$kind !== "function") {
+        $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", $kindOf(v));
+      }
+    }
+    return value;
+  },
+
   checkTable: function $checkTable(v, file, line, column) {
     if (!(v instanceof $Map)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", $kindOf(v));
@@ -2721,7 +2723,7 @@ const $rt = {
     if ($rt.isJsonArrayTable(v)) {
       $rt.fail("E8001", "expected table", file, line, column, "table", "array");
     }
-    return v;
+    return $rt.validateData(v, file, line, column);
   },
 
   // ===== Descriptor dispatch (js-backend-runtime-artifact D3/D4) =====
@@ -2807,7 +2809,7 @@ const $rt = {
         if (typeof v === "string") return $rt.checkString(v, file, line, column);
         if (["null", "undefined", "boolean", "number", "table", "array"].includes(kind)
             || (v !== null && v !== $undefined && (v.$kind === "class"
-                || (kind === "function" && typeof v !== "function")))) return v;
+                || (kind === "function" && typeof v !== "function")))) return $rt.validateData(v, file, line, column);
         $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", kind);
       }
       if ($parsed.$name === "record") {
@@ -2875,6 +2877,23 @@ const $rt = {
   // element N type mismatch", deal/runtime.lua:788 — no inner-message
   // text is embedded). Success returns the value unchanged.
   tagArray: function(v, elementDescriptor) { $arrayDescriptors.set(v, elementDescriptor); return v; },
+
+  // Only declared host admission may install a fresh array's descriptor.
+  // Existing arrays (including parsed unknown[]) are never retagged.
+  admitHostArray: function(descriptor, value) {
+    let parsed = $parse(descriptor);
+    if (value === null || value === $undefined) return value;
+    while (parsed && parsed.$t === "nullable") {
+      descriptor = parsed.$inner;
+      parsed = $parse(descriptor);
+    }
+    if (!parsed || parsed.$t !== "array") return value;
+    if (!$Array.isArray(value) || $arrayDescriptors.has(value)) return value;
+    const element = $arrayElementDescriptor(descriptor);
+    for (const member of value) $rt.admitHostArray(element, member);
+    $arrayDescriptors.set(value, element);
+    return value;
+  },
 
   checkArray: function $checkArray(descriptor, v, file, line, column) {
     const $isJsonArrayMap = !$Array.isArray(v) && $rt.isJsonArrayTable(v);
@@ -2959,6 +2978,14 @@ const $rt = {
   // stored value, so a real Array keeps the representation its declared
   // element type gave it and a decoded slot whose variant matches its
   // declared kind stays a plain number.
+  arrayHas: function $arrayHas(v, i) {
+    if ($rt.isJsonArrayTable(v)) {
+      if ($arrayDeleted.get(v)?.has(i) && v.get(String(i + 1)) === $undefined) return false;
+      return v.has(String(i + 1));
+    }
+    return Object.prototype.hasOwnProperty.call(v, i);
+  },
+
   arrayAt: function $arrayAt(v, i, wantsNumber) {
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
       const $key = String(i + 1);
@@ -3005,6 +3032,7 @@ const $rt = {
   // after a rewrite and the encode walks spell by the stored value. The
   // carrier identity is preserved; no copy, no extra mutation.
   arraySet: function $arraySet(v, i, value, isNumber) {
+    $arrayDeleted.get(v)?.delete(i);
     const $variant = $numVariantOf(value, isNumber);
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
       const $key = String(i + 1);
@@ -3019,21 +3047,24 @@ const $rt = {
 
   // arrayDelete: the committed step of an emitted array-element delete
   // whose E8002 bounds gate already ran and whose append-at-length guard
-  // already suppressed the write at i === length. A native Array stores
-  // the T1 nil-equivalent in the slot and a marked Map sets its
-  // array-form key to the same value, the nil-write of the reference
-  // semantics: reads at the slot yield the nil-equivalent and the length
+  // already suppressed the write at i === length. A native Array removes
+  // its own slot; a decoded Map retains its length key with a private
+  // absence mark. Both distinguish deletion from stored undefined.
+  // Reads at the slot yield undefined and the length
   // is unchanged. The slot's number-variant mark is cleared — the slot
   // now holds the internal missing value, never a classified number. No
   // mutation of any other slot; the carrier identity is preserved.
   arrayDelete: function $arrayDelete(v, i) {
     if (!$Array.isArray(v) && $rt.isJsonArrayTable(v)) {
+      let deleted = $arrayDeleted.get(v);
+      if (!deleted) { deleted = new Set(); $arrayDeleted.set(v, deleted); }
+      deleted.add(i);
       const $key = String(i + 1);
       v.set($key, $undefined);
       $clearNumberVariant(v, $key);
       return;
     }
-    v[i] = $undefined;
+    delete v[i];
     $clearNumberVariant(v, String(i));
   },
 
@@ -3375,11 +3406,12 @@ const $rt = {
           }
         }
         if ($r === $undefined && $retDesc === "void") return $undefined;
-        if ($r === $undefined) {
+        if ($r === $undefined && !($retDesc === "unknown" || $retDesc === "undefined" || $retDesc.startsWith("!undefined") || $retDesc.startsWith("!") || $retDesc.startsWith("?!"))) {
           $rt.fail("E8010", "return value 1 type mismatch: expected " + $retDesc + ", got nothing", $file, $line, $column, $retDesc, "nothing");
         }
         try {
-          return $rt.checkType($retDesc, $r, $file, $line, $column);
+          const checked = $rt.checkType($retDesc, $r, $file, $line, $column);
+          return $rt.admitHostArray($retDesc, checked);
         } catch ($e) {
           if (!($e instanceof $DEALError)) {
             throw $e;
@@ -3475,8 +3507,9 @@ const $rt = {
         }
         const $v = await $op;
         try {
-          return $rt.checkType($retDesc, $v, $completionFile,
+          const checked = $rt.checkType($retDesc, $v, $completionFile,
             $completionLine, $completionColumn);
+          return $rt.admitHostArray($retDesc, checked);
         } catch ($completionError) {
           if ($completionError instanceof $DEALError
               && $completionError.actual === $kindOf($v)

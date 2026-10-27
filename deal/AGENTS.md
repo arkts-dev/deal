@@ -8,7 +8,7 @@ Own compiler phases, runtimes and CLI integration. Preserve deterministic diagno
 - Class construction uses supplied values in declaration order. Required-nullable fields require presence; omitted optionals remain absent. Never consult defaults hooks.
 - Null, undefined and missing presence remain distinct. Missing reads normalize to undefined, not null. Sync host no-result admits void only.
 - Throw/catch/rethrow preserve Error identity, mutable code/message, original diagnostic facts and linked causes. Error held as unknown remains an error trace atom.
-- Keep generic stringify, declared-field encoding and dynamic Record-content validation separate. Generic JSON omits object undefined/functions and substitutes null in arrays/nonfinite positions; declared numbers substitute null; dynamic Record walkers reject unsupported leaves at their own paths.
-- Class JSON reads private declaration-order storage, respects presence and detects cycles by original identity. Error exposes code/message only. Preserve metadata across host copies and both Lua runtime load orders.
+- Generated Records share generic JSON omission/substitution, numeric own-key order and nested-class rules; declared fields retain declaration order. Malformed Unicode/cycles reject. Validate whole Record/unknown ingress graphs before publication, preserving identities.
+- Class JSON reads private declaration-order storage, respects presence and detects cycles by original identity. Error exposes code/message only. Preserve original identities and metadata across host crossings and both Lua runtime load orders.
 
 Keep implementation and affected policies synchronized; place regression details in executable tests, not policy inventories.
