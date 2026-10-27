@@ -3,11 +3,11 @@
 // @expected: runtime-error ASYNC_SOURCE_FAIL
 // @features: source-location, async, runtime-errors
 
-async function failAsync(): number {
+async function failAsync(): Promise<number> {
   throw { code: "ASYNC_SOURCE_FAIL", message: "async source fail" };
 }
 
-export async function test_source_location_async_error(): number {
+export async function test_source_location_async_error(): Promise<number> {
   return await failAsync();
 }
 

@@ -7,7 +7,8 @@ function expectNoError(what: string): null {
   throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
-function expectCaught(e: Error, what: string, code: string, message: string): null {
+function expectCaught(value: unknown, what: string, code: string, message: string): null {
+  let e: Error = value as Error;
   if (e.code !== code || e.message !== message) {
     throw { code: "CONTROL_FAIL", message: what + ": expected " + code + " " + message
       + ", got " + e.code + " " + e.message };

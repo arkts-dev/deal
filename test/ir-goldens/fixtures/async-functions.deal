@@ -1,24 +1,24 @@
 // IR golden fixture: async-functions
-// Tests async function declarations with the async function type marker,
-// async functions with various return types, and async function IR dump format.
+// Tests async declarations with Promise result annotations,
+// various result types, and the checked-AST async function dump format.
 // Verifies that the IrDumper produces "async function" as the node kind
 // and "async" prefix in function type descriptors.
 
-async function identity(x: number): number {
+async function identity(x: number): Promise<number> {
     return x;
 }
 
-async function maybe(x: number): number | null {
+async function maybe(x: number): Promise<number | null> {
     if (x === 0) {
         return null;
     }
     return x;
 }
 
-async function compute(a: number, b: number): number {
+async function compute(a: number, b: number): Promise<number> {
     return a + b;
 }
 
-async function noAwait(): number {
+async function noAwait(): Promise<number> {
     return 5;
 }

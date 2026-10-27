@@ -28,6 +28,7 @@ public enum ActualKind {
 
     /** Language null. */
     NULL("null"),
+    UNDEFINED("undefined"),
     /** Internal missing (e.g. absent optional/template slot). */
     MISSING("missing"),
     /** Boolean. */

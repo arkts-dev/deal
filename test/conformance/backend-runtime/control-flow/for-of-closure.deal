@@ -7,7 +7,7 @@ export function test_closure_capture(): number {
   let vals: number[] = [1, 2, 3];
   let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
   let i: number = 0;
-  for (let x: number of vals) {
+  for (let x of vals) {
     fs[i] = function(): number { return x; };
     i = i + 1;
   }

@@ -4,7 +4,6 @@ import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticStructuredOutput;
-import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
 import deal.project.ProjectContext;
@@ -107,7 +106,7 @@ public final class Main {
             return 1;
         }
 
-        // Exact-v1.4 location (D1): entry validation, ancestor-manifest
+        // Exact-v1.5 location (D1): entry validation, ancestor-manifest
         // discovery, strict UTF-8 read/decode, strict parse, override
         // validation, root/externals conversion, effective backend and
         // output, the pinned stdlib surface, and the deployment identity.
@@ -147,7 +146,7 @@ public final class Main {
             if (dumpIr) {
                 System.out.println("IR dump: enabled");
             }
-            // The v1.4 default debugging artifacts: source comments and
+            // The v1.5 default debugging artifacts: source comments and
             // per-source map sidecars are emitted by every successful
             // compile, and the accepted --source-map spelling selects
             // nothing.
@@ -199,28 +198,9 @@ public final class Main {
         return 0;
     }
 
-    /**
-     * The verbose stdlib-surface report: the surface resolved by
-     * {@link DistributionHome} in the pinned three-tier order
-     * ({@code release-distribution-packaging-and-discovery} D3) —
-     * {@code project-local}, {@code distribution-classpath-resources},
-     * {@code distribution-home}, {@code cwd-fallback}, or {@code none}.
-     * The report comes from the resolver (never from a CWD/entry
-     * heuristic), and the same resolver — with the same inputs —
-     * produced the surface {@link ProjectLocator} published in the
-     * context, so the report never guesses a surface the compile does
-     * not use.
-     */
+    /** Report the exact stdlib directory selected during project discovery. */
     private static String describeStdlibSurface(ProjectContext context) {
-        Optional<DistributionHome.ResolvedSurface> surface =
-            DistributionHome.forManifestDirectory(
-                    context.manifestDirectory())
-                .resolveStdlibSurface();
-        if (surface.isEmpty()) {
-            return "none";
-        }
-        DistributionHome.ResolvedSurface resolved = surface.get();
-        return resolved.tier() + " " + resolved.pathText();
+        return context.stdlibSurfacePath() == null ? "none" : context.stdlibSurfacePath();
     }
 
     /**

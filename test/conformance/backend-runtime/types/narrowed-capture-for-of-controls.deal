@@ -30,7 +30,7 @@ export function main(): null {
   let items: number[] | null = [1, 2, 3];
   if (items !== null) {
     let total: number = 0;
-    for (let n: number of items) {
+    for (let n of items) {
       total = total + n;
     }
     expectEqual("narrowed array iteration", total, 6);
@@ -40,7 +40,7 @@ export function main(): null {
   let empty: number[] | null = [];
   if (empty !== null) {
     let visits: number = 0;
-    for (let n: number of empty) {
+    for (let n of empty) {
       visits = visits + 1;
     }
     expectEqual("empty array visits", visits, 0);
@@ -54,7 +54,7 @@ export function main(): null {
     return [7, 8];
   };
   let built: number = 0;
-  for (let n: number of build()) {
+  for (let n of build()) {
     built = built + n;
   }
   expectEqual("iterable evaluated once", calls, 1);
@@ -66,7 +66,7 @@ export function main(): null {
   if (live !== null) {
     let alias: number[] = live;
     let visited: number = 0;
-    for (let n: number of live) {
+    for (let n of live) {
       if (n === 1) {
         alias[1] = 2;
         alias[2] = 3;
@@ -80,7 +80,7 @@ export function main(): null {
   let target: number[] | null = original;
   if (target !== null) {
     let visited: number = 0;
-    for (let n: number of target) {
+    for (let n of target) {
       target = redirect;
       visited = visited + 1;
     }
@@ -91,7 +91,7 @@ export function main(): null {
   let numbers: number[] | null = [1, 2, 3, 4, 5];
   if (numbers !== null) {
     let broken: number = 0;
-    for (let n: number of numbers) {
+    for (let n of numbers) {
       if (n === 3) {
         break;
       }
@@ -99,7 +99,7 @@ export function main(): null {
     }
     expectEqual("for-of break", broken, 3);
     let continued: number = 0;
-    for (let n: number of numbers) {
+    for (let n of numbers) {
       if (n === 3) {
         continue;
       }
@@ -117,7 +117,7 @@ export function main(): null {
       function(): number { return -1; }
     ];
     let index: number = 0;
-    for (let n: number of source) {
+    for (let n of source) {
       captured[index] = function(): number { return n; };
       index = index + 1;
     }
@@ -131,7 +131,7 @@ export function main(): null {
   if (text !== null) {
     let scalars: number = 0;
     let joined: string = "";
-    for (let c: string of text) {
+    for (let c of text) {
       scalars = scalars + 1;
       joined = joined + c;
     }
@@ -153,11 +153,11 @@ export function main(): null {
     let visits: number = 0;
     let caught: number = 0;
     try {
-      for (let n: number of cleared) {
+      for (let n of cleared) {
         visits = visits + 1;
       }
     } catch (e) {
-      expectCaught("array iterable admission", e, "E8001");
+      expectCaught("array iterable admission", e as Error, "E8001");
       caught = caught + 1;
     }
     expectEqual("array iterable admission raised", caught, 1);
@@ -173,11 +173,11 @@ export function main(): null {
     let visits: number = 0;
     let caught: number = 0;
     try {
-      for (let c: string of clearedName) {
+      for (let c of clearedName) {
         visits = visits + 1;
       }
     } catch (e) {
-      expectCaught("string iterable admission", e, "E8001");
+      expectCaught("string iterable admission", e as Error, "E8001");
       caught = caught + 1;
     }
     expectEqual("string iterable admission raised", caught, 1);

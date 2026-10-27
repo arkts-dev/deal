@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected table\",\"sourceFile\":\"backend-runtime/stdlib/json/json-parse-top-level-array-table-error.deal\",\"line\":9,\"column\":18,\"expected\":\"table\",\"actual\":\"array\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected table\",\"sourceFile\":\"backend-runtime/stdlib/json/json-parse-top-level-array-table-error.deal\",\"line\":9,\"column\":36,\"expected\":\"table\",\"actual\":\"array\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -17,7 +17,7 @@
       "message": "expected table",
       "sourceFile": "backend-runtime/stdlib/json/json-parse-top-level-array-table-error.deal",
       "line": 9,
-      "column": 18,
+      "column": 36,
       "expected": "table",
       "actual": "array"
     }

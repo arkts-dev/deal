@@ -5,10 +5,10 @@
 
 import * as c from "std/console";
 export function main(): null {
- let t: table = {key:null}; let key: string = ""; t[key] = "";
- let empty: string = t[key]; let nil: string | null = t.key;
+ let t: Record<string, unknown> = {key:null}; let key: string = ""; t[key] = "";
+ let empty: string = t[key] as string; let nil: unknown = t.key;
  if(empty !== "" || nil !== null) {throw {code:"TEST_FAIL",message:"empty string or null collapsed"};}
- delete t[key]; let gone: string | null = t[key]; if(gone !== null) {throw {code:"TEST_FAIL",message:"empty key deletion failed"};}
- t[key] = "x"; let restored: string = t[key]; if(restored !== "x") {throw {code:"TEST_FAIL",message:"empty key rewrite"};}
+ delete t[key]; let gone: unknown = t[key]; if(gone !== undefined || Object.hasOwn(t, key)) {throw {code:"TEST_FAIL",message:"empty key deletion failed"};}
+ t[key] = "x"; let restored: string = t[key] as string; if(restored !== "x") {throw {code:"TEST_FAIL",message:"empty key rewrite"};}
  c.log("literal-null-vs-empty-string"); return null;
 }

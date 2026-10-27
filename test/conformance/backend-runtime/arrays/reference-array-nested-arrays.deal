@@ -84,7 +84,8 @@ export function test_array_nested_arrays(): null {
   try {
     let bad: number[][] = m[9];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
-  } catch (e) {
+  } catch (value) {
+    let e: Error = value as Error;
     if (e.code !== "E8002") {
       throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
     }
@@ -93,7 +94,8 @@ export function test_array_nested_arrays(): null {
   try {
     let bad: number[][] = m[-1];
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
-  } catch (e) {
+  } catch (value) {
+    let e: Error = value as Error;
     if (e.code !== "E8002") {
       throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
     }

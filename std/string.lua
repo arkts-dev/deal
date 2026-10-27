@@ -1,5 +1,5 @@
--- DEAL Standard Library: std/string — v1.4
--- Provides string manipulation functions per the v1.4 spec.
+-- DEAL Standard Library: std/string — v1.5
+-- Provides string manipulation functions per the v1.5 spec.
 -- String lengths and positions are measured in Unicode scalar values.
 
 local __rt = require("deal.runtime")
@@ -21,7 +21,7 @@ local function escape_replacement(s)
 end
 
 --- length(s: string): int
--- Returns the number of Unicode scalar values in the string (v1.4).
+-- Returns the number of Unicode scalar values in the string (v1.5).
 -- The trailing span triplet carries the call site (ISSUE-0598), so the
 -- dynamic-nonstring E8001 reports it byte-exact.
 stringlib.length = __rt.function_("(string)->number", function(s, file, line, column)
@@ -39,7 +39,7 @@ end)
 
 --- substring(s: string, start: int, end: int): string
 -- Returns the substring from start (0-based, inclusive) to end (exclusive),
--- with positions measured in Unicode scalar values (v1.4).
+-- with positions measured in Unicode scalar values (v1.5).
 -- start > end, start beyond the string, or end <= 0 produce the empty
 -- string; out-of-range end clamps to the string end.
 stringlib.substring = __rt.function_("(string,number,number)->string", function(s, start, end_, file, line, column)
@@ -137,13 +137,13 @@ stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep, f
   __rt.check_string(sep, file, line, column)
   local result = {}
 
-  -- Empty string: return empty array regardless of separator
+  -- Empty string still carries its persistent string element descriptor.
   if #s == 0 then
-    return result
+    return __rt.tag_array(result, "string")
   end
 
   if sep == "" then
-    -- Split into individual Unicode scalar values (v1.4).
+    -- Split into individual Unicode scalar values (v1.5).
     local cursor = 0
     while true do
       local next_cursor, ch = __rt.utf8_next(s, cursor)
@@ -151,7 +151,7 @@ stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep, f
       result[#result + 1] = ch
       cursor = next_cursor
     end
-    return result
+    return __rt.tag_array(result, "string")
   end
 
   local start_pos = 1
@@ -165,7 +165,7 @@ stringlib.split = __rt.function_("(string,string)->[string]", function(s, sep, f
     start_pos = found_end + 1
   end
 
-  return result
+  return __rt.tag_array(result, "string")
 end)
 
 --- trim(s: string): string

@@ -100,6 +100,9 @@ public class TypeDescriptorTest {
         NameResolver nr = new NameResolver("test", resolver);
         SymbolTable symTable = nr.resolve(program);
         CheckResult result = TypeChecker.check("test", symTable, nr, program);
+        if (!nr.diagnostics().isEmpty() || !result.diagnostics().isEmpty()) {
+            throw new AssertionError("Descriptor fixture rejected: " + nr.diagnostics() + result.diagnostics());
+        }
 
         return new CompileResult(program, result, symTable);
     }
@@ -112,7 +115,7 @@ public class TypeDescriptorTest {
     static void testIrSpecFormatNotLegacy() {
         System.out.print("  testIrSpecFormatNotLegacy... ");
         CompileResult cr = compile("""
-            function f(a: number[], b: number | null, c: string | null): null { return; }
+            function f(a: number[], b: number | null, c: string | null): null { return null; }
             """);
         String ir = dumpIR(cr);
         assertContains(ir, "[number]", "array uses spec [T] format");
@@ -126,7 +129,7 @@ public class TypeDescriptorTest {
     static void testIrArrayDescriptors() {
         System.out.print("  testIrArrayDescriptors... ");
         CompileResult cr = compile("""
-            function f(a: number[], b: string[]): null { return; }
+            function f(a: number[], b: string[]): null { return null; }
             """);
         String ir = dumpIR(cr);
         assertContains(ir, "param a: [number]", "array param of number uses [number]");
@@ -139,7 +142,7 @@ public class TypeDescriptorTest {
     static void testIrNullableDescriptorsOnParams() {
         System.out.print("  testIrNullableDescriptorsOnParams... ");
         CompileResult cr = compile("""
-            function f(a: number | null, b: string | null): null { return; }
+            function f(a: number | null, b: string | null): null { return null; }
             """);
         String ir = dumpIR(cr);
         assertContains(ir, "param a: ?number", "nullable number param uses ?number");
@@ -178,7 +181,7 @@ public class TypeDescriptorTest {
     static void testIrNestedArrayDescriptors() {
         System.out.print("  testIrNestedArrayDescriptors... ");
         CompileResult cr = compile("""
-            function f(a: number[][]): null { return; }
+            function f(a: number[][]): null { return null; }
             """);
         String ir = dumpIR(cr);
         assertContains(ir, "[[number]]", "nested array uses [[number]]");
@@ -189,7 +192,7 @@ public class TypeDescriptorTest {
     static void testIrNullableArrayParam() {
         System.out.print("  testIrNullableArrayParam... ");
         CompileResult cr = compile("""
-            function f(a: number[] | null): null { return; }
+            function f(a: number[] | null): null { return null; }
             """);
         String ir = dumpIR(cr);
         assertContains(ir, "?[number]", "nullable array uses ?[number]");
@@ -200,7 +203,7 @@ public class TypeDescriptorTest {
     static void testIrArrayOfNullableInt() {
         System.out.print("  testIrArrayOfNullableInt... ");
         CompileResult cr = compile("""
-            function f(a: (number | null)[]): null { return; }
+            function f(a: (number | null)[]): null { return null; }
             """);
         String ir = dumpIR(cr);
         assertContains(ir, "[?number]", "array of nullable number uses [?number]");
@@ -210,7 +213,7 @@ public class TypeDescriptorTest {
     static void testIrNullReturnFunctionDescriptor() {
         System.out.print("  testIrNullReturnFunctionDescriptor... ");
         CompileResult cr = compile("""
-            function noop(): null { return; }
+            function noop(): null { return null; }
             let f: () => null = noop;
             """);
         String ir = dumpIR(cr);
@@ -233,10 +236,10 @@ public class TypeDescriptorTest {
     static void testIrAsyncFuncDescriptor() {
         System.out.print("  testIrAsyncFuncDescriptor... ");
         CompileResult cr = compile("""
-            async function fetch(x: number): string { return ""; }
+            async function fetch(x: number): Promise<string> { return ""; }
             export function probe(): null {
-              let f: async (x: number) => string = fetch;
-              return;
+              let f: (x: number) => Promise<string> = fetch;
+              return null;
             }
             """);
         String ir = dumpIR(cr);
@@ -247,7 +250,7 @@ public class TypeDescriptorTest {
     static void testIrZeroParamDescriptor() {
         System.out.print("  testIrZeroParamDescriptor... ");
         CompileResult cr = compile("""
-            function sum2(): null { return; }
+            function sum2(): null { return null; }
             let g: () => null = sum2;
             """);
         String ir = dumpIR(cr);
@@ -258,7 +261,7 @@ public class TypeDescriptorTest {
     static void testIrFixedParamsDescriptor() {
         System.out.print("  testIrFixedParamsDescriptor... ");
         CompileResult cr = compile("""
-            function describe(sep: string, values: number[]): null { return; }
+            function describe(sep: string, values: number[]): null { return null; }
             let d: (sep: string, values: number[]) => null = describe;
             """);
         String ir = dumpIR(cr);
@@ -282,14 +285,14 @@ public class TypeDescriptorTest {
     static void testIrTableRows() {
         System.out.print("  testIrTableRows... ");
         CompileResult cr = compile("""
-            function f(b: table): table { return b; }
-            function g(a: table[], m: table | null): null { return; }
+            function f(b: Record<string, unknown>): Record<string, unknown> { return b; }
+            function g(a: Record<string, unknown>[], m: Record<string, unknown> | null): null { return null; }
             """);
         String ir = dumpIR(cr);
-        assertContains(ir, "param b: table", "table param uses the table primitive");
-        assertContains(ir, "function f: table", "table return row uses the table primitive");
-        assertContains(ir, "[table]", "table array uses [table]");
-        assertContains(ir, "?table", "nullable table uses ?table");
+        assertContains(ir, "param b: record", "Record param uses the record descriptor");
+        assertContains(ir, "function f: record", "Record return row uses the record descriptor");
+        assertContains(ir, "[record]", "Record array uses [record]");
+        assertContains(ir, "?record", "nullable Record uses ?record");
         System.out.println("OK");
     }
 

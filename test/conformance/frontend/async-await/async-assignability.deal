@@ -3,7 +3,7 @@
 // @expected: compile-error E3001
 // @features: async-await, type-system
 
-async function f(): number {
+async function f(): Promise<number> {
   return 42;
 }
 

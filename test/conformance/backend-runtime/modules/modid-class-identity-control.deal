@@ -6,8 +6,8 @@
 import * as LibA from "./modid_lib_a/lib_a";
 
 export function test_same_module_class_identity_roundtrip(): number {
-  let holder: table = { item: LibA.make(7) };
-  let result: number = LibA.needBox(holder.item);
+  let holder: Record<string, unknown> = { item: LibA.make(7) };
+  let result: number = LibA.needBox(holder.item as LibA.Point);
   if (result !== 7) {
     throw { code: "TEST_FAIL", message: "same-module identity roundtrip failed" };
   }

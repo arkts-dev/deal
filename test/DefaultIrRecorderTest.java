@@ -371,8 +371,8 @@ public final class DefaultIrRecorderTest {
                 && evaluatorScope.root.span().startColumn() == 14,
             "await keeps its own source range");
         // Await inside a nested async function-expression body: legal.
-        RecorderRun nested = new RecorderRun("f: async () => int",
-            "async function(): int { return await source(); }",
+        RecorderRun nested = new RecorderRun("f: () => Promise<number>",
+            "async function(): Promise<number> { return await source(); }",
             Types.func(List.of(), Type.Number.INSTANCE, true), null);
         check(nested.root.kind().name().equals("FUNCTION_EXPRESSION")
                 && !nested.root.children().isEmpty(),
@@ -1571,7 +1571,7 @@ public final class DefaultIrRecorderTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.4.md &sect;Name resolution — Declaration order), exactly like the
+     * (docs/spec-v1.5.md &sect;Name resolution — Declaration order), exactly like the
      * checker's {@code resolveVisibleBinding} — so the literal keeps
      * the enclosing binding's declared provider, never the
      * not-yet-visible inner declaration's annotation and never the

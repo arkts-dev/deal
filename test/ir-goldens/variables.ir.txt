@@ -1,5 +1,5 @@
-module @test/ir-goldens/fixtures/variables.deal:5:1-11:1
-  function main: null @test/ir-goldens/fixtures/variables.deal:5:1-11:1
+module @test/ir-goldens/fixtures/variables.deal:5:1-12:1
+  function main: null @test/ir-goldens/fixtures/variables.deal:5:1-12:1
     body
       let x: number @test/ir-goldens/fixtures/variables.deal:6:5-7:7
         [boundary: var-annotation]
@@ -17,3 +17,6 @@ module @test/ir-goldens/fixtures/variables.deal:5:1-11:1
           [boundary: assignment]
           ident x : number @test/ir-goldens/fixtures/variables.deal:9:5-9:5
           literal 500.0 : number @test/ir-goldens/fixtures/variables.deal:9:9-9:11
+      return @test/ir-goldens/fixtures/variables.deal:10:5-11:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/variables.deal:10:12-10:15

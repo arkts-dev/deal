@@ -215,15 +215,15 @@ public class LexerTest {
     static void testKeywords() {
         System.out.println("-- Keywords --");
 
-        // v1.1 keyword set: 25 keywords
+        // Active v1.5 keyword set.
         String[] keywords = {
             "let", "class", "function", "async", "await",
             "return", "if", "else",
             "while", "for", "of", "break", "continue",
             "null", "true", "false",
-            "import", "export", "from", "delete", "has",
+            "import", "export", "from", "delete",
             "try", "catch", "throw",
-            "as"
+            "as", "typeof", "instanceof"
         };
 
         TokenType[] types = {
@@ -235,11 +235,11 @@ public class LexerTest {
             TokenType.BREAK, TokenType.CONTINUE,
             TokenType.NULL, TokenType.TRUE, TokenType.FALSE,
             TokenType.IMPORT, TokenType.EXPORT, TokenType.FROM, TokenType.DELETE,
-            TokenType.HAS, TokenType.TRY, TokenType.CATCH, TokenType.THROW,
-            TokenType.AS
+            TokenType.TRY, TokenType.CATCH, TokenType.THROW,
+            TokenType.AS, TokenType.TYPEOF, TokenType.INSTANCEOF
         };
 
-        check(keywords.length == 25, "keyword set has exactly 25 entries, got " + keywords.length);
+        check(keywords.length == 26, "keyword set has exactly 26 entries, got " + keywords.length);
         check(keywords.length == types.length, "keywords and types arrays have same length");
 
         for (int i = 0; i < keywords.length; i++) {

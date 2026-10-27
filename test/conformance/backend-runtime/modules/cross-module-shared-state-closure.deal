@@ -8,11 +8,11 @@ import * as State from "./integration_state_lib";
 export function main(): null {
   let counter: State.Counter = State.makeCounter(40);
   let alias: State.Counter = counter;
-  let audit: table = { calls: 0 };
+  let audit: Record<string, unknown> = { calls: 0 };
   let step: () => number = State.makeStep(counter, audit);
   let first: number = step();
   let second: number = step();
-  let calls: number = audit.calls;
+  let calls: number = audit.calls as number;
 
   if (first !== 41 || second !== 42) {
     throw { code: "TEST_FAIL", message: "imported closure call order mismatch" };

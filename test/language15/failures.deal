@@ -1,0 +1,38 @@
+// Independent malformed-value boundaries: failures must remain catchable DEAL
+// errors, never native exceptions from a stale runtime token/descriptor table.
+function require(condition: boolean, message: string): void {
+  if (!condition) { throw {code: "FAIL", message: message}; }
+}
+class Bucket { values: ((n: number) => number)[]; }
+export function main(): null {
+  let callbacks: ((n: number) => number)[] = [function(n: number): number { return n; }];
+  let bucket: Bucket = {values: callbacks};
+  delete callbacks[0];
+  let caught: boolean = false;
+  try { let invalid = bucket.values; }
+  catch (e) {
+    if (e instanceof Error) { caught = e.code === "E8003"; }
+  }
+  require(caught, "deleted function array slot is a DEAL error");
+
+  let value: unknown = undefined;
+  caught = false;
+  try { let invalid = value as number; }
+  catch (e) { if (e instanceof Error) { caught = e.code === "E8001"; } }
+  require(caught, "undefined assertion mismatch");
+
+  let numbers: (number | null | undefined)[] = [1];
+  value = numbers;
+  caught = false;
+  try { let invalid = value as string[]; }
+  catch (e) { if (e instanceof Error) { caught = e.code === "E8001"; } }
+  require(caught, "nullish array descriptor mismatch");
+
+  let maybe: ((n: number | undefined) => (string | null | undefined))[] = [];
+  value = maybe;
+  caught = false;
+  try { let invalid = value as ((n: number) => string)[]; }
+  catch (e) { if (e instanceof Error) { caught = e.code === "E8001"; } }
+  require(caught, "nested function nullish descriptor mismatch");
+  return null;
+}

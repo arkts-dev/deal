@@ -3,19 +3,19 @@
 // @expected: runtime-ok
 // @features: async-await, runtime
 
-async function intValue(): number {
+async function intValue(): Promise<number> {
   return 21;
 }
 
-async function textValue(): string {
+async function textValue(): Promise<string> {
   return "hello";
 }
 
-async function maybeValue(): string | null {
+async function maybeValue(): Promise<string | null> {
   return null;
 }
 
-export async function test_direct_await_completion_values(): number {
+export async function test_direct_await_completion_values(): Promise<number> {
   let a: number = await intValue();
   let b: number = await intValue();
   let sum: number = a + b;

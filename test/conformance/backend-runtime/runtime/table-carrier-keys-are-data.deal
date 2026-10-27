@@ -15,7 +15,7 @@ class Tagged {
 }
 
 export function test_table_carrier_keys_are_data(): null {
-  let t: table = {
+  let t: Record<string, unknown> = {
     __kind: "class",
     __classname: "Error",
     __c: true,
@@ -47,16 +47,16 @@ export function test_table_carrier_keys_are_data(): null {
     __ptr: 8,
     data: 9,
   };
-  let text: string = json.stringify(t);
-  let back: table = json.parse(text);
-  let kind: string = back.__kind;
-  let classname: string = back.__classname;
-  let id: string = back.__id;
-  let keysData: string = back.__keys;
-  let orderData: string = back.__order;
-  let c: boolean = back.__c;
-  let tt: boolean = back.__t;
-  let data: number = back.data;
+  let text: string = json.stringify(t) as string;
+  let back: Record<string, unknown> = json.parse(text);
+  let kind: string = back.__kind as string;
+  let classname: string = back.__classname as string;
+  let id: string = back.__id as string;
+  let keysData: string = back.__keys as string;
+  let orderData: string = back.__order as string;
+  let c: boolean = back.__c as boolean;
+  let tt: boolean = back.__t as boolean;
+  let data: number = back.data as number;
   if (kind !== "class" || c !== true || tt !== true) {
     throw { code: "TEST_FAIL", message: "carrier-like keys did not survive the JSON round-trip" };
   }
@@ -73,7 +73,7 @@ export function test_table_carrier_keys_are_data(): null {
   if (keys.length !== 30) {
     throw { code: "TEST_FAIL", message: "table.keys lost or invented a key" };
   }
-  let small: table = { __kind: 1, __keys: 2, plain: 3 };
+  let small: Record<string, unknown> = { __kind: 1, __keys: 2, plain: 3 };
   let smallKeys: string[] = tablelib.keys(small);
   if (smallKeys.length !== 3) {
     throw { code: "TEST_FAIL", message: "a small tagged table lost keys" };

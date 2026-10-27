@@ -3,7 +3,7 @@
 // @expected: runtime-error E8001
 // @features: type-system, nullable, narrowing, runtime-errors, error-handling, async-await
 
-export async function test_async_throw_admission(): null {
+export async function test_async_throw_admission(): Promise<null> {
   let e: Error | null = { code: "ASYNC", message: "async" };
   let clear: () => null = function(): null {
     e = null;

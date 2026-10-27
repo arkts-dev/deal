@@ -11,7 +11,7 @@ export function main(): null {
  function fail(): number {trace = trace + "B"; throw {code:"STOP",message:"ignored"};}
  function last(): number {trace = trace + "X"; return 3;}
  let extended: (x: number, y: number, z: number) => number = small;
- try {let r: number = extended(first(), fail(), last()); trace = trace + "Y";} catch(e) {
+ try {let r: number = extended(first(), fail(), last()); trace = trace + "Y";} catch(value) { let e: Error = value as Error;
   if(e.code !== "STOP" || e.message !== "ignored") {throw {code:"TEST_FAIL",message:"wrong error"};} trace = trace + "C";
  }
  if(trace !== "ABC") {throw {code:"TEST_FAIL",message:"abrupt ignored arg: " + trace};}

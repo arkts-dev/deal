@@ -427,8 +427,8 @@ public final class IrGoldenTest {
             Map<String, Map<String, Type>> map = new LinkedHashMap<>();
 
             map.put("std/console", module(
-                fn("log", list(strType()), nullType()),
-                fn("error", list(strType()), nullType())
+                fn("log", list(strType()), Type.Void.INSTANCE),
+                fn("error", list(strType()), Type.Void.INSTANCE)
             ));
 
             map.put("std/string", module(
@@ -448,7 +448,7 @@ public final class IrGoldenTest {
 
             map.put("std/json", module(
                 fn("parse", list(strType()), tableType()),
-                fn("stringify", list(tableType()), strType())
+                fn("stringify", list(Type.Unknown.INSTANCE), Types.optionalRead(strType()))
             ));
 
             map.put("std/math", module(

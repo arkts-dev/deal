@@ -1,7 +1,6 @@
 package deal.test;
 
 import deal.codegen.Backend;
-import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.publication.Artifact;
 import deal.publication.ArtifactSet;
@@ -49,7 +48,6 @@ public class PublicationStagerTest {
         testStaleStageTreesRemoved();
         testConcurrentCompilationsSerialize();
         testIrDumpsStagedAndTransactional();
-        testOutOfCheckoutCopiesResolveDistributionHome();
         testPublishMoveFailureRestoresAndReports();
         testStagingFailureReportsPinnedDiagnostic();
         testDeleteRetiredFailureToleratedAndRecovered();
@@ -672,81 +670,6 @@ public class PublicationStagerTest {
             check(!Files.exists(freshOut),
                 "the failing compilation leaves the fresh root absent "
                     + "(no .ir.txt anywhere in it)");
-        } finally {
-            deleteTree(base);
-        }
-    }
-
-    // =========================================================================
-    // Verification 7: out-of-checkout distribution copies
-    // =========================================================================
-
-    private static void testOutOfCheckoutCopiesResolveDistributionHome()
-            throws Exception {
-        System.out.println("-- Out-of-checkout copies resolve through DistributionHome");
-
-        Path base = tempDir("pub-dist-home-");
-        try {
-            // A language distribution on the DEAL_HOME filesystem tier:
-            // distinct marker bytes for the runtime and console stdlib.
-            Path dist = base.resolve("distribution");
-            writeText(dist.resolve("deal/runtime.lua"),
-                "-- distribution runtime marker\n");
-            writeText(dist.resolve("std/console.lua"),
-                "-- distribution console marker\n");
-
-            Path src = base.resolve("proj");
-            writeText(src.resolve("main.deal"),
-                "export function main(): null { return null; }\n");
-            Path out = base.resolve("out");
-
-            System.setProperty(DistributionHome.DEAL_HOME_PROPERTY,
-                dist.toString());
-            try {
-                boolean ok = compileProject(src, out, Backend.LUAJIT,
-                    false, false, null);
-                check(ok, "the distribution-home compile succeeds");
-                Map<String, byte[]> published = treeBytes(out);
-                check(Arrays.equals(published.get("deal/runtime.lua"),
-                        Files.readAllBytes(
-                            dist.resolve("deal/runtime.lua"))),
-                    "the staged runtime bytes equal the distribution's "
-                        + "bytes (never the checkout's)");
-                check(Arrays.equals(published.get("std/console.lua"),
-                        Files.readAllBytes(
-                            dist.resolve("std/console.lua"))),
-                    "the staged stdlib bytes equal the distribution's "
-                        + "bytes (never the checkout's)");
-
-                // Project-local surface precedence: a project-local
-                // std/ override stages its own bytes even with the
-                // distribution present.
-                Path overrideSrc = base.resolve("proj-override");
-                writeText(overrideSrc.resolve("main.deal"),
-                    "export function main(): null { return null; }\n");
-                writeText(overrideSrc.resolve("std/console.lua"),
-                    "-- project-local console marker\n");
-                Path overrideOut = base.resolve("out-override");
-                boolean overrideOk = compileProject(overrideSrc,
-                    overrideOut, Backend.LUAJIT, false, false, null);
-                check(overrideOk, "the project-local override compiles");
-                Map<String, byte[]> overridePublished =
-                    treeBytes(overrideOut);
-                check(Arrays.equals(
-                        overridePublished.get("std/console.lua"),
-                        Files.readAllBytes(overrideSrc.resolve(
-                            "std/console.lua"))),
-                    "the project-local std/ override stages its own bytes "
-                        + "(project surface wins over the distribution)");
-                check(Arrays.equals(
-                        overridePublished.get("deal/runtime.lua"),
-                        Files.readAllBytes(
-                            dist.resolve("deal/runtime.lua"))),
-                    "the runtime still resolves from the distribution "
-                        + "(no project-local runtime tier is pinned)");
-            } finally {
-                System.clearProperty(DistributionHome.DEAL_HOME_PROPERTY);
-            }
         } finally {
             deleteTree(base);
         }

@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Runtime type descriptor format
-// @description: Canonical [T] array descriptors cross typed boundaries end to end: array parameters and returns, nested [[int]] arrays, and [(int)->int] function-element arrays all pass through the canonical boundary matcher byte-for-byte.
+// @description: Canonical [T] array descriptors cross typed boundaries end to end: array parameters and returns, nested [[number]] arrays, and [(number)->number] function-element arrays all pass through the canonical boundary matcher byte-for-byte.
 // @expected: runtime-ok
 // @features: descriptors, arrays, functions
 
@@ -9,7 +9,7 @@ function first(xs: number[]): number {
 
 function applyAll(fs: ((x: number) => number)[], x: number): number {
   let acc: number = x;
-  for (let f: (x: number) => number of fs) {
+  for (let f of fs) {
     acc = f(acc);
   }
   return acc;

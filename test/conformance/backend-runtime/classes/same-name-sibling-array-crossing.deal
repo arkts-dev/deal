@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Nominal typing
-// @description: A dynamic table holding an array of the first same-named sibling declaration read into the second declaration's array type fails the array element's class-identity check (E8003) naming the exact declarations.
+// @description: A nominally refined unknown replaced by a closure with the first sibling's instance fails the second sibling's array element boundary with E8003, retaining both exact declaration atoms.
 // @expected: runtime-error E8003
 // @features: classes, arrays, modules, runtime-errors, nominal-identity
 
@@ -7,7 +7,11 @@ import * as a from "./same_name_sibling_a";
 import * as b from "./same_name_sibling_b";
 
 export function main(): null {
-  let t: table = { items: [a.make()] };
-  let wrong: b.Item[] = t.items;
+  let value: unknown = b.make();
+  let replace: () => void = function(): void { value = a.make(); };
+  if (value instanceof b.Item) {
+    replace();
+    let wrong: b.Item[] = [value];
+  }
   return null;
 }

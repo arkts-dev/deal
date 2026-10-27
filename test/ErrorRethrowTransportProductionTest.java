@@ -69,8 +69,8 @@ public class ErrorRethrowTransportProductionTest {
      */
     private static final String LIB_SOURCE = """
         function inner(): number {
-          let t: table = { value: "bad" };
-          let x: number = t.value;
+          let t: Record<string, unknown> = { value: "bad" };
+          let x: number = t.value as number;
           return x;
         }
 
@@ -86,7 +86,7 @@ public class ErrorRethrowTransportProductionTest {
 
         export function probeCause(): number {
           try { return withCause(); }
-          catch (original) { return relay(original); }
+          catch (original) { return relay(original as Error); }
         }
         """;
 
@@ -111,8 +111,8 @@ public class ErrorRethrowTransportProductionTest {
      */
     private static final String SAVED_CAUSE_LIB_SOURCE = """
         function inner(): number {
-          let t: table = { value: "bad" };
-          let x: number = t.value;
+          let t: Record<string, unknown> = { value: "bad" };
+          let x: number = t.value as number;
           return x;
         }
 
@@ -122,7 +122,7 @@ public class ErrorRethrowTransportProductionTest {
           function raiseOuter(): number {
             try { return inner(); }
             catch (e) {
-              saved = e;
+              saved = e as Error;
               throw { code: "OUTER", message: "outer" };
             }
           }
@@ -131,7 +131,7 @@ public class ErrorRethrowTransportProductionTest {
           catch (o) {
             saved.code = "CHANGED";
             saved.message = "changed";
-            throw o;
+            throw o as Error;
           }
         }
         """;
@@ -408,8 +408,8 @@ public class ErrorRethrowTransportProductionTest {
 
     static final String HOST_ERROR_LIB_SOURCE = """
         function inner(): number {
-          let t: table = { value: "bad" };
-          let x: number = t.value;
+          let t: Record<string, unknown> = { value: "bad" };
+          let x: number = t.value as number;
           return x;
         }
 
@@ -417,13 +417,13 @@ public class ErrorRethrowTransportProductionTest {
           return inner();
         }
 
-        async function ainner(): number {
-          let t: table = { value: "bad" };
-          let x: number = t.value;
+        async function ainner(): Promise<number> {
+          let t: Record<string, unknown> = { value: "bad" };
+          let x: number = t.value as number;
           return x;
         }
 
-        export async function afail(): number {
+        export async function afail(): Promise<number> {
           return await ainner();
         }
 
@@ -434,10 +434,10 @@ public class ErrorRethrowTransportProductionTest {
         export function echo(e: Error): number { throw e; }
         export function alias(): boolean {
           let first: Error = { code: "seed", message: "seed" };
-          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught; }
+          try { throw { code: "X", message: "x" }; } catch (caught) { first = caught as Error; }
           first.code = "Z";
           let again: Error = { code: "seed", message: "seed" };
-          try { throw first; } catch (caught) { again = caught; }
+          try { throw first; } catch (caught) { again = caught as Error; }
           return first === again && again.code === "Z";
         }
         """;
@@ -447,17 +447,17 @@ public class ErrorRethrowTransportProductionTest {
         export function main(): null { return null; }
         export function run(): number { return helper.fail(); }
         export function reraise(): number {
-          try { return helper.fail(); } catch (e) { throw e; }
+          try { return helper.fail(); } catch (e) { throw e as Error; }
         }
         export function leafFail(): number {
-          let t: table = { value: "bad" };
-          let x: number = t.value;
+          let t: Record<string, unknown> = { value: "bad" };
+          let x: number = t.value as number;
           return x;
         }
         export function recur(n: number, step: (n: number) => number): number {
           if (n === 0) {
-            let t: table = { value: "bad" };
-            let x: number = t.value;
+            let t: Record<string, unknown> = { value: "bad" };
+            let x: number = t.value as number;
             return x;
           }
           return step(n - 1);
@@ -465,9 +465,9 @@ public class ErrorRethrowTransportProductionTest {
         export function swallow(): number {
           try { return helper.fail(); } catch (e) { return 0; }
         }
-        export async function arun(): number { return await helper.afail(); }
-        export async function areraise(): number {
-          try { return await helper.afail(); } catch (e) { throw e; }
+        export async function arun(): Promise<number> { return await helper.afail(); }
+        export async function areraise(): Promise<number> {
+          try { return await helper.afail(); } catch (e) { throw e as Error; }
         }
         export function overflow(): number { return helper.boom(); }
         export function replaced(): number {
@@ -481,11 +481,11 @@ public class ErrorRethrowTransportProductionTest {
           function step(): number {
             try {
               try { return helper.fail(); }
-              catch (e) { saved = e; throw { code: "OUTER", message: "outer" }; }
+              catch (e) { saved = e as Error; throw { code: "OUTER", message: "outer" }; }
             } catch (o) {
               saved.code = "CHANGED";
               saved.message = "changed";
-              throw o;
+              throw o as Error;
             }
           }
           return step();

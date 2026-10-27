@@ -641,11 +641,14 @@ public final class ClassConstructionValidator {
                                           ClassRegistrationSeeds seeds) {
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> "null";
+            case RuntimeDescriptor.Undefined ignored -> "undefined";
+            case RuntimeDescriptor.Unknown ignored -> "unknown";
+            case RuntimeDescriptor.Void ignored -> "void";
             case RuntimeDescriptor.Boolean ignored -> "boolean";
 
             case RuntimeDescriptor.Number ignored -> "number";
             case RuntimeDescriptor.String ignored -> "string";
-            case RuntimeDescriptor.Table ignored -> "table";
+            case RuntimeDescriptor.Table ignored -> "Record<string, unknown>";
             case RuntimeDescriptor.Class classDescriptor ->
                 classReferenceText(classDescriptor.classId(), index, seeds);
             case RuntimeDescriptor.Array array -> {
@@ -663,9 +666,13 @@ public final class ClassConstructionValidator {
                 if (inner == null) {
                     yield null;
                 }
-                yield nullable.inner() instanceof RuntimeDescriptor.Func
-                    ? "(" + inner + ") | null"
-                    : inner + " | null";
+                String base = nullable.inner() instanceof RuntimeDescriptor.Func
+                    ? "(" + inner + ")" : inner;
+                if (nullable.inner() == RuntimeDescriptor.Undefined.INSTANCE && nullable.admitsNull()) {
+                    yield "null | undefined";
+                }
+                yield base + (nullable.admitsNull() ? " | null" : "")
+                    + (nullable.admitsUndefined() ? " | undefined" : "");
             }
             case RuntimeDescriptor.Func func -> {
                 List<String> params = new ArrayList<>(func.paramTypes().size());
@@ -680,8 +687,8 @@ public final class ClassConstructionValidator {
                 if (result == null) {
                     yield null;
                 }
-                yield (func.isAsync() ? "async " : "") + "("
-                    + String.join(", ", params) + ") => " + result;
+                yield "(" + String.join(", ", params) + ") => "
+                    + (func.isAsync() ? "Promise<" + result + ">" : result);
             }
         };
     }
@@ -1873,6 +1880,9 @@ public final class ClassConstructionValidator {
                                                                      Set<ClassId> visited) {
             return switch (descriptor) {
                 case RuntimeDescriptor.Null ignored -> Optional.empty();
+                case RuntimeDescriptor.Undefined ignored -> Optional.empty();
+                case RuntimeDescriptor.Unknown ignored -> Optional.empty();
+                case RuntimeDescriptor.Void ignored -> Optional.empty();
                 case RuntimeDescriptor.Boolean ignored -> Optional.empty();
 
                 case RuntimeDescriptor.Number ignored -> Optional.empty();

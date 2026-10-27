@@ -5,7 +5,7 @@
 
 import * as json from "std/json";
 
-export function test_json_parse_duplicate_key(): table {
+export function test_json_parse_duplicate_key(): Record<string, unknown> {
   return json.parse("{\"a\":1,\"a\":2}");
 }
 

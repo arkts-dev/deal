@@ -8,17 +8,17 @@ import * as c from "std/console";
 // The skipped awaited right operand: starting it at all is the defect
 // (a conditional operand flattened out of its branch starts the operation
 // even though the short-circuit decided the result).
-async function failAsync(): boolean {
+async function failAsync(): Promise<boolean> {
   throw { code: "SC_BAD", message: "a skipped awaited right operand started" };
 }
 
-async function okAsync(): boolean { return true; }
+async function okAsync(): Promise<boolean> { return true; }
 
 class Flags {
   on: boolean;
 }
 
-export async function awaitedShortCircuitAssignments(): null {
+export async function awaitedShortCircuitAssignments(): Promise<null> {
   let flag: boolean = false;
   flag = true || await failAsync();
   if (flag !== true) { throw { code: "TEST_FAIL", message: "await: skipped OR result" }; }
@@ -41,12 +41,12 @@ export async function awaitedShortCircuitAssignments(): null {
   cells[0] = true && await okAsync();
   if (cells[0] !== true) { throw { code: "TEST_FAIL", message: "await: selected array element" }; }
 
-  let table: table = {};
+  let table: Record<string, unknown> = {};
   table.on = true || await failAsync();
-  let member: boolean = table.on;
+  let member: boolean = table.on as boolean;
   if (member !== true) { throw { code: "TEST_FAIL", message: "await: skipped table member" }; }
   table.on = false || await okAsync();
-  let selected: boolean = table.on;
+  let selected: boolean = table.on as boolean;
   if (selected !== true) { throw { code: "TEST_FAIL", message: "await: selected table member" }; }
 
   c.log("awaited-short-circuit-assignment");

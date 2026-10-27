@@ -1,8 +1,8 @@
-module @test/ir-goldens/fixtures/object-literals.deal:4:1-13:1
+module @test/ir-goldens/fixtures/object-literals.deal:4:1-14:1
   class Point @test/ir-goldens/fixtures/object-literals.deal:4:1-7:1
     field x: number @test/ir-goldens/fixtures/object-literals.deal:5:5-6:5
     field y: number @test/ir-goldens/fixtures/object-literals.deal:6:5-7:1
-  function main: null @test/ir-goldens/fixtures/object-literals.deal:9:1-13:1
+  function main: null @test/ir-goldens/fixtures/object-literals.deal:9:1-14:1
     body
       let p: @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:10:5-11:7
         [boundary: var-annotation]
@@ -10,9 +10,12 @@ module @test/ir-goldens/fixtures/object-literals.deal:4:1-13:1
           [boundary: class-construct]
           literal 1.0 : number @test/ir-goldens/fixtures/object-literals.deal:10:25-10:25
           literal 2.0 : number @test/ir-goldens/fixtures/object-literals.deal:10:31-10:31
-      let q: @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:11:5-12:1
+      let q: @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:11:5-12:10
         [boundary: var-annotation]
         object : @test/ir-goldens/fixtures/object-literals.deal/Point @test/ir-goldens/fixtures/object-literals.deal:11:20-11:33
           [boundary: class-construct]
           literal 3.0 : number @test/ir-goldens/fixtures/object-literals.deal:11:25-11:25
           literal 4.0 : number @test/ir-goldens/fixtures/object-literals.deal:11:31-11:31
+      return @test/ir-goldens/fixtures/object-literals.deal:12:5-13:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/object-literals.deal:12:12-12:15

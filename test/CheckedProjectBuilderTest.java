@@ -137,7 +137,7 @@ public class CheckedProjectBuilderTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -202,7 +202,7 @@ public class CheckedProjectBuilderTest {
                 entry, output, false, false, false, false, Backend.LUAJIT,
                 null, List.of(strippedDir),
                 Path.of("std").toAbsolutePath().normalize(), null,
-                CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+                CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry()));
             boolean ok = orchestrator.compile();
             check(ok, "declaration-only-import-compile.deal compiles through phase 3 + builder: "
@@ -418,22 +418,23 @@ public class CheckedProjectBuilderTest {
         CanonicalTypeText.Context context = new CanonicalTypeText.Context(
             new ModuleId("m"), Set.of("C"), Map.of("V", "cc_class"));
 
-        // Six primitives.
+        // Current primitive and record annotation forms.
         check("null".equals(CanonicalTypeText.render(nt("null"), context)),
             "NamedType null renders as null");
         check("boolean".equals(CanonicalTypeText.render(nt("boolean"), context)),
             "NamedType boolean renders as boolean");
         check("number".equals(CanonicalTypeText.render(nt("number"), context)),
             "NamedType number renders as number");
-        check("number".equals(CanonicalTypeText.render(nt("number"), context)),
-            "NamedType number renders as number");
+        check("undefined".equals(CanonicalTypeText.render(nt("undefined"), context)),
+            "NamedType undefined renders as undefined");
         check("string".equals(CanonicalTypeText.render(nt("string"), context)),
             "NamedType string renders as string");
-        check("table".equals(CanonicalTypeText.render(nt("table"), context)),
-            "NamedType table renders as table");
-        check("table".equals(CanonicalTypeText.render(nt("table"), context)),
-            "NamedType table renders as table (the primitive joins "
-                + "the declared-variant grammar)");
+        check("Record<string, unknown>".equals(CanonicalTypeText.render(nt("Record<string, unknown>"), context)),
+            "Record annotation renders with its closed arguments");
+        check("unknown".equals(CanonicalTypeText.render(nt("unknown"), context)),
+            "NamedType unknown renders as unknown");
+        check("void".equals(CanonicalTypeText.render(nt("void"), context)),
+            "void result annotation renders as void");
 
         // Builtin Error and module classes.
         check("Error".equals(CanonicalTypeText.render(nt("Error"), context)),
@@ -462,14 +463,34 @@ public class CheckedProjectBuilderTest {
                     context)),
             "a function inner is parenthesized: ((number) => number) | null");
 
+        TypeNode undefinedThenNull = new NullableType(span(),
+            new NullableType(span(), nt("number"), true), false);
+        TypeNode nullThenUndefined = new NullableType(span(), nul(nt("number")), true);
+        String both = "number | null | undefined";
+        check(both.equals(CanonicalTypeText.render(undefinedThenNull, context))
+                && both.equals(CanonicalTypeText.render(nullThenUndefined, context)),
+            "independent nullish members canonicalize regardless of source order");
+        check(both.equals(CanonicalTypeText.render(new Type.Nullable(Type.Number.INSTANCE, true, true))),
+            "checked and annotation nullish flags render identically");
+        check("(number | null | undefined)[]".equals(
+                CanonicalTypeText.render(arr(undefinedThenNull), context)),
+            "combined nullish array element stays parenthesized");
+        check("null | undefined".equals(CanonicalTypeText.render(
+                new NullableType(span(), nt("undefined"), false), context))
+                && "null | undefined".equals(CanonicalTypeText.render(
+                    new NullableType(span(), nt("null"), true), context)),
+            "singleton nullish unions canonicalize in either order");
+        check("null | undefined".equals(CanonicalTypeText.render(Types.optionalRead(Type.Null.INSTANCE))),
+            "the checked singleton union matches annotation canonical order");
+
         // Function forms: sync/async, recursive positions.
         check("(number, string) => boolean".equals(
                 CanonicalTypeText.render(fn(List.of(nt("number"), nt("string")),
                     nt("boolean"), false), context)),
             "the sync function form renders (T1, …, TN) => R");
-        check("async () => null".equals(
+        check("() => Promise<null>".equals(
                 CanonicalTypeText.render(fn(List.of(), nt("null"), true), context)),
-            "the async function form renders async (T1, …, TN) => R");
+            "the async function form renders (T1, …, TN) => Promise<R>");
         check("((number) => number) => null".equals(
                 CanonicalTypeText.render(fn(List.of(
                     fn(List.of(nt("number")), nt("number"), false)), nt("null"), false), context)),
@@ -489,9 +510,11 @@ public class CheckedProjectBuilderTest {
         typeNodeForms.put(nt("null"), "null");
         typeNodeForms.put(nt("boolean"), "boolean");
         typeNodeForms.put(nt("number"), "number");
-        typeNodeForms.put(nt("number"), "number");
+        typeNodeForms.put(nt("undefined"), "undefined");
+        typeNodeForms.put(nt("unknown"), "unknown");
+        typeNodeForms.put(nt("void"), "void");
         typeNodeForms.put(nt("string"), "string");
-        typeNodeForms.put(nt("table"), "table");
+        typeNodeForms.put(nt("Record<string, unknown>"), "Record<string, unknown>");
         typeNodeForms.put(arr(nt("number")), "number[]");
         typeNodeForms.put(arr(arr(nt("number"))), "number[][]");
         typeNodeForms.put(arr(nul(nt("number"))), "(number | null)[]");
@@ -501,7 +524,7 @@ public class CheckedProjectBuilderTest {
             "((number) => number) | null");
         typeNodeForms.put(fn(List.of(nt("number"), nt("string")), nt("boolean"), false),
             "(number, string) => boolean");
-        typeNodeForms.put(fn(List.of(), nt("null"), true), "async () => null");
+        typeNodeForms.put(fn(List.of(), nt("null"), true), "() => Promise<null>");
         for (Map.Entry<TypeNode, String> entry : typeNodeForms.entrySet()) {
             check(entry.getValue().equals(
                     CanonicalTypeText.render(entry.getKey(), context)),
@@ -523,22 +546,22 @@ public class CheckedProjectBuilderTest {
         check("number[] | null".equals(CanonicalTypeText.render(
                 Types.nullable(Types.array(Type.Number.INSTANCE)))),
             "checked number[] | null parity");
-        check("table[]".equals(CanonicalTypeText.render(
+        check("Record<string, unknown>[]".equals(CanonicalTypeText.render(
                 Types.array(Type.Table.INSTANCE))),
-            "checked table[] renders unwrapped (primitive element)");
-        check("table[] | null".equals(CanonicalTypeText.render(
+            "checked Record array renders unwrapped");
+        check("Record<string, unknown>[] | null".equals(CanonicalTypeText.render(
                 Types.nullable(Types.array(Type.Table.INSTANCE)))),
-            "checked table[] | null renders the array unwrapped");
-        check("(table) => table".equals(CanonicalTypeText.render(
+            "checked nullable Record array renders unwrapped");
+        check("(Record<string, unknown>) => Record<string, unknown>".equals(CanonicalTypeText.render(
                 Types.func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE))),
-            "checked sync table function form parity");
-        check("async (table) => table".equals(CanonicalTypeText.render(
+            "checked sync Record function form parity");
+        check("(Record<string, unknown>) => Promise<Record<string, unknown>>".equals(CanonicalTypeText.render(
                 new Type.Func(List.of(Type.Table.INSTANCE),
                     Type.Table.INSTANCE, true))),
-            "checked async table function form parity");
-        check("(table) => null".equals(CanonicalTypeText.render(
+            "checked async Record function form parity");
+        check("(Record<string, unknown>) => null".equals(CanonicalTypeText.render(
                 new Type.Func(List.of(Type.Table.INSTANCE), Type.Null.INSTANCE))),
-            "table at function-parameter depth renders recursively");
+            "Record at function-parameter depth renders recursively");
         check("((number) => number) | null".equals(CanonicalTypeText.render(
                 Types.nullable(new Type.Func(List.of(Type.Number.INSTANCE), Type.Number.INSTANCE)))),
             "checked ((number) => number) | null parity");
@@ -546,7 +569,7 @@ public class CheckedProjectBuilderTest {
                 Types.func(List.of(Type.Number.INSTANCE, Type.String.INSTANCE),
                     Type.Boolean.INSTANCE))),
             "checked sync function form parity");
-        check("async () => null".equals(CanonicalTypeText.render(
+        check("() => Promise<null>".equals(CanonicalTypeText.render(
                 new Type.Func(List.of(), Type.Null.INSTANCE, true))),
             "checked async function form parity");
     }
@@ -567,6 +590,15 @@ public class CheckedProjectBuilderTest {
             "an unresolvable qualified alias is a defect");
         expectDefect(() -> CanonicalTypeText.render(nul(nul(nt("number"))), context),
             "a chained T | null | null annotation is a defect");
+        expectDefect(() -> CanonicalTypeText.render(new NullableType(span(),
+                new NullableType(span(), nt("number"), true), true), context),
+            "duplicate undefined annotation is a defect");
+        expectDefect(() -> CanonicalTypeText.render(nul(nt("null")), context),
+            "duplicate singleton null annotation is a defect");
+        expectDefect(() -> CanonicalTypeText.render(new NullableType(span(), nt("undefined"), true), context),
+            "duplicate singleton undefined annotation is a defect");
+        expectDefect(() -> CanonicalTypeText.render(nt("table"), context),
+            "retired source table is not a compatibility alias");
         expectDefect(() -> CanonicalTypeText.render(nt("Missing"), context),
             "a NamedType that is neither a primitive nor a module class is a defect");
         // Same defects through the declaration-entry derivation of the builder
@@ -617,9 +649,9 @@ public class CheckedProjectBuilderTest {
                 tableBuild.index().modules().get(new ModuleId("main"));
             check(tableEntry != null && tableEntry.exports().equals(List.of(
                     new ExportInterface("main", "() => null"),
-                    new ExportInterface("bad", "table"))),
-                "the implementation entry renders the table export as the "
-                    + "primitive name; got "
+                    new ExportInterface("bad", "Record<string, unknown>"))),
+                "the implementation entry renders the Record export with its "
+                    + "closed arguments; got "
                     + (tableEntry == null ? "<null>" : tableEntry.exports()));
         }
 
@@ -685,7 +717,7 @@ public class CheckedProjectBuilderTest {
         check(message.contains("validatorRule INDEX_INTERNAL_ERROR_SENTINEL"),
             what + ": the payload validatorRule is INDEX_INTERNAL_ERROR_SENTINEL; got "
                 + message);
-        check(message.contains("semanticProfile DEAL_V1_4_BINARY64"),
+        check(message.contains("semanticProfile DEAL_V1_5_BINARY64"),
             what + ": the payload carries the invocation profile; got " + message);
         check(message.contains("irVersion deal.semantic-ir/2"),
             what + ": the payload carries the pinned IR version; got " + message);
@@ -800,7 +832,7 @@ public class CheckedProjectBuilderTest {
                     + "export class D { w: boolean; }\n"
                     + "export function main(): null { return null; }\n");
             Files.writeString(tmp.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n"
+                "{\n  \"languageVersion\": \"1.5\",\n"
                     + "  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"build\",\n"
                     + "  \"backend\": \"luajit\",\n"
@@ -913,7 +945,7 @@ public class CheckedProjectBuilderTest {
                 + "import * as time from \"std/time\";\n"
                 + "export function main(): null { return null; }\n");
         Files.writeString(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.4\",\n"
+            "{\n  \"languageVersion\": \"1.5\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n"
                 + "  \"output\": \"build\",\n"
                 + "  \"backend\": \"luajit\",\n"

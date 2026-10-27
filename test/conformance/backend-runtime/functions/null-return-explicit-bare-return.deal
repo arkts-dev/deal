@@ -1,11 +1,17 @@
 // @spec: Functions — Return type requirements
-// @description: A bare return satisfies a null-returning body (the explicit null-return exception; v1.2 defect snippet 49)
+// @description: Bare void returns, fallthrough void completion and explicit null returns remain distinct
 // @expected: runtime-ok
 // @features: functions, return, v1.2
 
-function empty(): null { return; }
+function empty(): void { return; }
+function fallthrough(): void {}
+function explicitNull(): null { return null; }
 
 export function main(): null {
   empty();
+  fallthrough();
+  if (explicitNull() !== null) {
+    throw { code: "TEST_FAIL", message: "explicit null return changed" };
+  }
   return null;
 }

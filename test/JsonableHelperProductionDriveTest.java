@@ -8,7 +8,7 @@ import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.distribution.DistributionHome;
+import deal.module.CheckoutResources;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
 import deal.project.ProjectContext;
@@ -74,7 +74,7 @@ import java.util.stream.Stream;
  * ({@code lua-abi/jsonable-helper-name-near-collision},
  * {@code lua-abi-structural/jsonable-helper-export-keys}), and the
  * family's pinned compile-error fixture
- * ({@code jsonable-minimal-table-nested-array-access}, E3007 at the
+ * ({@code jsonable-minimal-table-nested-array-access}, E3001 at the
  * frontend — no sidecar). The {@code runtime-ok} fixtures must publish
  * exit 0 with empty transcripts; the pinned {@code runtime-error} fixture
  * ({@code jsonable-tojson-rejects-cyclic-table}) must reproduce its
@@ -336,7 +336,7 @@ public class JsonableHelperProductionDriveTest {
                 materialized);
         }
         String entryStem = moduleNameOf(entryCorpus.getFileName().toString());
-        String dealJson = "{\n  \"languageVersion\": \"1.4\",\n"
+        String dealJson = "{\n  \"languageVersion\": \"1.5\",\n"
             + "  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n"
             + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
@@ -458,7 +458,7 @@ public class JsonableHelperProductionDriveTest {
                 BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
                 java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
-                DistributionHome.forManifestDirectory(project.root().toString()), stager);
+                CheckoutResources.forManifestDirectory(project.root().toString()), stager);
             if (result.emitted()) {
                 stager.publish();
             }
@@ -849,7 +849,7 @@ public class JsonableHelperProductionDriveTest {
             }
         }
         // The family's pinned compile-error fixture: the frontend rejects
-        // the dynamic table index with E3007 on both targets and nothing
+        // assigning an unknown Record read to an array with E3001 on both targets and nothing
         // publishes (the sidecar-free disposition of the corpus).
         Project rejectProject = materialize(COMPILE_REJECT, Target.LUAJIT);
         try {
@@ -858,8 +858,8 @@ public class JsonableHelperProductionDriveTest {
                 diagnostics);
             check(!compiled, COMPILE_REJECT + ": the frontend rejects the dynamic "
                 + "table index");
-            check(diagnostics.stream().anyMatch(d -> d.startsWith("E3007 ")),
-                COMPILE_REJECT + ": the pinned E3007 diagnostic: " + diagnostics);
+            check(diagnostics.stream().anyMatch(d -> d.startsWith("E3001 ")),
+                COMPILE_REJECT + ": the pinned unknown-assignment E3001 diagnostic: " + diagnostics);
             check(!Files.exists(artifactOf(rejectProject, Target.LUAJIT)),
                 COMPILE_REJECT + ": no artifact publishes for the compile reject");
         } finally {
@@ -1510,7 +1510,7 @@ public class JsonableHelperProductionDriveTest {
                 + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(root.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"],\n"
+                "{\n  \"languageVersion\": \"1.5\",\n  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n",
                 StandardCharsets.UTF_8);
             Project project = new Project(root, src, src.resolve("plain.deal"), "plain",
@@ -1547,7 +1547,7 @@ public class JsonableHelperProductionDriveTest {
                     + "export function main(): null {\n  return null;\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(missing.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"],\n"
+                "{\n  \"languageVersion\": \"1.5\",\n  \"moduleRoots\": [\"src\"],\n"
                     + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n",
                 StandardCharsets.UTF_8);
             Project project = new Project(missing, src, src.resolve("app.deal"), "app",
@@ -1777,7 +1777,7 @@ public class JsonableHelperProductionDriveTest {
                         Map.of(), BuiltinErrorDeclaration.synthesized(
                             built.input().modules().get(0).ast().span()),
                         java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
-                        DistributionHome.forManifestDirectory(
+                        CheckoutResources.forManifestDirectory(
                             project.root().toString()), stager);
                     staged = new ArrayList<>(stager.stagedSet().relativePaths());
                 } finally {
@@ -1825,7 +1825,7 @@ public class JsonableHelperProductionDriveTest {
                             + "export function main(): null {\n  return null;\n}\n",
                         StandardCharsets.UTF_8);
                     Files.writeString(entryRoot.resolve("deal.json"),
-                        "{\n  \"languageVersion\": \"1.4\",\n"
+                        "{\n  \"languageVersion\": \"1.5\",\n"
                             + "  \"moduleRoots\": [\"src\"],\n"
                             + "  \"output\": \"out\",\n"
                             + "  \"backend\": \""
@@ -1926,7 +1926,7 @@ public class JsonableHelperProductionDriveTest {
         Path entryFile = srcRoot.resolve(moduleName + ".deal");
         Files.writeString(entryFile, source, StandardCharsets.UTF_8);
         Files.writeString(root.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.4\",\n"
+            "{\n  \"languageVersion\": \"1.5\",\n"
                 + "  \"moduleRoots\": [\"src\"],\n  \"output\": \"out\",\n"
                 + "  \"backend\": \"" + (target == Target.JVM ? "jvm" : "luajit")
                 + "\"\n}\n", StandardCharsets.UTF_8);
@@ -2046,7 +2046,7 @@ public class JsonableHelperProductionDriveTest {
         String source = """
             // @jsonable
             export class Wrapper {
-              data: table;
+              data: Record<string, unknown>;
             }
 
             function apply(f: (w: Wrapper) => string, w: Wrapper): string {
@@ -2223,7 +2223,7 @@ public class JsonableHelperProductionDriveTest {
 
             // @jsonable
             export class Wrapper {
-              data: table;
+              data: Record<string, unknown>;
             }
 
             export function test_table_class_instance(): string {
@@ -2383,7 +2383,7 @@ public class JsonableHelperProductionDriveTest {
 
     /** The shared nested-class fixture: {@code Wrapper.child.data} is the table field. */
     private static String nestedTableFixtureSource(String function) {
-        return "// @jsonable\nexport class Child {\n  data: table;\n}\n\n"
+        return "// @jsonable\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
             + "// @jsonable\nexport class Wrapper {\n  child: Child;\n}\n\n"
             + function
             + "\nexport function main(): null {\n  return null;\n}\n";
@@ -2437,8 +2437,8 @@ public class JsonableHelperProductionDriveTest {
             // number position and a number-variant slot read at a number
             // position both travel as carriers and must keep their own
             // variant's spelling.
-            + "  let t: table = { x: 1 };\n"
-            + "  let n: number = t.x;\n"
+            + "  let t: Record<string, unknown> = { x: 1 };\n"
+            + "  let n: number = t.x as number;\n"
             + "  w.child.data.ri = n;\n"
             + "  let nums: number[] = [6.5];\n"
             + "  let fromNum: number = nums[0];\n"
@@ -2463,7 +2463,7 @@ public class JsonableHelperProductionDriveTest {
     private static String nestedClassDepthSource(int links, String expectedText) {
         StringBuilder body = new StringBuilder();
         body.append("  let w: Wrapper = { child: { data: {} } };\n");
-        body.append("  let cur: table = w.child.data;\n");
+        body.append("  let cur: Record<string, unknown> = w.child.data;\n");
         body.append("  let i: number = 0; while (i < ").append(links)
             .append(") {\n");
         body.append("    cur = linkAppend(cur); i = i + 1;\n  }\n");
@@ -2477,10 +2477,10 @@ public class JsonableHelperProductionDriveTest {
         } else {
             body.append("  return Wrapper$toJson(w);\n");
         }
-        return "// @jsonable\nexport class Child {\n  data: table;\n}\n\n"
+        return "// @jsonable\nexport class Child {\n  data: Record<string, unknown>;\n}\n\n"
             + "// @jsonable\nexport class Wrapper {\n  child: Child;\n}\n\n"
-            + "export function linkAppend(cur: table): table {\n"
-            + "  let n: table = {};\n"
+            + "export function linkAppend(cur: Record<string, unknown>): Record<string, unknown> {\n"
+            + "  let n: Record<string, unknown> = {};\n"
             + "  cur.next = n;\n"
             + "  return n;\n"
             + "}\n\n"
@@ -2582,7 +2582,7 @@ public class JsonableHelperProductionDriveTest {
         System.out.println("-- the oracle's live array view: replacement and "
             + "append serialize on all three consumers --");
         String source = "// @jsonable\nexport class Box {\n  xs: number[];\n}\n\n"
-            + "// @jsonable\nexport class Wrapper {\n  data: table;\n}\n\n"
+            + "// @jsonable\nexport class Wrapper {\n  data: Record<string, unknown>;\n}\n\n"
             + "export function test_array_mutation(): null {\n"
             + "  let b: Box = { xs: [1] };\n"
             + "  b.xs[0] = 2;\n"
@@ -2606,7 +2606,7 @@ public class JsonableHelperProductionDriveTest {
             // serializes.
             + "export function test_table_nested_array(): null {\n"
             + "  let w: Wrapper = { data: { xs: [1] } };\n"
-            + "  let arr: number[] = w.data.xs;\n"
+            + "  let arr: number[] = w.data.xs as number[];\n"
             + "  arr[0] = 2;\n"
             + "  arr[1] = 3;\n"
             + "  let json: string = Wrapper$toJson(w);\n"
@@ -2644,10 +2644,10 @@ public class JsonableHelperProductionDriveTest {
         // internal missing element on every consumer, never a serialized
         // null or the stale pre-delete value.
         String tableSource = "// @jsonable\nexport class Wrapper {\n"
-            + "  data: table;\n}\n\n"
+            + "  data: Record<string, unknown>;\n}\n\n"
             + "export function test_table_array_delete(): string {\n"
             + "  let w: Wrapper = { data: { xs: [1.0, 2] } };\n"
-            + "  let arr: number[] = w.data.xs;\n"
+            + "  let arr: number[] = w.data.xs as number[];\n"
             + "  delete arr[0];\n"
             + "  return Wrapper$toJson(w);\n"
             + "}\n\n"
@@ -3074,9 +3074,9 @@ public class JsonableHelperProductionDriveTest {
             + "// @jsonable\nexport class Box {\n"
             + "  child: Child;\n}\n\n"
             + "export function test_read_derived_numbers(): null {\n"
-            + "  let t: table = { i: 1, n: 2.5 };\n"
-            + "  let i: number = t.i;\n"
-            + "  let n: number = t.n;\n"
+            + "  let t: Record<string, unknown> = { i: 1, n: 2.5 };\n"
+            + "  let i: number = t.i as number;\n"
+            + "  let n: number = t.n as number;\n"
             + "  let b: Box = { child: { n: i, xs: [i, n] } };\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
@@ -3118,8 +3118,8 @@ public class JsonableHelperProductionDriveTest {
             + "  ns: (number | null)[];\n"
             + "  grid: number[][];\n}\n\n"
             + "export function test_int_variant_elements(): null {\n"
-            + "  let t: table = { xs: [1.0, 2] };\n"
-            + "  let xs: number[] = t.xs;\n"
+            + "  let t: Record<string, unknown> = { xs: [1.0, 2] };\n"
+            + "  let xs: number[] = t.xs as number[];\n"
             + "  let b: Box = { xs: xs, ns: [], grid: [] };\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
@@ -3130,8 +3130,9 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function test_nullable_position_elements(): null {\n"
-            + "  let t: table = { ns: [1.0, 2] };\n"
-            + "  let ns: (number | null)[] = t.ns;\n"
+            + "  let seed: (number | null)[] = [1.0, 2];\n"
+            + "  let t: Record<string, unknown> = { ns: seed };\n"
+            + "  let ns: (number | null)[] = t.ns as (number | null)[];\n"
             + "  ns[1] = null;\n"
             + "  let b: Box = { xs: [], ns: ns, grid: [] };\n"
             + "  let json: string = Box$toJson(b);\n"
@@ -3143,8 +3144,8 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function test_nested_array_position_elements(): null {\n"
-            + "  let t: table = { grid: [[1], [2]] };\n"
-            + "  let grid: number[][] = t.grid;\n"
+            + "  let t: Record<string, unknown> = { grid: [[1], [2]] };\n"
+            + "  let grid: number[][] = t.grid as number[][];\n"
             + "  grid[1] = [2.5];\n"
             + "  let b: Box = { xs: [], ns: [], grid: grid };\n"
             + "  let json: string = Box$toJson(b);\n"
@@ -3165,8 +3166,8 @@ public class JsonableHelperProductionDriveTest {
         String controls = "// @jsonable\nexport class Box {\n"
             + "  xs: number[];\n}\n\n"
             + "export function test_number_variant_elements(): null {\n"
-            + "  let t: table = { xs: [1.0, 1.5] };\n"
-            + "  let xs: number[] = t.xs;\n"
+            + "  let t: Record<string, unknown> = { xs: [1.0, 1.5] };\n"
+            + "  let xs: number[] = t.xs as number[];\n"
             + "  let b: Box = { xs: xs };\n"
             + "  let json: string = Box$toJson(b);\n"
             + "  let expected: string = "
@@ -3177,8 +3178,8 @@ public class JsonableHelperProductionDriveTest {
             + "  return null;\n"
             + "}\n\n"
             + "export function test_mixed_variant_elements(): null {\n"
-            + "  let t: table = { xs: [1.0, 2] };\n"
-            + "  let xs: number[] = t.xs;\n"
+            + "  let t: Record<string, unknown> = { xs: [1.0, 2] };\n"
+            + "  let xs: number[] = t.xs as number[];\n"
             + "  xs[0] = 2.5;\n"
             + "  let b: Box = { xs: xs };\n"
             + "  let json: string = Box$toJson(b);\n"
@@ -3219,11 +3220,11 @@ public class JsonableHelperProductionDriveTest {
             + "// @jsonable\nexport class Box {\n"
             + "  child: Child;\n}\n\n"
             + "function getNum(): number {\n"
-            + "  let t: table = { n: 2.5 };\n"
-            + "  return t.n;\n}\n\n"
+            + "  let t: Record<string, unknown> = { n: 2.5 };\n"
+            + "  return t.n as number;\n}\n\n"
             + "function getNums(): number[] {\n"
-            + "  let t: table = { n: 2.5 };\n"
-            + "  let n: number = t.n;\n"
+            + "  let t: Record<string, unknown> = { n: 2.5 };\n"
+            + "  let n: number = t.n as number;\n"
             + "  return [n];\n}\n\n"
             + "export function test_provided_numeric_carriers(): null {\n"
             + "  let box: Box | null = {child: {n: getNum(), o: getNum(), xs: getNums()}};\n"

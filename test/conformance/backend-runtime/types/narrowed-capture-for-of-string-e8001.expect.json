@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected string\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-for-of-string-e8001.deal\",\"line\":14,\"column\":27,\"expected\":\"string\",\"actual\":\"null\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected string\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-for-of-string-e8001.deal\",\"line\":14,\"column\":19,\"expected\":\"string\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -17,7 +17,7 @@
       "message": "expected string",
       "sourceFile": "backend-runtime/types/narrowed-capture-for-of-string-e8001.deal",
       "line": 14,
-      "column": 27,
+      "column": 19,
       "expected": "string",
       "actual": "null"
     }

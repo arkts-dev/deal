@@ -7,8 +7,8 @@ class Contact {
 }
 
 function displayName(contact: Contact): string {
-  let nick: string | null = contact.nick;
-  if (nick !== null) {
+  let nick: string | undefined = contact.nick;
+  if (nick !== undefined) {
     return nick;
   }
   return contact.name;
@@ -16,7 +16,7 @@ function displayName(contact: Contact): string {
 
 function activeNames(contacts: Contact[]): string[] {
   let names: string[] = [];
-  for (let contact: Contact of contacts) {
+  for (let contact of contacts) {
     if (contact.active) {
       names[names.length] = displayName(contact);
     }

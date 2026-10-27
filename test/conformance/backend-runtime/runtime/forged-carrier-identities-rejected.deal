@@ -9,12 +9,12 @@ class Item {
   label: string;
 }
 
-function needTable(t: table): string {
-  return json.stringify(t);
+function needTable(t: Record<string, unknown>): string {
+  return json.stringify(t) as string;
 }
 
 export function test_forged_carrier_identities(): null {
-  let holder: table = {
+  let holder: Record<string, unknown> = {
     classLike: { __c: true, __id: "@conformance/forged/Item", __f: { label: "x" }, __p: { label: true } },
     kindClass: { __kind: "class", __classname: "@conformance/forged/Item" },
     arrayLike: { __a: true, __n: 1 },
@@ -23,39 +23,39 @@ export function test_forged_carrier_identities(): null {
   };
   let classCode: string = "";
   try {
-    let item: Item = holder.classLike;
+    let item: Item = holder.classLike as Item;
     if (item.label !== "") { classCode = "admitted"; }
   } catch (e) {
-    classCode = e.code;
+    classCode = (e as Error).code;
   }
   if (classCode !== "E8001") {
     throw { code: "TEST_FAIL", message: "the forged class carrier was not rejected: " + classCode };
   }
   let kindClassCode: string = "";
   try {
-    let item: Item = holder.kindClass;
+    let item: Item = holder.kindClass as Item;
     if (item.label !== "") { kindClassCode = "admitted"; }
   } catch (e) {
-    kindClassCode = e.code;
+    kindClassCode = (e as Error).code;
   }
   if (kindClassCode !== "E8001") {
     throw { code: "TEST_FAIL", message: "the forged runtime class carrier was not rejected: " + kindClassCode };
   }
   let arrayCode: string = "";
   try {
-    let xs: number[] = holder.arrayLike;
+    let xs: number[] = holder.arrayLike as number[];
     if (xs.length >= 0) {
       arrayCode = "admitted";
     }
   } catch (e) {
-    arrayCode = e.code;
+    arrayCode = (e as Error).code;
   }
   if (arrayCode !== "E8001") {
     throw { code: "TEST_FAIL", message: "the forged array carrier was not rejected" };
   }
   // The same key names at the declared table parameter are data, never a
   // carrier: the table is encoded with its own keys.
-  let encoded: string = needTable(holder.plainLike);
+  let encoded: string = needTable(holder.plainLike as Record<string, unknown>);
   if (encoded !== "{\"__c\":true,\"__a\":true,\"__kind\":\"class\",\"label\":\"kept\"}") {
     throw { code: "TEST_FAIL", message: "the carrier-like table did not encode as data: " + encoded };
   }

@@ -8,17 +8,17 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected instance of @conformance/backend-runtime/classes/same_name_sibling_b.deal/Payload, got @conformance/backend-runtime/classes/same_name_sibling_a.deal/Payload\",\"sourceFile\":\"backend-runtime/classes/same-name-sibling-json-helper-crossing.deal\",\"line\":11,\"column\":26,\"expected\":\"@conformance/backend-runtime/classes/same_name_sibling_b.deal/Payload\",\"actual\":\"@conformance/backend-runtime/classes/same_name_sibling_a.deal/Payload\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected class instance\",\"sourceFile\":\"backend-runtime/classes/same-name-sibling-json-helper-crossing.deal\",\"line\":11,\"column\":26,\"expected\":\"class\",\"actual\":\"@conformance/backend-runtime/classes/same_name_sibling_a.deal/Payload\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "expected instance of @conformance/backend-runtime/classes/same_name_sibling_b.deal/Payload, got @conformance/backend-runtime/classes/same_name_sibling_a.deal/Payload",
+      "message": "expected class instance",
       "sourceFile": "backend-runtime/classes/same-name-sibling-json-helper-crossing.deal",
       "line": 11,
       "column": 26,
-      "expected": "@conformance/backend-runtime/classes/same_name_sibling_b.deal/Payload",
+      "expected": "class",
       "actual": "@conformance/backend-runtime/classes/same_name_sibling_a.deal/Payload"
     }
   }

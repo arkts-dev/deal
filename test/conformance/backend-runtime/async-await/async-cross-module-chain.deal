@@ -5,7 +5,7 @@
 
 import * as mid from "./async_chain_mid_lib";
 
-export async function test_cross_module_async_chain(): number {
+export async function test_cross_module_async_chain(): Promise<number> {
   let x: number = await mid.midAnswer();
   if (x !== 42) {
     throw { code: "TEST_FAIL", message: "cross-module chain int mismatch" };

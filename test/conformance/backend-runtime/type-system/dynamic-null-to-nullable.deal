@@ -1,11 +1,11 @@
 // @spec: Type system — Nullable runtime checks
-// @description: Assigning dynamic null to nullable int is accepted at runtime
+// @description: Assigning dynamic null to nullable number is accepted at runtime
 // @expected: runtime-ok
 // @features: type-system, nullable, tables
 
 export function test_dynamic_null_to_nullable(): null {
-  let t: table = { value: null };
-  let x: number | null = t.value;
+  let t: Record<string, unknown> = { value: null };
+  let x: number | null = t.value as number | null;
   if (x !== null) { throw { code: "TEST_FAIL", message: "dynamic null nullable mismatch" }; }
   return null;
 }

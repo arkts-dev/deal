@@ -8,17 +8,16 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"sqrt of negative number\",\"sourceFile\":\"backend-runtime/control-flow-errors/error-inside-for-of.deal\",\"line\":10,\"column\":27,\"actual\":\"-0x1.0p0\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"JSON parse error at position 1: unexpected character\",\"sourceFile\":\"backend-runtime/control-flow-errors/error-inside-for-of.deal\",\"line\":10,\"column\":20}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
       "code": "E8001",
-      "message": "sqrt of negative number",
+      "message": "JSON parse error at position 1: unexpected character",
       "sourceFile": "backend-runtime/control-flow-errors/error-inside-for-of.deal",
       "line": 10,
-      "column": 27,
-      "actual": "-0x1.0p0"
+      "column": 20
     }
   }
 }

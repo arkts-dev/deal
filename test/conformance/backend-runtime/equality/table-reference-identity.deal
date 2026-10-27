@@ -4,9 +4,9 @@
 // @features: equality, table
 
 export function test_table_reference_identity(): null {
-  let a: table = { x: 1 };
-  let b: table = { x: 1 };
-  let c: table = a;
+  let a: Record<string, unknown> = { x: 1 };
+  let b: Record<string, unknown> = { x: 1 };
+  let c: Record<string, unknown> = a;
   if (!(a === c)) {
     throw { code: "TEST_FAIL", message: "same table reference must be equal" };
   }

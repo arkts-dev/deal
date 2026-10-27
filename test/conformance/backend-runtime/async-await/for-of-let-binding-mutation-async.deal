@@ -3,19 +3,19 @@
 // @expected: runtime-ok
 // @features: async-await, await, for-of, closure, binding
 
-async function identityInt(x: number): number {
+async function identityInt(x: number): Promise<number> {
   return x;
 }
 
-async function identityText(x: string): string {
+async function identityText(x: string): Promise<string> {
   return x;
 }
 
-export async function testAsyncArrayMutation(): number {
+export async function testAsyncArrayMutation(): Promise<number> {
   let readers: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of [1, 2, 3]) {
+  for (let n of [1, 2, 3]) {
     n = n + 10;
     let echoed: number = await identityInt(n);
     if (echoed !== n) {
@@ -43,10 +43,10 @@ export async function testAsyncArrayMutation(): number {
   return total;
 }
 
-export async function testAsyncStringMutation(): string {
+export async function testAsyncStringMutation(): Promise<string> {
   let visits: number = 0;
   let seen: string = "";
-  for (let c: string of "ab") {
+  for (let c of "ab") {
     c = c + "+";
     let echoed: string = await identityText(c);
     if (echoed !== c) {
@@ -64,11 +64,11 @@ export async function testAsyncStringMutation(): string {
   return seen;
 }
 
-export async function testAsyncClosureMutation(): number {
+export async function testAsyncClosureMutation(): Promise<number> {
   let bump: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }];
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of [1, 2]) {
+  for (let n of [1, 2]) {
     n = n + 10;
     await identityInt(n);
     bump[visits] = function(): number { n = n + 100; return n; };

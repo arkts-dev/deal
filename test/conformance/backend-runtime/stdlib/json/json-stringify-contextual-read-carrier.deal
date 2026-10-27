@@ -1,7 +1,7 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: A contextual table read used as a std/json.stringify argument is runtime-checked against the declared (table) parameter: the decoded JSON array, the decoded JSON null and a class instance read out of a table take the shared E8001 expected-table boundary and never reach the encoder (v1.4)
+// @description: stringify accepts unknown Record reads containing decoded arrays, null and nominal class instances without a Record assertion or retagging
 // @expected: runtime-ok
-// @features: stdlib, json, v1.4
+// @features: stdlib, json, unknown
 
 import * as json from "std/json";
 
@@ -10,54 +10,29 @@ class Box {
 }
 
 export function test_json_stringify_contextual_read_carrier(): null {
-  let doc: table = json.parse("{\"xs\":[1,2],\"n\":null}");
-  let arrayAdmitted: string = "";
-  let arrayCode: string = "";
-  let arrayMessage: string = "";
-  try {
-    arrayAdmitted = json.stringify(doc.xs);
-  } catch (e) {
-    arrayCode = e.code;
-    arrayMessage = e.message;
+  let doc: Record<string, unknown> = json.parse("{\"xs\":[\"a\",\"b\"],\"n\":null}");
+  let arrayValue: unknown[] = doc.xs as unknown[];
+  let arrayText: string = json.stringify(arrayValue) as string;
+  if (arrayText !== "[\"a\",\"b\"]") {
+    throw { code: "TEST_FAIL", message: "decoded array serialization: " + arrayText };
   }
-  if (arrayAdmitted !== "") {
-    throw { code: "TEST_FAIL", message: "the decoded JSON array was admitted at the declared table parameter: " + arrayAdmitted };
+  if ((doc.xs as unknown[]) !== arrayValue) {
+    throw { code: "TEST_FAIL", message: "stringify changed array identity" };
   }
-  if (arrayCode !== "E8001" || arrayMessage !== "expected table") {
-    throw { code: "TEST_FAIL", message: "the decoded JSON array did not take the expected-table boundary: " + arrayCode + "/" + arrayMessage };
+  if ((json.stringify(doc.n) as string) !== "null" || !Object.hasOwn(doc, "n")) {
+    throw { code: "TEST_FAIL", message: "present null serialization" };
   }
-  let nullAdmitted: string = "";
-  let nullCode: string = "";
-  let nullMessage: string = "";
-  try {
-    nullAdmitted = json.stringify(doc.n);
-  } catch (e) {
-    nullCode = e.code;
-    nullMessage = e.message;
+  if (json.stringify(doc.missing) !== undefined || Object.hasOwn(doc, "missing")) {
+    throw { code: "TEST_FAIL", message: "missing undefined serialization" };
   }
-  if (nullAdmitted !== "") {
-    throw { code: "TEST_FAIL", message: "the decoded JSON null was admitted at the declared table parameter: " + nullAdmitted };
-  }
-  if (nullCode !== "E8001" || nullMessage !== "expected table") {
-    throw { code: "TEST_FAIL", message: "the decoded JSON null did not take the expected-table boundary: " + nullCode + "/" + nullMessage };
-  }
-  let holder: table = {};
+  let holder: Record<string, unknown> = {};
   let box: Box = {label: "b"};
   holder.box = box;
-  let classAdmitted: string = "";
-  let classCode: string = "";
-  let classMessage: string = "";
-  try {
-    classAdmitted = json.stringify(holder.box);
-  } catch (e) {
-    classCode = e.code;
-    classMessage = e.message;
+  if ((json.stringify(holder.box) as string) !== "{\"label\":\"b\"}") {
+    throw { code: "TEST_FAIL", message: "nominal class serialization" };
   }
-  if (classAdmitted !== "") {
-    throw { code: "TEST_FAIL", message: "the class instance was admitted at the declared table parameter: " + classAdmitted };
-  }
-  if (classCode !== "E8001" || classMessage !== "expected table") {
-    throw { code: "TEST_FAIL", message: "the class instance did not take the expected-table boundary: " + classCode + "/" + classMessage };
+  if ((holder.box as Box) !== box) {
+    throw { code: "TEST_FAIL", message: "stringify changed class identity" };
   }
   return null;
 }

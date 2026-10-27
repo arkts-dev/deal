@@ -1,4 +1,4 @@
 // IR golden fixture: async-await-async-nullable-return
 // Migrated IR-containment pin for legacy case 'async-nullable-return' (ISSUE-0358).
 
-export async function f(): string | null { return null; }
+export async function f(): Promise<string | null> { return null; }

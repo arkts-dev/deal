@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async, nullable, runtime
 
-export async function f_null(): string | null {
+export async function f_null(): Promise<string | null> {
   let result: string | null = null;
   if (result !== null) {
     throw { code: "TEST_FAIL", message: "async nullable f_null: expected exact null completion" };
@@ -11,7 +11,7 @@ export async function f_null(): string | null {
   return result;
 }
 
-export async function f_value(): string | null {
+export async function f_value(): Promise<string | null> {
   let result: string | null = "hello";
   if (result !== null) {
     if (result !== "hello") {

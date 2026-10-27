@@ -1,18 +1,23 @@
-# DEAL Compiler v1.4
+# DEAL Compiler v1.5
 
-Compiler, semantic IR, runtimes and standard library for DEAL v1.4, targeting
-JavaScript, LuaJIT and JVM. The sole language authority is
-[`docs/spec-v1.4.md`](docs/spec-v1.4.md). Projects require
-`"languageVersion": "1.4"`; the standard-library version is also `"1.4"`.
+Compiler, semantic IR, runtimes and standard library targeting JavaScript,
+LuaJIT and JVM. The sole language authority is
+[`docs/spec-v1.5.md`](docs/spec-v1.5.md). Projects require
+`"languageVersion": "1.5"`; the standard-library version is also `"1.5"`.
 
-The language has binary64 `number` values and structural class declarations
-with explicitly supplied required fields. Removed source version directives,
-C-style loops, remainder, C FFI, bytes, integer/conversion intrinsics and class
-field initializers are not compatibility features.
+DEAL uses binary64 `number`, nominal classes with explicitly supplied
+required fields, safe `unknown`, `Record<string, unknown>`, checked `as`
+assertions and independent null/undefined/presence semantics. Async results
+use `Promise<R>` notation; promises are not first-class data. Source is a
+bounded TypeScript-syntax subset, not TypeScript's structural type system.
 
-See [`skills/write-deal/SKILL.md`](skills/write-deal/SKILL.md) for authoring
-help and [`docs/deal-v1.4-capabilities.deal`](docs/deal-v1.4-capabilities.deal)
-for an executable example.
+Removed source version directives, source `table`/`has`, C-style loops,
+remainder, C FFI, bytes, integer/conversion intrinsics and class field
+initializers are not compatibility features. There is no LLVM backend.
+
+Executable v1.5 examples are in [`test/language15/`](test/language15/),
+with a language guide in [`docs/learn-deal.ts`](docs/learn-deal.ts) and
+an executable [capability demo](docs/deal-v1.5-capabilities.deal).
 
 ## Build and Test
 
@@ -20,10 +25,11 @@ for an executable example.
 ./run_tests.sh --jobs 1
 ```
 
-Compiles all production and remaining test sources with `javac --release 25`
+Compiles all production and test sources with `javac --release 25`
 and executes the complete selection in `tools/gate-manifest.sh` with
-assertions enabled: 87 Java suites and five Lua/JS runtime records. Java
-suites run sequentially; `--jobs` controls parallel work inside suites.
+assertions enabled, including the TypeScript compiler's syntactic/grammar
+diagnostics and real JS/LuaJIT/JVM runtime records. Java suites run
+sequentially; `--jobs` controls parallel work inside suites.
 There is no alternate full-suite profile.
 
 `run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,
@@ -32,27 +38,27 @@ There is no alternate full-suite profile.
 JS production suites have no skip path: a run that omits a supported lane is
 a failure, never a pass.
 
-## Distribution
+## Compile from the checkout
 
-Build the packaged compiler with its matched runtime, declarations, drivers, and
-standard library:
-
-```bash
-./tools/build-release.sh
-```
-
-Verify a packaged distribution outside the checkout:
+After building with `run_tests.sh`, run from the repository root:
 
 ```bash
-./tools/verify-release.sh [dist]
+java -cp build deal.Main compile path/to/main.deal --backend js --output build/example
 ```
 
-The verification copies private projects into a scratch directory, compiles and
-executes the committed smoke project through the packaged launcher on every
-supported backend (`luajit`, `jvm`, `js`), and rejects old versions, missing or
-mismatched resources, broken deployment copies, and failing executions. It needs
-`luajit`, Java 25 `javac`/`java`, and `node` on `PATH`; a missing tool or artifact
-is a failure, not a skip.
+The compiler reads runtimes and standard-library files from the source checkout;
+project-local `std/` overrides remain supported. No separate installation or
+packaging step is needed.
+
+Run the independent TypeScript syntax/grammar check with:
+
+```bash
+node tools/check-typescript-syntax.cjs
+```
+
+This uses the TypeScript compiler API on unmodified source text, not TypeScript
+semantic type-checking. DEAL's nominal types and checked runtime assertions have
+their own tests.
 
 ## Coverage
 
@@ -67,6 +73,6 @@ Coverage executes the same test runner and instruments Java subprocesses
 without Java startup-option environment variables. Production classes compile into `build/deal`; test classes compile separately
 into `build/test-classes`. Only `build/deal` enters the report; test helpers
 and generated probe classes are excluded. Lua/JS execution is not counted by JaCoCo.
-Minimum production coverage is **80% lines** and **70% branches**.
+Minimum production coverage is **85% lines** and **75% branches**.
 Reports are written to `build/coverage.csv`, `build/coverage.xml`, and
 `build/coverage-html/index.html`.

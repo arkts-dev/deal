@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/runtime-errors/type-mismatch-e8001.deal\",\"line\":6,\"column\":21,\"expected\":\"number\",\"actual\":\"string\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/runtime-errors/type-mismatch-e8001.deal\",\"line\":10,\"column\":18,\"expected\":\"number\",\"actual\":\"string\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -16,8 +16,8 @@
       "code": "E8001",
       "message": "expected number",
       "sourceFile": "backend-runtime/runtime-errors/type-mismatch-e8001.deal",
-      "line": 6,
-      "column": 21,
+      "line": 10,
+      "column": 18,
       "expected": "number",
       "actual": "string"
     }

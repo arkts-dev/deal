@@ -1,7 +1,7 @@
 // IR golden fixture: type-descriptors-function-type-descriptor-fixed-array-param
 // Migrated IR-containment pin for legacy case 'function-type-descriptor-fixed-array-param' (ISSUE-0358).
 
-function describe(label: string, values: number[]): null { return; }
+function describe(label: string, values: number[]): null { return null; }
 export function main(): null {
   let f: (label: string, values: number[]) => null = describe;
   return null;

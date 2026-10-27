@@ -4,15 +4,15 @@
 // @features: classes, construction, tables
 
 class Holder {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function test_table_default_freshness_extended(): null {
   let a: Holder = {data: {}};
   let b: Holder = {data: {}};
   a.data.count = 9;
-  let count: number | null = b.data.count;
-  if (count !== null) { throw { code: "TEST_FAIL", message: "provided tables shared" }; }
+  let count: unknown = b.data.count;
+  if (count !== undefined || Object.hasOwn(b.data, "count")) { throw { code: "TEST_FAIL", message: "provided tables shared" }; }
   return null;
 }
 

@@ -998,7 +998,7 @@ final class JvmHostAbiEmission {
         out.append("    return JvmRuntime.fail(\"E8001\", reason, oFile + \":\" + oLine + \":\" + oCol, desc, __hostKind(v));\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostKind(java.lang.Object v) {\n");
-        out.append("    if (v == JvmRuntime.MISSING) return \"nil\";\n");
+        out.append("    if (v == JvmRuntime.UNDEFINED || v == JvmRuntime.MISSING) return \"undefined\";\n");
         out.append("    if (v == null) return \"table\";\n");
         out.append("    if (v instanceof java.lang.String) return \"string\";\n");
         out.append("    if (v instanceof byte[]) return \"string\";\n");
@@ -1012,14 +1012,16 @@ final class JvmHostAbiEmission {
             + "unchanged runtime matcher's own form \"expected array\"/\"array\" "
             + "and \"expected class instance\"/\"class\").\n");
         out.append("  static java.lang.String __hostKindText(java.lang.String d) {\n");
-        out.append("    if (d.startsWith(\"?\")) return __hostKindText(d.substring(1));\n");
+        out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) return __hostKindText(d.substring(1));\n");
+        out.append("    if (d.equals(\"record\")) return \"table\";\n");
         out.append("    if (d.startsWith(\"@\")) return \"class instance\";\n");
         out.append("    if (d.startsWith(\"[\")) return \"array\";\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) return \"function\";\n");
         out.append("    return d;\n");
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostKindToken(java.lang.String d) {\n");
-        out.append("    if (d.startsWith(\"?\")) return __hostKindToken(d.substring(1));\n");
+        out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) return __hostKindToken(d.substring(1));\n");
+        out.append("    if (d.equals(\"record\")) return \"table\";\n");
         out.append("    if (d.startsWith(\"@\")) return \"class\";\n");
         out.append("    if (d.startsWith(\"[\")) return \"array\";\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) return \"function\";\n");
@@ -1030,7 +1032,7 @@ final class JvmHostAbiEmission {
         out.append("  }\n\n");
         out.append("  static java.lang.String __hostInnerMessage(java.lang.String d, "
             + "java.lang.Object v, JvmRuntime.DealError inner) {\n");
-        out.append("    if (d.startsWith(\"?\")) return __hostInnerMessage(d.substring(1), v, inner);\n");
+        out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) return __hostInnerMessage(d.substring(1), v, inner);\n");
         out.append("    if (inner == null) { throw new java.lang.IllegalStateException(\"the host inner-reason render has no inner failure (producer defect)\"); }\n");
         out.append("    return inner.msg;\n");
         out.append("  }\n\n");
@@ -1079,17 +1081,18 @@ final class JvmHostAbiEmission {
 
     private void emitCrossings(StringBuilder out) {
         out.append("  // ---- The host-boundary crossing projections (ISSUE-0651; H7) ----\n");
+        out.append("  static java.lang.String __hostBase(java.lang.String d) { int p = 0; while (p < d.length() && (d.charAt(p) == '?' || d.charAt(p) == '!')) p++; return d.substring(p); }\n");
         out.append("  static java.lang.Object __hostProjectArg(java.lang.String d, java.lang.Object v) {\n");
-        out.append("    if (v == null) return null;\n");
-        out.append("    java.lang.String inner = d.startsWith(\"?\") ? d.substring(1) : d;\n");
+        out.append("    if (v == null || v == JvmRuntime.UNDEFINED || v == JvmRuntime.MISSING) return v;\n");
+        out.append("    java.lang.String inner = __hostBase(d);\n");
         out.append("    if (inner.startsWith(\"(\") || inner.startsWith(\"async(\")) return __hostFnCarrier(inner, v);\n");
         out.append("    if (inner.startsWith(\"[\")) return __hostArrayFromDeal(inner, v);\n");
         out.append("    if (inner.equals(\"number\")) return java.lang.Double.valueOf(((java.lang.Number) v).doubleValue());\n");
         out.append("    return v;\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostToDeal(java.lang.String d, java.lang.Object v) {\n");
-        out.append("    if (v == null) return null;\n");
-        out.append("    java.lang.String inner = d.startsWith(\"?\") ? d.substring(1) : d;\n");
+        out.append("    if (v == null || v == JvmRuntime.UNDEFINED || v == JvmRuntime.MISSING) return v;\n");
+        out.append("    java.lang.String inner = __hostBase(d);\n");
         out.append("    if (inner.startsWith(\"(\") || inner.startsWith(\"async(\")) return __hostFnToDeal(inner, v);\n");
         out.append("    if (inner.startsWith(\"[\")) return __hostArrayToDeal(inner, v);\n");
         out.append("    return v;\n");
@@ -1261,7 +1264,7 @@ final class JvmHostAbiEmission {
             + "java.lang.Object v, JvmRuntime.Array t) {\n");
         out.append("    if (v == null || t == null) return;\n");
         out.append("    if (v instanceof JvmRuntime.Array) return;\n");
-        out.append("    java.lang.String __key = d.startsWith(\"?\") ? d.substring(1) : d;\n");
+        out.append("    java.lang.String __key = __hostBase(d);\n");
         for (Map.Entry<String, Type> entry : arrayElements.entrySet()) {
             String desc = entry.getKey();
             Type element = entry.getValue();
@@ -1394,9 +1397,14 @@ final class JvmHostAbiEmission {
             + " java.lang.Object v, java.lang.String oFile, int oLine, int oCol,"
             + " java.util.ArrayList<java.lang.Object[]> __pending,"
             + " java.util.IdentityHashMap<java.lang.Object, java.lang.Object> __memo) {\n");
-        out.append("    if (d.startsWith(\"?\")) {\n");
-        out.append("      if (v == null) return null;\n");
-        out.append("      return __hostCheckPlan(d.substring(1), v, oFile, oLine, oCol, __pending, __memo);\n");
+        out.append("    if (v == JvmRuntime.MISSING) v = JvmRuntime.UNDEFINED;\n");
+        out.append("    if (d.equals(\"unknown\") || d.equals(\"undefined\") || d.equals(\"void\")) return JvmRuntime.bcheck(d, \"ref\", v);\n");
+        out.append("    if (d.equals(\"null|undefined\")) { if (v == null || v == JvmRuntime.UNDEFINED) return v; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) {\n");
+        out.append("      int __prefix = 0; boolean __null = false, __undefined = false;\n");
+        out.append("      while (__prefix < d.length() && (d.charAt(__prefix) == '?' || d.charAt(__prefix) == '!')) { if (d.charAt(__prefix++) == '?') __null = true; else __undefined = true; }\n");
+        out.append("      if ((v == null && __null) || (v == JvmRuntime.UNDEFINED && __undefined)) return v;\n");
+        out.append("      return __hostCheckPlan(d.substring(__prefix), v, oFile, oLine, oCol, __pending, __memo);\n");
         out.append("    }\n");
         out.append("    if (d.equals(\"null\")) { if (v == null) return null; throw __hostFail(JvmRuntime.kindReason(\"null\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"boolean\")) { if (v instanceof java.lang.Boolean) return v; throw __hostFail(JvmRuntime.kindReason(\"boolean\"), d, v, oFile, oLine, oCol); }\n");
@@ -1407,7 +1415,7 @@ final class JvmHostAbiEmission {
         // then settles the admitted value as the production Double.
         out.append("    if (d.equals(\"number\")) { if (v instanceof java.lang.Double || v instanceof java.lang.Long || v instanceof java.lang.Integer) return v; throw __hostFail(JvmRuntime.kindReason(\"number\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.equals(\"string\")) { if (v instanceof java.lang.String __s) { java.lang.String __r = __hostStringReason(__s); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return v; } if (v instanceof byte[] __b) { java.lang.String __r = JvmRuntime.hostStringReason(__b); if (__r != null) throw __hostFail(__r, d, v, oFile, oLine, oCol); return new java.lang.String(__b, java.nio.charset.StandardCharsets.UTF_8); } throw __hostFail(JvmRuntime.kindReason(\"string\"), d, v, oFile, oLine, oCol); }\n");
-        out.append("    if (d.equals(\"table\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"table\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.equals(\"record\")) { if (v instanceof JvmRuntime.Table) return v; throw __hostFail(JvmRuntime.kindReason(\"record\"), d, v, oFile, oLine, oCol); }\n");
         out.append("    if (d.startsWith(\"[\")) { return __hostCheckArrayPlan(d, v, oFile, oLine, oCol, __pending, __memo); }\n");
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
@@ -1417,7 +1425,7 @@ final class JvmHostAbiEmission {
         out.append("      if (__carried != null) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH, java.util.Map.of(\"expected\", d, \"actual\", __carried), oFile + \":\" + oLine + \":\" + oCol, d, __carried); }\n");
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"function\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
-        out.append("    if (d.startsWith(\"@\")) { return __hostCheckIdentity(d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.startsWith(\"@\") || d.equals(\"Error\")) { return __hostCheckIdentity(d, v, oFile, oLine, oCol); }\n");
         out.append("    throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheckArrayPlan(java.lang.String d,"
@@ -1625,6 +1633,12 @@ final class JvmHostAbiEmission {
 
     private void emitRecordClassInstance(StringBuilder out, RecordInfo record) {
         out.append("    @Override public java.lang.String classIdText() { return $identity; }\n");
+        out.append("    @Override public java.util.List<String> fieldNames() { return java.util.List.of(");
+        for (int i = 0; i < record.fields().size(); i++) {
+            if (i > 0) out.append(", ");
+            out.append(javaString(record.fields().get(i).name()));
+        }
+        out.append("); }\n");
         out.append("    @Override public boolean isPresent(java.lang.String key) {\n");
         for (FieldInfo field : record.fields()) {
             out.append("      if (").append(javaString(field.name()))
@@ -1683,15 +1697,14 @@ final class JvmHostAbiEmission {
 
     /**
      * The record storage → production carrier projection of one declared
-     * field (the {@code FIELD_READ} direction): the primitive-int and
-     * primitive-number storages box into the closed production carriers,
+     * field (the {@code FIELD_READ} direction): numeric storage boxes
+     * into the binary64 production carrier,
      * a declared array/function storage crosses through the emitted
      * host-to-DEAL projections, and every other storage (string, boolean,
      * record) is the production value itself.
      */
     private String readProjection(FieldInfo field, String expression) {
-        String inner = field.descriptorText().startsWith("?")
-            ? field.descriptorText().substring(1) : field.descriptorText();
+        String inner = field.descriptorText().replaceFirst("^[?!]+", "");
         // A primitive storage cannot carry the language null (the declared
         // boundary rejects it); every reference storage can (an optional
         // field's present null), so the boxing forms guard it.
@@ -1699,11 +1712,6 @@ final class JvmHostAbiEmission {
             case "int", "double", "boolean" -> true;
             default -> false;
         };
-        if (inner.equals("int")) {
-            String boxed = "java.lang.Long.valueOf((long) " + expression + ")";
-            return primitive ? boxed
-                : "(" + expression + " == null ? null : " + boxed + ")";
-        }
         if (inner.equals("number")) {
             String boxed = "java.lang.Double.valueOf((double) " + expression + ")";
             return primitive ? boxed

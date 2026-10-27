@@ -6,7 +6,7 @@ import deal.codegen.SharedEmissionFailure;
 import deal.codegen.jvm.JvmBackend;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
-import deal.distribution.DistributionHome;
+import deal.module.CheckoutResources;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
@@ -157,7 +157,7 @@ public class CrossModuleCallRealizationTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-        DistributionHome distributionHome,
+        CheckoutResources checkoutResources,
         String entryModule) {
     }
 
@@ -208,7 +208,7 @@ public class CrossModuleCallRealizationTest {
         return new Fixture(root, moduleRoot, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             new LinkedHashMap<>(),
-            DistributionHome.forManifestDirectory(moduleRoot.toString()),
+            CheckoutResources.forManifestDirectory(moduleRoot.toString()),
             fixtureName);
     }
 
@@ -270,7 +270,7 @@ public class CrossModuleCallRealizationTest {
         return new Fixture(root, moduleRoot, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             new LinkedHashMap<>(),
-            DistributionHome.forManifestDirectory(moduleRoot.toString()), "app");
+            CheckoutResources.forManifestDirectory(moduleRoot.toString()), "app");
     }
 
     /** A failing-callee probe: the callee throws after a nested call. */
@@ -310,7 +310,7 @@ public class CrossModuleCallRealizationTest {
         return new Fixture(root, moduleRoot, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             new LinkedHashMap<>(),
-            DistributionHome.forManifestDirectory(moduleRoot.toString()), "app");
+            CheckoutResources.forManifestDirectory(moduleRoot.toString()), "app");
     }
 
     /** The one project lowering over the real checked project. */
@@ -331,7 +331,7 @@ public class CrossModuleCallRealizationTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
+            java.util.Set.of(), backend, false, fixture.checkoutResources(), stager);
     }
 
     private static List<SemanticOp> ofKind(LoweredModuleUnit unit,

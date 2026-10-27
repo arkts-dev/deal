@@ -6,7 +6,7 @@
 import * as c from "std/console";
 function echo(e: Error): Error {return e;}
 function recover(): Error {
- try {throw {code:"USER",message:"a\nβ"};} catch(e) {return echo(e);}
+ try {throw {code:"USER",message:"a\nβ"};} catch(e) {return echo(e as Error);}
 }
 export function main(): null {
  let e: Error = recover(); if(e.code !== "USER" || e.message !== "a\nβ") {throw {code:"TEST_FAIL",message:"error fields"};}

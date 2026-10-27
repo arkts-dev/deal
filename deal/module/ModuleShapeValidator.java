@@ -1,5 +1,8 @@
 package deal.module;
 
+import deal.ast.AssertionExpr;
+import deal.ast.InstanceofExpr;
+
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
@@ -222,6 +225,8 @@ public final class ModuleShapeValidator {
         switch (expr) {
             case LiteralExpr le -> { /* leaf */ }
             case IdentifierExpr ie -> { /* leaf */ }
+            case AssertionExpr assertion -> checkExpression(assertion.value(), diagnostics, isDeclarationFile);
+            case InstanceofExpr test -> checkExpression(test.value(), diagnostics, isDeclarationFile);
             case FunctionExpr fe ->
                 checkNested(fe.body(), diagnostics, isDeclarationFile);
             case CallExpr ce -> {
@@ -247,8 +252,10 @@ public final class ModuleShapeValidator {
                         isDeclarationFile);
                 }
             }
-            case HasExpr he ->
+            case HasExpr he -> {
                 checkExpression(he.object(), diagnostics, isDeclarationFile);
+                if (he.key() != null) checkExpression(he.key(), diagnostics, isDeclarationFile);
+            }
             case AssignmentExpr ae -> {
                 checkExpression(ae.target(), diagnostics, isDeclarationFile);
                 checkExpression(ae.value(), diagnostics, isDeclarationFile);

@@ -94,9 +94,9 @@ public class DynamicResolutionIrTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final SemanticIrValidator.ComparisonFacts FACTS =
-        new SemanticIrValidator.ComparisonFacts(IFACE, SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+        new SemanticIrValidator.ComparisonFacts(IFACE, SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STR = RuntimeDescriptor.String.INSTANCE;
@@ -176,7 +176,7 @@ public class DynamicResolutionIrTest {
             }
         }
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, module, IFACE, LCH, Set.of(), Map.of(), Map.of(),
+            SemanticProfile.DEAL_V1_5_BINARY64, module, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             declared, new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
             bindings, ops, membership(ops, bindings),
             new ClassFactoryRegistry(Map.of()),
@@ -599,11 +599,11 @@ public class DynamicResolutionIrTest {
         modules.put(MOD_B, withInterfaceHash(callee, index.interfaceIndexDigest()));
         modules.put(MOD, withInterfaceHash(caller, index.interfaceIndexDigest()));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_4_BINARY64, index, modules, MOD,
+            SemanticProfile.DEAL_V1_5_BINARY64, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
         SemanticIrValidator.ComparisonFacts projectFacts =
             new SemanticIrValidator.ComparisonFacts(index.interfaceIndexDigest(),
-                SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+                SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
         assertPass(SemanticIrValidator.validate(project, projectFacts),
             "the cross-unit dynamic CALL validates at project level (typed)");
         assertPass(SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(project),
@@ -1617,7 +1617,7 @@ public class DynamicResolutionIrTest {
                 MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         return new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_4_BINARY64, index, modules, MOD,
+            SemanticProfile.DEAL_V1_5_BINARY64, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -1924,7 +1924,7 @@ public class DynamicResolutionIrTest {
                 MOD, new ExternalModuleInterface(MOD, ExternalModuleKind.IMPLEMENTATION,
                     List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_4_BINARY64, index, modules, MOD,
+            SemanticProfile.DEAL_V1_5_BINARY64, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = Map.of(MOD, sharedTable, MOD_B,
             calleeTable);

@@ -1,13 +1,14 @@
 // @spec: Tables — Delete and dynamic field presence
-// @description: Deleting a table field makes subsequent nullable reads observe missing/null
+// @description: Deleting a Record field makes subsequent checked reads observe undefined
 // @expected: runtime-ok
 // @features: tables, delete, nullable
 
 export function test_table_delete_dynamic_field(): null {
-  let t: table = { value: 4 };
+  let t: Record<string, unknown> = { value: 4 };
   delete t.value;
-  let v: number | null = t.value;
-  if (v !== null) { throw { code: "TEST_FAIL", message: "deleted table field still present" }; }
+  let v: number | undefined = t.value as number | undefined;
+  if (Object.hasOwn(t, "value")) { throw { code: "TEST_FAIL", message: "deleted key present" }; }
+  if (v !== undefined) { throw { code: "TEST_FAIL", message: "deleted table field still present" }; }
   return null;
 }
 

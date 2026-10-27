@@ -32,8 +32,8 @@ import java.util.stream.Stream;
  *
  * <p>The drive reproduces the reported defect before the correction: the
  * validator's read-result descriptor of an optional {@code null} field is
- * the {@code null} atom (the spec's {@code T | null} with {@code T = null}
- * canonicalizes to {@code null}), never the forbidden {@code ?null} wrapper
+ * {@code null | undefined} (absence is undefined; present null remains null),
+ * never the forbidden {@code ?null} wrapper
  * whose construction aborts the compile with an internal error. Each
  * artifact must complete its own entry body and print the pinned
  * {@code OK} marker, so a backend that lost the read, the presence state or
@@ -252,15 +252,15 @@ public final class OptionalNullFieldReadProductionTest {
 
     /**
      * The emitted read-result descriptor text is the {@code null} atom (the
-     * spec's {@code T | null} with {@code T = null} canonicalizes to
-     * {@code null}): the artifact carries the backend's null-descriptor
+     * spec's optional null read is {@code null | undefined}): the artifact
+     * carries the backend's null/undefined-descriptor
      * boundary check and never a nullable spelling of the null atom.
      */
     private static void assertNullAtomReadResult(String label, String backend,
             String nullAtomCheck, String artifactText) {
         check(artifactText.contains(nullAtomCheck), label + " " + backend
-            + ": the emitted artifact checks the optional null read against the"
-            + " null atom (" + nullAtomCheck + ")");
+            + ": the emitted artifact checks the optional null read against its"
+            + " null/undefined descriptor (" + nullAtomCheck + ")");
         for (String forbidden : FORBIDDEN_WRAPS) {
             check(!artifactText.contains(forbidden), label + " " + backend
                 + ": the emitted artifact carries no " + forbidden
@@ -291,7 +291,7 @@ public final class OptionalNullFieldReadProductionTest {
         check(Files.isRegularFile(project.out().resolve("deal/runtime.lua")),
             label + " luajit: the production compile deploys the runtime");
         assertNullAtomReadResult(label, "luajit",
-            "pcall(__bcheck, \"null\", \"null\"",
+            "pcall(__bcheck, \"nullable(undefined)\", \"nullable:undefined\"",
             Files.readString(artifact, StandardCharsets.UTF_8));
 
         assertExecution(label, "luajit",
@@ -321,7 +321,7 @@ public final class OptionalNullFieldReadProductionTest {
             return;
         }
         assertNullAtomReadResult(label, "jvm",
-            "JvmRuntime.bcheck(\"null\", \"null\"",
+            "JvmRuntime.bcheck(\"nullable(undefined)\", \"nullable:undefined\"",
             Files.readString(artifact, StandardCharsets.UTF_8));
         Path classes = project.root().resolve("classes");
         Files.createDirectories(classes);
@@ -358,7 +358,7 @@ public final class OptionalNullFieldReadProductionTest {
         check(Files.isRegularFile(project.out().resolve("deal/runtime.js")),
             label + " js: the production compile deploys the runtime");
         if (Files.isRegularFile(artifact)) {
-            assertNullAtomReadResult(label, "js", "$rt.checkType(\"null\"",
+            assertNullAtomReadResult(label, "js", "$rt.checkType(\"null|undefined\"",
                 Files.readString(artifact, StandardCharsets.UTF_8));
         }
 

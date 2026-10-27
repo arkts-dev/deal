@@ -80,7 +80,7 @@ public final class SharedStdlibSemantics {
      * classifications and carriers only, never target representations.
      */
     public sealed interface Value
-        permits Value.Null, Value.Bool, Value.Number, Value.String,
+        permits Value.Undefined, Value.Null, Value.Bool, Value.Number, Value.String,
                 Value.Table, Value.Array, Value.Other {
 
         /** The canonical actual kind this value renders as. */
@@ -119,6 +119,11 @@ public final class SharedStdlibSemantics {
             public ActualKind actualKind() {
                 return ActualKind.NULL;
             }
+        }
+
+        enum Undefined implements Value {
+            INSTANCE;
+            public ActualKind actualKind() { return ActualKind.UNDEFINED; }
         }
 
         /** A boolean value. */
@@ -448,7 +453,7 @@ public final class SharedStdlibSemantics {
             case STRING_TRIM -> stringTrim(origin, validTextOf(argv, 0, function));
             case TABLE_KEYS -> tableKeys(origin, tableOf(argv, 0, function));
             case JSON_PARSE -> jsonParse(origin, validTextOf(argv, 0, function));
-            case JSON_STRINGIFY -> jsonStringify(origin, tableOf(argv, 0, function));
+            case JSON_STRINGIFY -> jsonStringify(origin, argv.get(0));
             case MATH_FLOOR -> mathFloor(origin, numberOf(argv, 0, function));
             case MATH_CEIL -> mathCeil(origin, numberOf(argv, 0, function));
             case MATH_SQRT -> mathSqrt(origin, numberOf(argv, 0, function));
@@ -603,6 +608,7 @@ public final class SharedStdlibSemantics {
     private static FailureProjections.CarrierKind stringifyCarrierKind(Value value) {
         return switch (value) {
             case Value.Null ignored -> FailureProjections.CarrierKind.LANGUAGE_NULL;
+            case Value.Undefined ignored -> FailureProjections.CarrierKind.ABSENT;
             case Value.Bool ignored -> FailureProjections.CarrierKind.BOOLEAN;
 
             case Value.Number ignored -> FailureProjections.CarrierKind.NUMBER;
@@ -676,7 +682,7 @@ public final class SharedStdlibSemantics {
         // failure (INFRASTRUCTURE_ONLY) and propagates to the executor,
         // which aborts the run — never a DEAL failure.
         sink.write(effectBytes);
-        return new Outcome.Success<>(Value.Null.INSTANCE);
+        return new Outcome.Success<>(Value.Undefined.INSTANCE);
     }
 
     // =========================================================================
@@ -1087,14 +1093,23 @@ public final class SharedStdlibSemantics {
      * order, pre-order depth-first.</p>
      *
      */
-    public static Outcome<Value> jsonStringify(SourceOrigin origin,
-                                               SemanticTable<Value> table) {
+    public static Outcome<Value> jsonStringify(SourceOrigin origin, SemanticTable<Value> table) {
+        return jsonStringify(origin, new Value.Table(table));
+    }
+
+    private static boolean jsonOmitted(Value value) {
+        return value instanceof Value.Undefined || value instanceof Value.Other other
+            && (other.kind() == ActualKind.FUNCTION || other.kind() == ActualKind.MISSING);
+    }
+
+    public static Outcome<Value> jsonStringify(SourceOrigin origin, Value value) {
         Objects.requireNonNull(origin, "origin must not be null");
-        Objects.requireNonNull(table, "table must not be null");
+        Objects.requireNonNull(value, "value must not be null");
+        if (jsonOmitted(value)) return new Outcome.Success<>(Value.Undefined.INSTANCE);
         StringBuilder out = new StringBuilder();
         Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
         try {
-            stringifyRoot(out, table, path);
+            stringifyRoot(out, value, path);
         } catch (JsonStringifyCycle cycle) {
             // The walk family's closed cycle arm: the needle's own fact
             // selects the arm at the call origin, with no parameters and
@@ -1164,6 +1179,7 @@ public final class SharedStdlibSemantics {
         final List<String> keys;
         final PathNode path;
         int index;
+        int emitted;
 
         StringifyFrame(SemanticTable<Value> table, List<String> keys,
                        PathNode path) {
@@ -1189,10 +1205,9 @@ public final class SharedStdlibSemantics {
      * on open, removed on close); entries emit in first-insertion/index
      * order and the first failure in that order wins unchanged.
      */
-    private static void stringifyRoot(StringBuilder out, SemanticTable<Value> root,
-                                      Set<Object> path) {
+    private static void stringifyRoot(StringBuilder out, Value root, Set<Object> path) {
         Deque<StringifyFrame> stack = new ArrayDeque<>();
-        openTable(out, root, null, path, stack);
+        stringifyChild(out, root, null, "", path, stack);
         while (!stack.isEmpty()) {
             StringifyFrame frame = stack.peek();
             if (frame.table == null) {
@@ -1218,16 +1233,15 @@ public final class SharedStdlibSemantics {
                         + "(keys are identifier-derived); the key at slot " + i
                         + " is not — a producer defect, never a projection");
                 }
-                if (i > 0) {
-                    out.append(',');
-                }
-                appendJsonString(out, key);
-                out.append(':');
                 SemanticTable.Lookup<Value> lookup = frame.table.get(key);
                 if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
                     throw new Defect("a table key returned by keys() is always present; got "
                         + "Missing for '" + key + "' — a producer defect, never a projection");
                 }
+                if (jsonOmitted(present.value())) continue;
+                if (frame.emitted++ > 0) out.append(',');
+                appendJsonString(out, key);
+                out.append(':');
                 stringifyChild(out, present.value(), frame.path, key, path, stack);
             } else {
                 out.append('}');
@@ -1270,14 +1284,12 @@ public final class SharedStdlibSemantics {
                                        Deque<StringifyFrame> stack) {
         switch (value) {
             case Value.Null ignored -> out.append("null");
+            case Value.Undefined ignored -> out.append("null");
             case Value.Bool bool -> out.append(bool.value() ? "true" : "false");
 
             case Value.Number number -> {
-                if (!Double.isFinite(number.value())) {
-                    throw new JsonStringifyFailure(pathText(parentPath, segment),
-                        FailureProjections.CarrierKind.NUMBER);
-                }
-                out.append((number.value() == 0 ? "0" : Double.toString(number.value())));
+                out.append(!Double.isFinite(number.value()) ? "null"
+                    : number.value() == 0 ? "0" : Double.toString(number.value()));
             }
             case Value.String string -> {
                 if (string.scalar() instanceof UnicodeScalars.Invalid) {
@@ -1289,11 +1301,13 @@ public final class SharedStdlibSemantics {
                 appendJsonString(out, ((UnicodeScalars.Valid) string.scalar()).carrier());
             }
             case Value.Table table -> openTable(out, table.table(),
-                new PathNode(parentPath, segment), path, stack);
+                parentPath == null && segment.isEmpty() ? null : new PathNode(parentPath, segment), path, stack);
             case Value.Array array -> openArray(out, array.elements(),
-                new PathNode(parentPath, segment), path, stack);
-            case Value.Other other -> throw new JsonStringifyFailure(
-                pathText(parentPath, segment), stringifyCarrierKind(other));
+                parentPath == null && segment.isEmpty() ? null : new PathNode(parentPath, segment), path, stack);
+            case Value.Other other -> {
+                if (other.kind() == ActualKind.FUNCTION || other.kind() == ActualKind.MISSING) out.append("null");
+                else throw new JsonStringifyFailure(pathText(parentPath, segment), stringifyCarrierKind(other));
+            }
         }
     }
 
@@ -1551,10 +1565,8 @@ public final class SharedStdlibSemantics {
         }
 
         Value parseNumber() {
-            // The exact decimal classification (DEAL v1.4): the lexeme
-            // denotes an Int exactly when its mathematical value is
-            // rounded to binary64; every numeric lexeme denotes
-            // the binary64 value of the standard conversion.
+            // Every numeric lexeme rounds directly to binary64, preserving
+            // negative zero; no integer classification changes its value.
             JsonScan.CodePointCursor.NumberScan scan = parseNumberText();
             return new Value.Number(JsonNumberClassifier.toDouble(scan.text()));
         }

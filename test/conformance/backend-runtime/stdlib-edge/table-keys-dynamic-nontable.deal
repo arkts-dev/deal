@@ -1,13 +1,18 @@
 // @spec: Standard library declarations — std/table errors
-// @description: std/table.keys rejects dynamic non-table input at runtime
+// @description: std/table.keys rejects a closure-cleared Record refinement at its parameter boundary.
 // @expected: runtime-error E8001
 // @features: stdlib, table, runtime-errors
 
 import * as tables from "std/table";
 
 export function test_table_keys_dynamic_nontable(): string[] {
-  let t: table = { value: 1 };
-  return tables.keys(t.value);
+  let data: Record<string, unknown> | null = {value: 1};
+  let clear: () => void = function(): void { data = null; };
+  if (data !== null) {
+    clear();
+    return tables.keys(data);
+  }
+  throw { code: "TEST_FAIL", message: "Record parameter branch skipped" };
 }
 
 export function main(): null {

@@ -1,9 +1,9 @@
 # Validate
 
-Use the project's verified compiler launcher, runtime, and host setup. Inspect help before adding flags. CLI shape:
+Use the source checkout's compiled compiler, runtime and host setup. Run from the repository root after building. CLI shape:
 
 ```text
-deal compile <entry.deal> --backend <luajit|jvm|js> --output <fresh-directory>
+java -cp build deal.Main compile <entry.deal> --backend <luajit|jvm|js> --output <fresh-directory>
 ```
 
 Compile through production, inspect the fresh artifact, execute it, and check expected output/errors on every supported production backend.
@@ -11,14 +11,14 @@ Compile through production, inspect the fresh artifact, execute it, and check ex
 | Backend | Execute |
 |---|---|
 | `luajit` | `luajit <entry>.lua` in the output directory |
-| `jvm` | `javac --release 25 -proc:none -cp <install> -d <classes> <entry>.java`, then `java -cp <classes>:<install> <Entry>` |
+| `jvm` | `javac --release 25 -proc:none -cp <compiler-build> -d <classes> <entry>.java`, then `java -cp <classes>:<compiler-build> <Entry>` |
 | `js` | `node <entry>.js` in the output directory |
 
-`<install>` is the compiler's own installation root (the directory behind the launcher); the JVM artifact links against its runtime classes.
+`<compiler-build>` is the absolute path to the checkout's `build` directory; the JVM artifact links against its runtime classes.
 
 Identify unsupported cases explicitly instead of weakening source: host imports need an embedding implementation; async exports are invoked through the embedding's ABI, not by a plain run; an entry must export synchronous `main(): null`.
 
-[Example entry](../examples/src/main.deal) throws on mismatch and otherwise completes silently. Host binding needs an embedding implementation; copy its manifest outside the parent project. Serialization is a separate compiler-support probe, not part of that entry. Keep output outside active worker directories; follow the existing orchestrator.
+[Example entry](../examples/src/main.deal) throws on mismatch and otherwise completes silently. Host binding needs an embedding implementation; copy its manifest outside the parent project. Serialization has its own executable entry and requires every nonoptional field; validate it separately as well as the main example. Keep output outside active worker directories; follow the existing orchestrator.
 
 | Failure | Check |
 |---|---|

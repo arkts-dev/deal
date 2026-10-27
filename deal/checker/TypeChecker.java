@@ -106,6 +106,7 @@ public final class TypeChecker {
     //    checker owns the narrowing analysis and its scope-correct binding
     //    resolution (a shadowing block-local declaration never contributes).
     private final Set<ExpressionNode> narrowedReads = new HashSet<>();
+    private final Map<InstanceofExpr, Type.Class> instanceofTargets = new HashMap<>();
 
     // -- Assignment tracking for the open try regions of the current
     //    function: one frame per open try block, holding the resolved
@@ -152,7 +153,7 @@ public final class TypeChecker {
     // -- Saved pre-loop narrowing states of the open loops: a loop body
     //    is checked under a fresh narrowing state, so an await inside a
     //    body must invalidate the enclosing function's saved states too
-    //    (docs/spec-v1.4.md §Nullable semantics: after an await every
+    //    (docs/spec-v1.5.md §Nullable semantics: after an await every
     //    narrowed variable of the enclosing async function reverts to
     //    its declared type, and a loop exit must not restore an entry
     //    the suspension invalidated). The stack is swapped at function
@@ -227,7 +228,8 @@ public final class TypeChecker {
             Map.copyOf(checker.classDeclarationScopes),
             Map.copyOf(checker.constructedDeclNodes),
             Map.copyOf(checker.exactClassDecls),
-            Set.copyOf(checker.narrowedReads)
+            Set.copyOf(checker.narrowedReads),
+            Map.copyOf(checker.instanceofTargets)
         );
     }
 
@@ -394,6 +396,9 @@ public final class TypeChecker {
     private boolean isJsonableType(Type t) {
         return switch (t) {
             case Type.Null ignored       -> true;
+            case Type.Undefined ignored  -> true;
+            case Type.Unknown ignored -> false;
+            case Type.Void ignored -> false;
             case Type.Boolean ignored    -> true;
 
             case Type.Number ignored     -> true;
@@ -866,6 +871,10 @@ public final class TypeChecker {
             }
         }
         Type exprType = checkContextualReadPosition(vd.initializer());
+        if (exprType instanceof Type.Void) {
+            error(DiagnosticCode.E3001, "Void results cannot initialize bindings", vd.initializer().span());
+            exprType = Type.Error.INSTANCE;
+        }
         expectedType = savedExpected;
         contextualClassDecl = savedContextualClass;
 
@@ -878,7 +887,7 @@ public final class TypeChecker {
         // following statements of its block. Only the declaration's own
         // scope stops treating it as pending — an inner block's
         // same-name declaration never makes an enclosing scope's pending
-        // declaration visible early (docs/spec-v1.4.md §Name resolution —
+        // declaration visible early (docs/spec-v1.5.md §Name resolution —
         // Declaration order: a let declaration is visible only after its declaration
         // and only in its own block).
         for (PendingScope ps : pendingScopes) {
@@ -920,7 +929,7 @@ public final class TypeChecker {
                     // was laid out by that declaration, so a later
                     // boundary crossing to a distinct same-named
                     // declaration must still be E3019
-                    // (docs/spec-v1.4.md §Nominal typing and
+                    // (docs/spec-v1.5.md §Nominal typing and
                     // §Equality and comparison operand rules: class types
                     // are equal by declared class symbol only).
                     Symbol sym = currentScope.resolve(vd.name());
@@ -1057,22 +1066,15 @@ public final class TypeChecker {
         loopDepth = savedLoopDepth;
 
         if (funcType != null && !fd.isExternal()) {
-            // ISSUE-0717: the definite-return analysis walks the block
-            // in reachability order (a return-terminated block and a
-            // literal-true loop with an unconditional return both
-            // satisfy the rule), so a non-null-returning body the older
-            // last-statement-only walk rejected now passes. The
-            // null-returning body keeps the landed fall-off tolerance:
-            // the strict "must not fall off" reading of the spec's
-            // return-type requirements (defect snippets 25/26) would
-            // reject every empty `: null` body, and the repository's
-            // established null-return shape relies on the tolerance.
+            // One definite-return rule serves every compile surface: only
+            // void admits normal completion; null is an explicit data result.
+            // Analyze reachable statements, including unconditional-return loops.
             Type retType = funcType.returnType();
             // The try/catch-local obligation first: a try block that
             // definitely returns via return statements requires the catch
             // block to definitely return or throw, independently of the
             // enclosing body's termination and of its return type
-            // (docs/spec-v1.4.md §try / catch). The deficient catch block
+            // (docs/spec-v1.5.md §try / catch). The deficient catch block
             // carries the diagnostic even when a later statement returns;
             // when the composite rule fires, the whole-body falloff
             // diagnostic is redundant and stays suppressed.
@@ -1086,7 +1088,7 @@ public final class TypeChecker {
                     ts.catchBlock().span());
             }
             if (fallthroughs.isEmpty()
-                    && !Types.isNull(retType)
+                    && !(retType instanceof Type.Void)
                     && !ReturnAnalysis.definitelyReturns(fd.body())) {
                 error(DiagnosticCode.E5002,
                     "Function '" + fd.name() + "' must return a value on all paths",
@@ -1137,10 +1139,10 @@ public final class TypeChecker {
                 }
             }
         } else {
-            if (currentReturnType != null && !Types.isNull(currentReturnType)) {
+            if (currentReturnType != null && !(currentReturnType instanceof Type.Void)) {
                 error(DiagnosticCode.E5003,
                     "Return type mismatch: expected " + typeName(currentReturnType)
-                    + ", got null",
+                    + ", got undefined",
                     rs.span());
             }
         }
@@ -1170,13 +1172,13 @@ public final class TypeChecker {
 
         // Apply narrowing for then branch
         narrowing = thenNarrowing;
-        narrowing.onIfCondition(is.condition(), true, this::declaredTypeOf);
+        narrowCondition(is.condition(), true);
         walkStatement(is.thenBlock());
         thenNarrowing = narrowing;
 
         // Apply narrowing for else branch
         narrowing = elseNarrowing;
-        narrowing.onIfCondition(is.condition(), false, this::declaredTypeOf);
+        narrowCondition(is.condition(), false);
         if (is.elseBranch().isPresent()) {
             switch (is.elseBranch().get()) {
                 case Either.Left<IfStatement, Block> left ->
@@ -1206,17 +1208,28 @@ public final class TypeChecker {
         }
     }
 
+    /** Apply nominal tests with the same branch polarity as nullish/typeof tests. */
+    private void narrowCondition(ExpressionNode condition, boolean matching) {
+        narrowing.onIfCondition(condition, matching, this::declaredTypeOf);
+        while (condition instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
+            condition = unary.expr();
+            matching = !matching;
+        }
+        if (matching && condition instanceof InstanceofExpr test
+                && test.value() instanceof IdentifierExpr id) {
+            Type.Class target = instanceofTargets.get(test);
+            if (target != null) narrowing.narrow(id.name(), target);
+        }
+    }
+
     // =======================================================================
     // While statement
     // =======================================================================
 
     private void checkWhileStatement(WhileStatement ws) {
-        // F6: The loop-condition boolean requirement is not a
-        // contextual-read position: the closed admission list
-        // (docs/spec-v1.4.md "Reading table fields") has no loop row, so
-        // the condition checks with no expected type and a
-        // `while (t.flag)` read is E3003 at the read. The boolean
-        // requirement itself is unchanged for every non-read condition.
+        // Conditions require boolean. Record reads remain unknown here,
+        // just as in all other value positions; use explicit refinement or
+        // a checked assertion before consuming one as a condition.
         Type savedExpected = expectedType;
         expectedType = null;
         Type condType = checkExpression(ws.condition());
@@ -1280,7 +1293,13 @@ public final class TypeChecker {
     private void checkForOfStatement(ForOfStatement fos) {
         // In parent scope (no scopeMap entry for ForOfStatement)
         Type iterableType = checkExpression(fos.iterable());
-        Type varType = nameResolver.resolveTypeNode(fos.varType());
+        Type varType = iterableType instanceof Type.Array a ? a.element()
+            : iterableType instanceof Type.String ? Type.String.INSTANCE : Type.Error.INSTANCE;
+        SymbolTable bodyScope = scopeMap.get(fos.body());
+        if (bodyScope != null && bodyScope.parent() != null) {
+            bodyScope.parent().defineReplace(fos.varName(),
+                new Symbol.VariableSymbol(fos.varName(), varType, false));
+        }
 
         if (iterableType instanceof Type.Array arr) {
             if (!Types.equals(arr.element(), varType)) {
@@ -1549,6 +1568,8 @@ public final class TypeChecker {
         return switch (expr) {
             case LiteralExpr lit       -> checkLiteral(lit);
             case IdentifierExpr id     -> checkIdentifier(id);
+            case AssertionExpr assertion -> checkAssertion(assertion);
+            case InstanceofExpr test -> checkInstanceof(test);
             case BinaryExpr bin        -> checkBinary(bin);
             case UnaryExpr un          -> checkUnary(un);
             case CallExpr call         -> checkCall(call);
@@ -1672,6 +1693,7 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkIdentifier(IdentifierExpr id) {
+        if (id.name().equals("undefined")) return Type.Undefined.INSTANCE;
         Symbol sym = resolveVisibleBinding(id.name());
         if (sym == null) {
             error(DiagnosticCode.E2001, "Undeclared identifier '" + id.name() + "'", id.span());
@@ -1680,9 +1702,7 @@ public final class TypeChecker {
 
         Type declaredType = getDeclaredType(sym);
         Type narrowedType = narrowing.getNarrowedType(id.name());
-        if (narrowedType != null
-                && declaredType instanceof Type.Nullable nullable
-                && Types.equals(nullable.inner(), narrowedType)) {
+        if (narrowedType != null && !Types.equals(declaredType, narrowedType)) {
             // The read is a refinement claim (declared T | null, read as
             // T): publish the fact the one lowering consumes at the
             // operator operand, condition, index receiver/key and table
@@ -1711,11 +1731,9 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkBinary(BinaryExpr bin) {
-        // A composite operator's operands do not inherit the enclosing
-        // position's expected type: the v1.4 admission list admits a direct
-        // table read in its own position (`return t.flag && true` is not a
-        // `return E` whose whole E is the read), so the operands check with
-        // no expected type and a nested read is E3003 at the operand.
+        // Composite operands do not inherit the enclosing storage type.
+        // Record reads remain unknown and must be extracted or refined
+        // before an operator consumes a concrete value.
         Type savedExpected = expectedType;
         expectedType = null;
         Type leftType;
@@ -1737,7 +1755,7 @@ public final class TypeChecker {
             boolean equalTypes = Types.equals(leftType, rightType);
             boolean nullableVsNull = isNullableOf(leftType, rightType)
                 || isNullableOf(rightType, leftType);
-            if (equalTypes || nullableVsNull) {
+            if ((equalTypes && !(leftType instanceof Type.Unknown) && !(leftType instanceof Type.Void)) || nullableVsNull) {
 
                 return Type.Boolean.INSTANCE;
             }
@@ -1819,6 +1837,13 @@ public final class TypeChecker {
         if (exprType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
         return switch (un.op()) {
+            case TYPEOF -> {
+                if (exprType instanceof Type.Void) {
+                    error(DiagnosticCode.E3007, "Void results are not data", un.span());
+                    yield Type.Error.INSTANCE;
+                }
+                yield Type.String.INSTANCE;
+            }
             case NOT -> {
                 if (!(exprType instanceof Type.Boolean)) {
                     error(DiagnosticCode.E3007, "Operand of '!' must be boolean, got "
@@ -1905,7 +1930,7 @@ public final class TypeChecker {
         // Intrinsic call? The callee's own visible binding decides: a
         // lexically shadowing local, parameter or enclosing-block binding
         // — and a same-block `let` that is not declared yet
-        // (docs/spec-v1.4.md §Name resolution — Declaration order) —
+        // (docs/spec-v1.5.md §Name resolution — Declaration order) —
         // precedes the root intrinsic, exactly as checkIdentifier
         // resolved the callee expression's type above.
         if (call.callee() instanceof IdentifierExpr id) {
@@ -2073,7 +2098,7 @@ public final class TypeChecker {
         //
         // ISSUE-0717 (defect snippet 30): a nullable-typed receiver must
         // be narrowed before its fields are read. Narrowing is supported
-        // only for local variables and parameters (docs/spec-v1.4.md
+        // only for local variables and parameters (docs/spec-v1.5.md
         // §Nullable semantics — "No property-path narrowing"), so a
         // plain identifier receiver is narrowed by the null-narrowing
         // analysis inside its guarded branch and an unguarded read — a
@@ -2102,14 +2127,13 @@ public final class TypeChecker {
                     // identity-keyed answer).
                     recordExactClassDecl(mae, fieldType,
                         exactFieldClassSymbol(sym, cf.type(), fieldType));
-                    if (cf.optional() && !cf.nullable() && !assignmentTargetMode) {
+                    if (cf.optional() && !assignmentTargetMode) {
                         // A read of an omitted optional field yields null;
                         // a write target keeps the declared field type. The
                         // read result is the canonical T | null wrap, so a
-                        // field declared null reads as null (null | null is
-                        // null) and the forbidden Nullable<Null> form is
-                        // never built (docs/spec-v1.4.md §Field access).
-                        fieldType = Types.nullableOrSelf(fieldType);
+                        // field declared null reads as null | undefined.
+                        // Absence never becomes explicit null.
+                        fieldType = Types.optionalRead(fieldType);
                     }
                     return fieldType;
                 } else {
@@ -2134,12 +2158,7 @@ public final class TypeChecker {
             if (assignmentTargetMode) {
                 return Type.Table.INSTANCE;
             }
-            if (expectedType != null && contextualReadPosition) {
-                return expectedType;
-            }
-            error(DiagnosticCode.E3003,
-                "Table field read requires contextual target type", mae.span());
-            return Type.Error.INSTANCE;
+            return Type.Unknown.INSTANCE;
         }
 
         error(DiagnosticCode.E3003,
@@ -2158,7 +2177,7 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
 
         // A-D10 (assignment-delete-address-chains): table index
-        // write/delete keys must have static type string (docs/spec-v1.4.md
+        // write/delete keys must have static type string (docs/spec-v1.5.md
         // §Writing table fields and §Deletion). The F5 "allow any index
         // type and skip further checks" skip is superseded by the static string-key gate.
         if (arrayType instanceof Type.Table) {
@@ -2181,12 +2200,7 @@ public final class TypeChecker {
                     idx.index().span());
                 return Type.Error.INSTANCE;
             }
-            if (expectedType != null && contextualReadPosition) {
-                return expectedType;
-            }
-            error(DiagnosticCode.E3003,
-                "Table field read requires contextual target type", idx.span());
-            return Type.Error.INSTANCE;
+            return Type.Unknown.INSTANCE;
         }
 
         // Integrality and bounds are runtime checks; static indexes are numbers.
@@ -2291,9 +2305,13 @@ public final class TypeChecker {
             if (constructed == Type.Error.INSTANCE) return constructed;
             return constructed;
         }
+        Type savedExpected = expectedType;
+        expectedType = null;
         for (Property prop : obj.properties()) {
-            checkExpression(prop.value());
+            if (checkExpression(prop.value()) instanceof Type.Void)
+                error(DiagnosticCode.E3001, "Void results cannot be stored in records", prop.value().span());
         }
+        expectedType = savedExpected;
         if (obj.properties().isEmpty() && expectedType == null) {
             error(DiagnosticCode.E3002, "Cannot infer type of empty object literal", obj.span());
             return Type.Error.INSTANCE;
@@ -2507,7 +2525,7 @@ public final class TypeChecker {
         for (Parameter p : fe.params()) {
             paramTypes.add(nameResolver.resolveTypeNode(p.type()));
         }
-        Type returnType = nameResolver.resolveTypeNode(fe.returnType());
+        Type returnType = nameResolver.resolveResultTypeNode(fe.returnType());
         // The return annotation's own declared class symbol, resolved in
         // the scope the function expression is declared in (never in its
         // parameter scope): a returned object literal keeps the declared
@@ -2587,7 +2605,7 @@ public final class TypeChecker {
                 ts.catchBlock().span());
         }
         if (fallthroughs.isEmpty()
-                && !Types.isNull(returnType)
+                && !(returnType instanceof Type.Void)
                 && !ReturnAnalysis.definitelyReturns(fe.body())) {
             error(DiagnosticCode.E5002,
                 "Function expression must return a value on all paths", fe.span());
@@ -2606,8 +2624,38 @@ public final class TypeChecker {
     // Has expression
     // =======================================================================
 
+    private Type checkAssertion(AssertionExpr assertion) {
+        Type source = checkExpression(assertion.value());
+        Type target = nameResolver.resolveTypeNode(assertion.target());
+        if (target instanceof Type.Void || source instanceof Type.Void
+                || (!(source instanceof Type.Unknown) && !isAssignable(target, source)
+                    && !isAssignable(source, target))) {
+            error(DiagnosticCode.E3001, "Incompatible checked assertion", assertion.span());
+            return Type.Error.INSTANCE;
+        }
+        recordExactClassDecl(assertion, target, exactAnnotationClassSymbol(currentScope, assertion.target()));
+        return target;
+    }
+
+    private Type checkInstanceof(InstanceofExpr test) {
+        Type source = checkExpression(test.value());
+        Type target = nameResolver.resolveTypeNode(test.target());
+        if (!(target instanceof Type.Class cls) || source instanceof Type.Void) {
+            error(DiagnosticCode.E3001, "instanceof requires a nominal class", test.span());
+            return Type.Error.INSTANCE;
+        }
+        instanceofTargets.put(test, cls);
+        return Type.Boolean.INSTANCE;
+    }
+
     private Type checkHas(HasExpr has) {
         Type objType = checkExpression(has.object());
+        Type keyType = checkExpression(has.key());
+        if (!(keyType instanceof Type.String)) {
+            error(DiagnosticCode.E4005, "Object.hasOwn key must be string", has.key().span());
+            return Type.Error.INSTANCE;
+        }
+        if (objType instanceof Type.Table) return Type.Boolean.INSTANCE;
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
         if (!(objType instanceof Type.Class cls)) {
@@ -2630,17 +2678,14 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
+        if (has.field() == null) {
+            error(DiagnosticCode.E4005, "Class presence tests require a literal declared-field name", has.key().span());
+            return Type.Error.INSTANCE;
+        }
         ClassField field = IntrinsicResolvers.findField(sym.fields(), has.field());
         if (field == null) {
             error(DiagnosticCode.E4005,
                 "Field '" + has.field() + "' not declared in class '" + cls.name() + "'",
-                has.span());
-            return Type.Error.INSTANCE;
-        }
-        if (!field.optional()) {
-            error(DiagnosticCode.E4005,
-                "'has' argument must be an optional class field; '" + has.field()
-                + "' is required",
                 has.span());
             return Type.Error.INSTANCE;
         }
@@ -2902,15 +2947,7 @@ public final class TypeChecker {
         // (the provider-aware Types.equals already covers the recursive
         // positions; this keeps the nominal rule explicit).
         if (Types.crossesClassDeclarations(expected, actual)) return false;
-        if (Types.equals(expected, actual)) return true;
-        if (expected instanceof Type.Nullable ne) {
-            if (Types.equals(ne.inner(), actual)) return true;
-            if (actual instanceof Type.Null) return true;
-        }
-        if (expected instanceof Type.Func ef && actual instanceof Type.Func af) {
-            return Types.isAssignable(af, ef);
-        }
-        return false;
+        return Types.isAssignable(actual, expected);
     }
     /**
      * F10: Detects the reverse arity case where the actual function has more
@@ -2952,20 +2989,16 @@ public final class TypeChecker {
                 yield exprType;
             }
             case CallExpr call -> exprType;
+            case AssignmentExpr assignment -> exprType;
             case FunctionExpr fe -> exprType;
             case IdentifierExpr id -> exprType;
             case IndexExpr idx -> exprType;
             case UnaryExpr un -> exprType;
             case BinaryExpr bin -> exprType;
-            case MemberAccessExpr mae -> {
-                if (typeOf(mae.object()) instanceof Type.Table) {
-                    error(DiagnosticCode.E3003,
-                        "Table field read requires contextual target type", init.span());
-                    yield null;
-                }
-                yield exprType;
-            }
+            case MemberAccessExpr mae -> exprType;
             case HasExpr has -> exprType;
+            case AssertionExpr assertion -> exprType;
+            case InstanceofExpr test -> exprType;
             case TemplateLiteralExpr tl -> exprType;
             case AwaitExpression await -> {
                 // Await in inference context: use the result type directly.
@@ -2997,7 +3030,7 @@ public final class TypeChecker {
 
     /**
      * Resolves a name to the binding the declaration-order rules make
-     * visible at the current statement (docs/spec-v1.4.md §Name resolution —
+     * visible at the current statement (docs/spec-v1.5.md §Name resolution —
      * Declaration order and §Scope): a let declaration is visible only after its
      * declaration, so a reference from inside the declaring block's
      * earlier statements (a forward or self reference) resolves against
@@ -3043,7 +3076,9 @@ public final class TypeChecker {
     }
 
     private static boolean isNullableOf(Type maybeNullable, Type other) {
-        return maybeNullable instanceof Type.Nullable && other instanceof Type.Null;
+        return (maybeNullable instanceof Type.Nullable && (other instanceof Type.Null || other instanceof Type.Undefined)
+                && Types.isAssignable(other, maybeNullable))
+            || (maybeNullable instanceof Type.Unknown && (other instanceof Type.Null || other instanceof Type.Undefined));
     }
 
     private String opSymbol(BinaryOp op) {
@@ -3073,14 +3108,18 @@ public final class TypeChecker {
         if (t == null) return "null";
         return switch (t) {
             case Type.Null ignored -> "null";
+            case Type.Undefined ignored -> "undefined";
+            case Type.Unknown ignored -> "unknown";
+            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
+            case Type.Table ignored -> "Record<string, unknown>";
             case Type.Error ignored -> "<error>";
             case Type.Array a -> typeName(a.element()) + "[]";
-            case Type.Nullable n -> typeName(n.inner()) + " | null";
+            case Type.Nullable n -> typeName(n.inner()) + (n.admitsNull() ? " | null" : "")
+                + (n.admitsUndefined() ? " | undefined" : "");
             case Type.Class c -> c.name();
             case Type.Func f -> "function";
         };

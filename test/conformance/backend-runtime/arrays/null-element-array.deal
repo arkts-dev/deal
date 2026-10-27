@@ -1,5 +1,5 @@
 // @spec: Type system — Type grammar (ArrayType over BuiltinType null)
-// @description: A null array element type written with '[]' suffixes (null[], null[][]) parses wherever the normative Type grammar applies — variable, class field, parameter, return, and for-of annotations, and nested arrays — and the emitted array keeps its read, write, append, length, and iteration behavior; the parenthesized (null)[] spelling stays an equivalent passing control
+// @description: A null array element type written with '[]' suffixes (null[], null[][]) parses wherever the normative Type grammar applies — variable, class field, parameter, return annotations and inferred for-of bindings, and nested arrays — and the emitted array keeps its read, write, append, length, and iteration behavior; the parenthesized (null)[] spelling stays an equivalent passing control
 // @expected: runtime-ok
 // @features: types, arrays, nullable, parser
 
@@ -36,7 +36,7 @@ export function main(): null {
   xs[0] = null;
   let rewritten: null = xs[0];
   let seen: number = 0;
-  for (let e: null of xs) {
+  for (let e of xs) {
     seen = seen + 1;
   }
   expectTrue("iteration visits every element", seen === xs.length);
@@ -50,12 +50,12 @@ export function main(): null {
   grid[0][grid[0].length] = null;
   expectTrue("nested append", grid[0].length === 2);
   let rows: number = 0;
-  for (let row: null[] of grid) {
+  for (let row of grid) {
     rows = rows + 1;
   }
   expectTrue("nested rows iterate once each", rows === 2);
   let cells: number = 0;
-  for (let cell: null of grid[1]) {
+  for (let cell of grid[1]) {
     cells = cells + 1;
   }
   expectTrue("nested inner row iterates", cells === 2);

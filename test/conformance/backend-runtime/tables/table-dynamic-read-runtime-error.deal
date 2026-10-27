@@ -1,11 +1,11 @@
 // @spec: Tables — Assignment typing
-// @description: Assigning a table dynamic read to an incompatible annotated type fails at runtime
+// @description: Asserting an incompatible Record field type fails at runtime
 // @expected: runtime-error E8001
 // @features: tables, runtime-errors
 
 export function test_table_dynamic_read_runtime_error(): number {
-  let t: table = { value: "bad" };
-  let result: number = t.value;
+  let t: Record<string, unknown> = { value: "bad" };
+  let result: number = t.value as number;
   return result;
 }
 

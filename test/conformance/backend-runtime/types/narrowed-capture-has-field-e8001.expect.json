@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected class instance\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-has-field-e8001.deal\",\"line\":18,\"column\":32,\"expected\":\"class\",\"actual\":\"null\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected class instance\",\"sourceFile\":\"backend-runtime/types/narrowed-capture-has-field-e8001.deal\",\"line\":18,\"column\":42,\"expected\":\"class\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -17,7 +17,7 @@
       "message": "expected class instance",
       "sourceFile": "backend-runtime/types/narrowed-capture-has-field-e8001.deal",
       "line": 18,
-      "column": 32,
+      "column": 42,
       "expected": "class",
       "actual": "null"
     }

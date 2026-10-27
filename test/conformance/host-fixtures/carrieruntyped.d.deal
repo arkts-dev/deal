@@ -8,5 +8,5 @@
 // DEAL-side class, function and builtin Error values through the host and
 // back.
 
-export function roundTrip(t: table): table;
-export function roundTripArray(items: table[]): table[];
+export function roundTrip(t: Record<string, unknown>): Record<string, unknown>;
+export function roundTripArray(items: Record<string, unknown>[]): Record<string, unknown>[];

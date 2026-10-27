@@ -6,7 +6,7 @@
 export function test_sum(): number {
   let xs: number[] = [1, 2, 3, 4, 5];
   let total: number = 0;
-  for (let x: number of xs) {
+  for (let x of xs) {
     total = total + x;
   }
   if (total !== 15) {

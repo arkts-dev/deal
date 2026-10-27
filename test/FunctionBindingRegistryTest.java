@@ -103,13 +103,13 @@ public class FunctionBindingRegistryTest {
     }
 
     private static final String GROUP_SOURCE = """
-        function f(): null {
+        function f(): void {
           let gRef = g;
         }
-        function g(): null {
+        function g(): void {
           let fRef = f;
         }
-        function h(): null {}
+        function h(): void {}
         """;
 
     // =========================================================================
@@ -153,7 +153,7 @@ public class FunctionBindingRegistryTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClosureCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -163,7 +163,7 @@ public class FunctionBindingRegistryTest {
             return null;
         }
         return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -221,10 +221,10 @@ public class FunctionBindingRegistryTest {
             + "the result identity, in registration order --");
 
         SemanticLowerer.ClosureCoreResult result = lowerClosureSlice("""
-            function f(): null {}
-            function g(): null {}
-            function h(): null {
-              let k = function(): null {};
+            function f(): void {}
+            function g(): void {}
+            function h(): void {
+              let k = function(): void {};
             }
             """);
         if (result == null || result.lowering().hasErrors() || result.lowering().unit() == null) {
@@ -755,7 +755,7 @@ public class FunctionBindingRegistryTest {
             Map.of("g", new Type.Func(List.of(), Type.Null.INSTANCE)));
         CheckedSlice slice = checkSlice("""
             import * as host from "stub/host";
-            function f(): null {
+            function f(): void {
               let h: () => null = host.g;
             }
             """, resolver);
@@ -763,7 +763,7 @@ public class FunctionBindingRegistryTest {
             return;
         }
         SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
-            moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH,
+            moduleOf(slice), SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH,
             REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
         check(result.lowering().unit() == null && result.lowering().hasErrors(),
             "the member-access slice produces no unit (fail closed)");

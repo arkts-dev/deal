@@ -10,7 +10,7 @@ function greet(name: string): string {
 export function test_forof_template(): string {
   let names: string[] = ["Alice", "Bob"];
   let result: string = "";
-  for (let n: string of names) {
+  for (let n of names) {
     result = result + `[${n}]`;
   }
   if (result !== "[Alice][Bob]") {

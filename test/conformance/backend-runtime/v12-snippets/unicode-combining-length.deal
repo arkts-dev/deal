@@ -9,7 +9,7 @@ export function main(): null {
  let decomposed: string = "é"; let composed: string = "é";
  if(s.length(decomposed) !== 2 || s.length(composed) !== 1 || decomposed === composed) {throw {code:"SCALAR_LENGTH",message:"normalization or code-unit length"};}
  let pieces: string = ""; let count: number = 0;
- for(let x: string of decomposed) {pieces = pieces + x; count = count + 1;}
+ for(let x of decomposed) {pieces = pieces + x; count = count + 1;}
  if(count !== 2 || pieces !== decomposed || s.substring(decomposed,1,2) !== "́") {throw {code:"COMBINING_ITERATION_SLICE",message:"combining mark iteration"};}
  c.log("unicode-combining-length"); return null;
 }

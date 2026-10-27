@@ -20,7 +20,7 @@ import deal.diagnostics.DiagnosticOrder;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
-import deal.distribution.DistributionHome;
+import deal.module.CheckoutResources;
 import deal.identity.CanonicalClassIdentity;
 import deal.publication.PublicationStager;
 import deal.parser.*;
@@ -72,7 +72,7 @@ public final class CompilationOrchestrator {
     private final boolean verbose;
     private final boolean dumpIr;
     /**
-     * The v1.4 default debugging-artifacts fact: every successful backend
+     * The default debugging-artifacts fact: every successful backend
      * compilation emits source comments and one version-1 per-source map
      * sidecar per constituent module. The accepted {@code --source-map} /
      * {@code sourceMap} constructor spellings remain part of the CLI and
@@ -82,7 +82,7 @@ public final class CompilationOrchestrator {
     private final Backend backend;
 
     /**
-     * The single immutable exact-v1.2 project context governing this
+     * The single immutable v1.5 project context governing this
      * compilation (design source
      * {@code strict-project-context-resolution-identity} D1/D7): the
      * production constructor consumes the context published by
@@ -127,7 +127,7 @@ public final class CompilationOrchestrator {
     /**
      * The release-owned compiler invocation resolved at compile start
      * (foundation F1/F8): every compile carries the one
-     * {@code DEAL_V1_4_BINARY64} profile, the release state, and the derived
+     * {@code DEAL_V1_5_BINARY64} profile, the release state, and the derived
      * release-state hash, resolved through {@link CompilerProfileProvider};
      * the verbose report prints the recorded facts but the recording
      * location is the invocation's immutable {@code releaseStateHash}
@@ -183,7 +183,7 @@ public final class CompilationOrchestrator {
      */
     private final Path diagnosticsJsonPath;
 
-    private final DistributionHome distributionHome;
+    private final CheckoutResources checkoutResources;
 
     /**
      * The transactional whole-project publication stager of the running
@@ -258,7 +258,7 @@ public final class CompilationOrchestrator {
         this.verbose = verbose;
         this.dumpIr = dumpIr;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
-        this.distributionHome = DistributionHome.forManifestDirectory(
+        this.checkoutResources = CheckoutResources.forManifestDirectory(
             context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
@@ -319,7 +319,7 @@ public final class CompilationOrchestrator {
     /**
      * Test-only isolated-phase overload; see the 6-argument form. Both the
      * {@code sourceMap} and {@code sourceMapExplicit} spellings are accepted
-     * request surface only: the v1.4 default emits source comments and
+     * request surface only: the default emits source comments and
      * sidecars for every successful compilation, so neither selects an
      * emission mode.
      */
@@ -361,7 +361,7 @@ public final class CompilationOrchestrator {
         this.verbose = verbose;
         this.dumpIr = dumpIr;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
-        this.distributionHome = DistributionHome.forManifestDirectory(
+        this.checkoutResources = CheckoutResources.forManifestDirectory(
             context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
@@ -451,12 +451,12 @@ public final class CompilationOrchestrator {
             entryDir.resolve("deal.json").normalize().toString(),
             entryDirText,
             entryDirText,
-            "1.4",
+            ProjectLocator.LANGUAGE_VERSION,
             roots,
             output,
             backend.cliName(),
             externals,
-            "1.4",
+            ProjectLocator.LANGUAGE_VERSION,
             surface,
             stdlibDeclarationFiles,
             syntheticDeploymentIdentity(entryDir));
@@ -487,9 +487,9 @@ public final class CompilationOrchestrator {
         if (local.isPresent()) {
             return local.get().toString();
         }
-        Optional<Path> distribution = ProtectedPathOps.probeDirectory(
+        Optional<Path> checkout = ProtectedPathOps.probeDirectory(
             Path.of("").toAbsolutePath().resolve("std"));
-        return distribution.map(Path::toString).orElse(null);
+        return checkout.map(Path::toString).orElse(null);
     }
 
     /**
@@ -545,7 +545,7 @@ public final class CompilationOrchestrator {
      * {@link CompilerProfileProvider} from
      * {@link ReleaseConfiguration#CURRENT_RELEASE_STATE} and the release
      * capability registry (A2 — the single release-owned selection point;
-     * the profile is the sole {@code DEAL_V1_4_BINARY64}, foundation F1/F4).
+     * the profile is the sole {@code DEAL_V1_5_BINARY64}, foundation F1/F4).
      * It is the only invocation constructor — the orchestrator never
      * constructs an invocation itself.
      */
@@ -837,7 +837,7 @@ public final class CompilationOrchestrator {
                 continue;
             }
 
-            // Phase-0 parsing uses the sole v1.4 grammar and binary64
+            // Phase-0 parsing uses the sole v1.5 grammar and binary64
             // literal admission. The lexer's directive events reach the
             // same declaration-binding path as every production parse.
             Parser parser = new Parser(lex.tokens(), sourcePath,
@@ -1832,23 +1832,6 @@ public final class CompilationOrchestrator {
             log("  Checked: " + sourcePath + " (" + modElapsed + "ms)");
         }
 
-        // The null-return fall-off gate (ISSUE-0717 defect snippets
-        // 25/26): the one compile surface rejects a : null body that can
-        // complete normally on every backend. The gate runs for every
-        // invocation — there is no alternate semantic arm that tolerates
-        // a fall-off body (see NullReturnFallOff).
-        for (ModuleInfo info : modules.values()) {
-            if (info.isDeclarationFile || info.rawAst == null) {
-                continue;
-            }
-            List<CompilerDiagnostic> fallOff =
-                NullReturnFallOff.diagnostics(info.rawAst);
-            if (!fallOff.isEmpty()) {
-                diagnostics.addAll(fallOff);
-                hasErrors = true;
-            }
-        }
-
         long phaseElapsed = System.currentTimeMillis() - phaseStart;
         if (verbose) {
             System.out.println("  Phase 3 total: " + phaseElapsed + "ms");
@@ -1907,7 +1890,7 @@ public final class CompilationOrchestrator {
      * {@link ProductionProjectEmission#run} over the compile's declared
      * inputs — the one project lowering, the pre-emission closure guard,
      * the one production emission (with the project's source comments and
-     * {@code .deal.map.json} sidecars, the v1.4 default), and the one
+     * {@code .deal.map.json} sidecars, the default), and the one
      * staged production artifact set plus the target's complete
      * runtime/stdlib deployment copies (LuaJIT and JVM stage one project
      * artifact; JavaScript stages one CommonJS artifact per implementation
@@ -1940,7 +1923,7 @@ public final class CompilationOrchestrator {
             requirementManifests.manifests(), hostDeclarationSurface,
             declarationModuleIdentities(),
             builtinErrorDeclaration(checked.input()),
-            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
+            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, checkoutResources, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
             recordProducedProject(result.producedProject());

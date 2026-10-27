@@ -1,10 +1,10 @@
 import * as settings from "./settings";
 
 export function main(): null {
-  let value: settings.Settings | null = settings.Settings$fromJson("{\"title\":\"Tools\",\"note\":null}");
+  let value: settings.Settings | null = settings.Settings$fromJson("{\"enabled\":true,\"title\":\"Tools\",\"note\":null}");
   if (value !== null) {
-    if (!value.enabled || value.title !== "Tools" || !has(value.note)) {
-      throw { code: "EXAMPLE_FAILED", message: "JSON defaults and presence" };
+    if (!value.enabled || value.title !== "Tools" || !Object.hasOwn(value, "note")) {
+      throw { code: "EXAMPLE_FAILED", message: "JSON required fields and presence" };
     }
     let encoded: string = settings.Settings$toJson(value);
     let restored: settings.Settings | null = settings.Settings$fromJson(encoded);

@@ -34,7 +34,7 @@ import java.util.stream.Stream;
  * backend.
  *
  * <p>DEAL's {@code Error} is a builtin nominal class whose values compare by
- * reference identity (docs/spec-v1.4.md, "Error type" and the {@code ===}
+ * reference identity (docs/spec-v1.5.md, "Error type" and the {@code ===}
  * semantics), so {@code throw}/{@code catch} must transport the thrown
  * instance itself, never a replacement carrier: {@code caught === original},
  * a field write through either alias is visible through the other, and the
@@ -123,7 +123,7 @@ public final class ErrorIdentityProductionTest {
           let alias: Error = original;
           try {
             throw original;
-          } catch (caught) {
+          } catch (value) { let caught: Error = value as Error;
             if (caught !== original || caught !== alias) {
               throw { code: "TEST_FAIL", message: "the first throw lost the identity" };
             }
@@ -152,8 +152,8 @@ public final class ErrorIdentityProductionTest {
      */
     private static final String WRAPPED_LIB_SOURCE = """
         function inner(): number {
-          let t: table = { value: "bad" };
-          let x: number = t.value;
+          let t: Record<string, unknown> = { value: "bad" };
+          let x: number = t.value as number;
           return x;
         }
 

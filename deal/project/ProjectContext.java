@@ -7,13 +7,11 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * The single immutable exact-v1.4 project context published by
- * {@link ProjectLocator} (design source
- * {@code strict-project-context-resolution-identity} D1,
- * {@code deal-v1.2-directives-and-c-ffi-declarations} D10).
+ * The immutable v1.5 project context published by {@link ProjectLocator}.
+ * The normative configuration rules are in docs/spec-v1.5.md.
  *
  * <p>Exactly one ancestor {@code deal.json} with
- * {@code languageVersion: "1.4"} governs the graph; every field below is
+ * {@code languageVersion: "1.5"} governs the graph; every field below is
  * validated and converted before publication, and a failed locate
  * publishes no context at all. The record is immutable: the list and map
  * components are defensively copied, and every element is itself
@@ -24,12 +22,12 @@ import java.util.Objects;
  *       symlink-resolved absolute path text (D4 manifest row: regular +
  *       readable + full symlink resolution).</li>
  *   <li>{@code projectRoot} — pinned equal to {@code manifestDirectory}
- *       (v1.4 has no separate root field).</li>
+ *       (there is no separate root field).</li>
  *   <li>{@code manifestDirectory} — the manifest's directory (its
  *       symlink-resolved parent): the base for module-root conversion,
  *       manifest-relative output, externals declarations, and the
  *       project-local stdlib surface probe.</li>
- *   <li>{@code languageVersion} — always {@code "1.4"} (D2 requires it
+ *   <li>{@code languageVersion} — always {@code "1.5"} (D2 requires it
  *       exactly).</li>
  *   <li>{@code configuredModuleRoots} — the manifest roots in member
  *       order, each completed by step-4 root conversion
@@ -50,7 +48,7 @@ import java.util.Objects;
  *       are unique across entries and never equal a pinned stdlib file
  *       (D1 step 4(b)).</li>
  *   <li>{@code stdlibVersion} — the manifest {@code stdlib} value after
- *       D2 validation, always {@code "1.4"}.</li>
+ *       validation, always {@code "1.5"}.</li>
  *   <li>{@code stdlibSurfacePath} — the protected-resolved absolute
  *       directory of the pinned stdlib surface:
  *       {@code <manifestDirectory>/std} when it exists as a directory,

@@ -49,7 +49,7 @@ public record ClassLayout(ClassId classId, List<FieldLayout> fields) {
          * {@code new RuntimeDescriptor.Nullable(...)}.
          */
         public RuntimeDescriptor readResultDescriptor() {
-            return required ? descriptor : RuntimeDescriptor.nullable(descriptor);
+            return required ? descriptor : RuntimeDescriptor.optionalRead(descriptor);
         }
     }
 

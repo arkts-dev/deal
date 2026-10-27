@@ -140,6 +140,6 @@ export function main(): null {
     afterBranch: afterBranch === 1,
     staticControls: staticControls === 57,
     widened: widened === 4
-  }));
+  }) as string);
   return null;
 }

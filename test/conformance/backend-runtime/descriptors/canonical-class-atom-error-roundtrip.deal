@@ -7,7 +7,7 @@ function passThrough(): Error {
   try {
     throw { code: "E_CANON", message: "roundtrip" };
   } catch (e) {
-    return e;
+    return e as Error;
   }
 }
 

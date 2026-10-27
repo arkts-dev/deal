@@ -4,11 +4,11 @@
 // @features: tables, dynamic-write
 
 export function test_table_write(): string {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   t.key = "val";
   t.num = 42;
-  let key: string = t.key;
-  let num: number = t.num;
+  let key: string = t.key as string;
+  let num: number = t.num as number;
   if (key !== "val") {
     throw { code: "TEST_FAIL", message: "table key post-state mismatch" };
   }

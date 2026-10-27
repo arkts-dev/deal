@@ -4,14 +4,14 @@
 // @features: type-system, nullable, narrowing, tables, runtime-errors
 
 export function main(): null {
-  let t: table | null = {a: 1};
+  let t: Record<string, unknown> | null = {a: 1};
   let clear: () => null = function(): null {
     t = null;
     return null;
   };
   if (t !== null) {
     clear();
-    t.a.b = 2;
+    (t.a as Record<string, unknown>).b = 2;
   }
   return null;
 }

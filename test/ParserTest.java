@@ -880,7 +880,7 @@ public class ParserTest {
     }
 
     /**
-     * v1.4 Semicolon rules (docs/spec-v1.4.md Syntactic grammar): every
+     * v1.4 Semicolon rules (docs/spec-v1.5.md Syntactic grammar): every
      * production carrying {@code ';'} consumes one — imports, class fields,
      * variable/expression/return/break/continue/delete/throw statements and
      * the C-style for separators. Block-ending productions (blocks,
@@ -917,7 +917,7 @@ public class ParserTest {
         // Let before an async function declaration.
         ParseResult beforeAsync = parse("export function main(): null {\n"
             + "  let n: int = 1\n"
-            + "  async function f(): null { return null; }\n"
+            + "  async function f(): Promise<null> { return null; }\n"
             + "  return null;\n"
             + "}\n");
         assertParseError(beforeAsync, "E1053", "let before async function");
@@ -1160,9 +1160,13 @@ public class ParserTest {
     }
 
     static void testHasExpression() {
-        System.out.println("-- Has Expression --");
+        System.out.println("-- Own Presence Expression --");
+        ParseResult ordinary = parse("has(obj.field);");
+        assertNoParseErrors(ordinary, "has is an ordinary identifier call");
+        check(((ExpressionStatement) ordinary.program().statements().get(0)).expr() instanceof CallExpr,
+            "retired has intrinsic is not a presence AST");
 
-        ParseResult r = parse("let b: boolean = has(obj.field);");
+        ParseResult r = parse("let b: boolean = Object.hasOwn(obj, \"field\");");
         assertNoParseErrors(r, "has expr");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         HasExpr has = assertExprInstance(vd.initializer(), HasExpr.class, "has");
@@ -1171,8 +1175,8 @@ public class ParserTest {
             check(has.object() instanceof IdentifierExpr, "object");
         }
 
-        // Nested: !has(obj.field)
-        r = parse("let b: boolean = !has(obj.field);");
+        // Negated own-presence test.
+        r = parse("let b: boolean = !Object.hasOwn(obj, \"field\");");
         assertNoParseErrors(r, "!has");
         vd = (VariableDeclaration) r.program().statements().get(0);
         UnaryExpr un = assertExprInstance(vd.initializer(), UnaryExpr.class, "!has");
@@ -1573,7 +1577,7 @@ public class ParserTest {
     static void testForOfStatement() {
         System.out.println("-- ForOfStatement --");
 
-        ParseResult r = parse("function f(xs: int[]): null { for (let x: int of xs) { } return; }");
+        ParseResult r = parse("function f(xs: number[]): null { for (let x of xs) { } return null; }");
         assertNoParseErrors(r, "for-of array");
         FunctionDeclaration fd = (FunctionDeclaration) r.program().statements().get(0);
         check(fd.body().statements().size() == 2, "2 body stmts");
@@ -1581,21 +1585,23 @@ public class ParserTest {
                 ForOfStatement.class, "ForOfStatement");
         if (fos != null) {
             check(fos.varName().equals("x"), "var name = x");
-            check(fos.varType() instanceof NamedType, "var type is NamedType");
-            check(((NamedType) fos.varType()).name().equals("int"), "var type = int");
+            check(fos.varType() == null, "for-of type is inferred, not annotated");
             check(fos.iterable() instanceof IdentifierExpr, "iterable is identifier");
             check(((IdentifierExpr) fos.iterable()).name().equals("xs"), "iterable = xs");
         }
 
+        assertParseError(parse("function f(xs: number[]): null { for (let x: number of xs) {} return null; }"),
+            "E1013", "explicit for-of annotation is rejected");
+
         // For-of over string
-        r = parse("function f(s: string): null { for (let c: string of s) { } return; }");
+        r = parse("function f(s: string): null { for (let c of s) { } return null; }");
         assertNoParseErrors(r, "for-of string");
         fd = (FunctionDeclaration) r.program().statements().get(0);
         fos = assertInstance(fd.body().statements().get(0),
                 ForOfStatement.class, "for-of string");
         if (fos != null) {
             check(fos.varName().equals("c"), "var name = c");
-            check(((NamedType) fos.varType()).name().equals("string"), "var type = string");
+            check(fos.varType() == null, "string loop binding is inferred");
         }
     }
 
@@ -1603,7 +1609,7 @@ public class ParserTest {
         System.out.println("-- ForOfStatement: missing iterable (D20) --");
 
         // Parse the for-of with missing iterable. Should not NPE.
-        ParseResult r = parse("function f(): null { for (let x: int of ) { } return; }");
+        ParseResult r = parse("function f(): null { for (let x of ) { } return null; }");
         // We just check it doesn't throw — error diagnostics are expected
         check(r.program() != null, "program not null");
         // The for-of statement should not be present in the AST because the parser
@@ -2217,7 +2223,7 @@ public class ParserTest {
     static void testAsyncFunctionDeclaration() {
         System.out.println("-- Async Function Declaration --");
 
-        ParseResult r = parse("async function f(): int { return await g(); }");
+        ParseResult r = parse("async function f(): Promise<number> { return await g(); }");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async function decl");
         assertStmtCount(prog, 1, "one statement");
@@ -2244,7 +2250,7 @@ public class ParserTest {
     static void testAwaitExpression() {
         System.out.println("-- Await Expression --");
 
-        ParseResult r = parse("async function f(): int { await g(1, 2); }");
+        ParseResult r = parse("async function f(): Promise<number> { await g(1, 2); }");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "await expression");
         assertStmtCount(prog, 1, "one statement");
@@ -2269,7 +2275,7 @@ public class ParserTest {
     static void testAwaitNotCall() {
         System.out.println("-- Await Not Call -> E1042 --");
 
-        ParseResult r = parse("async function f(): int { await 42; }");
+        ParseResult r = parse("async function f(): Promise<number> { await 42; }");
         assertParseError(r, "E1042", "await not followed by call");
 
         // Should still produce an AwaitExpression (error recovery)
@@ -2289,7 +2295,7 @@ public class ParserTest {
         System.out.println("-- Async Function Type --");
 
         // Test: let f: async (int) => string;
-        ParseResult r = parse("let f: async (p: int) => string = g;");
+        ParseResult r = parse("let f: (p: number) => Promise<string> = g;");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async function type annotation");
         assertStmtCount(prog, 1, "one statement");
@@ -2306,7 +2312,7 @@ public class ParserTest {
         check(ft.params().get(0).name().equals("p"), "param name is p");
 
         // Also test just the type in isolation via let with no init
-        ParseResult r2 = parse("let f: async (a: int, b: string) => boolean = h;");
+        ParseResult r2 = parse("let f: (a: number, b: string) => Promise<boolean> = h;");
         ProgramNode prog2 = r2.program();
         // Multi-param async function type
         VariableDeclaration vd2 = assertInstance(prog2.statements().get(0),
@@ -2322,7 +2328,7 @@ public class ParserTest {
     static void testAsyncFunctionExprInLet() {
         System.out.println("-- Async Function Expression in Let --");
 
-        ParseResult r = parse("let f = async function(): int { return 5; };");
+        ParseResult r = parse("let f = async function(): Promise<number> { return 5; };");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async function expr in let");
         assertStmtCount(prog, 1, "one statement");
@@ -2339,7 +2345,7 @@ public class ParserTest {
 
         // let f: async (int) => string;
         // But since let requires an initializer, use a valid one
-        ParseResult r = parse("let f: async (p: int) => string = someFunc;");
+        ParseResult r = parse("let f: (p: number) => Promise<string> = someFunc;");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async type annotation in let");
         assertStmtCount(prog, 1, "one statement");
@@ -2356,7 +2362,7 @@ public class ParserTest {
     static void testExportAsyncFunction() {
         System.out.println("-- Export Async Function --");
 
-        ParseResult r = parse("export async function f(): int { return 5; }");
+        ParseResult r = parse("export async function f(): Promise<number> { return 5; }");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "export async function");
         assertStmtCount(prog, 1, "one statement");
@@ -2373,7 +2379,7 @@ public class ParserTest {
         System.out.println("-- Async Function as Expression Statement --");
 
         // Bare async function expression as a statement
-        ParseResult r = parse("async function(): int { return 5; };");
+        ParseResult r = parse("async function(): Promise<number> { return 5; };");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async expr statement");
         assertStmtCount(prog, 1, "one statement");
@@ -2528,16 +2534,16 @@ public class ParserTest {
             "null[][] function-type return");
 
         // Every annotation position reaches the same Array<null> node:
-        // class field, parameter, return type, and for-of loop variable.
+        // class field, parameter, return type, and inferred for-of binding.
         String positions = "class Holder { xs: null[]; }\n"
             + "function f(xs: null[]): null[] { return xs; }\n"
             + "export function main(): null {\n"
-            + "  for (let row: null[] of [[null]]) { }\n"
+            + "  for (let row of [[null]]) { }\n"
             + "  return null;\n"
             + "}";
         ParseResult atPositions = parse(positions);
         assertNoParseErrors(atPositions,
-            "null[] in field, parameter, return, and for-of positions");
+            "null[] annotations and inferred for-of binding");
         ClassDeclaration holder = assertInstance(
             atPositions.program().statements().get(0), ClassDeclaration.class,
             "null[] class");
@@ -2566,8 +2572,7 @@ public class ParserTest {
         ForOfStatement forOf = assertInstance(first, ForOfStatement.class,
             "null[] for-of loop");
         if (forOf != null) {
-            checkNullElement(assertTypeInstance(forOf.varType(), ArrayType.class,
-                "null[] loop variable"), "null[] loop variable");
+            check(forOf.varType() == null, "null[] loop binding annotation is absent");
         }
 
         // Rejected spellings keep their exact parse diagnostics.

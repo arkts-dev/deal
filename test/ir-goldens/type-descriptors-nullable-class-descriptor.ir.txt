@@ -5,4 +5,6 @@ module @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal
     param u: ?User @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:12-5:26
       [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:36-5:44
+      return @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:36-5:49
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/type-descriptors-nullable-class-descriptor.deal:5:43-5:46

@@ -21,7 +21,7 @@ public final class DefaultSemanticPlannerTest {
     }
 
     private static final String MANIFEST = """
-        {"languageVersion":"1.4","moduleRoots":["src"],
+        {"languageVersion":"1.5","moduleRoots":["src"],
          "backend":"luajit","output":"build"}
         """;
 
@@ -123,20 +123,20 @@ public final class DefaultSemanticPlannerTest {
 
     private static void requiredPresence() throws Exception {
         Compile declaration = compile(Map.of("src/main.deal", """
-            class Record { value: number; nullable: number | null; }
+            class Row { value: number; nullable: number | null; }
             export function main(): null { return null; }
             """));
         check(declaration.success(), "required declarations need no initializer: "
             + declaration.diagnostics());
         Compile omitted = compile(Map.of("src/main.deal", """
-            class Record { value: number; nullable: number | null; }
-            function make(): Record { return {value: 1}; }
+            class Row { value: number; nullable: number | null; }
+            function make(): Row { return {value: 1}; }
             export function main(): null { return null; }
             """));
         check(!omitted.success() && omitted.error("E4001") != null,
             "required nullable omission fails: " + omitted.diagnostics());
         check(omitted.error("E4001").message()
-            .equals("Missing required field 'nullable' in class literal for 'Record'"),
+            .equals("Missing required field 'nullable' in class literal for 'Row'"),
             "missing field diagnostic");
         check(omitted.orchestrator().plannedDefaultClasses().isEmpty(),
             "failed checking publishes no plan");
@@ -145,7 +145,7 @@ public final class DefaultSemanticPlannerTest {
     private static void hostDeclarations() throws Exception {
         Compile run = compile(Map.of(
             "deal.json", """
-                {"languageVersion":"1.4","moduleRoots":["src"],"backend":"luajit",
+                {"languageVersion":"1.5","moduleRoots":["src"],"backend":"luajit",
                  "output":"build","externals":{"host/cfg":
                    {"declaration":"bindings/cfg.d.deal"}}}
                 """,
@@ -169,12 +169,12 @@ public final class DefaultSemanticPlannerTest {
 
     private static void initializerRejection() throws Exception {
         for (String expression : List.of("1", "\"wrong\"", "await source()",
-                "async function(): number { return await source(); }")) {
+                "async function(): Promise<number> { return await source(); }")) {
             Compile run = compile(Map.of("src/main.deal", """
                 class Bad {
                   value: number = %s;
                 }
-                async function source(): number { return 3; }
+                async function source(): Promise<number> { return 3; }
                 export function main(): null { return null; }
                 """.formatted(expression)));
             CompilerDiagnostic rejected = run.error("E1007");
@@ -186,7 +186,7 @@ public final class DefaultSemanticPlannerTest {
                 "invalid syntax creates no structural plan");
         }
         Compile local = compile(Map.of("src/main.deal", """
-            async function build(): null {
+            async function build(): Promise<null> {
               class Inner { value: number; }
               return null;
             }
@@ -198,10 +198,10 @@ public final class DefaultSemanticPlannerTest {
             && local.error("E1057").range().startColumn() == 3,
             "local placement error retains declaration range");
         Compile async = compile(Map.of("src/main.deal", """
-            class Holder { f: async () => number; }
-            async function source(): number { return 3; }
+            class Holder { f: () => Promise<number>; }
+            async function source(): Promise<number> { return 3; }
             export function main(): null {
-              let holder: Holder = {f: async function(): number { return await source(); }};
+              let holder: Holder = {f: async function(): Promise<number> { return await source(); }};
               return null;
             }
             """));

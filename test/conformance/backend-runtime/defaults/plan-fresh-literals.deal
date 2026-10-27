@@ -4,15 +4,15 @@
 // @features: classes, construction, tables
 
 class Box {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function test_plan_fresh_literals(): null {
   let a: Box = {data: {}};
   let b: Box = {data: {}};
   a.data.x = 7;
-  let bx: number | null = b.data.x;
-  if (bx !== null) {
+  let bx: unknown = b.data.x;
+  if (bx !== undefined || Object.hasOwn(b.data, "x")) {
     throw { code: "TEST_FAIL", message: "provided table literals shared across instances" };
   }
   return null;

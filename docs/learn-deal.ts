@@ -1,4 +1,4 @@
-// Learn DEAL — companion to docs/spec-v1.4.md, not a specification.
+// Learn DEAL — companion to docs/spec-v1.5.md, not a specification.
 // The sections below are independent examples, not one source module.
 // Imports precede declarations. Executable statements belong in functions.
 
@@ -54,7 +54,7 @@ function counter(start: number): () => number {
 // numbers. Reads require index < length; writes may append at length.
 function sumAll(values: number[]): number {
   let total: number = 0;
-  for (let value: number of values) { total = total + value; }
+  for (let value of values) { total = total + value; }
   return total;
 }
 function arrays(): number {
@@ -67,15 +67,15 @@ function arrays(): number {
   return sumAll(values);
 }
 
-// Tables have dynamic string keys. Reads need a contextual target type
-// and validate the stored value; writes preserve null versus absence.
+// Records have dynamic string keys and unknown reads. Checked assertions
+// validate concrete uses; writes preserve null versus absence.
 function tableData(): number {
-  let data: table = { name: "Ada", age: 36 };
-  let age: number = data.age;
+  let data: Record<string, unknown> = { name: "Ada", age: 36 };
+  let age: number = data.age as number;
   data.note = null;
   delete data.note;
   let keys: string[] = tables.keys(data);
-  for (let key: string of keys) {
+  for (let key of keys) {
     let name: string = key;
   }
   return age;
@@ -91,9 +91,9 @@ class User {
 }
 function records(): User {
   let user: User = { name: "Ada", nick: "beeb", bio: null, active: true };
-  let present: boolean = has(user.nick);
-  let nick: string | null = user.nick;
-  if (nick !== null) { user.name = nick; }
+  let present: boolean = Object.hasOwn(user, "nick");
+  let nick: string | undefined = user.nick;
+  if (nick !== undefined) { user.name = nick; }
   delete user.nick;
   return user;
 }
@@ -107,8 +107,8 @@ class Vector { x: number; y: number; }
 export class Settings { name: string; note?: string | null; }
 // Parsing rejects duplicate/extra keys and missing required fields.
 // Missing optionals remain absent. Serialization omits absent fields,
-// preserves null, rejects cycles/nonfinite numbers, and emits either zero
-// sign as 0. JSON numeric tokens round to binary64; parsing preserves -0.
+// preserves null, rejects cycles, substitutes null for declared numeric
+// nonfinite values, and emits either zero sign as 0. JSON numeric tokens round to binary64; parsing preserves -0.
 
 // Standard library string positions count Unicode scalars. Substring
 // bounds must be finite whole numbers; valid bounds are then clamped.

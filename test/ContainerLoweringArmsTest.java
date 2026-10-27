@@ -1,5 +1,7 @@
 package deal.test;
 
+import deal.ast.AssertionExpr;
+
 import deal.ast.AwaitExpression;
 import deal.ast.ArrayLiteralExpr;
 import deal.ast.BinaryOp;
@@ -140,7 +142,7 @@ public class ContainerLoweringArmsTest {
 
     private static SemanticIrValidator.ComparisonFacts facts() {
         return new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
-            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH);
     }
 
     private static SemanticLowerer.ModuleLowerer lowerer(CheckResult checks) {
@@ -275,6 +277,7 @@ public class ContainerLoweringArmsTest {
                     collectExpressions(arg, outExpressions);
                 }
             }
+            case AssertionExpr a -> collectExpressions(a.value(), outExpressions);
             case MemberAccessExpr m -> collectExpressions(m.object(), outExpressions);
             case IndexExpr i -> {
                 collectExpressions(i.array(), outExpressions);
@@ -392,7 +395,7 @@ public class ContainerLoweringArmsTest {
         System.out.println("-- CONST arm: every closed scalar literal --");
 
         CheckedSlice slice = checkSlice("""
-            function f(): null {
+            function f(): void {
               let n = null;
               let b = true;
               let i = 42;
@@ -509,8 +512,8 @@ public class ContainerLoweringArmsTest {
 
     private static NestedLoopLowering lowerNestedLoop() {
         CheckedSlice slice = checkSlice("""
-            for (let x: string of "ab") {
-              for (let y: string of x) {}
+            for (let x of "ab") {
+              for (let y of x) {}
             }
             """);
         if (slice == null) {
@@ -621,11 +624,11 @@ public class ContainerLoweringArmsTest {
 
         // (a) The pinned source-order shape with five loop-binding loads.
         CheckedSlice orderSlice = checkSlice("""
-            for (let a: string of "a") {
-              for (let b: string of a) {
-                for (let i: string of b) {
-                  for (let c: string of i) {
-                    for (let v: string of c) {
+            for (let a of "a") {
+              for (let b of a) {
+                for (let i of b) {
+                  for (let c of i) {
+                    for (let v of c) {
                       let xs: string[] = [a, b, i, c, v];
                     }
                   }
@@ -1158,13 +1161,13 @@ public class ContainerLoweringArmsTest {
     }
 
     // =========================================================================
-    // 8. MEMBER_READ arm — checked contextual positions
+    // 8. MEMBER_READ arm — unknown reads before explicit assertions
     // =========================================================================
 
     static void testMemberReadArm(CheckedSlice reads) {
-        System.out.println("-- MEMBER_READ arm: checked contextual positions --");
+        System.out.println("-- MEMBER_READ arm: unknown reads before explicit assertions --");
 
-        // (a) The if-condition read: contextual type boolean → TYPE_DESCRIPTOR.
+        // (a) The if-condition's operand stays unknown until its assertion.
         CheckedSlice boolSlice = reads;
         if (boolSlice != null) {
             MemberAccessExpr access = first(boolSlice.program(), MemberAccessExpr.class);
@@ -1192,8 +1195,8 @@ public class ContainerLoweringArmsTest {
                         "MEMBER_READ key is the constant identifier string (never evaluated)");
                     check(read.result().equals(readValue),
                         "MEMBER_READ publishes its result ValueId");
-                    check(read.resultType().equals(RuntimeDescriptor.Boolean.INSTANCE),
-                        "MEMBER_READ resultType is D(contextual type) = boolean");
+                    check(read.resultType().equals(RuntimeDescriptor.Unknown.INSTANCE),
+                        "MEMBER_READ remains unknown before the boolean assertion");
                     check(read.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
                         "MEMBER_READ policy NO_DEAL_FAILURE");
                     checkOrigin("MEMBER_READ", read, access.span(), SourceOriginKind.USER, null);
@@ -1204,8 +1207,8 @@ public class ContainerLoweringArmsTest {
                         (KindPayload.BoundaryPayload) child.payload();
                     check(boundary.kind() == BoundaryKind.CONTEXTUAL_TABLE_READ,
                         "child kind CONTEXTUAL_TABLE_READ");
-                    check(boundary.descriptor().equals(RuntimeDescriptor.Boolean.INSTANCE),
-                        "child descriptor D(contextual type) = boolean");
+                    check(boundary.descriptor().equals(RuntimeDescriptor.Unknown.INSTANCE),
+                        "read child admits unknown, not an implicit boolean context");
                     check(boundary.input().equals(read.result()),
                         "child input is the MEMBER_READ result ValueId");
                     check(boundary.realization().equals(new BoundaryRealization.RuntimeValidation(
@@ -1220,14 +1223,14 @@ public class ContainerLoweringArmsTest {
             }
         }
 
-        // (b) The function-descriptor read: contextual type () => int →
-        // FUNCTION_SIGNATURE by the descriptor-kind rule.
+        // (b) The callable assertion does not retroactively type the raw read.
         CheckedSlice funcSlice = reads;
         if (funcSlice != null) {
             FunctionDeclaration function = (FunctionDeclaration) funcSlice.program()
                 .statements().get(1);
-            MemberAccessExpr access = (MemberAccessExpr) ((VariableDeclaration)
+            AssertionExpr assertion = (AssertionExpr) ((VariableDeclaration)
                 function.body().statements().get(0)).initializer();
+            MemberAccessExpr access = (MemberAccessExpr) assertion.value();
             check(access != null && "g".equals(access.field()),
                 "the function-context slice carries t.g");
             if (access != null) {
@@ -1240,13 +1243,33 @@ public class ContainerLoweringArmsTest {
                 if (ops.size() == 3) {
                     SemanticOp read = ops.get(1);
                     SemanticOp child = ops.get(2);
-                    check(read.resultType() instanceof RuntimeDescriptor.Func,
-                        "MEMBER_READ resultType is the function descriptor");
+                    check(read.resultType() instanceof RuntimeDescriptor.Unknown,
+                        "MEMBER_READ remains unknown before the callable assertion");
                     check(((KindPayload.BoundaryPayload) child.payload()).descriptor()
                             .equals(read.resultType()),
                         "child descriptor equals the MEMBER_READ result descriptor");
-                    check(child.failurePolicy() == FailurePolicyId.FUNCTION_SIGNATURE,
-                        "child policy is the descriptor-kind rule: FUNCTION_SIGNATURE");
+                    check(child.failurePolicy() == FailurePolicyId.TYPE_DESCRIPTOR,
+                        "unknown read has TYPE_DESCRIPTOR policy, never an implicit callable cast");
+                }
+                SemanticLowerer.ModuleLowerer checked = lowerer(funcSlice.checks());
+                checked.openForEachScope("t");
+                ValueId checkedValue = checked.lowerExpression(assertion);
+                checked.closeForEachScope();
+                List<SemanticOp> checkedOps = checked.ops();
+                check(checkedOps.size() == 4,
+                    "callable extraction adds exactly one explicit assertion after the raw read");
+                if (checkedOps.size() == 4) {
+                    SemanticOp extraction = checkedOps.get(3);
+                    KindPayload.BoundaryPayload payload =
+                        (KindPayload.BoundaryPayload) extraction.payload();
+                    check(extraction.kind() == SemanticOpKind.BOUNDARY
+                            && payload.kind() == BoundaryKind.ASSERTION
+                            && payload.descriptor() instanceof RuntimeDescriptor.Func
+                            && payload.input().equals(checkedOps.get(1).result())
+                            && checkedValue.equals(extraction.result()),
+                        "explicit assertion consumes the original unknown read and publishes the callable");
+                    check(extraction.failurePolicy() == FailurePolicyId.FUNCTION_SIGNATURE,
+                        "callable assertion retains signature-check policy; ASSERTION projects mismatches as E8001");
                 }
             }
         }
@@ -1322,8 +1345,8 @@ public class ContainerLoweringArmsTest {
             "the read slot is the normalize's closed table slot");
         check(read.result().equals(readValue),
             "INDEX_READ publishes its result ValueId");
-        check(read.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
-            "the read resultType is the contextual type's descriptor (number)");
+        check(read.resultType().equals(RuntimeDescriptor.Unknown.INSTANCE),
+            "the read resultType stays unknown before the numeric assertion");
         check(read.failurePolicy() == FailurePolicyId.NO_DEAL_FAILURE,
             "INDEX_READ policy NO_DEAL_FAILURE");
         checkOrigin("INDEX_READ", read, index.span(), SourceOriginKind.USER, null);
@@ -1337,8 +1360,8 @@ public class ContainerLoweringArmsTest {
             (KindPayload.BoundaryPayload) child.payload();
         check(boundary.kind() == BoundaryKind.CONTEXTUAL_TABLE_READ,
             "child kind CONTEXTUAL_TABLE_READ");
-        check(boundary.descriptor().equals(RuntimeDescriptor.Number.INSTANCE),
-            "child descriptor D(contextual type) = number");
+        check(boundary.descriptor().equals(RuntimeDescriptor.Unknown.INSTANCE),
+            "read child descriptor is unknown, independent of numeric use");
         check(boundary.input().equals(read.result()),
             "child input is the INDEX_READ result ValueId");
         check(boundary.realization().equals(new BoundaryRealization.RuntimeValidation(
@@ -1384,7 +1407,7 @@ public class ContainerLoweringArmsTest {
         // (b) The empty body: zero body ops, the binding and body block still
         // payload-carried.
         CheckedSlice emptyBody = checkSlice("""
-            for (let x: string of "s") {}
+            for (let x of "s") {}
             """);
         if (emptyBody != null) {
             ForOfStatement statement = first(emptyBody.program(), ForOfStatement.class);
@@ -1433,8 +1456,8 @@ public class ContainerLoweringArmsTest {
             what + " detail capability CONTAINERS_AND_STRINGS");
         check(SemanticLowerer.CONSTRUCT_UNLOWERED.equals(detail.validatorRule()),
             what + " detail validatorRule CONSTRUCT_UNLOWERED");
-        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_4_BINARY64,
-            what + " detail semanticProfile DEAL_V1_4_BINARY64");
+        check(detail.semanticProfile() == SemanticProfile.DEAL_V1_5_BINARY64,
+            what + " detail semanticProfile DEAL_V1_5_BINARY64");
         check(LoweredModuleUnit.FORMAT_VERSION.equals(detail.irVersion()),
             what + " detail irVersion deal.semantic-ir/2");
         check(("SemanticLowerer " + SemanticLowerer.CONSTRUCT_UNLOWERED + " ("
@@ -1477,7 +1500,7 @@ public class ContainerLoweringArmsTest {
             // The module-level seam: exactly the pinned LoweringFailureDetail,
             // no unit, never a reroute.
             SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModule(
-                moduleOf(indexRead), SemanticProfile.DEAL_V1_4_BINARY64, Map.of(),
+                moduleOf(indexRead), SemanticProfile.DEAL_V1_5_BINARY64, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.hasErrors() && result.unit() == null,
@@ -1541,7 +1564,7 @@ public class ContainerLoweringArmsTest {
             CheckedSlice moduleAccess = checkSlice("""
                 import * as console from "std/console";
                 function f(): null {
-                  let g: (x: string) => null = console.log;
+                  let g: (x: string) => void = console.log;
                   return null;
                 }
                 """, resolver);
@@ -1596,11 +1619,11 @@ public class ContainerLoweringArmsTest {
         {
             StubModuleResolver resolver = new StubModuleResolver();
             resolver.register("std/console",
-                Map.of("log", new Type.Func(List.of(), Type.Null.INSTANCE)));
+                Map.of("log", new Type.Func(List.of(), Type.Void.INSTANCE)));
             CheckedSlice moduleAccess = checkSlice("""
                 import * as console from "std/console";
                 function f(): null {
-                  let g: () => null = console.log;
+                  let g: () => void = console.log;
                   return null;
                 }
                 """, resolver);
@@ -1623,8 +1646,8 @@ public class ContainerLoweringArmsTest {
                         "the diverging declared member raises ConstructUnlowered");
                     checkConstructDetail("module member access", defect, "EXPORT_READ");
                     if (defect != null) {
-                        check(defect.getMessage().contains("()->null")
-                                && defect.getMessage().contains("(string)->null"),
+                        check(defect.getMessage().contains("()->void")
+                                && defect.getMessage().contains("(string)->void"),
                             "the failure is the descriptor-equality guard naming the "
                                 + "checked and the catalog row's declared descriptor: "
                                 + defect.getMessage());
@@ -2018,7 +2041,7 @@ public class ContainerLoweringArmsTest {
             ConstructKind.ARRAY_OBJECT_LITERAL, ConstructKind.ARRAY_OBJECT_LITERAL.mappedOpKinds(),
             ConstructKind.SCALAR_LITERAL, ConstructKind.SCALAR_LITERAL.mappedOpKinds());
         LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(),
-            SemanticProfile.DEAL_V1_4_BINARY64, INTERFACE_HASH, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_5_BINARY64, INTERFACE_HASH, REGISTRY_HASH);
         // The slice opens value frames for the parameters without lowering
         // the declaration arm, so its binding cells are absent; the
         // common-admission head is the applicable closed-rule gate of this
@@ -2180,8 +2203,8 @@ public class ContainerLoweringArmsTest {
         System.out.println("-- Module seam: positionable spine, determinism, R-COVERAGE --");
 
         CheckedSlice slice = checkSlice("""
-            for (let x: string of "ab" + `c${"d"}e`) {
-              for (let y: string of x) {}
+            for (let x of "ab" + `c${"d"}e`) {
+              for (let y of x) {}
             }
             """);
         if (slice == null) {
@@ -2195,7 +2218,7 @@ public class ContainerLoweringArmsTest {
             ConstructKind.IF_WHILE_FOR_FOR_OF, ConstructKind.IF_WHILE_FOR_FOR_OF.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the positionable spine lowers to a validated unit: " + (first == null ? "null"
@@ -2240,7 +2263,7 @@ public class ContainerLoweringArmsTest {
 
         // Determinism: a fresh lowering produces byte-identical dumps.
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),
             "the repeated lowering validates again");
@@ -2258,7 +2281,7 @@ public class ContainerLoweringArmsTest {
             new LinkedHashMap<>(coverage);
         overCoverage.put(ConstructKind.CALL, ConstructKind.CALL.mappedOpKinds());
         SemanticLowerer.LoweringResult uncovered = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, overCoverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(uncovered != null && uncovered.hasErrors() && uncovered.unit() == null,
             "a recorded CALL row without a produced op fails hard with no unit");
@@ -2288,16 +2311,16 @@ public class ContainerLoweringArmsTest {
         testArrayLengthArm();
         testNarrowedArrayLengthReceiverAdmission();
         CheckedSlice tableReads = checkSlice("""
-            function booleanMemberRead(t: table): null {
-              if (t.k) {}
+            function booleanMemberRead(t: Record<string, unknown>): null {
+              if (t.k as boolean) {}
               return null;
             }
-            function functionMemberRead(t: table): null {
-              let g: () => number = t.g;
+            function functionMemberRead(t: Record<string, unknown>): null {
+              let g = t.g as () => number;
               return null;
             }
-            function dynamicIndexRead(t: table, k: string): null {
-              let n: number = t[k];
+            function dynamicIndexRead(t: Record<string, unknown>, k: string): null {
+              let n = t[k] as number;
               return null;
             }
             """);

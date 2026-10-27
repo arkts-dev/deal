@@ -302,9 +302,7 @@ public class ContainerOpsExecutorTest {
 
     /**
      * The boundary's published value: a passing boundary never copies or
-     * converts — except the pinned missing→null mapping, which the
-     * executor's closed table assigns to the delegate and which the
-     * published null view reflects.
+     * converts. The absent carrier remains distinct from explicit null.
      */
     private static Value publishValue(BoundaryValueView view, Value input) {
         return view.kind() == ActualKind.NULL ? Value.Null.INSTANCE : input;
@@ -745,7 +743,7 @@ public class ContainerOpsExecutorTest {
             fail("the present-mismatch read did not fail");
         }
 
-        // Missing + nullable descriptor: the delegate maps missing -> null.
+        // Missing + null-only descriptor: absence is undefined, never null.
         SemanticTable<Value> emptyTable = new SemanticTable<>();
         ValueId emptyReceiver = nextValue();
         Map<ValueId, Value> emptyValues = new LinkedHashMap<>();
@@ -758,13 +756,27 @@ public class ContainerOpsExecutorTest {
             NULLABLE_INT, FailurePolicyId.NO_DEAL_FAILURE, null);
         Outcome<Value> nullable = ContainerOpsExecutor.executeMemberRead(nullableOp,
             emptyValues, nullableChild, realProjectionDelegate(null));
-        if (nullable instanceof Outcome.Success<Value> success) {
-            check(success.value() == Value.Null.INSTANCE,
-                "missing against a nullable descriptor publishes language null "
-                    + "(the delegate's pinned missing->null mapping)");
+        if (nullable instanceof Outcome.Failure<Value> failure) {
+            check(failure.failure().failure().code() == DiagnosticCode.E8001
+                    && "undefined".equals(failure.failure().failure().actual())
+                    && "expected number".equals(failure.failure().failure().message()),
+                "null-only admission rejects absence as undefined, not null");
         } else {
-            fail("missing + nullable did not publish null");
+            fail("missing + null-only descriptor must reject undefined");
         }
+
+        RuntimeDescriptor optionalInt = new RuntimeDescriptor.Nullable(INT, false, true);
+        OpId optionalId = nextOpId();
+        SemanticOp optionalChild = boundaryChild(optionalId,
+            BoundaryKind.CONTEXTUAL_TABLE_READ, optionalInt, FailurePolicyId.TYPE_DESCRIPTOR);
+        SemanticOp optionalOp = opWithId(optionalId, SemanticOpKind.MEMBER_READ,
+            new KindPayload.MemberReadPayload(emptyReceiver, "absent"), nextValue(),
+            optionalInt, FailurePolicyId.NO_DEAL_FAILURE, null);
+        Outcome<Value> optional = ContainerOpsExecutor.executeMemberRead(optionalOp,
+            emptyValues, optionalChild, realProjectionDelegate(null));
+        check(optional instanceof Outcome.Success<Value> success
+                && success.value() == Value.Missing.INSTANCE,
+            "undefined-admitting read passes the absent carrier, never fabricating null");
 
         // Missing + non-nullable descriptor: the delegate fails with got missing.
         OpId nonNullableId = nextOpId();
@@ -779,10 +791,10 @@ public class ContainerOpsExecutorTest {
             check(failure.failure().failure().code() == DiagnosticCode.E8001
                     && "expected number".equals(failure.failure().failure().message())
                     && "number".equals(failure.failure().failure().expected())
-                    && "nil".equals(failure.failure().failure().actual())
+                    && "undefined".equals(failure.failure().failure().actual())
                     && failure.failure().failure().policy() == FailurePolicyId.TYPE_DESCRIPTOR,
                 "missing against a non-nullable descriptor fails with the pinned "
-                    + "expected number projection (the absent marker's nil actual)");
+                    + "expected number projection (the absent marker's undefined actual)");
         } else {
             fail("missing + non-nullable did not fail with the absent-marker projection");
         }

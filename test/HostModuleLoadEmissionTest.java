@@ -104,9 +104,9 @@ public class HostModuleLoadEmissionTest {
 
         export function main(): null {
           let c: cfg.Config = {%s};
-          if (!has(c.fallback) || !has(c.peers)) { throw {code: "presence", message: "missing"}; }
-          let fallback: number | null = c.fallback;
-          if (fallback !== null) {
+          if (!Object.hasOwn(c, "fallback") || !Object.hasOwn(c, "peers")) { throw {code: "presence", message: "missing"}; }
+          let fallback: number | undefined = c.fallback;
+          if (fallback !== undefined) {
             if (fallback !== 3) { throw {code: "value", message: "fallback"}; }
           } else { throw {code: "value", message: "null fallback"}; }
           return null;
@@ -134,7 +134,7 @@ public class HostModuleLoadEmissionTest {
         export function badReturn(): number;
         export function join(sep: string, parts: string[]): string;
         export function apply(f: (x: number) => number, v: number): number;
-        export async function fetchValue(): string;
+        export function fetchValue(): Promise<string>;
         export function nullable(v: string | null): string | null;
         """;
 
@@ -254,17 +254,17 @@ public class HostModuleLoadEmissionTest {
      */
     private static final String TABLE_PARAM_SPECIFIER = "host/table_param";
     private static final String TABLE_PARAM_DECLARATION_SOURCE = """
-        export function consume(t: table): string;
+        export function consume(t: Record<string, unknown>): string;
         """;
 
-    /** The function value held in a table and read at the declared table cell. */
+    /** Valid Record admission followed by closure invalidation reaches the host parameter cell. */
     private static final String TABLE_PARAM_APP_SOURCE = """
         import * as host from "host/table_param";
 
         export function test_function_value_at_table_param(): null {
-          let holder: table = {};
-          holder.f = function(): number { return 1; };
-          let out: string = host.consume(holder.f);
+          let value: Record<string, unknown> | null = {};
+          let clear: () => void = function(): void { value = null; };
+          if (value !== null) { clear(); host.consume(value); }
           return null;
         }
 
@@ -459,7 +459,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function describe(s: ServerConfig): string;
-        export async function fetchConfig(id: number): ServerConfig;
+        export function fetchConfig(id: number): Promise<ServerConfig>;
         export function apply(f: (x: number) => number, v: number): number;
         """;
 
@@ -550,7 +550,7 @@ public class HostModuleLoadEmissionTest {
         """;
 
     private static final String CARRIER_METADATA_DEAL_JSON = """
-        {"languageVersion": "1.4", "backend": "luajit",
+        {"languageVersion": "1.5", "backend": "luajit",
          "moduleRoots": ["src"], "output": "out",
          "externals": {
            "host/carrier": {"declaration": "bindings/carrier.d.deal"},
@@ -597,7 +597,7 @@ public class HostModuleLoadEmissionTest {
 
     private static CompilerInvocation harnessInvocation() {
         return CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_4_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_5_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
     }
 
@@ -1153,8 +1153,8 @@ public class HostModuleLoadEmissionTest {
             + "[\"@src/app.deal/Widget\"] = \"deal\"}";
         check(lua.contains(expectedKinds), "the class-kind map classifies"
             + " exactly the emitted classes: " + expectedKinds);
-        check(!lua.contains("[\"Error\"] = "),
-            "the builtin Error identity is never a metadata key");
+        check(!expectedKinds.contains("[\"Error\"] = ") && lua.contains(expectedKinds),
+            "the declared host-class kind map excludes builtin Error; JSON order metadata may include it");
 
         // The shape map: the declared host functions, the declared
         // function-typed fields, the class-layout function field, the
@@ -1184,10 +1184,10 @@ public class HostModuleLoadEmissionTest {
                     + "{{\"string\", \"string\", \"string\"}, "
                     + "{\"string\", \"string\", \"string\"}, "
                     + "{\"string\", \"string\", \"string\"}}}",
-                "[\"(string)->table\"] = {ret = \"table\", "
+                "[\"(string)->record\"] = {ret = \"record\", "
                     + "cells = {{\"string\", \"string\", \"string\"}}}",
-                "[\"(table)->string\"] = {ret = \"string\", "
-                    + "cells = {{\"table\", \"table\", \"table\"}}}")) {
+                "[\"(unknown)->!string\"] = {ret = \"!string\", "
+                    + "cells = {{\"unknown\", \"ref\", \"unknown\"}}}")) {
             check(lua.contains(shape), "the function-shape map carries the"
                 + " declared shape " + shape);
         }
@@ -1854,16 +1854,16 @@ public class HostModuleLoadEmissionTest {
     }
 
     /**
-     * The table-declared host parameter at a contextual-read function
-     * value (ISSUE-0830): the emitted artifact's loaded matcher must keep
-     * the function carrier's own token, so the call fails with the closed
+     * The Record-declared host parameter after closure-invalidated narrowing:
+     * the null value reaches the parameter cell without an assertion, so
+     * the call fails with the closed
      * E8010 host parameter cell whose inner reason is the table kind arm
      * and the host module is never invoked.
      */
     private static void testLuaHostTableParameterFunctionCarrier(
             Baseline fixture) throws Exception {
-        System.out.println("-- the table-declared host parameter at a function"
-            + " value: the closed E8010 cell on the LuaJIT artifact --");
+        System.out.println("-- the Record-declared host parameter after invalidation:"
+            + " the closed E8010 cell on the LuaJIT artifact --");
         Path workspace = Files.createTempDirectory("host-table-param-lua");
         try {
             SemanticLowerer.ProjectLoweringResult result = fixture.result();
@@ -1873,7 +1873,13 @@ public class HostModuleLoadEmissionTest {
                 return;
             }
             Path artifact = workspace.resolve("project.lua");
-            Files.writeString(artifact, fixture.lua(), StandardCharsets.UTF_8);
+            String lua = fixture.lua();
+            String tail = "return __exportSurfaces[\"app\"]";
+            int tailAt = lua.lastIndexOf(tail);
+            if (tailAt < 0) { throw new AssertionError("missing published surface tail"); }
+            // Fixture-only exposure of private admission helpers to a direct seam probe.
+            Files.writeString(artifact, lua.substring(0, tailAt)
+                + "__probeHostFactories = __factories\n" + lua.substring(tailAt), StandardCharsets.UTF_8);
             deployRuntime(workspace);
             writeFileIn(workspace, "host/table_param.lua", TABLE_PARAM_LUA);
             Path probe = workspace.resolve("probe.lua");
@@ -1887,7 +1893,7 @@ public class HostModuleLoadEmissionTest {
                 if entry == nil then fail("missing export") end
                 local crossed, e = pcall(entry.f)
                 if crossed then
-                  fail("the function value crossed the table-declared host parameter")
+                  fail("the invalidated Record crossed the declared host parameter")
                 end
                 if type(e) ~= "table" or e[__dealCarrierKeys.d] ~= true then
                   fail("not a DEAL error: " .. tostring(e))
@@ -1896,23 +1902,52 @@ public class HostModuleLoadEmissionTest {
                 if e.m ~= "parameter 1 type mismatch: expected table" then
                   fail("message: " .. tostring(e.m))
                 end
-                if e.e ~= "table" then fail("expected: " .. tostring(e.e)) end
+                if e.e ~= "record" then fail("expected: " .. tostring(e.e)) end
                 -- The host parameter cell's own actual projection is the
                 -- carrier-kind token (every table-shaped carrier projects
                 -- table), exactly the JVM host cell's __hostKind value.
                 if e.a ~= "table" then fail("actual: " .. tostring(e.a)) end
+                local __factories = __probeHostFactories
+                local __MISSING = require("deal.runtime").__MISSING
+                local __NULL = require("deal.runtime").__NULL
+                for _, desc in ipairs({"record", "?record", "!record", "?!record"}) do
+                  if __factories.__hostDeclKind(desc) ~= "table" then fail("kind: " .. desc) end
+                end
+                for _, desc in ipairs({"!record", "?!record", "undefined", "null|undefined", "unknown"}) do
+                  local value = __factories.__hostParamAdmit(desc, 1, __MISSING, "probe:1:1")
+                  if value ~= require("deal.runtime").__UNDEFINED then fail("missing: " .. desc) end
+                end
+                for _, desc in ipairs({"?record", "?!record", "null|undefined", "unknown"}) do
+                  local value = __factories.__hostParamAdmit(desc, 1, __NULL, "probe:1:1")
+                  if value ~= require("deal.runtime").__NULL then fail("null: " .. desc) end
+                end
+                local admitted, reason = pcall(__factories.__hostParamAdmit,
+                  "!record", 1, __NULL, "probe:1:1")
+                if admitted or reason.code ~= "E8010" or reason.e ~= "!record"
+                    or reason.m ~= "parameter 1 type mismatch: expected table" then
+                  fail("undefined-only Record must reject null with the closed table reason")
+                end
+                local absentOk, absentError = pcall(__factories.__hostParamAdmit,
+                  "?record", 1, require("deal.runtime").__UNDEFINED, "probe:1:1")
+                if absentOk or absentError.code ~= "E8010" or absentError.a ~= "undefined"
+                    or absentError.m ~= "parameter 1 type mismatch: expected table" then
+                  fail("null-only Record must reject undefined with its own actual: "
+                    .. tostring(absentOk) .. ":" .. tostring(absentError)
+                    .. ":" .. tostring(type(absentError) == "table" and absentError.a)
+                    .. ":" .. tostring(type(absentError) == "table" and absentError.m))
+                end
                 print("PROBE-OK")
                 """.formatted(artifact.toAbsolutePath().toString()),
                 StandardCharsets.UTF_8);
             ProcessOutcome run = runProcess(List.of("luajit",
                 probe.toAbsolutePath().toString()), workspace, true);
             check(run.exitCode() == 0 && run.stdout().contains("PROBE-OK"),
-                "the function value at the table-declared host parameter takes"
+                "the invalidated Record value at the declared host parameter takes"
                     + " the E8010 cell: exit=" + run.exitCode()
                     + " stdout=" + escaped(run.stdout())
                     + " stderr=" + escaped(run.stderr()));
             check(!run.stdout().contains("HOST-CALLED"),
-                "the raw host is never reached with the function carrier: "
+                "the raw host is never reached with the invalidated Record: "
                     + escaped(run.stdout()));
         } finally {
             deleteRecursively(workspace);
@@ -1935,7 +1970,7 @@ public class HostModuleLoadEmissionTest {
           ratio: number;
         }
 
-        export async function absorbAsync(nums: number[]): string;
+        export function absorbAsync(nums: number[]): Promise<string>;
         export function echoNumbers(nums: number[]): number[];
         export function observeNumbers(nums: number[]): string;
         export function observeInts(ns: (number | null)[]): string;
@@ -1958,28 +1993,31 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function run(): string {
-          let numsDoc: table = json.parse("{\\"ms\\":[1e17,1.5]}");
-          let ms: number[] = numsDoc.ms;
+          let numsDoc: Record<string, unknown> = json.parse("{\\"ms\\":[1e17,1.5]}");
+          let decodedMs: unknown[] = numsDoc.ms as unknown[];
+          let ms: number[] = [decodedMs[0] as number, decodedMs[1] as number];
           let echo: number[] = host.echoNumbers(ms);
-          let box: table = { xs: echo };
+          let box: Record<string, unknown> = { xs: echo };
 
-          let intsDoc: table = json.parse("{\\"ns\\":[1,null,3]}");
-          let ns: (number | null)[] = intsDoc.ns;
+          let intsDoc: Record<string, unknown> = json.parse("{\\"ns\\":[1,null,3]}");
+          let decodedNs: unknown[] = intsDoc.ns as unknown[];
+          let ns: (number | null)[] = [decodedNs[0] as number | null, decodedNs[1] as number | null, decodedNs[2] as number | null];
 
-          let cfgDoc: table = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
-          let count: number = cfgDoc.count;
-          let ratio: number = cfgDoc.ratio;
+          let cfgDoc: Record<string, unknown> = json.parse("{\\"count\\":7,\\"ratio\\":2.5}");
+          let count: number = cfgDoc.count as number;
+          let ratio: number = cfgDoc.ratio as number;
           let cfg: host.Cfg = { count: count, ratio: ratio };
 
-          return json.stringify(box) + "\\n"
+          return (json.stringify(box) as string) + "\\n"
             + host.observeNumbers(ms) + "\\n"
             + host.observeInts(ns) + "\\n"
             + host.describeCfg(cfg);
         }
 
-        export async function runAsync(): string {
-          let doc: table = json.parse("{\\\"asms\\\":[1e17,1.5]}");
-          let xs: number[] = doc.asms;
+        export async function runAsync(): Promise<string> {
+          let doc: Record<string, unknown> = json.parse("{\\\"asms\\\":[1e17,1.5]}");
+          let decoded: unknown[] = doc.asms as unknown[];
+          let xs: number[] = [decoded[0] as number, decoded[1] as number];
           return await host.absorbAsync(xs);
         }
         """;
@@ -2071,13 +2109,13 @@ public class HostModuleLoadEmissionTest {
      * with raw Lua arithmetic.
      */
     private static final String TABLE_PROBE_DECLARATION_SOURCE = """
-        export function returnPlain(): table;
-        export function returnParsed(): table;
-        export function returnParsedVariant(): table;
-        export async function returnAsyncPlain(): table;
-        export function observeMember(o: table): string;
-        export function stringifyCarrier(t: table): string;
-        export function echo(t: table): table;
+        export function returnPlain(): Record<string, unknown>;
+        export function returnParsed(): Record<string, unknown>;
+        export function returnParsedVariant(): Record<string, unknown>;
+        export function returnAsyncPlain(): Promise<Record<string, unknown>>;
+        export function observeMember(o: Record<string, unknown>): string;
+        export function stringifyCarrier(t: Record<string, unknown>): string;
+        export function echo(t: Record<string, unknown>): Record<string, unknown>;
         """;
 
     /**
@@ -2096,22 +2134,22 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function run(): string {
-          let plain: table = host.returnPlain();
-          let decoded: table = json.parse("{\\"n\\":null,\\"v\\":0.1,\\"xs\\":[1,0.1,-2147483649]}");
-          let echoed: table = host.echo(decoded);
-          let member: string = host.observeMember(json.parse("{\\"o\\":{\\"v\\":41}}").o);
-          return json.stringify(plain) + "\\n"
-            + json.stringify(decoded) + "\\n"
+          let plain: Record<string, unknown> = host.returnPlain();
+          let decoded: Record<string, unknown> = json.parse("{\\"n\\":null,\\"v\\":0.1,\\"xs\\":[1,0.1,-2147483649]}");
+          let echoed: Record<string, unknown> = host.echo(decoded);
+          let member: string = host.observeMember(json.parse("{\\"o\\":{\\"v\\":41}}").o as Record<string, unknown>);
+          return (json.stringify(plain) as string) + "\\n"
+            + (json.stringify(decoded) as string) + "\\n"
             + host.stringifyCarrier(decoded) + "\\n"
-            + json.stringify(echoed) + "\\n"
+            + (json.stringify(echoed) as string) + "\\n"
             + member + "\\n"
-            + json.stringify(host.returnParsed()) + "\\n"
-            + json.stringify(host.returnParsedVariant());
+            + (json.stringify(host.returnParsed()) as string) + "\\n"
+            + (json.stringify(host.returnParsedVariant()) as string);
         }
 
-        export async function runAsync(): string {
-          let t: table = await host.returnAsyncPlain();
-          return json.stringify(t);
+        export async function runAsync(): Promise<string> {
+          let t: Record<string, unknown> = await host.returnAsyncPlain();
+          return json.stringify(t) as string;
         }
         """;
 
@@ -2294,13 +2332,13 @@ public class HostModuleLoadEmissionTest {
      * mixed-key table only a non-DEAL host table can carry.
      */
     private static final String HOST_TABLE_DECLARATION_SOURCE = """
-        export function makeTable(): table;
-        export function makeNested(): table;
-        export function makeCycle(): table;
-        export function makeArray(): table;
-        export function makeMixed(): table;
-        export function describe(t: table): string;
-        export function withTable(f: (t: table) => string): string;
+        export function makeTable(): Record<string, unknown>;
+        export function makeNested(): Record<string, unknown>;
+        export function makeCycle(): Record<string, unknown>;
+        export function makeArray(): Record<string, unknown>;
+        export function makeMixed(): Record<string, unknown>;
+        export function describe(t: Record<string, unknown>): string;
+        export function withTable(f: (t: Record<string, unknown>) => string): string;
         """;
 
     /**
@@ -2332,44 +2370,44 @@ public class HostModuleLoadEmissionTest {
           return out;
         }
 
-        function accept(t: table): string {
-          return "cb:" + joined(tables.keys(t)) + ":" + json.stringify(t);
+        function accept(t: Record<string, unknown>): string {
+          return "cb:" + joined(tables.keys(t)) + ":" + (json.stringify(t) as string);
         }
 
-        function closedOutcome(t: table): string {
+        function closedOutcome(t: Record<string, unknown>): string {
           let outcome: string = "no-failure";
           try {
-            outcome = "OK:" + json.stringify(t);
+            outcome = "OK:" + (json.stringify(t) as string);
           } catch (e) {
-            outcome = e.code + "|" + e.message;
+            outcome = (e as Error).code + "|" + (e as Error).message;
           }
           return outcome;
         }
 
         export function run(): string {
-          let t: table = host.makeTable();
+          let t: Record<string, unknown> = host.makeTable();
           let first: string = "keys=" + joined(tables.keys(t))
-            + " json=" + json.stringify(t)
+            + " json=" + (json.stringify(t) as string)
             + " host=" + host.describe(t);
 
-          let nested: table = host.makeNested();
-          let second: string = "nested=" + json.stringify(host.makeNested())
+          let nested: Record<string, unknown> = host.makeNested();
+          let second: string = "nested=" + (json.stringify(host.makeNested()) as string)
             + " keys=" + joined(tables.keys(nested));
 
           t.extra = 9;
           let third: string = "written=" + joined(tables.keys(t))
-            + ":" + json.stringify(t)
+            + ":" + (json.stringify(t) as string)
             + " host=" + host.describe(t);
 
           let fourth: string = "callback=" + host.withTable(accept);
 
           let cycleOk: boolean = false;
           try {
-            let encoded: string = json.stringify(host.makeCycle());
+            let encoded: string = json.stringify(host.makeCycle()) as string;
             cycleOk = encoded === "";
           } catch (e) {
-            cycleOk = e.code === "E8001"
-              && e.message === "cyclic value cannot be encoded as JSON";
+            cycleOk = (e as Error).code === "E8001"
+              && (e as Error).message === "cyclic value cannot be encoded as JSON";
           }
           if (!cycleOk) {
             throw { code: "TEST_FAIL", message: "host table cycle arm" };
@@ -2485,8 +2523,8 @@ public class HostModuleLoadEmissionTest {
      * passes a declared {@code int[]} argument into the DEAL callback.
      */
     private static final String ARRAY_CROSSING_DECLARATION_SOURCE = """
-        export async function produce(): number[];
-        export async function produceNested(): number[][];
+        export function produce(): Promise<number[]>;
+        export function produceNested(): Promise<number[][]>;
         export function consume(f: (xs: number[]) => number): number;
         """;
 
@@ -2535,12 +2573,12 @@ public class HostModuleLoadEmissionTest {
           return host.consume(callbackTotal);
         }
 
-        export async function runAsync(): number {
+        export async function runAsync(): Promise<number> {
           let xs: number[] = await host.produce();
           return asyncTotal(xs);
         }
 
-        export async function runNested(): number {
+        export async function runNested(): Promise<number> {
           let xs: number[][] = await host.produceNested();
           if (xs.length !== 2) {
             throw { code: "TEST_FAIL", message: "nested completion length" };
@@ -2685,9 +2723,9 @@ public class HostModuleLoadEmissionTest {
      * instead of the DEAL function value wrapper.
      */
     private static final String ARRAY_FAILURE_DECLARATION_SOURCE = """
-        export async function produceMap(): number[];
-        export async function produceSparse(): number[];
-        export async function produceNum(): number[];
+        export function produceMap(): Promise<number[]>;
+        export function produceSparse(): Promise<number[]>;
+        export function produceNum(): Promise<number[]>;
         export function consumeMap(f: (xs: number[]) => number): number;
         export function consumeSparse(f: (xs: number[]) => number): number;
         export function consumeNum(f: (xs: number[]) => number): number;
@@ -2744,17 +2782,17 @@ public class HostModuleLoadEmissionTest {
         export function runNullable(): number { return host.consumeNullable(nullableJoin); }
         export function runRawFn(): number { return host.consumeRawFn(outer); }
 
-        export async function runAsyncMap(): number {
+        export async function runAsyncMap(): Promise<number> {
           let xs: number[] = await host.produceMap();
           return sum(xs);
         }
 
-        export async function runAsyncSparse(): number {
+        export async function runAsyncSparse(): Promise<number> {
           let xs: number[] = await host.produceSparse();
           return sum(xs);
         }
 
-        export async function runAsyncNum(): number {
+        export async function runAsyncNum(): Promise<number> {
           let xs: number[] = await host.produceNum();
           return sum(xs);
         }
@@ -2919,8 +2957,8 @@ public class HostModuleLoadEmissionTest {
         export function run(): string {
           let a: cfg.ServerConfig = { port: 1, endpoint: { path: "/x" },
             tags: ["a", "b"], note: null, fallback: { path: "/fb" } };
-          let tags: string[] | null = a.tags;
-          if (tags !== null) {
+          let tags: string[] | undefined = a.tags;
+          if (tags !== undefined) {
             if (tags.length !== 2) {
               throw { code: "TEST_FAIL", message: "default tags length" };
             }
@@ -2937,23 +2975,23 @@ public class HostModuleLoadEmissionTest {
           if (carrier !== "true:2:nil:0:a:b") {
             throw { code: "TEST_FAIL", message: "default tags carrier: " + carrier };
           }
-          if (tags !== null) {
+          if (tags !== undefined) {
             tags[0] = "mutated";
           }
-          if (!has(a.note)) {
+          if (!Object.hasOwn(a, "note")) {
             throw { code: "TEST_FAIL", message: "present null default lost" };
           }
           if (a.note !== null) {
             throw { code: "TEST_FAIL", message: "present null default value" };
           }
-          if (has(a.memo)) {
+          if (Object.hasOwn(a, "memo")) {
             throw { code: "TEST_FAIL", message: "absent default fabricated" };
           }
-          if (a.memo !== null) {
+          if (a.memo !== undefined) {
             throw { code: "TEST_FAIL", message: "absent default read" };
           }
-          let fallback: cfg.Endpoint | null = a.fallback;
-          if (fallback !== null) {
+          let fallback: cfg.Endpoint | undefined = a.fallback;
+          if (fallback !== undefined) {
             if (pathOf(fallback) !== "/fb") {
               throw { code: "TEST_FAIL", message: "nested class default value" };
             }
@@ -2961,8 +2999,8 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "nested class default lost" };
           }
           let b: cfg.ServerConfig = { port: 2, endpoint: { path: "/y" }, tags: ["z"] };
-          let bTags: string[] | null = b.tags;
-          if (bTags !== null) {
+          let bTags: string[] | undefined = b.tags;
+          if (bTags !== undefined) {
             if (bTags.length !== 1) {
               throw { code: "TEST_FAIL", message: "provided tags length" };
             }
@@ -2973,12 +3011,12 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "provided tags lost" };
           }
           let omitted: cfg.ServerConfig = { port: 0, endpoint: { path: "/o" } };
-          if (has(omitted.tags) || has(omitted.note) || has(omitted.fallback)) {
+          if (Object.hasOwn(omitted, "tags") || Object.hasOwn(omitted, "note") || Object.hasOwn(omitted, "fallback")) {
             throw { code: "TEST_FAIL", message: "omitted optional fabricated" };
           }
           let c: cfg.ServerConfig = { port: 3, endpoint: { path: "/z" }, tags: ["a", "b"] };
-          let cTags: string[] | null = c.tags;
-          if (cTags !== null) {
+          let cTags: string[] | undefined = c.tags;
+          if (cTags !== undefined) {
             if (cTags.length !== 2) {
               throw { code: "TEST_FAIL", message: "second default tags length" };
             }
@@ -2992,8 +3030,8 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "second default tags lost" };
           }
           let bundle: cfg.Bundle = { label: "b", action: function(x: number): number { return x + 1; } };
-          let action: ((x: number) => number) | null = bundle.action;
-          if (action !== null) {
+          let action: ((x: number) => number) | undefined = bundle.action;
+          if (action !== undefined) {
             let r: number = action(41);
             if (r !== 42) {
               throw { code: "TEST_FAIL", message: "function default result" };
@@ -3010,7 +3048,7 @@ public class HostModuleLoadEmissionTest {
 
         export function badDefaults(): string {
           let e: cfg.OptionalOnly = {};
-          if (has(e.flag)) {
+          if (Object.hasOwn(e, "flag")) {
             throw { code: "TEST_FAIL", message: "omitted flag fabricated" };
           }
           return "constructed";
@@ -3267,7 +3305,7 @@ public class HostModuleLoadEmissionTest {
           let dynamic: string = callPair(host.describePair, cfg);
 
           let made: host.ServerConfig = host.make();
-          let tagsAbsent: boolean = made.tags === null;
+          let tagsAbsent: boolean = made.tags === undefined;
           let noteNull: boolean = made.note === null;
           let madeCheck: string = check(
             made.port === 7
@@ -3628,8 +3666,8 @@ public class HostModuleLoadEmissionTest {
           action: (x: number) => number;
         }
 
-        export async function describeAsync(s: ServerConfig, g: (x: number) => number): string;
-        export async function describeBundlesAsync(a: Bundle, b: Bundle): string;
+        export function describeAsync(s: ServerConfig, g: (x: number) => number): Promise<string>;
+        export function describeBundlesAsync(a: Bundle, b: Bundle): Promise<string>;
         """;
 
     /**
@@ -3662,11 +3700,11 @@ public class HostModuleLoadEmissionTest {
           return "ok";
         }
 
-        function pick(): async (s: host.ServerConfig, g: (x: number) => number) => string {
+        function pick(): (s: host.ServerConfig, g: (x: number) => number) => Promise<string> {
           return host.describeAsync;
         }
 
-        export async function run(): string {
+        export async function run(): Promise<string> {
           let cfg: host.ServerConfig = {
             port: 9090,
             endpoint: { path: "/api" },
@@ -3680,7 +3718,7 @@ public class HostModuleLoadEmissionTest {
           // The runtime-resolved async host call: the callee value's
           // execution class resolves to the loaded host surface entry at
           // execution (the dynamic HOST arm under RUN).
-          let dyn: async (s: host.ServerConfig, g: (x: number) => number) => string =
+          let dyn: (s: host.ServerConfig, g: (x: number) => number) => Promise<string> =
             pick();
           let dynamicText: string = await dyn(cfg, cb);
           let marker: Marker = { count: 0 };
@@ -3692,10 +3730,10 @@ public class HostModuleLoadEmissionTest {
           // nested source: the source binding is never assigned, so the
           // adapted declaration records the value it was created over and
           // the nested source start is the emitted static host call.
-          let valueSrc: async (s: host.ServerConfig, g: (x: number) => number) => string =
+          let valueSrc: (s: host.ServerConfig, g: (x: number) => number) => Promise<string> =
             host.describeAsync;
-          let fixed: async (s: host.ServerConfig, g: (x: number) => number,
-                            extra: number) => string = valueSrc;
+          let fixed: (s: host.ServerConfig, g: (x: number) => number,
+                            extra: number) => Promise<string> = valueSrc;
           let fixedText: string = await fixed(cfg, cb, extra());
           // The arity-extended adapter-over-async host call over an assigned
           // source binding: the reassignment defeats the source binding's
@@ -3704,20 +3742,20 @@ public class HostModuleLoadEmissionTest {
           // the source's execution class is selected at execution (the
           // runtime-resolved nested start, the dynamic HOST arm under
           // ELIDED_BY_ADAPTER).
-          let src: async (s: host.ServerConfig, g: (x: number) => number) => string =
+          let src: (s: host.ServerConfig, g: (x: number) => number) => Promise<string> =
             host.describeAsync;
           src = src;
-          let sharedFixed: async (s: host.ServerConfig, g: (x: number) => number,
-                                  extra: number) => string = src;
+          let sharedFixed: (s: host.ServerConfig, g: (x: number) => number,
+                                  extra: number) => Promise<string> = src;
           let sharedFixedText: string = await sharedFixed(cfg, cb, extra());
           // The arity-extended adapter-over-async host call, runtime-resolved
           // nested source: the materialized source value's execution class is
           // selected at execution (the dynamic HOST arm under
           // ELIDED_BY_ADAPTER).
-          let dynSrc: async (s: host.ServerConfig, g: (x: number) => number) => string =
+          let dynSrc: (s: host.ServerConfig, g: (x: number) => number) => Promise<string> =
             pick();
-          let dynFixed: async (s: host.ServerConfig, g: (x: number) => number,
-                               extra: number) => string = dynSrc;
+          let dynFixed: (s: host.ServerConfig, g: (x: number) => number,
+                               extra: number) => Promise<string> = dynSrc;
           let dynText: string = await dynFixed(cfg, cb, extra());
           // Two aliased class arguments whose function-typed field needs a
           // host-facing copy: the one crossing memo makes them one object.
@@ -4093,19 +4131,19 @@ public class HostModuleLoadEmissionTest {
           scores: number[];
         }
 
-        export async function make(): ServerConfig;
-        export async function makeAll(): Endpoint[];
-        export async function makeBundle(): table;
-        export async function makePlain(): table;
-        export async function makeNumber(): number;
-        export async function makeCallback(): (x: number) => number;
-        export async function makeBadArray(): number[];
-        export async function makeNull(): string | null;
+        export function make(): Promise<ServerConfig>;
+        export function makeAll(): Promise<Endpoint[]>;
+        export function makeBundle(): Promise<Record<string, unknown>>;
+        export function makePlain(): Promise<Record<string, unknown>>;
+        export function makeNumber(): Promise<number>;
+        export function makeCallback(): Promise<(x: number) => number>;
+        export function makeBadArray(): Promise<number[]>;
+        export function makeNull(): Promise<string | null>;
         export function checkClean(): string;
         export function inspectPlain(): string;
         export function inspectBundle(): string;
         export function checkCallback(): string;
-        export function bag(): table;
+        export function bag(): Record<string, unknown>;
         """;
 
     /**
@@ -4135,34 +4173,34 @@ public class HostModuleLoadEmissionTest {
           return out;
         }
 
-        export async function runClass(): string {
+        export async function runClass(): Promise<string> {
           let s: host.ServerConfig = await host.make();
-          let bag: table = host.bag();
+          let bag: Record<string, unknown> = host.bag();
           bag.cfg = s;
           bag.scores = s.scores;
           if (s.endpoint !== s.backup) {
             throw { code: "TEST_FAIL", message: "completion field alias" };
           }
-          let tags: string[] | null = s.tags;
+          let tags: string[] | undefined = s.tags;
           let tagText: string = "absent";
-          if (tags !== null) {
+          if (tags !== undefined) {
             tagText = joined(tags);
           }
-          let label: string | null = s.label;
-          if (label !== null) {
+          let label: string | undefined = s.label;
+          if (label !== undefined) {
             throw { code: "TEST_FAIL", message: "absent optional" };
           }
-          let note: string | null = s.note;
+          let note: string | null | undefined = s.note;
           let noteText: string = "absent";
           if (note === null) {
             noteText = "null";
           }
-          let header: string = json.stringify({ port: s.port });
+          let header: string = json.stringify({ port: s.port }) as string;
           return header + ":" + s.endpoint.path + ":" + tagText + ":"
             + noteText + ":host=" + host.checkClean();
         }
 
-        export async function runAll(): string {
+        export async function runAll(): Promise<string> {
           let xs: host.Endpoint[] = await host.makeAll();
           if (xs.length !== 2) {
             throw { code: "TEST_FAIL", message: "class array length" };
@@ -4170,50 +4208,50 @@ public class HostModuleLoadEmissionTest {
           if (xs[0] !== xs[1]) {
             throw { code: "TEST_FAIL", message: "class array alias" };
           }
-          return json.stringify({ length: xs.length, path: xs[0].path });
+          return json.stringify({ length: xs.length, path: xs[0].path }) as string;
         }
 
-        export async function runBundle(): string {
-          let t: table = await host.makeBundle();
-          let endpoint: host.Endpoint = t.endpoint;
-          let alias: host.Endpoint = t.alias;
+        export async function runBundle(): Promise<string> {
+          let t: Record<string, unknown> = await host.makeBundle();
+          let endpoint: host.Endpoint = t.endpoint as host.Endpoint;
+          let alias: host.Endpoint = t.alias as host.Endpoint;
           if (endpoint !== alias) {
             throw { code: "TEST_FAIL", message: "table copy alias" };
           }
-          let bump: (x: number) => number = t.bump;
+          let bump: (x: number) => number = t.bump as (x: number) => number;
           let value: number = bump(41);
-          return endpoint.path + ":" + json.stringify({ value: value })
+          return endpoint.path + ":" + (json.stringify({ value: value }) as string)
             + ":host=" + host.inspectBundle();
         }
 
-        export async function runPlain(): string {
-          let t: table = await host.makePlain();
+        export async function runPlain(): Promise<string> {
+          let t: Record<string, unknown> = await host.makePlain();
           t.extra = 9;
           return host.inspectPlain();
         }
 
-        export async function runNumber(): string {
+        export async function runNumber(): Promise<string> {
           let n: number = await host.makeNumber();
-          return json.stringify({ ms: n });
+          return json.stringify({ ms: n }) as string;
         }
 
-        export async function runCallback(): string {
+        export async function runCallback(): Promise<string> {
           let g: (x: number) => number = await host.makeCallback();
           let value: number = g(41);
-          return json.stringify({ value: value })
+          return (json.stringify({ value: value }) as string)
             + ":host=" + host.checkCallback();
         }
 
-        export function peek(): table {
+        export function peek(): Record<string, unknown> {
           return host.bag();
         }
 
-        export async function runBad(): string {
+        export async function runBad(): Promise<string> {
           let xs: number[] = await host.makeBadArray();
           return "unreachable";
         }
 
-        export async function runNull(): string {
+        export async function runNull(): Promise<string> {
           let v: string | null = await host.makeNull();
           if (v !== null) {
             throw { code: "TEST_FAIL", message: "null completion" };
@@ -4397,7 +4435,7 @@ public class HostModuleLoadEmissionTest {
             for (String descriptor : List.of(
                     "\"@$external/host/complete_probe/ServerConfig\"",
                     "\"[@$external/host/complete_probe/Endpoint]\"",
-                    "\"table\"", "\"number\"", "\"(number)->number\"",
+                    "\"record\"", "\"number\"", "\"(number)->number\"",
                     "\"[number]\"", "\"?string\"")) {
                 check(lua.contains(carrierIn + descriptor + ", __cA, {})"),
                     "the completion crossing of " + descriptor
@@ -4548,7 +4586,7 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function consume(f: (s: ServerConfig) => ServerConfig): string;
-        export function consumeTable(f: () => table): string;
+        export function consumeTable(f: () => Record<string, unknown>): string;
         export function consumeBundle(f: (b: Bundle) => Bundle): string;
         export function consumeBundleValue(f: () => Bundle): string;
         export function apply(f: (x: number) => number, v: number): number;
@@ -4583,8 +4621,8 @@ public class HostModuleLoadEmissionTest {
           if (s.endpoint.path !== "/e") {
             throw { code: "TEST_FAIL", message: "callback endpoint" };
           }
-          let tags: string[] | null = s.tags;
-          if (tags === null) {
+          let tags: string[] | undefined = s.tags;
+          if (tags === undefined) {
             throw { code: "TEST_FAIL", message: "callback tags absent" };
           } else {
             if (tags.length !== 2) {
@@ -4607,8 +4645,8 @@ public class HostModuleLoadEmissionTest {
           return y;
         }
 
-        function fresh(): table {
-          let t: table = { step: scale };
+        function fresh(): Record<string, unknown> {
+          let t: Record<string, unknown> = { step: scale };
           return t;
         }
 
@@ -4680,7 +4718,7 @@ public class HostModuleLoadEmissionTest {
             let ignored: number = wrong(1);
             return "mismatch=admitted";
           } catch (e) {
-            return "mismatch=" + e.code + "|" + e.message;
+            return "mismatch=" + (e as Error).code + "|" + (e as Error).message;
           }
         }
 
@@ -4991,25 +5029,26 @@ public class HostModuleLoadEmissionTest {
         export class Bundle {
           label: string;
           action: (s: string) => string;
-          extras: table;
+          extras: Record<string, unknown>;
         }
 
-        export function makeTable(): table;
-        export function consumeTable(t: table): string;
-        export function echoTable(t: table): table;
+        export function makeTable(): Record<string, unknown>;
+        export function consumeTable(t: Record<string, unknown>): string;
+        export function echoTable(t: Record<string, unknown>): Record<string, unknown>;
         export function makeBundle(): Bundle;
         export function consumeBundle(b: Bundle): string;
         export function makeBadBundle(): Bundle;
-        export function makePlainTable(): table;
-        export function observePlain(t: table): string;
-        export function makeClassyTable(): table;
-        export function observeClassy(t: table): string;
-        export function makeDenseTable(): table;
-        export function observeDense(items: table): string;
-        export function makeNullTable(): table;
-        export function observeNull(t: table): string;
+        export function makePlainTable(): Record<string, unknown>;
+        export function observePlain(t: Record<string, unknown>): string;
+        export function makeClassyTable(): Record<string, unknown>;
+        export function observeClassy(t: Record<string, unknown>): string;
+        export function makeDenseTable(): Record<string, unknown>;
+        export function observeDense(items: Record<string, unknown>): string;
+        export function makeNullTable(): Record<string, unknown>;
+        export function observeNull(t: Record<string, unknown>): string;
         export function observeMade(): string;
-        export function makeBadValues(): table;
+        export function makeBadValues(): Record<string, unknown>;
+        export function corruptSignature(holder: Record<string, unknown>): boolean;
         """;
 
     /** The second module of the drive: a DEAL function value whose signature
@@ -5046,9 +5085,9 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runMakeTable(): string {
-          let t: table = host.makeTable();
-          let cfg: host.Cfg = t.cfg;
-          let fn: (n: number) => number = t.fn;
+          let t: Record<string, unknown> = host.makeTable();
+          let cfg: host.Cfg = t.cfg as host.Cfg;
+          let fn: (n: number) => number = t.fn as (n: number) => number;
           let r: number = fn(41);
           let ok: string = "no";
           if (cfg.count === 7 && cfg.ratio === 2.5 && r === 42) {
@@ -5058,13 +5097,13 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runConsumeTable(): string {
-          let made: table = host.makeTable();
-          let cfg: host.Cfg = made.cfg;
-          let hfn: (n: number) => number = made.fn;
+          let made: Record<string, unknown> = host.makeTable();
+          let cfg: host.Cfg = made.cfg as host.Cfg;
+          let hfn: (n: number) => number = made.fn as (n: number) => number;
           let r: number = hfn(41);
           let p: Point = { x: 3, y: 4 };
           let e: Error = { code: "E_X", message: "boom" };
-          let t: table = { cfg: cfg, hfn: hfn, fn: util.bump, pt: p,
+          let t: Record<string, unknown> = { cfg: cfg, hfn: hfn, fn: util.bump, pt: p,
             other: p, xs: [p], err: e, errs: [e] };
           let ok: string = "no";
           if (r === 42 && cfg.count === 7) {
@@ -5076,17 +5115,17 @@ public class HostModuleLoadEmissionTest {
         export function runEcho(): string {
           let p: Point = { x: 3, y: 4 };
           let e: Error = { code: "E_X", message: "boom" };
-          let t: table = { pt: p, other: p, xs: [p], fn: util.bump,
+          let t: Record<string, unknown> = { pt: p, other: p, xs: [p], fn: util.bump,
             err: e, errs: [e] };
-          let echoed: table = host.echoTable(t);
-          let a: Point = echoed.pt;
-          let b: Point = echoed.other;
-          let xs: Point[] = echoed.xs;
+          let echoed: Record<string, unknown> = host.echoTable(t);
+          let a: Point = echoed.pt as Point;
+          let b: Point = echoed.other as Point;
+          let xs: Point[] = echoed.xs as Point[];
           let c: Point = xs[0];
-          let fn: (n: number) => number = echoed.fn;
+          let fn: (n: number) => number = echoed.fn as (n: number) => number;
           let r: number = fn(41);
-          let err: Error = echoed.err;
-          let errs: Error[] = echoed.errs;
+          let err: Error = echoed.err as Error;
+          let errs: Error[] = echoed.errs as Error[];
           let errInArray: Error = errs[0];
           let alias: string = "no";
           if (a === b && a === c && a.x === 3 && a.y === 4) {
@@ -5107,9 +5146,9 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runBundle(): string {
-          let made: table = host.makeTable();
-          let cfg: host.Cfg = made.cfg;
-          let hfn: (n: number) => number = made.fn;
+          let made: Record<string, unknown> = host.makeTable();
+          let cfg: host.Cfg = made.cfg as host.Cfg;
+          let hfn: (n: number) => number = made.fn as (n: number) => number;
           let r: number = hfn(41);
           let p: Point = { x: 5, y: 6 };
           let b: host.Bundle = { label: "box", action: scale,
@@ -5139,31 +5178,35 @@ public class HostModuleLoadEmissionTest {
             let v: string = action("x");
             return "wrongField=admitted";
           } catch (e) {
-            return "wrongField=" + e.code + "|" + e.message;
+            return "wrongField=" + (e as Error).code + "|" + (e as Error).message;
           }
         }
 
         export function runWrongMember(): string {
-          let t: table = host.makeTable();
+          let t: Record<string, unknown> = host.makeTable();
+          let original: (n: number) => number = t.fn as (n: number) => number;
+          if (!host.corruptSignature({value: original})) {
+            throw {code: "TEST_FAIL", message: "signature mutation failed"};
+          }
           try {
-            let fn: (s: string) => number = t.fn;
-            let r: number = fn("x");
+            let fn: (n: number) => number = original;
+            let r: number = fn(1);
             return "wrongMember=admitted";
           } catch (e) {
-            return "wrongMember=" + e.code + "|" + e.message;
+            return "wrongMember=" + (e as Error).code + "|" + (e as Error).message;
           }
         }
 
         export function runShare(): string {
-          let t: table = host.makePlainTable();
+          let t: Record<string, unknown> = host.makePlainTable();
           t.extra = 9;
           return host.observePlain(t);
         }
 
         export function runCopy(): string {
-          let t: table = host.makeClassyTable();
-          let nested: table = t.nested;
-          let same: table = t.again;
+          let t: Record<string, unknown> = host.makeClassyTable();
+          let nested: Record<string, unknown> = t.nested as Record<string, unknown>;
+          let same: Record<string, unknown> = t.again as Record<string, unknown>;
           let memo: string = "no";
           if (nested === same) {
             memo = "yes";
@@ -5173,61 +5216,68 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runDense(): string {
-          let t: table = host.makeDenseTable();
-          let items: table = t.items;
+          let t: Record<string, unknown> = host.makeDenseTable();
+          let items: Record<string, unknown> = t.items as Record<string, unknown>;
           return host.observeDense(items);
         }
 
         export function runNull(): string {
-          let t: table = host.makeNullTable();
-          let note: string | null = t.note;
-          let ratio: number = t.ratio;
-          let missing: string | null = t.missing;
+          let t: Record<string, unknown> = host.makeNullTable();
+          let note: string | null = t.note as string | null;
+          let ratio: number = t.ratio as number;
+          let missing: string | undefined = t.missing as string | undefined;
           let ok: string = "no";
-          if (note === null && missing === null && ratio === 2.5) {
+          if (note === null && missing === undefined && ratio === 2.5) {
             ok = "yes";
           }
           return "null=" + ok + "," + host.observeNull(t);
         }
 
         export function runNumeric(): string {
-          let decoded: table = json.parse("{\\"a\\":1,\\"b\\":0.1,\\"n\\":null}");
-          let t: table = { doc: decoded };
-          let echoed: table = host.echoTable(t);
-          let doc: table = echoed.doc;
-          return "numeric=" + json.stringify(doc);
+          let decoded: Record<string, unknown> = json.parse("{\\"a\\":1,\\"b\\":0.1,\\"n\\":null}");
+          let t: Record<string, unknown> = { doc: decoded };
+          let echoed: Record<string, unknown> = host.echoTable(t);
+          let doc: Record<string, unknown> = echoed.doc as Record<string, unknown>;
+          return "numeric=" + (json.stringify(doc) as string);
         }
 
         export function runWrongRawFunction(): string {
-          let t: table = host.makeBadValues();
+          let t: Record<string, unknown> = host.makeBadValues();
           try {
-            let fn: (n: number) => number = t.raw;
+            let fn: (n: number) => number = t.raw as (n: number) => number;
             let r: number = fn(41);
             return "rawFunction=admitted";
           } catch (e) {
-            return "rawFunction=" + e.code + "|" + e.message;
+            return "rawFunction=" + (e as Error).code + "|" + (e as Error).message;
           }
         }
 
         export function runWrongClassValue(): string {
-          let t: table = host.makeTable();
+          let t: Record<string, unknown> = host.makeTable();
           try {
-            let c: host.Cfg = t.fn;
+            let c: host.Cfg = t.fn as host.Cfg;
             return "wrongClass=admitted";
           } catch (e) {
-            return "wrongClass=" + e.code + "|" + e.message;
+            return "wrongClass=" + (e as Error).code + "|" + (e as Error).message;
           }
         }
 
         export function runWrongElement(): string {
           let p: Point = { x: 1, y: 2 };
-          let t: table = { xs: [p] };
-          let echoed: table = host.echoTable(t);
+          let t: Record<string, unknown> = { xs: [p] };
+          let echoed: Record<string, unknown> = host.echoTable(t);
+          let admitted: Point[] = echoed.xs as Point[];
+          let value: Point | null = admitted[0];
+          let clear: () => void = function(): void { value = null; };
           try {
-            let xs: host.Cfg[] = echoed.xs;
-            return "wrongElement=admitted";
+            if (value !== null) {
+              clear();
+              let xs: Point[] = [value];
+              return "wrongElement=admitted";
+            }
+            throw {code: "TEST_FAIL", message: "element branch skipped"};
           } catch (e) {
-            return "wrongElement=" + e.code + "|" + e.message;
+            return "wrongElement=" + (e as Error).code + "|" + (e as Error).message;
           }
         }
 
@@ -5430,6 +5480,23 @@ public class HostModuleLoadEmissionTest {
             return {raw = function(x) return x end}
           end,
 
+          -- Deliberately hostile fixture-only mutation of the carried signature.
+          corruptSignature = function(holder)
+            local wrapper = holder.value
+            local carrier = wrapper
+            if type(wrapper.f) == "function" then
+              for i = 1, 100 do
+                local name, captured = debug.getupvalue(wrapper.f, i)
+                if name == nil then break end
+                if name == "carrier" then carrier = captured; break end
+              end
+            end
+            carrier.sig = "(string)->number"
+            carrier[K.csig] = "(string)->number"
+            carrier[K.sig] = "(string)->number"
+            return true
+          end,
+
           makeNullTable = function()
             return {note = rt.__NULL, ratio = 2.5}
           end,
@@ -5462,13 +5529,13 @@ public class HostModuleLoadEmissionTest {
         runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=nil res=ab! bad=E8001|expected string|string|number|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=nil,extras.hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,invoked=yes
         runFieldCall=field=yes
         runWrongField=wrongField=E8010|function signature mismatch: expected (string)->string, got (number)->number
-        runWrongMember=wrongMember=E8010|function signature mismatch: expected (string)->number, got (number)->number
+        runWrongMember=wrongMember=E8010|function signature mismatch: expected (number)->number, got (string)->number
         runShare=plain=extra:9,shared:true,hostextra:9
         runCopy=classy=marker:3,hostmarker:nil,copy:true,memo=yes
         runDense=dense=n:3,array:false,v1:1
         runNull=null=yes,null=note:true,missing:true,ratio:number:2.5
         runNumeric=numeric={"a":1.0,"b":0.1,"n":null}
-        runWrongRawFunction=rawFunction=E8001|expected function
+        runWrongRawFunction=rawFunction=E8001|expected unknown
         runWrongClassValue=wrongClass=E8001|expected class instance
         runWrongElement=wrongElement=E8003|array element 1 type mismatch
         TRANSCRIPT-END
@@ -6212,6 +6279,31 @@ public class HostModuleLoadEmissionTest {
 
               public static void main(String[] args) {
                 App.dealMain();
+                Object undefined = deal.codegen.jvm.JvmRuntime.UNDEFINED;
+                Object missing = deal.codegen.jvm.JvmRuntime.MISSING;
+                Object record = new deal.codegen.jvm.JvmRuntime.Table();
+                for (String desc : new String[]{"record", "?record", "!record", "?!record"}) {
+                  check(App.__hostParamCheck(1, desc, record, "probe.deal", 1, 1) == record,
+                      "Record host admission preserves identity " + desc);
+                }
+                for (String desc : new String[]{"!record", "?!record", "undefined", "null|undefined", "unknown"}) {
+                  check(App.__hostParamCheck(1, desc, missing, "probe.deal", 1, 1) == undefined,
+                      "host missing admits undefined " + desc);
+                }
+                for (String desc : new String[]{"?record", "?!record", "null|undefined", "unknown"}) {
+                  check(App.__hostParamCheck(1, desc, null, "probe.deal", 1, 1) == null,
+                      "host null permission " + desc);
+                }
+                for (String desc : new String[]{"!number", "?!number", "![number]", "!()->number"}) {
+                  check(App.__hostProjectArg(desc, undefined) == undefined,
+                      "outbound undefined identity " + desc);
+                  check(App.__hostToDeal(desc, undefined) == undefined,
+                      "inbound undefined identity " + desc);
+                }
+                expect("E8010", "parameter 1 type mismatch: expected table", "!record", "table",
+                    () -> App.__hostParamCheck(1, "!record", null, "probe.deal", 1, 1));
+                expect("E8010", "parameter 1 type mismatch: expected table", "?record", "undefined",
+                    () -> App.__hostParamCheck(1, "?record", missing, "probe.deal", 1, 1));
                 // The valid declared carrier crosses both wrapper cells and
                 // its element lands in the production array.
                 deal.codegen.jvm.JvmRuntime.Array good =
@@ -6516,7 +6608,7 @@ public class HostModuleLoadEmissionTest {
             String app, String host, String label,
             Map<String, String> extraSources) throws Exception {
         writeFileIn(root, "deal.json", """
-            {"languageVersion": "1.4", "backend": "luajit",
+            {"languageVersion": "1.5", "backend": "luajit",
              "moduleRoots": ["src"], "output": "out",
              "externals": {"host/%s":
                {"declaration": "bindings/%s.d.deal"}}}

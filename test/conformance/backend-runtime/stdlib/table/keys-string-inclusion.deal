@@ -6,12 +6,12 @@
 import * as tables from "std/table";
 
 export function test_table_keys_string_inclusion(): null {
-  let t: table = { alpha: 1, beta: "b", gamma: null };
+  let t: Record<string, unknown> = { alpha: 1, beta: "b", gamma: null };
   let ks: string[] = tables.keys(t);
   if (ks.length !== 3) {
     throw { code: "TEST_FAIL", message: "keys length mismatch" };
   }
-  let found: table = { alpha: false, beta: false, gamma: false };
+  let found: Record<string, unknown> = { alpha: false, beta: false, gamma: false };
   let i: number = 0;
   while (i < ks.length) {
     let k: string = ks[i];
@@ -20,9 +20,9 @@ export function test_table_keys_string_inclusion(): null {
     if (k === "gamma") { found.gamma = true; }
     i = i + 1;
   }
-  let alphaHit: boolean = found.alpha;
-  let betaHit: boolean = found.beta;
-  let gammaHit: boolean = found.gamma;
+  let alphaHit: boolean = found.alpha as boolean;
+  let betaHit: boolean = found.beta as boolean;
+  let gammaHit: boolean = found.gamma as boolean;
   if (!alphaHit || !betaHit || !gammaHit) {
     throw { code: "TEST_FAIL", message: "a string key is missing" };
   }

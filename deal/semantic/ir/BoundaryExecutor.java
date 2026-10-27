@@ -122,6 +122,16 @@ public final class BoundaryExecutor {
     // Policy handlers
     // =========================================================================
 
+    /** Checked assertions publish E8001 for every mismatch, including nested checks. */
+    public static BoundaryOutcome checkAssertion(RuntimeDescriptor descriptor, BoundaryValueView view) {
+        CoreResult result = core(descriptor, view);
+        if (result instanceof CorePass passed) {
+            return new BoundaryOutcome.Pass(passed.value());
+        }
+        return new BoundaryOutcome.Fail(renderKind(FailureArmId.TYPED_BOUNDARY_KIND,
+            (CoreFail) kindFail(descriptor, view)));
+    }
+
     /** TYPE_DESCRIPTOR: the descriptor-kind rule for non-function descriptors. */
     private static BoundaryOutcome checkTypeDescriptor(RuntimeDescriptor descriptor,
                                                        BoundaryValueView view) {
@@ -184,6 +194,9 @@ public final class BoundaryExecutor {
     /** HOST_SYNC_RETURN: no value first, then the host return cell arm. */
     private static BoundaryOutcome checkHostSyncReturn(RuntimeDescriptor descriptor,
                                                        BoundaryValueView view) {
+        if (view.kind() == ActualKind.NOTHING && descriptor instanceof RuntimeDescriptor.Void) {
+            return new BoundaryOutcome.Pass(BoundaryValueView.of(ActualKind.UNDEFINED));
+        }
         if (view.kind() == ActualKind.NOTHING) {
             FailureArm arm = FailureContractRegistry.arm(FailureArmId.HOST_SYNC_RETURN_NOTHING);
             return new BoundaryOutcome.Fail(FailureContractRegistry.render(
@@ -462,13 +475,16 @@ public final class BoundaryExecutor {
      * carried signature structurally.
      */
     private static CoreResult core(RuntimeDescriptor descriptor, BoundaryValueView view) {
-        if (view.kind() == ActualKind.MISSING
-                && descriptor instanceof RuntimeDescriptor.Nullable) {
-            // The named missing→null mapping (OPTIONAL_FIELD_READ /
-            // CONTEXTUAL_TABLE_READ with a nullable descriptor).
-            return pass(BoundaryValueView.nullView());
+        if (view.kind() == ActualKind.MISSING) {
+            view = BoundaryValueView.of(ActualKind.UNDEFINED);
         }
         return switch (descriptor) {
+            case RuntimeDescriptor.Undefined ignored -> view.kind() == ActualKind.UNDEFINED ? pass(view) : kindFail(descriptor, view);
+            case RuntimeDescriptor.Void ignored -> view.kind() == ActualKind.UNDEFINED ? pass(view) : kindFail(descriptor, view);
+            case RuntimeDescriptor.Unknown ignored -> switch (view.kind()) {
+                case NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, TABLE, ARRAY, CLASS, FUNCTION -> pass(view);
+                default -> kindFail(descriptor, view);
+            };
             case RuntimeDescriptor.Null ignored ->
                 view.kind() == ActualKind.NULL ? pass(view) : kindFail(descriptor, view);
             case RuntimeDescriptor.Boolean ignored ->
@@ -515,6 +531,8 @@ public final class BoundaryExecutor {
         if (view.kind() != ActualKind.ARRAY) {
             return kindFail(descriptor, view);
         }
+        if (view.arrayElementDescriptor() != null && !view.arrayElementDescriptor().equals(descriptor.element()))
+            return kindFail(descriptor, view);
         List<BoundaryValueView> elements = view.elements();
         for (int i = 0; i < elements.size(); i++) {
             BoundaryValueView element = elements.get(i);
@@ -548,7 +566,8 @@ public final class BoundaryExecutor {
     /** Nullable: language null passes; the inner failure propagates unchanged. */
     private static CoreResult coreNullable(RuntimeDescriptor.Nullable descriptor,
                                            BoundaryValueView view) {
-        if (view.kind() == ActualKind.NULL) {
+        if ((view.kind() == ActualKind.NULL && descriptor.admitsNull())
+                || (view.kind() == ActualKind.UNDEFINED && descriptor.admitsUndefined())) {
             return pass(view);
         }
         return core(descriptor.inner(), view);
@@ -736,6 +755,7 @@ public final class BoundaryExecutor {
     private static FailureProjections.CarrierKind carrierKindOf(BoundaryValueView view) {
         return switch (view.kind()) {
             case MISSING -> FailureProjections.CarrierKind.ABSENT;
+            case UNDEFINED -> FailureProjections.CarrierKind.UNDEFINED;
             case NULL -> FailureProjections.CarrierKind.LANGUAGE_NULL;
             case BOOLEAN -> FailureProjections.CarrierKind.BOOLEAN;
             case STRING, INVALID_UNICODE -> FailureProjections.CarrierKind.STRING;
@@ -786,6 +806,9 @@ public final class BoundaryExecutor {
 
     private static String jsonShape(RuntimeDescriptor descriptor, BoundaryValueView view) {
         return switch (descriptor) {
+            case RuntimeDescriptor.Undefined ignored -> view.kind() == ActualKind.UNDEFINED ? null : jsonToken(view);
+            case RuntimeDescriptor.Unknown ignored -> null;
+            case RuntimeDescriptor.Void ignored -> jsonToken(view);
             case RuntimeDescriptor.Class cls ->
                 view.kind() == ActualKind.CLASS
                         && cls.classId().text().equals(view.classId())

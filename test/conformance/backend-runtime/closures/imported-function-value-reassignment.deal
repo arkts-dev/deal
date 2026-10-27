@@ -20,6 +20,6 @@ export function test_imported_function_binding(): number {
 
 export function main(): null {
   let imported: number = test_imported_function_binding();
-  console.log(json.stringify({ imported: imported }));
+  console.log(json.stringify({ imported: imported }) as string);
   return null;
 }

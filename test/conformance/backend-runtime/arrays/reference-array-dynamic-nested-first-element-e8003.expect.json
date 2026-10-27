@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8003\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8003\",\"message\":\"array element 1 type mismatch\",\"sourceFile\":\"backend-runtime/arrays/reference-array-dynamic-nested-first-element-e8003.deal\",\"line\":10,\"column\":11,\"expected\":\"[table]\",\"actual\":\"table\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8003\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8003\",\"message\":\"array element 1 type mismatch\",\"sourceFile\":\"backend-runtime/arrays/reference-array-dynamic-nested-first-element-e8003.deal\",\"line\":13,\"column\":44,\"expected\":\"[record]\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -16,10 +16,10 @@
       "code": "E8003",
       "message": "array element 1 type mismatch",
       "sourceFile": "backend-runtime/arrays/reference-array-dynamic-nested-first-element-e8003.deal",
-      "line": 10,
-      "column": 11,
-      "expected": "[table]",
-      "actual": "table"
+      "line": 13,
+      "column": 44,
+      "expected": "[record]",
+      "actual": "null"
     }
   }
 }

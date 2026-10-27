@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async, runtime
 
-export async function f(): number {
+export async function f(): Promise<number> {
   let result: number = 5;
   if (result !== 5) {
     throw { code: "TEST_FAIL", message: "synchronous completion value mismatch" };

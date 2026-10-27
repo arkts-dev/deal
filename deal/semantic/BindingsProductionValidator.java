@@ -2070,6 +2070,11 @@ public final class BindingsProductionValidator {
                         + " operands (VALUE carries exactly one operand)");
                 }
                 ValueId operand = op.operands().get(0);
+                if (!(source instanceof AdaptSourceRef.Value captured)
+                        || !captured.value().equals(operand)) {
+                    return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
+                        + op.opId() + " source must name its single operand");
+                }
                 if (facts == null) {
                     facts = productionFacts(model);
                 }
@@ -2077,11 +2082,13 @@ public final class BindingsProductionValidator {
 
                 List<SemanticOp> producingLoads = new ArrayList<>();
                 List<SemanticOp> producingOthers = new ArrayList<>();
+                boolean precedesAdapter = true;
                 for (SemanticOp other : model.unit.ops()) {
+                    if (other.opId().equals(op.opId())) precedesAdapter = false;
                     if (other.result() instanceof ValueId value && value.equals(operand)) {
                         if (other.kind() == SemanticOpKind.BINDING_LOAD) {
                             producingLoads.add(other);
-                        } else {
+                        } else if (precedesAdapter) {
                             producingOthers.add(other);
                         }
                     }
@@ -2099,7 +2106,7 @@ public final class BindingsProductionValidator {
                     // identity-preservation flow (loads publish the cell's
                     // tracked identity), so a mixed production set is not
                     // proof-requiring at this level.
-                    if (producingOthers.isEmpty()) {
+                    if (producingOthers.isEmpty() && !materializedAssignmentRhs(model, op, operand)) {
                         return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                             + op.opId() + " carries a binding-load operand " + operand
                             + " without its proof (VALUE over a binding is admissible "
@@ -2144,6 +2151,27 @@ public final class BindingsProductionValidator {
             }
         }
         return Optional.empty();
+    }
+
+    /** A once-evaluated assignment RHS is a value capture, even for mutable loads. */
+    private static boolean materializedAssignmentRhs(Model model, SemanticOp adapter, ValueId operand) {
+        for (SemanticOp chain : model.unit.ops()) {
+            if (!(chain.payload() instanceof KindPayload.AssignPayload assign)
+                    || !Objects.equals(chain.result(), operand)
+                    || !Objects.equals(adapter.origin().parentOpId(), chain.opId())) continue;
+            List<OpId> children = assign.childOps();
+            int adapterIndex = children.indexOf(adapter.opId());
+            if (adapterIndex < 1 || children.lastIndexOf(adapter.opId()) != adapterIndex) continue;
+            for (SemanticOp producer : model.unit.ops()) {
+                if (producer.opId().equals(adapter.opId())) break;
+                if (producer.opId().equals(children.get(adapterIndex - 1))
+                        && Objects.equals(producer.origin().parentOpId(), chain.opId())
+                        && Objects.equals(producer.result(), operand)
+                        && Objects.equals(producer.resultType(), chain.resultType())
+                        && model.unit.ops().indexOf(adapter) < model.unit.ops().indexOf(chain)) return true;
+            }
+        }
+        return false;
     }
 
     // =========================================================================

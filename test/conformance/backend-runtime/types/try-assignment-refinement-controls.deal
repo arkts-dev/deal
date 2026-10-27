@@ -205,7 +205,7 @@ function callInducedMutationIsCatchable(): number {
       let x: number = n;
       return x + 100;
     } catch (e) {
-      expectCode("closure call", e.code, "E8001");
+      expectCode("closure call", (e as Error).code, "E8001");
       return 1;
     }
   }
@@ -222,7 +222,7 @@ function declarationCallIsCatchable(): number {
       let x: number = n;
       return x + 100;
     } catch (e) {
-      expectCode("function declaration", e.code, "E8001");
+      expectCode("function declaration", (e as Error).code, "E8001");
       return 1;
     }
   }

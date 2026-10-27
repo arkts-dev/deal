@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Nullable class checks
-// @description: Dynamic wrong table assigned to nullable class type fails when non-null
+// @description: Checked unknown extraction rejects a nonnominal Record as a nullable class; null admission is covered independently.
 // @expected: runtime-error E8001
 // @features: classes, nullable, runtime-errors
 
@@ -8,8 +8,8 @@ import * as json from "std/json";
 class Box { value: number; }
 
 export function test_dynamic_bad_nullable_class(): Box | null {
-  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
-  let b: Box | null = holder.item;
+  let holder: Record<string, unknown> = { item: json.parse("{\"value\":\"bad\"}") };
+  let b: Box | null = holder.item as Box | null;
   return b;
 }
 

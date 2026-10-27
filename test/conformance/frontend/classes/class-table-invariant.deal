@@ -4,11 +4,10 @@
 // @features: classes, tables
 
 class Point { x: number; }
-export function main(): null { return null; }
 export function main(): null {
 
 let p: Point = { x: 1 };
-let t: table = p;
+let t: Record<string, unknown> = p;
 
 
 return null;

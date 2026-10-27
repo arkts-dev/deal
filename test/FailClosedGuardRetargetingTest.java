@@ -2,7 +2,7 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
-import deal.distribution.DistributionHome;
+import deal.module.CheckoutResources;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -132,11 +132,11 @@ public class FailClosedGuardRetargetingTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-        DistributionHome distributionHome) {
+        CheckoutResources checkoutResources) {
     }
 
     private static CompilerInvocation harnessInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -200,7 +200,7 @@ public class FailClosedGuardRetargetingTest {
         return new Fixture(root, src, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             identities,
-            DistributionHome.forManifestDirectory(src.toString()));
+            CheckoutResources.forManifestDirectory(src.toString()));
     }
 
     private static Fixture importedLiteralFixture() throws Exception {
@@ -227,7 +227,7 @@ public class FailClosedGuardRetargetingTest {
             index, manifests, fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 project.modules().get(0).ast().span()),
-            java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
+            java.util.Set.of(), backend, false, fixture.checkoutResources(), stager);
     }
 
     /** The two production targets the non-FFI negative seeds cover. */
@@ -409,7 +409,7 @@ public class FailClosedGuardRetargetingTest {
 
     private static final String MANIFEST = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"
@@ -447,7 +447,7 @@ public class FailClosedGuardRetargetingTest {
 
     private static final String CAPTURE_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let fs: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];\n  { let v14Loop0: number = 0; while (v14Loop0 < 4) { let i: number = v14Loop0; {\n    fs[i] = function(): number { return i; };\n  } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }\n  let total: number = fs[0]() + fs[1]() + fs[2]() + fs[3]();\n  if (total === 6) {\n    console.log(\"PROBE|CAPTURE|ok\");\n  } else {\n    console.log(\"PROBE|CAPTURE|bad\");\n  }\n  return null;\n}\n";
 
-    private static final String TRANSFER_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let vals: number[] = [1, 2, 3, 4, 5];\n  let sum: number = 0;\n  for (let x: number of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 5) { let i: number = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    console.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    console.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
+    private static final String TRANSFER_PROBE = "import * as console from \"std/console\";\n\nexport function main(): null {\n  let vals: number[] = [1, 2, 3, 4, 5];\n  let sum: number = 0;\n  for (let x of vals) {\n    if (x === 2) {\n      continue;\n    }\n    if (x === 4) {\n      break;\n    }\n    sum = sum + x;\n  }\n  let found: number = 0;\n  { let v14Loop1: number = 0; while (v14Loop1 < 5) { let i: number = v14Loop1; {\n    try {\n      if (i === 3) {\n        break;\n      }\n    } catch (e) {\n      found = -1;\n    }\n    found = found + 1;\n  } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  if (sum === 4 && found === 3) {\n    console.log(\"PROBE|TRANSFER|ok\");\n  } else {\n    console.log(\"PROBE|TRANSFER|bad\");\n  }\n  return null;\n}\n";
 
     private static void testRealizedConstructProbes() throws Exception {
         System.out.println("-- the realized construct families compile through "

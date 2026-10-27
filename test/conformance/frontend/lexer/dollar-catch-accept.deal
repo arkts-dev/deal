@@ -6,10 +6,12 @@
 export function main(): null {
   try {
     try { throw {code:"CONTROL",message:"control"}; } catch (inner) {
-      let innerMessage: string = inner.message;
+      let innerError = inner as Error;
+      let innerMessage: string = innerError.message;
     }
   } catch (outer) {
-    let outerCode: string = outer.code;
+    let outerError = outer as Error;
+    let outerCode: string = outerError.code;
   }
   return null;
 }

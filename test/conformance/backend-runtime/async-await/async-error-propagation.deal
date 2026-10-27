@@ -3,12 +3,12 @@
 // @expected: runtime-ok
 // @features: async, await, error-handling, runtime
 
-async function inner(): number {
+async function inner(): Promise<number> {
   throw { code: "E_INNER", message: "inner error" };
   return 0;
 }
 
-export async function outer(): string {
+export async function outer(): Promise<string> {
   let intendedCatchRan: boolean = false;
   let fallbackCatchRan: boolean = false;
   let normalRan: boolean = false;
@@ -21,11 +21,11 @@ export async function outer(): string {
       normalRan = true;
     } catch (e) {
       intendedCatchRan = true;
-      intendedCode = e.code;
+      intendedCode = (e as Error).code;
     }
   } catch (outerErr) {
     fallbackCatchRan = true;
-    fallbackCode = outerErr.code;
+    fallbackCode = (outerErr as Error).code;
   }
 
   if (!intendedCatchRan || fallbackCatchRan || normalRan || intendedCode !== "E_INNER" || fallbackCode !== "") {

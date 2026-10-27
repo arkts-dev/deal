@@ -1,5 +1,5 @@
 // @spec: Control flow
-// @description: For-of observes array elements in index order for a native array literal and for a JSON-decoded array crossing a contextual typed table-field read
+// @description: For-of observes index order for native arrays and decoded unknown arrays with checked per-element string consumption
 // @expected: runtime-ok
 // @features: control-flow, for-of, arrays, json
 
@@ -7,18 +7,19 @@ import * as json from "std/json";
 
 export function test_for_of_array_order(): null {
   let digits: number = 0;
-  for (let value: number of [1, 2, 3]) { digits = digits * 10 + value; }
+  for (let value of [1, 2, 3]) { digits = digits * 10 + value; }
   if (digits !== 123) { throw { code: "TEST_FAIL", message: "for-of array order changed" }; }
   return null;
 }
 
 export function test_for_of_json_decoded_array_order(): null {
-  let data: table = json.parse("{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}");
-  let items: string[] = data.items;
+  let data: Record<string, unknown> = json.parse("{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}");
+  let items: unknown[] = data.items as unknown[];
   let count: number = 0;
   let first: string = "";
   let collected: string = "";
-  for (let item: string of items) {
+  for (let value of items) {
+    let item: string = value as string;
     if (count === 0) { first = item; }
     count = count + 1;
     collected = collected + item;
@@ -32,7 +33,7 @@ export function test_for_of_json_decoded_array_order(): null {
   if (collected !== "AdaBobCara") {
     throw { code: "TEST_FAIL", message: "for-of decoded array element order mismatch" };
   }
-  if (json.stringify(data) !== "{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}") {
+  if ((json.stringify(data) as string) !== "{\"items\":[\"Ada\",\"Bob\",\"Cara\"]}") {
     throw { code: "TEST_FAIL", message: "for-of decoded array table round-trip mismatch" };
   }
   return null;

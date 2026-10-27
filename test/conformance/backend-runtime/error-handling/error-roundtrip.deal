@@ -7,7 +7,7 @@ function produceError(): Error {
   try {
     throw { code: "E_ROUND", message: "roundtrip" };
   } catch (e) {
-    return e;
+    return e as Error;
   }
 }
 

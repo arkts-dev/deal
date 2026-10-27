@@ -1,7 +1,7 @@
 // @spec: Classes
-// @description: Corner-case subject has-computed-target-accept — has() does not accept computed target even for known optional field. (basis: HasExpression grammar: PostfixExpression dot Identifier)
+// @description: Class presence accepts a literal declared optional-field key
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
 class C {x?: number;}
-export function f(c:C): boolean {return has(c.x);}
+export function f(c:C): boolean {return Object.hasOwn(c, "x");}

@@ -128,7 +128,7 @@ public final class HarnessCompileEntry {
         Path entryFile = Path.of(entryPath).toAbsolutePath().normalize();
 
         // The harness invocation record of this compile: the one
-        // release-owned production record (the sole DEAL_V1_4_BINARY64
+        // release-owned production record (the sole DEAL_V1_5_BINARY64
         // profile). The record selects no arm — phase 4 always runs the
         // one production arm — and the metadata never selects semantics.
         CompilerInvocation invocation = ConformanceHarnessMetadata.invocation();

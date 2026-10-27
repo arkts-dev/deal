@@ -45,7 +45,7 @@ public final class ClassOpsExecutor {
     // =========================================================================
 
     public sealed interface Value
-        permits Value.Null, Value.Bool, Value.Number, Value.String,
+        permits Value.Undefined, Value.Null, Value.Bool, Value.Number, Value.String,
                 Value.Table, Value.Array, Value.Class, Value.Function,
                 Value.Missing {
 
@@ -65,6 +65,11 @@ public final class ClassOpsExecutor {
             public ActualKind actualKind() {
                 return ActualKind.NULL;
             }
+        }
+
+        enum Undefined implements Value {
+            INSTANCE;
+            public ActualKind actualKind() { return ActualKind.UNDEFINED; }
         }
 
         /** A boolean value. */
@@ -120,7 +125,9 @@ public final class ClassOpsExecutor {
 
 
         /** An array value carrying its ordered element list. */
-        record Array(SemanticArray<Value> array) implements Value {
+        record Array(SemanticArray<Value> array, RuntimeDescriptor elementDescriptor) implements Value {
+
+            public Array(SemanticArray<Value> array) { this(array, null); }
 
             public Array {
                 Objects.requireNonNull(array, "array must not be null");
@@ -838,7 +845,7 @@ public final class ClassOpsExecutor {
         if (state instanceof FieldState.Present present) {
             readValue = present.value();
         } else {
-            readValue = Value.Null.INSTANCE;
+            readValue = Value.Undefined.INSTANCE;
         }
 
         // The field boundary's pinned result descriptor (the checker's
@@ -1502,6 +1509,9 @@ public final class ClassOpsExecutor {
             SemanticOp op, RuntimeDescriptor descriptor, Value raw,
             Map<ClassId, ClassLayout> layouts) {
         return switch (descriptor) {
+            case RuntimeDescriptor.Undefined ignored -> throw new JsonFromFailure("JSON cannot contain undefined");
+            case RuntimeDescriptor.Unknown ignored -> raw;
+            case RuntimeDescriptor.Void ignored -> throw new Defect("Void is not a JSON field type");
             case RuntimeDescriptor.Null ignored -> {
                 if (!(raw instanceof Value.Null)) {
                     throw new JsonFromFailure("expected null, got " + raw.actualKind());
@@ -1536,7 +1546,7 @@ public final class ClassOpsExecutor {
                     yield tableValue;
                 }
                 // A table field accepts only a JSON object
-                // (docs/spec-v1.4.md:695): an array-shaped value of any
+                // (docs/spec-v1.5.md:695): an array-shaped value of any
                 // length, the empty array included, is a validation
                 // failure — never an empty table.
                 throw new JsonFromFailure("expected table, got " + raw.actualKind());
@@ -1551,10 +1561,11 @@ public final class ClassOpsExecutor {
                     requireJsonShape(op, element);
                     decoded.add(decodeRaw(op, arrayDescriptor.element(), element, layouts));
                 }
-                yield new Value.Array(SemanticArray.of(decoded));
+                yield new Value.Array(SemanticArray.of(decoded), arrayDescriptor.element());
             }
             case RuntimeDescriptor.Nullable nullable -> {
                 if (raw instanceof Value.Null) {
+                    if (!nullable.admitsNull()) throw new JsonFromFailure("null is not admitted");
                     yield Value.Null.INSTANCE;
                 }
                 yield decodeRaw(op, nullable.inner(), raw, layouts);
@@ -1633,6 +1644,7 @@ public final class ClassOpsExecutor {
 
                 String encoded = encodeField(op, field.descriptor(), fieldValue,
                     fieldPosition, layouts, stringifier, entered);
+                if (encoded == null) continue;
                 if (!first) {
                     out.append(',');
                 }
@@ -1652,7 +1664,13 @@ public final class ClassOpsExecutor {
             SemanticOp op, RuntimeDescriptor descriptor, Value value, String fieldPath,
             Map<ClassId, ClassLayout> layouts, JsonStringifier stringifier,
             Set<Object> entered) {
+        if (value instanceof Value.Undefined &&
+                (descriptor instanceof RuntimeDescriptor.Undefined
+                    || descriptor instanceof RuntimeDescriptor.Nullable nullable && nullable.admitsUndefined())) return null;
         return switch (descriptor) {
+            case RuntimeDescriptor.Undefined ignored -> throw new JsonToFailure(fieldPath, actualTokenOf(value));
+            case RuntimeDescriptor.Unknown ignored -> seamText(op, stringifier, value, fieldPath, entered);
+            case RuntimeDescriptor.Void ignored -> throw new Defect("Void is not a JSON field type");
             case RuntimeDescriptor.Null ignored -> {
                 if (!(value instanceof Value.Null)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
@@ -1667,10 +1685,12 @@ public final class ClassOpsExecutor {
             }
 
             case RuntimeDescriptor.Number ignored -> {
-                if (!(value instanceof Value.Number)) {
+                if (!(value instanceof Value.Number number)) {
                     throw new JsonToFailure(fieldPath, actualTokenOf(value));
                 }
-                // Nonfinite numbers fail inside the seam (the E8 row).
+                // Declared numbers follow JSON encoding, independently of the
+                // narrower dynamic Record-content seam and its path failures.
+                if (!Double.isFinite(number.value())) yield "null";
                 yield seamText(op, stringifier, value, fieldPath, entered);
             }
             case RuntimeDescriptor.String ignored -> {
@@ -1702,6 +1722,7 @@ public final class ClassOpsExecutor {
             }
             case RuntimeDescriptor.Nullable nullable -> {
                 if (value instanceof Value.Null) {
+                    if (!nullable.admitsNull()) throw new JsonToFailure(fieldPath, actualTokenOf(value));
                     yield seamText(op, stringifier, value, fieldPath, entered);
                 }
                 yield encodeField(op, nullable.inner(), value, fieldPath, layouts,
@@ -1756,9 +1777,9 @@ public final class ClassOpsExecutor {
                     out.append(',');
                 }
                 String elementPath = fieldPath + "[" + i + "]";
-                out.append(encodeField(op, elementDescriptor,
-                    elements.array().elementAt(i), elementPath, layouts, stringifier,
-                    entered));
+                String encoded = encodeField(op, elementDescriptor,
+                    elements.array().elementAt(i), elementPath, layouts, stringifier, entered);
+                out.append(encoded == null ? "null" : encoded);
             }
             out.append(']');
             return out.toString();
@@ -1808,6 +1829,11 @@ public final class ClassOpsExecutor {
                                                     Value value,
                                                     Map<ClassId, ClassLayout> layouts) {
         switch (descriptor) {
+            case RuntimeDescriptor.Undefined ignored -> {
+                if (value.actualKind().token().equals("undefined")) return;
+            }
+            case RuntimeDescriptor.Unknown ignored -> { return; }
+            case RuntimeDescriptor.Void ignored -> throw new Defect("Void is not a field type");
             case RuntimeDescriptor.Null ignored -> {
                 if (value instanceof Value.Null) {
                     return;

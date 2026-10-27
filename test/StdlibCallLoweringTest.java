@@ -157,14 +157,14 @@ public class StdlibCallLoweringTest {
 
     /** The fixed common-shadow invocation of the carrier tests. */
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     /** The validated-lowering facts of the checked project (R-PROFILE). */
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_4_BINARY64,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_5_BINARY64,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -209,7 +209,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));
@@ -239,7 +239,7 @@ public class StdlibCallLoweringTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgramE7(subject,
-            SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
+            SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds), Map.of(), Set.of());
@@ -395,10 +395,10 @@ public class StdlibCallLoweringTest {
                       let s6: string = str.replace("aba", "a", "z");
                       let xs7: string[] = str.split("a,b", ",");
                       let s8: string = str.trim(" x ");
-                      let t: table = {k: 1};
+                      let t: Record<string, unknown> = {k: 1};
                       let ks9: string[] = tbl.keys(t);
-                      let jt10: table = json.parse("{\\"a\\": 1}");
-                      let js11: string = json.stringify(t);
+                      let jt10: Record<string, unknown> = json.parse("{\\"a\\": 1}");
+                      let js11: string | undefined = json.stringify(t);
                       let f12: number = math.floor(1.5);
                       let f13: number = math.ceil(1.5);
                       let f14: number = math.sqrt(4.0);
@@ -813,7 +813,7 @@ public class StdlibCallLoweringTest {
                     import * as console from "std/console";
 
                     function run(): null {
-                      let g: (x: string) => null = console.log;
+                      let g: (x: string) => void = console.log;
                       g("x");
                       return null;
                     }
@@ -1155,8 +1155,8 @@ public class StdlibCallLoweringTest {
 
                     function run(): null {
                       console.log("hi");
-                      let t: table = json.parse("{\\"k\\": 1}");
-                      let s: string = json.stringify(t);
+                      let t: Record<string, unknown> = json.parse("{\\"k\\": 1}");
+                      let s: string | undefined = json.stringify(t);
                       let f: number = math.floor(1.5);
                       let i: number = math.absNumber(-3);
                       return null;
@@ -1181,12 +1181,12 @@ public class StdlibCallLoweringTest {
                 moduleIds.add(module.moduleId());
             }
             SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));
             SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModuleFullProgram(
-                main, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
+                main, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
                 checked.index().interfaceIndexDigest(),
                 CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
                 SemanticIdAllocator.over(moduleIds));

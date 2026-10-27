@@ -1,5 +1,5 @@
 // @spec: Error handling — try / catch; Nullable semantics
-// @description: Assigning the catch binding reassigns only the catch-local Error binding: the assignment is a legal Error replacement, and the same-named outer refinement is unaffected after the catch scope exits
+// @description: Assigning the catch binding reassigns only the catch-local unknown binding: the assignment stores an explicitly typed Error replacement, and the same-named outer refinement is unaffected after the catch scope exits
 // @expected: compile-ok
 // @features: error-handling, try-catch, nullable, narrowing, shadowing, assignment
 
@@ -9,8 +9,10 @@ export function main(): null {
     try {
       throw { code: "C_ASSIGN", message: "assign" };
     } catch (e) {
-      e = { code: "C_REPLACED", message: "replaced" };
-      let message: string = e.message;
+      let replacement: Error = { code: "C_REPLACED", message: "replaced" };
+      e = replacement;
+      let checked: Error = e as Error;
+      let message: string = checked.message;
     }
     let afterCatch: number = e;
   }

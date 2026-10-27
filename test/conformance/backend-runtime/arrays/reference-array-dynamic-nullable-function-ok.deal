@@ -5,13 +5,13 @@
 
 export function test_array_dynamic_nullable_function_ok(): string {
   let id: (b: number[]) => number[] = function(b: number[]): number[] { return b; };
-  let holderNull: table = { f: null };
-  let f: ((b: number[]) => number[]) | null = holderNull.f;
+  let holderNull: Record<string, unknown> = { f: null };
+  let f: ((b: number[]) => number[]) | null = holderNull.f as ((b: number[]) => number[]) | null;
   if (f !== null) {
     throw { code: "TEST_FAIL", message: "nullable function null pass-through mismatch" };
   }
-  let holderFn: table = { g: id };
-  let g: ((b: number[]) => number[]) | null = holderFn.g;
+  let holderFn: Record<string, unknown> = { g: id };
+  let g: ((b: number[]) => number[]) | null = holderFn.g as ((b: number[]) => number[]) | null;
   if (g !== null) {
     if (g([0]).length !== 1) {
       throw { code: "TEST_FAIL", message: "nullable function call mismatch" };

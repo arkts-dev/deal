@@ -1,10 +1,10 @@
 // @spec: Tables — Reading table fields
-// @description: A table field read in a null context is a permitted target context (v1.2 defect snippet 03)
+// @description: A Record field can be checked as null before binding
 // @expected: compile-ok
 // @features: tables, dynamic-read, contextual-target
 
 export function main(): null {
-  let t: table = { x: null };
-  let n: null = t.x;
+  let t: Record<string, unknown> = { x: null };
+  let n: null = t.x as null;
   return null;
 }

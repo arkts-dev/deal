@@ -1,4 +1,4 @@
 // IR golden fixture: type-descriptors-array-string-spec-format
 // Migrated IR-containment pin for legacy case 'array-string-spec-format' (ISSUE-0358).
 
-function f(a: string[]): null { return; }
+function f(a: string[]): null { return null; }

@@ -8,4 +8,5 @@ function main(): null {
     let d: boolean = true;
     let e: boolean = false;
     let f: null = null;
+    return null;
 }

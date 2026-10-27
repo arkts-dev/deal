@@ -1,31 +1,36 @@
 module @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:1-6:1
   async function inner: number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:1-5:6
     body
-      throw @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:34-4:90
-        object : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:40-4:82
+      throw @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:43-4:99
+        object : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:49-4:91
           [boundary: class-construct]
-          literal "E_INNER" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:48-4:56
-          literal "inner error" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:68-4:80
-      return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:85-4:95
+          literal "E_INNER" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:57-4:65
+          literal "inner error" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:77-4:89
+      return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:94-4:104
         [boundary: async-completion]
-        literal 0.0 : number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:92-4:92
+        literal 0.0 : number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:4:101-4:101
   export @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:1-6:1
     [boundary: export]
     async function outer: string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:8-6:1
       body
-        try @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:41-5:128
-          block @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:45-5:97
-            let _: number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:47-5:83
+        try @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:50-5:172
+          block @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:54-5:106
+            let _: number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:56-5:92
               [boundary: var-annotation]
-              await : number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:63-5:75
-                call : number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:69-5:75
-                  ident inner : async()->number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:69-5:73
-            return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:78-5:97
+              await : number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:72-5:84
+                call : number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:78-5:84
+                  ident inner : async()->number @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:78-5:82
+            return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:87-5:106
               [boundary: async-completion]
-              literal "no error" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:85-5:94
-        catch e @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:109-5:126
-          block @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:109-5:126
-            return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:111-5:126
+              literal "no error" : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:94-5:103
+        catch e @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:118-5:170
+          block @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:118-5:170
+            let error: Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:120-5:156
+              [boundary: var-annotation]
+              assert as Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:139-5:148
+                [boundary: assertion]
+                ident e : unknown @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:139-5:139
+            return @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:151-5:170
               [boundary: async-completion]
-              member .code : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:118-5:123
-                ident e : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:118-5:118
+              member .code : string @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:158-5:167
+                ident error : Error @test/ir-goldens/fixtures/async-await-async-error-propagation.deal:5:158-5:162

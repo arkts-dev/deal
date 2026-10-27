@@ -4,7 +4,7 @@
 // @features: type-system, nullable, narrowing, tables, runtime-errors
 
 export function main(): null {
-  let t: table | null = {a: 1};
+  let t: Record<string, unknown> | null = {a: 1};
   let clear: () => null = function(): null {
     t = null;
     return null;

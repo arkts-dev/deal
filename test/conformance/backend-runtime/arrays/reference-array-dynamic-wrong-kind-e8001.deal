@@ -4,8 +4,8 @@
 // @features: descriptors, number[], dynamic-boundaries
 
 export function test_array_dynamic_wrong_kind(): number {
-  let holder: table = { b: "not-number[]" };
-  let b: number[] = holder.b;
+  let holder: Record<string, unknown> = { b: "not-number[]" };
+  let b: number[] = holder.b as number[];
   return b[0];
 }
 

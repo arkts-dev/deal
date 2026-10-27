@@ -40,6 +40,7 @@ public class IrDumperTest {
         testMissingTypeMapEntryThrows();
         testCallExpr();
         testTableReadBoundary();
+        testNominalAndPresenceObservers();
         testStdlibBoundary();
         testExternalBoundary();
         testAwaitExpressionIr();
@@ -176,19 +177,19 @@ public class IrDumperTest {
 
     static void testReturnStatement() {
         System.out.print("  testReturnStatement... ");
-        String source = "function f(): null { return; }";
+        String source = "function f(): void { return; }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
         assertContains(ir, "return", "return statement");
-        assertNotContains(ir, "[boundary: return]", "no return boundary for null return");
+        assertNotContains(ir, "[boundary: return]", "no value boundary for bare void return");
         assertContains(ir, "@test.deal:", "spans present");
         System.out.println("OK");
     }
 
     static void testIfStatement() {
         System.out.print("  testIfStatement... ");
-        String source = "function f(): null { if (true) { let x: number = 1; } }";
+        String source = "function f(): void { if (true) { let x: number = 1; } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -200,7 +201,7 @@ public class IrDumperTest {
 
     static void testWhileStatement() {
         System.out.print("  testWhileStatement... ");
-        String source = "function f(): null { while (true) { break; } }";
+        String source = "function f(): void { while (true) { break; } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -211,7 +212,7 @@ public class IrDumperTest {
 
     static void testForStatement() {
         System.out.print("  testForStatement... ");
-        String source = "function f(): null { { let v14Loop0: number = 0; while (v14Loop0 < 10) { let i: number = v14Loop0; { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } } }";
+        String source = "function f(): void { { let v14Loop0: number = 0; while (v14Loop0 < 10) { let i: number = v14Loop0; { { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; } } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -222,7 +223,7 @@ public class IrDumperTest {
 
     static void testTryCatch() {
         System.out.print("  testTryCatch... ");
-        String source = "function f(): null { try { let x: number = 1; } catch (e) { let y: number = 2; } }";
+        String source = "function f(): void { try { let x: number = 1; } catch (e) { let y: number = 2; } }";
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
@@ -289,7 +290,7 @@ public class IrDumperTest {
     static void testExpressionKinds() {
         System.out.print("  testExpressionKinds... ");
         String source = """
-            function f(): null {
+            function f(): void {
                 let a: number = 1;
                 let b: number = -a;
                 let c: boolean = !true;
@@ -297,7 +298,7 @@ public class IrDumperTest {
                 let e: boolean = a === b;
                 let f: boolean = a < b && b > 0;
                 let g: number[] = [1, 2, 3];
-                let h: table = { key: "val" };
+                let h: Record<string, unknown> = { key: "val" };
                 let i: number = g[0];
                 a = 5;
             }
@@ -311,7 +312,7 @@ public class IrDumperTest {
         assertContains(ir, "binary ===", "binary eq");
         assertContains(ir, "binary &&", "binary and");
         assertContains(ir, "array : [number]", "array literal");
-        assertContains(ir, "object : table", "object literal");
+        assertContains(ir, "object : record", "object literal");
         assertContains(ir, "index []", "index expr");
         assertContains(ir, "assign =", "assignment");
         System.out.println("OK");
@@ -342,7 +343,7 @@ public class IrDumperTest {
             class User { name: string; }
             function f(a: number[], b: number|null): null {
                 let u: User = { name: "test" };
-                return;
+                return null;
             }
             """;
         CompileResult cr = compile(source);
@@ -498,6 +499,7 @@ public class IrDumperTest {
             function compute(x: number, y: number): number { return x; }
             function main(): null {
                 let r: number = compute(1, 2);
+                return null;
             }
             """;
         CompileResult cr = compile(source);
@@ -514,17 +516,44 @@ public class IrDumperTest {
 
     static void testTableReadBoundary() {
         System.out.print("  testTableReadBoundary... ");
-        // A table read with contextual type should produce [boundary: table-read]
+        // Record reads remain unknown until an explicit checked assertion.
         String source = """
-            function readTable(t: table): string {
-                return t.name;
+            function readTable(t: Record<string, unknown>): string {
+                return t.name as string;
             }
             """;
         CompileResult cr = compile(source);
         String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
 
-        assertContains(ir, "[boundary: table-read]", "table-read boundary on member access");
+        assertContains(ir, "member .name : unknown", "record member read remains unknown");
+        assertContains(ir, "assert as string", "explicit assertion owns the concrete boundary");
         System.out.println("OK");
+    }
+
+    static void testNominalAndPresenceObservers() {
+        CompileResult cr = compile("""
+            class Item { value?: number; }
+            function observe(value: unknown, record: Record<string, unknown>, key: string): boolean {
+                if (value instanceof Item) { return Object.hasOwn(value, "value"); }
+                return Object.hasOwn(record, key);
+            }
+            """);
+        if (cr.checkResult.hasErrors()) {
+            throw new AssertionError(cr.checkResult.diagnostics());
+        }
+        String ir = IrDumper.dump(cr.program, cr.checkResult, "test", INDEX);
+        assertContains(ir, "instanceof @test/Item : boolean", "exact checked nominal target");
+        assertContains(ir, "Object.hasOwn .value : boolean", "literal declared-field presence");
+        assertContains(ir, "Object.hasOwn [] : boolean", "dynamic Record key presence");
+        assertContains(ir, "ident key : string", "dynamic presence key is observed");
+        CheckResult missing = new CheckResult(cr.checkResult.typeMap(), cr.symbolTable, List.of());
+        try {
+            IrDumper.dump(cr.program, missing, "test", INDEX);
+            failed++;
+            System.out.println("FAIL: missing nominal fact did not reject");
+        } catch (IllegalStateException expected) {
+            assertContains(expected.getMessage(), "Missing instanceof class fact", "no spelling fallback");
+        }
     }
 
     static void testStdlibBoundary() {

@@ -21,6 +21,6 @@ export function test_host_function_binding(): number {
 export function main(): null {
   let observed: number = test_host_function_binding();
   let trace: string = host.trace();
-  console.log(json.stringify({ host: observed, trace: trace }));
+  console.log(json.stringify({ host: observed, trace: trace }) as string);
   return null;
 }

@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: A declared host class crosses the asynchronous host boundary in both directions: the statically resolved and the runtime-resolved async host call preserve the class argument's nested class field, array field, optional array and present null, and the host-invoked function argument's declared result; an async class completion delivers a nested class field, an array field, an absent optional that stays absent and a present null that stays present (both read as language null and distinguished by has); a host-returned class-element array and a class-field array preserve their elements and length, and two slots naming one host instance are one DEAL value.
+// @description: A declared host class crosses the asynchronous host boundary in both directions: the statically resolved and the runtime-resolved async host call preserve the class argument's nested class field, array field, optional array and present null, and the host-invoked function argument's declared result; an async class completion delivers a nested class field, an array field, an absent optional that stays absent and a present null that stays present (absent reads undefined, independently distinguished by Object.hasOwn); a host-returned class-element array and a class-field array preserve their elements and length, and two slots naming one host instance are one DEAL value.
 // @expected: runtime-ok
 // @features: modules, host-abi, async-await, classes, arrays, functions
 
@@ -17,11 +17,11 @@ function bump(x: number): number {
   return y;
 }
 
-function pick(): async (s: host.ServerConfig, g: (x: number) => number) => string {
+function pick(): (s: host.ServerConfig, g: (x: number) => number) => Promise<string> {
   return host.describeAsync;
 }
 
-export async function test_async_class_parameter(): null {
+export async function test_async_class_parameter(): Promise<null> {
   let cfg: host.ServerConfig = {
     port: 9090,
     endpoint: { path: "/api" },
@@ -31,24 +31,24 @@ export async function test_async_class_parameter(): null {
   };
   let direct: string = await host.describeAsync(cfg, bump);
   check(direct === "SC|9090|/api|2:p1|1:dev|null|true:42", "the declared async host call preserves the class and function arguments");
-  let dyn: async (s: host.ServerConfig, g: (x: number) => number) => string = pick();
+  let dyn: (s: host.ServerConfig, g: (x: number) => number) => Promise<string> = pick();
   let runtime: string = await dyn(cfg, bump);
   check(runtime === direct, "the runtime-resolved async host call preserves the class and function arguments");
   return null;
 }
 
-export async function test_async_class_completion(): null {
+export async function test_async_class_completion(): Promise<null> {
   let made: host.ServerConfig = await host.make();
   check(made.port === 4242, "the async class completion port");
   check(made.endpoint.path === "/made", "the async class completion nested class field");
   check(made.parts.length === 2, "the async class completion array field length");
   check(made.parts[0] === "a" && made.parts[1] === "b", "the async class completion array field elements");
-  let tags: string[] | null = made.tags;
-  check(tags === null, "the async class completion absent optional");
-  check(!has(made.tags), "the async class completion absent optional stays absent");
-  let note: string | null = made.note;
+  let tags: string[] | undefined = made.tags;
+  check(tags === undefined, "the async class completion absent optional");
+  check(!Object.hasOwn(made, "tags"), "the async class completion absent optional stays absent");
+  let note: string | null | undefined = made.note;
   check(note === null, "the async class completion present null");
-  check(has(made.note), "the async class completion present null stays present");
+  check(Object.hasOwn(made, "note"), "the async class completion present null stays present");
   return null;
 }
 

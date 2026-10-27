@@ -1,4 +1,4 @@
 // IR golden fixture: async-await-async-sync-complete
 // Migrated IR-containment pin for legacy case 'async-sync-complete' (ISSUE-0358).
 
-export async function f(): number { return 5; }
+export async function f(): Promise<number> { return 5; }

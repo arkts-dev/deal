@@ -423,6 +423,9 @@ public final class Parser {
     private StatementNode parseFunctionDeclaration() {
         boolean isAsync = match(TokenType.ASYNC);
         Token startToken = isAsync ? previous() : peek();
+        if (isAsync && peek().line() != startToken.line()) {
+            error(DiagnosticCode.E1007, "No line terminator between async and function", peek());
+        }
         Token funcToken = advance();  // consumes FUNCTION
         Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected function name after 'function'");
         if (nameToken == null) { synchronize(); return null; }
@@ -432,8 +435,14 @@ public final class Parser {
         if (suffix == null) { return null; }
 
         Span sp = spanBetween(startToken, previousOrCurrent());
+        if (isAsync != suffix.isAsync() && !suffix.isExternal()) {
+            error(DiagnosticCode.E1011, "Async implementations require Promise result notation; sync implementations forbid it", startToken);
+        }
+        if (isAsync && suffix.isExternal()) {
+            error(DiagnosticCode.E1011, "External declarations must omit async", startToken);
+        }
         return new FunctionDeclaration(sp, nameToken.lexeme(),
-                suffix.params(), suffix.returnType(), suffix.body(), isAsync,
+                suffix.params(), suffix.returnType(), suffix.body(), suffix.isAsync(),
                 suffix.isExternal());
     }
 
@@ -455,7 +464,8 @@ public final class Parser {
             error(DiagnosticCode.E1011, returnTypeMessage, peek());
             synchronize(); return null;
         }
-        TypeNode returnType = parseType();
+        ResultAnnotation result = parseResultAnnotation();
+        TypeNode returnType = result.type();
         if (returnType == null) { synchronize(); return null; }
 
         Block body;
@@ -471,12 +481,25 @@ public final class Parser {
             body = emptyBlock();
             synchronize();
         }
-        return new FunctionSuffix(paramResult.params(), returnType, body, isExternal);
+        return new FunctionSuffix(paramResult.params(), returnType, body, isExternal, result.isAsync());
     }
 
     /** The parsed function suffix shared by declarations and expressions. */
     private record FunctionSuffix(List<Parameter> params, TypeNode returnType,
-                                  Block body, boolean isExternal) {
+                                  Block body, boolean isExternal, boolean isAsync) {
+    }
+
+    private record ResultAnnotation(TypeNode type, boolean isAsync) {}
+
+    private ResultAnnotation parseResultAnnotation() {
+        if (peek().type() == TokenType.IDENTIFIER && peek().lexeme().equals("Promise")) {
+            advance();
+            expect(TokenType.LT, DiagnosticCode.E1032, "Expected '<' after Promise");
+            TypeNode result = parseType();
+            expect(TokenType.GT, DiagnosticCode.E1032, "Expected '>' after Promise result");
+            return new ResultAnnotation(result, true);
+        }
+        return new ResultAnnotation(parseType(), false);
     }
 
     // -- VariableDeclaration --
@@ -511,6 +534,9 @@ public final class Parser {
 
         Optional<ExpressionNode> expr = Optional.empty();
         if (!isAtEnd() && canStartExpression(peek().type())) {
+            if (peek().line() != retToken.line()) {
+                error(DiagnosticCode.E1007, "No line terminator between return and its operand", peek());
+            }
             ExpressionNode parsed = parseExpression();
             if (parsed != null) expr = Optional.of(parsed);
         }
@@ -573,10 +599,11 @@ public final class Parser {
         Token name = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007,
             "Expected iteration variable name");
         if (name == null) { synchronize(); return null; }
-        expect(TokenType.COLON, DiagnosticCode.E1013,
-            "Expected iteration variable type in for-of loop");
-        TypeNode type = parseType();
-        if (type == null) { synchronize(); return null; }
+        TypeNode type = null;
+        if (match(TokenType.COLON)) {
+            error(DiagnosticCode.E1013, "For-of bindings must not have a type annotation", previous());
+            parseType();
+        }
         if (!match(TokenType.OF)) {
             error(DiagnosticCode.E1013, "Expected 'of'; C-style for loops are not supported", peek());
             synchronize(); return null;
@@ -702,6 +729,9 @@ public final class Parser {
     // -- Throw --
     private StatementNode parseThrowStatement() {
         Token throwToken = advance();
+        if (peek().line() != throwToken.line()) {
+            error(DiagnosticCode.E1007, "No line terminator between throw and its operand", peek());
+        }
 
         ExpressionNode expr = parseExpression();
         if (expr == null) { synchronize(); return null; }
@@ -725,8 +755,7 @@ public final class Parser {
     // =======================================================================
 
     private TypeNode parseType() {
-        // Try function type first: '(' params ')' '=>' Type   or   async '(' params ')' '=>' Type
-        if (peek().type() == TokenType.LPAREN || peek().type() == TokenType.ASYNC) {
+        if (peek().type() == TokenType.LPAREN) {
             TypeNode funcType = tryParseFunctionType();
             if (funcType != null) return funcType;
         }
@@ -737,8 +766,7 @@ public final class Parser {
         int savedPos = pos;
         int diagSize = diagnostics.size();
 
-        boolean isAsync = match(TokenType.ASYNC);
-        Token lparen = advance();  // consumes LPAREN (or whatever if not a function type)
+        Token lparen = advance();
 
         List<FunctionTypeParam> params = new ArrayList<>();
 
@@ -783,13 +811,14 @@ public final class Parser {
             return null;
         }
 
-        TypeNode returnType = parseType();
+        ResultAnnotation result = parseResultAnnotation();
+        TypeNode returnType = result.type();
         if (returnType == null) {
-            returnType = new NamedType(spanOf(previousOrCurrent()), "null");
+            returnType = new NamedType(spanOf(previousOrCurrent()), "void");
         }
 
         return new FunctionType(spanBetween(lparen, previousOrCurrent()),
-                List.copyOf(params), returnType, isAsync);
+                List.copyOf(params), returnType, result.isAsync());
     }
 
     private FunctionTypeParam parseFunctionTypeParam() {
@@ -828,14 +857,15 @@ public final class Parser {
         // element chain is rooted at null (null[], null[][]), or the
         // "null |" nullable prefix. The array suffixes bind tighter than
         // '|', so they are consumed before any nullable decision.
-        if (match(TokenType.NULL)) {
-            Token nullToken = previous();
-            TypeNode nullType = parseArraySuffixes(new NamedType(spanOf(nullToken), "null"));
+        if (peek().type() == TokenType.NULL || isUndefinedToken(peek())) {
+            Token nullToken = advance();
+            TypeNode nullType = parseArraySuffixes(new NamedType(spanOf(nullToken), nullToken.lexeme()));
             // "null |" prefix — can be chained: null | null | T
-            if (isPlainNull(nullType) && match(TokenType.PIPE)) {
+            if (isPlainNullish(nullType) && match(TokenType.PIPE)) {
                 TypeNode inner = parseNullableType();
                 if (inner == null) return null;
-                return new NullableType(spanBetween(nullToken, previousOrCurrent()), inner);
+                return new NullableType(spanBetween(nullToken, previousOrCurrent()), inner,
+                    nullToken.lexeme().equals("undefined"));
             }
             return parseNullableSuffix(nullType);
         }
@@ -847,8 +877,13 @@ public final class Parser {
     }
 
     /** Whether a parsed type node is the bare {@code null} builtin primary. */
-    private static boolean isPlainNull(TypeNode type) {
-        return type instanceof NamedType named && named.name().equals("null");
+    private static boolean isPlainNullish(TypeNode type) {
+        return type instanceof NamedType named
+            && (named.name().equals("null") || named.name().equals("undefined"));
+    }
+
+    private static boolean isUndefinedToken(Token token) {
+        return token.type() == TokenType.IDENTIFIER && token.lexeme().equals("undefined");
     }
 
     /**
@@ -860,10 +895,11 @@ public final class Parser {
     private TypeNode parseNullableSuffix(TypeNode type) {
         TypeNode inner = type;
         while (match(TokenType.PIPE)) {
-            if (match(TokenType.NULL)) {
+            if (peek().type() == TokenType.NULL || isUndefinedToken(peek())) {
+                Token member = advance();
                 inner = new NullableType(
                         spanBetween(tokenSpanStart(inner), previousOrCurrent()),
-                        inner);
+                        inner, member.lexeme().equals("undefined"));
             } else {
                 error(DiagnosticCode.E1030, "Expected 'null' after '|' in nullable type", peek());
                 break;
@@ -917,6 +953,17 @@ public final class Parser {
         // Also a single-qualifier type like ModuleAlias.ClassName
         if (tt == TokenType.IDENTIFIER) {
             Token first = advance();
+            if (first.lexeme().equals("Record")) {
+                expect(TokenType.LT, DiagnosticCode.E1032, "Expected '<' after Record");
+                Token key = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected string key type");
+                expect(TokenType.COMMA, DiagnosticCode.E1032, "Expected ',' in Record type");
+                Token value = expect(TokenType.IDENTIFIER, DiagnosticCode.E1032, "Expected unknown value type");
+                expect(TokenType.GT, DiagnosticCode.E1032, "Expected '>' after Record type");
+                if (key == null || !key.lexeme().equals("string") || value == null || !value.lexeme().equals("unknown")) {
+                    error(DiagnosticCode.E1032, "Only Record<string, unknown> is supported", first);
+                }
+                return new NamedType(spanBetween(first, previousOrCurrent()), "Record<string, unknown>");
+            }
 
             // Qualified type: exactly one '.' level (v1.4 Type grammar:
             // PrimaryType ::= Identifier | Identifier '.' Identifier).
@@ -1079,6 +1126,17 @@ public final class Parser {
             if (prec < minPrec) break;
 
             advance();
+            if (op.type() == TokenType.AS || op.type() == TokenType.INSTANCEOF) {
+                TypeNode target = op.type() == TokenType.AS ? parseType() : parsePrimaryType();
+                if (target == null) return left;
+                Span sp = spanBetween(left.span(), target.span());
+                left = op.type() == TokenType.AS ? new AssertionExpr(sp, left, target)
+                    : new InstanceofExpr(sp, left, target);
+                if (getBinaryPrecedence(peek().type()) == prec) {
+                    error(DiagnosticCode.E1056, "Chained relational expression is not supported", peek());
+                }
+                continue;
+            }
             int nextMinPrec = prec + 1;
             ExpressionNode right = parseBinary(nextMinPrec);
             if (right == null) return left;
@@ -1101,6 +1159,11 @@ public final class Parser {
     }
 
     private ExpressionNode parseUnary() {
+        if (match(TokenType.TYPEOF)) {
+            Token token = previous();
+            ExpressionNode value = parseUnary();
+            return value == null ? null : new UnaryExpr(combineTokenAndSpan(token, value.span()), UnaryOp.TYPEOF, value);
+        }
         // await expression: await PostfixExpression
         if (match(TokenType.AWAIT)) {
             Token awaitToken = previous();
@@ -1179,7 +1242,17 @@ public final class Parser {
                 } else {
                     sp = spanBetween(expr.span(), spanOf(previousOrCurrent()));
                 }
-                expr = new CallExpr(sp, expr, List.copyOf(args));
+                if (expr instanceof MemberAccessExpr member
+                        && member.object() instanceof IdentifierExpr id
+                        && id.name().equals("Object") && member.field().equals("hasOwn")
+                        && args.size() == 2) {
+                    ExpressionNode key = args.get(1);
+                    String literal = key instanceof LiteralExpr lit
+                        && lit.value() instanceof LiteralValue.StringLiteral s ? s.value() : null;
+                    expr = new HasExpr(sp, args.get(0), literal, key);
+                } else {
+                    expr = new CallExpr(sp, expr, List.copyOf(args));
+                }
             } else {
                 break;
             }
@@ -1246,7 +1319,6 @@ public final class Parser {
             case LBRACE   -> { return parseObjectLiteral(); }
             case FUNCTION -> { return parseFunctionExpression(); }
             case ASYNC    -> { return parseFunctionExpression(); }
-            case HAS      -> { return parseHasExpression(); }
             default -> {
                 error(DiagnosticCode.E1037, "Expected expression", token);
                 if (!isStatementBoundary(token.type())) {
@@ -1548,7 +1620,7 @@ public final class Parser {
         diagnostics.addAll(subParser.diagnostics);
 
         // 7. v1.4: an interpolation contains exactly one complete
-        //    expression (docs/spec-v1.4.md lexical grammar). A leftover
+        //    expression (docs/spec-v1.5.md lexical grammar). A leftover
         //    token after the parsed expression is E1042 at that token's
         //    rebased position.
         if (expr != null && subParser.peek().type() != TokenType.EOF) {
@@ -1655,15 +1727,21 @@ public final class Parser {
     private ExpressionNode parseFunctionExpression() {
         boolean isAsync = match(TokenType.ASYNC);
         Token startToken = isAsync ? previous() : peek();
+        if (isAsync && peek().line() != startToken.line()) {
+            error(DiagnosticCode.E1007, "No line terminator between async and function", peek());
+        }
         Token funcToken = advance();  // consumes FUNCTION
 
         FunctionSuffix suffix = parseFunctionSuffix("Expected '(' after 'function'",
             "Expected ':' return type annotation on function expression", false);
         if (suffix == null) { return null; }
 
+        if (isAsync != suffix.isAsync()) {
+            error(DiagnosticCode.E1011, "Async implementations require Promise result notation; sync implementations forbid it", startToken);
+        }
         Span sp = spanBetween(startToken, previousOrCurrent());
         return new FunctionExpr(sp, suffix.params(), suffix.returnType(), suffix.body(),
-            isAsync);
+            suffix.isAsync());
     }
 
     private ExpressionNode parseArrayLiteral() {
@@ -1740,35 +1818,6 @@ public final class Parser {
 
         Span sp = combineTokenAndSpan(nameToken, value.span());
         return new Property(sp, nameToken.lexeme(), value);
-    }
-
-    private ExpressionNode parseHasExpression() {
-        Token hasToken = advance();
-
-        expect(TokenType.LPAREN, DiagnosticCode.E1039, "Expected '(' after 'has'");
-
-        // Parse the full expression including the .field part.
-        // parsePostfix() will consume the chain like obj.field or a.b.c.
-        ExpressionNode full = parsePostfix();
-
-        expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after has() expression");
-
-        // Decompose: the expression must be a MemberAccessExpr.
-        // For a.b.c, the full expression is MemberAccessExpr(MemberAccessExpr(a, "b"), "c"),
-        // and we want HasExpr(MemberAccessExpr(a, "b"), "c") — the outermost field
-        // is the one being checked for existence.
-        if (full instanceof MemberAccessExpr ma) {
-            Span sp = spanBetween(hasToken, previousOrCurrent());
-            return new HasExpr(sp, ma.object(), ma.field());
-        }
-
-        if (full != null) {
-            error(DiagnosticCode.E1040, "Expected member access (obj.field) in has() expression", full);
-        } else {
-            error(DiagnosticCode.E1040, "Expected member access (obj.field) in has() expression", hasToken);
-        }
-        Span sp = spanBetween(hasToken, previousOrCurrent());
-        return new HasExpr(sp, full, "?");
     }
 
     // =======================================================================
@@ -2049,7 +2098,7 @@ public final class Parser {
         return switch (type) {
             case NULL, TRUE, FALSE, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
                  IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
-                 FUNCTION, HAS, AWAIT, ASYNC -> true;
+                 FUNCTION, AWAIT, ASYNC, TYPEOF -> true;
             default -> false;
         };
     }
@@ -2063,7 +2112,7 @@ public final class Parser {
             case OR         -> PREC_OR;
             case AND        -> PREC_AND;
             case EQ_STRICT, NEQ_STRICT -> PREC_EQUALITY;
-            case LT, LTE, GT, GTE -> PREC_RELATIONAL;
+            case LT, LTE, GT, GTE, AS, INSTANCEOF -> PREC_RELATIONAL;
             case PLUS, MINUS -> PREC_ADDITIVE;
             case STAR, SLASH -> PREC_MULTIPLICATIVE;
             default         -> PREC_NONE;

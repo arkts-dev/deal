@@ -15,11 +15,11 @@ export function test_jsonable_optional_nullable_nested_class(): null {
 
   let value: Lib.MaybeChild | null = Lib.MaybeChild$fromJson("{\"child\":{\"value\":8}}");
   if (value !== null) {
-    let child: Lib.Child | null = value.child;
-    if (child !== null) {
+    let child: Lib.Child | null | undefined = value.child;
+    if (child !== null) { if (child !== undefined) {
       if (child.value !== 8) { throw { code: "TEST_FAIL", message: "nested value mismatch" }; }
       return null;
-    }
+    } }
   }
   throw { code: "TEST_FAIL", message: "nested value fromJson failed" };
 }

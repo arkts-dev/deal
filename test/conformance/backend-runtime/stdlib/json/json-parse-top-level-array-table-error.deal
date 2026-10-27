@@ -1,12 +1,12 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: json.parse rejects a top-level JSON array at the declared (string)->table return with E8001 expected table (the decoded array carrier, actual array) — one uniform outcome on the shared oracle and all three production lanes (v1.4)
+// @description: json.parse rejects a top-level JSON array at the declared (string)->record return with E8001 expected table (the decoded array carrier, actual array) — one uniform outcome on the shared oracle and all three production lanes (v1.4)
 // @expected: runtime-error E8001
 // @features: stdlib, json, v1.4
 
 import * as json from "std/json";
 
 export function test_json_parse_top_level_array(): null {
-  let t: table = json.parse("[1,2]");
+  let t: Record<string, unknown> = json.parse("[1,2]");
   return null;
 }
 

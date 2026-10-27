@@ -1,16 +1,30 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: json.stringify rejects a nonfinite number through the closed JSON_STRINGIFY_UNSUPPORTED arm (v1.4)
-// @expected: runtime-error E8001
-// @features: stdlib, json, nonfinite, v1.4
+// @description: stringify substitutes null for NaN and both infinities without changing the original number cells
+// @expected: runtime-ok
+// @features: stdlib, json, nonfinite
 
 import * as json from "std/json";
 
-export function test_json_stringify_nonfinite(): string {
-  let t: table = { x: 1.0 };
-  t.x = 1.0 / 0.0;
-  return json.stringify(t);
-}
-
-export function main(): null {
+export function test_json_stringify_nonfinite(): null {
+  let t: Record<string, unknown> = { x: 1.0 };
+  t.x = 1 / 0;
+  t.negative = -1 / 0;
+  t.nan = 0 / 0;
+  if ((json.stringify(t) as string) !== "{\"x\":null,\"negative\":null,\"nan\":null}") {
+    throw {code: "TEST_FAIL", message: "nonfinite object serialization"};
+  }
+  if ((t.x as number) !== 1 / 0 || (t.negative as number) !== -1 / 0) {
+    throw {code: "TEST_FAIL", message: "stringify mutated infinity"};
+  }
+  let nan: number = t.nan as number;
+  if (nan === nan) { throw {code: "TEST_FAIL", message: "stringify mutated NaN"}; }
+  if ((json.stringify([1 / 0, -1 / 0, nan]) as string) !== "[null,null,null]") {
+    throw {code: "TEST_FAIL", message: "nonfinite array serialization"};
+  }
+  if ((json.stringify(nan) as string) !== "null") {
+    throw {code: "TEST_FAIL", message: "nonfinite top-level serialization"};
+  }
   return null;
 }
+
+export function main(): null { return null; }

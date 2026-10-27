@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Nominal typing
-// @description: Two same-directory sibling files export the class name Item; a value of the first declaration crossed through a dynamic table and read into the second declaration's typed local is refused with the runtime class-identity failure naming both exact declarations.
+// @description: Checked extraction of the first sibling's nominal Item as the second sibling's Item fails with E8001 and retains the actual declaration atom; the assertion target remains the other exact declaration.
 // @expected: runtime-error E8001
 // @features: classes, modules, runtime-errors, nominal-identity
 
@@ -7,7 +7,7 @@ import * as a from "./same_name_sibling_a";
 import * as b from "./same_name_sibling_b";
 
 export function main(): null {
-  let t: table = { value: a.make() };
-  let wrong: b.Item = t.value;
+  let t: Record<string, unknown> = { value: a.make() };
+  let wrong: b.Item = t.value as b.Item;
   return null;
 }

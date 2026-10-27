@@ -14,7 +14,7 @@ export function test_jsonable_optional_nullable_three_state(): null {
   let missingJson: string = User$toJson(missing);
   let missing2: User | null = User$fromJson(missingJson);
   if (missing2 !== null) {
-    if (has(missing2.nick)) {
+    if (Object.hasOwn(missing2, "nick")) {
       throw { code: "TEST_FAIL", message: "missing optional field not preserved" };
     }
   } else {
@@ -25,7 +25,7 @@ export function test_jsonable_optional_nullable_three_state(): null {
   let nullJson: string = User$toJson(explicitNull);
   let null2: User | null = User$fromJson(nullJson);
   if (null2 !== null) {
-    if (!has(null2.nick) || null2.nick !== null) {
+    if (!Object.hasOwn(null2, "nick") || null2.nick !== null) {
       throw { code: "TEST_FAIL", message: "explicit null optional field not preserved" };
     }
   } else {
@@ -36,12 +36,12 @@ export function test_jsonable_optional_nullable_three_state(): null {
   let valueJson: string = User$toJson(value);
   let value2: User | null = User$fromJson(valueJson);
   if (value2 !== null) {
-    if (!has(value2.nick)) {
+    if (!Object.hasOwn(value2, "nick")) {
       throw { code: "TEST_FAIL", message: "optional field value not present" };
     }
-    let nick: string | null = value2.nick;
+    let nick: string | null | undefined = value2.nick;
     if (nick !== null) {
-      if (nick !== "cee") {
+      if ((nick as string) !== "cee") {
         throw { code: "TEST_FAIL", message: "optional field value not preserved" };
       }
     } else {

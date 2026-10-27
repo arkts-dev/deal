@@ -218,10 +218,15 @@ public sealed interface KindPayload
     }
 
     /** {@code UNARY} — one closed unary selector. */
-    record UnaryPayload(UnarySelector selector) implements KindPayload, SelectorCarrying {
-
+    record UnaryPayload(UnarySelector selector, RuntimeDescriptor target) implements KindPayload, SelectorCarrying {
+        public UnaryPayload(UnarySelector selector) { this(selector, null); }
         public UnaryPayload {
             Objects.requireNonNull(selector, "selector must not be null");
+            if (selector == UnarySelector.INSTANCEOF ? !(target instanceof RuntimeDescriptor.Class)
+                    : target != null) {
+                throw new IllegalArgumentException(
+                    "INSTANCEOF requires a nominal class target; other unary selectors forbid targets");
+            }
         }
     }
 
@@ -387,11 +392,11 @@ public sealed interface KindPayload
     }
 
     /** {@code HAS_FIELD} — checked receiver and key, each evaluated once. */
-    record HasFieldPayload(ValueId receiver, String key) implements KindPayload {
-
+    record HasFieldPayload(ValueId receiver, String key, ValueId dynamicKey) implements KindPayload {
+        public HasFieldPayload(ValueId receiver, String key) { this(receiver, key, null); }
         public HasFieldPayload {
             Objects.requireNonNull(receiver, "receiver must not be null");
-            Objects.requireNonNull(key, "key must not be null");
+            if ((key == null) == (dynamicKey == null)) throw new IllegalArgumentException("Exactly one key representation required");
         }
     }
 

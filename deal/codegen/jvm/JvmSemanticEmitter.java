@@ -639,6 +639,7 @@ public final class JvmSemanticEmitter {
             // Function factories (every module).
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (LoweredFunction function : moduleUnit.functions().values()) {
+                    emitFunctionStateHelpers(function);
                     emitFunctionFactory(function);
                 }
             }
@@ -892,6 +893,12 @@ public final class JvmSemanticEmitter {
                     out.append("    boolean ").append(fieldFlag(field.name())).append(";\n");
                 }
                 out.append("    @Override public String classIdText() { return ID; }\n");
+                out.append("    @Override public java.util.List<String> fieldNames() { return java.util.List.of(");
+                for (int i = 0; i < layout.fields().size(); i++) {
+                    if (i > 0) out.append(", ");
+                    out.append(javaString(layout.fields().get(i).name()));
+                }
+                out.append("); }\n");
                 out.append("    @Override public boolean isPresent(String key) {\n");
                 for (ClassLayout.FieldLayout field : layout.fields()) {
                     out.append("      if (")
@@ -978,7 +985,8 @@ public final class JvmSemanticEmitter {
         /** The JSON plan descriptor text (the walk's closed kind grammar). */
         private static String jsonDescriptorText(RuntimeDescriptor descriptor) {
             if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
-                return "nullable:" + jsonDescriptorText(nullable.inner());
+                return (nullable.admitsNull() ? (nullable.admitsUndefined() ? "nullish:" : "nullable:") : "undefinedable:")
+                    + jsonDescriptorText(nullable.inner());
             }
             if (descriptor instanceof RuntimeDescriptor.Array array) {
                 return "array(" + jsonDescriptorText(array.element()) + ")";
@@ -988,6 +996,9 @@ public final class JvmSemanticEmitter {
             }
             return switch (descriptor) {
                 case RuntimeDescriptor.Null ignored -> "null";
+                case RuntimeDescriptor.Undefined ignored -> "undefined";
+                case RuntimeDescriptor.Unknown ignored -> "unknown";
+                case RuntimeDescriptor.Void ignored -> "void";
                 case RuntimeDescriptor.Boolean ignored -> "boolean";
 
                 case RuntimeDescriptor.Number ignored -> "number";
@@ -1089,6 +1100,48 @@ public final class JvmSemanticEmitter {
             out.append("  }\n");
         }
 
+        /**
+         * One state copier per body, shared by all call sites. Bounded leaf
+         * helpers keep both callers and wide-body copiers below JVM method
+         * limits without changing snapshot order, cell identity or finally
+         * restoration. These methods introduce no semantic events.
+         */
+        private void emitFunctionStateHelpers(LoweredFunction function) {
+            List<String> keys = bodyStateKeys(function.functionId());
+            if (keys.isEmpty()) return;
+            String name = "__state" + function.functionId().id();
+            int chunkSize = 256;
+            int chunks = (keys.size() + chunkSize - 1) / chunkSize;
+            out.append("  static Object[] ").append(name).append("Save() {\n")
+                .append("    Object[] state = new Object[").append(keys.size()).append("];\n");
+            for (int chunk = 0; chunk < chunks; chunk++) {
+                out.append("    ").append(name).append("Save").append(chunk).append("(state);\n");
+            }
+            out.append("    return state;\n  }\n")
+                .append("  static void ").append(name).append("Restore(Object[] state) {\n");
+            for (int chunk = 0; chunk < chunks; chunk++) {
+                out.append("    ").append(name).append("Restore").append(chunk).append("(state);\n");
+            }
+            out.append("  }\n");
+            for (int chunk = 0; chunk < chunks; chunk++) {
+                int end = Math.min(keys.size(), (chunk + 1) * chunkSize);
+                out.append("  static void ").append(name).append("Save").append(chunk)
+                    .append("(Object[] state) {\n");
+                for (int i = chunk * chunkSize; i < end; i++) {
+                    out.append("    state[").append(i).append("] = ").append(keys.get(i)).append(";\n");
+                }
+                out.append("  }\n  static void ").append(name).append("Restore").append(chunk)
+                    .append("(Object[] state) {\n");
+                for (int i = chunk * chunkSize; i < end; i++) {
+                    out.append("    ").append(keys.get(i)).append(" = state[").append(i).append("];\n");
+                }
+                out.append("  }\n");
+            }
+        }
+
+        /** Return targets in detached body segments are owned by the factory. */
+        private boolean detachedBodySegment;
+
         /** Emits one function factory: a FunctionValue over the passed capture cells. */
         private void emitFunctionFactory(LoweredFunction function) {
             FunctionId functionId = function.functionId();
@@ -1123,9 +1176,36 @@ public final class JvmSemanticEmitter {
                         ? "new Object[]{args[" + i + "]}" : "args[" + i + "]")
                     .append(";\n");
             }
+            List<SemanticOp> reachableOps = new ArrayList<>();
+            for (int i = paramCount; i < bodyOps.size(); i++) {
+                OpId id = bodyOps.get(i);
+                if (ownedChildren.contains(id) || skippedOps.contains(id)) continue;
+                SemanticOp op = opsById.get(id);
+                // Let the owning emitter diagnose a missing child at its
+                // initiating operation before this scheduling-only prepass.
+                if (op == null) continue;
+                reachableOps.add(op);
+                if (!completesNormally(op)) break;
+            }
+            boolean segmented = reachableOps.size() > 32;
+            if (segmented) {
+                StringBuilder arguments = new StringBuilder();
+                for (BindingGeneration capture : captures) {
+                    if (arguments.length() > 0) arguments.append(", ");
+                    arguments.append(captureCell(capture.binding()));
+                }
+                out.append("      try {\n");
+                for (int start = 0, part = 0; start < reachableOps.size(); start += 16, part++) {
+                    String name = "__body" + functionId.id() + "Part" + part;
+                    out.append("        ").append(name).append('(').append(arguments).append(");\n");
+                }
+                out.append("      } catch (JvmRuntime.Transfer transfer) {\n")
+                    .append("        if (\"return\".equals(transfer.kind)) return transfer.value;\n")
+                    .append("        throw transfer;\n      }\n");
+            }
             boolean reachable = true;
             boolean unreachableReported = false;
-            for (int i = paramCount; i < bodyOps.size(); i++) {
+            for (int i = paramCount; !segmented && i < bodyOps.size(); i++) {
                 OpId opId = bodyOps.get(i);
                 if (ownedChildren.contains(opId) || skippedOps.contains(opId)) {
                     continue;
@@ -1151,7 +1231,7 @@ public final class JvmSemanticEmitter {
             // A body whose last emitted op is not a RETURN (the
             // group-core window's member bodies carry no E7 RETURN
             // production) must still terminate the lambda: the
-            // unconditional null return is reachable-safe after any
+            // unconditional undefined return is reachable-safe after any
             // try-catch tail and never follows a directly emitted
             // `return` (tail RETURN emits one). A body whose emitted
             // statements cannot complete normally needs no terminating
@@ -1168,8 +1248,8 @@ public final class JvmSemanticEmitter {
                     break;
                 }
             }
-            if (reachable && (tail == null || tail.kind() != SemanticOpKind.RETURN)) {
-                out.append("      return null;\n");
+            if (segmented || (reachable && (tail == null || tail.kind() != SemanticOpKind.RETURN))) {
+                out.append("      return JvmRuntime.UNDEFINED;\n");
             }
             out.append("    }, ")
                 .append(javaString(descriptorText(function.descriptor())))
@@ -1179,6 +1259,23 @@ public final class JvmSemanticEmitter {
                 .append(javaString(frameLabel(functionId)))
                 .append(");\n");
             out.append("  }\n");
+            if (segmented) {
+                // Whole top-level ops keep lexical loop/handler scope intact.
+                // Slots and explicit capture parameters carry state across parts.
+                for (int start = 0, part = 0; start < reachableOps.size(); start += 16, part++) {
+                    out.append("  static void __body").append(functionId.id()).append("Part")
+                        .append(part).append('(').append(params).append(") {\n");
+                    detachedBodySegment = true;
+                    try {
+                        for (int j = start; j < Math.min(start + 16, reachableOps.size()); j++) {
+                            emitOp(reachableOps.get(j), 2);
+                        }
+                    } finally {
+                        detachedBodySegment = false;
+                    }
+                    out.append("  }\n");
+                }
+            }
             currentFunction = null;
         }
 
@@ -1628,7 +1725,7 @@ public final class JvmSemanticEmitter {
         private boolean transferTargetVisible(SemanticOp emittingOp,
                                               SemanticOp targetLoop) {
             if (targetLoop == null) {
-                return tryDepth == 0;
+                return tryDepth == 0 && !detachedBodySegment;
             }
             for (SemanticOp ancestor
                     : structureAncestors(opBlock.get(emittingOp.opId()))) {
@@ -1706,6 +1803,7 @@ public final class JvmSemanticEmitter {
             KindPayload.ConstPayload payload = (KindPayload.ConstPayload) op.payload();
             String literal = switch (payload.value()) {
                 case ScalarValue.Null ignored -> "null";
+                case ScalarValue.Undefined ignored -> "JvmRuntime.UNDEFINED";
                 case ScalarValue.Boolean bool -> bool.value()
                     ? "Boolean.TRUE" : "Boolean.FALSE";
 
@@ -1726,6 +1824,13 @@ public final class JvmSemanticEmitter {
                 out.append(indent(indent)).append(slot((ValueId) op.result()))
                     .append(" = !((Boolean) ").append(slot(op.operands().get(0)))
                     .append(");\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.TYPEOF) {
+                out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = JvmRuntime.typeOf(")
+                    .append(slot(op.operands().get(0))).append(");\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.INSTANCEOF) {
+                out.append(indent(indent)).append(slot((ValueId) op.result())).append(" = JvmRuntime.isInstance(")
+                    .append(slot(op.operands().get(0))).append(", ")
+                    .append(javaString(payload.target().canonicalSpecText())).append(");\n");
             } else {
                 out.append(indent(indent)).append(slot((ValueId) op.result()))
                     .append(" = JvmRuntime.unary(")
@@ -1800,6 +1905,8 @@ public final class JvmSemanticEmitter {
             String target = slot((ValueId) op.result());
             out.append(indent(indent)).append(target).append(" = new JvmRuntime.Array(")
                 .append(payload.values().size()).append(");\n");
+            out.append(indent(indent)).append("((JvmRuntime.Array)").append(target)
+                .append(").elementDescriptor = ").append(javaString(descriptorText(payload.elementDescriptor()))).append(";\n");
             for (int i = 0; i < payload.values().size(); i++) {
                 OpId boundaryId = payload.elementBoundaryOpIds().get(i);
                 SemanticOp boundary = opsById.get(boundaryId);
@@ -2020,7 +2127,7 @@ public final class JvmSemanticEmitter {
             } else {
                 String source = slot(payload.value());
                 out.append(indent(indent)).append(target).append(" = ")
-                    .append(source).append(" == JvmRuntime.MISSING ? null : ")
+                    .append(source).append(" == JvmRuntime.MISSING ? JvmRuntime.UNDEFINED : ")
                     .append(source).append(";\n");
             }
             SemanticOp boundary = boundaryChildOf(op);
@@ -2120,7 +2227,7 @@ public final class JvmSemanticEmitter {
             String target = slot((ValueId) op.result());
             out.append(indent(indent)).append(target).append(" = JvmRuntime.hasField(")
                 .append(slot(payload.receiver())).append(", ")
-                .append(javaString(payload.key())).append(");\n");
+                .append(payload.dynamicKey() == null ? javaString(payload.key()) : "(String) " + slot(payload.dynamicKey())).append(");\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
 
@@ -2148,7 +2255,7 @@ public final class JvmSemanticEmitter {
                 .append(receiver).append(").read(")
                 .append(javaString(payload.field())).append(");\n");
             out.append(indent(indent)).append(read).append(" = ").append(read)
-                .append(" == JvmRuntime.MISSING ? null : ").append(read)
+                .append(" == JvmRuntime.MISSING ? JvmRuntime.UNDEFINED : ").append(read)
                 .append(";\n");
             emitFieldBoundaryCheck(op,
                 boundaryChildOfKind(op, BoundaryKind.OPTIONAL_FIELD_READ),
@@ -2433,11 +2540,22 @@ public final class JvmSemanticEmitter {
                 .append(bcheckArgs(payload.descriptor(), slot(payload.input())))
                 .append(";\n");
             out.append(indent(indent)).append("} catch (JvmRuntime.DealError __be) {\n");
-            out.append(indent(indent))
-                .append("  JvmRuntime.DealError __bre = new JvmRuntime.DealError("
-                    + "__be.code, __be.msg, ")
-                .append(javaString(originOf(op)))
-                .append(", __be.expected, __be.actual, __be.frames, null);\n");
+            if (payload.kind() == BoundaryKind.ASSERTION) {
+                RuntimeDescriptor descriptor = payload.descriptor();
+                out.append(indent(indent)).append("  JvmRuntime.DealError __bre = JvmRuntime.arm(")
+                    .append("deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND, java.util.Map.of(\"kind\", ")
+                    .append(javaString(deal.semantic.ir.FailureProjections.kindText(descriptor)))
+                    .append("), ").append(javaString(originOf(op))).append(", ")
+                    .append(javaString(deal.semantic.ir.FailureProjections.kindToken(descriptor)))
+                    .append(", JvmRuntime.actualOf(\"\", ").append(slot(payload.input()))
+                    .append("));\n");
+            } else {
+                out.append(indent(indent))
+                    .append("  JvmRuntime.DealError __bre = new JvmRuntime.DealError("
+                        + "__be.code, __be.msg, ")
+                    .append(javaString(originOf(op)))
+                    .append(", __be.expected, __be.actual, __be.frames, null);\n");
+            }
             if (trace) {
                 emitFailureEvent(op.opId(), "BOUNDARY", op,
                     "JvmRuntime.errtext(__bre)", indent + 1);
@@ -2771,7 +2889,7 @@ public final class JvmSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.4.md §Name resolution
+         * forward reference of docs/spec-v1.5.md §Name resolution
          * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).
@@ -3369,8 +3487,7 @@ public final class JvmSemanticEmitter {
                 .append(" = __bodyActive.contains(").append(callee.id())
                 .append("L);\n");
             out.append(indent(indent)).append("Object[] ").append(saved)
-                .append(" = new Object[]{").append(String.join(", ", keys))
-                .append("};\n");
+                .append(" = __state").append(callee.id()).append("Save();\n");
             out.append(indent(indent)).append("__bodyActive.add(")
                 .append(callee.id()).append("L);\n");
             return new StateSlot(previous, saved);
@@ -3388,11 +3505,8 @@ public final class JvmSemanticEmitter {
             if (slot == null) {
                 return;
             }
-            List<String> keys = bodyStateKeys(callee);
-            for (int i = 0; i < keys.size(); i++) {
-                out.append(indent(indent)).append(keys.get(i)).append(" = ")
-                    .append(slot.saved()).append("[").append(i).append("];\n");
-            }
+            out.append(indent(indent)).append("__state").append(callee.id())
+                .append("Restore(").append(slot.saved()).append(");\n");
             out.append(indent(indent)).append("if (!").append(slot.previous())
                 .append(") {\n");
             out.append(indent(indent + 1)).append("__bodyActive.remove(")
@@ -3424,8 +3538,7 @@ public final class JvmSemanticEmitter {
                 .append(" = __bodyActive.contains(").append(callee.id())
                 .append("L);\n");
             out.append(indent(indent)).append("Object[] ").append(saved)
-                .append(" = new Object[]{").append(String.join(", ", keys))
-                .append("};\n");
+                .append(" = __state").append(callee.id()).append("Save();\n");
             out.append(indent(indent)).append("__bodyActive.add(")
                 .append(callee.id()).append("L);\n");
             return new StateSlot(previous, saved);
@@ -3437,11 +3550,8 @@ public final class JvmSemanticEmitter {
             if (slot == null) {
                 return;
             }
-            List<String> keys = bodyStateKeys(callee);
-            for (int i = 0; i < keys.size(); i++) {
-                out.append(indent(indent)).append(keys.get(i)).append(" = ")
-                    .append(slot.saved()).append("[").append(i).append("];\n");
-            }
+            out.append(indent(indent)).append("__state").append(callee.id())
+                .append("Restore(").append(slot.saved()).append(");\n");
             // A re-entrant invocation leaves the enclosing invocation's
             // marker in place; only the outermost one clears it.
             out.append(indent(indent)).append("if (!").append(slot.previous())

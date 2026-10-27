@@ -27,7 +27,8 @@ function expectTrue(what: string, condition: boolean): null {
   return null;
 }
 
-function expectCaught(what: string, e: Error, message: string): null {
+function expectCaught(what: string, value: unknown, message: string): null {
+  let e: Error = value as Error;
   if (e.code !== "E8001") {
     throw { code: "CONTROL_FAIL", message: what + ": expected E8001, got " + e.code };
   }
@@ -51,17 +52,17 @@ export function main(): null {
   // admission republishes the read the presence op consumes.
   let box: Box | null = {};
   if (box !== null) {
-    expectTrue("absent optional field", !has(box.n));
+    expectTrue("absent optional field", !Object.hasOwn(box, "n"));
     box.n = 0;
-    expectTrue("present zero field", has(box.n));
+    expectTrue("present zero field", Object.hasOwn(box, "n"));
     box.flag = false;
-    expectTrue("present false field", has(box.flag));
+    expectTrue("present false field", Object.hasOwn(box, "flag"));
     box.nick = null;
-    expectTrue("present null field", has(box.nick));
+    expectTrue("present null field", Object.hasOwn(box, "nick"));
     delete box.nick;
-    expectTrue("deleted optional field", !has(box.nick));
+    expectTrue("deleted optional field", !Object.hasOwn(box, "nick"));
     box.nick = "ada";
-    expectTrue("reassigned optional field", has(box.nick));
+    expectTrue("reassigned optional field", Object.hasOwn(box, "nick"));
   }
 
   // A call between the narrowing and the presence read does not
@@ -76,20 +77,20 @@ export function main(): null {
     return null;
   };
   if (current !== null) {
-    expectTrue("the first object carries no field", !has(current.n));
+    expectTrue("the first object carries no field", !Object.hasOwn(current, "n"));
     swap();
-    expectTrue("the captured reassignment is observed", has(current.n));
-    expectTrue("the new object's present null field", has(current.nick));
-    let observed: number | null = current.n;
-    expectTrue("the ordinary read observes the new object", observed !== null);
+    expectTrue("the captured reassignment is observed", Object.hasOwn(current, "n"));
+    expectTrue("the new object's present null field", Object.hasOwn(current, "nick"));
+    let observed: number | undefined = current.n;
+    expectTrue("the ordinary read observes the new object", (observed as number) === 3);
   }
 
   // The nested receiver chain: the presence read of the inner instance's
   // optional field is unchanged for a valid refinement.
   let pair: Pair | null = { inner: { n: 4 } };
   if (pair !== null) {
-    expectTrue("nested chain presence", has(pair.inner.n));
-    expectTrue("nested chain absent field", !has(pair.inner.nick));
+    expectTrue("nested chain presence", Object.hasOwn(pair.inner, "n"));
+    expectTrue("nested chain absent field", !Object.hasOwn(pair.inner, "nick"));
   }
 
   // The nested chain's outer receiver is validated where it stands: after
@@ -104,7 +105,7 @@ export function main(): null {
     drop();
     let caughtNested: boolean = false;
     try {
-      let present: boolean = has(holder.inner.n);
+      let present: boolean = Object.hasOwn(holder.inner, "n");
       fail("nested chain presence");
     } catch (e) {
       expectCaught("nested chain presence", e, "expected class instance");
@@ -125,7 +126,7 @@ export function main(): null {
     clear();
     let caughtPresence: number = 0;
     try {
-      let present: boolean = has(cleared.n);
+      let present: boolean = Object.hasOwn(cleared, "n");
       fail("presence read");
     } catch (e) {
       expectCaught("presence read", e, "expected class instance");
@@ -147,7 +148,7 @@ export function main(): null {
     wipe();
     let caughtFields: number = 0;
     try {
-      let value: number | null = target.n;
+      let value: number | undefined = target.n;
       fail("ordinary field read");
     } catch (e) {
       expectCaught("ordinary field read", e, "expected class instance");
@@ -162,7 +163,7 @@ export function main(): null {
       caughtFields = caughtFields + 1;
     }
     expectEqual("the ordinary field delete raised", caughtFields, 2);
-    expectTrue("the failed field operations mutate nothing", has(keep.nick));
+    expectTrue("the failed field operations mutate nothing", Object.hasOwn(keep, "nick"));
   }
 
   // The receiver expression of a presence read completes exactly once, and
@@ -174,11 +175,11 @@ export function main(): null {
     evaluations = evaluations + 1;
     return source;
   };
-  let presentValue: boolean = has(make().n);
+  let presentValue: boolean = Object.hasOwn(make(), "n");
   expectTrue("call-valued receiver presence", presentValue);
   expectEqual("the receiver completes exactly once", evaluations, 1);
   delete source.n;
-  let absentValue: boolean = has(make().n);
+  let absentValue: boolean = Object.hasOwn(make(), "n");
   expectTrue("call-valued receiver absent field", !absentValue);
   expectEqual("one completion per presence read", evaluations, 2);
 
@@ -187,21 +188,21 @@ export function main(): null {
   // absent-versus-present-null member results after a call, and a cleared
   // binding raises its own canonical table error instead of a raw backend
   // index error, leaving the aliased table unmutated.
-  let slots: table | null = { present: null, value: 7 };
+  let slots: Record<string, unknown> | null = { present: null, value: 7 };
   let noop: () => null = function(): null {
     return null;
   };
   if (slots !== null) {
     noop();
-    let presentNull: number | null = slots.present;
-    let absent: number | null = slots.missing;
+    let presentNull: unknown = slots.present;
+    let absent: unknown = slots.missing;
     expectTrue("table present null member", presentNull === null);
-    expectTrue("table absent member", absent === null);
-    let presentMember: number = slots.value;
+    expectTrue("table absent member", absent === undefined);
+    let presentMember: number = slots.value as number;
     expectEqual("table present member", presentMember, 7);
   }
-  let editable: table = { value: 7 };
-  let held: table | null = editable;
+  let editable: Record<string, unknown> = { value: 7 };
+  let held: Record<string, unknown> | null = editable;
   let relinquish: () => null = function(): null {
     held = null;
     return null;
@@ -210,14 +211,14 @@ export function main(): null {
     relinquish();
     let caughtTable: boolean = false;
     try {
-      let value: number = held.value;
+      let value: unknown = held.value;
       fail("table member read");
     } catch (e) {
       expectCaught("table member read", e, "expected table");
       caughtTable = true;
     }
     expectTrue("the table member read raised its own typed-boundary error", caughtTable);
-    let kept: number = editable.value;
+    let kept: number = editable.value as number;
     expectEqual("the failed table read mutates nothing", kept, 7);
   }
   return null;

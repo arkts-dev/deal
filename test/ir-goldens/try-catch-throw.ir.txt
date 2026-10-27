@@ -1,16 +1,24 @@
-module @test/ir-goldens/fixtures/try-catch-throw.deal:4:1-11:1
-  function main: null @test/ir-goldens/fixtures/try-catch-throw.deal:4:1-11:1
+module @test/ir-goldens/fixtures/try-catch-throw.deal:4:1-13:1
+  function main: null @test/ir-goldens/fixtures/try-catch-throw.deal:4:1-13:1
     body
-      try @test/ir-goldens/fixtures/try-catch-throw.deal:5:5-10:1
+      try @test/ir-goldens/fixtures/try-catch-throw.deal:5:5-11:10
         block @test/ir-goldens/fixtures/try-catch-throw.deal:5:9-7:5
           throw @test/ir-goldens/fixtures/try-catch-throw.deal:6:9-7:5
             object : Error @test/ir-goldens/fixtures/try-catch-throw.deal:6:15-6:63
               [boundary: class-construct]
               literal "E001" : string @test/ir-goldens/fixtures/try-catch-throw.deal:6:23-6:28
               literal "something went wrong" : string @test/ir-goldens/fixtures/try-catch-throw.deal:6:40-6:61
-      catch e @test/ir-goldens/fixtures/try-catch-throw.deal:7:17-9:5
-        block @test/ir-goldens/fixtures/try-catch-throw.deal:7:17-9:5
-          let msg: string @test/ir-goldens/fixtures/try-catch-throw.deal:8:9-9:5
+      catch e @test/ir-goldens/fixtures/try-catch-throw.deal:7:17-10:5
+        block @test/ir-goldens/fixtures/try-catch-throw.deal:7:17-10:5
+          let error: Error @test/ir-goldens/fixtures/try-catch-throw.deal:8:9-9:11
             [boundary: var-annotation]
-            member .message : string @test/ir-goldens/fixtures/try-catch-throw.deal:8:27-8:35
-              ident e : Error @test/ir-goldens/fixtures/try-catch-throw.deal:8:27-8:27
+            assert as Error @test/ir-goldens/fixtures/try-catch-throw.deal:8:28-8:37
+              [boundary: assertion]
+              ident e : unknown @test/ir-goldens/fixtures/try-catch-throw.deal:8:28-8:28
+          let msg: string @test/ir-goldens/fixtures/try-catch-throw.deal:9:9-10:5
+            [boundary: var-annotation]
+            member .message : string @test/ir-goldens/fixtures/try-catch-throw.deal:9:27-9:39
+              ident error : Error @test/ir-goldens/fixtures/try-catch-throw.deal:9:27-9:31
+      return @test/ir-goldens/fixtures/try-catch-throw.deal:11:5-12:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/try-catch-throw.deal:11:12-11:15

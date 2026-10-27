@@ -1,42 +1,42 @@
 module @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:4:1-8:1
   async function a: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:4:1-5:5
     body
-      return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:4:30-4:40
+      return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:4:39-4:49
         [boundary: async-completion]
-        literal 1.0 : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:4:37-4:37
+        literal 1.0 : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:4:46-4:46
   async function b: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:5:1-6:5
     body
-      return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:5:30-5:40
+      return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:5:39-5:49
         [boundary: async-completion]
-        literal 2.0 : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:5:37-5:37
+        literal 2.0 : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:5:46-5:46
   async function c: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:6:1-7:6
     body
-      return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:6:30-6:40
+      return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:6:39-6:49
         [boundary: async-completion]
-        literal 3.0 : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:6:37-6:37
+        literal 3.0 : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:6:46-6:46
   export @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:1-8:1
     [boundary: export]
     async function f: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:8-8:1
       body
-        let x: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:37-7:66
+        let x: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:46-7:75
           [boundary: var-annotation]
-          await : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:53-7:61
-            call : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:59-7:61
-              ident a : async()->number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:59-7:59
-        let y: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:64-7:93
+          await : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:62-7:70
+            call : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:68-7:70
+              ident a : async()->number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:68-7:68
+        let y: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:73-7:102
           [boundary: var-annotation]
-          await : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:80-7:88
-            call : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:86-7:88
-              ident b : async()->number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:86-7:86
-        let z: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:91-7:123
+          await : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:89-7:97
+            call : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:95-7:97
+              ident b : async()->number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:95-7:95
+        let z: number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:100-7:132
           [boundary: var-annotation]
-          await : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:107-7:115
-            call : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:113-7:115
-              ident c : async()->number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:113-7:113
-        return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:118-7:136
+          await : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:116-7:124
+            call : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:122-7:124
+              ident c : async()->number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:122-7:122
+        return @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:127-7:145
           [boundary: async-completion]
-          binary + : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:125-7:133
-            binary + : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:125-7:129
-              ident x : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:125-7:125
-              ident y : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:129-7:129
-            ident z : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:133-7:133
+          binary + : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:134-7:142
+            binary + : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:134-7:138
+              ident x : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:134-7:134
+              ident y : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:138-7:138
+            ident z : number @test/ir-goldens/fixtures/async-await-async-multiple-awaits.deal:7:142-7:142

@@ -3,7 +3,10 @@
 // @expected: runtime-ok
 // @features: async-await, await, closures, catch, binding, mutation, loops
 
-async function identityText(x: string): string {
+function errorOf(value: unknown): Error { return value as Error; }
+function replacement(code: string, message: string): Error { return {code: code, message: message}; }
+
+async function identityText(x: string): Promise<string> {
   return x;
 }
 
@@ -14,25 +17,25 @@ function expectTrue(what: string, condition: boolean): null {
   return null;
 }
 
-export async function testAsyncCaptureAfterAwait(): number {
+export async function testAsyncCaptureAfterAwait(): Promise<number> {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_AA", message: "awaited" }; }
   catch (e) {
     let echoed: string = await identityText("resume");
     expectTrue("the awaited resumption completes", echoed === "resume");
-    read = function(): string { return e.message; };
-    expectTrue("the direct name reads the catch binding after the await", e.message === "awaited");
+    read = function(): string { return errorOf(e).message; };
+    expectTrue("the direct name reads the catch binding after the await", errorOf(e).message === "awaited");
     expectTrue("a closure captures the catch binding after the await", read() === "awaited");
   }
   expectTrue("the capture survives the catch exit", read() === "awaited");
   return 11;
 }
 
-export async function testAsyncEarlyCaptureSurvivesAwait(): number {
+export async function testAsyncEarlyCaptureSurvivesAwait(): Promise<number> {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_EA", message: "early" }; }
   catch (e) {
-    read = function(): string { return e.message; };
+    read = function(): string { return errorOf(e).message; };
     let echoed: string = await identityText("resume");
     expectTrue("the awaited resumption completes", echoed === "resume");
     expectTrue("a capture made before the await reads after it", read() === "early");
@@ -40,33 +43,33 @@ export async function testAsyncEarlyCaptureSurvivesAwait(): number {
   return 22;
 }
 
-export async function testAsyncStoreAcrossAwait(): string {
+export async function testAsyncStoreAcrossAwait(): Promise<string> {
   let store: () => null = function(): null { return null; };
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_SA", message: "before" }; }
   catch (e) {
-    store = function(): null { e = { code: "E_SA2", message: "rewritten" }; return null; };
-    read = function(): string { return e.message; };
+    store = function(): null { e = replacement("E_SA2", "rewritten"); return null; };
+    read = function(): string { return errorOf(e).message; };
     let echoed: string = await identityText("resume");
     expectTrue("the awaited resumption completes", echoed === "resume");
     store();
     expectTrue("a post-await closure store reaches the binding", read() === "rewritten");
-    expectTrue("the direct name reads the post-await store", e.message === "rewritten");
+    expectTrue("the direct name reads the post-await store", errorOf(e).message === "rewritten");
   }
   return read();
 }
 
-export async function testAsyncCaptureAcrossOuterAwait(): number {
+export async function testAsyncCaptureAcrossOuterAwait(): Promise<number> {
   let read: () => string = function(): string { return ""; };
   try { throw { code: "E_OA", message: "outer await" }; }
-  catch (e) { read = function(): string { return e.message; }; }
+  catch (e) { read = function(): string { return errorOf(e).message; }; }
   let echoed: string = await identityText("after");
   expectTrue("the outer awaited resumption completes", echoed === "after");
   expectTrue("the capture survived the catch exit and the await", read() === "outer await");
   return 44;
 }
 
-export async function testAsyncLoopCatches(): number {
+export async function testAsyncLoopCatches(): Promise<number> {
   let messages: string[] = ["first", "second"];
   let readers: (() => string)[] = [];
   { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {
@@ -74,7 +77,7 @@ export async function testAsyncLoopCatches(): number {
     catch (e) {
       let echoed: string = await identityText(messages[i]);
       expectTrue("the loop catch's awaited resumption completes", echoed === messages[i]);
-      readers[i] = function(): string { return e.message; };
+      readers[i] = function(): string { return errorOf(e).message; };
     }
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
   expectTrue("the first iteration binding", readers[0]() === "first");
@@ -82,13 +85,13 @@ export async function testAsyncLoopCatches(): number {
   return 55;
 }
 
-export async function testAsyncAsyncClosure(): string {
-  let read: async () => string = async function(): string { return ""; };
+export async function testAsyncAsyncClosure(): Promise<string> {
+  let read: () => Promise<string> = async function(): Promise<string> { return ""; };
   try { throw { code: "E_AC", message: "async closure" }; }
   catch (e) {
-    read = async function(): string {
+    read = async function(): Promise<string> {
       let echoed: string = await identityText("inner");
-      return e.message + "/" + echoed;
+      return errorOf(e).message + "/" + echoed;
     };
   }
   let value: string = await read();

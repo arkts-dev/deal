@@ -155,7 +155,7 @@ public class ControlFlowLoweringTest {
     /** The foundation detector's recorded coverage rows for the slice. */
     private static Map<ConstructKind, List<SemanticOpKind>> detectedCoverage(
             CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -184,7 +184,7 @@ public class ControlFlowLoweringTest {
 
     private static SemanticLowerer.LoweringResult lower(CheckedSlice slice,
             Map<ConstructKind, List<SemanticOpKind>> coverage) {
-        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64,
+        return SemanticLowerer.lowerModule(moduleOf(slice), SemanticProfile.DEAL_V1_5_BINARY64,
             coverage, INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -204,7 +204,7 @@ public class ControlFlowLoweringTest {
     private static SemanticLowerer.LoweringResult lowerFullProgram(CheckedSlice slice) {
         SemanticLowerer.FullProgramE7Result result =
             SemanticLowerer.lowerModuleFullProgramE7(moduleOf(slice),
-                SemanticProfile.DEAL_V1_4_BINARY64, detectedCoverage(slice),
+                SemanticProfile.DEAL_V1_5_BINARY64, detectedCoverage(slice),
                 INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)), Map.of(), Set.of());
         return result == null ? null : result.lowering();
@@ -448,7 +448,7 @@ public class ControlFlowLoweringTest {
     static void testIfBranchArm() {
         System.out.println("-- BRANCH(IF): condition, selected/alternate blocks --");
 
-        CheckedSlice slice = checkSlice("if ({flag: true}.flag) { \"a\"; } else { \"b\"; }");
+        CheckedSlice slice = checkSlice("if ({flag: true}.flag as boolean) { \"a\"; } else { \"b\"; }");
         if (slice == null) {
             return;
         }
@@ -476,12 +476,18 @@ public class ControlFlowLoweringTest {
 
         // The condition's producing ops complete in the enclosing block
         // before the BRANCH op: CONST(true), TABLE_NEW, MEMBER_READ,
-        // CONTEXTUAL_TABLE_READ child — all members of the module-init
+        // ASSERTION boundary — all members of the module-init
         // block, emitted before the BRANCH op.
         int branchIndex = ops.indexOf(branch);
         SemanticOp memberRead = ofKind(ops, SemanticOpKind.MEMBER_READ).get(0);
-        check(payload.condition().equals(memberRead.result()),
-            "the BRANCH condition is the MEMBER_READ result (the if-condition)");
+        SemanticOp assertion = ops.stream().filter(op -> op.payload() instanceof KindPayload.BoundaryPayload b
+                && b.kind() == BoundaryKind.ASSERTION).findFirst().orElseThrow();
+        check(payload.condition().equals(assertion.result())
+                && ((KindPayload.BoundaryPayload) assertion.payload()).input().equals(memberRead.result())
+                && assertion.resultType().equals(RuntimeDescriptor.Boolean.INSTANCE)
+                && ops.indexOf(memberRead) < ops.indexOf(assertion)
+                && ops.indexOf(assertion) < branchIndex,
+            "the BRANCH consumes the once-checked boolean assertion of the unknown member read");
         check(ops.indexOf(memberRead) < branchIndex,
             "the condition's producing ops precede the BRANCH op in the unit list");
         StructuredBodyTable table = result.table();
@@ -838,14 +844,14 @@ public class ControlFlowLoweringTest {
         narrowedForOfIterable("the array arm", """
             let xs: number[] | null = [1, 2];
             if (xs !== null) {
-              for (let n: number of xs) { break; }
+              for (let n of xs) { break; }
             }
             """, IterationMode.ARRAY_VALUES,
             new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE));
         narrowedForOfIterable("the string arm", """
             let name: string | null = "ab";
             if (name !== null) {
-              for (let c: string of name) { break; }
+              for (let c of name) { break; }
             }
             """, IterationMode.STRING_SCALARS, RuntimeDescriptor.String.INSTANCE);
     }
@@ -858,7 +864,7 @@ public class ControlFlowLoweringTest {
             return;
         }
         SemanticLowerer.LoweringResult result = SemanticLowerer.lowerModuleFullProgram(
-            moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64, detectedCoverage(slice),
+            moduleOf(slice), SemanticProfile.DEAL_V1_5_BINARY64, detectedCoverage(slice),
             INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(result != null && !result.hasErrors(),
@@ -943,7 +949,7 @@ public class ControlFlowLoweringTest {
     static void testForEachArrayValuesArm() {
         System.out.println("-- FOR_EACH(ARRAY_VALUES): iterable once, fresh binding, break target --");
 
-        CheckedSlice slice = checkSlice("for (let x: number of [1, 2]) { break; }");
+        CheckedSlice slice = checkSlice("for (let x of [1, 2]) { break; }");
         if (slice == null) {
             return;
         }
@@ -994,7 +1000,7 @@ public class ControlFlowLoweringTest {
 
         // A load of the loop binding inside the body resolves to the
         // payload binding with the initial generation.
-        CheckedSlice loadSlice = checkSlice("for (let b: boolean of [true]) { break; }");
+        CheckedSlice loadSlice = checkSlice("for (let b of [true]) { break; }");
         if (loadSlice != null) {
             SemanticLowerer.LoweringResult loadResult = lowerDetected(loadSlice);
             check(loadResult != null && !loadResult.hasErrors(),
@@ -1159,7 +1165,7 @@ public class ControlFlowLoweringTest {
     static void testTryCatchThrowArm() {
         System.out.println("-- TRY_CATCH/THROW: blocks, catchBinding, THROW_TRANSFER --");
 
-        CheckedSlice slice = checkSlice("try {} catch (e) { throw e; }");
+        CheckedSlice slice = checkSlice("try {} catch (e) { throw e as Error; }");
         if (slice == null) {
             return;
         }
@@ -1188,12 +1194,12 @@ public class ControlFlowLoweringTest {
             "the payload carries the producer-allocated catchBinding");
 
         List<OpId> catchOps = table.blockOps().get(payload.catchBlock());
-        check(catchOps.size() == 3,
-            "catchBlock carries the catch binding's BINDING_ALLOC, the BINDING_LOAD,"
-                + " and the THROW; got " + catchOps.size());
+        check(catchOps.size() == 4,
+            "catchBlock carries ALLOC, LOAD, checked assertion and THROW; got " + catchOps.size());
         SemanticOp alloc = opById(ops, catchOps.get(0));
         SemanticOp load = opById(ops, catchOps.get(1));
-        SemanticOp throwOp = opById(ops, catchOps.get(2));
+        SemanticOp assertion = opById(ops, catchOps.get(2));
+        SemanticOp throwOp = opById(ops, catchOps.get(3));
         check(alloc.kind() == SemanticOpKind.BINDING_ALLOC,
             "the first catch-block op is the catch binding's producing ALLOC "
                 + "(the catch-entry write's incarnation)");
@@ -1212,19 +1218,22 @@ public class ControlFlowLoweringTest {
             "the load carries the TRY_CATCH payload's catch binding");
         check(loadPayload.generation() == SemanticLowerer.INITIAL_LOOP_GENERATION,
             "the load carries the pinned initial generation");
-        check(load.resultType().equals(new RuntimeDescriptor.Class(
-                new deal.semantic.ir.ClassId("", "Error"))),
-            "the load resultType is D(Error) (the catch variable's checked type); got "
-                + load.resultType());
+        check(load.resultType().equals(RuntimeDescriptor.Unknown.INSTANCE),
+            "the catch binding loads unknown; got " + load.resultType());
+        check(assertion.payload() instanceof KindPayload.BoundaryPayload boundary
+                && boundary.kind() == BoundaryKind.ASSERTION
+                && boundary.descriptor().equals(new RuntimeDescriptor.Class(deal.semantic.ir.ClassId.ERROR))
+                && boundary.input().equals(load.result()),
+            "the assertion checks the unknown catch value against Error");
         check(throwOp.kind() == SemanticOpKind.THROW,
-            "the third catch-block op is the THROW");
+            "the fourth catch-block op is the THROW");
         check(throwOp.failurePolicy() == FailurePolicyId.THROW_TRANSFER,
             "the THROW carries THROW_TRANSFER (code/message preserved, origin = the THROW "
                 + "origin)");
         checkNoResult("THROW", throwOp);
-        check(load.result().equals(((KindPayload.ThrowPayload) throwOp.payload()).errorValue()),
+        check(assertion.result().equals(((KindPayload.ThrowPayload) throwOp.payload()).errorValue()),
             "the THROW operand is the load's produced Error value (completes before START)");
-        for (SemanticOp op : List.of(alloc, load, throwOp)) {
+        for (SemanticOp op : List.of(alloc, load, assertion, throwOp)) {
             check(tryCatch.opId().equals(op.origin().parentOpId()),
                 op.kind() + " records the TRY_CATCH as parentOpId");
         }
@@ -1236,7 +1245,7 @@ public class ControlFlowLoweringTest {
 
     /**
      * The catch variable is an ordinary mutable lexical binding of the
-     * full-program walk (docs/spec-v1.4.md §Closures and captured
+     * full-program walk (docs/spec-v1.5.md §Closures and captured
      * variables, §try / catch): its catch-block BINDING_ALLOC is the
      * incarnation a direct assignment commits, a closure created in the
      * catch block records the capture (the capture-driven cell kind makes
@@ -1252,7 +1261,7 @@ public class ControlFlowLoweringTest {
               let read: () => Error = function(): Error { return seed; };
               try { throw seed; }
               catch (e) {
-                read = function(): Error { return e; };
+                read = function(): Error { return e as Error; };
                 e = seed;
               }
               return read;
@@ -2037,7 +2046,7 @@ public class ControlFlowLoweringTest {
             rule + " is named as the validator rule; got \"" + d.message() + "\"");
         check(d.message().startsWith("Common semantic lowering failed")
                 && d.message().contains("module 'main'")
-                && d.message().contains("semanticProfile DEAL_V1_4_BINARY64")
+                && d.message().contains("semanticProfile DEAL_V1_5_BINARY64")
                 && d.message().contains("irVersion deal.semantic-ir/2")
                 && d.diagnosticCode().phase() == DiagnosticCode.Phase.BACKEND_LOWERING,
             rule + " full diagnostic projection fields");
@@ -2160,13 +2169,13 @@ public class ControlFlowLoweringTest {
     static void testCoverageRows() {
         System.out.println("-- Detector coverage rows for the lowered constructs --");
 
-        // The closed ConstructKind set carries no new values (the fixed
+        // The closed ConstructKind set includes checked assertions (the fixed
         // rows are extended, never the set).
-        check(ConstructKind.values().length == 23,
-            "the closed ConstructKind set carries exactly its 23 pinned values; got "
+        check(ConstructKind.values().length == 24,
+            "the closed ConstructKind set carries exactly its 24 pinned values; got "
                 + ConstructKind.values().length);
 
-        CheckedSlice slice = checkSlice("if (true) {}\nwhile (false) { break; }\n{  while (true) { { {  continue; } }  } }\nfor (let x: number of [1]) {}\ntry {} catch (e) { throw e; }\n\"probe\";\n");
+        CheckedSlice slice = checkSlice("if (true) {}\nwhile (false) { break; }\n{  while (true) { { {  continue; } }  } }\nfor (let x of [1]) {}\ntry {} catch (e) { throw e as Error; }\n\"probe\";\n");
         if (slice == null) {
             return;
         }
@@ -2227,7 +2236,7 @@ public class ControlFlowLoweringTest {
     static void testDeterminism() {
         System.out.println("-- Determinism: byte-identical repeated lowerings --");
 
-        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {\n  if (({f: true}).f) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e; }\nfor (let x: number of [1, 2]) { continue; }\n");
+        CheckedSlice slice = checkSlice("while (({b: true}).b = false) {\n  if (({f: true}).f as boolean) { \"a\"; }\n  {  while (true) { { break; }  } }\n}\ntry {} catch (e) { throw e as Error; }\nfor (let x of [1, 2]) { continue; }\n");
         if (slice == null) {
             return;
         }

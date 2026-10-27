@@ -1,5 +1,5 @@
 // @spec: Tables — Reading table fields
-// @description: The five admitted direct read positions stay admitted — parenthesized let initializer, assignment value, return expression, call argument and if condition — beside the computed direct read, the typed intermediate in an array literal, contextual class/array object-literal construction and an ordinary template interpolation of a static string.
+// @description: Checked Record reads work in initializers, assignments, returns, arguments and conditions, beside computed reads, typed intermediates, nominal construction and string interpolation.
 // @expected: compile-ok
 // @features: tables, dynamic-read, contextual-target, template-literal, classes
 
@@ -7,20 +7,20 @@ class Box { n: number; }
 
 function take(n: number): number { return n; }
 
-function readN(t: table): number { return t.n; }
+function readN(t: Record<string, unknown>): number { return t.n as number; }
 
 export function main(): null {
-  let t: table = { n: 1, flag: true, s: "a" };
-  let n: number = (t.n);
-  let computed: number = t["n"];
-  n = t.n;
-  n = take(t.n);
-  if (t.flag) { n = n + 1; }
+  let t: Record<string, unknown> = { n: 1, flag: true, s: "a" };
+  let n: number = (t.n as number);
+  let computed: number = t["n"] as number;
+  n = t.n as number;
+  n = take(t.n as number);
+  if (t.flag as boolean) { n = n + 1; }
   n = readN(t);
   let xs: number[] = [n];
   let b: Box = { n: n };
   let bs: Box[] = [{ n: n }];
-  let v: string = t.s;
+  let v: string = t.s as string;
   let s: string = `v${v}`;
   return null;
 }

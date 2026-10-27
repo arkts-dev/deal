@@ -993,6 +993,28 @@ public class CanonicalProjectionParityTest {
     /** The raw host carrier of the bad_string fixture's malformed string ("a\x80b"). */
     private static final byte[] RAW_MALFORMED_STRING = { 0x61, (byte) 0x80, 0x62 };
 
+    /** Fixture-only equivalent of the deployed hosts' hostile final-field mutation. */
+    static void hostileOracleSignature(SemanticOracle.Value.FuncValue value,
+            RuntimeDescriptor.Func signature) {
+        try {
+            var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
+            var lookupField = java.lang.invoke.MethodHandles.Lookup.class.getDeclaredField("IMPL_LOOKUP");
+            var lookup = (java.lang.invoke.MethodHandles.Lookup) unsafe.getObject(
+                unsafe.staticFieldBase(lookupField), unsafe.staticFieldOffset(lookupField));
+            Class<?> internal = Class.forName("jdk.internal.misc.Unsafe");
+            Object internalUnsafe = lookup.findStaticGetter(internal, "theUnsafe", internal).invoke();
+            long offset = (long) lookup.findVirtual(internal, "objectFieldOffset",
+                java.lang.invoke.MethodType.methodType(long.class, Class.class, String.class))
+                .invoke(internalUnsafe, SemanticOracle.Value.FuncValue.class, "signature");
+            unsafe.putObject(value, offset, signature);
+            if (value.signature() != signature) throw new AssertionError("Signature mutation did not commit");
+        } catch (Throwable failure) {
+            throw new AssertionError("Cannot invalidate the fixture callable", failure);
+        }
+    }
+
     /**
      * The closed E7 host seam of the async cases (the non-operation host
      * handle carrying the corpus host's returned number for the shape
@@ -1001,6 +1023,24 @@ public class CanonicalProjectionParityTest {
      * carrier marks of the bad_string fixture).
      */
     private static SemanticOracle.HostResponder responderFor(Case spec) {
+        if (Set.of("descriptors/canonical-sig-mismatch-e8010",
+                "classes/same-name-sibling-function-crossing",
+                "host-abi/host-nullable-function-param-bad").contains(spec.corpusPath())) {
+            return new SemanticOracle.HostResponder() {
+                @Override
+                public SyncOutcome call(ModuleId module, String export,
+                        RuntimeDescriptor.Func descriptor, List<SemanticOracle.Value> args) {
+                    if (!export.equals("replaceSignature") || args.size() != 2)
+                        throw new AssertionError("Unexpected hostile fixture call: " + module + "." + export);
+                    var holder = (SemanticOracle.Value.TableValue) args.get(0);
+                    var function = (SemanticOracle.Value.FuncValue) holder.entries().get("value");
+                    var text = (SemanticOracle.Value.StrValue) args.get(1);
+                    hostileOracleSignature(function,
+                        (RuntimeDescriptor.Func) RuntimeDescriptor.parseCanonicalText(text.value()));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.BoolValue(true));
+                }
+            };
+        }
         if ("empty_return".equals(spec.hostStem())) {
             // The declared void host's no-result terminal: the full-program
             // oracle drive passes the absent result through the recorded
@@ -1386,8 +1426,9 @@ public class CanonicalProjectionParityTest {
             if (pin == null) {
                 check(Set.of("arithmetic/int-convert-fraction", "runtime/int-convert-noninteger",
                     "arithmetic/int-convert-nan", "arithmetic/int-convert-infinity",
-                    "arithmetic/int-add-overflow").contains(spec.corpusPath()),
-                    spec.what() + ": only migrated numeric admissions use the success branch");
+                    "arithmetic/int-add-overflow", "runtime-errors/json-stringify-function-e8001",
+                    "stdlib/json/json-stringify-nonfinite").contains(spec.corpusPath()),
+                    spec.what() + ": only explicitly migrated numeric/JSON admissions use the success branch");
                 SemanticRuntimeModel.ConsumerRun run = oracleRun(compiled);
                 check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
                     spec.what() + " (oracle): the value-consuming subject succeeds: " + run.terminal());
@@ -1435,9 +1476,9 @@ public class CanonicalProjectionParityTest {
                     + ": the read-expression column");
             }
             case "runtime-errors/type-mismatch-e8001" -> {
-                checkEq(Integer.valueOf(6), pin.line(), spec.what()
+                checkEq(Integer.valueOf(10), pin.line(), spec.what()
                     + ": the sidecar pins the callee's declared annotation line");
-                checkEq(Integer.valueOf(21), pin.column(), spec.what()
+                checkEq(Integer.valueOf(18), pin.column(), spec.what()
                     + ": the sidecar pins the annotation column");
                 checkEq(pin.line(), oracle.line(), spec.what()
                     + ": the oracle renders the callee's declared annotation");
@@ -2170,9 +2211,9 @@ public class CanonicalProjectionParityTest {
      * numeric carriers.
      */
     private static final String NUMERIC_COMPLETION_DECLARATION = """
-        export async function fetchInt(): number;
-        export async function fetchNullableInt(): number | null;
-        export async function fetchNumber(): number;
+        export function fetchInt(): Promise<number>;
+        export function fetchNullableInt(): Promise<number | null>;
+        export function fetchNumber(): Promise<number>;
         """;
 
     /**
@@ -2183,7 +2224,7 @@ public class CanonicalProjectionParityTest {
     private static final String NUMERIC_COMPLETION_INT_DRIVER = """
         import * as host from "host/async_numeric";
 
-        export async function test_use_int(): number {
+        export async function test_use_int(): Promise<number> {
           let v: number = await host.fetchInt();
           let w: number = v + 1;
           return w;
@@ -2198,7 +2239,7 @@ public class CanonicalProjectionParityTest {
     private static final String NUMERIC_COMPLETION_NULLABLE_INT_DRIVER = """
         import * as host from "host/async_numeric";
 
-        export async function test_use_nullable_int(): number {
+        export async function test_use_nullable_int(): Promise<number> {
           let v: number | null = await host.fetchNullableInt();
           if (v !== null) {
             let w: number = v + 1;
@@ -2216,7 +2257,7 @@ public class CanonicalProjectionParityTest {
     private static final String NUMERIC_COMPLETION_NUMBER_DRIVER = """
         import * as host from "host/async_numeric";
 
-        export async function test_use_number(): number {
+        export async function test_use_number(): Promise<number> {
           let v: number = await host.fetchNumber();
           let w: number = v + 0.5;
           return w;
@@ -2480,13 +2521,13 @@ public class CanonicalProjectionParityTest {
      * number array.
      */
     private static final String ARRAY_COMPLETION_DECLARATION = """
-        export async function fetchInts(): number[];
-        export async function fetchNullableInts(): number[] | null;
-        export async function fetchNullableElements(): (number | null)[];
-        export async function fetchNestedInts(): number[][];
-        export async function fetchNestedStrings(): string[][];
-        export async function fetchStrings(): string[];
-        export async function fetchNumbers(): number[];
+        export function fetchInts(): Promise<number[]>;
+        export function fetchNullableInts(): Promise<number[] | null>;
+        export function fetchNullableElements(): Promise<(number | null)[]>;
+        export function fetchNestedInts(): Promise<number[][]>;
+        export function fetchNestedStrings(): Promise<string[][]>;
+        export function fetchStrings(): Promise<string[]>;
+        export function fetchNumbers(): Promise<number[]>;
         """;
 
     /**
@@ -2498,7 +2539,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_int_array(): number {
+        export async function test_use_int_array(): Promise<number> {
           let xs: number[] = await host.fetchInts();
           let v: number = xs[0];
           if (v !== 7) {
@@ -2516,7 +2557,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NULLABLE_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_nullable_int_array(): number {
+        export async function test_use_nullable_int_array(): Promise<number> {
           let xs: number[] | null = await host.fetchNullableInts();
           if (xs !== null) {
             let v: number = xs[0];
@@ -2540,7 +2581,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NULLABLE_ELEMENT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_nullable_elements(): number {
+        export async function test_use_nullable_elements(): Promise<number> {
           let xs: (number | null)[] = await host.fetchNullableElements();
           let v: number | null = xs[0];
           let w: number | null = xs[1];
@@ -2566,7 +2607,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NESTED_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_nested_int_array(): number {
+        export async function test_use_nested_int_array(): Promise<number> {
           let xs: number[][] = await host.fetchNestedInts();
           let v: number = xs[0][0];
           if (v !== 7) {
@@ -2590,7 +2631,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NUMBER_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_use_number_array(): number {
+        export async function test_use_number_array(): Promise<number> {
           let xs: number[] = await host.fetchNumbers();
           let v: number = xs[0];
           if (v !== 7.0) {
@@ -2608,7 +2649,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_STRING_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_drop_string_array(): null {
+        export async function test_drop_string_array(): Promise<null> {
           let xs: string[] = await host.fetchStrings();
           return null;
         }
@@ -2622,7 +2663,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_NESTED_STRING_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_drop_nested_string_array(): null {
+        export async function test_drop_nested_string_array(): Promise<null> {
           let xs: string[][] = await host.fetchNestedStrings();
           return null;
         }
@@ -3036,7 +3077,7 @@ public class CanonicalProjectionParityTest {
         try {
             assertAsyncArrayCompletionSuccess(compiled, "test_use_nullable_elements",
                 "num:0x1.0p3", arrayCompletionResponder(oracleNullableElementArray()),
-                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7}"),
+                luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 2, [1] = 7, [2] = rt.__NULL}"),
                 jvmAsyncArrayHost("nullable-integer"),
                 "the boxed int and null (int | null)[] completion");
         } finally {
@@ -3300,7 +3341,7 @@ public class CanonicalProjectionParityTest {
      * operation the driver awaits twice.
      */
     private static final String SHARED_ARRAY_COMPLETION_DECLARATION = """
-        export async function fetchSharedInts(): number[];
+        export function fetchSharedInts(): Promise<number[]>;
         """;
 
     /**
@@ -3314,7 +3355,7 @@ public class CanonicalProjectionParityTest {
     private static final String SHARED_ARRAY_COMPLETION_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_reuse_int_array(): number {
+        export async function test_reuse_int_array(): Promise<number> {
           let xs: number[] = await host.fetchSharedInts();
           let ys: number[] = await host.fetchSharedInts();
           if (xs !== ys) {
@@ -3511,7 +3552,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_DROP_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_drop_int_array(): null {
+        export async function test_drop_int_array(): Promise<null> {
           await host.fetchInts();
           return null;
         }
@@ -3525,7 +3566,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_drop_nullable_elements(): null {
+        export async function test_drop_nullable_elements(): Promise<null> {
           await host.fetchNullableElements();
           return null;
         }
@@ -3539,7 +3580,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_DROP_NESTED_INT_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_drop_nested_int_array(): null {
+        export async function test_drop_nested_int_array(): Promise<null> {
           await host.fetchNestedInts();
           return null;
         }
@@ -3557,7 +3598,7 @@ public class CanonicalProjectionParityTest {
     private static final String ARRAY_COMPLETION_DROP_ORDER_DRIVER = """
         import * as host from "host/async_arrays";
 
-        export async function test_drop_ordered_strings(): null {
+        export async function test_drop_ordered_strings(): Promise<null> {
           await host.fetchStrings();
           return null;
         }
@@ -3638,8 +3679,9 @@ public class CanonicalProjectionParityTest {
             ARRAY_COMPLETION_DROP_NULLABLE_ELEMENT_DRIVER);
         try {
             assertAsyncCompletionSuccess(compiled, "async_arrays",
-                arrayCompletionResponder(
-                    oracleOutOfRangeIntArrayElement(-2147483649L)),
+                arrayCompletionResponder(new SemanticOracle.Value.ArrayValue(
+                    new ArrayList<>(List.of(new SemanticOracle.Value.NumValue(-2147483649L))),
+                    RuntimeDescriptor.parseCanonicalText("?number"), false)),
                 "test_drop_nullable_elements",
                 luaAsyncArrayHost("{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = -2147483649}"),
                 jvmAsyncArrayHost("negative-range-long"),
@@ -4256,27 +4298,27 @@ public class CanonicalProjectionParityTest {
         export function takeNullableArray(value: (number | null)[]): string;
         export function takeNestedNullableArray(value: (number | null)[][]): string;
         export function takeNullableArrayBadReturn(value: (number | null)[]): string;
-        export async function asyncTakeNullableArray(value: (number | null)[]): string;
+        export function asyncTakeNullableArray(value: (number | null)[]): Promise<string>;
         export function takeSharedArray(first: (number | null)[], second: (number | null)[]): string;
         export function roundtripArray(value: (number | null)[]): (number | null)[];
         export function writeArray(value: (number | null)[]): string;
         export function stashArray(value: (number | null)[]): string;
         export function sameAsStash(value: (number | null)[]): string;
         export function writeNestedArray(value: (number | null)[][]): string;
-        export async function asyncTakeSharedArray(first: (number | null)[], second: (number | null)[]): string;
-        export async function asyncRoundtripArray(value: (number | null)[]): (number | null)[];
-        export async function asyncWriteArray(value: (number | null)[]): string;
+        export function asyncTakeSharedArray(first: (number | null)[], second: (number | null)[]): Promise<string>;
+        export function asyncRoundtripArray(value: (number | null)[]): Promise<(number | null)[]>;
+        export function asyncWriteArray(value: (number | null)[]): Promise<string>;
         export function takeNullBadReturn(value: null): string;
-        export function takeTable(value: table): string;
+        export function takeTable(value: Record<string, unknown>): string;
         export function takeArray(value: number[]): string;
         export function returnNull(): null;
         export function returnNullableInt(): number | null;
-        export async function asyncTakeNull(value: null): string;
-        export async function asyncTakeNullableInt(value: number | null): string;
-        export async function asyncTakeNullThenInt(value: null, count: number): string;
-        export async function asyncTakePair(value: number | null, count: number | null): string;
-        export async function asyncTakeTable(value: table): string;
-        export async function asyncTakeArray(value: number[]): string;
+        export function asyncTakeNull(value: null): Promise<string>;
+        export function asyncTakeNullableInt(value: number | null): Promise<string>;
+        export function asyncTakeNullThenInt(value: null, count: number): Promise<string>;
+        export function asyncTakePair(value: number | null, count: number | null): Promise<string>;
+        export function asyncTakeTable(value: Record<string, unknown>): Promise<string>;
+        export function asyncTakeArray(value: number[]): Promise<string>;
         """;
 
     /**
@@ -4334,24 +4376,29 @@ public class CanonicalProjectionParityTest {
             new NullHelper(102, true, "applyAsyncPair", "value: number | null, count: number | null", "null, 7"),
             new NullHelper(122, false, "applyNull", "value: null", "null"),
             new NullHelper(126, false, "applyNullableInt", "value: number | null", "null"),
-            new NullHelper(162, false, "applyTable", "value: table", "bag.value"),
+            new NullHelper(162, false, "applyTable", "value: Record<string, unknown>", "bag.value"),
             new NullHelper(166, false, "applyArray", "value: number[]", "bag.value"),
-            new NullHelper(190, true, "applyAsyncTable", "value: table", "bag.value"),
+            new NullHelper(190, true, "applyAsyncTable", "value: Record<string, unknown>", "bag.value"),
             new NullHelper(194, true, "applyAsyncArray", "value: number[]", "bag.value"),
-            new NullHelper(228, false, "applyTableMissing", "value: table", "bag.missing"),
+            new NullHelper(228, false, "applyTableMissing", "value: Record<string, unknown>", "bag.missing"),
             new NullHelper(232, false, "applyArrayMissing", "value: number[]", "bag.missing"),
-            new NullHelper(246, true, "applyAsyncTableMissing", "value: table", "bag.missing"),
+            new NullHelper(246, true, "applyAsyncTableMissing", "value: Record<string, unknown>", "bag.missing"),
             new NullHelper(250, true, "applyAsyncArrayMissing", "value: number[]", "bag.missing"),
             new NullHelper(264, true, "applyAsyncNullValue", "value: null", "value"));
         for (NullHelper row : helpers) {
             String expression = row.expression();
-            String parameters = "f: " + (row.async() ? "async " : "") + "(" + row.parameters() + ") => string"
-                + (expression.startsWith("bag.") ? ", bag: table" : expression.equals("value") ? ", value: null" : "");
-            blocks.put(row.line(), nullFunction("", row.async(), row.name(), parameters, "string",
-                "return " + (row.async() ? "await " : "") + "f(" + expression + ");\n"));
+            String parameters = "f: (" + row.parameters() + ") => "
+                + (row.async() ? "Promise<string>" : "string")
+                + (expression.startsWith("bag.") ? ", bag: Record<string, unknown>" : expression.equals("value") ? ", value: null" : "");
+            String body = "return " + (row.async() ? "await " : "") + "f(" + expression + ");\n";
+            if (expression.startsWith("bag.")) {
+                String type = row.parameters().substring("value: ".length());
+                body = invalidatedHostCall(type, expression, "f", row.async(), true);
+            }
+            blocks.put(row.line(), nullFunction("", row.async(), row.name(), parameters, "string", body));
         }
-        blocks.put(146, nullFunction("", false, "bagWithNull", "", "table",
-            "let bag: table = {};\nbag.value = null;\nreturn bag;\n"));
+        blocks.put(146, nullFunction("", false, "bagWithNull", "", "Record<string, unknown>",
+            "let bag: Record<string, unknown> = {};\nbag.value = null;\nreturn bag;\n"));
         List<NullRejectSource> rejections = List.of(
             new NullRejectSource(152, false, "test_reject_table_dynamic_null", "host.takeTable(bagWithNull().value)"),
             new NullRejectSource(157, false, "test_reject_array_dynamic_null", "host.takeArray(bagWithNull().value)"),
@@ -4370,8 +4417,16 @@ public class CanonicalProjectionParityTest {
             new NullRejectSource(254, true, "test_dynamic_async_reject_table_missing_field", "await applyAsyncTableMissing(host.asyncTakeTable, bagWithNull())"),
             new NullRejectSource(259, true, "test_dynamic_async_reject_array_missing_field", "await applyAsyncArrayMissing(host.asyncTakeArray, bagWithNull())"));
         for (NullRejectSource row : rejections) {
-            blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null",
-                row.expression() + ";\nreturn null;\n"));
+            String body = row.expression() + ";\nreturn null;\n";
+            if (row.expression().contains("(bagWithNull().")) {
+                String call = row.expression().replace("await ", "");
+                String target = call.substring(0, call.indexOf('('));
+                String expression = call.substring(call.indexOf('(') + 1, call.length() - 1);
+                String type = target.endsWith("Table") ? "Record<string, unknown>" : "number[]";
+                body = invalidatedHostCall(type, expression, target, row.async(), false)
+                    + "return null;\n";
+            }
+            blocks.put(row.line(), nullFunction("export ", row.async(), row.export(), "", "null", body));
         }
         blocks.put(286, nullFunction("export ", false, "main", "", "null", "return null;\n"));
         blocks.put(319, nullFunction("export ", false, "test_take_nullable_array_bad_return", "", "null",
@@ -4385,6 +4440,17 @@ public class CanonicalProjectionParityTest {
             line = block.getKey() + (int) block.getValue().chars().filter(c -> c == '\n').count();
         }
         return source.toString();
+    }
+
+    /** Valid admission followed by hostile closure invalidation, not a pre-call assertion failure. */
+    private static String invalidatedHostCall(String type, String expression, String target,
+            boolean async, boolean returnsString) {
+        String absent = expression.endsWith("missing") ? "undefined" : "null";
+        String initial = type.equals("number[]") ? "[]" : "{}";
+        return "let value: " + type + " | " + absent + " = " + initial
+            + "; let clear: () => void = function(): void {value = " + expression + " as " + absent
+            + ";}; if (value !== " + absent + ") {clear(); " + (returnsString ? "return " : "")
+            + (async ? "await " : "") + target + "(value);}" + (returnsString ? " return \"\";" : "") + "\n";
     }
 
     private static String nullArrayDriver() {
@@ -4467,7 +4533,7 @@ public class CanonicalProjectionParityTest {
     private static String nullFunction(String prefix, boolean async, String name,
             String parameters, String result, String body) {
         return prefix + (async ? "async " : "") + "function " + name + "(" + parameters + "): "
-            + result + " {\n" + body.indent(2) + "}\n";
+            + (async ? "Promise<" + result + ">" : result) + " {\n" + body.indent(2) + "}\n";
     }
 
     /**
@@ -5093,9 +5159,9 @@ public class CanonicalProjectionParityTest {
                 + "export completes after a second load of the same chunk: " + output);
         }
         Tuple rejectTuple = parseLuaProbe(output, compiled);
-        checkEq(hostParameterCellTuple("table", 1,
+        checkEq(hostParameterCellTuple("record", 1,
                 FailureProjections.kindReason(RuntimeDescriptor.Table.INSTANCE),
-                "nil", 209, 3),
+                "undefined", 209, 179),
             rejectTuple, "the null crossing's two-load retained rejection renders "
                 + "the declared parameter cell's canonical tuple: " + output);
     }
@@ -5126,27 +5192,27 @@ public class CanonicalProjectionParityTest {
 
     private static void driveNullCrossingRejections(Compiled compiled) throws Exception {
         List<NullRejection> rows = List.of(
-            new NullRejection("test_reject_table_dynamic_null", false, false, "table", "table", 153, 3),
-            new NullRejection("test_reject_array_dynamic_null", false, false, "array", "table", 158, 3),
-            new NullRejection("test_dynamic_reject_table_dynamic_null", false, true, "table", "null", 163, 12),
-            new NullRejection("test_dynamic_reject_array_dynamic_null", false, true, "array", "null", 167, 10),
-            new NullRejection("test_async_reject_table_dynamic_null", true, false, "table", "table", 181, 9),
-            new NullRejection("test_async_reject_array_dynamic_null", true, false, "array", "table", 186, 9),
-            new NullRejection("test_dynamic_async_reject_table_dynamic_null", true, true, "table", "null", 191, 18),
-            new NullRejection("test_dynamic_async_reject_array_dynamic_null", true, true, "array", "null", 195, 16),
-            new NullRejection("test_reject_table_missing_field", false, false, "table", "nil", 209, 3),
-            new NullRejection("test_reject_array_missing_field", false, false, "array", "nil", 214, 3),
-            new NullRejection("test_async_reject_table_missing_field", true, false, "table", "nil", 219, 9),
-            new NullRejection("test_async_reject_array_missing_field", true, false, "array", "nil", 224, 9),
-            new NullRejection("test_dynamic_reject_table_missing_field", false, true, "table", "nil", 229, 12),
-            new NullRejection("test_dynamic_reject_array_missing_field", false, true, "array", "nil", 233, 10),
-            new NullRejection("test_dynamic_async_reject_table_missing_field", true, true, "table", "nil", 247, 18),
-            new NullRejection("test_dynamic_async_reject_array_missing_field", true, true, "array", "nil", 251, 16));
+            new NullRejection("test_reject_table_dynamic_null", false, false, "table", "table", 153, 162),
+            new NullRejection("test_reject_array_dynamic_null", false, false, "array", "table", 158, 147),
+            new NullRejection("test_dynamic_reject_table_dynamic_null", false, true, "table", "null", 163, 159),
+            new NullRejection("test_dynamic_reject_array_dynamic_null", false, true, "array", "null", 167, 144),
+            new NullRejection("test_async_reject_table_dynamic_null", true, false, "table", "table", 181, 168),
+            new NullRejection("test_async_reject_array_dynamic_null", true, false, "array", "table", 186, 153),
+            new NullRejection("test_dynamic_async_reject_table_dynamic_null", true, true, "table", "null", 191, 165),
+            new NullRejection("test_dynamic_async_reject_array_dynamic_null", true, true, "array", "null", 195, 150),
+            new NullRejection("test_reject_table_missing_field", false, false, "table", "undefined", 209, 179),
+            new NullRejection("test_reject_array_missing_field", false, false, "array", "undefined", 214, 164),
+            new NullRejection("test_async_reject_table_missing_field", true, false, "table", "undefined", 219, 185),
+            new NullRejection("test_async_reject_array_missing_field", true, false, "array", "undefined", 224, 170),
+            new NullRejection("test_dynamic_reject_table_missing_field", false, true, "table", "undefined", 229, 176),
+            new NullRejection("test_dynamic_reject_array_missing_field", false, true, "array", "undefined", 233, 161),
+            new NullRejection("test_dynamic_async_reject_table_missing_field", true, true, "table", "undefined", 247, 182),
+            new NullRejection("test_dynamic_async_reject_array_missing_field", true, true, "array", "undefined", 251, 167));
         for (NullRejection row : rows) {
             boolean array = row.kind().equals("array");
             Tuple expected = row.indirect()
                 ? typedBoundaryKindTuple(row.kind(), row.actual(), row.line(), row.column())
-                : hostParameterCellTuple(array ? "[number]" : "table", 1,
+                : hostParameterCellTuple(array ? "[number]" : "record", 1,
                     FailureProjections.kindReason(array ? new RuntimeDescriptor.Array(RuntimeDescriptor.Number.INSTANCE)
                         : RuntimeDescriptor.Table.INSTANCE), row.actual(), row.line(), row.column());
             assertNullCrossingRejection(compiled, row.export(), expected, row.export(), row.async());
@@ -6968,7 +7034,7 @@ public class CanonicalProjectionParityTest {
                             .equals(compiled.checkedProject().entryModule()))
                         .findFirst().orElseThrow().ast().span()),
                 java.util.Set.of(), backend, false,
-                deal.distribution.DistributionHome.forManifestDirectory(
+                deal.module.CheckoutResources.forManifestDirectory(
                     compiled.mirror().toString()), stager);
             if (result.emitted()) {
                 stager.publish();
@@ -7443,7 +7509,7 @@ public class CanonicalProjectionParityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash",
                 "context", Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(),
                     new deal.semantic.ir.BlockId(0)),
@@ -7461,7 +7527,7 @@ public class CanonicalProjectionParityTest {
                 deal.semantic.ir.ExternalModuleKind.IMPLEMENTATION, List.of(), List.of(),
                 List.of(), deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<ModuleId, StructuredBodyTable> tables = new LinkedHashMap<>();
         tables.put(entry, new StructuredBodyTable(
@@ -8142,7 +8208,7 @@ public class CanonicalProjectionParityTest {
     private static final String FOREACH_DELETED_SLOT_SOURCE = """
         function main(): null {
           let xs: number[] = [1, 2, 3];
-          for (let e: number of xs) {
+          for (let e of xs) {
             if (e === 1) { delete xs[1]; }
             if (e === 3) { let z: number = 1 / (e - 3); z = z + 1; }
           }
@@ -8160,7 +8226,7 @@ public class CanonicalProjectionParityTest {
     private static final String FOREACH_APPENDED_SLOT_SOURCE = """
         function main(): null {
           let xs: number[] = [1, 2];
-          for (let e: number of xs) {
+          for (let e of xs) {
             if (e === 1) { xs[xs.length] = 7; }
             if (e === 7) { let z: number = xs[100]; z = z + 1; }
           }
@@ -8266,27 +8332,20 @@ public class CanonicalProjectionParityTest {
      */
     private static Seed lowerSeed(String source, String what) {
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
-            deal.semantic.ir.ReleaseState.V1_4_ACTIVE,
+            deal.semantic.ir.ReleaseState.V1_5_ACTIVE,
             deal.semantic.CapabilityRegistry.releaseRegistry());
         CheckedSeed seed = checkedSeed(source, what, invocation);
         if (seed == null) {
             return null;
         }
-        String registryHash = deal.semantic.CapabilityRegistry.releaseRegistry()
-            .capabilityRegistryHash();
-        ProjectInterfaceIndex index = seed.built().index();
-        SemanticLowerer.LoweringResult lowering = SemanticLowerer.lowerModuleFullProgram(
-            seed.input(), deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64,
-            seed.manifests().manifests().get(0).constructCoverage(),
-            index.interfaceIndexDigest(), registryHash,
-            deal.semantic.ir.SemanticIdAllocator.over(List.of(MATRIX_MODULE)));
-        check(lowering != null && !lowering.hasErrors() && lowering.unit() != null,
-            what + ": the full-program lowering passes the closed validators: "
+        var lowering = SemanticLowerer.lowerProject(invocation, seed.built().input(),
+            seed.built().index(), seed.manifests().manifests(), new HostDeclarationSurface(Map.of()),
+            Map.of(), BuiltinErrorDeclaration.synthesized(seed.input().ast().span()), Set.of());
+        check(lowering != null && lowering.project() != null,
+            what + ": the project lowering passes the closed validators: "
                 + (lowering == null ? "null" : lowering.diagnostics()));
-        if (lowering == null || lowering.hasErrors() || lowering.unit() == null) {
-            return null;
-        }
-        return new Seed(lowering.unit(), lowering.table());
+        if (lowering == null || lowering.project() == null) return null;
+        return new Seed(lowering.project().modules().get(MATRIX_MODULE), lowering.tables().get(MATRIX_MODULE));
     }
 
     private static void testForEachDeletedSlot() throws Exception {
@@ -8359,18 +8418,18 @@ public class CanonicalProjectionParityTest {
     private static final String DYNAMIC_TABLE_READ_SOURCE = """
         function keyOf(): string { return "x"; }
         function main(): null {
-          let t: table = { x: 7 };
+          let t: Record<string, unknown> = { x: 7 };
           let k: string = "x";
-          let n: number = t[k];
-          let n2: number = t[keyOf()];
-          let u: table = {};
+          let n: number = t[k] as number;
+          let n2: number = t[keyOf()] as number;
+          let u: Record<string, unknown> = {};
           u["y"] = 9;
           let ky: string = "y";
-          let m: number = u[ky];
-          let q: table = {};
-          let miss: number | null = q[k];
-          let v: table = { s: 1 };
-          let nn: number | null = v["s"];
+          let m: number = u[ky] as number;
+          let q: Record<string, unknown> = {};
+          let miss: number | undefined = q[k] as number | undefined;
+          let v: Record<string, unknown> = { s: 1 };
+          let nn: number | null = v["s"] as number | null;
           let nz: number = 0;
           if (nn !== null) { nz = nn; }
           return null;
@@ -8384,9 +8443,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String DYNAMIC_TABLE_READ_WRONG_KIND_SOURCE = """
         function main(): null {
-          let t: table = { x: "str" };
+          let t: Record<string, unknown> = { x: "str" };
           let k: string = "x";
-          let n: number | null = t[k];
+          let n: number | null = t[k] as number | null;
           return null;
         }
         """;
@@ -8397,9 +8456,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String DYNAMIC_TABLE_READ_MISSING_SOURCE = """
         function main(): null {
-          let t: table = {};
+          let t: Record<string, unknown> = {};
           let k: string = "x";
-          let n: number = t[k];
+          let n: number = t[k] as number;
           return null;
         }
         """;
@@ -8489,9 +8548,9 @@ public class CanonicalProjectionParityTest {
      */
     private static final String PRESENT_NULL_ELEMENT_SOURCE = """
         function main(): null {
-          let inner: (null)[] = [null];
-          let holder: table = { xs: inner };
-          let ys: number[] = holder.xs;
+          let inner: number | null = 1;
+          let clear: () => void = function(): void { inner = null; };
+          if (inner !== null) { clear(); let ys: number[] = [inner]; }
           return null;
         }
         """;
@@ -8501,8 +8560,8 @@ public class CanonicalProjectionParityTest {
         function main(): null {
           let inner: number[] = [1];
           delete inner[0];
-          let holder: table = { xs: inner };
-          let ys: number[] = holder.xs;
+          let holder: Record<string, unknown> = { xs: inner };
+          let ys: number[] = inner;
           return null;
         }
         """;
@@ -8511,8 +8570,8 @@ public class CanonicalProjectionParityTest {
     private static final String NULL_ARRAY_ELEMENT_SOURCE = """
         function main(): null {
           let inner: (null)[] = [null];
-          let holder: table = { xs: inner };
-          let ys: (null)[] = holder.xs;
+          let holder: Record<string, unknown> = { xs: inner };
+          let ys: (null)[] = holder.xs as (null)[];
           return null;
         }
         """;
@@ -8534,10 +8593,10 @@ public class CanonicalProjectionParityTest {
         try {
             driveArrayElementFailure("the present-null element",
                 PRESENT_NULL_ELEMENT_SOURCE, workspace.resolve("present-null"),
-                "test.deal:4:11", "number", "null");
+                "test.deal:4:54", "number", "null");
             driveArrayElementFailure("the deleted-slot element",
                 DELETED_SLOT_ELEMENT_SOURCE, workspace.resolve("deleted-slot"),
-                "test.deal:5:11", "number", "nil");
+                "test.deal:5:11", "number", "undefined");
             driveArrayAdmission("the array(null) admission",
                 NULL_ARRAY_ELEMENT_SOURCE, workspace.resolve("null-array"));
         } finally {
@@ -8952,8 +9011,8 @@ public class CanonicalProjectionParityTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let holder: table = { ns: lib };
-          let xs: number[] = holder.ns;
+          let holder: Record<string, unknown> = { ns: lib };
+          let xs: number[] = holder.ns as number[];
           return null;
         }
         """;
@@ -8966,8 +9025,8 @@ public class CanonicalProjectionParityTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let holder: table = { ns: lib };
-          let xs: number[][] = holder.ns;
+          let holder: Record<string, unknown> = { ns: lib };
+          let xs: number[][] = holder.ns as number[][];
           return null;
         }
         """;
@@ -8981,9 +9040,9 @@ public class CanonicalProjectionParityTest {
         import * as lib from "./lib";
 
         export function main(): null {
-          let holder: table = { ns: [1] };
+          let holder: Record<string, unknown> = { ns: [1] };
           holder.ns = lib;
-          let xs: number[] = holder.ns;
+          let xs: number[] = holder.ns as number[];
           return null;
         }
         """;
@@ -8999,8 +9058,8 @@ public class CanonicalProjectionParityTest {
 
         export function main(): null {
           let payload: number[] = [1];
-          let holder: table = { ns: payload };
-          let t: table = holder.ns;
+          let holder: Record<string, unknown> = { ns: payload };
+          let t: Record<string, unknown> = holder.ns as Record<string, unknown>;
           return null;
         }
         """;
@@ -9027,13 +9086,13 @@ public class CanonicalProjectionParityTest {
             + "nested array boundaries: the unmarked table carrier projects "
             + "`table` on all three consumers --");
         driveNamespaceFailure("the namespace at the direct array boundary",
-            NAMESPACE_DIRECT_SOURCE, 5, 11, "expected array", "array", "table");
+            NAMESPACE_DIRECT_SOURCE, 5, 22, "expected array", "array", "table");
         driveNamespaceFailure("the namespace at the nested array boundary",
-            NAMESPACE_NESTED_SOURCE, 5, 11, "expected array", "array", "table");
+            NAMESPACE_NESTED_SOURCE, 5, 24, "expected array", "array", "table");
         driveNamespaceFailure("the namespace written into a table field",
-            NAMESPACE_WRITTEN_SOURCE, 6, 11, "expected array", "array", "table");
+            NAMESPACE_WRITTEN_SOURCE, 6, 22, "expected array", "array", "table");
         driveNamespaceFailure("the array-carrier table control",
-            NAMESPACE_ARRAY_CONTROL_SOURCE, 6, 18, "expected table", "table",
+            NAMESPACE_ARRAY_CONTROL_SOURCE, 6, 36, "expected table", "table",
             "array");
     }
 

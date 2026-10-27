@@ -12,13 +12,13 @@ import java.util.Objects;
  *
  * <pre>{@code
  * ExecutableLoweredProject {
- *   semanticProfile: DEAL_V1_4_BINARY64,
+ *   semanticProfile: DEAL_V1_5_BINARY64,
  *   interfaceIndex, modules: Map<ModuleId, LoweredModuleUnit>,   // complete implementation closure
  *   entryModule, classSeeds
  * }
  * }</pre>
  *
- * <p>The project carries the single {@code DEAL_V1_4_BINARY64} profile — no
+ * <p>The project carries the single {@code DEAL_V1_5_BINARY64} profile — no
  * constructor path admits any other value. The
  * modules map is the complete implementation closure in dependency order
  * (insertion order is preserved, so repeated dumps are byte-identical);

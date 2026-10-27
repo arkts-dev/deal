@@ -6,19 +6,23 @@
 export function test_array_dynamic_boundary_ok(): string {
   // Accepted number[]: the shared number[] carrier crosses the `number[]` row
   // unchanged; reads observe the stored buffer's contents.
-  let holder: table = { b: [0, 0] };
-  let b: number[] = holder.b;
+  let original: number[] = [0, 0];
+  let holder: Record<string, unknown> = { b: original };
+  let b: number[] = holder.b as number[];
+  if (b !== original) {
+    throw { code: "TEST_FAIL", message: "array assertion changed identity" };
+  }
   if (b.length !== 2 || b[0] !== 0) {
     throw { code: "TEST_FAIL", message: "accepted number[] boundary mismatch" };
   }
   // Nullable pass-through: the `?number[]` row passes the DEAL null and a
   // real buffer with the same reference identity.
-  let holderNull: table = { n: null };
-  let nb: number[] | null = holderNull.n;
+  let holderNull: Record<string, unknown> = { n: null };
+  let nb: number[] | null = holderNull.n as number[] | null;
   if (nb !== null) {
     throw { code: "TEST_FAIL", message: "nullable null pass-through mismatch" };
   }
-  let nb2: number[] | null = holder.b;
+  let nb2: number[] | null = holder.b as number[] | null;
   if (nb2 !== null) {
     if (nb2.length !== 2) {
       throw { code: "TEST_FAIL", message: "nullable number[] pass-through mismatch" };
@@ -29,8 +33,11 @@ export function test_array_dynamic_boundary_ok(): string {
   // Accepted function wrapper: a (number[])->number[] value crosses the
   // function row and stays callable with the same buffer reference.
   let id: (x: number[]) => number[] = function(x: number[]): number[] { return x; };
-  let holderFn: table = { f: id };
-  let f: (x: number[]) => number[] = holderFn.f;
+  let holderFn: Record<string, unknown> = { f: id };
+  let f: (x: number[]) => number[] = holderFn.f as (x: number[]) => number[];
+  if (f !== id) {
+    throw { code: "TEST_FAIL", message: "function assertion changed identity" };
+  }
   if (f(b) !== b) {
     throw { code: "TEST_FAIL", message: "function row identity mismatch" };
   }

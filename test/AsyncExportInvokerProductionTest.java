@@ -45,15 +45,13 @@ import javax.tools.ToolProvider;
  * and object-field empty arrays (the JSON array shape survives every
  * depth); parsed-JSON completions (every decoded numeric leaf keeps its
  * own variant — the precision-boundary, nested fractional, and integral
- * leaves — and the decoded container shapes survive); absent versus
- * present-null slots (a deleted array element is a value-representation
- * failure, an explicit null element stays JSON {@code null}); shared
- * references that encode at every position and cyclic completions that
- * are value-representation failures; a
- * non-finite number classified as representation failures; class,
- * function, and builtin Error completions that pass the matcher and are
- * rejected by the shared encoder (top-level, nullable, nested in an
- * array, and as a table field) instead of a fabricated DEAL error; a
+ * leaves — and the decoded container shapes survive); deleted and
+ * present-null array slots both encode JSON {@code null}; shared
+ * references encode at every position and cyclic completions are
+ * value-representation failures. Nonfinite numbers encode null; nominal
+ * class fields and builtin Error code/message encode without private
+ * metadata. Function array elements encode null, while function roots
+ * have no JSON representation and fail before envelope serialization. A
  * delayed host async completion awaited by the export; a typed completion
  * rejection at the await site (E8001, message unchanged); a DEAL error
  * raised by the async operation and by {@code main()} (code/message/
@@ -92,7 +90,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** The pinned value-7 project of the issue: a quiet main plus an int async export. */
     private static final String VALUE_SEVEN_SOURCE = """
-        export async function run(): number {
+        export async function run(): Promise<number> {
           return 7;
         }
 
@@ -107,7 +105,7 @@ public class AsyncExportInvokerProductionTest {
      * null sentinel (a raw {@code nil} is rejected as "expected null").
      */
     private static final String NULL_COMPLETION_SOURCE = """
-        export async function run(): null {
+        export async function run(): Promise<null> {
           return null;
         }
 
@@ -122,7 +120,7 @@ public class AsyncExportInvokerProductionTest {
      * metadata ({@code __a}/{@code __n}).
      */
     private static final String ARRAY_COMPLETION_SOURCE = """
-        export async function run(): number[] {
+        export async function run(): Promise<number[]> {
           return [7.0, 8];
         }
 
@@ -137,7 +135,7 @@ public class AsyncExportInvokerProductionTest {
      * carrier metadata ({@code __t}/{@code __order}/{@code __keys}).
      */
     private static final String TABLE_COMPLETION_SOURCE = """
-        export async function run(): table {
+        export async function run(): Promise<Record<string, unknown>> {
           return { a: 7 };
         }
 
@@ -152,7 +150,7 @@ public class AsyncExportInvokerProductionTest {
      * containers and preserves the null slot as JSON {@code null}.
      */
     private static final String NESTED_COMPLETION_SOURCE = """
-        export async function run(): table {
+        export async function run(): Promise<Record<string, unknown>> {
           return { a: 7, xs: [7.0, 8], n: null };
         }
 
@@ -168,9 +166,9 @@ public class AsyncExportInvokerProductionTest {
      * (ISSUE-0749 review cycle 2, finding 1).
      */
     private static final String NUMBER_READ_SOURCE = """
-        export async function run(): number {
-          let t: table = { v: 7.5 };
-          let v: number = t.v;
+        export async function run(): Promise<number> {
+          let t: Record<string, unknown> = { v: 7.5 };
+          let v: number = t.v as number;
           return v;
         }
 
@@ -181,9 +179,9 @@ public class AsyncExportInvokerProductionTest {
 
     /** The nested numeric read: array elements carry read carriers too. */
     private static final String NESTED_NUMBER_READ_SOURCE = """
-        export async function run(): number[] {
-          let t: table = { v: 7.5 };
-          let v: number = t.v;
+        export async function run(): Promise<number[]> {
+          let t: Record<string, unknown> = { v: 7.5 };
+          let v: number = t.v as number;
           return [v, 8.25];
         }
 
@@ -194,9 +192,9 @@ public class AsyncExportInvokerProductionTest {
 
     /** The int-variant read carrier unwraps to its integral number. */
     private static final String INT_READ_SOURCE = """
-        export async function run(): number {
-          let t: table = { v: 7 };
-          let v: number = t.v;
+        export async function run(): Promise<number> {
+          let t: Record<string, unknown> = { v: 7 };
+          let v: number = t.v as number;
           return v;
         }
 
@@ -213,7 +211,7 @@ public class AsyncExportInvokerProductionTest {
      * spelling.
      */
     private static final String NUMBER_ARITHMETIC_SOURCE = """
-        export async function run(): number {
+        export async function run(): Promise<number> {
           return 2.5 * 2.0;
         }
 
@@ -228,9 +226,9 @@ public class AsyncExportInvokerProductionTest {
      * keep the shared walker's canonical shortest-round-trip text.
      */
     private static final String NUMBER_PRECISION_SOURCE = """
-        export async function run(): number {
-          let t: table = { v: 0.30000000000000004 };
-          let v: number = t.v;
+        export async function run(): Promise<number> {
+          let t: Record<string, unknown> = { v: 0.30000000000000004 };
+          let v: number = t.v as number;
           return v;
         }
 
@@ -241,9 +239,9 @@ public class AsyncExportInvokerProductionTest {
 
     /** The magnitude boundary of the number text (exponent spelling). */
     private static final String NUMBER_MAGNITUDE_SOURCE = """
-        export async function run(): number {
-          let t: table = { v: 1e17 };
-          let v: number = t.v;
+        export async function run(): Promise<number> {
+          let t: Record<string, unknown> = { v: 1e17 };
+          let v: number = t.v as number;
           return v;
         }
 
@@ -258,9 +256,9 @@ public class AsyncExportInvokerProductionTest {
      * spelling the JVM sibling's boxed long emits.
      */
     private static final String NUMBER_INT_VARIANT_SOURCE = """
-        export async function run(): number {
-          let t: table = { v: 7 };
-          let v: number = t.v;
+        export async function run(): Promise<number> {
+          let t: Record<string, unknown> = { v: 7 };
+          let v: number = t.v as number;
           return v;
         }
 
@@ -270,12 +268,10 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
-     * The non-finite number boundary: the completion passes the canonical
-     * matcher and the encoder's own finite check rejects it — a
-     * representation failure with the pinned message, never a value.
+     * A nonfinite number passes its declared matcher and encodes JSON null.
      */
     private static final String INFINITE_NUMBER_SOURCE = """
-        export async function run(): number {
+        export async function run(): Promise<number> {
           let n: number = 1e300 * 1e300;
           return n;
         }
@@ -291,7 +287,7 @@ public class AsyncExportInvokerProductionTest {
      * (ISSUE-0749 review cycle 2, finding 2).
      */
     private static final String EMPTY_ARRAY_SOURCE = """
-        export async function run(): number[] {
+        export async function run(): Promise<number[]> {
           return [];
         }
 
@@ -302,7 +298,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** Nested empty arrays keep the JSON array shape at every depth. */
     private static final String NESTED_EMPTY_ARRAY_SOURCE = """
-        export async function run(): number[][] {
+        export async function run(): Promise<number[][]> {
           let xs: number[][] = [[], [7]];
           return xs;
         }
@@ -314,7 +310,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** An empty array inside an object field keeps the JSON array shape. */
     private static final String EMPTY_ARRAY_FIELD_SOURCE = """
-        export async function run(): table {
+        export async function run(): Promise<Record<string, unknown>> {
           let xs: number[] = [];
           return { a: 7, xs: xs, n: null };
         }
@@ -326,8 +322,8 @@ public class AsyncExportInvokerProductionTest {
 
     /** A shared reference: repeated identities encode at every position. */
     private static final String SHARED_REFERENCE_SOURCE = """
-        export async function run(): table {
-          let t: table = { v: 7 };
+        export async function run(): Promise<Record<string, unknown>> {
+          let t: Record<string, unknown> = { v: 7 };
           return { a: t, b: t };
         }
 
@@ -342,8 +338,8 @@ public class AsyncExportInvokerProductionTest {
      * infrastructure failure (ISSUE-0749 review cycle 2, finding 3).
      */
     private static final String CYCLIC_COMPLETION_SOURCE = """
-        export async function run(): table {
-          let t: table = { v: 7 };
+        export async function run(): Promise<Record<string, unknown>> {
+          let t: Record<string, unknown> = { v: 7 };
           t.self = t;
           return t;
         }
@@ -366,7 +362,7 @@ public class AsyncExportInvokerProductionTest {
     private static final String PARSED_JSON_NUMBERS_SOURCE = """
         import * as json from "std/json";
 
-        export async function run(): table | null {
+        export async function run(): Promise<Record<string, unknown> | null> {
           return json.parse("{\\"x\\":0.30000000000000004,\\"xs\\":[5],\\"n\\":7.0}");
         }
 
@@ -383,7 +379,7 @@ public class AsyncExportInvokerProductionTest {
     private static final String PARSED_JSON_CONTAINER_SOURCE = """
         import * as json from "std/json";
 
-        export async function run(): table | null {
+        export async function run(): Promise<Record<string, unknown> | null> {
           return json.parse("{\\"xs\\":[],\\"o\\":{\\"n\\":null}}");
         }
 
@@ -401,7 +397,7 @@ public class AsyncExportInvokerProductionTest {
     private static final String PARSED_JSON_EXPONENT_SOURCE = """
         import * as json from "std/json";
 
-        export async function run(): table | null {
+        export async function run(): Promise<Record<string, unknown> | null> {
           return json.parse("{\\"xs\\":[1e17,1e-320,0]}");
         }
 
@@ -411,13 +407,11 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
-     * The deleted array slot (the latest ISSUE-0749 review, finding 2): a raw
-     * nil slot is the absent/deleted element, which the shared JSON walk
-     * rejects as a value-representation failure — never a fabricated JSON
-     * null. The JVM sibling's {@code MISSING} slot rejects identically.
+     * A deleted array slot stays absent in the language but encodes JSON
+     * null under the generic JSON array-position rule on both targets.
      */
     private static final String DELETED_SLOT_SOURCE = """
-        export async function run(): table {
+        export async function run(): Promise<Record<string, unknown>> {
           let xs: number[] = [7.0, 8];
           delete xs[0];
           return { xs: xs };
@@ -434,7 +428,7 @@ public class AsyncExportInvokerProductionTest {
      * slot (the absent/missing distinction stays visible).
      */
     private static final String EXPLICIT_NULL_SLOT_SOURCE = """
-        export async function run(): table {
+        export async function run(): Promise<Record<string, unknown>> {
           let xs: (number | null)[] = [null, 8];
           return { xs: xs };
         }
@@ -445,19 +439,15 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
-     * The class completion (the latest ISSUE-0749 review, finding 3): a valid
-     * compiled class instance is admitted by the canonical matcher (the
-     * projection carries the matcher's {@code __kind}/{@code __classname}
-     * shape) and rejected by the shared encoder as a non-encodable
-     * table-carried value — a representation failure on both targets,
-     * never a fabricated DEAL error.
+     * A nominal class completion retains declared field storage through
+     * canonical matching and JSON encoding, without exposing carrier metadata.
      */
     private static final String CLASS_COMPLETION_SOURCE = """
         class C {
           x: number;
         }
 
-        export async function run(): C {
+        export async function run(): Promise<C> {
           let c: C = { x: 7 };
           return c;
         }
@@ -473,7 +463,7 @@ public class AsyncExportInvokerProductionTest {
           x: number;
         }
 
-        export async function run(): C[] {
+        export async function run(): Promise<C[]> {
           let c: C = { x: 7 };
           return [c];
         }
@@ -489,7 +479,7 @@ public class AsyncExportInvokerProductionTest {
           x: number;
         }
 
-        export async function run(): C | null {
+        export async function run(): Promise<C | null> {
           let c: C = { x: 7 };
           return c;
         }
@@ -507,7 +497,7 @@ public class AsyncExportInvokerProductionTest {
      * as a DEAL function value on both targets.
      */
     private static final String FUNCTION_COMPLETION_SOURCE = """
-        export async function run(): () => number {
+        export async function run(): Promise<() => number> {
           let f: () => number = function(): number { return 7; };
           return f;
         }
@@ -519,7 +509,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** The same function value nested in an array completion. */
     private static final String FUNCTION_ARRAY_COMPLETION_SOURCE = """
-        export async function run(): (() => number)[] {
+        export async function run(): Promise<(() => number)[]> {
           let f: () => number = function(): number { return 7; };
           return [f];
         }
@@ -533,7 +523,7 @@ public class AsyncExportInvokerProductionTest {
     private static final String STDLIB_FUNCTION_COMPLETION_SOURCE = """
         import * as json from "std/json";
 
-        export async function run(): (t: table) => string {
+        export async function run(): Promise<(t: unknown) => string | undefined> {
           return json.stringify;
         }
 
@@ -543,17 +533,16 @@ public class AsyncExportInvokerProductionTest {
         """;
 
     /**
-     * The builtin Error value as a table field: the {@code __d} carrier
-     * takes the matcher's class shape for nested occurrences and the
-     * encoder rejects it as a table-carried value on both targets.
+     * An Error member retains code/message through completion projection;
+     * JSON exposes neither transport metadata nor a replacement message.
      */
     private static final String ERROR_FIELD_COMPLETION_SOURCE = """
         function passThrough(): Error {
           try { throw { code: "E_CANON", message: "roundtrip" }; }
-          catch (e) { return e; }
+          catch (e) { return e as Error; }
         }
 
-        export async function run(): table {
+        export async function run(): Promise<Record<string, unknown>> {
           return { e: passThrough() };
         }
 
@@ -568,7 +557,7 @@ public class AsyncExportInvokerProductionTest {
      * entry (ISSUE-0749 review cycle 2, finding 4).
      */
     private static final String PARAMETERIZED_SOURCE = """
-        export async function run(x: number): number {
+        export async function run(x: number): Promise<number> {
           return x;
         }
 
@@ -585,14 +574,14 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export async function run(): number {
+        export async function run(): Promise<number> {
           let v: number = await probe.fetchDelayed();
           return v;
         }
         """;
 
     private static final String DELAYED_DECLARATION = """
-        export async function fetchDelayed(): number;
+        export function fetchDelayed(): Promise<number>;
         """;
 
     private static final String DELAYED_LUA_HOST = """
@@ -644,14 +633,14 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export async function run(): number {
+        export async function run(): Promise<number> {
           let v: string = await probe.fetchMismatch();
           return 7;
         }
         """;
 
     private static final String MISMATCH_DECLARATION = """
-        export async function fetchMismatch(): string;
+        export function fetchMismatch(): Promise<string>;
         """;
 
     private static final String MISMATCH_LUA_HOST = """
@@ -675,7 +664,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** The operation-raised DEAL error: an int division by zero inside the async export. */
     private static final String OPERATION_ERROR_SOURCE = """
-        export async function run(): number {
+        export async function run(): Promise<number> {
           let z: number[] = [1];
           let w: number = 0;
           let q: number = z[w + 1];
@@ -689,7 +678,7 @@ public class AsyncExportInvokerProductionTest {
 
     /** The main-raised DEAL error: the same division by zero inside main(). */
     private static final String MAIN_ERROR_SOURCE = """
-        export async function run(): number {
+        export async function run(): Promise<number> {
           return 7;
         }
 
@@ -707,7 +696,7 @@ public class AsyncExportInvokerProductionTest {
      * of its own, and the error's origin is the throw at 2:3.
      */
     private static final String USER_ERROR_SOURCE = """
-        export async function run(): number {
+        export async function run(): Promise<number> {
           throw { code: "E_USER", message: "unchanged\\nmessage" };
         }
 
@@ -730,7 +719,7 @@ public class AsyncExportInvokerProductionTest {
           return null;
         }
 
-        export async function run(): number {
+        export async function run(): Promise<number> {
           return probe.snapshot();
         }
         """;
@@ -774,7 +763,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String EXTERNALS_HEADER = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s",
@@ -786,7 +775,7 @@ public class AsyncExportInvokerProductionTest {
 
     private static final String PLAIN_MANIFEST = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "%s"
@@ -808,11 +797,11 @@ public class AsyncExportInvokerProductionTest {
 
         export function main(): null { return null; }
 
-        export async function run(): null {
+        export async function run(): Promise<null> {
           let trace: string = "";
-          async function value(s: string, x: number): number { trace = trace + s; return x; }
-          async function small(x: number): number { trace = trace + "F"; return x; }
-          let f: async (x: number, y: number) => number = small;
+          async function value(s: string, x: number): Promise<number> { trace = trace + s; return x; }
+          async function small(x: number): Promise<number> { trace = trace + "F"; return x; }
+          let f: (x: number, y: number) => Promise<number> = small;
           let r: number = await f(await value("A", 7), await value("B", 8));
           if (r !== 7 || trace !== "ABF") {
             throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
@@ -866,7 +855,7 @@ public class AsyncExportInvokerProductionTest {
             testInitializationAndMainOnceBothTargets();
             testParameterizedPublishedWrapper();
             testDealErrorEnvelopeProjection();
-            testSharedProtocolAndPackagedRuntime();
+            testSharedProtocolAndRuntime();
         } finally {
             javacPreparation = null;
         }
@@ -1016,7 +1005,7 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), EMPTY_ARRAY_FIELD_SOURCE,
                 null, null);
             try {
-                Object result = invoke(field, "run", "table");
+                Object result = invoke(field, "run", "record");
                 String json = valueJson(result);
                 check(json != null && json.contains("\"xs\":[]"),
                     backend + ": an empty array field stays a JSON array: " + json);
@@ -1044,8 +1033,8 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), SHARED_REFERENCE_SOURCE,
                 null, null);
             try {
-                Object result = invoke(shared, "run", "table");
-                checkEq(valueResult(backend, "table",
+                Object result = invoke(shared, "run", "record");
+                checkEq(valueResult(backend, "record",
                         "{\"a\":{\"v\":7.0},\"b\":{\"v\":7.0}}"), result,
                     backend + ": a shared reference encodes at every position: "
                         + result);
@@ -1057,7 +1046,7 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), CYCLIC_COMPLETION_SOURCE,
                 null, null);
             try {
-                invoke(cyclic, "run", "table");
+                invoke(cyclic, "run", "record");
                 check(false, backend + ": a cyclic completion is a hard failure,"
                     + " never a value");
             } catch (LuaJitAsyncExportInvocationException
@@ -1068,7 +1057,7 @@ public class AsyncExportInvokerProductionTest {
                         && failure.getMessage().contains(
                             "cyclic value cannot be encoded as JSON"),
                     backend + ": the cycle rejection is the pinned closed cycle"
-                        + " arm (v1.4): " + failure.getMessage());
+                        + " arm: " + failure.getMessage());
             } finally {
                 deleteRecursively(cyclic.root());
             }
@@ -1093,8 +1082,8 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend),
                 PARSED_JSON_NUMBERS_SOURCE, null, null);
             try {
-                Object result = invoke(numbers, "run", "?table");
-                checkEq(valueResult(backend, "?table",
+                Object result = invoke(numbers, "run", "?record");
+                checkEq(valueResult(backend, "?record",
                         "{\"x\":0.30000000000000004,\"xs\":[5.0],\"n\":7.0}"),
                     result,
                     backend + ": every parsed numeric leaf keeps its variant"
@@ -1107,8 +1096,8 @@ public class AsyncExportInvokerProductionTest {
                 backend, String.format(PLAIN_MANIFEST, backend),
                 PARSED_JSON_CONTAINER_SOURCE, null, null);
             try {
-                Object result = invoke(containers, "run", "?table");
-                checkEq(valueResult(backend, "?table",
+                Object result = invoke(containers, "run", "?record");
+                checkEq(valueResult(backend, "?record",
                         "{\"xs\":[],\"o\":{\"n\":null}}"), result,
                     backend + ": a parsed empty array and null field keep their"
                         + " JSON shapes: " + result);
@@ -1120,12 +1109,11 @@ public class AsyncExportInvokerProductionTest {
                 backend, String.format(PLAIN_MANIFEST, backend),
                 PARSED_JSON_EXPONENT_SOURCE, null, null);
             try {
-                Object result = invoke(exponents, "run", "?table");
-                checkEq(valueResult(backend, "?table",
+                Object result = invoke(exponents, "run", "?record");
+                checkEq(valueResult(backend, "?record",
                         "{\"xs\":[1.0E17,1.0E-320,0]}"), result,
                     backend + ": parsed exponent and signed-zero leaves keep"
-                        + " their canonical text (5.0 form and -0.0 classify as"
-                        + " number by the v1.4 exact rule): " + result);
+                        + " their binary64 JSON values: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
             } finally {
                 deleteRecursively(exponents.root());
@@ -1134,26 +1122,20 @@ public class AsyncExportInvokerProductionTest {
     }
 
     /**
-     * The absent/present-null slot distinction (the latest ISSUE-0749 review,
-     * finding 2): a deleted array element is the internal missing slot and
-     * the shared encoder rejects it as a value-representation failure on
-     * both targets — the projection never fabricates a present JSON null
-     * from an absent slot. A genuinely present null element keeps the JSON
-     * null slot, so the two remain distinguishable.
+     * Both deleted and present-null array slots encode null, without
+     * changing language presence or confusing this JSON rule with admission.
      */
     private static void testAbsentAndNullSlotsBothTargets() throws Exception {
-        System.out.println("-- a deleted slot is a representation failure; an"
-            + " explicit null slot stays JSON null");
+        System.out.println("-- deleted and explicit-null array slots encode JSON null");
         for (String backend : List.of("luajit", "jvm")) {
-            assertRepresentationFailure(backend, "deleted-slot",
-                DELETED_SLOT_SOURCE, "table",
-                "unsupported type for JSON encoding: nil");
+            assertEncodedCompletion(backend, "deleted-slot",
+                DELETED_SLOT_SOURCE, "record", "{\"xs\":[null,8.0]}");
             Project project = compile("explicit-null-slot-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend),
                 EXPLICIT_NULL_SLOT_SOURCE, null, null);
             try {
-                Object result = invoke(project, "run", "table");
-                checkEq(valueResult(backend, "table", "{\"xs\":[null,8.0]}"),
+                Object result = invoke(project, "run", "record");
+                checkEq(valueResult(backend, "record", "{\"xs\":[null,8.0]}"),
                     result,
                     backend + ": a present null slot keeps its JSON null: "
                         + result);
@@ -1165,41 +1147,31 @@ public class AsyncExportInvokerProductionTest {
     }
 
     /**
-     * The non-encodable value carriers (the latest ISSUE-0749 review, finding
-     * 3): a valid compiled class instance, a declared function value, and
-     * the builtin Error carrier are admitted by the canonical matcher —
-     * the projection carries the matcher's own class and function shapes —
-     * and the shared encoder rejects each as a value-representation
-     * failure, exactly like the JVM sibling. A fabricated DEAL error for a
-     * valid completion is the defect this pins, at the top level, under a
-     * nullable descriptor, nested in an array, and as a table field.
+     * Checked class/Error carriers encode their public declared data;
+     * function roots have no JSON representation, independently from null
+     * substitution for function elements. Keep all published invocation lanes.
      */
     private static void testNonEncodableCarrierCompletionsBothTargets()
             throws Exception {
-        System.out.println("-- class, function, and Error completions reach the"
-            + " encoder as representation failures");
+        System.out.println("-- class, function, and Error completion JSON rules");
         for (String backend : List.of("luajit", "jvm")) {
-            assertRepresentationFailure(backend, "class-completion",
-                CLASS_COMPLETION_SOURCE, "@src/main.deal/C",
-                "unsupported type for JSON encoding: table");
-            assertRepresentationFailure(backend, "class-array-completion",
-                CLASS_ARRAY_COMPLETION_SOURCE, "[@src/main.deal/C]",
-                "unsupported type for JSON encoding: table");
-            assertRepresentationFailure(backend, "nullable-class-completion",
-                NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/main.deal/C",
-                "unsupported type for JSON encoding: table");
+            assertEncodedCompletion(backend, "class-completion",
+                CLASS_COMPLETION_SOURCE, "@src/main.deal/C", "{\"x\":7.0}");
+            assertEncodedCompletion(backend, "class-array-completion",
+                CLASS_ARRAY_COMPLETION_SOURCE, "[@src/main.deal/C]", "[{\"x\":7.0}]");
+            assertEncodedCompletion(backend, "nullable-class-completion",
+                NULLABLE_CLASS_COMPLETION_SOURCE, "?@src/main.deal/C", "{\"x\":7.0}");
             assertRepresentationFailure(backend, "function-completion",
                 FUNCTION_COMPLETION_SOURCE, "()->number",
-                "unsupported type for JSON encoding: function");
-            assertRepresentationFailure(backend, "function-array-completion",
-                FUNCTION_ARRAY_COMPLETION_SOURCE, "[()->number]",
-                "unsupported type for JSON encoding: function");
+                "completion has no JSON representation");
+            assertEncodedCompletion(backend, "function-array-completion",
+                FUNCTION_ARRAY_COMPLETION_SOURCE, "[()->number]", "[null]");
             assertRepresentationFailure(backend, "stdlib-function-completion",
-                STDLIB_FUNCTION_COMPLETION_SOURCE, "(table)->string",
-                "unsupported type for JSON encoding: function");
-            assertRepresentationFailure(backend, "error-field-completion",
-                ERROR_FIELD_COMPLETION_SOURCE, "table",
-                "unsupported type for JSON encoding: table");
+                STDLIB_FUNCTION_COMPLETION_SOURCE, "(unknown)->!string",
+                "completion has no JSON representation");
+            assertEncodedCompletion(backend, "error-field-completion",
+                ERROR_FIELD_COMPLETION_SOURCE, "record",
+                "{\"e\":{\"code\":\"E_CANON\",\"message\":\"roundtrip\"}}");
         }
     }
 
@@ -1290,8 +1262,8 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), TABLE_COMPLETION_SOURCE,
                 null, null);
             try {
-                Object result = invoke(table, "run", "table");
-                checkEq(valueResult(backend, "table", "{\"a\":7.0}"), result,
+                Object result = invoke(table, "run", "record");
+                checkEq(valueResult(backend, "record", "{\"a\":7.0}"), result,
                     backend + ": a plain-object completion encodes as the checked"
                         + " JSON object: " + result);
                 assertNoInternalKeys(backend, valueJson(result));
@@ -1304,7 +1276,7 @@ public class AsyncExportInvokerProductionTest {
                 String.format(PLAIN_MANIFEST, backend), NESTED_COMPLETION_SOURCE,
                 null, null);
             try {
-                Object result = invoke(nested, "run", "table");
+                Object result = invoke(nested, "run", "record");
                 String json = valueJson(result);
                 check(result instanceof LuaJitAsyncExportInvoker.Result.Value
                         || result instanceof JvmAsyncExportInvoker.Result.Value,
@@ -1322,19 +1294,69 @@ public class AsyncExportInvokerProductionTest {
     }
 
     /**
-     * The preserved representation-failure classification
-     * Non-finite numbers pass the declared number matcher, then fail the
-     * encoder's finite check: a hard representation failure, never a DEAL
-     * code or a value.
+     * Nonfinite completions pass number admission and encode null, rather
+     * than becoming fabricated DEAL or representation errors.
      */
     private static void testRepresentationFailureBothTargets() throws Exception {
-        System.out.println("-- non-finite completions are representation"
-            + " failures on both targets");
+        System.out.println("-- nonfinite completions encode null on both targets");
         for (String backend : List.of("luajit", "jvm")) {
-            assertRepresentationFailure(backend, "infinite-number",
-                INFINITE_NUMBER_SOURCE, "number",
-                "unsupported type for JSON encoding: number");
+            assertEncodedCompletion(backend, "infinite-number",
+                INFINITE_NUMBER_SOURCE, "number", "null");
         }
+    }
+
+    /** Every encodable completion uses the production JSON value rules. */
+    private static void assertEncodedCompletion(String backend, String name,
+            String source, String descriptor, String expectedJson) throws Exception {
+        Project project = compile(name + "-" + backend, backend,
+            String.format(PLAIN_MANIFEST, backend), source, null, null);
+        try {
+            Object result = invoke(project, "run", descriptor);
+            check(valueJson(result) != null,
+                backend + ": " + name + " publishes a value envelope: " + result);
+            if (valueJson(result) != null) {
+                checkEq(jsonStructure(expectedJson), jsonStructure(valueJson(result)),
+                    backend + ": " + name + " encodes its checked completion: " + result);
+            }
+            assertNoInternalKeys(backend, valueJson(result));
+        } finally {
+            deleteRecursively(project.root());
+        }
+    }
+
+    private static Object jsonStructure(String text) {
+        var parsed = deal.semantic.SharedStdlibSemantics.jsonParse(
+            new deal.semantic.ir.SourceOrigin("completion.deal",
+                deal.semantic.ir.SourceSpan.synthetic("completion.deal"),
+                deal.semantic.ir.SourceOriginKind.SYNTHETIC,
+                new deal.semantic.ir.AnchorId(1), null),
+            new deal.semantic.ir.UnicodeScalars.Valid("{\"value\":" + text + "}"));
+        if (!(parsed instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success)) {
+            throw new AssertionError("Invalid JSON completion: " + text);
+        }
+        return jsonStructure(success.value());
+    }
+
+    private static Object jsonStructure(deal.semantic.SharedStdlibSemantics.Value value) {
+        return switch (value) {
+            case deal.semantic.SharedStdlibSemantics.Value.Number n -> Double.doubleToLongBits(n.value());
+            case deal.semantic.SharedStdlibSemantics.Value.Table t -> {
+                java.util.Map<String, Object> fields = new java.util.LinkedHashMap<>();
+                for (String key : t.table().keys()) {
+                    var slot = t.table().get(key);
+                    if (!(slot instanceof deal.semantic.ir.SemanticTable.Lookup.Present<
+                            deal.semantic.SharedStdlibSemantics.Value> present)) {
+                        throw new AssertionError("Parsed JSON key is absent");
+                    }
+                    fields.put(key, jsonStructure(present.value()));
+                }
+                yield fields;
+            }
+            case deal.semantic.SharedStdlibSemantics.Value.Array a ->
+                a.elements().elements().stream().map(AsyncExportInvokerProductionTest::jsonStructure).toList();
+            default -> value;
+        };
     }
 
     /** One completion the encoder must reject as a value-representation failure. */
@@ -1490,8 +1512,8 @@ public class AsyncExportInvokerProductionTest {
             Project caused = compile("caused-error-" + backend, backend,
                 String.format(PLAIN_MANIFEST, backend), """
                     export function main(): null {return null;}
-                    export async function run(): number {
-                      try {let t: table = {value: "bad"}; let x: number = t.value; return x;}
+                    export async function run(): Promise<number> {
+                      try {let t: Record<string, unknown> = {value: "bad"}; let x: number = t.value as number; return x;}
                       catch(e) {throw {code: "OUTER", message: "outer"};}
                     }
                     """, null, null);
@@ -1848,7 +1870,7 @@ public class AsyncExportInvokerProductionTest {
         }
     }
 
-    private static void testSharedProtocolAndPackagedRuntime() {
+    private static void testSharedProtocolAndRuntime() {
         System.out.println("-- the shared envelope marker and the child runtime"
             + " classpath");
         checkEq(LuaJitAsyncExportInvoker.RESULT_PREFIX,
@@ -1939,14 +1961,14 @@ public class AsyncExportInvokerProductionTest {
     // =========================================================================
 
     /**
-     * The corner-case companion: the contextually typed read on line 3
-     * fails with the typed-kind arm at the read's own check anchor
+     * The corner-case companion: the checked assertion on line 3
+     * fails with the typed-kind arm at its own check anchor
      * (column 16 — never the later annotation check at column 10).
      */
     private static final String CORNER_HELPER = """
-        export %sfunction fail(): number {
-          let t: table = {value: "bad"};
-          let x: number = t.value;
+        export %sfunction fail(): %s {
+          let t: Record<string, unknown> = {value: "bad"};
+          let x: number = t.value as number;
           return x;
         }
         """;
@@ -1955,20 +1977,20 @@ public class AsyncExportInvokerProductionTest {
         import * as c from "std/console";
         import * as helper from "./helper";
         export function main(): null {return null;}
-        export %sfunction run(): number {%s}
+        export %sfunction run(): %s {%s}
         """;
 
     private static Project compileCorner(String name, String backend,
             boolean async, boolean rethrow) throws Exception {
         String body = "return " + (async ? "await " : "") + "helper.fail();";
         if (rethrow) {
-            body = "try {" + body + "} catch(e) {throw e;}";
+            body = "try {" + body + "} catch(e) {throw e as Error;}";
         }
         String modifier = async ? "async " : "";
         Path root = Files.createTempDirectory("async-export-" + name + "-");
-        writeFile(root, "src/helper.deal", CORNER_HELPER.formatted(modifier));
+        writeFile(root, "src/helper.deal", CORNER_HELPER.formatted(modifier, async ? "Promise<number>" : "number"));
         return compileAt(root, name, backend, PLAIN_MANIFEST.formatted(backend),
-            CORNER_MAIN.formatted(modifier, body), null, null);
+            CORNER_MAIN.formatted(modifier, async ? "Promise<number>" : "number", body), null, null);
     }
 
     /**
@@ -2201,24 +2223,24 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String AWAIT_ARRAY_WRITE_SUBJECT = """
         export function main(): null {return null;}
-        export async function run(): number {
+        export async function run(): Promise<number> {
           let xs: number[] = [7];
           let alias: number[] = xs;
           let trace: string = "";
-          async function value(): number {trace = trace + "V"; return 9;}
+          async function value(): Promise<number> {trace = trace + "V"; return 9;}
           function index(): number {trace = trace + "I"; return 2;}
           function receiver(): number[] {trace = trace + "R"; return xs;}
           try {receiver()[index()] = await value(); trace = trace + "X";}
-          catch (e) {if (e.code !== "E8002") {return 0;} trace = trace + "C";}
+          catch (e) {if ((e as Error).code !== "E8002") {return 0;} trace = trace + "C";}
           if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {return 0;}
           alias[alias.length] = 8;
           if (xs.length !== 2 || xs[1] !== 8) {return 0;}
-          let zero: table = {value: -0.0};
+          let zero: Record<string, unknown> = {value: -0.0};
           function admitted(x: number): number {
             if (1.0 / x < 0.0) {return 1;}
             return 0;
           }
-          return admitted(zero.value);
+          return admitted(zero.value as number);
         }
         """;
 

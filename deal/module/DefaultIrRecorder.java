@@ -1,5 +1,8 @@
 package deal.module;
 
+import deal.ast.AssertionExpr;
+import deal.ast.InstanceofExpr;
+
 import deal.ast.ArrayLiteralExpr;
 import deal.ast.ArrayType;
 import deal.ast.AssignmentExpr;
@@ -151,7 +154,7 @@ final class DefaultIrRecorder {
         bindingProviders = new java.util.IdentityHashMap<>();
 
     /**
-     * The checker's non-hoisting let visibility (docs/spec-v1.4.md
+     * The checker's non-hoisting let visibility (docs/spec-v1.5.md
      * &sect;Name resolution — Declaration order and &sect;Scope) mirrored over this
      * source-order walk: one frame per open statement list, holding the
      * scope of that list and its own let-declared names not yet
@@ -331,6 +334,16 @@ final class DefaultIrRecorder {
             case IdentifierExpr id -> {
                 return recordIdentifier(id, scope, contexts);
             }
+            case AssertionExpr assertion -> {
+                return node(DefaultIrNode.NodeKind.UNARY, "AS", typeMap.get(assertion), contexts,
+                    List.of(recordExpression(assertion.value(), scope, List.of(), evaluatorScope)),
+                    null, null, null, assertion, assertion.span());
+            }
+            case InstanceofExpr test -> {
+                return node(DefaultIrNode.NodeKind.UNARY, "INSTANCEOF", typeMap.get(test), contexts,
+                    List.of(recordExpression(test.value(), scope, List.of(), evaluatorScope)),
+                    null, null, null, test, test.span());
+            }
             case BinaryExpr bin -> {
                 return node(DefaultIrNode.NodeKind.BINARY,
                     bin.op().name(), typeMap.get(bin), contexts,
@@ -387,10 +400,11 @@ final class DefaultIrRecorder {
                 return recordFunctionExpression(fe, scope, contexts);
             }
             case HasExpr has -> {
+                List<DefaultIrNode> children = new ArrayList<>();
+                children.add(recordExpression(has.object(), scope, List.of(), evaluatorScope));
+                if (has.key() != null) children.add(recordExpression(has.key(), scope, List.of(), evaluatorScope));
                 return node(DefaultIrNode.NodeKind.HAS, null,
-                    typeMap.get(has), contexts,
-                    List.of(recordExpression(has.object(), scope,
-                        List.of(), evaluatorScope)),
+                    typeMap.get(has), contexts, children,
                     null, null, null, has, has.span());
             }
             case AssignmentExpr assign -> {
@@ -593,7 +607,7 @@ final class DefaultIrRecorder {
 
     /**
      * Resolves a name to the binding the declaration-order rules make
-     * visible at the current walk position (docs/spec-v1.4.md
+     * visible at the current walk position (docs/spec-v1.5.md
      * &sect;Name resolution — Declaration order): a let declaration is visible only after
      * its declaration, so a reference from inside the declaring
      * statement list's earlier statements — a shadowing declaration's
@@ -1059,7 +1073,7 @@ final class DefaultIrRecorder {
                 // The declaration is complete: the name is visible to
                 // the following statements of its own statement list,
                 // so a later assignment to it resolves to this binding
-                // (docs/spec-v1.4.md §Name resolution — Declaration order).
+                // (docs/spec-v1.5.md §Name resolution — Declaration order).
                 declarationReached(effectiveScope, vd.name());
                 return node(DefaultIrNode.NodeKind.VARIABLE_DECLARATION,
                     null, null, List.of(), children, null, null,

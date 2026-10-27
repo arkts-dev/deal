@@ -13,10 +13,10 @@ function freshText(counter: number[]): string {
   return "ab";
 }
 
-function testArrayDirectMutation(): null {
+function testArrayDirectMutation(): void {
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of [1, 2, 3]) {
+  for (let n of [1, 2, 3]) {
     n = n + 10;
     total = total + n;
     visits = visits + 1;
@@ -30,10 +30,10 @@ function testArrayDirectMutation(): null {
   return;
 }
 
-function testArrayClosureReadsMutation(): null {
+function testArrayClosureReadsMutation(): void {
   let readers: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }, function(): number { return -1; }];
   let visits: number = 0;
-  for (let n: number of [1, 2, 3]) {
+  for (let n of [1, 2, 3]) {
     n = n + 10;
     readers[visits] = function(): number { return n; };
     visits = visits + 1;
@@ -56,11 +56,11 @@ function testArrayClosureReadsMutation(): null {
   return;
 }
 
-function testArrayClosureWritesMutation(): null {
+function testArrayClosureWritesMutation(): void {
   let bump: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }];
   let read: (() => number)[] = [function(): number { return -1; }, function(): number { return -1; }];
   let visits: number = 0;
-  for (let n: number of [1, 2]) {
+  for (let n of [1, 2]) {
     bump[visits] = function(): number { n = n + 10; return n; };
     read[visits] = function(): number { return n; };
     visits = visits + 1;
@@ -83,10 +83,10 @@ function testArrayClosureWritesMutation(): null {
   return;
 }
 
-function testStringDirectMutation(): null {
+function testStringDirectMutation(): void {
   let visits: number = 0;
   let joined: string = "";
-  for (let c: string of "abc") {
+  for (let c of "abc") {
     c = c + "!";
     joined = joined + c;
     visits = visits + 1;
@@ -100,10 +100,10 @@ function testStringDirectMutation(): null {
   return;
 }
 
-function testStringClosureReadsMutation(): null {
+function testStringClosureReadsMutation(): void {
   let readers: (() => string)[] = [function(): string { return "-1"; }, function(): string { return "-1"; }, function(): string { return "-1"; }];
   let visits: number = 0;
-  for (let c: string of "xyz") {
+  for (let c of "xyz") {
     c = c + "?";
     readers[visits] = function(): string { return c; };
     visits = visits + 1;
@@ -123,10 +123,10 @@ function testStringClosureReadsMutation(): null {
   return;
 }
 
-function testBreakAndContinueAfterMutation(): null {
+function testBreakAndContinueAfterMutation(): void {
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of [1, 2, 3, 4]) {
+  for (let n of [1, 2, 3, 4]) {
     n = n * 10;
     visits = visits + 1;
     if (n === 20) { continue; }
@@ -142,11 +142,11 @@ function testBreakAndContinueAfterMutation(): null {
   return;
 }
 
-function testIterableReassignmentDoesNotRedirect(): null {
+function testIterableReassignmentDoesNotRedirect(): void {
   let xs: number[] = [1, 2, 3];
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of xs) {
+  for (let n of xs) {
     xs = [100];
     total = total + n;
     visits = visits + 1;
@@ -160,11 +160,11 @@ function testIterableReassignmentDoesNotRedirect(): null {
   return;
 }
 
-function testArrayIterableEvaluatedOnce(): null {
+function testArrayIterableEvaluatedOnce(): void {
   let counter: number[] = [0];
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of freshArray(counter)) {
+  for (let n of freshArray(counter)) {
     visits = visits + 1;
     total = total + n;
   }
@@ -180,11 +180,11 @@ function testArrayIterableEvaluatedOnce(): null {
   return;
 }
 
-function testStringIterableEvaluatedOnce(): null {
+function testStringIterableEvaluatedOnce(): void {
   let counter: number[] = [0];
   let visits: number = 0;
   let joined: string = "";
-  for (let c: string of freshText(counter)) {
+  for (let c of freshText(counter)) {
     c = c + "!";
     joined = joined + c;
     visits = visits + 1;
@@ -201,11 +201,11 @@ function testStringIterableEvaluatedOnce(): null {
   return;
 }
 
-function testUnvisitedReplacementIsObserved(): null {
+function testUnvisitedReplacementIsObserved(): void {
   let xs: number[] = [1, 2, 3];
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of xs) {
+  for (let n of xs) {
     visits = visits + 1;
     total = total + n;
     if (visits === 1) {
@@ -224,11 +224,11 @@ function testUnvisitedReplacementIsObserved(): null {
   return;
 }
 
-function testAppendIsObserved(): null {
+function testAppendIsObserved(): void {
   let xs: number[] = [1, 2];
   let visits: number = 0;
   let total: number = 0;
-  for (let n: number of xs) {
+  for (let n of xs) {
     visits = visits + 1;
     total = total + n;
     if (visits === 1) {

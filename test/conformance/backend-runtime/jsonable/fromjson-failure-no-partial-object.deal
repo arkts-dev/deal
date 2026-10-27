@@ -29,22 +29,22 @@ export function main(): null {
     if (valid.name !== "ok" || valid.items.length !== 3) {
       throw { code: "TEST_FAIL", message: "valid decode failed after rejected inputs" };
     }
-    if (has(valid.items[0].note)) {
+    if (Object.hasOwn(valid.items[0], "note")) {
       throw { code: "TEST_FAIL", message: "missing optional state lost" };
     }
-    if (!has(valid.items[1].note)) {
+    if (!Object.hasOwn(valid.items[1], "note")) {
       throw { code: "TEST_FAIL", message: "explicit-null state lost" };
     }
-    let explicitNote: string | null = valid.items[1].note;
+    let explicitNote: string | null | undefined = valid.items[1].note;
     if (explicitNote !== null) {
       throw { code: "TEST_FAIL", message: "explicit-null state lost" };
     }
-    if (!has(valid.items[2].note)) {
+    if (!Object.hasOwn(valid.items[2], "note")) {
       throw { code: "TEST_FAIL", message: "present optional state lost" };
     }
-    let note: string | null = valid.items[2].note;
+    let note: string | null | undefined = valid.items[2].note;
     if (note !== null) {
-      if (note !== "n") {
+      if ((note as string) !== "n") {
         throw { code: "TEST_FAIL", message: "present optional value changed" };
       }
       return null;

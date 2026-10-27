@@ -3,6 +3,7 @@
 // @expected: runtime-error E8010
 // @features: number[], functions, arity, runtime-errors
 
+import * as host from "host/signature_mutation";
 function id(b: number[]): number[] { return b; }
 
 function apply2(cb: (b: number[], v: number) => number[], b: number[]): number[] {
@@ -10,8 +11,9 @@ function apply2(cb: (b: number[], v: number) => number[], b: number[]): number[]
 }
 
 export function test_array_fn_adapter_e8010(): number {
-  let source: table = {f: id};
-  let cb: (b: number[], v: number) => number[] = source.f;
+  let source: (b: number[], v: number) => number[] = function(b: number[], v: number): number[] { return b; };
+  if (!host.replaceSignature({value: source}, "([number])->[number]")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  let cb: (b: number[], v: number) => number[] = source;
   return apply2(cb, [0])[0];
 }
 

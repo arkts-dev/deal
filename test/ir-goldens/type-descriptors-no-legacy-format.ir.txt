@@ -9,4 +9,6 @@ module @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:1-5:1
     param d: [string] @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:61-4:72
       [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:82-4:90
+      return @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:82-4:95
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/type-descriptors-no-legacy-format.deal:4:89-4:92

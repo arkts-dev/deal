@@ -1,6 +1,6 @@
 // @jsonable
 export class Settings {
-  enabled: boolean = true;
-  title: string = "";
+  enabled: boolean;
+  title: string;
   note?: string | null;
 }

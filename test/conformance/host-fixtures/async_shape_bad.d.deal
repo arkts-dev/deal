@@ -8,4 +8,4 @@
 // below returns a plain number instead, which the load-time wrapper must
 // reject at the call site with E8010 (async-operation shape).
 
-export async function fetchValue(): string;
+export function fetchValue(): Promise<string>;

@@ -260,8 +260,8 @@ public class CompositeTerminatorAnalysisTest {
     /**
      * The direct checked-facts lowering of one probe source: the
      * composite-terminator analysis exercises the lowerer's declared-body
-     * materialization and its implicit-null-return arm for the shapes the
-     * public compile surface rejects with E5002 as well as for the accepted
+     * materialization and its implicit-undefined-return arm for void structural
+     * twins of null falloff negatives, as well as for accepted
      * ones, so the lowering runs over the checked facts directly. The
      * public gate stays pinned by the {@code checkPublicFallOff*} checks
      * over the same sources.
@@ -526,9 +526,17 @@ public class CompositeTerminatorAnalysisTest {
         }
     }
 
+    /** Resultless structural twins preserve every control-flow operation, not a null falloff exception. */
+    private static String voidResultProbes(String source) {
+        int main = source.lastIndexOf("export function main(): null");
+        if (main < 0) throw new AssertionError("probe source has no explicit-null entry");
+        return source.substring(0, main).replace(": null", ": void")
+            .replace("=> null", "=> void").replace("return null;", "return;")
+            + source.substring(main);
+    }
+
     static void testCompositeMarkingNegatives() throws Exception {
-        System.out.println("-- the negative controls: the implicit null return is "
-            + "kept --");
+        System.out.println("-- null falloff rejects; resultless void twins retain implicit undefined returns --");
         record Negative(String name, String source) {
         }
         List<Negative> negatives = List.of(
@@ -588,18 +596,15 @@ public class CompositeTerminatorAnalysisTest {
                     }
                     """)));
         for (Negative negative : negatives) {
-            // The harness invocation keeps the implicit-null-return
-            // tolerance the closed analysis exercises (the public build's
-            // fall-off gate is NullReturnFallOff); the same program's
-            // public rejection is pinned below.
-            Lowered lowered = lowerProbe(negative.name(), negative.source(),
+            checkPublicFallOff(negative.name(), negative.source());
+            Lowered lowered = lowerProbe(negative.name(), voidResultProbes(negative.source()),
                 ConformanceHarnessMetadata.invocation());
             if (lowered == null) {
                 continue;
             }
             List<SemanticOp> implicit = lowered.implicitReturns();
             checkEq(1, implicit.size(), negative.name()
-                + ": the open body keeps the pinned implicit null return");
+                + ": the void body keeps its implicit undefined return");
             List<BlockId> bodies = lowered.declaredBodyBlocks();
             if (bodies.isEmpty()) {
                 continue;
@@ -615,16 +620,13 @@ public class CompositeTerminatorAnalysisTest {
                 check(ops.contains(implicit.get(0)), negative.name()
                     + ": the implicit RETURN is a member of the probe body block");
             }
-            // The public compile surface rejects the same open body with
-            // exactly one E5002 (the spec's no-fall-off rule; ISSUE-0717
-            // defect snippets 25/26).
-            checkPublicFallOff(negative.name(), negative.source());
+            checkPublicFallOffCount(negative.name() + " void twin", voidResultProbes(negative.source()), 0);
         }
     }
 
     static void testPartialTransferKeepsImplicitReturn() throws Exception {
         System.out.println("-- the partial transfers: an open-branch composite's "
-            + "break/continue path keeps the literal-true loop's implicit null "
+            + "break/continue path keeps the void loop's implicit undefined "
             + "return --");
         record LoopForm(String name, String header) {
         }
@@ -685,7 +687,7 @@ public class CompositeTerminatorAnalysisTest {
         checkPublicFallOffCount("the partial-transfer matrix",
             probeProgram(source.toString()), fallOffProbes);
         Lowered lowered = lowerProbe("partial-transfer matrix",
-            probeProgram(source.toString()),
+            voidResultProbes(probeProgram(source.toString())),
             ConformanceHarnessMetadata.invocation());
         if (lowered == null) {
             return;
@@ -700,14 +702,14 @@ public class CompositeTerminatorAnalysisTest {
             "the ten probe bodies and main have distinct blocks");
         List<SemanticOp> allImplicit = lowered.implicitReturns();
         checkEq(10, allImplicit.size(), "only the ten partial-transfer bodies keep "
-            + "the pinned implicit null returns");
+            + "the implicit undefined returns");
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
             BlockId probeBody = bodies.get(i);
             List<SemanticOp> ops = lowered.blockOps(probeBody);
             List<SemanticOp> implicit = allImplicit.stream().filter(ops::contains).toList();
             checkEq(1, implicit.size(), name + ": the partial-transfer body "
-                + "keeps the pinned implicit null return");
+                + "keeps its implicit undefined return");
             check(!ops.isEmpty() && ops.get(ops.size() - 1).kind()
                     == SemanticOpKind.RETURN,
                 name + ": the implicit return is the body block's trailing "
@@ -759,22 +761,20 @@ public class CompositeTerminatorAnalysisTest {
                 """), 1, true));
         for (Terminated shape : terminated) {
             Lowered lowered = shape.publicFallOff()
-                ? lowerProbe(shape.name(), shape.source(),
+                ? lowerProbe(shape.name(), voidResultProbes(shape.source()),
                     ConformanceHarnessMetadata.invocation())
                 : lowerProbe(shape.name(), shape.source());
             if (lowered == null) {
                 continue;
             }
             if (shape.publicFallOff()) {
-                // The nested body's reachable break-exit falls off and is
-                // rejected by the public surface; the enclosing body still
-                // definitely returns and the retained harness profile keeps
-                // the nested body's implicit null return observable.
+                // Null falloff rejects uniformly. The void twin independently
+                // exercises the nested body's implicit undefined return.
                 checkPublicFallOff(shape.name(), shape.source());
             }
             checkEq(shape.implicitReturns(), lowered.implicitReturns().size(),
                 shape.name() + ": only the genuinely open bodies keep the pinned "
-                    + "implicit null return");
+                    + "implicit undefined return");
             List<BlockId> bodies = lowered.declaredBodyBlocks();
             if (bodies.isEmpty()) {
                 continue;
@@ -802,7 +802,7 @@ public class CompositeTerminatorAnalysisTest {
               }
             }
             """);
-        Lowered lowered = lowerProbe("nested declared body", nestedProbe,
+        Lowered lowered = lowerProbe("nested declared body", voidResultProbes(nestedProbe),
             ConformanceHarnessMetadata.invocation());
         if (lowered == null) {
             return;
@@ -819,7 +819,7 @@ public class CompositeTerminatorAnalysisTest {
             + "outer loop's state)");
         check(!probeOps.isEmpty() && probeOps.get(probeOps.size() - 1).kind()
                 == SemanticOpKind.RETURN,
-            "the enclosing body block ends with its implicit null return (op "
+            "the enclosing void body ends with its implicit undefined return (op "
                 + "kinds " + kindsOf(lowered, bodies.get(0)) + ")");
         checkPublicFallOff("nested declared body", nestedProbe);
         List<SemanticOp> nestedOps = lowered.blockOps(bodies.get(1));
@@ -862,8 +862,7 @@ public class CompositeTerminatorAnalysisTest {
     }
 
     static void testNestedGroupFallOffExemption() throws Exception {
-        System.out.println("-- the nested mutual-reference group keeps its "
-            + "implicit null returns on the public build --");
+        System.out.println("-- nested mutual-reference groups reject null falloff and admit void --");
         String group = """
             export function main(): null {
               function f(n: number): null {
@@ -876,11 +875,10 @@ public class CompositeTerminatorAnalysisTest {
               return null;
             }
             """;
-        List<CompilerDiagnostic> groupDiagnostics = publicBuildDiagnostics(group);
-        check(groupDiagnostics.stream().noneMatch(
-                diagnostic -> "E5002".equals(diagnostic.code())),
-            "the nested mutual-reference group's implicit null returns compile "
-                + "on the public build: " + groupDiagnostics);
+        checkPublicFallOffCount("nested mutual-reference null group", group, 2);
+        String voidGroup = group.replace("function f(n: number): null", "function f(n: number): void")
+            .replace("function g(n: number): null", "function g(n: number): void");
+        checkPublicFallOffCount("nested mutual-reference void group", voidGroup, 0);
 
         String standalone = """
             export function main(): null {
@@ -1147,7 +1145,7 @@ public class CompositeTerminatorAnalysisTest {
         CheckedModuleInput module = built.input().modules().get(0);
         SemanticLowerer.FullProgramE7Result e7 =
             SemanticLowerer.lowerModuleFullProgramE7(module,
-                SemanticProfile.DEAL_V1_4_BINARY64,
+                SemanticProfile.DEAL_V1_5_BINARY64,
                 manifests.manifests().get(0).constructCoverage(),
                 built.index().interfaceIndexDigest(),
                 productionInvocation().capabilityRegistryHash(),
@@ -1465,7 +1463,7 @@ public class CompositeTerminatorAnalysisTest {
         Path root = Files.createTempDirectory("partial-transfer-parity-");
         try {
             Lowered lowered = lowerSourceDirect("partial-transfer matrix",
-                PARTIAL_TRANSFER_PROBE_SOURCE);
+                voidResultProbes(PARTIAL_TRANSFER_PROBE_SOURCE));
             if (lowered == null) {
                 return;
             }
@@ -1473,7 +1471,7 @@ public class CompositeTerminatorAnalysisTest {
                 PARTIAL_TRANSFER_PROBE_SOURCE, 5);
             List<SemanticOp> implicit = lowered.implicitReturns();
             checkEq(5, implicit.size(), "the partial-transfer probes each "
-                + "retain their implicit null return");
+                + "retain their implicit undefined return");
             List<OpId> implicitIds = implicit.stream().map(SemanticOp::opId).toList();
             Set<OpId> bodyMembers = lowered.declaredBodyBlocks().stream()
                 .flatMap(body -> lowered.blockOps(body).stream()).map(SemanticOp::opId)
@@ -1510,7 +1508,7 @@ public class CompositeTerminatorAnalysisTest {
                             event.phase() == SemanticRuntimeModel.Phase.SUCCESS
                                 && event.op().equals(id)).count();
                         checkEq(1L, executed, run.consumer() + " executed the retained "
-                            + "implicit null return " + id + " on its probe's break "
+                            + "implicit undefined return " + id + " on its probe's break "
                             + "exit");
                     }
                     List<SemanticRuntimeModel.TraceEvent> continues = events(run,

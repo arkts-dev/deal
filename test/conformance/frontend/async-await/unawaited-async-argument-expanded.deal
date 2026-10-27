@@ -3,10 +3,10 @@
 // @expected: compile-error E3014
 // @features: async, diagnostics
 
-async function value(): number { return 1; }
+async function value(): Promise<number> { return 1; }
 function consume(x: number): number { return x; }
 
-export async function test_unawaited_async_argument(): number {
+export async function test_unawaited_async_argument(): Promise<number> {
   return consume(value());
 }
 

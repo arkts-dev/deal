@@ -24,18 +24,18 @@ const $console = {};
 // check, so parameter and return errors report the DEAL call site
 // (js-backend-runtime D6; the wrapper carries the exact "(string)->null"
 // signature, so it crosses a function-typed boundary with no E8010).
-$console.log = $rt.function("(string)->null", function(x, $file, $line, $column) {
+$console.log = $rt.function("(string)->void", function(x, $file, $line, $column) {
   $rt.checkString(x, $file, $line, $column);
   $process.stdout.write(x + "\n");
-  return $rt.checkNull(null, $file, $line, $column);
+  return undefined;
 });
 
 // error: identical with the captured stderr stream — the reference's
 // io.stderr:write(x .. "\n").
-$console.error = $rt.function("(string)->null", function(x, $file, $line, $column) {
+$console.error = $rt.function("(string)->void", function(x, $file, $line, $column) {
   $rt.checkString(x, $file, $line, $column);
   $process.stderr.write(x + "\n");
-  return $rt.checkNull(null, $file, $line, $column);
+  return undefined;
 });
 
 module.exports = $console;

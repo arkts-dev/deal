@@ -1,7 +1,7 @@
 // IR golden fixture: type-descriptors-function-type-descriptor-null-return
 // Migrated IR-containment pin for legacy case 'function-type-descriptor-null-return' (ISSUE-0358).
 
-function noop(): null { return; }
+function noop(): null { return null; }
 export function main(): null {
 let f: () => null = noop;
 return null;

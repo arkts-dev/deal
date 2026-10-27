@@ -4,8 +4,8 @@
 // @features: type-system, functions, runtime-errors
 
 export function test_dynamic_nonfunction_to_function_runtime_error(): number {
-  let t: table = { f: 1 };
-  let f: (x: number) => number = t.f;
+  let t: Record<string, unknown> = { f: 1 };
+  let f: (x: number) => number = t.f as (x: number) => number;
   return f(1);
 }
 

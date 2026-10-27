@@ -95,12 +95,12 @@ public class ClosureLoweringTest {
     }
 
     private static final String HOISTED_CAPTURE_SOURCE = """
-        function first(): null {
-          let h: () => null = function(): null {
-            let copy: () => null = laterFn;
+        function first(): void {
+          let h: () => void = function(): void {
+            let copy: () => void = laterFn;
           };
         }
-        function laterFn(): null {}
+        function laterFn(): void {}
         """;
 
     // =========================================================================
@@ -143,7 +143,7 @@ public class ClosureLoweringTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClosureCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -233,10 +233,10 @@ public class ClosureLoweringTest {
             + "registry one-to-one --");
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
-            function outer(): null {
+            function outer(): void {
               let x: number = 1;
               let y: number = 2;
-              let h: () => null = function(): null {
+              let h: () => void = function(): void {
                 let a: number = y;
                 let b: number = x;
               };
@@ -286,8 +286,8 @@ public class ClosureLoweringTest {
         check(hClosure.result() != null
                 && hClosure.resultType() instanceof RuntimeDescriptor.Func func
                 && func.equals(new RuntimeDescriptor.Func(List.of(),
-                    RuntimeDescriptor.Null.INSTANCE)),
-            "h's CLOSURE_NEW result type is the exact declared signature () -> null");
+                    RuntimeDescriptor.Void.INSTANCE)),
+            "h's CLOSURE_NEW result type is the exact declared signature () -> void");
 
         // The LoweredFunction record agrees with the payload.
         LoweredFunction hFunction = unit.functions().get(hPayload.function());
@@ -396,10 +396,10 @@ public class ClosureLoweringTest {
             + "(window shape) --");
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
-            function test_nested_closure_mutation(): null {
+            function test_nested_closure_mutation(): void {
               let x: number = 1;
-              function make(): null {
-                let inner: () => null = function(): null {
+              function make(): void {
+                let inner: () => void = function(): void {
                   let y: number = x;
                 };
               }
@@ -522,11 +522,11 @@ public class ClosureLoweringTest {
         System.out.println("-- transitive detaching-chain propagation: triple nesting --");
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
-            function outer(): null {
+            function outer(): void {
               let x: number = 1;
-              function mid(): null {
+              function mid(): void {
                 let z: number = 2;
-                function inner(): null {
+                function inner(): void {
                   let a: number = x;
                   let b: number = z;
                 }
@@ -622,7 +622,7 @@ public class ClosureLoweringTest {
 
     /**
      * A closure capturing a later-declared module function: the capture
-     * resolves to the hoisted module-init ALLOC (B1; docs/spec-v1.4.md
+     * resolves to the hoisted module-init ALLOC (B1; docs/spec-v1.5.md
      * §Name resolution — Declaration order), the hoisted ALLOC upgrades
      * to {@code SHARED_CELL}, and the function-typed load inside the earlier closure body
      * publishes the pre-allocated hoist-time identity that the
@@ -729,9 +729,9 @@ public class ClosureLoweringTest {
                         && loadPayload.binding().equals(laterFn.binding())) {
                     check(load.resultType() instanceof RuntimeDescriptor.Func func
                             && func.equals(new RuntimeDescriptor.Func(List.of(),
-                                RuntimeDescriptor.Null.INSTANCE)),
+                                RuntimeDescriptor.Void.INSTANCE)),
                         "the load of laterFn carries the declared signature descriptor "
-                            + "() -> null");
+                            + "() -> void");
                 }
             }
         }
@@ -774,7 +774,7 @@ public class ClosureLoweringTest {
      * the generation-0 store of that loaded value, before the update chain
      * and the condition re-production — so a body store reaches the
      * iteration's update and the subsequent test (the spec's
-     * {@code for}-to-{@code while} desugaring, docs/spec-v1.4.md
+     * {@code for}-to-{@code while} desugaring, docs/spec-v1.5.md
      * §Control flow — For (C-style)). The update-less row carries the same
      * transfer before its condition re-production, and the body's own
      * incarnation stays the captured generation-1 cell.
@@ -806,16 +806,16 @@ public class ClosureLoweringTest {
      * signature descriptor only, and a load of a nullable binding inside
      * the body carries the declared nullable descriptor (never a
      * narrowed one — {@code NullNarrowing} state is checker-local,
-     * docs/spec-v1.4.md §Closures and captured variables).
+     * docs/spec-v1.5.md §Closures and captured variables).
      */
     static void testNarrowedFlowTypesNeverCaptured() {
         System.out.println("-- narrowed flow types: capture entries are BindingIds, declared "
             + "descriptors only --");
 
         SemanticLowerer.ClosureCoreResult result = lowerSlice("""
-            function outer(): null {
+            function outer(): void {
               let x: number | null = 1;
-              let h: () => null = function(): null {
+              let h: () => void = function(): void {
                 let y: number | null = x;
               };
             }
@@ -853,7 +853,7 @@ public class ClosureLoweringTest {
                     + "verbatim");
             check(function != null && function.descriptor()
                     .equals(new RuntimeDescriptor.Func(List.of(),
-                        RuntimeDescriptor.Null.INSTANCE)),
+                        RuntimeDescriptor.Void.INSTANCE)),
                 "the LoweredFunction carries the declared signature descriptor only");
         }
         check(sawCapture, "h captures x exactly once");
@@ -887,7 +887,7 @@ public class ClosureLoweringTest {
 
         // (a) Reassignable-uncaptured local stays DIRECT with mutable=true.
         SemanticLowerer.ClosureCoreResult uncaptured = lowerSlice("""
-            function outer(): null {
+            function outer(): void {
               let x: number = 1;
               x = 2;
             }
@@ -905,9 +905,9 @@ public class ClosureLoweringTest {
 
         // (b) A store inside the closure body captures the cell.
         SemanticLowerer.ClosureCoreResult storeCapture = lowerSlice("""
-            function outer(): null {
+            function outer(): void {
               let x: number = 1;
-              let h: () => null = function(): null {
+              let h: () => void = function(): void {
                 x = 2;
               };
               x = 9;
@@ -936,8 +936,8 @@ public class ClosureLoweringTest {
         // hoisted ALLOC; the hoisted ALLOC upgrades; the CLOSURE_NEW is
         // the immediate commit before BINDING_INIT.
         SemanticLowerer.ClosureCoreResult selfRecursion = lowerSlice("""
-            function f(): null {
-              let g: () => null = f;
+            function f(): void {
+              let g: () => void = f;
             }
             """);
         if (selfRecursion != null && !selfRecursion.lowering().hasErrors()) {
@@ -972,9 +972,9 @@ public class ClosureLoweringTest {
         // nested-scope ALLOC (at the declaration position in outer's
         // body) and upgrades it.
         SemanticLowerer.ClosureCoreResult nestedSelf = lowerSlice("""
-            function outer(): null {
-              function g(): null {
-                let copy: () => null = g;
+            function outer(): void {
+              function g(): void {
+                let copy: () => void = g;
               }
             }
             """);
@@ -1024,10 +1024,10 @@ public class ClosureLoweringTest {
     static void testFailClosedNegatives() {
         System.out.println("-- fail-closed negatives --");
 
-        CheckedSlice slice = checkSlice("let h: () => null = function(): null {};");
+        CheckedSlice slice = checkSlice("let h: () => void = function(): void {};");
         if (slice != null) {
             SemanticLowerer.BindingCoreResult foreign = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(slice), SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH,
+                moduleOf(slice), SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH,
                 REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(foreign != null && foreign.lowering().hasErrors()
                     && foreign.lowering().unit() == null,
@@ -1108,7 +1108,7 @@ public class ClosureLoweringTest {
             variableSlice.checks().symbolTable().define("x",
                 new Symbol.VariableSymbol("x", Type.Error.INSTANCE, false));
             SemanticLowerer.BindingCoreResult result = SemanticLowerer.lowerModuleBindingCore(
-                moduleOf(variableSlice), SemanticProfile.DEAL_V1_4_BINARY64, Map.of(),
+                moduleOf(variableSlice), SemanticProfile.DEAL_V1_5_BINARY64, Map.of(),
                 INTERFACE_HASH, REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.lowering().hasErrors()
                     && result.lowering().unit() == null,
@@ -1206,7 +1206,7 @@ public class ClosureLoweringTest {
                 Path.of("writer.deal"), program, checks, List.of(), List.of(),
                 CheckedModuleKind.IMPLEMENTATION);
             SemanticLowerer.ClosureCoreResult result = SemanticLowerer.lowerModuleClosureCore(
-                module, SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH,
+                module, SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH,
                 REGISTRY_HASH, SemanticIdAllocator.over(List.of(MODULE)));
             check(result != null && result.lowering().hasErrors()
                     && result.lowering().unit() == null,
@@ -1237,7 +1237,7 @@ public class ClosureLoweringTest {
             throw new AssertionError("group source must check");
         }
         return SemanticLowerer.lowerModuleGroupCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -1251,19 +1251,19 @@ public class ClosureLoweringTest {
 
     private static void testRecursiveGroups() {
         String source = """
-            function f(): null {
-              let h: () => null = function(): null { let copy: () => null = laterFn; };
-              let gRef: () => null = g;
+            function f(): void {
+              let h: () => void = function(): void { let copy: () => void = laterFn; };
+              let gRef: () => void = g;
             }
-            function g(): null { let fRef: () => null = f; }
-            function laterFn(): null {}
-            function self(): null { let copy: () => null = self; }
-            function a(): null { let bRef: () => null = b; }
-            function b(): null { let aRef: () => null = a; }
-            function outer(): null {
+            function g(): void { let fRef: () => void = f; }
+            function laterFn(): void {}
+            function self(): void { let copy: () => void = self; }
+            function a(): void { let bRef: () => void = b; }
+            function b(): void { let aRef: () => void = a; }
+            function outer(): void {
               let before = 1;
-              function n(): null { let mRef: () => null = m; }
-              function m(): null { let nRef: () => null = n; }
+              function n(): void { let mRef: () => void = m; }
+              function m(): void { let nRef: () => void = n; }
               let after = 2;
             }
             """;
@@ -1354,8 +1354,8 @@ public class ClosureLoweringTest {
         check(first.closures().stream().anyMatch(c -> c.bodyBlock().equals(nested.block())),
             "nested group belongs to enclosing closure body");
         SemanticLowerer.GroupCoreResult pair = lowerGroups("""
-            function f(): null { let gRef: () => null = g; }
-            function g(): null { let fRef: () => null = f; }
+            function f(): void { let gRef: () => void = g; }
+            function g(): void { let fRef: () => void = f; }
             """);
         check(!pair.lowering().hasErrors() && pair.groups().size() == 1
                 && ofKind(pair.lowering().unit().ops(), SemanticOpKind.CLOSURE_NEW).isEmpty(),
@@ -1367,7 +1367,7 @@ public class ClosureLoweringTest {
                     && pair.lowering().unit().functions().get(member.functionId()).captureBindings().equals(List.of(sibling)),
                 "isolated pair captures exactly its sibling, with no extra binding");
         }
-        SemanticLowerer.GroupCoreResult singletonResult = lowerGroups("function f(): null { let self: () => null = f; }");
+        SemanticLowerer.GroupCoreResult singletonResult = lowerGroups("function f(): void { let self: () => void = f; }");
         check(!singletonResult.lowering().hasErrors() && singletonResult.groups().isEmpty()
                 && ofKind(singletonResult.lowering().unit().ops(), SemanticOpKind.RECURSIVE_GROUP_INIT).isEmpty()
                 && ofKind(singletonResult.lowering().unit().ops(), SemanticOpKind.CLOSURE_NEW).size() == 1,
@@ -1407,8 +1407,8 @@ public class ClosureLoweringTest {
                     SemanticIrDumper.dumpModule(second.lowering().unit())),
             "independent group lowerings produce identical dumps");
         SemanticLowerer.GroupCoreResult foreign = lowerGroups("""
-            function f(): null { g(); }
-            function g(): null { let fRef: () => null = f; }
+            function f(): void { g(); }
+            function g(): void { let fRef: () => void = f; }
             """);
         check(foreign.lowering().unit() == null && foreign.lowering().hasErrors()
                 && foreign.lowering().diagnostics().get(0).code().equals("E6005")

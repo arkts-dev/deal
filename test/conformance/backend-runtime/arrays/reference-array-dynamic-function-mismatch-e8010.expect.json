@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected ([number])->[number], got (number)->number\",\"sourceFile\":\"backend-runtime/arrays/reference-array-dynamic-function-mismatch-e8010.deal\",\"line\":12,\"column\":10,\"expected\":\"([number])->[number]\",\"actual\":\"(number)->number\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected ([number])->[number], got (number)->number\",\"sourceFile\":\"backend-runtime/arrays/reference-array-dynamic-function-mismatch-e8010.deal\",\"line\":14,\"column\":10,\"expected\":\"([number])->[number]\",\"actual\":\"(number)->number\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -16,7 +16,7 @@
       "code": "E8010",
       "message": "function signature mismatch: expected ([number])->[number], got (number)->number",
       "sourceFile": "backend-runtime/arrays/reference-array-dynamic-function-mismatch-e8010.deal",
-      "line": 12,
+      "line": 14,
       "column": 10,
       "expected": "([number])->[number]",
       "actual": "(number)->number"

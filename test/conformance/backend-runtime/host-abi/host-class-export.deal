@@ -1,5 +1,5 @@
 // @spec: Modules, declarations, standard library, and host ABI
-// @description: A declared host class exports its module-qualified identity and defaults; class literals construct through the synthesized class symbols with defaults passthrough, and the constructed instance crosses the host boundary through a declared function parameter.
+// @description: A declared host class constructs from supplied structural fields without defaults hooks; optional presence and the instance survive a declared host parameter crossing.
 // @expected: runtime-ok
 // @features: modules, host-abi, classes
 
@@ -18,8 +18,8 @@ export function test_host_class_export(): string {
   if (s.endpoint.path !== "/api") {
     throw { code: "TEST_FAIL", message: "host class endpoint field mismatch" };
   }
-  let tags: string[] | null = s.tags;
-  if (tags !== null) {
+  let tags: string[] | undefined = s.tags;
+  if (tags !== undefined) {
     if (tags[0] !== "dev") {
       throw { code: "TEST_FAIL", message: "host class array field mismatch" };
     }

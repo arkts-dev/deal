@@ -25,7 +25,7 @@ import java.util.stream.Stream;
  * the throw machinery consumes it, on every production backend and through
  * every production async invoker.
  *
- * <p>docs/spec-v1.4.md Nullable semantics keeps calls non-invalidating on
+ * <p>docs/spec-v1.5.md Nullable semantics keeps calls non-invalidating on
  * purpose, so a capturing closure can clear the binding while the refinement
  * claim still holds. The {@code THROW} operand is a consumed value like the
  * arithmetic operand, condition, index receiver/key, table member receiver,

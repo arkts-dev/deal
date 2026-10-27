@@ -40,7 +40,7 @@ function pickPairAdaptedFirst(n: number): (x: number, y: number) => number {
   return exactPair;
 }
 
-function needParse(f: (text: string, extra: number) => table): table {
+function needParse(f: (text: string, extra: number) => Record<string, unknown>): Record<string, unknown> {
   return f("{}", 9);
 }
 
@@ -59,11 +59,11 @@ export function main(): null {
   check(importedDefault.pair(4, 5) === 4,
     "a cross-module default class field adapts one-to-two");
 
-  let parsed: table = needParse(json.parse);
-  check(json.stringify(parsed) === "{}",
+  let parsed: Record<string, unknown> = needParse(json.parse);
+  check((json.stringify(parsed) as string) === "{}",
     "a cataloged stdlib callable adapts at a longer parameter position");
-  let parseWide: (text: string, extra: number) => table = json.parse;
-  check(json.stringify(parseWide("{}", 9)) === "{}",
+  let parseWide: (text: string, extra: number) => Record<string, unknown> = json.parse;
+  check((json.stringify(parseWide("{}", 9)) as string) === "{}",
     "an adapter over a cataloged stdlib callable invokes its row");
 
   console.log("OK");

@@ -1,5 +1,5 @@
-// @spec: Classes — has and delete
-// @description: has() and delete preserve missing versus explicit null state for optional fields
+// @spec: Classes — Presence and delete
+// @description: Object.hasOwn and delete preserve missing versus explicit null state for optional fields
 // @expected: runtime-ok
 // @features: classes, has, delete, optional
 
@@ -9,11 +9,12 @@ class Item {
 
 export function test_has_delete_optional_nullable(): null {
   let item: Item = { tag: null };
-  if (!has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be present" }; }
+  if (!Object.hasOwn(item, "tag")) { throw { code: "TEST_FAIL", message: "tag should be present" }; }
   delete item.tag;
-  if (has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be missing after delete" }; }
+  if (Object.hasOwn(item, "tag")) { throw { code: "TEST_FAIL", message: "tag should be missing after delete" }; }
+  if (item.tag !== undefined) { throw { code: "TEST_FAIL", message: "deleted read should be undefined" }; }
   item.tag = "ok";
-  if (!has(item.tag)) { throw { code: "TEST_FAIL", message: "tag should be present after write" }; }
+  if (!Object.hasOwn(item, "tag")) { throw { code: "TEST_FAIL", message: "tag should be present after write" }; }
   return null;
 }
 

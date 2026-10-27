@@ -1,4 +1,4 @@
--- DEAL Runtime Library v1.4 (LuaJIT backend)
+-- DEAL Runtime Library v1.5 (LuaJIT backend)
 -- Provides type checks, canonical descriptor parsing and matching, integer
 -- arithmetic, class construction, function wrapping,
 -- async/await infrastructure and typed host-module loading.
@@ -19,6 +19,7 @@ local __rt = {}
 -- renders "null", never a table address), which the aliasing must keep.
 __rt.__NULL = setmetatable({}, {__tostring = function() return "null" end})
 __rt.__MISSING = {}
+__rt.__UNDEFINED = {}
 
 -- ===== Private carrier keys (ISSUE-0830) =====
 -- Carrier identity (the class/Error/function/array/async/numeric-variant
@@ -36,7 +37,7 @@ local __CARRIER_KEYS = rawget(_G, "__dealCarrierKeys")
 if __CARRIER_KEYS == nil then
   __CARRIER_KEYS = {
     kind = {}, classname = {}, c = {}, id = {}, p = {}, f = {}, d = {},
-    a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, order = {},
+    elementDescriptor = {}, a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, order = {},
     fn = {}, csig = {}, sig = {}, fid = {}, it = {}, sid = {}, val = {},
     mode = {}, jn = {}, jo = {}, ja = {}, jkeys = {}, jnum = {}, jseen = {},
     ptr = {},
@@ -45,6 +46,8 @@ if __CARRIER_KEYS == nil then
 end
 local __K = __CARRIER_KEYS
 __rt.__keys = __K
+__K.classOrder = __K.classOrder or {}
+__K.classOrders = __K.classOrders or {}
 
 -- ===== Error formatting =====
 
@@ -120,7 +123,7 @@ end
 -- arguments leave the corresponding fields absent (nil), matching _err's
 -- convention.
 --
--- The canonical identity (v1.4 DescriptorV13): the instance carries the
+-- The canonical identity (canonical nominal descriptor): the instance carries the
 -- canonical builtin class atom Error (the one class atom without the
 -- leading '@'), and the canonical boundary matcher matches it
 -- byte-for-byte. The superseded v1.2 spellings @/Error and
@@ -177,7 +180,7 @@ function __rt.check_number(v, file, line, column)
   return v
 end
 
--- ===== Unicode scalar-value string support (v1.4) =====
+-- ===== Unicode scalar-value string support =====
 
 --- Validate that a Lua string is well-formed UTF-8 encoding a sequence of
 -- Unicode scalar values: no truncated sequences, no stray continuation
@@ -345,7 +348,7 @@ function __rt.check_string(v, file, line, column)
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "string" }, "E8001",
       "expected string", file, line, column, "string", __rt.typed_kind(v)))
   end
-  -- v1.4 boundary rule: strings accepted from untrusted or backend-native
+  -- Strings accepted from untrusted or backend-native
   -- boundaries must reject invalid encodings (malformed UTF-8 byte
   -- sequences). A surrogate code point gets the specific pinned message
   -- (the host-surrogate-utf8-e8010 sidecar); every other malformed
@@ -375,7 +378,8 @@ end
 -- carrier projects its own recorded variant ("int" or "number"), never
 -- one fixed numeric token.
 function __rt.typed_kind(v)
-  if v == nil or v == __rt.__MISSING then return "nil" end
+  if v == __rt.__UNDEFINED or v == __rt.__MISSING then return "undefined" end
+  if v == nil then return "null" end
   if v == __rt.__NULL then return "null" end
   local t = type(v)
   if t == "boolean" then return "boolean" end
@@ -420,7 +424,7 @@ function __rt.check_table(v, file, line, column)
   end
   if v == __rt.__MISSING then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
-      "expected table", file, line, column, "table", "nil"))
+      "expected table", file, line, column, "table", "undefined"))
   end
   if type(v) ~= "table" then
     error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "table" }, "E8001",
@@ -456,6 +460,14 @@ function __rt.check_array(array_descriptor, v, file, line, column)
   return __rt.check_type(array_descriptor, v, file, line, column)
 end
 
+-- A producer tags its persistent element descriptor without copying.
+function __rt.tag_array(v, element_descriptor)
+  v[__K.a] = true
+  v[__K.n] = #v
+  v[__K.elementDescriptor] = element_descriptor
+  return v
+end
+
 -- The canonical descriptor parser and matcher (parse_descriptor /
 -- check_type) live in the "Canonical descriptor parser and matcher"
 -- section below; this merge retired the legacy dialect parser that used
@@ -464,12 +476,12 @@ end
 
 -- ===== Integer arithmetic =====
 
--- ===== Canonical descriptor parser and matcher (v1.4) =====
+-- ===== Canonical descriptor parser and matcher =====
 --
 -- The canonical cutover (runtime page D3): the legacy dialect parser and
 -- matcher are removed; parse_descriptor / check_type /
 -- check_array / check_nullable below ARE the canonical matcher. Every
--- generated v1.4 artifact, stdlib signature, and host declared map
+-- generated artifact, stdlib signature, and host declared map
 -- carries canonical descriptors, and any legacy dialect spelling
 -- ("T[]", "T|null", bare class names, "...T[]") is rejected at the
 -- boundary. error_value tags reified Error instances with the canonical
@@ -500,7 +512,7 @@ end
 -- the canonical parser accepts no legacy spelling at any point.
 
 local CANONICAL_PRIMITIVES = {
-  "null", "boolean", "number", "string", "table",
+  "null", "undefined", "unknown", "void", "boolean", "number", "string", "record",
 }
 
 --- Strict canonical recursive-descent parser (total; never throws).
@@ -705,9 +717,20 @@ local function parse_descriptor(text)
       pos = pos + 1
       return { kind = "array", element = element, text = string.sub(text, start, pos - 1) }
     end
-    if b == 0x3F then  -- '?': nullable
+    if string.sub(text, pos, pos + 13) == "null|undefined" then
+      pos = pos + 14
+      return {kind = "nullable", inner = {kind = "primitive", name = "undefined", text = "undefined"},
+        admitsNull = true, admitsUndefined = false, text = "null|undefined"}
+    end
+    if b == 0x3F or b == 0x21 then
       local start = pos
+      local admitsNull = b == 0x3F
+      local admitsUndefined = not admitsNull
       pos = pos + 1
+      if admitsNull and string.byte(text, pos) == 0x21 then
+        admitsUndefined = true
+        pos = pos + 1
+      end
       local inner = parse_descriptor()
       if inner == nil then
         return nil
@@ -715,10 +738,10 @@ local function parse_descriptor(text)
       if inner.kind == "nullable" then
         return nil  -- nested nullable ("??T")
       end
-      if inner.kind == "primitive" and inner.name == "null" then
-        return nil  -- nullable of null ("?null")
-      end
-      return { kind = "nullable", inner = inner, text = string.sub(text, start, pos - 1) }
+      if inner.kind == "primitive" and (inner.name == "unknown" or inner.name == "void"
+          or (admitsNull and inner.name == "null") or (admitsUndefined and inner.name == "undefined")) then return nil end
+      return { kind = "nullable", inner = inner, admitsNull = admitsNull,
+        admitsUndefined = admitsUndefined, text = string.sub(text, start, pos - 1) }
     end
     if b == 0x28 then  -- '(': function
       return parse_function(false, pos)
@@ -787,8 +810,19 @@ local function check_canonical_ast(ast, v, file, line, column)
       return __rt.check_number(v, file, line, column)
     elseif name == "string" then
       return __rt.check_string(v, file, line, column)
-    elseif name == "table" then
+    elseif name == "record" then
       return __rt.check_table(v, file, line, column)
+    elseif name == "undefined" or name == "void" then
+      if v == __rt.__UNDEFINED or v == __rt.__MISSING then return __rt.__UNDEFINED end
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "undefined"}, "E8001", "expected undefined",
+        file, line, column, "undefined", __rt.typed_kind(v)))
+    elseif name == "unknown" then
+      if type(v) == "string" then return __rt.check_string(v, file, line, column) end
+      local actual = __rt.typed_kind(v)
+      if actual ~= "async-operation" and type(v) ~= "function" and type(v) ~= "thread" and type(v) ~= "userdata" and type(v) ~= "cdata" then
+        if v == __rt.__MISSING then return __rt.__UNDEFINED end
+        return v
+      end
     end
     error(__rt._err("E8001", "unknown primitive type: " .. name, file, line, column, nil, nil))
   elseif kind == "class" then
@@ -827,6 +861,11 @@ local function check_canonical_ast(ast, v, file, line, column)
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
         "expected array", file, line, column, "array", __rt.typed_kind(v)))
     end
+    local persistent = v[__K.elementDescriptor]
+    if persistent ~= nil and persistent ~= ast.element.text then
+      error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
+        "expected array", file, line, column, "array", __rt.typed_kind(v)))
+    end
     local length
     if v[__K.a] ~= nil then
       length = v[__K.n] or 0
@@ -859,9 +898,8 @@ local function check_canonical_ast(ast, v, file, line, column)
     end
     return v
   elseif kind == "nullable" then
-    if v == nil or v == __rt.__NULL then
-      return __rt.__NULL
-    end
+    if ast.admitsNull and (v == nil or v == __rt.__NULL) then return __rt.__NULL end
+    if ast.admitsUndefined and (v == __rt.__UNDEFINED or v == __rt.__MISSING) then return __rt.__UNDEFINED end
     return check_canonical_ast(ast.inner, v, file, line, column)
   elseif kind == "function" then
     -- Function row: a wrapper whose carried descriptor equals the atom's
@@ -908,7 +946,7 @@ end
 --
 -- This is the boundary path every typed crossing uses: generated
 -- wrapper/param/return/await checks, host declared maps, stdlib
--- signatures, and the v1.4 runtime entries (class_plan_ phase-3 field
+-- signatures, and the runtime entries (class_plan_ phase-3 field
 -- validation, invoke_async_export completion validation) all call this
 -- entry with canonical descriptors. It accepts only the canonical
 -- grammar; every legacy dialect spelling fails the parser.
@@ -1044,7 +1082,7 @@ end
 -- raw call, so hosts receive plain Lua functions; __NULL (and nil) arguments
 -- on nullable-function parameters pass through unadapted.
 --
--- DEAL v1.4 has no rest parameters: the parameter list is exact. A legacy
+-- DEAL has no rest parameters: the parameter list is exact. A legacy
 -- "...T" descriptor entry never parses under the canonical grammar, so a
 -- signature carrying one is rejected here at wrap time (E8010).
 function __rt.from_lua_function(sig, raw_f)
@@ -1087,7 +1125,7 @@ function __rt.from_lua_function(sig, raw_f)
       nargs = nargs_full - 3
     end
 
-    -- v1.4 exact arity: no rest parameters exist.
+    -- Exact arity: no rest parameters exist.
     if nargs < required_params then
       error(__rt._err("E8010", "expected at least " .. required_params .. " arguments, got " .. nargs, file, line, column, nil, nil))
     end
@@ -1598,6 +1636,9 @@ function __rt.class_plan_(identity, plan, provided, file, line, column)
   end
   instance[__K.kind] = "class"
   instance[__K.classname] = identity
+  local order = {}
+  for _, field in ipairs(plan) do order[#order + 1] = field.name end
+  instance[__K.classOrder] = order
   return instance
 end
 
@@ -1943,6 +1984,9 @@ function __rt.json_from_plan(identity, plan, parsed, file, line, column)
 
   slots[__K.classname] = identity
   slots[__K.kind] = "class"
+  local order = {}
+  for _, field in ipairs(plan) do order[#order + 1] = field.name end
+  slots[__K.classOrder] = order
   return slots
 end
 
@@ -2035,6 +2079,9 @@ function __rt._json_from_instance(descriptor, parsed, fields, seen)
   end
   instance[__K.classname] = descriptor
   instance[__K.kind] = "class"
+  local order = {}
+  for _, field in ipairs(fields) do order[#order + 1] = field.name end
+  instance[__K.classOrder] = order
   seen[parsed] = nil
   return instance
 end

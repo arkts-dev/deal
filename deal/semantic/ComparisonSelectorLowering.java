@@ -174,6 +174,9 @@ public final class ComparisonSelectorLowering {
                     : BinarySelector.STRING_EQ;
                 case Type.Boolean ignored -> negated ? BinarySelector.BOOLEAN_NE
                     : BinarySelector.BOOLEAN_EQ;
+                case Type.Undefined ignored -> negated ? BinarySelector.UNDEFINED_NE : BinarySelector.UNDEFINED_EQ;
+                case Type.Unknown ignored -> throw new Defect("Unknown equality requires a nullish singleton operand");
+                case Type.Void ignored -> throw new Defect("Void cannot be compared");
                 case Type.Null ignored -> negated ? BinarySelector.NULL_NE
                     : BinarySelector.NULL_EQ;
                 case Type.Nullable ignored -> {
@@ -195,6 +198,18 @@ public final class ComparisonSelectorLowering {
                         + "the selector map");
             };
             return payloadFor(selector, leftType, rightType, null);
+        }
+        if ((leftType instanceof Type.Nullable || leftType instanceof Type.Unknown) && rightType instanceof Type.Undefined) {
+            return new KindPayload.BinaryPayload(negated ? BinarySelector.NULLABLE_UNDEFINED_NE : BinarySelector.NULLABLE_UNDEFINED_EQ, describeShared(leftType), NullableSide.LEFT);
+        }
+        if ((rightType instanceof Type.Nullable || rightType instanceof Type.Unknown) && leftType instanceof Type.Undefined) {
+            return new KindPayload.BinaryPayload(negated ? BinarySelector.NULLABLE_UNDEFINED_NE : BinarySelector.NULLABLE_UNDEFINED_EQ, describeShared(rightType), NullableSide.RIGHT);
+        }
+        if (leftType instanceof Type.Unknown && rightType instanceof Type.Null) {
+            return new KindPayload.BinaryPayload(negated ? BinarySelector.NULLABLE_NULL_NE : BinarySelector.NULLABLE_NULL_EQ, RuntimeDescriptor.Unknown.INSTANCE, NullableSide.LEFT);
+        }
+        if (rightType instanceof Type.Unknown && leftType instanceof Type.Null) {
+            return new KindPayload.BinaryPayload(negated ? BinarySelector.NULLABLE_NULL_NE : BinarySelector.NULLABLE_NULL_EQ, RuntimeDescriptor.Unknown.INSTANCE, NullableSide.RIGHT);
         }
         // T|null vs null literal: side names the nullable operand.
         if (leftType instanceof Type.Nullable && rightType instanceof Type.Null) {
@@ -417,7 +432,7 @@ public final class ComparisonSelectorLowering {
      * {@link #payloadOf(BinaryOp, Type, Type)} or
      * {@link #produce} — {@code module}, {@code capability
      * EVALUATION_ORDER}, {@code validatorRule COMPARISON_SELECTOR},
-     * {@code semanticProfile DEAL_V1_4_BINARY64}, {@code irVersion
+     * {@code semanticProfile DEAL_V1_5_BINARY64}, {@code irVersion
      * deal.semantic-ir/2}, and the {@code ComparisonSelectorLowering}
      * origin. The unit-production seam converts the returned detail into
      * the E6005 diagnostic through
@@ -432,7 +447,7 @@ public final class ComparisonSelectorLowering {
             module.path(),
             SemanticCapability.EVALUATION_ORDER,
             COMPARISON_SELECTOR,
-            SemanticProfile.DEAL_V1_4_BINARY64,
+            SemanticProfile.DEAL_V1_5_BINARY64,
             LoweredModuleUnit.FORMAT_VERSION,
             "ComparisonSelectorLowering " + COMPARISON_SELECTOR
                 + " (" + defect.getMessage() + ")");

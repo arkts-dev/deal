@@ -1,4 +1,4 @@
-import * as math from "std/math";
+import * as json from "std/json";
 // @spec: Control flow — Runtime errors in for-of
 // @description: Runtime error inside for-of loop propagates with its error code
 // @expected: runtime-error E8001
@@ -6,8 +6,8 @@ import * as math from "std/math";
 
 export function test_error_inside_for_of(): number {
   let xs: number[] = [1, 2, 0];
-  for (let x: number of xs) {
-    if (x === 0) { return math.sqrt(-1); }
+  for (let x of xs) {
+    if (x === 0) { json.parse("bad"); return 0; }
   }
   return 0;
 }

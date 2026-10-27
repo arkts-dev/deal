@@ -95,26 +95,26 @@ export function main(): null {
   }
 
   // -- table member target
-  let table: table = {};
+  let table: Record<string, unknown> = {};
   table.on = true || boom();
-  let member: boolean = table.on;
+  let member: boolean = table.on as boolean;
   if (member !== true || calls !== 3) {
     throw { code: "TEST_FAIL", message: "table member: skipped right operand or value" };
   }
   table.on = false || effect();
-  let memberSelected: boolean = table.on;
+  let memberSelected: boolean = table.on as boolean;
   if (memberSelected !== true || calls !== 4) {
     throw { code: "TEST_FAIL", message: "table member: selected right operand" };
   }
 
   // -- table index target
   table["flag"] = false && boom();
-  let indexed: boolean = table["flag"];
+  let indexed: boolean = table["flag"] as boolean;
   if (indexed !== false || calls !== 4) {
     throw { code: "TEST_FAIL", message: "table index: skipped right operand or value" };
   }
   table["flag"] = true && effect();
-  let indexedSelected: boolean = table["flag"];
+  let indexedSelected: boolean = table["flag"] as boolean;
   if (indexedSelected !== true || calls !== 5) {
     throw { code: "TEST_FAIL", message: "table index: selected right operand" };
   }

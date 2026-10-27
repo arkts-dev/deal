@@ -4,7 +4,7 @@
 // @features: tables, assignment, type-system
 
 export function main(): null {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   t = 1;
   return null;
 }

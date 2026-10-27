@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Objects;
 
 public sealed interface RuntimeDescriptor extends OpResultType
-    permits RuntimeDescriptor.Null,
+    permits RuntimeDescriptor.Null, RuntimeDescriptor.Undefined, RuntimeDescriptor.Unknown, RuntimeDescriptor.Void,
             RuntimeDescriptor.Boolean,
             RuntimeDescriptor.Number,
             RuntimeDescriptor.String,
@@ -59,11 +59,21 @@ public sealed interface RuntimeDescriptor extends OpResultType
             expect(text, pos, ']');
             return new Array(element);
         }
-        if (c == '?') {
+        if (text.startsWith("null|undefined", pos[0])) {
+            pos[0] += "null|undefined".length();
+            return new Nullable(Undefined.INSTANCE, true, false);
+        }
+        if (c == '?' || c == '!') {
+            boolean admitsNull = c == '?';
             pos[0]++;
+            boolean admitsUndefined = c == '!';
+            if (admitsNull && pos[0] < text.length() && text.charAt(pos[0]) == '!') {
+                admitsUndefined = true;
+                pos[0]++;
+            }
             RuntimeDescriptor inner = parseAt(text, pos, true);
             try {
-                return new Nullable(inner);
+                return new Nullable(inner, admitsNull, admitsUndefined);
             } catch (IllegalArgumentException e) {
                 throw new SemanticIrTextDecodeException(
                     "not a canonical descriptor text (invalid nullable inner): \""
@@ -122,8 +132,8 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return parseFunc(text, pos, false);
         }
         // Fixed scalar spellings.
-        java.lang.String[] fixed = {"null", "boolean", "number", "string", "table"};
-        RuntimeDescriptor[] mapped = {Null.INSTANCE, Boolean.INSTANCE,
+        java.lang.String[] fixed = {"null", "undefined", "unknown", "void", "boolean", "number", "string", "record"};
+        RuntimeDescriptor[] mapped = {Null.INSTANCE, Undefined.INSTANCE, Unknown.INSTANCE, Void.INSTANCE, Boolean.INSTANCE,
             Number.INSTANCE, String.INSTANCE, Table.INSTANCE};
         for (int i = 0; i < fixed.length; i++) {
             if (text.startsWith(fixed[i], pos[0])) {
@@ -208,10 +218,9 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * spec's {@code T | null} type, so it is canonicalized at construction:
      * an already-nullable descriptor is its own wrap, and the {@code null}
      * descriptor is too, because {@code null | null} is {@code null}
-     * ({@code docs/spec-v1.4.md} §Field access — an optional {@code n?:
-     * null} field's read yields language {@code null}). The forbidden
-     * {@code ?null} form is therefore never constructed by a read-result
-     * path, and no consumer has to normalize it.
+     * by idempotence. Optional field reads are a different operation:
+     * {@link #optionalRead} adds undefined, so an optional null field reads
+     * as null | undefined. No caller may use this helper to model absence.
      */
     static RuntimeDescriptor nullable(RuntimeDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
@@ -219,6 +228,31 @@ public sealed interface RuntimeDescriptor extends OpResultType
             return descriptor;
         }
         return new Nullable(descriptor);
+    }
+
+    enum Undefined implements RuntimeDescriptor {
+        INSTANCE;
+        public java.lang.String canonicalSpecText() { return "undefined"; }
+    }
+
+    enum Unknown implements RuntimeDescriptor {
+        INSTANCE;
+        public java.lang.String canonicalSpecText() { return "unknown"; }
+    }
+
+    enum Void implements RuntimeDescriptor {
+        INSTANCE;
+        public java.lang.String canonicalSpecText() { return "void"; }
+    }
+
+    static RuntimeDescriptor optionalRead(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof Unknown || descriptor instanceof Undefined) return descriptor;
+        if (descriptor instanceof Nullable n) {
+            if (n.inner() instanceof Undefined) return n;
+            return new Nullable(n.inner(), n.admitsNull(), true);
+        }
+        if (descriptor instanceof Null) return new Nullable(Undefined.INSTANCE, true, false);
+        return new Nullable(descriptor, false, true);
     }
 
     /** The {@code boolean} descriptor; canonical text {@code "boolean"}. */
@@ -257,7 +291,7 @@ public sealed interface RuntimeDescriptor extends OpResultType
 
         @Override
         public java.lang.String canonicalSpecText() {
-            return "table";
+            return "record";
         }
     }
 
@@ -306,23 +340,22 @@ public sealed interface RuntimeDescriptor extends OpResultType
      * another nullable (flatten at construction).</p>
      *
      */
-    record Nullable(RuntimeDescriptor inner) implements RuntimeDescriptor {
-
+    record Nullable(RuntimeDescriptor inner, boolean admitsNull, boolean admitsUndefined) implements RuntimeDescriptor {
+        public Nullable(RuntimeDescriptor inner) { this(inner, true, false); }
         public Nullable {
             Objects.requireNonNull(inner, "inner must not be null");
-            if (inner instanceof Null) {
-                throw new IllegalArgumentException(
-                    "Nullable inner must not be null; use Null.INSTANCE directly");
-            }
-            if (inner instanceof Nullable) {
-                throw new IllegalArgumentException(
-                    "Nullable inner must not be another Nullable; flatten at construction");
+            if (inner instanceof Nullable || inner instanceof Unknown || inner instanceof Void
+                    || (!admitsNull && !admitsUndefined)
+                    || (inner instanceof Null && admitsNull)
+                    || (inner instanceof Undefined && admitsUndefined)) {
+                throw new IllegalArgumentException("Invalid canonical nullish descriptor");
             }
         }
 
         @Override
         public java.lang.String canonicalSpecText() {
-            return "?" + inner.canonicalSpecText();
+            if (inner instanceof Undefined && admitsNull) return "null|undefined";
+            return (admitsNull ? "?" : "") + (admitsUndefined ? "!" : "") + inner.canonicalSpecText();
         }
     }
 

@@ -1184,6 +1184,7 @@ public final class JsSemanticEmitter {
                 (KindPayload.ConstPayload) op.payload();
             String literal = switch (payload.value()) {
                 case ScalarValue.Null ignored -> "null";
+                case ScalarValue.Undefined ignored -> "undefined";
                 case ScalarValue.Boolean bool -> bool.value() ? "true" : "false";
 
                 case ScalarValue.Number number -> numberLiteral(number.value());
@@ -1198,6 +1199,8 @@ public final class JsSemanticEmitter {
             String operand = slot(op.operands().get(0));
             String expression = switch (payload.selector()) {
                 case BOOL_NOT -> "!" + operand;
+                case TYPEOF -> "$rt.typeOf(" + operand + ")";
+                case INSTANCEOF -> "$rt.isInstance(" + operand + ", " + jsString(payload.target().canonicalSpecText()) + ")";
 
                 case NUMBER_NEG -> "-" + numeric(operand);
             };
@@ -1246,6 +1249,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + ") > 0)";
                 case STRING_GE -> "($rt.strCompare(" + left + ", " + right
                     + ") >= 0)";
+                case UNDEFINED_EQ, NULLABLE_UNDEFINED_EQ -> "(" + left + " === " + right + ")";
+                case UNDEFINED_NE, NULLABLE_UNDEFINED_NE -> "(" + left + " !== " + right + ")";
                 case NULL_EQ -> "(" + left + " === null)";
                 case NULL_NE -> "(" + left + " !== null)";
                 // Nullable-vs-nullable equality: nil-equivalent pairs
@@ -1354,7 +1359,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                 expression.append(slot(payload.values().get(i)));
             }
             expression.append("]");
-            emit(slotOf(op) + " = " + expression + ";");
+            emit(slotOf(op) + " = $rt.tagArray(" + expression + ", "
+                + jsString(payload.elementDescriptor().canonicalSpecText()) + ");");
         }
 
         private void emitTableNew(SemanticOp op) {
@@ -1584,7 +1590,7 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                 (KindPayload.OptionalReadPayload) op.payload();
             String target = slotOf(op);
             if (payload.value() == null) {
-                emit(target + " = null;");
+                emit(target + " = undefined;");
             } else {
                 emit(target + " = $rt.optRead(" + slot(payload.value()) + ");");
             }
@@ -1598,7 +1604,7 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
             KindPayload.HasFieldPayload payload =
                 (KindPayload.HasFieldPayload) op.payload();
             emit(slotOf(op) + " = $rt.has(" + slot(payload.receiver()) + ", "
-                + jsString(payload.key()) + ");");
+                + (payload.dynamicKey() == null ? jsString(payload.key()) : slot(payload.dynamicKey())) + ");");
         }
 
         // =====================================================================
@@ -1668,7 +1674,9 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
          * {@code -0} normalization included).
          */
         private String boundaryCheckExpr(SemanticOp boundary, String input) {
-            return "$rt.checkType("
+            boolean assertion = ((KindPayload.BoundaryPayload) boundary.payload()).kind()
+                == BoundaryKind.ASSERTION;
+            return (assertion ? "$rt.assertType(" : "$rt.checkType(")
                 + jsString(descriptorOf(boundary).canonicalSpecText()) + ", "
                 + input + ", " + spanArgs(boundary) + ")";
         }
@@ -1814,7 +1822,7 @@ private void emitBindingLoad(SemanticOp op) {
             // return value the body's own RETURN cell checked.
             String keyword = function.descriptor().isAsync() ? "async " : "";
             // The emitted function expression keeps the lowered function's
-            // original source name (docs/spec-v1.4.md §Source maps and
+            // original source name (docs/spec-v1.5.md §Source maps and
             // debugging: a stack trace names both the generated function and
             // the original source function). The generated half is the
             // deterministic "<sourceName>$f" spelling of the retained JS
@@ -3664,9 +3672,8 @@ private void emitBindingLoad(SemanticOp op) {
                                       ClassLayout.FieldLayout field,
                                       Set<ClassId> stack) {
             RuntimeDescriptor descriptor = field.descriptor();
-            boolean nullable = descriptor instanceof RuntimeDescriptor.Nullable;
-            RuntimeDescriptor base = nullable
-                ? ((RuntimeDescriptor.Nullable) descriptor).inner() : descriptor;
+            boolean nullable = descriptor instanceof RuntimeDescriptor.Nullable n && n.admitsNull();
+            RuntimeDescriptor base = descriptor instanceof RuntimeDescriptor.Nullable n ? n.inner() : descriptor;
             StringBuilder entry = new StringBuilder("{ name: ")
                 .append(jsString(field.name()))
                 .append(", jtype: ").append(jsString(jsonJType(base)));
@@ -3677,13 +3684,16 @@ private void emitBindingLoad(SemanticOp op) {
                         .append(", fields: ")
                         .append(nestedFieldsText(classDescriptor.classId(), stack));
                 }
-                case RuntimeDescriptor.Array array -> entry.append(", element: ")
+                case RuntimeDescriptor.Array array -> entry.append(", elementDescriptor: ")
+                    .append(jsString(array.element().canonicalSpecText())).append(", element: ")
                     .append(elementEntryText(array.element(), stack));
                 default -> {
                 }
             }
             entry.append(", optional: ").append(!field.required())
-                .append(", nullable: ").append(nullable);
+                .append(", nullable: ").append(nullable)
+                .append(", undefinedable: ").append(descriptor instanceof RuntimeDescriptor.Undefined
+                    || descriptor instanceof RuntimeDescriptor.Nullable n && n.admitsUndefined());
             return entry.append(" }").toString();
         }
 
@@ -3731,9 +3741,8 @@ private void emitBindingLoad(SemanticOp op) {
         /** One array element's descriptor entry (no name/default roles). */
         private String elementEntryText(RuntimeDescriptor element,
                                         Set<ClassId> stack) {
-            boolean nullable = element instanceof RuntimeDescriptor.Nullable;
-            RuntimeDescriptor base = nullable
-                ? ((RuntimeDescriptor.Nullable) element).inner() : element;
+            boolean nullable = element instanceof RuntimeDescriptor.Nullable n && n.admitsNull();
+            RuntimeDescriptor base = element instanceof RuntimeDescriptor.Nullable n ? n.inner() : element;
             StringBuilder entry = new StringBuilder("{ jtype: ")
                 .append(jsString(jsonJType(base)));
             switch (base) {
@@ -3743,17 +3752,20 @@ private void emitBindingLoad(SemanticOp op) {
                         .append(", fields: ")
                         .append(nestedFieldsText(classDescriptor.classId(), stack));
                 }
-                case RuntimeDescriptor.Array array -> entry.append(", element: ")
+                case RuntimeDescriptor.Array array -> entry.append(", elementDescriptor: ")
+                    .append(jsString(array.element().canonicalSpecText())).append(", element: ")
                     .append(elementEntryText(array.element(), stack));
                 default -> {
                 }
             }
             return entry.append(", optional: false, nullable: ")
-                .append(nullable).append(" }").toString();
+                .append(nullable).append(", undefinedable: ").append(element instanceof RuntimeDescriptor.Undefined
+                    || element instanceof RuntimeDescriptor.Nullable n && n.admitsUndefined()).append(" }").toString();
         }
 
         /** The closed JSON kind name of one canonical descriptor. */
         private String jsonJType(RuntimeDescriptor descriptor) {
+            if (descriptor == RuntimeDescriptor.Undefined.INSTANCE) return "undefined";
             if (descriptor == RuntimeDescriptor.Null.INSTANCE) {
                 return "null";
             }
@@ -4093,6 +4105,9 @@ private void emitBindingLoad(SemanticOp op) {
             emit("$rt.setProp(" + target + ", \"$kind\", \"class\");");
             emit("$rt.setProp(" + target + ", \"$classname\", "
                 + jsString(payload.classId().text()) + ");");
+            emit("$rt.registerClassFields(" + target + ", ["
+                + layout.fields().stream().map(field -> jsString(field.name()))
+                    .collect(java.util.stream.Collectors.joining(", ")) + "]);");
         }
 
         // ----- Field operations -----

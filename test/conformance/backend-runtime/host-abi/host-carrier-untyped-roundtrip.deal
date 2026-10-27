@@ -21,35 +21,35 @@ function check(condition: boolean, message: string): null {
 export function test_untyped_container(): null {
   let point: Point = { x: 3, y: 4 };
   let failure: Error = { code: "E_X", message: "boom" };
-  let holder: table = { point: point, twin: point, step: util.bump, err: failure };
-  let back: table = host.roundTrip(holder);
-  let observed: string = back.observed;
+  let holder: Record<string, unknown> = { point: point, twin: point, step: util.bump, err: failure };
+  let back: Record<string, unknown> = host.roundTrip(holder);
+  let observed: string = back.observed as string;
   check(observed === "true|3,4|true|true:42|true:E_X:boom", "the host observes the untyped-nested class, function and builtin Error carriers");
-  let first: Point = back.point;
+  let first: Point = back.point as Point;
   check(first.x === 3 && first.y === 4, "the DEAL class value round-trips at its declared type");
-  let second: Point = back.twin;
+  let second: Point = back.twin as Point;
   check(first === second, "the aliased class members round-trip as one DEAL value");
-  let step: (x: number) => number = back.step;
+  let step: (x: number) => number = back.step as (x: number) => number;
   check(step(41) === 42, "the DEAL function value round-trips invocable");
-  let err: Error = back.err;
+  let err: Error = back.err as Error;
   check(err.code === "E_X" && err.message === "boom", "the builtin Error value round-trips");
   return null;
 }
 
 export function test_untyped_array(): null {
   let point: Point = { x: 5, y: 6 };
-  let items: table[] = [{ point: point }, { point: point }];
-  let back: table[] = host.roundTripArray(items);
+  let items: Record<string, unknown>[] = [{ point: point }, { point: point }];
+  let back: Record<string, unknown>[] = host.roundTripArray(items);
   check(back.length === 2, "the untyped array length");
-  let firstElement: table = back[0];
-  let firstObserved: string = firstElement.observed;
+  let firstElement: Record<string, unknown> = back[0];
+  let firstObserved: string = firstElement.observed as string;
   check(firstObserved === "true|5,6|self", "the host observes the class instance inside the first array element");
-  let first: Point = firstElement.point;
+  let first: Point = firstElement.point as Point;
   check(first.x === 5 && first.y === 6, "the class value inside an array element round-trips");
-  let secondElement: table = back[1];
-  let secondObserved: string = secondElement.observed;
+  let secondElement: Record<string, unknown> = back[1];
+  let secondObserved: string = secondElement.observed as string;
   check(secondObserved === "true|5,6|true", "the host observes the same class instance inside both array elements");
-  let second: Point = secondElement.point;
+  let second: Point = secondElement.point as Point;
   check(first === second, "the class value inside two array elements is one DEAL value");
   return null;
 }

@@ -15,9 +15,9 @@ export function main(): null {
   let a1: number[] = [1];
   let a2: number[] = [1];
   let aa: number[] = a1;
-  let t1: table = { value: 1 };
-  let t2: table = { value: 1 };
-  let ta: table = t1;
+  let t1: Record<string, unknown> = { value: 1 };
+  let t2: Record<string, unknown> = { value: 1 };
+  let ta: Record<string, unknown> = t1;
   let c1: Cell = { value: 1 };
   let c2: Cell = { value: 1 };
   let ca: Cell = c1;
@@ -35,7 +35,7 @@ export function main(): null {
   aa[0] = 9;
   ta.value = 8;
   ca.value = 7;
-  let tableValue: number = t1.value;
+  let tableValue: number = t1.value as number;
   if (a1[0] !== 9 || tableValue !== 8 || c1.value !== 7) {
     throw { code: "TEST_FAIL", message: "alias mutation not visible" };
   }

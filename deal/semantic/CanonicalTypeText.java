@@ -60,8 +60,8 @@ public final class CanonicalTypeText {
     /**
      * Renders a checked {@link Type} value into its canonical form —
      * implementation entries render the module's Phase-3-corrected
-     * resolved export map through this exact rule set. The eleven
-     * declared variants render as twelve canonical forms;
+     * resolved export map through this exact rule set; nullish flags
+     * and Promise result notation match declaration annotations;
      * {@link Type.Error} has no rendering and raises {@link Defect}.
      *
      */
@@ -69,11 +69,14 @@ public final class CanonicalTypeText {
         Objects.requireNonNull(type, "type must not be null");
         return switch (type) {
             case Type.Null ignored -> "null";
+            case Type.Undefined ignored -> "undefined";
+            case Type.Unknown ignored -> "unknown";
+            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
+            case Type.Table ignored -> "Record<string, unknown>";
             case Type.Error ignored -> throw new Defect(
                 "Type.Error reached a declared-type position: the internal checker "
                     + "sentinel has no canonical rendering and is excluded from the index");
@@ -83,10 +86,13 @@ public final class CanonicalTypeText {
                     isFunctionForm(array.element()), isNullableForm(array.element()));
             }
             case Type.Nullable nullable -> {
+                if (nullable.inner() == Type.Undefined.INSTANCE && nullable.admitsNull()) {
+                    yield "null | undefined";
+                }
                 String inner = render(nullable.inner());
-                yield isFunctionForm(nullable.inner())
-                    ? "(" + inner + ") | null"
-                    : inner + " | null";
+                yield (isFunctionForm(nullable.inner()) ? "(" + inner + ")" : inner)
+                    + (nullable.admitsNull() ? " | null" : "")
+                    + (nullable.admitsUndefined() ? " | undefined" : "");
             }
             case Type.Class cls -> {
                 String path = DescriptorService.semanticModulePath(cls.identity());
@@ -125,17 +131,7 @@ public final class CanonicalTypeText {
                 yield wrapInArrayPosition(element,
                     isFunctionForm(array.elementType()), isNullableForm(array.elementType()));
             }
-            case NullableType nullable -> {
-                if (nullable.innerType() instanceof NullableType) {
-                    throw new Defect(
-                        "chained nullable annotation 'T | null | null' is outside the pinned "
-                            + "TypeNode grammar (out-of-grammar declaration annotation)");
-                }
-                String inner = render(nullable.innerType(), context);
-                yield isFunctionForm(nullable.innerType())
-                    ? "(" + inner + ") | null"
-                    : inner + " | null";
-            }
+            case NullableType nullable -> renderNullish(nullable, context);
             case FunctionType func -> renderFunctionForm(
                 func.params().stream()
                     .map(p -> render(p.type(), context))
@@ -156,7 +152,7 @@ public final class CanonicalTypeText {
 
     /**
      * Renders the full function form of a declared function export —
-     * {@code (T1, …, TN) => R} or {@code async (T1, …, TN) => R} — from
+     * {@code (T1, …, TN) => R} or {@code (T1, …, TN) => Promise<R>} — from
      * the declaration's parameter annotations, return annotation, and
      * async marker (the pinned declaration-entry derivation of F2).
      *
@@ -175,8 +171,8 @@ public final class CanonicalTypeText {
 
     private static String renderFunctionForm(List<String> params, String returnText,
                                              boolean isAsync) {
-        return (isAsync ? "async " : "") + "(" + String.join(", ", params)
-            + ") => " + returnText;
+        return "(" + String.join(", ", params) + ") => "
+            + (isAsync ? "Promise<" + returnText + ">" : returnText);
     }
 
     // =========================================================================
@@ -196,9 +192,38 @@ public final class CanonicalTypeText {
             : rendered + "[]";
     }
 
+    private static String renderNullish(NullableType node, Context context) {
+        boolean admitsNull = false;
+        boolean admitsUndefined = false;
+        TypeNode base = node;
+        while (base instanceof NullableType member) {
+            if (member.undefinedMember()) {
+                if (admitsUndefined) throw new Defect("Duplicate undefined member in nullish annotation");
+                admitsUndefined = true;
+            } else {
+                if (admitsNull) throw new Defect("Duplicate null member in nullish annotation");
+                admitsNull = true;
+            }
+            base = member.innerType();
+        }
+        if (base instanceof NamedType named) {
+            if (named.name().equals("null")) {
+                if (admitsNull) throw new Defect("Duplicate null member in nullish annotation");
+                return "null | undefined";
+            }
+            if (named.name().equals("undefined")) {
+                if (admitsUndefined) throw new Defect("Duplicate undefined member in nullish annotation");
+                return "null | undefined";
+            }
+        }
+        String inner = render(base, context);
+        return (isFunctionForm(base) ? "(" + inner + ")" : inner)
+            + (admitsNull ? " | null" : "") + (admitsUndefined ? " | undefined" : "");
+    }
+
     private static String renderNamed(String name, Context context) {
         return switch (name) {
-            case "null", "boolean", "number", "string", "table" -> name;
+            case "null", "undefined", "unknown", "void", "boolean", "number", "string", "Record<string, unknown>" -> name;
             case "Error" -> "Error";
             default -> {
                 if (!context.declaredClasses().contains(name)) {

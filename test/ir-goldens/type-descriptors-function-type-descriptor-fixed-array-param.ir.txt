@@ -5,7 +5,9 @@ module @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed
     param values: [number] @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:34-4:50
       [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:60-4:68
+      return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:60-4:73
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:4:67-4:70
   export @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:5:1-9:1
     [boundary: export]
     function main: null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:5:8-9:1
@@ -14,4 +16,5 @@ module @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed
           [boundary: var-annotation]
           ident describe : (string,[number])->null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:6:54-6:61
         return @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:7:3-8:1
+          [boundary: return]
           literal null : null @test/ir-goldens/fixtures/type-descriptors-function-type-descriptor-fixed-array-param.deal:7:10-7:13

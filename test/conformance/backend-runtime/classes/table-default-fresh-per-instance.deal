@@ -4,15 +4,15 @@
 // @features: classes, tables, construction
 
 class Box {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function test_table_default_is_fresh(): null {
   let a: Box = {data: {}};
   let b: Box = {data: {}};
   a.data.x = 7;
-  let bx: number | null = b.data.x;
-  if (bx !== null) {
+  let bx: unknown = b.data.x;
+  if (bx !== undefined || Object.hasOwn(b.data, "x")) {
     throw { code: "TEST_FAIL", message: "provided tables were shared across instances" };
   }
   return null;

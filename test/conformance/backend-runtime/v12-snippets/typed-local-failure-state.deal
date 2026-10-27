@@ -1,12 +1,12 @@
 // @spec: Runtime execution model
-// @description: Corner-case subject typed-local-failure-state — Rejected contextual dynamic read must not overwrite existing typed local. (basis: Typed boundaries: assignment; Assignment type checking)
+// @description: A rejected checked unknown read must not overwrite an existing typed local. (basis: Checked assertions; assignment publication)
 // @expected: runtime-ok
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
 export function main(): null {
- let x: number = 7; let t: table = {bad:"not-int"}; let caught: boolean = false;
- try {x = t.bad;} catch(e) {if(e.code !== "E8001") {throw {code:"TEST_FAIL",message:"wrong type code"};} caught = true;}
+ let x: number = 7; let t: Record<string, unknown> = {bad:"not-int"}; let caught: boolean = false;
+ try {x = t.bad as number;} catch(e) {if((e as Error).code !== "E8001") {throw {code:"TEST_FAIL",message:"wrong type code"};} caught = true;}
  if(!caught || x !== 7) {throw {code:"TEST_FAIL",message:"failed assignment overwrote old local"};}
  c.log("typed-local-failure-state"); return null;
 }

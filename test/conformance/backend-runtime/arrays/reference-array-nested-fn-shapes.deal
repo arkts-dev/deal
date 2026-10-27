@@ -31,7 +31,7 @@ class Holder {
 // read must happen first (spec Operational semantics rule 1 — LuaJIT
 // reads box.cbMaybe before evaluating any argument), so the call
 // invokes the pre-reassignment binding.
-function retarget(box: Holder): table {
+function retarget(box: Holder): Record<string, unknown> {
   box.cbMaybe = markTwo;
   return { x: [0] };
 }
@@ -66,7 +66,7 @@ export function test_array_nested_fn_shapes(): number {
       throw { code: "TEST_FAIL", message: "nullable fn field write failed" };
     }
   }
-  let ordered: number[] = box.cbMaybe(retarget(box).x);
+  let ordered: number[] = box.cbMaybe(retarget(box).x as number[]);
   if (ordered[0] !== 1) {
     throw { code: "TEST_FAIL", message: "callee-first field read failed" };
   }

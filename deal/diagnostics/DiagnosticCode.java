@@ -155,7 +155,7 @@ public enum DiagnosticCode {
 
     /**
      * Local class declaration: the v1.4 grammar makes {@code class}
-     * module-level only ({@code docs/spec-v1.4.md} Classes — "Local class
+     * module-level only ({@code docs/spec-v1.5.md} Classes — "Local class
      * declarations are compile-time errors"), at any nesting depth and in
      * unreachable bodies included.
      */

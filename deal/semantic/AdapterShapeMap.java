@@ -85,8 +85,9 @@ public final class AdapterShapeMap {
      * materialized value. A {@code REEVALUATE_THUNK} source there would
      * re-execute the position's expression at every adapter invocation and
      * break the once-only effect and evaluation-order contract those
-     * positions carry; the definition positions ({@code let} initializers
-     * and variable assignments) keep the thunk arm of {@link #selectMode}.
+     * positions carry. Variable assignments are value positions too;
+     * only declaration initializers retain the separate definition-mode
+     * selection of {@link #selectMode}.
      *
      */
     public static CaptureMode selectPositionMode(SourceShape shape,

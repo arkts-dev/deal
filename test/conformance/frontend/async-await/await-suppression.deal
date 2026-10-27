@@ -3,9 +3,9 @@
 // @expected: compile-ok
 // @features: async, await
 
-async function g(): number { return 5; }
+async function g(): Promise<number> { return 5; }
 
-async function f(): number {
+async function f(): Promise<number> {
   return await g();
 }
 

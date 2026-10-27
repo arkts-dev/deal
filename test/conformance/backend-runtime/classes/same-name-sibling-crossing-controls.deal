@@ -18,16 +18,16 @@ function fail(what: string): null {
 
 export function main(): null {
   // The declaring declaration's own value passes a dynamic table read.
-  let t: table = { item: a.make() };
-  let ok: a.Item = t.item;
+  let t: Record<string, unknown> = { item: a.make() };
+  let ok: a.Item = t.item as a.Item;
   if (a.read(ok) !== 1) {
     return fail("own declaration table read");
   }
 
   // An equivalent import spelling of the same source file is the same
   // declaration: the identity does not depend on the import spelling.
-  let t2: table = { item: aAgain.make() };
-  let ok2: aAgain.Item = t2.item;
+  let t2: Record<string, unknown> = { item: aAgain.make() };
+  let ok2: aAgain.Item = t2.item as aAgain.Item;
   let ok3: a.Item = ok2;
   if (a.read(ok3) !== 1) {
     return fail("equivalent import spelling");
@@ -35,10 +35,11 @@ export function main(): null {
 
   // Recursive identity positions: arrays, nullable and function
   // descriptors carry the declaring declaration's exact atoms.
-  let t3: table = { items: [a.make()], maybe: a.make(), f: a.identity };
-  let items: a.Item[] = t3.items;
-  let maybe: a.Item | null = t3.maybe;
-  let f: (x: a.Item) => a.Item = t3.f;
+  let seed: a.Item[] = [a.make()];
+  let t3: Record<string, unknown> = { items: seed, maybe: a.make(), f: a.identity };
+  let items: a.Item[] = t3.items as a.Item[];
+  let maybe: a.Item | null = t3.maybe as a.Item | null;
+  let f: (x: a.Item) => a.Item = t3.f as (x: a.Item) => a.Item;
   let first: a.Item = items[0];
   if (a.read(first) !== 1) {
     return fail("array identity position");
@@ -57,7 +58,7 @@ export function main(): null {
   // A class field declared with the declaring declaration's type accepts
   // its values.
   let h: Holder = {item: a.make()};
-  h.item = t.item;
+  h.item = t.item as a.Item;
   if (a.read(h.item) !== 1) {
     return fail("class field position");
   }
@@ -78,8 +79,8 @@ export function main(): null {
   // The other same-named declaration keeps its own boundaries: its
   // values pass at its own declaration and are never interchangeable
   // with the first declaration's.
-  let tb: table = { item: b.make() };
-  let bok: b.Item = tb.item;
+  let tb: Record<string, unknown> = { item: b.make() };
+  let bok: b.Item = tb.item as b.Item;
   if (b.read(bok) !== 2) {
     return fail("other declaration table read");
   }
@@ -98,8 +99,8 @@ export function main(): null {
   // the same dynamic crossing: the host ABI class atom is exact and is
   // never confused with a project declaration's atom.
   let hostConfig: cfg.ServerConfig = { port: 9090, endpoint: { path: "/api" } };
-  let hostTable: table = { config: hostConfig };
-  let hostRead: cfg.ServerConfig = hostTable.config;
+  let hostTable: Record<string, unknown> = { config: hostConfig };
+  let hostRead: cfg.ServerConfig = hostTable.config as cfg.ServerConfig;
   if (hostRead.port !== 9090) {
     return fail("host class crossing");
   }

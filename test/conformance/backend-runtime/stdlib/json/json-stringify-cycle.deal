@@ -6,9 +6,9 @@
 import * as json from "std/json";
 
 export function test_json_stringify_cycle(): string {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   t.self = t;
-  return json.stringify(t);
+  return json.stringify(t) as string;
 }
 
 export function main(): null {

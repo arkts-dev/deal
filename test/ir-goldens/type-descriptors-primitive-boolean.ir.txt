@@ -4,4 +4,6 @@ module @test/ir-goldens/fixtures/type-descriptors-primitive-boolean.deal:4:1-5:1
       let x: boolean @test/ir-goldens/fixtures/type-descriptors-primitive-boolean.deal:4:22-4:50
         [boundary: var-annotation]
         literal true : boolean @test/ir-goldens/fixtures/type-descriptors-primitive-boolean.deal:4:39-4:42
-      return @test/ir-goldens/fixtures/type-descriptors-primitive-boolean.deal:4:45-4:53
+      return @test/ir-goldens/fixtures/type-descriptors-primitive-boolean.deal:4:45-4:58
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/type-descriptors-primitive-boolean.deal:4:52-4:55

@@ -1,5 +1,5 @@
 // @spec: Error handling — try / catch; Nullable semantics
-// @description: A try/catch nested inside an enclosing try block reassigns only its own catch Error binding: the same-named outer number and string refinements stay readable after the inner catch and after the outer catch, for a local and a parameter binding alike
+// @description: A try/catch nested inside an enclosing try block reassigns only its own catch unknown binding with an explicitly typed Error: the same-named outer number and string refinements stay readable after the inner catch and after the outer catch, for a local and a parameter binding alike
 // @expected: compile-ok
 // @features: error-handling, try-catch, nullable, narrowing, shadowing, assignment, nesting, parameters
 
@@ -9,8 +9,10 @@ function probeParameter(e: number | null): number {
       try {
         throw { code: "C_PARAM_INNER", message: "parameter inner" };
       } catch (e) {
-        e = { code: "C_PARAM_REPLACED", message: "parameter replaced" };
-        let message: string = e.message;
+        let replacement: Error = { code: "C_PARAM_REPLACED", message: "parameter replaced" };
+        e = replacement;
+        let checked: Error = e as Error;
+        let message: string = checked.message;
       }
       let afterInner: number = e;
     } catch (outer) {
@@ -27,8 +29,10 @@ export function main(): null {
       try {
         throw { code: "C_INNER", message: "inner" };
       } catch (e) {
-        e = { code: "C_REPLACED", message: "replaced" };
-        let message: string = e.message;
+        let replacement: Error = { code: "C_REPLACED", message: "replaced" };
+        e = replacement;
+        let checked: Error = e as Error;
+        let message: string = checked.message;
       }
       let afterInner: number = e;
     } catch (outer) {
@@ -41,8 +45,10 @@ export function main(): null {
       try {
         throw { code: "C_TEXT", message: "text" };
       } catch (text) {
-        text = { code: "C_TEXT_REPLACED", message: "text replaced" };
-        let replaced: string = text.message;
+        let replacement: Error = { code: "C_TEXT_REPLACED", message: "text replaced" };
+        text = replacement;
+        let checked: Error = text as Error;
+        let replaced: string = checked.message;
       }
       let afterInnerText: string = text;
     } catch (outer) {

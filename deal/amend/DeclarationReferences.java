@@ -80,11 +80,13 @@ final class DeclarationReferences {
             case CallExpr n -> { expression(n.callee(), scope); n.args().forEach(e -> expression(e, scope)); }
             case BinaryExpr n -> { expression(n.left(), scope); expression(n.right(), scope); }
             case UnaryExpr n -> expression(n.expr(), scope);
+            case AssertionExpr n -> { expression(n.value(), scope); type(n.target()); }
+            case InstanceofExpr n -> { expression(n.value(), scope); type(n.target()); }
             case IndexExpr n -> { expression(n.array(), scope); expression(n.index(), scope); }
             case ArrayLiteralExpr n -> n.elements().forEach(e -> expression(e, scope));
             case ObjectLiteralExpr n -> n.properties().forEach(p -> expression(p.value(), scope));
             case FunctionExpr n -> function(n.params(), n.returnType(), n.body(), scope);
-            case HasExpr n -> expression(n.object(), scope);
+            case HasExpr n -> { expression(n.object(), scope); expression(n.key(), scope); }
             case AssignmentExpr n -> { expression(n.target(), scope); expression(n.value(), scope); }
             case TemplateLiteralExpr n -> n.parts().forEach(e -> expression(e, scope));
             case AwaitExpression n -> expression(n.callee(), scope);

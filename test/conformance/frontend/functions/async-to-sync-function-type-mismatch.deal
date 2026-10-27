@@ -3,8 +3,7 @@
 // @expected: compile-error E3001
 // @features: async, functions, diagnostics
 
-async function f(): number { return 1; }
-export function main(): null { return null; }
+async function f(): Promise<number> { return 1; }
 export function main(): null {
 let g: () => number = f;
 

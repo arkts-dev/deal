@@ -385,6 +385,18 @@ public final class LuaSemanticEmitter {
          * order, and the shapes in first-encounter order — so a repeated
          * production emission of one project is byte-identical.</p>
          */
+        private void emitJsonClassOrder() {
+            out.append("__factories.__jsonClassOrder = {\n");
+            for (HostCarrierClass carrier : hostCarrierClasses()) {
+                out.append("  [").append(luaString(carrier.classId().text())).append("] = {");
+                for (String name : carrier.fields().keySet()) out.append(luaString(name)).append(",");
+                out.append("},\n");
+            }
+            out.append("  [\"Error\"] = {\"code\", \"message\"}\n}\n");
+            out.append("for identity, fields in pairs(__factories.__jsonClassOrder) do "
+                + "__dealCarrierKeys.classOrders[identity] = fields end\n");
+        }
+
         private void emitHostCarrierMetadata() {
             List<HostCarrierClass> classes = hostCarrierClasses();
             StringBuilder classFields = new StringBuilder("{");
@@ -815,7 +827,7 @@ public final class LuaSemanticEmitter {
             out.append("__dealCarrierKeys = __dealCarrierKeys or {\n");
             out.append("  kind = {}, classname = {}, c = {}, id = {}, p = {}, "
                 + "f = {}, d = {},\n");
-            out.append("  a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, "
+            out.append("  elementDescriptor = {}, a = {}, n = {}, nK = {}, da = {}, t = {}, keys = {}, "
                 + "order = {},\n");
             out.append("  fn = {}, csig = {}, sig = {}, fid = {}, it = {}, "
                 + "sid = {}, val = {},\n");
@@ -823,6 +835,8 @@ public final class LuaSemanticEmitter {
                 + "jnum = {}, jseen = {},\n");
             out.append("  ptr = {},\n");
             out.append("}\n");
+            out.append("__dealCarrierKeys.classOrder = __dealCarrierKeys.classOrder or {}\n");
+            out.append("__dealCarrierKeys.classOrders = __dealCarrierKeys.classOrders or {}\n");
             // The shared run state (frames, sequence, allocation ids, the
             // async task registry and FIFO queue) is chunk-global: a
             // multi-module drive runs several artifacts in one process,
@@ -858,6 +872,8 @@ public final class LuaSemanticEmitter {
             // mode.
             out.append("local __traceMode = ").append(trace ? "true" : "false")
                 .append("\n");
+            out.append("local ").append(FACTORY_TABLE).append(" = {}\n");
+            emitJsonClassOrder();
             out.append(preludeWithArms());
             out.append(PRELUDE_ASYNC);
             out.append(JSON_PRELUDE);
@@ -925,8 +941,6 @@ public final class LuaSemanticEmitter {
             // chunk's helpers and sentinels — and the store is already a
             // chunk-level local, so the helpers spend no main-chunk local
             // (the LuaJIT 200-local bound).
-            out.append("local ").append(FACTORY_TABLE).append(" = {}\n");
-
             if (bindsHostRuntime()) {
                 out.append("local __rt = require(\"deal.runtime\")\n");
                 // The one language-null representation (ISSUE-0814): the
@@ -941,6 +955,7 @@ public final class LuaSemanticEmitter {
                 // would detach all three). The prelude's own sentinel
                 // remains the fallback of a chunk that binds no runtime.
                 out.append("__NULL = __rt.__NULL\n");
+                out.append("__UNDEFINED = __rt.__UNDEFINED\n");
                 out.append("__rtNull = __rt.__NULL\n");
                 out.append("__rtMissing = __rt.__MISSING\n");
                 // The host-load arm renderer (canonical failure-projection
@@ -1785,6 +1800,7 @@ public final class LuaSemanticEmitter {
             KindPayload.ConstPayload payload = (KindPayload.ConstPayload) op.payload();
             String literal = switch (payload.value()) {
                 case ScalarValue.Null ignored -> "nil";
+                case ScalarValue.Undefined ignored -> "__UNDEFINED";
                 case ScalarValue.Boolean bool -> bool.value() ? "true" : "false";
 
                 case ScalarValue.Number number -> luaNumber(number.value());
@@ -1804,6 +1820,12 @@ public final class LuaSemanticEmitter {
             if (payload.selector() == deal.semantic.ir.UnarySelector.BOOL_NOT) {
                 out.append(slot((ValueId) op.result())).append(" = not ")
                     .append(slot(input)).append("\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.TYPEOF) {
+                out.append(slot((ValueId) op.result())).append(" = __factories.__typeOf(")
+                    .append(slot(input)).append(")\n");
+            } else if (payload.selector() == deal.semantic.ir.UnarySelector.INSTANCEOF) {
+                out.append(slot((ValueId) op.result())).append(" = __factories.__isInstance(")
+                    .append(slot(input)).append(", ").append(luaString(payload.target().canonicalSpecText())).append(")\n");
             } else {
                 out.append(slot((ValueId) op.result())).append(" = __unary(")
                     .append(luaString(payload.selector().name())).append(", ")
@@ -1874,7 +1896,8 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             String target = slot((ValueId) op.result());
             out.append(target).append(" = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = ")
-                .append(payload.values().size()).append("}\n");
+                .append(payload.values().size()).append(", [__dealCarrierKeys.elementDescriptor] = ")
+                .append(luaString(payload.elementDescriptor().canonicalSpecText())).append("}\n");
             for (int i = 0; i < payload.values().size(); i++) {
                 OpId boundaryId = payload.elementBoundaryOpIds().get(i);
                 SemanticOp boundary = opsById.get(boundaryId);
@@ -2106,11 +2129,11 @@ public final class LuaSemanticEmitter {
             }
             String target = slot((ValueId) op.result());
             if (payload.value() == null) {
-                out.append(target).append(" = nil\n");
+                out.append(target).append(" = __UNDEFINED\n");
             } else {
                 String source = slot(payload.value());
                 out.append("if ").append(source).append(" == __MISSING then\n");
-                out.append("  ").append(target).append(" = nil\n");
+                out.append("  ").append(target).append(" = __UNDEFINED\n");
                 out.append("else\n");
                 out.append("  ").append(target).append(" = ").append(source).append("\n");
                 out.append("end\n");
@@ -2179,7 +2202,7 @@ public final class LuaSemanticEmitter {
                 return;
             }
             out.append(target).append(" = (__member(").append(slot(payload.receiver()))
-                .append(", ").append(luaString(payload.key())).append(") ~= __MISSING)\n");
+                .append(", ").append(payload.dynamicKey() == null ? luaString(payload.key()) : slot(payload.dynamicKey())).append(") ~= __MISSING)\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 
@@ -2231,12 +2254,12 @@ public final class LuaSemanticEmitter {
 
                 out.append("__rvT = __instT[").append(luaString(payload.field()))
                     .append("]\n");
-                out.append("if __rvT == __NULL or __rvT == __rt.__NULL then "
-                    + "__rvT = nil end\n");
+                out.append("if __rvT == nil or __rvT == __MISSING then __rvT = __UNDEFINED "
+                    + "elseif __rvT == __NULL or __rvT == __rt.__NULL then __rvT = nil end\n");
             } else {
                 // The presence-aware read: missing → nil before the boundary;
                 // present (present null included) → the stored value.
-                out.append("__rvT = nil\n");
+                out.append("__rvT = __UNDEFINED\n");
                 out.append("if __instT[__dealCarrierKeys.p][").append(luaString(payload.field()))
                     .append("] then\n");
                 out.append("  __rvT = __instT[__dealCarrierKeys.f][").append(luaString(payload.field()))
@@ -2554,6 +2577,14 @@ public final class LuaSemanticEmitter {
                 .append(bcheckArgs(payload.descriptor(), slot(payload.input())))
                 .append(")\n");
             out.append("if not __okB then\n");
+            if (payload.kind() == BoundaryKind.ASSERTION) {
+                out.append("  __chk = __arm(\"TYPED_BOUNDARY_KIND\", {kind = ")
+                    .append(luaString(deal.semantic.ir.FailureProjections.kindText(payload.descriptor())))
+                    .append("}, ").append(luaString(originOf(op))).append(", ")
+                    .append(luaString(deal.semantic.ir.FailureProjections.kindToken(payload.descriptor())))
+                    .append(", __typedBoundaryKind(\"\", ").append(slot(payload.input()))
+                    .append("))\n");
+            }
             out.append("  __chk.o = ").append(luaString(originOf(op))).append("\n");
             emitFailureEvent(op.opId(), "BOUNDARY", op, "__errtext(__chk)");
             out.append("  error(__chk, 0)\n");
@@ -2872,7 +2903,7 @@ public final class LuaSemanticEmitter {
          * op executes, so an earlier declaration's closure captures the
          * cell by identity even when the publishing group op runs later
          * in the same module init — the declaration-order-independent
-         * forward reference of docs/spec-v1.4.md §Name resolution
+         * forward reference of docs/spec-v1.5.md §Name resolution
          * (Declaration order) and C1's body
          * coverage. A nested group's cells are still created per
          * execution by its own op ({@link #emitRecursiveGroupInit}).
@@ -6660,11 +6691,15 @@ private void emitStdlib(SemanticOp op) {
          */
         private static String jsonDescriptorText(RuntimeDescriptor descriptor) {
             if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
-                return "nullable:" + jsonDescriptorText(nullable.inner());
+                return (nullable.admitsNull() ? (nullable.admitsUndefined() ? "nullish:" : "nullable:") : "undefinedable:")
+                    + jsonDescriptorText(nullable.inner());
             }
             if (descriptor instanceof RuntimeDescriptor.Array array) {
                 return "array(" + jsonDescriptorText(array.element()) + ")";
             }
+            // The JSON plan's object-kind dialect is distinct from the
+            // canonical runtime descriptor atom record.
+            if (descriptor instanceof RuntimeDescriptor.Table) return "table";
             return descriptorText(descriptor);
         }
 
@@ -7304,6 +7339,12 @@ end
 -- carrier rejected merely for its representation (the recursive
 -- nullable/array positions included).
 local function __jsonConforms(desc, v)
+  if desc == "undefined" then return v == __UNDEFINED end
+  if string.sub(desc, 1, 14) == "undefinedable:" then
+    return v == __UNDEFINED or __jsonConforms(string.sub(desc, 15), v)
+  elseif string.sub(desc, 1, 8) == "nullish:" then
+    return v == __UNDEFINED or v == nil or __jsonConforms(string.sub(desc, 9), v)
+  end
   local kind, inner = __jsonKindOf(desc)
   if kind == "null" then return v == nil end
   if kind == "boolean" then return type(v) == "boolean" end
@@ -7349,7 +7390,29 @@ end
 -- read/write/JSON_STRINGIFY consumers. The nested @jsonable class arm
 -- decodes through the nested class's own plan (the same phase order).
 local __jsonDecodeClass
+local function __jsonRuntimeDescriptor(desc)
+  for _, entry in ipairs({{"nullable:", "?"}, {"undefinedable:", "!"},
+      {"nullish:", "?!"}}) do
+    if string.sub(desc, 1, #entry[1]) == entry[1] then
+      local inner = __jsonRuntimeDescriptor(string.sub(desc, #entry[1] + 1))
+      if entry[2] == "?" and inner == "undefined"
+          or entry[2] == "!" and inner == "null" then return "null|undefined" end
+      return entry[2] .. inner
+    end
+  end
+  if string.sub(desc, 1, 6) == "array(" then
+    return "[" .. __jsonRuntimeDescriptor(string.sub(desc, 7, -2)) .. "]"
+  end
+  return desc == "table" and "record" or desc
+end
 local function __jsonDecodeRaw(desc, v, numberVariant)
+  if desc == "undefined" then return false end
+  if string.sub(desc, 1, 14) == "undefinedable:" then
+    return __jsonDecodeRaw(string.sub(desc, 15), v, numberVariant)
+  elseif string.sub(desc, 1, 8) == "nullish:" then
+    if v == __JNULL then return true, nil end
+    return __jsonDecodeRaw(string.sub(desc, 9), v, numberVariant)
+  end
   local kind, inner = __jsonKindOf(desc)
   if kind == "null" then
     if v == __JNULL then return true, nil end
@@ -7364,14 +7427,15 @@ local function __jsonDecodeRaw(desc, v, numberVariant)
     if type(v) == "string" and __jsonValidUtf8(v) then return true, v end
     return false
   elseif kind == "table" then
-    -- A table field accepts only a JSON object (docs/spec-v1.4.md:695):
+    -- A table field accepts only a JSON object (docs/spec-v1.5.md:695):
     -- an array-shaped value of any length, the empty array included, is
     -- a validation failure — never an empty table.
     if __jsonIsObject(v) then return true, __jsonToLanguage(v) end
     return false
   elseif kind == "array" then
     if not __jsonIsArray(v) then return false end
-    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = v[__dealCarrierKeys.n], [__dealCarrierKeys.nK] = {}}
+    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = v[__dealCarrierKeys.n],
+      [__dealCarrierKeys.nK] = {}, [__dealCarrierKeys.elementDescriptor] = __jsonRuntimeDescriptor(inner)}
     for i = 1, v[__dealCarrierKeys.n] do
       local ok, element, elementVariant =
         __jsonDecodeRaw(inner, v[i], v[__dealCarrierKeys.jnum][i] == true)
@@ -7519,7 +7583,7 @@ local function __jsonToClassOp(planName, root)
   -- plain Lua table (the LuaJIT value mapping's table value — a host-returned
   -- table, or one composed outside TABLE_NEW) is classified by its own keys:
   -- the dense 1..n integer form is an array and the string-keyed form an
-  -- object, exactly the JSON shape docs/spec-v1.4.md:728 admits. A value that
+  -- object, exactly the JSON shape docs/spec-v1.5.md:728 admits. A value that
   -- carries a private value-model carrier mark is never JSON-shaped content.
   local function __jsonContentCarrier(v)
     local kind = v[__dealCarrierKeys.kind]
@@ -7625,6 +7689,9 @@ local function __jsonToClassOp(planName, root)
     -- alike (__jsonContentForm), while a produced value-model carrier
     -- keeps the closed unsupported-member failure at its own position.
     local function emitValue(element, elementPath, out, frames, marks, variant)
+      if element == __UNDEFINED or element == __MISSING then
+        return fail(elementPath, element)
+      end
       if element == nil or element == __NULL
           or (__rtNull ~= nil and element == __rtNull) then
         -- A language null is the JSON null leaf at a content position.
@@ -7647,7 +7714,7 @@ local function __jsonToClassOp(planName, root)
         else
           -- An unmarked numeric leaf (a plain host table carries no
           -- per-slot marks) is JSON content only when it is finite: the
-          -- non-finite values are not JSON-shaped (docs/spec-v1.4.md:728)
+          -- non-finite values are not JSON-shaped (docs/spec-v1.5.md:728)
           -- and take the closed typed-boundary failure at their own
           -- position, exactly like the JVM/JS walks' finite check.
           if element ~= element or element == math.huge
@@ -7837,7 +7904,7 @@ local function __jsonToClassOp(planName, root)
       end
       local encoded = encodeField(edesc, declared, elementPath, visited)
       if encoded == nil then return nil end
-      out[#out + 1] = encoded
+      out[#out + 1] = encoded == __UNDEFINED and "null" or encoded
     end
     visited[av] = nil
     out[#out + 1] = "]"
@@ -7888,10 +7955,12 @@ local function __jsonToClassOp(planName, root)
         if value == __NULL then value = nil end
         local encoded = encodeField(f.desc, value, fieldPath, visited)
         if encoded == nil then return nil end
-        if not first then out[#out + 1] = "," end
-        first = false
-        out[#out + 1] = __QT .. __jsonEscapeString(f.name) .. __QT .. ":"
-        out[#out + 1] = encoded
+        if encoded ~= __UNDEFINED then
+          if not first then out[#out + 1] = "," end
+          first = false
+          out[#out + 1] = __QT .. __jsonEscapeString(f.name) .. __QT .. ":"
+          out[#out + 1] = encoded
+        end
       end
     end
     visited[instance] = nil
@@ -7899,6 +7968,17 @@ local function __jsonToClassOp(planName, root)
     return table.concat(out)
   end
   encodeField = function(desc, v, path, visited)
+    if string.sub(desc, 1, 14) == "undefinedable:" then
+      if v == __UNDEFINED then return __UNDEFINED end
+      return encodeField(string.sub(desc, 15), v, path, visited)
+    elseif string.sub(desc, 1, 8) == "nullish:" then
+      if v == __UNDEFINED then return __UNDEFINED end
+      if v == nil then return "null" end
+      return encodeField(string.sub(desc, 9), v, path, visited)
+    elseif desc == "undefined" then
+      if v == __UNDEFINED then return __UNDEFINED end
+      return fail(path, v)
+    end
     local kind, inner = __jsonKindOf(desc)
     if kind == "null" then
       if v == nil then return "null" end
@@ -7914,11 +7994,14 @@ local function __jsonToClassOp(planName, root)
       -- the shared JVM runtime's Int/Double split, never the declared
       -- descriptor's text.
       if type(v) == "table" and v[__dealCarrierKeys.jn] then
-        local text = __jsonNumText(v.d)
+        local number = v.d
+        if number ~= number or number == math.huge or number == -math.huge then return "null" end
+        local text = __jsonNumText(number)
         if text == nil then return fail(path, v) end
         return text
       end
       if type(v) == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then return "null" end
         local text = __jsonNumText(v)
         if text == nil then return fail(path, v) end
         return text
@@ -8247,6 +8330,11 @@ end
 -- store is already a chunk-level local, so the helper set spends no
 -- main-chunk local (the LuaJIT 200-local bound).
 __factories.__hostDeclKind = function(desc)
+  while string.sub(desc, 1, 1) == "?" or string.sub(desc, 1, 1) == "!" do
+    desc = string.sub(desc, 2)
+  end
+  if desc == "null|undefined" then return "null" end
+  if desc == "record" then return "table" end
   if desc == "Error" then return "class instance" end
   if string.sub(desc, 1, 1) == "@" then return "class instance" end
   if string.sub(desc, 1, 1) == "[" then return "array" end
@@ -8286,12 +8374,19 @@ __factories.__hostParamAdmit = function(desc, index, v, origin)
   -- internal table shape too, so the closed inner reason is the
   -- position's own text, never the carrier table's Lua type.
   if type(v) == "table" and v[__dealCarrierKeys.jn] then v = v.d end
+  local prefix = string.sub(desc, 1, 1)
+  local admitsNull = desc == "null" or desc == "null|undefined" or desc == "unknown" or prefix == "?"
+  local admitsUndefined = desc == "undefined" or desc == "null|undefined" or desc == "unknown"
+    or prefix == "!" or string.sub(desc, 1, 2) == "?!"
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then
-    if string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
+    v = __rt.__UNDEFINED
+  end
+  if v == __UNDEFINED or v == __rt.__UNDEFINED then
+    if admitsUndefined then return __rt.__UNDEFINED end
     local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
       {kind = __factories.__hostDeclKind(desc)})
     return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
-      origin, desc, __typedBoundaryKind("missing", v)), 0)
+      origin, desc, "undefined"), 0)
   end
   if v ~= nil and v ~= __NULL then
     -- The shared carrier of a declared array position crosses unchanged,
@@ -8304,7 +8399,7 @@ __factories.__hostParamAdmit = function(desc, index, v, origin)
     -- repeated or nested reference stays one host array.
     return v
   end
-  if desc == "null" or string.sub(desc, 1, 1) == "?" then return __rt.__NULL end
+  if admitsNull then return __rt.__NULL end
   local inner = __renderTemplate("TYPED_BOUNDARY_KIND",
     {kind = __factories.__hostDeclKind(desc)})
   return error(__arm("HOST_PARAMETER_CELL", {index = index, inner = inner},
@@ -8602,8 +8697,8 @@ __factories.__hostCarrierOut = function(desc, v, memo)
   if cached ~= nil then return cached end
   if v[__dealCarrierKeys.jn] then return v.d end
   local function baseOf(d)
-    if d ~= nil and string.sub(d, 1, 1) == "?" then return string.sub(d, 2) end
-    return d
+    if d == nil then return nil end
+    return (string.gsub(d, "^[?!]+", ""))
   end
   local function arrayElementOf(d)
     local base = baseOf(d)
@@ -8827,7 +8922,8 @@ __factories.__hostCarrierOut = function(desc, v, memo)
       memo[v] = v
       return v
     end
-    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = n}
+    local out = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = n,
+      [__dealCarrierKeys.elementDescriptor] = v[__dealCarrierKeys.elementDescriptor]}
     local sourceMarks = v[__dealCarrierKeys.nK]
     local marks = nil
     if type(sourceMarks) == "table" then
@@ -9279,6 +9375,7 @@ end
 -- ==== shared runtime prelude ====
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
 local __NULL = setmetatable({}, {__tostring = function() return "null" end})
+local __UNDEFINED = setmetatable({}, {__tostring = function() return "undefined" end})
 -- The deployed runtime's own language-null sentinel (deal/runtime.lua's
 -- __rt.__NULL). The chunk's runtime binding assigns it when the chunk
 -- binds the deployed runtime (a host session) and aliases the
@@ -9577,6 +9674,11 @@ local function __numHex(v)
   return sign..h
 end
 local function __atom(kind, v)
+  if type(v) == "table" and v[__dealCarrierKeys.d] then
+    return "err:"..v.code..":"..__esc(v.m or "")
+  end
+  if v == __UNDEFINED then return "undefined" end
+  if type(v) == "number" then return "num:"..__numHex(v) end
   if v == __MISSING then return "missing" end
   if kind == "missing" then return "missing" end
   -- The value's own scalar kind wins over a mismatched declared kind
@@ -9678,6 +9780,7 @@ end
 -- exactly the oracle's publish). Numbers render through the declared
 -- inner kind (Lua numbers carry no int/number distinction).
 local function __rawAtom(kind, v)
+  if v == __UNDEFINED then return "undefined" end
   if v == __MISSING then return "missing" end
   if v == nil then return "null" end
   if type(v) == "table" and v[__dealCarrierKeys.jn] then
@@ -9875,34 +9978,34 @@ end
 -- The closed field shapes of the arm declaration (P2): a caller-supplied
 -- expected/actual token outside its arm's declared shape is a producer
 -- defect — the renderer never publishes a fabricated field.
-local __kindTokens = {["null"] = true, ["boolean"] = true,
+local __kindTokens = {["null"] = true, ["undefined"] = true, ["unknown"] = true, ["void"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true,
   ["array"] = true, ["function"] = true, ["class"] = true}
 -- The closed typed-boundary kind *texts* (P2 item 3): the {kind} parameter
 -- of a KIND_TOKEN arm is one of these (a class projects "class instance"
 -- while its token is "class"), so an invented kind text never derives a
 -- DEAL-visible token through the authority.
-local __kindTexts = {["null"] = true, ["boolean"] = true,
+local __kindTexts = {["null"] = true, ["undefined"] = true, ["unknown"] = true, ["void"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["table"] = true,
   ["array"] = true, ["function"] = true, ["class instance"] = true}
-local __typedTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
+local __typedTokens = {["nil"] = true, ["undefined"] = true, ["null"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true,
   ["invalid-unicode"] = true, ["table"] = true, ["array"] = true,
   ["function"] = true, ["async-operation"] = true,
   ["nothing"] = true, ["NaN"] = true, ["infinity"] = true}
-local __completionTokens = {["nil"] = true, ["null"] = true, ["boolean"] = true,
+local __completionTokens = {["nil"] = true, ["undefined"] = true, ["null"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["invalid-unicode"] = true,
   ["table"] = true, ["array"] = true, ["function"] = true,
   ["async-operation"] = true, ["nothing"] = true, ["NaN"] = true,
   ["infinity"] = true}
-local __carrierTokens = {["nil"] = true, ["table"] = true, ["boolean"] = true,
+local __carrierTokens = {["nil"] = true, ["undefined"] = true, ["table"] = true, ["boolean"] = true,
   ["number"] = true, ["string"] = true, ["function"] = true}
 -- The closed descriptor recognizers — the canonical grammar the one
 -- decoder consumes and the emitters' internal dialect — built once in a
 -- private scope so the chunk's own local-variable budget is untouched.
 local __isClassAtom, __isDescriptorText = (function()
-local __descriptorPrimitives = {"null", "boolean", "number", "string",
-  "table"}
+local __descriptorPrimitives = {"null", "undefined", "unknown", "void", "boolean", "number", "string",
+  "record"}
 -- One class-atom segment: '@' plus text up to ')' / ']' / ',' (the canonical
 -- decoder's own stop set; the dialect function's ';' separator also
 -- terminates a class atom in a dialect parameter list) or the end of the
@@ -9974,8 +10077,8 @@ local function __canonicalParams(s, i)
   end
 end
 -- One canonical descriptor (the one decoder's grammar:
--- null|boolean|int|number|string|table|Error|@modulePath/ClassName|
--- [inner]|?inner|(params)->result|async(params)->result); returns the index
+-- null|undefined|unknown|void|boolean|number|string|record|Error|@modulePath/ClassName|
+-- [inner]|?inner|!inner|?!inner|null|undefined|(params)->result|async(params)->result); returns the index
 -- just past it, or nil. Every nested position is parsed and the whole text
 -- must be consumed, so a foreign or malformed parameter/result text is
 -- never admitted.
@@ -9983,20 +10086,25 @@ __canonicalDesc = function(s, i)
   local c = string.sub(s, i, i)
   if c == "" then return nil end
   if __isErrorAtom(s, i, false) then return i + 5 end
+  if string.sub(s, i, i + 13) == "null|undefined" then return i + 14 end
   if c == "[" then
     local inner = __canonicalDesc(s, i + 1)
     if inner == nil or string.sub(s, inner, inner) ~= "]" then return nil end
     return inner + 1
   end
-  if c == "?" then
-    local inner = __canonicalDesc(s, i + 1)
+  if c == "?" or c == "!" then
+    local start = i + 1
+    local nullAllowed, undefinedAllowed = c == "?", c == "!"
+    if nullAllowed and string.sub(s, start, start) == "!" then
+      undefinedAllowed = true; start = start + 1
+    end
+    local inner = __canonicalDesc(s, start)
     if inner == nil then return nil end
-    -- The pinned nullable-inner invariant (spec:2283; the one decoder's
-    -- Nullable): the inner descriptor is neither null nor another nullable
-    -- (flatten at construction), so '?null' and '??inner' are outside the
-    -- canonical grammar.
-    local innerText = string.sub(s, i + 1, inner - 1)
-    if innerText == "null" or string.sub(innerText, 1, 1) == "?" then return nil end
+    local innerText = string.sub(s, start, inner - 1)
+    local prefix = string.sub(innerText, 1, 1)
+    if prefix == "?" or prefix == "!" or innerText == "unknown" or innerText == "void"
+      or innerText == "null|undefined" or innerText == "null" and nullAllowed
+      or innerText == "undefined" and undefinedAllowed then return nil end
     return inner
   end
   if c == "@" then return __classAtomEnd(s, i, false) end
@@ -10063,16 +10171,19 @@ __dialectDesc = function(s, i)
     if inner == nil or string.sub(s, inner, inner) ~= ")" then return nil end
     return inner + 1
   end
-  if string.sub(s, i, i + 8) == "nullable(" then
-    local inner = __dialectDesc(s, i + 9)
-    if inner == nil or string.sub(s, inner, inner) ~= ")" then return nil end
-    -- The pinned nullable-inner invariant (spec:2283): the inner descriptor
-    -- is neither null nor another nullable, exactly like the canonical
-    -- decoder (RuntimeDescriptor.Nullable), so the dialect spelling admits
-    -- no form the canonical grammar rejects.
-    local innerText = string.sub(s, i + 9, inner - 1)
-    if innerText == "null" or string.sub(innerText, 1, 9) == "nullable(" then return nil end
-    return inner + 1
+  for _, wrapper in ipairs({"nullable(", "undefinedable(", "nullableundefinedable("}) do
+    if string.sub(s, i, i + #wrapper - 1) == wrapper then
+      local inner = __dialectDesc(s, i + #wrapper)
+      if inner == nil or string.sub(s, inner, inner) ~= ")" then return nil end
+      local innerText = string.sub(s, i + #wrapper, inner - 1)
+      local nullAllowed = wrapper ~= "undefinedable("
+      local undefinedAllowed = wrapper ~= "nullable("
+      if innerText == "unknown" or innerText == "void"
+        or innerText == "null" and nullAllowed or innerText == "undefined" and undefinedAllowed
+        or string.sub(innerText, 1, 8) == "nullable"
+        or string.sub(innerText, 1, 13) == "undefinedable" then return nil end
+      return inner + 1
+    end
   end
   if string.sub(s, i, i + 8) == "function(" then
     local parameters = __dialectParams(s, i + 9)
@@ -10466,10 +10577,10 @@ end
 -- null, and a class instance its carried canonical class atom (never a
 -- target class name, never the class: IR/trace spelling).
 local function __typedBoundaryKind(staticKind, v)
-  if v == __MISSING then return "nil" end
+  if v == __UNDEFINED or v == __MISSING then return "undefined" end
   -- The deployed runtime's absent-marker sentinel, by identity (its own
   -- value, never the nil a host-free chunk leaves the binding at).
-  if __rtMissing ~= nil and v == __rtMissing then return "nil" end
+  if __rtMissing ~= nil and v == __rtMissing then return "undefined" end
   if v == nil or v == __NULL or v == __rtNull then return "null" end
   if type(v) == "table" and v[__dealCarrierKeys.jn] then return v.k end
   local t = type(v)
@@ -10550,7 +10661,25 @@ end
 -- unchanged runtimes — the absent marker is nil, the language-null
 -- sentinel is table, every other table-carried value is table, and a raw
 -- host-facing function stays function.
+__factories.__typeOf = function(v)
+  if v == __UNDEFINED or v == __MISSING then return "undefined" end
+  if v == nil or v == __NULL or v == __rtNull then return "object" end
+  local t = type(v)
+  if t == "table" then
+    if v[__dealCarrierKeys.jn] then return "number" end
+    if v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.kind] == "function" then return "function" end
+    return "object"
+  end
+  return t
+end
+__factories.__isInstance = function(v, descriptor)
+  if type(v) ~= "table" then return false end
+  if descriptor == "Error" and v[__dealCarrierKeys.d] then return true end
+  return (v[__dealCarrierKeys.c] and v[__dealCarrierKeys.id] == descriptor)
+    or (v[__dealCarrierKeys.kind] == "class" and v[__dealCarrierKeys.classname] == descriptor) or false
+end
 local function __carrierKind(v)
+  if v == __UNDEFINED then return "undefined" end
   if v == __MISSING then return "nil" end
   if v == nil then return "nil" end
   if v == __NULL then return "table" end
@@ -10610,8 +10739,15 @@ local function __canonDesc(desc)
   if string.sub(desc, 1, 6) == "array(" then
     return "["..__canonDesc(string.sub(desc, 7, -2)).."]"
   end
-  if string.sub(desc, 1, 9) == "nullable(" then
-    return "?"..__canonDesc(string.sub(desc, 10, -2))
+  for _, entry in ipairs({{"nullable(", "?"}, {"undefinedable(", "!"},
+      {"nullableundefinedable(", "?!"}}) do
+    if string.sub(desc, 1, #entry[1]) == entry[1] then
+      local inner = __canonDesc(string.sub(desc, #entry[1] + 1, -2))
+      if entry[2] == "?" and inner == "undefined" or entry[2] == "!" and inner == "null" then
+        return "null|undefined"
+      end
+      return entry[2]..inner
+    end
   end
   if string.sub(desc, 1, 9) == "function(" then
     local inner = string.sub(desc, 10, -2)
@@ -10643,6 +10779,7 @@ local function __canonDesc(desc)
   return desc
 end
 local function __bcheck(desc, staticKind, v, csig, completion)
+  if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then v = __UNDEFINED end
   local actual = completion and __completionBoundaryKind(staticKind, v)
     or __typedBoundaryKind(staticKind, v)
   -- The typed-boundary kind arm (the completion cell's own kind arm): the
@@ -10671,7 +10808,15 @@ local function __bcheck(desc, staticKind, v, csig, completion)
   local function fail(expected)
     return failKind(expected, expected)
   end
-  if desc == "null" then
+  if desc == "undefined" or desc == "void" then
+    if v == __UNDEFINED then return v end
+    return fail("undefined")
+  elseif desc == "unknown" then
+    if type(v) == "function" or type(v) == "thread" or type(v) == "userdata" or type(v) == "cdata" then return fail("unknown") end
+    if type(v) == "string" then return __bcheck("string", "string", v, csig, completion) end
+    if __typedBoundaryKind(staticKind, v) == "async-operation" then return fail("unknown") end
+    return v
+  elseif desc == "null" then
     -- The language-null admission (P2): the chunk's own nil
     -- representation, its null sentinel, and the deployed runtime's
     -- host-crossed null sentinel (a host completion, a runtime-produced
@@ -10705,7 +10850,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         "invalid-unicode"), 0)
     end
     return fail("string")
-  elseif desc == "table" then
+  elseif desc == "record" then
     -- A shared table carrier (__t) and a module export surface (the K15
     -- namespace value an import alias cell holds: a compiled module's
     -- publication table, a stdlib module's cataloged-callable table, or
@@ -10733,6 +10878,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
   elseif string.sub(desc, 1, 6) == "array(" then
     if type(v) == "table" and v[__dealCarrierKeys.a] then
       local inner = string.sub(desc, 7, -2)
+      local persistent = v[__dealCarrierKeys.elementDescriptor]
       local innerSig = nil
       -- The canonical element text of the E8003 projection: the closed
       -- canonical descriptor spelling (the semantic oracle's
@@ -10744,6 +10890,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         innerSig = string.sub(csig, 2, -2)
         innerExpected = innerSig
       end
+      if persistent ~= nil and persistent ~= innerExpected then return fail("array") end
       for i = 1, v[__dealCarrierKeys.n] do
         -- The element's own recorded numeric variant (the __nK mark a
         -- decoded array carries) materializes before the recursive
@@ -10764,21 +10911,20 @@ local function __bcheck(desc, staticKind, v, csig, completion)
       return v
     end
     return fail("array")
-  elseif string.sub(desc, 1, 9) == "nullable(" then
-    -- The named absent→null mapping plus the language-null admission:
-    -- the absent marker and both null sentinels (the chunk's own and the
-    -- deployed runtime's host-crossed one) all yield the chunk's own null
-    -- representation (nil), so a host operation completing with the
-    -- runtime's sentinel passes a declared null/nullable completion
-    -- exactly like the oracle's NullValue and the JVM's present null.
-    if v == nil or v == __MISSING or v == __NULL or v == __rtNull then
-      return nil
-    end
+  elseif string.sub(desc, 1, 9) == "nullable(" or string.sub(desc, 1, 14) == "undefinedable("
+      or string.sub(desc, 1, 22) == "nullableundefinedable(" then
+    local nullAllowed = string.sub(desc, 1, 8) == "nullable"
+    local undefinedAllowed = string.find(desc, "undefinedable", 1, true) ~= nil
+    if nullAllowed and (v == nil or v == __NULL or v == __rtNull) then return nil end
+    if undefinedAllowed and v == __UNDEFINED then return v end
     local innerSig = csig
-    if innerSig ~= nil and string.sub(innerSig, 1, 1) == "?" then
-      innerSig = string.sub(innerSig, 2)
+    if innerSig == "null|undefined" then
+      innerSig = nullAllowed and "undefined" or "null"
+    elseif innerSig ~= nil then
+      if nullAllowed then innerSig = string.sub(innerSig, 2) end
+      if undefinedAllowed then innerSig = string.sub(innerSig, 2) end
     end
-    return __bcheck(string.sub(desc, 10, -2), staticKind, v, innerSig, completion)
+    return __bcheck(string.sub(desc, string.find(desc, "(", 1, true) + 1, -2), staticKind, v, innerSig, completion)
   elseif string.sub(desc, 1, 9) == "function(" then
     if type(v) == "function" then
       -- A raw Lua function is not the LuaJIT function value mapping
@@ -10809,8 +10955,16 @@ local function __bcheck(desc, staticKind, v, csig, completion)
   return v
 end
 local function __cmp(selector, kindL, l, kindR, r, side)
-  local lnil = (l == nil or l == __MISSING)
-  local rnil = (r == nil or r == __MISSING)
+  local lu = l == __UNDEFINED or l == __MISSING
+  local ru = r == __UNDEFINED or r == __MISSING
+  if lu or ru or string.find(selector, "UNDEFINED", 1, true) then
+    local equal = lu and ru
+    if string.sub(selector, -3) == "_EQ" then return equal end
+    if string.sub(selector, -3) == "_NE" then return not equal end
+    return false
+  end
+  local lnil = (l == nil or l == __NULL or l == __rtNull)
+  local rnil = (r == nil or r == __NULL or r == __rtNull)
   -- The nullable-null rows are total over both operand positions, exactly
   -- like the shared comparison executor: the side names the nullable
   -- operand, selected by an explicit branch, never Lua's and/or idiom,
@@ -10898,12 +11052,7 @@ local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, 
     nil, nil)
   __ev(bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, {}, __atom(elemKind, elem),
     nil)
-  if elem == __MISSING then
-    if nullable then
-      return nil
-    end
-    return __MISSING
-  end
+  if elem == __MISSING then return __UNDEFINED end
   return elem
 end
 local function __arrayBounds(bKey, bDigest, bParent, input, slotName, lengthSlot,
@@ -11281,13 +11430,16 @@ local function __asyncExportCompletion(__rtAsync, v, __declaredNumber, __seen)
   end
   if v[__dealCarrierKeys.c] then
     local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = v[__dealCarrierKeys.id],
-                 [__dealCarrierKeys.classname] = v[__dealCarrierKeys.id]}
+                 [__dealCarrierKeys.classname] = v[__dealCarrierKeys.id],
+                 [__dealCarrierKeys.f] = v[__dealCarrierKeys.f],
+                 [__dealCarrierKeys.p] = v[__dealCarrierKeys.p],
+                 [__dealCarrierKeys.classOrder] = v[__dealCarrierKeys.classOrder]}
     seen[v] = out
     return out
   end
   if v[__dealCarrierKeys.d] then
     local out = {[__dealCarrierKeys.kind] = "class", [__dealCarrierKeys.d] = true,
-                 [__dealCarrierKeys.classname] = "Error"}
+                 [__dealCarrierKeys.classname] = "Error", code = v.code, m = v.m or v.message}
     seen[v] = out
     return out
   end
@@ -11319,6 +11471,10 @@ end
 -- loads without a deployed runtime (like the wrapper's own lazy
 -- require).
 __dealAsyncExportEncode = function(v)
+  if v == __UNDEFINED or v == __MISSING or (type(v) == "table" and
+      (v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.kind] == "function")) then
+    error("completion has no JSON representation", 0)
+  end
   if __rtNull == nil then __rtNull = require("deal.runtime").__NULL end
   -- A top-level scalar number whose recorded variant is the number
   -- variant goes through the walker as a one-element marked array whose
@@ -11585,6 +11741,7 @@ end
 -- value its own kind) instead of crashing on the declared-kind
 -- rendering.
 local function __rawArgAtom(kind, v)
+  if v == __UNDEFINED then return "undefined" end
   if v == __MISSING then return "missing" end
   if v == nil then return "null" end
   local t = type(v)
@@ -11906,13 +12063,13 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   elseif fn == "STRING_SPLIT" then
     local input = __cps(__args[1])
     local sep = __cps(__args[2])
-    if #input == 0 then return {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0} end
+    if #input == 0 then return {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.elementDescriptor] = "string"} end
     if #sep == 0 then
-      local singles = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #input}
+      local singles = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #input, [__dealCarrierKeys.elementDescriptor] = "string"}
       for i = 1, #input do singles[i] = __u8enc(input[i]) end
       return singles
     end
-    local parts = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0}
+    local parts = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 0, [__dealCarrierKeys.elementDescriptor] = "string"}
     local cursor = 1
     while true do
       local occ = __subseqIndexOf(input, sep, cursor - 1)
@@ -11950,7 +12107,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     local t = __args[1]
     local ns = __nsSurfaces[t]
     local order = ns ~= nil and ns.order or __tableKeyList(t)
-    local keys = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #order}
+    local keys = {[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = #order, [__dealCarrierKeys.elementDescriptor] = "string"}
     for i = 1, #order do keys[i] = order[i] end
     return keys
   elseif fn == "JSON_PARSE" then
@@ -12239,6 +12396,11 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     if not atEnd() then parseFail("trailing content") end
     return value
   elseif fn == "JSON_STRINGIFY" then
+    local function omitted(v)
+      return v == __UNDEFINED or v == __MISSING or type(v) == "function"
+        or (type(v) == "table" and (v[__dealCarrierKeys.fn] ~= nil or v[__dealCarrierKeys.kind] == "function"))
+    end
+    if omitted(__args[1]) then return __UNDEFINED end
     local out = {}
     local path = {}
     -- The pinned STDLIB_CALL(JSON_STRINGIFY) rejection: the
@@ -12269,17 +12431,15 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
     -- The walk is stack-safe: an explicit frame stack replaces the
     -- recursion, so a finite nested value has no Lua call-stack bound.
     sfEmit = function(frames, v, isNumber)
-      if v == nil or v == __rtNull then out[#out + 1] = "null"; return end
-      if v == __MISSING then sfFail(v); return end
+      if v == nil or v == __NULL or v == __rtNull or omitted(v) then out[#out + 1] = "null"; return end
       local t = type(v)
       if t == "boolean" then
         out[#out + 1] = (v and "true" or "false")
         return
       end
       if t == "number" then
-        if v ~= v or v == math.huge or v == -math.huge then
-          sfFail(v)
-        end
+        if v ~= v or v == math.huge or v == -math.huge then out[#out + 1] = "null"; return end
+        if v == 0 then out[#out + 1] = "0"; return end
         if isNumber then out[#out + 1] = __sfNumText(v)
         else out[#out + 1] = tostring(v) end
         return
@@ -12295,10 +12455,21 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       end
       if t == "table" then
         if v[__dealCarrierKeys.jn] then
-          if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then
-            sfFail(v)
-          end
+          if v.d ~= v.d or v.d == math.huge or v.d == -math.huge then out[#out + 1] = "null"; return end
+          if v.d == 0 then out[#out + 1] = "0"; return end
           out[#out + 1] = __sfNumText(v.d)
+          return
+        end
+        if v[__dealCarrierKeys.c] or v[__dealCarrierKeys.d] or v[__dealCarrierKeys.kind] == "class" then
+          local identity = v[__dealCarrierKeys.id] or v[__dealCarrierKeys.classname]
+          if v[__dealCarrierKeys.d] then identity = "Error" end
+          local order = v[__dealCarrierKeys.classOrder] or __factories.__jsonClassOrder[identity]
+            or __dealCarrierKeys.classOrders[identity]
+          if order == nil then sfFail(v); return end
+          if path[v] then sfCycle(); return end
+          path[v] = true
+          out[#out + 1] = "{"
+          frames[#frames + 1] = {kind = "class", value = v, order = order, index = 1, sorted = true}
           return
         end
         if v[__dealCarrierKeys.a] then
@@ -12441,11 +12612,31 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
       if t == "function" then sfFail(v); return end
       sfFail(v)
     end
+    local function ownKeyOrder(keys)
+      local ranks = {}
+      for i = 1, #keys do ranks[keys[i]] = i end
+      local function index(key)
+        if key ~= "0" and not string.match(key, "^[1-9][0-9]*$") then return nil end
+        local n = tonumber(key)
+        if n ~= nil and n < 4294967295 then return n end
+        return nil
+      end
+      table.sort(keys, function(a, b)
+        local x, y = index(a), index(b)
+        if x ~= nil then return y == nil or x < y end
+        if y ~= nil then return false end
+        return ranks[a] < ranks[b]
+      end)
+    end
     sfValue = function(v, isNumber)
       local frames = {}
       sfEmit(frames, v, isNumber)
       while #frames > 0 do
         local frame = frames[#frames]
+        if frame.order ~= nil and not frame.sorted then
+          ownKeyOrder(frame.order)
+          frame.sorted = true
+        end
         if frame.kind == "array" then
           local limit = frame.maxIdx
           if limit == nil then limit = frame.value[__dealCarrierKeys.n] end
@@ -12463,8 +12654,33 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             -- a present null is the __NULL marker. The deleted element is
             -- never serialized as JSON null.
             if elem == __NULL then elem = nil
-            elseif elem == nil then sfFail(__MISSING) end
+            elseif elem == nil then elem = __UNDEFINED end
             sfEmit(frames, elem, frame.marks ~= nil and frame.marks[i] == true)
+          end
+        elseif frame.kind == "class" then
+          if frame.index > #frame.order then
+            out[#out + 1] = "}"
+            path[frame.value] = nil
+            frames[#frames] = nil
+          else
+            local key = frame.order[frame.index]
+            frame.index = frame.index + 1
+            local fields = frame.value[__dealCarrierKeys.f]
+            local presence = frame.value[__dealCarrierKeys.p]
+            local member
+            if frame.value[__dealCarrierKeys.d] then
+              if key == "message" then member = frame.value.m or frame.value.message
+              else member = frame.value.code end
+            elseif type(fields) == "table" then
+              if type(presence) ~= "table" or presence[key] then member = fields[key] end
+            else member = frame.value[key] end
+            if member ~= nil and member ~= __MISSING and not omitted(member) then
+              if (frame.emitted or 0) > 0 then out[#out + 1] = "," end
+              frame.emitted = (frame.emitted or 0) + 1
+              out[#out + 1] = __jsonEscape(key)
+              out[#out + 1] = ":"
+              sfEmit(frames, member, false)
+            end
           end
         elseif frame.kind == "namespace" then
           if frame.index > #frame.order then
@@ -12476,14 +12692,18 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             frame.index = i + 1
             local k = frame.order[i]
             if not __jsonValidUtf8(k) then sfFail(k) end
-            if i > 1 then out[#out + 1] = "," end
-            out[#out + 1] = __jsonEscape(k)
-            out[#out + 1] = ":"
+            local member = __nsEntry(frame.value, frame.value[k])
+            if not omitted(member) then
+              if (frame.emitted or 0) > 0 then out[#out + 1] = "," end
+              frame.emitted = (frame.emitted or 0) + 1
+              out[#out + 1] = __jsonEscape(k)
+              out[#out + 1] = ":"
             -- A module namespace surface's entry is projected through
             -- __nsEntry (a compiled module's ABI wrapper unwraps to its
             -- published value), so the walker rejects the module's own
             -- entries exactly like the oracle's and the JVM's value.
-            sfEmit(frames, __nsEntry(frame.value, frame.value[k]), false)
+              sfEmit(frames, member, false)
+            end
           end
         else
           if frame.index > #frame.order then
@@ -12495,10 +12715,12 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
             frame.index = i + 1
             local k = frame.order[i]
             if not __jsonValidUtf8(k) then sfFail(k) end
-            if i > 1 then out[#out + 1] = "," end
-            out[#out + 1] = __jsonEscape(k)
-            out[#out + 1] = ":"
             local element = frame.value[k]
+            if not omitted(element) then
+              if (frame.emitted or 0) > 0 then out[#out + 1] = "," end
+              frame.emitted = (frame.emitted or 0) + 1
+              out[#out + 1] = __jsonEscape(k)
+              out[#out + 1] = ":"
             if element == nil and frame.presence ~= nil
                 and frame.presence[k] == true then
               -- A recorded present null member: the JSON_PARSE graph
@@ -12506,6 +12728,7 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
               out[#out + 1] = "null"
             else
               sfEmit(frames, element, frame.marks ~= nil and frame.marks[k] == true)
+            end
             end
           end
         end
@@ -12577,10 +12800,10 @@ end
 local function __stdlibInvoke(kind, fn, opKey, digest, parent, origin, ...)
   if fn == "CONSOLE_LOG" then
     __consoleEffect("STDOUT", __consoleText(...))
-    return nil
+    return __UNDEFINED
   elseif fn == "CONSOLE_ERROR" then
     __consoleEffect("STDERR", __consoleText(...))
-    return nil
+    return __UNDEFINED
   end
   return __stdlib(kind, fn, opKey, digest, parent, origin, ...)
 end

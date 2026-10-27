@@ -1,5 +1,11 @@
 package deal.semantic;
 
+import deal.ast.AssertionExpr;
+import deal.ast.NamedType;
+import deal.ast.QualifiedType;
+import deal.checker.NameResolver;
+import deal.ast.InstanceofExpr;
+
 import deal.ast.ArrayLiteralExpr;
 import deal.ast.AssignmentExpr;
 import deal.ast.AwaitExpression;
@@ -652,14 +658,14 @@ public final class SemanticLowerer {
         if (defect instanceof ConstructUnlowered unlowered) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CONTAINERS_AND_STRINGS, CONSTRUCT_UNLOWERED,
-                SemanticProfile.DEAL_V1_4_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_5_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + CONSTRUCT_UNLOWERED + " (" + unlowered.construct() + ")");
         }
 
         if (defect instanceof RetainedAbiDeferred deferred) {
             return new LoweringFailureDetail(module.path(),
                 SemanticCapability.CLASSES, RETAINED_ABI_DEFERRED,
-                SemanticProfile.DEAL_V1_4_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
+                SemanticProfile.DEAL_V1_5_BINARY64, LoweredModuleUnit.FORMAT_VERSION,
                 "SemanticLowerer " + RETAINED_ABI_DEFERRED + " (class "
                     + deferred.classId() + " — the RETAINED_ABI derivation is E10's)");
         }
@@ -2655,7 +2661,7 @@ public final class SemanticLowerer {
 
         /**
          * The complete module-level class layout surface, computed
-         * before any body walk (docs/spec-v1.4.md §Name resolution,
+         * before any body walk (docs/spec-v1.5.md §Name resolution,
          * Declaration order: a function body and a class field may
          * reference a class declared later in the same module). One entry
          * per module-level class declaration, in declaration order, with
@@ -3008,7 +3014,7 @@ public final class SemanticLowerer {
          * (keyed by binding identity, first incarnation wins). A
          * function-typed binding whose declaring scope names it is mutable:
          * a read observes the current binding, never the allocation the
-         * declaration's initializer produced (docs/spec-v1.4.md §Closures
+         * declaration's initializer produced (docs/spec-v1.5.md §Closures
          * and captured variables — captured variables are captured by
          * binding, not by value).
          */
@@ -3920,7 +3926,7 @@ public final class SemanticLowerer {
                         // The function-allocation identity of the hoisted
                         // module-level function is pre-allocated here so a
                         // capture of a later-declared module function
-                        // (B1; docs/spec-v1.4.md §Name resolution,
+                        // (B1; docs/spec-v1.5.md §Name resolution,
                         // Declaration order) — a
                         // function-typed load inside an earlier closure
                         // body — can publish the identity the cell will
@@ -4331,7 +4337,7 @@ public final class SemanticLowerer {
 
         /**
          * Registers every module-level class declaration's layout before
-         * any body walk (docs/spec-v1.4.md §Name resolution, Declaration
+         * any body walk (docs/spec-v1.5.md §Name resolution, Declaration
          * order): a function body or class field may construct a class
          * declared later in the same module, so a class-literal in an
          * earlier function body must resolve the module's own layout even
@@ -5073,8 +5079,8 @@ public final class SemanticLowerer {
                 case deal.ast.QualifiedType qualified -> resolveQualifiedFieldType(qualified);
                 case deal.ast.ArrayType array -> deal.types.Types.array(
                     fieldTypeOf(array.elementType()));
-                case deal.ast.NullableType nullable -> deal.types.Types.nullable(
-                    fieldTypeOf(nullable.innerType()));
+                case deal.ast.NullableType nullable -> deal.types.Types.withNullish(
+                    fieldTypeOf(nullable.innerType()), nullable.undefinedMember(), true);
                 case deal.ast.FunctionType function -> {
                     List<Type> paramTypes = new ArrayList<>();
                     for (deal.ast.FunctionTypeParam parameter : function.params()) {
@@ -5092,9 +5098,12 @@ public final class SemanticLowerer {
             return switch (name) {
                 case "null" -> Type.Null.INSTANCE;
                 case "boolean" -> Type.Boolean.INSTANCE;
-                    case "number" -> Type.Number.INSTANCE;
+                case "number" -> Type.Number.INSTANCE;
                 case "string" -> Type.String.INSTANCE;
-                case "table" -> Type.Table.INSTANCE;
+                case "Record<string, unknown>" -> Type.Table.INSTANCE;
+                case "undefined" -> Type.Undefined.INSTANCE;
+                case "unknown" -> Type.Unknown.INSTANCE;
+                case "void" -> Type.Void.INSTANCE;
                 case "Error" -> deal.types.Types.classType("Error",
                     deal.checker.NameResolver.intrinsicErrorIdentity());
                 default -> {
@@ -5582,12 +5591,20 @@ public final class SemanticLowerer {
         private ValueId lowerPositionAdapter(ExpressionNode value,
                                              RuntimeDescriptor.Func targetSignature,
                                              java.util.function.Supplier<ValueId> lower) {
+            return lowerPositionAdapter(value, targetSignature, lower, false);
+        }
+
+        private ValueId lowerPositionAdapter(ExpressionNode value,
+                                             RuntimeDescriptor.Func targetSignature,
+                                             java.util.function.Supplier<ValueId> lower,
+                                             boolean materializedAssignment) {
             Type.Func sourceType = (Type.Func) producedType(value);
             RuntimeDescriptor.Func sourceSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
             Optional<BindingImmutabilityProof> proof = sourceProofOf(value);
             AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(value);
-            CaptureMode mode = AdapterShapeMap.selectPositionMode(shape, proof);
+            CaptureMode mode = materializedAssignment ? CaptureMode.VALUE
+                : AdapterShapeMap.selectPositionMode(shape, proof);
             AdaptSourceRef sourceRef;
             List<ValueId> operands;
             List<RuntimeDescriptor> operandTypes;
@@ -5602,7 +5619,7 @@ public final class SemanticLowerer {
                 operandTypes = List.of();
             } else {
                 ValueId operand = lower.get();
-                if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE) {
+                if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE && !materializedAssignment) {
                     payloadProof = proof.orElseThrow(() ->
                         new IllegalStateException("the closed shape map selects VALUE "
                             + "over a binding only with the recorded proof (producer "
@@ -6055,7 +6072,7 @@ public final class SemanticLowerer {
                             // the fail-closed arm.
                             if (exitStateOf(bodyBlock) == BlockExitState.OPEN) {
                                 if (!(reservedContext.signature.returnType()
-                                        instanceof RuntimeDescriptor.Null)) {
+                                        instanceof RuntimeDescriptor.Void)) {
                                     throw new ConstructUnlowered("function '"
                                         + function.name()
                                         + "' body is not terminated and its return type is "
@@ -6232,7 +6249,7 @@ public final class SemanticLowerer {
                                 // a non-OPEN body carries no implicit
                                 // return and never fails closed).
                                 if (!(reservedContext.signature.returnType()
-                                        instanceof RuntimeDescriptor.Null)) {
+                                        instanceof RuntimeDescriptor.Void)) {
                                     throw new ConstructUnlowered("group member '"
                                         + member.name() + "' body is not terminated"
                                         + " and its return type is not null", member.span());
@@ -6692,6 +6709,8 @@ public final class SemanticLowerer {
                     walkReferenceExpr(binary.right(), bound, references);
                 }
                 case UnaryExpr unary -> walkReferenceExpr(unary.expr(), bound, references);
+                case AssertionExpr assertion -> walkReferenceExpr(assertion.value(), bound, references);
+                case InstanceofExpr test -> walkReferenceExpr(test.value(), bound, references);
                 case CallExpr call -> {
                     walkReferenceExpr(call.callee(), bound, references);
                     for (ExpressionNode arg : call.args()) {
@@ -6721,7 +6740,7 @@ public final class SemanticLowerer {
                     }
                     walkReferenceBlock(functionExpr.body(), inner, references);
                 }
-                case HasExpr has -> walkReferenceExpr(has.object(), bound, references);
+                case HasExpr has -> { walkReferenceExpr(has.object(), bound, references); walkReferenceExpr(has.key(), bound, references); }
                 case AssignmentExpr assignment -> {
                     walkReferenceExpr(assignment.target(), bound, references);
                     walkReferenceExpr(assignment.value(), bound, references);
@@ -6823,6 +6842,8 @@ public final class SemanticLowerer {
                     collectAssignedNames(binary.right(), assigned);
                 }
                 case UnaryExpr unary -> collectAssignedNames(unary.expr(), assigned);
+                case AssertionExpr assertion -> collectAssignedNames(assertion.value(), assigned);
+                case InstanceofExpr test -> collectAssignedNames(test.value(), assigned);
                 case CallExpr call -> {
                     collectAssignedNames(call.callee(), assigned);
                     for (ExpressionNode arg : call.args()) {
@@ -6847,7 +6868,7 @@ public final class SemanticLowerer {
                 }
                 case FunctionExpr functionExpr ->
                     collectAssignedNames(functionExpr.body().statements(), assigned);
-                case HasExpr has -> collectAssignedNames(has.object(), assigned);
+                case HasExpr has -> { collectAssignedNames(has.object(), assigned); collectAssignedNames(has.key(), assigned); }
                 case AssignmentExpr assignment -> {
                     if (assignment.target() instanceof IdentifierExpr target) {
                         assigned.add(target.name());
@@ -7241,6 +7262,24 @@ public final class SemanticLowerer {
 
         private ValueId lowerExpressionCore(ExpressionNode expr, ValueId slot) {
             return switch (expr) {
+                case AssertionExpr assertion -> {
+                    ValueId value = lowerExpression(assertion.value());
+                    RuntimeDescriptor descriptor = valueDescriptorOf(checkedType(assertion));
+                    ValueId result = emitValueOp(SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(BoundaryKind.ASSERTION, descriptor, value,
+                            new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                        assertion.span(), descriptor, descriptorKindPolicy(descriptor), slot);
+                    registerDynamicMaterialization(result, producerOpId(result), descriptor);
+                    yield result;
+                }
+                case InstanceofExpr test -> {
+                    Type target = checkedInstanceofTarget(test);
+                    ValueId value = lowerExpression(test.value());
+                    yield emitOperandOp(SemanticOpKind.UNARY,
+                        new KindPayload.UnaryPayload(UnarySelector.INSTANCEOF, valueDescriptorOf(target)),
+                        List.of(value), List.of(valueDescriptorOf(checkedType(test.value()))),
+                        test.span(), RuntimeDescriptor.Boolean.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, slot);
+                }
                 case LiteralExpr literal -> lowerConst(literal, slot);
                 case IdentifierExpr identifier -> lowerBindingLoad(identifier, slot);
                 case FunctionExpr functionExpr -> {
@@ -7690,7 +7729,7 @@ public final class SemanticLowerer {
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
                     List.of(valueOp, boundaryOp, commitOp)),
-                value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+                value, valueDescriptorOf(checkedType(assignment)), FailurePolicyId.NO_DEAL_FAILURE, origin));
             if (creationRuleAnalysis) {
                 classifyVariableAssignPosition(assignment, target, value, boundaryOp);
             }
@@ -7698,27 +7737,12 @@ public final class SemanticLowerer {
         }
 
         /**
-         * The shape-map child's adapted variable-assignment chain (B6-B9):
-         * the closed mode map selects exactly one mode from checker
-         * facts (B7) and the per-mode payload is built from birth (B8).
-         * The chain's committed value is the adapter result: the closed
-         * chain shapes are {@code [sourceOp, FUNCTION_ADAPT,
-         * VARIABLE_ASSIGNMENT boundaryOp, BINDING_STORE commitOp]}
-         * (VALUE — the single operand completes at creation as the
-         * chain's RHS child, exactly once) and {@code [FUNCTION_ADAPT,
-         * VARIABLE_ASSIGNMENT boundaryOp, BINDING_STORE commitOp]}
-         * (SHARED_CELL/REEVALUATE_THUNK — zero evaluation at the
-         * creation site; the thunk ops live only inside the detached
-         * thunk block, whose captures are generation-pinned in
-         * first-reference order). The adapter op emits zero
-         * {@code BOUNDARY} children; the position's own
-         * {@code VARIABLE_ASSIGNMENT} boundary takes the adapter result
-         * as its direct input (exact-signature pass-through), the
-         * commit stores it, the {@code ASSIGN} result is the committed
-         * adapter identity, and the cell's tracked function identity
-         * becomes the adapter identity (loads/reads/passes/returns
-         * preserve it — the adapter is an ordinary function value after
-         * the commit).
+         * The adapted variable-assignment chain: {@code [sourceOp,
+         * FUNCTION_ADAPT, VARIABLE_ASSIGNMENT boundary, BINDING_STORE]}.
+         * The source completes once, including a mutable binding read.
+         * VALUE captures that evaluated function, not the source binding
+         * or a replay thunk. The boundary checks and the commit stores
+         * the adapter; ASSIGN publishes the original RHS identity/type.
          *
          */
         private ValueId emitAdaptedVariableAssignChain(AssignmentExpr assignment,
@@ -7730,54 +7754,25 @@ public final class SemanticLowerer {
                 ContainerPayloadDescriptors.resultDescriptorOf(sourceType);
             RuntimeDescriptor.Func targetSignature = (RuntimeDescriptor.Func)
                 ContainerPayloadDescriptors.resultDescriptorOf(targetType);
-            Optional<BindingImmutabilityProof> proof = sourceProofOf(assignment.value());
-            AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
-                assignment.value());
-            CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
-            // REEVALUATE_THUNK: the detached thunk walks before the
-            // chain opens — the thunk ops execute only at invocation
-            // (E7) and must not be chain children.
-            ThunkSource thunk = mode == CaptureMode.REEVALUATE_THUNK
-                ? lowerThunkSource(assignment.value()) : null;
+            CaptureMode mode = CaptureMode.VALUE;
+            // Assignment is a once-evaluated value position. In particular,
+            // adapting a call or nested assignment stores the materialized
+            // RHS, never a thunk that would replay its effects.
             OpId chainOpId = ids.nextOpId(module, nextOrdinal++, 0);
             chainParents.push(chainOpId);
             ValueId value;
-            OpId valueOp = null;
+            OpId valueOp;
             OpId boundaryOp;
             OpId commitOp;
             EmittedAdapter adapter;
-            AdaptSourceRef sourceRef = null;
-            BindingImmutabilityProof payloadProof = null;
+            AdaptSourceRef sourceRef;
+            ValueId originalRhs;
             try {
-                ValueId operand = null;
-                List<ValueId> operands;
-                List<RuntimeDescriptor> operandTypes;
-                switch (mode) {
-                    case VALUE -> {
-                        AdapterValueSource source = completeAdapterValueSource(
-                            assignment.value(), shape, proof);
-                        operand = source.operand();
-                        payloadProof = source.proof();
-                        valueOp = producerOpId(operand);
-                        sourceRef = new AdaptSourceRef.Value(operand);
-                        operands = List.of(operand);
-                        operandTypes = List.of(sourceSignature);
-                    }
-                    case SHARED_CELL -> {
-                        sourceRef = lowerAdapterSharedCellSource(
-                            assignment.value());
-                        operands = List.of();
-                        operandTypes = List.of();
-                    }
-                    case REEVALUATE_THUNK -> {
-                        sourceRef = thunkSourceRef(thunk);
-                        operands = List.of();
-                        operandTypes = List.of();
-                    }
-                    default -> throw new IllegalStateException("unreachable mode " + mode);
-                }
+                originalRhs = lowerExpression(assignment.value());
+                valueOp = producerOpId(originalRhs);
+                sourceRef = new AdaptSourceRef.Value(originalRhs);
                 adapter = emitFunctionAdapt(mode, sourceRef, sourceSignature,
-                    targetSignature, payloadProof, operands, operandTypes,
+                    targetSignature, null, List.of(originalRhs), List.of(sourceSignature),
                     assignment.value().span());
                 value = adapter.identity();
                 boundaryOp = emitNullOp(SemanticOpKind.BOUNDARY,
@@ -7794,26 +7789,21 @@ public final class SemanticLowerer {
             } finally {
                 chainParents.pop();
             }
-            List<OpId> children = valueOp != null
-                ? List.of(valueOp, adapter.opId(), boundaryOp, commitOp)
-                : List.of(adapter.opId(), boundaryOp, commitOp);
+            List<OpId> children = List.of(valueOp, adapter.opId(), boundaryOp, commitOp);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             SourceOrigin origin = new SourceOrigin(sourceId,
                 toSourceSpan(assignment.span()), SourceOriginKind.USER, anchor,
                 currentParent());
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.VARIABLE, children),
-                value, targetSignature, FailurePolicyId.NO_DEAL_FAILURE, origin));
+                originalRhs, sourceSignature, FailurePolicyId.NO_DEAL_FAILURE, origin));
             recordAdapterEmission(adapter.opId(), adapter.identity(), mode, sourceRef,
-                sourceSignature, targetSignature, payloadProof, boundaryOp,
+                sourceSignature, targetSignature, null, boundaryOp,
                 BoundaryKind.VARIABLE_ASSIGNMENT);
-            if (thunk != null) {
-                emitTarget().addAll(thunk.ops());
-            }
             if (creationRuleAnalysis) {
                 classifyVariableAssignPosition(assignment, target, value, boundaryOp);
             }
-            return value;
+            return originalRhs;
         }
 
         /**
@@ -7861,7 +7851,7 @@ public final class SemanticLowerer {
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT,
                     List.of(containerOp, valueOp, commitOp)),
-                value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+                value, valueDescriptorOf(checkedType(assignment)), FailurePolicyId.NO_DEAL_FAILURE, origin));
             return value;
         }
 
@@ -7922,7 +7912,7 @@ public final class SemanticLowerer {
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.TABLE_SLOT,
                     List.of(containerOp, keyOp, valueOp, normalizeOp, commitOp)),
-                value, targetDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+                value, valueDescriptorOf(checkedType(assignment)), FailurePolicyId.NO_DEAL_FAILURE, origin));
             return value;
         }
 
@@ -7971,11 +7961,13 @@ public final class SemanticLowerer {
             OpId commitOp;
             OpId adapterOp = null;
             OpId rhsOp = null;
+            ValueId originalRhs;
             try {
                 ValueId container = lowerOperand(index.array());
                 containerOp = chainChildOp(container);
                 ValueId key = lowerOperand(index.index());
                 keyOp = chainChildOp(key);
+                originalRhs = lowerExpression(assignment.value(), slot);
                 if (positionAdapts(assignment.value(), elementDescriptor)) {
                     // The array element write is a statically typed
                     // function-value position: the RHS value keeps its own
@@ -7988,18 +7980,12 @@ public final class SemanticLowerer {
                     // Arity extension adapter). A binding source adapts over
                     // its dominant incarnation's cell (zero evaluation at the
                     // position), so the chain then carries the adapter alone.
-                    OpId[] materialized = new OpId[1];
                     value = lowerPositionAdapter(assignment.value(),
-                        (RuntimeDescriptor.Func) elementDescriptor,
-                        () -> {
-                            ValueId rhs = lowerExpression(assignment.value(), slot);
-                            materialized[0] = chainChildOp(rhs);
-                            return rhs;
-                        });
+                        (RuntimeDescriptor.Func) elementDescriptor, () -> originalRhs, true);
                     adapterOp = chainChildOp(value);
-                    rhsOp = materialized[0];
+                    rhsOp = chainChildOp(originalRhs);
                 } else {
-                    value = lowerExpression(assignment.value(), slot);
+                    value = originalRhs;
                 }
                 valueOp = chainChildOp(value);
                 ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
@@ -8049,12 +8035,12 @@ public final class SemanticLowerer {
             }
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT, chainChildren),
-                value, elementDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+                originalRhs, valueDescriptorOf(checkedType(assignment)), FailurePolicyId.NO_DEAL_FAILURE, origin));
             if (creationRuleAnalysis) {
                 recordPositionClassification(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
                     producedType(assignment.value()), arrayType.element(), value, boundaryOp);
             }
-            return value;
+            return originalRhs;
         }
 
 
@@ -8122,9 +8108,11 @@ public final class SemanticLowerer {
             OpId adapterOp = null;
             OpId rhsOp = null;
             OpId fieldBoundaryOp = null;
+            ValueId originalRhs;
             try {
                 ValueId container = lowerExpression(access.object());
                 containerOp = chainChildOp(container);
+                originalRhs = lowerExpression(assignment.value(), slot);
                 if (classCore && positionAdapts(assignment.value(), declaredDescriptor)) {
                     // The class field write is a statically typed
                     // function-value position: exactly one arity-extension
@@ -8136,18 +8124,12 @@ public final class SemanticLowerer {
                     // source adapts over its dominant incarnation's cell
                     // (zero evaluation at the position), so the chain then
                     // carries the adapter alone.
-                    OpId[] materialized = new OpId[1];
                     value = lowerPositionAdapter(assignment.value(),
-                        (RuntimeDescriptor.Func) declaredDescriptor,
-                        () -> {
-                            ValueId rhs = lowerExpression(assignment.value(), slot);
-                            materialized[0] = chainChildOp(rhs);
-                            return rhs;
-                        });
+                        (RuntimeDescriptor.Func) declaredDescriptor, () -> originalRhs, true);
                     adapterOp = chainChildOp(value);
-                    rhsOp = materialized[0];
+                    rhsOp = chainChildOp(originalRhs);
                 } else {
-                    value = lowerExpression(assignment.value(), slot);
+                    value = originalRhs;
                 }
                 valueOp = chainChildOp(value);
                 commitOp = emitNullOp(SemanticOpKind.FIELD_WRITE,
@@ -8192,13 +8174,13 @@ public final class SemanticLowerer {
             }
             emit(buildOp(chainOpId, SemanticOpKind.ASSIGN,
                 new KindPayload.AssignPayload(AssignTargetKind.CLASS_FIELD, chainChildren),
-                value, fieldDescriptor, FailurePolicyId.NO_DEAL_FAILURE, origin));
+                originalRhs, valueDescriptorOf(checkedType(assignment)), FailurePolicyId.NO_DEAL_FAILURE, origin));
             if (creationRuleAnalysis && classCore) {
                 recordPositionClassification(BoundaryKind.CLASS_FIELD_ASSIGNMENT,
                     producedType(assignment.value()), declaredDescriptor,
                     fieldBoundaryOp != null ? fieldBoundaryOp : commitOp);
             }
-            return value;
+            return originalRhs;
         }
 
         /**
@@ -11342,14 +11324,13 @@ public final class SemanticLowerer {
                     value = lowerExpression(expr);
                 }
             } else {
-                if (!(context.signature.returnType() instanceof RuntimeDescriptor.Null)) {
-                    throw new ConstructUnlowered("bare return in a function whose return "
-                        + "type is not null (the checker requires the value)", statement.span());
+                if (!(context.signature.returnType() instanceof RuntimeDescriptor.Void)) {
+                    throw new ConstructUnlowered("bare return requires a void result", statement.span());
                 }
                 value = emitValueOp(SemanticOpKind.CONST,
-                    new KindPayload.ConstPayload(ScalarValue.Null.INSTANCE),
+                    new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE),
                     statement.span(),
-                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE),
+                    ContainerPayloadDescriptors.resultDescriptorOf(Type.Undefined.INSTANCE),
                     FailurePolicyId.NO_DEAL_FAILURE);
             }
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
@@ -11425,8 +11406,8 @@ public final class SemanticLowerer {
          */
         private void lowerImplicitReturn(FunctionContext context, Span span) {
             ValueId value = emitValueOp(SemanticOpKind.CONST,
-                new KindPayload.ConstPayload(ScalarValue.Null.INSTANCE), span,
-                ContainerPayloadDescriptors.resultDescriptorOf(Type.Null.INSTANCE),
+                new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE), span,
+                ContainerPayloadDescriptors.resultDescriptorOf(Type.Undefined.INSTANCE),
                 FailurePolicyId.NO_DEAL_FAILURE);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId returnOpId = ids.nextOpId(module, nextOrdinal++, 0);
@@ -12239,7 +12220,7 @@ public final class SemanticLowerer {
             catchFrames.add(0, new CatchFrame(statement.catchVar(), catchBinding,
                 bindingScopes.size()));
             // The catch variable is an ordinary mutable lexical binding of
-            // the catch block's scope (docs/spec-v1.4.md §try / catch): it
+            // the catch block's scope (docs/spec-v1.5.md §try / catch): it
             // enters the walk's binding environment in its own frame so a
             // direct assignment resolves its cell and a closure created in
             // the catch body registers it as a capture — the catch entry's
@@ -12410,6 +12391,10 @@ public final class SemanticLowerer {
 
         private ValueId lowerBindingLoad(IdentifierExpr identifier, ValueId slot) {
             Type type = checkedType(identifier);
+            if (identifier.name().equals("undefined")) {
+                return emitValueOp(SemanticOpKind.CONST, new KindPayload.ConstPayload(ScalarValue.Undefined.INSTANCE),
+                    identifier.span(), RuntimeDescriptor.Undefined.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE, slot);
+            }
             for (ForEachFrame frame : frames) {
                 if (frame.name().equals(identifier.name())) {
                     FrameResolution loopResolution = resolveFrame(frame.name());
@@ -12658,7 +12643,7 @@ public final class SemanticLowerer {
                             // non-OPEN body carries no implicit return and
                             // never fails closed).
                             if (!(signature.returnType()
-                                    instanceof RuntimeDescriptor.Null)) {
+                                    instanceof RuntimeDescriptor.Void)) {
                                 throw new ConstructUnlowered("closure body is not "
                                     + "terminated and its return type is not null "
                                     + "(the E7 slice lowers the pinned implicit null "
@@ -12975,10 +12960,17 @@ public final class SemanticLowerer {
          * semantics, the once-only receiver evaluation and the operand order
          * are unchanged.
          */
+        private Type checkedInstanceofTarget(InstanceofExpr test) {
+            Type.Class target = checks.instanceofTargets().get(test);
+            if (target == null) throw new ConstructUnlowered("Missing instanceof class fact", test.span());
+            return target;
+        }
+
         private ValueId lowerHasField(HasExpr has, ValueId slot) {
             ValueId receiver = lowerOperand(has.object());
+            ValueId key = has.field() == null ? lowerExpression(has.key()) : null;
             return emitValueOp(SemanticOpKind.HAS_FIELD,
-                new KindPayload.HasFieldPayload(receiver, has.field()),
+                new KindPayload.HasFieldPayload(receiver, has.field(), key),
                 has.span(),
                 ContainerPayloadDescriptors.resultDescriptorOf(Type.Boolean.INSTANCE),
                 FailurePolicyId.NO_DEAL_FAILURE, slot);
@@ -13255,7 +13247,7 @@ public final class SemanticLowerer {
          * (declared {@code T | null}, read as {@code T}), the
          * {@code NARROWED_READ} validation of that read.
          *
-         * <p>docs/spec-v1.4.md Nullable semantics keeps calls
+         * <p>docs/spec-v1.5.md Nullable semantics keeps calls
          * non-invalidating on purpose, so a capturing closure call can
          * leave the binding null while the refinement claim still holds;
          * the consumer then receives a value its checked type does not
@@ -13574,6 +13566,7 @@ public final class SemanticLowerer {
             Type operandType = checkedType(unary.expr());
             UnarySelector selector;
             switch (unary.op()) {
+                case TYPEOF -> selector = UnarySelector.TYPEOF;
                 case NOT -> {
                     if (!(operandType instanceof Type.Boolean)) {
                         throw new ConstructUnlowered("unary '!' over non-boolean checked "
@@ -13608,7 +13601,7 @@ public final class SemanticLowerer {
          * position resolves to, or {@code null} when the position's
          * binding is not that intrinsic — the position-resolved
          * classifier the intrinsic-call arm and the adapted-source shape
-         * share. Resolution follows docs/spec-v1.4.md §Name resolution:
+         * share. Resolution follows docs/spec-v1.5.md §Name resolution:
          * the walk's own binding environment is the declaration-order
          * exact per-position fact (a {@code let} is registered only after
          * its own initializer, so an initializer reading the shadowed
@@ -13661,26 +13654,6 @@ public final class SemanticLowerer {
 
 
         private static RuntimeDescriptor valueDescriptorOf(Type type) {
-            boolean admissible = switch (type) {
-                case Type.Null ignored -> true;
-                case Type.Boolean ignored -> true;
-
-                case Type.Number ignored -> true;
-                case Type.String ignored -> true;
-                case Type.Nullable nullable -> switch (nullable.inner()) {
-                    case Type.Boolean ignored -> true;
-
-                    case Type.Number ignored -> true;
-                    default -> false;
-                };
-                default -> false;
-            };
-            if (!admissible) {
-                throw new ConstructUnlowered(
-                    "value-slice descriptor position over non-scalar checked type "
-                        + typeName(type) + " (the slice's pinned one-line scalar rows "
-                        + "only; the structural DescriptorService is ISSUE-0233's)");
-            }
             try {
                 return DescriptorService.describe(type);
             } catch (DescriptorService.Defect defect) {
@@ -13743,33 +13716,12 @@ public final class SemanticLowerer {
          * The checked type of the value one source expression actually
          * produces at a statically typed function-value position (the
          * signature the position's adapter records and validates the
-         * consumed source against). Every expression produces its own
-         * checked type except an assignment expression, which the checker
-         * types by its right-hand side while the lowering commits the
-         * <em>target-typed</em> value: the assignment position's own cell
-         * ({@code VARIABLE_ASSIGNMENT}, {@code ARRAY_ELEMENT_ASSIGNMENT} or
-         * {@code CLASS_FIELD_ASSIGNMENT}) admits exactly the target
-         * binding/field/element descriptor, so an assignable-but-not-exact
-         * function value is adapted by that assignment and an exact one
-         * stores directly — either way the result carries the target type.
-         * Classifying such a source by the right-hand side's static type
-         * would adapt an already target-typed value a second time: the
-         * position's source-signature check would compare the shorter
-         * right-hand side signature with the wider value the assignment
-         * actually produced. The recursion covers a nested assignment
-         * source, which produces the target-typed value of its own
-         * position. A non-function target (a table member, a nullable
-         * function field, a bytes slot) stores the right-hand side as it
-         * is, so the expression keeps its own checked type there.
+         * consumed source against). Assignment expressions also produce
+         * their checked RHS type and original RHS identity: an adapter is
+         * committed only to storage, never yielded. A consuming position
+         * therefore adapts the yielded RHS independently when necessary.
          */
         private Type producedType(ExpressionNode expr) {
-            if (expr instanceof AssignmentExpr assignment) {
-                Type targetType = checkedType(assignment.target());
-                if (targetType instanceof Type.Func
-                        && producedType(assignment.value()) instanceof Type.Func) {
-                    return targetType;
-                }
-            }
             return checkedType(expr);
         }
 

@@ -17,7 +17,7 @@ function rethrowCaught(e: Error): number {
   try {
     throw e;
   } catch (caught) {
-    throw caught;
+    throw caught as Error;
   }
   return 0;
 }
@@ -28,7 +28,8 @@ function assertFirstThrowIdentity(): null {
   let caughtOnce: boolean = false;
   try {
     throw original;
-  } catch (e) {
+  } catch (caught) {
+    let e: Error = caught as Error;
     caughtOnce = true;
     if (e !== original || e !== alias) {
       throw { code: "TEST_FAIL", message: "the first throw lost the Error identity" };
@@ -52,7 +53,8 @@ function assertRethrowIdentity(): null {
   let caughtAgain: boolean = false;
   try {
     let x: number = rethrowCaught(original);
-  } catch (again) {
+  } catch (caught) {
+    let again: Error = caught as Error;
     caughtAgain = true;
     if (again !== original) {
       throw { code: "TEST_FAIL", message: "the rethrow lost the Error identity" };
@@ -74,12 +76,13 @@ function assertNestedCatchIdentity(): null {
     try {
       throw { code: "INNER", message: "inner" };
     } catch (inner) {
-      if (inner.code !== "INNER") {
+      if ((inner as Error).code !== "INNER") {
         throw { code: "TEST_FAIL", message: "the handled Error lost its code" };
       }
       throw outer;
     }
-  } catch (o) {
+  } catch (caught) {
+    let o: Error = caught as Error;
     handled = true;
     if (o !== outer) {
       throw { code: "TEST_FAIL", message: "the handler's replacement lost the Error identity" };
@@ -111,18 +114,19 @@ function assertErrorCrossingIdentity(): null {
 // same instance the async body threw, so the awaiting catch binds it and
 // its field write is visible through both aliases. Driven as the
 // fixture's declared zero-arity assertion export on every lane.
-export async function test_awaited_error_identity(): string {
+export async function test_awaited_error_identity(): Promise<string> {
   let original: Error = { code: "A", message: "a" };
   let alias: Error = original;
 
-  async function asyncThrow(): number {
+  async function asyncThrow(): Promise<number> {
     throw original;
   }
 
   let caught: boolean = false;
   try {
     let x: number = await asyncThrow();
-  } catch (e) {
+  } catch (caughtError) {
+    let e: Error = caughtError as Error;
     caught = true;
     if (e !== original || e !== alias) {
       throw { code: "TEST_FAIL", message: "the awaited error lost the Error identity" };

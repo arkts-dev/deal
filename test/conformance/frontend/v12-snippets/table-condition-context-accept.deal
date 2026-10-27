@@ -1,6 +1,6 @@
 // @spec: Tables
-// @description: Corner-case subject table-condition-context-accept — Keep narrow contextual list, contrast if condition with while condition. (basis: Table read allowed contexts enumerate if(E), not while(E))
+// @description: A checked Record boolean can be consumed directly as an if condition
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): boolean {let t: table = {flag:true}; if(t.flag) {return true;} return false;}
+export function f(): boolean {let t: Record<string, unknown> = {flag:true}; if(t.flag as boolean) {return true;} return false;}

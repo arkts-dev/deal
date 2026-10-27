@@ -6,6 +6,8 @@ function main(): null {
     try {
         throw { code: "E999", message: "test error" };
     } catch (e) {
-        let code: string = e.code;
+        let error: Error = e as Error;
+        let code: string = error.code;
     }
+    return null;
 }

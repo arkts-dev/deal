@@ -22,26 +22,26 @@ function bump(x: number): number {
   return y;
 }
 
-function pick(): async (w: host.Widget, g: (x: number) => number) => string {
+function pick(): (w: host.Widget, g: (x: number) => number) => Promise<string> {
   return host.describeAsync;
 }
 
-export async function test_runtime_resolved_async(): null {
+export async function test_runtime_resolved_async(): Promise<null> {
   let w: host.Widget = { label: "w", weight: 7, action: bump };
-  let dyn: async (w: host.Widget, g: (x: number) => number) => string = pick();
+  let dyn: (w: host.Widget, g: (x: number) => number) => Promise<string> = pick();
   let text: string = await dyn(w, bump);
   check(text === "W|w|7|true:42", "the runtime-resolved async host call preserves the class and function arguments");
   return null;
 }
 
 export function test_table_return(): null {
-  let t: table = host.makeTable();
-  let w: host.Widget = t.widget;
+  let t: Record<string, unknown> = host.makeTable();
+  let w: host.Widget = t.widget as host.Widget;
   check(w.label === "made", "the table-typed host return class member label");
   check(w.weight === 9, "the table-typed host return class member weight");
   let field: (x: number) => number = w.action;
   check(field(41) === 42, "the table-typed host return class member function field");
-  let member: (x: number) => number = t.action;
+  let member: (x: number) => number = t.action as (x: number) => number;
   check(member(41) === 42, "the table-typed host return function member");
   check(host.tableIntact(), "the host object the bridge copies is not mutated");
   return null;
@@ -49,7 +49,7 @@ export function test_table_return(): null {
 
 export function test_table_parameter(): null {
   let point: Point = { x: 3, y: 4 };
-  let holder: table = { point: point, twin: point, step: bump };
+  let holder: Record<string, unknown> = { point: point, twin: point, step: bump };
   let report: string = host.describeTable(holder);
   check(report === "T|true|3,4|true|true:42", "the table-typed host parameter preserves the class member, its alias and the function member");
   return null;
@@ -60,10 +60,10 @@ export function test_table_field(): null {
   check(board.title === "board", "the table-typed host-class field carrier title");
   check(board.widgets.length === 1, "the host-class class-array field length");
   check(board.widgets[0].label === "w0", "the host-class class-array field element");
-  let meta: table = board.meta;
-  let w: host.Widget = meta.widget;
+  let meta: Record<string, unknown> = board.meta;
+  let w: host.Widget = meta.widget as host.Widget;
   check(w.weight === 5, "the table-typed host-class field class member");
-  let member: (x: number) => number = meta.action;
+  let member: (x: number) => number = meta.action as (x: number) => number;
   check(member(41) === 42, "the table-typed host-class field function member");
   return null;
 }

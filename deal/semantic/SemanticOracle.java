@@ -560,7 +560,7 @@ public final class SemanticOracle {
 
     /** The oracle's closed runtime-value model. */
     public sealed interface Value
-        permits Value.NullValue, Value.MissingValue, Value.AbsentValue,
+        permits Value.UndefinedValue, Value.NullValue, Value.MissingValue, Value.AbsentValue,
                 Value.BoolValue,
                 Value.NumValue, Value.StrValue, Value.TableValue, Value.ArrayValue,
                 Value.FuncValue, Value.AdapterValue,
@@ -568,6 +568,7 @@ public final class SemanticOracle {
                 Value.StdlibCallableValue, Value.HostEntryValue {
 
         enum NullValue implements Value { INSTANCE }
+        enum UndefinedValue implements Value { INSTANCE }
 
         enum MissingValue implements Value { INSTANCE }
 
@@ -1520,6 +1521,7 @@ record NumValue(double value) implements Value {
                 return "missing";
             }
             return switch (value) {
+                case Value.UndefinedValue ignored -> "undefined";
                 case Value.NullValue ignored -> "null";
                 case Value.MissingValue ignored -> "missing";
                 case Value.AbsentValue ignored -> "missing";
@@ -1826,7 +1828,7 @@ record NumValue(double value) implements Value {
          * so an earlier declaration's closure captures the cell by
          * identity even when the publishing group op runs later in the
          * same module init (the declaration-order-independent forward
-         * reference: docs/spec-v1.4.md §Name resolution — Declaration order,
+         * reference: docs/spec-v1.5.md §Name resolution — Declaration order,
          * C1 body coverage). The
          * group op's publication phase still writes the member closures
          * into these pre-created cells in one ordered sequence (phase 0's
@@ -2030,6 +2032,7 @@ record NumValue(double value) implements Value {
             ScalarValue scalar = payload.value();
             Value value = switch (scalar) {
                 case ScalarValue.Null ignored -> Value.NullValue.INSTANCE;
+                case ScalarValue.Undefined ignored -> Value.UndefinedValue.INSTANCE;
                 case ScalarValue.Boolean bool -> new Value.BoolValue(bool.value());
 
                 case ScalarValue.Number number -> new Value.NumValue(number.value());
@@ -2042,11 +2045,30 @@ record NumValue(double value) implements Value {
             KindPayload.UnaryPayload payload = (KindPayload.UnaryPayload) op.payload();
             Value input = valueOf(op.operands().get(0));
             return switch (payload.selector()) {
+                case TYPEOF -> publish(op, new Value.StrValue(sourceTypeof(input)));
+                case INSTANCEOF -> publish(op, new Value.BoolValue(
+                    payload.target() instanceof RuntimeDescriptor.Class target
+                        && (input instanceof Value.ClassValue instance && instance.classId().equals(target.classId())
+                            || input instanceof Value.ErrorValue && target.classId().equals(ClassId.ERROR))));
                 case BOOL_NOT -> publish(op,
                     new Value.BoolValue(!((Value.BoolValue) input).value()));
 
                 case NUMBER_NEG -> publish(op,
                     new Value.NumValue(-numberUse(input)));
+            };
+        }
+
+        private static String sourceTypeof(Value value) {
+            return switch (value) {
+                case Value.UndefinedValue ignored -> "undefined";
+                case Value.BoolValue ignored -> "boolean";
+                case Value.NumValue ignored -> "number";
+                case Value.StrValue ignored -> "string";
+                case Value.FuncValue ignored -> "function";
+                case Value.AdapterValue ignored -> "function";
+                case Value.StdlibCallableValue ignored -> "function";
+                case Value.HostEntryValue ignored -> "function";
+                default -> "object";
             };
         }
 
@@ -2065,8 +2087,7 @@ record NumValue(double value) implements Value {
                     return publish(op, arithmetic(op, payload.selector(), left, right));
                 }
             }
-            // An int boundary admits integral number variants without changing
-            // storage. Supply integer views only to integer comparison consumers.
+            // Select the binary64 comparison view without changing storage.
             boolean numberComparison = payload.selector().name().startsWith("NUMBER_")
                 || payload.innerDescriptor() instanceof RuntimeDescriptor.Number;
             boolean result = ComparisonExecutor.compare(payload.selector(),
@@ -2132,6 +2153,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
         ComparisonOperandView viewOf(Value value) {
             return switch (value) {
                 case Value.NullValue ignored -> ComparisonOperandView.Null.INSTANCE;
+                case Value.UndefinedValue ignored -> ComparisonOperandView.Undefined.INSTANCE;
                 case Value.MissingValue ignored -> ComparisonOperandView.Missing.INSTANCE;
                 case Value.BoolValue bool -> new ComparisonOperandView.Boolean(bool.value());
 
@@ -2317,7 +2339,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             Value input = payload.value() == null
                 ? Value.MissingValue.INSTANCE : valueOf(payload.value());
             Value preMapped = input instanceof Value.MissingValue
-                ? Value.NullValue.INSTANCE : input;
+                ? Value.UndefinedValue.INSTANCE : input;
             SemanticOp boundary = singleChild(op);
             if (boundary == null) {
                 return publish(op, preMapped);
@@ -2364,9 +2386,10 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             KindPayload.HasFieldPayload payload =
                 (KindPayload.HasFieldPayload) op.payload();
             Value receiver = valueOf(payload.receiver());
+            String key = payload.dynamicKey() == null ? payload.key() : ((Value.StrValue) valueOf(payload.dynamicKey())).value();
             if (receiver instanceof Value.TableValue table) {
                 return publish(op,
-                    new Value.BoolValue(table.entries().containsKey(payload.key())));
+                    new Value.BoolValue(table.entries().containsKey(key)));
             }
             if (receiver instanceof Value.ClassValue classValue) {
 
@@ -2679,6 +2702,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
         /** The uncached oracle → executor conversion. */
         private ClassOpsExecutor.Value convertExecutorView(Value value) {
             return switch (value) {
+                case Value.UndefinedValue ignored -> ClassOpsExecutor.Value.Undefined.INSTANCE;
                 case Value.NullValue ignored -> ClassOpsExecutor.Value.Null.INSTANCE;
                 case Value.MissingValue ignored -> ClassOpsExecutor.Value.Missing.INSTANCE;
                 case Value.AbsentValue ignored -> throw new IllegalStateException(
@@ -2714,7 +2738,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     // identity/currentness contract as the live table view).
                     new ClassOpsExecutor.Value.Array(SemanticArray.live(
                         () -> array.elements().size(),
-                        index -> executorValueOf(array.elements().get(index))));
+                        index -> executorValueOf(array.elements().get(index))), array.elementDescriptor());
                 case Value.FuncValue func ->
                     new ClassOpsExecutor.Value.Function(func.signature());
                 case Value.AdapterValue adapter ->
@@ -2761,6 +2785,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
         /** The uncached executor → oracle conversion. */
         private Value convertOracleView(ClassOpsExecutor.Value value) {
             return switch (value) {
+                case ClassOpsExecutor.Value.Undefined ignored -> Value.UndefinedValue.INSTANCE;
                 case ClassOpsExecutor.Value.Null ignored -> Value.NullValue.INSTANCE;
                 case ClassOpsExecutor.Value.Missing ignored -> Value.MissingValue.INSTANCE;
                 case ClassOpsExecutor.Value.Bool bool ->
@@ -2796,13 +2821,11 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     for (int i = 0; i < array.array().size(); i++) {
                         elements.add(oracleValueOf(array.array().elementAt(i)));
                     }
-                    // The closed view carries no element descriptor; the
-                    // oracle's array values never consult the descriptor
-                    // at execution (boundaries and atoms read elements
-                    // only), so a construction-crossed array carries the
-                    // neutral descriptor.
+                    // Typed JSON decoding allocates arrays with the plan's
+                    // persistent element descriptor, including empty arrays.
                     yield new Value.ArrayValue(elements,
-                        RuntimeDescriptor.String.INSTANCE, false);
+                        array.elementDescriptor() == null ? RuntimeDescriptor.Unknown.INSTANCE
+                            : array.elementDescriptor(), array.elementDescriptor() == null);
                 }
                 case ClassOpsExecutor.Value.Function function ->
                     new Value.FuncValue(null, function.signature(), Map.of());
@@ -3412,9 +3435,10 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 List<Value> elements = array.elements();
                 IntFunction<BoundaryValueView> elementViews =
                     index -> viewOfValue(elements.get(index));
-                return array.decodedArray()
+                BoundaryValueView view = array.decodedArray()
                     ? BoundaryValueView.ofLazyDecodedArray(elements.size(), elementViews)
                     : BoundaryValueView.ofLazyArray(elements.size(), elementViews);
+                return array.decodedArray() ? view : view.withArrayElementDescriptor(array.elementDescriptor());
             }
             return shallowViewOfValue(value);
         }
@@ -3430,6 +3454,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
          */
         private BoundaryValueView shallowViewOfValue(Value value) {
             return switch (value) {
+                case Value.UndefinedValue ignored -> BoundaryValueView.of(ActualKind.UNDEFINED);
                 case Value.NullValue ignored -> BoundaryValueView.nullView();
                 case Value.MissingValue ignored -> BoundaryValueView.of(ActualKind.MISSING);
                 case Value.AbsentValue ignored ->
@@ -3462,7 +3487,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     BoundaryValueView.ofFunction(entry.descriptor());
                 case Value.ArrayValue array -> array.decodedArray()
                     ? BoundaryValueView.ofDecodedArray(List.of())
-                    : BoundaryValueView.ofArray(List.of());
+                    : BoundaryValueView.ofArray(List.of())
+                        .withArrayElementDescriptor(array.elementDescriptor());
                 case Value.ClassValue classValue ->
                     BoundaryValueView.ofClass(classValue.classId().text());
                 case Value.SlotValue slot -> BoundaryValueView.ofNumber(0);
@@ -3490,6 +3516,9 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
 
         /** The passed boundary view → runtime value (missing→null was pre-mapped). */
         private Value valueOfView(BoundaryValueView view, Value original) {
+            if (view.kind() == ActualKind.UNDEFINED) {
+                return Value.UndefinedValue.INSTANCE;
+            }
             if (view.kind() == ActualKind.MISSING) {
                 return Value.MissingValue.INSTANCE;
             }
@@ -3505,8 +3534,10 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             Value input = valueOf(payload.input());
             BoundaryOutcome outcome;
             try {
-                outcome = BoundaryExecutor.execute(op.failurePolicy(), payload.descriptor(),
-                    viewOfValue(input), BoundaryContext.none(), payload.realization());
+                outcome = payload.kind() == BoundaryKind.ASSERTION
+                    ? BoundaryExecutor.checkAssertion(payload.descriptor(), viewOfValue(input))
+                    : BoundaryExecutor.execute(op.failurePolicy(), payload.descriptor(),
+                        viewOfValue(input), BoundaryContext.none(), payload.realization());
             } catch (BoundaryExecutor.Defect defect) {
                 throw new IllegalStateException("boundary " + op.opId()
                     + " has no executor projection: " + defect.getMessage());
@@ -5633,6 +5664,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
         /** The canonical typed-boundary token of a runtime value (P2 item 1). */
         private String canonicalKind(Value input) {
             return switch (input) {
+                case Value.UndefinedValue ignored -> "undefined";
                 case Value.NullValue ignored -> "null";
                 case Value.AbsentValue ignored -> "nil";
                 case Value.BoolValue ignored -> "boolean";
@@ -5763,6 +5795,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
         private SharedStdlibSemantics.Value stdlibCarrierOf(
                 Value value, IdentityHashMap<Value, SharedStdlibSemantics.Value> memo) {
             return switch (value) {
+                case Value.UndefinedValue ignored -> SharedStdlibSemantics.Value.Undefined.INSTANCE;
                 case Value.NullValue ignored ->
                     SharedStdlibSemantics.Value.Null.INSTANCE;
                 case Value.AbsentValue ignored -> throw new IllegalStateException(
@@ -5816,11 +5849,28 @@ private static IllegalStateException dynamicFunctionValueDefect(
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
                 case Value.HostEntryValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.FUNCTION, null);
-                case Value.ErrorValue ignored -> new SharedStdlibSemantics.Value.Other(
-                    ActualKind.CLASS, ClassId.ERROR.text());
-                case Value.ClassValue classValue ->
-                    new SharedStdlibSemantics.Value.Other(ActualKind.CLASS,
-                        classValue.classId().text());
+                case Value.ErrorValue error -> {
+                    SemanticTable<SharedStdlibSemantics.Value> fields = new SemanticTable<>();
+                    fields.put("code", SharedStdlibSemantics.Value.string(error.code()));
+                    fields.put("message", SharedStdlibSemantics.Value.string(error.message()));
+                    yield new SharedStdlibSemantics.Value.Table(fields);
+                }
+                case Value.ClassValue classValue -> {
+                    SharedStdlibSemantics.Value mapped = memo.get(classValue);
+                    if (mapped != null) yield mapped;
+                    ClassLayout layout = instanceLayouts.get(classValue);
+                    if (layout == null) layout = classLayouts.get(classValue.classId());
+                    if (layout == null || layout.fields().size() != classValue.fields().size())
+                        throw new IllegalStateException("JSON class value has no exact layout");
+                    SemanticTable<SharedStdlibSemantics.Value> fields = new SemanticTable<>();
+                    SharedStdlibSemantics.Value.Table registered = new SharedStdlibSemantics.Value.Table(fields);
+                    memo.put(classValue, registered);
+                    for (int i = 0; i < layout.fields().size(); i++) {
+                        if (classValue.fields().get(i) instanceof Value.ClassFieldState.Present present)
+                            fields.put(layout.fields().get(i).name(), stdlibCarrierOf(present.value(), memo));
+                    }
+                    yield registered;
+                }
                 case Value.MissingValue ignored ->
                     new SharedStdlibSemantics.Value.Other(ActualKind.MISSING, null);
                 case Value.SlotValue ignored -> throw new IllegalStateException(
@@ -5843,6 +5893,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
         private Value stdlibResultOf(SharedStdlibSemantics.Value value,
                 boolean decodedArrays) {
             return switch (value) {
+                case SharedStdlibSemantics.Value.Undefined ignored -> Value.UndefinedValue.INSTANCE;
                 case SharedStdlibSemantics.Value.Null ignored ->
                     Value.NullValue.INSTANCE;
                 case SharedStdlibSemantics.Value.Bool bool ->
@@ -5894,7 +5945,11 @@ private static IllegalStateException dynamicFunctionValueDefect(
             for (int i = 0; i < elements.size(); i++) {
                 result.add(stdlibResultOf(elements.elementAt(i), decodedArray));
             }
-            return new Value.ArrayValue(result, JSON_CARRIER_ELEMENT_DESCRIPTOR,
+            // The non-JSON array-producing stdlib rows (split and keys)
+            // publish string[]; decoded JSON carriers remain structural
+            // until a typed crossing establishes their descriptor.
+            return new Value.ArrayValue(result, decodedArray
+                ? JSON_CARRIER_ELEMENT_DESCRIPTOR : RuntimeDescriptor.String.INSTANCE,
                 decodedArray);
         }
 
@@ -6185,7 +6240,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
             // expected/actual, frames and cause unchanged and catching the
             // rethrown error again is the identical Error value. The
             // binding is a fresh mutable lexical binding per catch
-            // execution (docs/spec-v1.4.md §Closures and captured
+            // execution (docs/spec-v1.5.md §Closures and captured
             // variables, §try / catch), so the cell is allocated here and
             // never reused: a closure created in an earlier catch captured
             // that execution's cell and keeps observing its own caught

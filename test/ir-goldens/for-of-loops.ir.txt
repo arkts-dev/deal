@@ -4,20 +4,24 @@ module @test/ir-goldens/fixtures/for-of-loops.deal:3:1-16:1
       [boundary: param-entry]
     body
       for-of @test/ir-goldens/fixtures/for-of-loops.deal:4:5-7:10
-        ident xs : [number] @test/ir-goldens/fixtures/for-of-loops.deal:4:27-4:28
-        block @test/ir-goldens/fixtures/for-of-loops.deal:4:31-6:5
+        ident xs : [number] @test/ir-goldens/fixtures/for-of-loops.deal:4:19-4:20
+        block @test/ir-goldens/fixtures/for-of-loops.deal:4:23-6:5
           let y: number @test/ir-goldens/fixtures/for-of-loops.deal:5:9-6:5
             [boundary: var-annotation]
             ident x : number @test/ir-goldens/fixtures/for-of-loops.deal:5:25-5:25
       return @test/ir-goldens/fixtures/for-of-loops.deal:7:5-8:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/for-of-loops.deal:7:12-7:15
   function testForOfString: null @test/ir-goldens/fixtures/for-of-loops.deal:10:1-16:1
     param s: string @test/ir-goldens/fixtures/for-of-loops.deal:10:26-10:35
       [boundary: param-entry]
     body
       for-of @test/ir-goldens/fixtures/for-of-loops.deal:11:5-14:10
-        ident s : string @test/ir-goldens/fixtures/for-of-loops.deal:11:27-11:27
-        block @test/ir-goldens/fixtures/for-of-loops.deal:11:30-13:5
+        ident s : string @test/ir-goldens/fixtures/for-of-loops.deal:11:19-11:19
+        block @test/ir-goldens/fixtures/for-of-loops.deal:11:22-13:5
           let d: string @test/ir-goldens/fixtures/for-of-loops.deal:12:9-13:5
             [boundary: var-annotation]
             ident c : string @test/ir-goldens/fixtures/for-of-loops.deal:12:25-12:25
       return @test/ir-goldens/fixtures/for-of-loops.deal:14:5-15:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/for-of-loops.deal:14:12-14:15

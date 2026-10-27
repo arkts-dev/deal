@@ -35,7 +35,7 @@ public class ClassNewLoweringTest {
         CheckResult checks = TypeChecker.check(MODULE.path(), symbols, resolver, parse.program());
         check(!checks.hasErrors(), "source checks: " + checks.diagnostics());
         if (checks.hasErrors()) return null;
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, parse.program(),
             Map.of(), symbols, checks, List.of());

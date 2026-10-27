@@ -395,7 +395,7 @@ public final class RawUnitMaterializer {
         return switch (kind) {
             case CONST -> new KindPayload.ConstPayload(scalar(p, "value", where));
             case UNARY -> new KindPayload.UnaryPayload(enumAt(p, "selector",
-                UnarySelector.class, where));
+                UnarySelector.class, where), optionalDescriptor(p, "target", where));
             case BINARY -> new KindPayload.BinaryPayload(
                 enumAt(p, "selector", BinarySelector.class, where),
                 optionalDescriptor(p, "innerDescriptor", where),
@@ -430,7 +430,7 @@ public final class RawUnitMaterializer {
                 optionalValueId(p, "value", where), boolAt(p, "present", where),
                 descriptorAt(p, "descriptor", where));
             case HAS_FIELD -> new KindPayload.HasFieldPayload(valueIdAt(p, "receiver", where),
-                stringAt(p, "key", where));
+                optionalString(p, "key"), optionalValueId(p, "dynamicKey", where));
             case BOUNDARY -> new KindPayload.BoundaryPayload(
                 enumAt(p, "kind", BoundaryKind.class, where),
                 descriptorAt(p, "descriptor", where), valueIdAt(p, "input", where),
@@ -577,6 +577,9 @@ public final class RawUnitMaterializer {
         CanonicalJson.Value value = at(payload, key, where);
         if (value instanceof CanonicalJson.Null) {
             return ScalarValue.Null.INSTANCE;
+        }
+        if (value.equals(CanonicalJson.obj(CanonicalJson.e("undefined", CanonicalJson.bool(true))))) {
+            return ScalarValue.Undefined.INSTANCE;
         }
         if (value instanceof CanonicalJson.Bool b) {
             return new ScalarValue.Boolean(b.value());

@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Class return checks
-// @description: Dynamic table with bad class field fails at class-typed return boundary
+// @description: A closure-cleared nominal class refinement fails at class return admission, independently of assertions.
 // @expected: runtime-error E8001
 // @features: classes, type-system, runtime-errors
 
@@ -8,8 +8,13 @@ import * as json from "std/json";
 class Box { value: number; }
 
 export function test_dynamic_bad_class_return(): Box {
-  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
-  return holder.item;
+  let item: Box | null = {value: 7};
+  let clear: () => void = function(): void { item = null; };
+  if (item !== null) {
+    clear();
+    return item;
+  }
+  throw { code: "TEST_FAIL", message: "refined class return branch skipped" };
 }
 
 export function main(): null {

@@ -1,5 +1,5 @@
 // @spec: Classes — Field access
-// @description: has() checks optional field presence
+// @description: Object.hasOwn checks optional and required field presence
 // @expected: runtime-ok
 // @features: classes, has
 
@@ -10,14 +10,17 @@ class User {
 
 export function test_has(): boolean {
   let u: User = { name: "Ada" };
-  let missing: boolean = has(u.nick); // false
+  let missing: boolean = Object.hasOwn(u, "nick"); // false
   if (missing !== false) {
     throw { code: "TEST_FAIL", message: "has() reported optional field present before assignment" };
   }
   u.nick = "ads";
-  let present: boolean = has(u.nick); // true
+  let present: boolean = Object.hasOwn(u, "nick"); // true
   if (present !== true) {
     throw { code: "TEST_FAIL", message: "has() reported optional field missing after assignment" };
+  }
+  if (!Object.hasOwn(u, "name")) {
+    throw { code: "TEST_FAIL", message: "required field must be present" };
   }
   return !missing && present;
 }

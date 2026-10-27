@@ -5,9 +5,11 @@
 
 import * as a from "./same_name_sibling_a";
 import * as b from "./same_name_sibling_b";
+import * as host from "host/signature_mutation";
 
 export function main(): null {
-  let t: table = { f: a.identity };
-  let wrong: (x: b.Item) => b.Item = t.f;
+  let source: (x: b.Item) => b.Item = function(x: b.Item): b.Item { return x; };
+  if (!host.replaceSignature({value: source}, "(@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item)->@conformance/backend-runtime/classes/same_name_sibling_a.deal/Item")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  let wrong: (x: b.Item) => b.Item = source;
   return null;
 }

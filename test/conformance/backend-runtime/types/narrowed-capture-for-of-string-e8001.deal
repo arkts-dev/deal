@@ -11,7 +11,7 @@ export function main(): null {
   };
   if (name !== null) {
     clear();
-    for (let c: string of name) {
+    for (let c of name) {
       throw { code: "TEST_FAIL", message: "the loop body must not run" };
     }
   }

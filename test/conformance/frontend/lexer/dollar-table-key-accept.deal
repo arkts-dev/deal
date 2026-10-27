@@ -4,11 +4,11 @@
 // @features: tables, dollar-prohibition, string-data, accept-control
 
 export function main(): null {
-  let t: table = { bad$key: 1 };
-  let direct: number = t.bad$key;
+  let t: Record<string, unknown> = { bad$key: 1 };
+  let direct: number = t.bad$key as number;
   let key: string = "bad$key";
   t[key] = direct;
-  let indexed: number = t[key];
+  let indexed: number = t[key] as number;
   let text: string = "price$";
   let templated: string = `tag$${text}`;
   return null;

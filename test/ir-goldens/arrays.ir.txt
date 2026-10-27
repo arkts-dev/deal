@@ -1,5 +1,5 @@
-module @test/ir-goldens/fixtures/arrays.deal:4:1-10:1
-  function main: null @test/ir-goldens/fixtures/arrays.deal:4:1-10:1
+module @test/ir-goldens/fixtures/arrays.deal:4:1-11:1
+  function main: null @test/ir-goldens/fixtures/arrays.deal:4:1-11:1
     body
       let a: [number] @test/ir-goldens/fixtures/arrays.deal:5:5-6:7
         [boundary: var-annotation]
@@ -19,6 +19,9 @@ module @test/ir-goldens/fixtures/arrays.deal:4:1-10:1
         index [] : number @test/ir-goldens/fixtures/arrays.deal:7:21-7:24
           ident a : [number] @test/ir-goldens/fixtures/arrays.deal:7:21-7:21
           literal 2.0 : number @test/ir-goldens/fixtures/arrays.deal:7:23-7:23
-      let empty: [number] @test/ir-goldens/fixtures/arrays.deal:8:5-9:1
+      let empty: [number] @test/ir-goldens/fixtures/arrays.deal:8:5-9:10
         [boundary: var-annotation]
         array : [number] @test/ir-goldens/fixtures/arrays.deal:8:27-8:28
+      return @test/ir-goldens/fixtures/arrays.deal:9:5-10:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/arrays.deal:9:12-9:15

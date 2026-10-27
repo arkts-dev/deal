@@ -69,11 +69,12 @@ public final class Lexer {
         Map.entry("export",   TokenType.EXPORT),
         Map.entry("from",     TokenType.FROM),
         Map.entry("delete",   TokenType.DELETE),
-        Map.entry("has",      TokenType.HAS),
         Map.entry("try",      TokenType.TRY),
         Map.entry("catch",    TokenType.CATCH),
         Map.entry("throw",    TokenType.THROW),
-        Map.entry("as",       TokenType.AS)
+        Map.entry("as",       TokenType.AS),
+        Map.entry("typeof",   TokenType.TYPEOF),
+        Map.entry("instanceof", TokenType.INSTANCEOF)
     );
 
     /**
@@ -591,6 +592,12 @@ public final class Lexer {
         // Integer part (optional if starts with dot)
         while (pos < source.length() && isDigit(source.charAt(pos))) {
             bump();
+        }
+
+        if (pos - startPos > 1 && source.charAt(startPos) == '0') {
+            error(DiagnosticCode.E1002,
+                "Leading-zero decimal literals are not supported",
+                tokenStartRange());
         }
 
         // Fractional part: '.' followed by digits

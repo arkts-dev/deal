@@ -48,7 +48,7 @@ import java.util.stream.Stream;
  * shorter function value is adapted at every statically typed
  * function-value position, so the position's own boundary validates the
  * adapted value's exact target signature instead of rejecting a
- * source-compatible assignment (docs/spec-v1.4.md Function type
+ * source-compatible assignment (docs/spec-v1.5.md Function type
  * compatibility; Arity extension adapter).
  *
  * <p>The three published artifacts run the corpus fixtures' own exact
@@ -112,30 +112,29 @@ public final class FunctionArityExtensionProductionTest {
      * {@code number} or {@code bytes} shadow is the adapted operand at the
      * parameter, return, class supplied-field, class field-write, array
      * literal and array write positions, using ordinary lexical bindings
-     * with no compiler intrinsic seeds (docs/spec-v1.4.md §Name resolution).
+     * with no compiler intrinsic seeds (docs/spec-v1.5.md §Name resolution).
      */
     private static final String CONVERSION_SHADOW =
         "arity-extension-conversion-shadow";
 
     /**
      * The assignment-expression-source corpus: an assignment expression
-     * used as a value produces the target-typed value its own assignment
-     * position committed, so every position adapts over that produced value
-     * exactly once rather than over the checker's shorter right-hand side
-     * type. The exact-target positions store it unchanged, the wider targets
-     * adapt it once, the value positions materialize the assignment once,
-     * and the nested chain produces and adapts the inner target-typed value.
+     * yields the original RHS identity and type, independently of the
+     * adapter committed to storage. An enclosing typed position therefore
+     * adapts the original shorter callable again; each assignment snapshots
+     * its evaluated RHS once, including nested assignment chains.
      */
     private static final String ASSIGNMENT_SOURCE =
         "arity-extension-assignment-source";
 
     /**
      * The assignment-expression-source corpus's adapter count: one adapter
-     * per adapting position (the inner assignment's own adaptation included),
-     * so a second adaptation of an already target-typed produced value is
-     * visible as an extra adapter here.
+     * per adapting position, including distinct storage and enclosing-value
+     * adaptations over the original RHS. The nine enclosing exact-storage
+     * positions still need their own adapters: assignment does not yield the
+     * stored adapter. Runtime probes independently pin once-only evaluation.
      */
-    private static final int ASSIGNMENT_SOURCE_ADAPTERS = 23;
+    private static final int ASSIGNMENT_SOURCE_ADAPTERS = 32;
 
     /**
      * The three conversion shadows' position count: three names across the
@@ -179,9 +178,9 @@ public final class FunctionArityExtensionProductionTest {
 
         export function useTriple(f: (x: number, y: number, z: number) => number): number;
 
-        export function useParse(f: (text: string, extra: number) => table): table;
+        export function useParse(f: (text: string, extra: number) => Record<string, unknown>): Record<string, unknown>;
 
-        export function useIntTable(f: (x: number, y: table) => number): number;
+        export function useIntTable(f: (x: number, y: Record<string, unknown>) => number): number;
         """;
 
     /** The subject's LuaJIT host implementation. */
@@ -243,11 +242,11 @@ public final class FunctionArityExtensionProductionTest {
             return Double.valueOf(f.invoke(5, 9, 13));
           }
 
-          public static Object useParse($DealRt.Fn2_S_N_R_$table f) {
+          public static Object useParse($DealRt.Fn2_S_N_R_$record f) {
             return f.invoke("{}", 9);
           }
 
-          public static Object useIntTable($DealRt.Fn2_N_$table_R_N f) {
+          public static Object useIntTable($DealRt.Fn2_N_$record_R_N f) {
             return Double.valueOf(f.invoke(5, "bad"));
           }
         }
@@ -260,12 +259,14 @@ public final class FunctionArityExtensionProductionTest {
      */
     private static final String HOST_DYNAMIC_SOURCE = """
         import * as host from "host/arity_extension_host";
+        import * as mutation from "host/signature_mutation";
 
         function one(x: number): number { return x; }
 
         export function main(): null {
-          let holder: table = { f: one };
-          let r: number = host.usePair(holder.f);
+          let source: (x: number, y: number) => number = function(x: number, y: number): number { return x + y; };
+          if (!mutation.replaceSignature({value: source}, "(number)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+          let r: number = host.usePair(source);
           return null;
         }
         """;
@@ -305,7 +306,7 @@ public final class FunctionArityExtensionProductionTest {
      * wrapper admits every declared target parameter, so the host that
      * invokes the published adapter value with a wrong-typed ignored
      * (trailing) argument fails closed with the typed-boundary row instead
-     * of silently dropping the argument (docs/spec-v1.4.md Arity extension
+     * of silently dropping the argument (docs/spec-v1.5.md Arity extension
      * adapter: the wrapper checks the parameter it ignores). The declared
      * parameter is {@code table} so the JVM host ABI's declared function
      * wrapper can hand a non-table value to the trailing position.
@@ -376,8 +377,8 @@ public final class FunctionArityExtensionProductionTest {
         import * as json from "std/json";
 
         export function main(): null {
-          let parsed: table = host.useParse(json.parse);
-          if (json.stringify(parsed) !== "{}") {
+          let parsed: Record<string, unknown> = host.useParse(json.parse);
+          if ((json.stringify(parsed) as string) !== "{}") {
             throw { code: "TEST_FAIL", message: "host stdlib adapter failed" };
           }
           console.log("OK");
@@ -654,7 +655,11 @@ public final class FunctionArityExtensionProductionTest {
     }
 
     private static Project writeProject(Path root, String fixture) throws Exception {
-        return writeProject(root, fixture, Map.of());
+        Map<String, String> externals = fixture.equals(DYNAMIC_SOURCE)
+                || fixture.equals(DYNAMIC_SOURCE_ASYNC)
+            ? Map.of("host/signature_mutation", "bindings/signature_mutation.d.deal")
+            : Map.of();
+        return writeProject(root, fixture, externals);
     }
 
     /**
@@ -675,8 +680,13 @@ public final class FunctionArityExtensionProductionTest {
     /** One project over explicit entry source text. */
     private static Project writeProjectSource(Path root, String source,
             Map<String, String> externals) throws Exception {
+        if (source.contains("host/signature_mutation") && !externals.containsKey("host/signature_mutation")) {
+            Map<String, String> combined = new LinkedHashMap<>(externals);
+            combined.put("host/signature_mutation", "bindings/signature_mutation.d.deal");
+            externals = combined;
+        }
         StringBuilder json = new StringBuilder(
-            "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"]");
+            "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"]");
         if (!externals.isEmpty()) {
             json.append(",\"externals\":{");
             boolean first = true;
@@ -696,7 +706,17 @@ public final class FunctionArityExtensionProductionTest {
         for (Map.Entry<String, String> external : externals.entrySet()) {
             // The isolated-phase constructor resolves a relative declaration
             // against the entry directory.
-            writeFile(root, "src/" + external.getValue(), HOST_DECLARATION_SOURCE);
+            boolean mutation = external.getKey().equals("host/signature_mutation");
+            writeFile(root, "src/" + external.getValue(), mutation
+                ? Files.readString(Path.of("test/conformance/host-fixtures/signature_mutation.d.deal"))
+                    .replaceAll("(?m)^// @.*\\R", "")
+                : HOST_DECLARATION_SOURCE);
+            if (mutation) {
+                for (String suffix : List.of("lua", "js", "java")) {
+                    writeFile(root, "src/host/signature_mutation." + suffix,
+                        Files.readString(Path.of("test/conformance/host-fixtures/signature_mutation." + suffix)));
+                }
+            }
         }
         Path src = root.resolve("src");
         return new Project(root, src, src.resolve(ENTRY_MODULE + ".deal"),
@@ -711,17 +731,30 @@ public final class FunctionArityExtensionProductionTest {
 
     private static CompilationOrchestrator productionCompile(Project project,
             Backend backend) throws Exception {
-        return productionCompile(project, backend, Map.of());
+        Map<String, String> externals = Files.exists(project.src().resolve("bindings/signature_mutation.d.deal"))
+            ? Map.of("host/signature_mutation", "bindings/signature_mutation.d.deal") : Map.of();
+        return productionCompile(project, backend, externals);
     }
 
     /** The production compile with the project's external declarations. */
     private static CompilationOrchestrator productionCompile(Project project,
             Backend backend, Map<String, String> externals) throws Exception {
+        if (Files.exists(project.src().resolve("bindings/signature_mutation.d.deal"))) {
+            Map<String, String> combined = new LinkedHashMap<>(externals);
+            combined.put("host/signature_mutation", "bindings/signature_mutation.d.deal");
+            externals = combined;
+        }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             project.entry().toAbsolutePath(), project.out(), false, false, false,
             false, backend, externals, List.of(project.src().toAbsolutePath()),
             Path.of("").toAbsolutePath(), null, productionInvocation());
         orchestrator.compile();
+        if (Files.exists(project.src().resolve("bindings/signature_mutation.d.deal"))
+                && Files.isDirectory(project.out()) && backend != Backend.JVM) {
+            String suffix = backend == Backend.JS ? "js" : "lua";
+            writeFile(project.out(), "host/signature_mutation." + suffix,
+                Files.readString(project.src().resolve("host/signature_mutation." + suffix)));
+        }
         return orchestrator;
     }
 
@@ -943,8 +976,11 @@ public final class FunctionArityExtensionProductionTest {
     private static JvmArtifacts compileJvmProject(Project project, String label,
             List<Path> extraSources, Map<String, String> externals)
             throws Exception {
+        Map<String, String> effectiveExternals = new LinkedHashMap<>(externals);
+        boolean mutation = Files.exists(project.src().resolve("bindings/signature_mutation.d.deal"));
+        if (mutation) effectiveExternals.put("host/signature_mutation", "bindings/signature_mutation.d.deal");
         assertProductionEmission(productionCompile(project, Backend.JVM,
-            externals), label);
+            effectiveExternals), label);
         String className = JvmNames.classNameFor(ENTRY_MODULE);
         Path artifact = project.out().resolve(className + ".java");
         check(Files.isRegularFile(artifact), "jvm: the production compile stages "
@@ -957,6 +993,7 @@ public final class FunctionArityExtensionProductionTest {
         for (Path extra : extraSources) {
             command.add(extra.toAbsolutePath().toString());
         }
+        if (mutation) command.add(project.src().resolve("host/signature_mutation.java").toAbsolutePath().toString());
         ProcessOutcome javac = runProcess(command, project.out());
         checkEq(0, javac.exitCode(), "jvm: the emitted artifact compiles with "
             + "javac --release 25 -proc:none: " + javac.stdout() + javac.stderr());
@@ -1094,7 +1131,7 @@ public final class FunctionArityExtensionProductionTest {
             + run.stdout() + run.stderr());
         checkEq("", run.stdout(), "js: the dynamic-source control's stdout");
         checkEq("DEAL_ERROR_CODE: E8010 " + E8010_MESSAGE + " at "
-                + project.entry().toAbsolutePath() + ":4:22\n", run.stderr(),
+                + project.entry().toAbsolutePath() + ":5:22\n", run.stderr(),
             "js: the dynamic-source control's own terminal transcript");
     }
 
@@ -1126,7 +1163,7 @@ public final class FunctionArityExtensionProductionTest {
             + run.stdout() + run.stderr());
         checkEq("TUPLE code=E8010 message=" + E8010_MESSAGE + " expected="
                 + E8010_EXPECTED + " actual=" + E8010_ACTUAL + " file="
-                + project.entry().toAbsolutePath() + " line=4 column=22\n",
+                + project.entry().toAbsolutePath() + " line=5 column=22\n",
             run.stdout(), "js: the dynamic-source control's exact failure tuple");
     }
 
@@ -1576,7 +1613,7 @@ public final class FunctionArityExtensionProductionTest {
             Path root, String source, java.util.Set<String> callbacks)
             throws Exception {
         writeFile(root, "deal.json",
-            "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"]}");
+            "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"]}");
         writeFile(root, "src/" + ENTRY_MODULE + ".deal", source);
         Path src = root.resolve("src");
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
@@ -2015,7 +2052,7 @@ public final class FunctionArityExtensionProductionTest {
         checkEq(E8010_EXPECTED, error.expected(), lane + ": the expected token");
         checkEq(E8010_ACTUAL, error.actual(), lane + ": the actual token");
         checkEq(expectedFile, error.file(), lane + ": the failure's source file");
-        checkEq(4, error.line(), lane + ": the declared parameter's line");
+        checkEq(5, error.line(), lane + ": the declared parameter's line");
         checkEq(22, error.column(), lane + ": the declared parameter's column");
     }
 
@@ -2031,7 +2068,7 @@ public final class FunctionArityExtensionProductionTest {
         checkEq(E8010_EXPECTED, error.expected(), lane + ": the expected token");
         checkEq(E8010_ACTUAL, error.actual(), lane + ": the actual token");
         checkEq(expectedFile, error.file(), lane + ": the failure's source file");
-        checkEq(4, error.line(), lane + ": the declared parameter's line");
+        checkEq(5, error.line(), lane + ": the declared parameter's line");
         checkEq(22, error.column(), lane + ": the declared parameter's column");
     }
 
@@ -2113,7 +2150,7 @@ public final class FunctionArityExtensionProductionTest {
                     + ": the sidecar pins the expected token");
                 checkEq(actualToken, error.actual().orElse(null), fixture
                     + ": the sidecar pins the actual token");
-                checkEq(8, error.line(), fixture
+                checkEq(9, error.line(), fixture
                     + ": the sidecar pins the corpus line");
                 checkEq(column, error.column(), fixture
                     + ": the sidecar pins the corpus column");

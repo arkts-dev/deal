@@ -7,4 +7,4 @@
 // anything else raises E8010 at the call site), and the completion value
 // must satisfy the declared async return type at the await site.
 
-export async function fetchValue(): string;
+export function fetchValue(): Promise<string>;

@@ -398,16 +398,7 @@ public class ContainerBoundaryProductionTest {
         }
     }
 
-    /**
-     * The scratch unlowered-construct seed: a for-let update that is not the
-     * assignment chain the update block lowers ({@code ForUpdate ::=
-     * LeftHandSideExpression '=' AssignmentExpression}), so the production
-     * compile still fails closed with the named E6005
-     * {@code CONSTRUCT_UNLOWERED}. The function-typed for-counter this seed
-     * previously named is production-covered now: the counter's declaration
-     * takes the shared declaration-initializer production and its carry
-     * loads resolve the current binding.
-     */
+    /** Invalid checked input must leave existing staged output unchanged. */
     private static final String GUARD_SEED = "export function main(): null { let x: number = true; return null; }";
 
     /**
@@ -419,8 +410,10 @@ public class ContainerBoundaryProductionTest {
         import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
-          let xs: table[][] = t.values;
+          let t: Record<string, unknown> = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
+          let slots: Record<string, unknown>[][] = [[]];
+          mutation.replaceFirst({slots: slots}, {value: t.values});
+          let xs: Record<string, unknown>[][] = [slots[0]];
           return null;
         }
         """;
@@ -432,8 +425,9 @@ public class ContainerBoundaryProductionTest {
     private static final String UNMARKED_NESTED_SOURCE = """
         export function main(): null {
           let inner: number[] = [1];
-          let holder: table = { values: [inner] };
-          let xs: table[][] = holder.values;
+          let slots: Record<string, unknown>[][] = [[]];
+          mutation.replaceFirst({slots: slots}, {value: [inner]});
+          let xs: Record<string, unknown>[][] = [slots[0]];
           return null;
         }
         """;
@@ -448,8 +442,9 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let inner: string[] = host.split("ignored");
-          let holder: table = { values: [inner] };
-          let xs: table[][] = holder.values;
+          let slots: Record<string, unknown>[][] = [[]];
+          mutation.replaceFirst({slots: slots}, {value: [inner]});
+          let xs: Record<string, unknown>[][] = [slots[0]];
           return null;
         }
         """;
@@ -465,8 +460,9 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let parts: string[] = strings.split("a,b", ",");
-          let holder: table = { values: [parts] };
-          let xs: table[][] = holder.values;
+          let slots: Record<string, unknown>[][] = [[]];
+          mutation.replaceFirst({slots: slots}, {value: [parts]});
+          let xs: Record<string, unknown>[][] = [slots[0]];
           return null;
         }
         """;
@@ -481,16 +477,17 @@ public class ContainerBoundaryProductionTest {
         import * as tables from "std/table";
 
         export function main(): null {
-          let t: table = { a: 1 };
+          let t: Record<string, unknown> = { a: 1 };
           let ks: string[] = tables.keys(t);
-          let holder: table = { values: [ks] };
-          let xs: table[][] = holder.values;
+          let slots: Record<string, unknown>[][] = [[]];
+          mutation.replaceFirst({slots: slots}, {value: [ks]});
+          let xs: Record<string, unknown>[][] = [slots[0]];
           return null;
         }
         """;
 
     /**
-     * The decode tree's second nested level: a {@code table[][][]} crossing
+     * The decode tree's second nested level: a nested Record-array crossing
      * over a parsed {@code [[["x"]]]} reports the same marked element one
      * wrap deeper, so the decode site marks every array of the tree
      * recursively.
@@ -499,8 +496,10 @@ public class ContainerBoundaryProductionTest {
         import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[[\\"x\\"]]]}");
-          let xs: table[][][] = t.values;
+          let t: Record<string, unknown> = json.parse("{\\"values\\":[[[\\"x\\"]]]}");
+          let slots: Record<string, unknown>[][][] = [[]];
+          mutation.replaceFirst({slots: slots}, {value: t.values});
+          let xs: Record<string, unknown>[][][] = [slots[0]];
           return null;
         }
         """;
@@ -514,14 +513,14 @@ public class ContainerBoundaryProductionTest {
         import * as json from "std/json";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
-          let xs: number[][] = t.values;
+          let t: Record<string, unknown> = json.parse("{\\"values\\":[[1.0,2.0],[3.0,4.0]]}");
+          let xs: number[][] = t.values as number[][];
           let first: number[] = xs[0];
           let alias: number[] = xs[0];
           if (first !== alias) {
             throw { code: "TEST_FAIL", message: "decoded identity" };
           }
-          let reread: number[][] = t.values;
+          let reread: number[][] = t.values as number[][];
           if (reread !== xs) {
             throw { code: "TEST_FAIL", message: "decoded member identity" };
           }
@@ -535,8 +534,8 @@ public class ContainerBoundaryProductionTest {
           if (alias[1] !== 9) {
             throw { code: "TEST_FAIL", message: "decoded alias mutation" };
           }
-          let encoded: string = json.stringify(t);
-          if (encoded !== "{\\"values\\":[[1.0,9.0],[3.0,4.0]]}") {
+          let encoded: string = json.stringify(t) as string;
+          if (json.stringify(json.parse(encoded)) !== json.stringify(json.parse("{\\"values\\":[[1,9],[3,4]]}"))) {
             throw { code: "TEST_FAIL", message: "decoded stringify: " + encoded };
           }
           return null;
@@ -552,8 +551,8 @@ public class ContainerBoundaryProductionTest {
         import * as tables from "std/table";
 
         export function main(): null {
-          let t: table = json.parse("{\\"values\\":[[1.0,2.0]]}");
-          let ks: string[] = tables.keys(t.values);
+          let t: Record<string, unknown> = json.parse("{\\"values\\":[[1.0,2.0]]}");
+          let ks: string[] = tables.keys(t.values as Record<string, unknown>);
           return null;
         }
         """;
@@ -572,42 +571,42 @@ public class ContainerBoundaryProductionTest {
 
         driveFocusedFailures(
             new FocusedFailure("decoded nested element (marked)",
-                DECODED_NESTED_SOURCE, 5, 11,
-                new Tuple("E8003", "array element 1 type mismatch", "[table]", "table")),
+                DECODED_NESTED_SOURCE, 8, 42,
+                new Tuple("E8003", "array element 1 type mismatch", "[record]", "table")),
             new FocusedFailure("unmarked nested element", UNMARKED_NESTED_SOURCE,
-                4, 11,
-                new Tuple("E8003", "array element 1 type mismatch", "[table]", "array")),
+                6, 42,
+                new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")),
 
             // STRING_SPLIT and TABLE_KEYS results stay unmarked.
             new FocusedFailure("split-result nested element",
-                SPLIT_NESTED_SOURCE, 6, 11,
-                new Tuple("E8003", "array element 1 type mismatch", "[table]", "array")),
+                SPLIT_NESTED_SOURCE, 8, 42,
+                new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")),
             new FocusedFailure("keys-result nested element",
-                KEYS_NESTED_SOURCE, 7, 11,
-                new Tuple("E8003", "array element 1 type mismatch", "[table]", "array")),
+                KEYS_NESTED_SOURCE, 9, 42,
+                new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")),
             new FocusedFailure("decoded element two levels down (marked)",
-                DECODED_DEEP_NESTED_SOURCE, 5, 11,
-                new Tuple("E8003", "array element 1 type mismatch", "[[table]]", "table")),
+                DECODED_DEEP_NESTED_SOURCE, 8, 44,
+                new Tuple("E8003", "array element 1 type mismatch", "[[record]]", "table")),
             new FocusedFailure("decoded array at a table descriptor",
                 DECODED_ADMISSION_SOURCE, 6, 34,
                 new Tuple("E8001", "expected table", "table", "array")));
 
         driveFocusedFailure("host-returned nested element",
-            HOST_RETURNED_NESTED_SOURCE, "array_return", "host/array_return", 6, 11,
-            new Tuple("E8003", "array element 1 type mismatch", "[table]", "array"));
+            HOST_RETURNED_NESTED_SOURCE, "array_return", "host/array_return", 8, 42,
+            new Tuple("E8003", "array element 1 type mismatch", "[record]", "array"));
 
         // Comparison honesty: a pin-exact tuple reports no divergence and a
         // divergent field fails by name with the captured and pinned values.
         Tuple pinned = new Tuple("E8003", "array element 1 type mismatch",
-            "[table]", "table");
+            "[record]", "table");
         checkEq(null, pinned.firstDivergence(pinned),
             "a pin-exact tuple reports no divergent field");
         checkEq("actual: captured array, pinned table",
-            new Tuple("E8003", "array element 1 type mismatch", "[table]", "array")
+            new Tuple("E8003", "array element 1 type mismatch", "[record]", "array")
                 .firstDivergence(pinned),
             "the pre-correction actual token fails by field");
         checkEq("code: captured E8001, pinned E8003",
-            new Tuple("E8001", "array element 1 type mismatch", "[table]", "table")
+            new Tuple("E8001", "array element 1 type mismatch", "[record]", "table")
                 .firstDivergence(pinned),
             "a divergent code fails by field");
 
@@ -621,13 +620,9 @@ public class ContainerBoundaryProductionTest {
     // =========================================================================
 
     /**
-     * The flat case (ISSUE-0768): a {@code number[]} class field decoded
-     * from {@code [2147483648]} carries its slot's recorded number mark
-     * (the exact v1.4 classification: an integral mathematical value
-     * outside signed32 is the number variant), so the same array admitted
-     * to a {@code string[]} boundary projects the number actual token —
-     * the oracle's retained NumValue and the JVM's retained Double alike
-     * — never the int token an integral bare Lua number suggests.
+     * A decoded binary64 class-field element crosses a string-array boundary
+     * only after hostile invalidation of an admitted carrier. The later E8003
+     * must name number on the Oracle and both production artifacts.
      */
     private static final String INTEGRAL_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
@@ -638,8 +633,9 @@ public class ContainerBoundaryProductionTest {
         export function main(): null {
           let d: Doc | null = Doc$fromJson("{\\"values\\":[2147483648]}");
           if (d !== null) {
-            let holder: table = { xs: d.values };
-            let ys: string[] = holder.xs;
+            let slots: string[] = [""];
+            mutation.replaceFirst({slots: slots}, {value: d.values});
+            let ys: string[] = slots;
             return null;
           }
           return null;
@@ -650,19 +646,21 @@ public class ContainerBoundaryProductionTest {
      * The nested case (ISSUE-0768): a decoded nested array (the empty
      * inner array admitted at the {@code string[][]} element position)
      * precedes the integral out-of-range number-form element, so the
-     * array recursion keeps the number variant at depth and the outer
-     * element arm renders the number token at its own index.
+     * element arm renders number at the second slot, after a valid empty
+     * array. An incompatible persistent array assertion must not mask E8003.
      */
     private static final String NESTED_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
         export class Nest {
-          values: table;
+          values: Record<string, unknown>;
         }
 
         export function main(): null {
           let d: Nest | null = Nest$fromJson("{\\"values\\":{\\"xs\\":[[],2147483648.0]}}");
           if (d !== null) {
-            let ys: string[][] = d.values.xs;
+            let slots: string[][] = [[], []];
+            mutation.replaceAt({slots: slots}, {value: d.values.xs}, 1);
+            let ys: string[][] = slots;
             return null;
           }
           return null;
@@ -670,11 +668,9 @@ public class ContainerBoundaryProductionTest {
         """;
 
     /**
-     * The inner nested-array case (ISSUE-0768): the integral out-of-range
-     * number-form element is the only element of an inner array; the
-     * boundary applies to that inner array at the outer index read, so
-     * the same recorded number mark projects the number token through
-     * the recursion.
+     * The inner nested-array case extracts the decoded class's inner array
+     * before fixture-only slot invalidation. Its later E8003 still reports
+     * the numeric element, independently from the flat class-field case.
      */
     private static final String NESTED_INNER_NUMBER_ELEMENT_SOURCE = """
         // @jsonable
@@ -685,8 +681,9 @@ public class ContainerBoundaryProductionTest {
         export function main(): null {
           let d: Deep | null = Deep$fromJson("{\\"values\\":[[2147483648]]}");
           if (d !== null) {
-            let holder: table = { xs: d.values[0] };
-            let ys: string[] = holder.xs;
+            let slots: string[] = [""];
+            mutation.replaceFirst({slots: slots}, {value: d.values[0]});
+            let ys: string[] = slots;
             return null;
           }
           return null;
@@ -696,20 +693,19 @@ public class ContainerBoundaryProductionTest {
     /**
      * The nested-array admission control (ISSUE-0768): the same nested
      * shape with matching element kinds runs to success on all three
-     * consumers, so the variant materialization never rejects a decoded
-     * nested array. The descriptor is the full nesting
+     * consumers. The descriptor is the full nesting
      * ({@code string[][]}) and the value is the decoded nested array.
      */
     private static final String NESTED_ADMISSION_SOURCE = """
         // @jsonable
         export class Ok {
-          values: table;
+          values: Record<string, unknown>;
         }
 
         export function main(): null {
           let d: Ok | null = Ok$fromJson("{\\"values\\":{\\"xs\\":[[\\"a\\"]]}}");
           if (d !== null) {
-            let ys: string[][] = d.values.xs;
+            let ys: string[][] = d.values.xs as string[][];
             return null;
           }
           return null;
@@ -717,31 +713,23 @@ public class ContainerBoundaryProductionTest {
         """;
 
     /**
-     * The canonical numeric-variant projection at array boundaries
-     * (ISSUE-0768): an integral number-form element of a JSON-decoded
-     * array (the {@code __nK} mark the {@code @jsonable} decode transfers
-     * from the parser's lexical variant) projects the number token on the
-     * oracle, the LuaJIT production artifact, and the JVM production
-     * artifact alike — the emitted Lua {@code __bcheck} element recursion
-     * materializes each element's recorded variant before the recursive
-     * validation and the failure projection, and never rewrites the
-     * stored value. The nested shapes prove the materialization at every
-     * recursion depth and the admission control proves the fix does not
-     * reject matching nested arrays.
+     * Preserve numeric actuals at flat, second-slot and extracted nested
+     * consumers without relying on retired numeric variants. Matching
+     * decoded nested arrays remain a separate successful admission control.
      */
     private static void testIntegralNumberFormArrayElements() throws Exception {
         System.out.println("-- the integral number-form JSON element at array "
-            + "boundaries keeps its number variant on all three consumers --");
+            + "boundaries reports number on all three consumers --");
 
         driveFocusedFailures(
             new FocusedFailure("integral number-form element",
-                INTEGRAL_NUMBER_ELEMENT_SOURCE, 10, 13,
+                INTEGRAL_NUMBER_ELEMENT_SOURCE, 12, 13,
                 new Tuple("E8003", "array element 1 type mismatch", "string", "number")),
             new FocusedFailure("integral number-form element after a nested array",
-                NESTED_NUMBER_ELEMENT_SOURCE, 9, 13,
+                NESTED_NUMBER_ELEMENT_SOURCE, 12, 13,
                 new Tuple("E8003", "array element 2 type mismatch", "[string]", "number")),
             new FocusedFailure("integral number-form element inside a nested array",
-                NESTED_INNER_NUMBER_ELEMENT_SOURCE, 10, 13,
+                NESTED_INNER_NUMBER_ELEMENT_SOURCE, 12, 13,
                 new Tuple("E8003", "array element 1 type mismatch", "string", "number")));
 
         Path root = Files.createTempDirectory("number-form-admission-");
@@ -770,7 +758,7 @@ public class ContainerBoundaryProductionTest {
      * declared field receives a mismatched function through the class
      * literal, so the class construction's field cell publishes the
      * canonical signature texts — the oracle's and the JVM's projection,
-     * never the Lua prelude's internal {@code function(int;int)} dialect.
+     * never the Lua prelude's internal callable dialect.
      */
     private static final String CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE = """
         function identity(x: number): number {
@@ -815,8 +803,8 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let b: Box = { f: identity };
-          let holder: table = { g: asString };
-          b.f = holder.g;
+          signature.replaceSignature({value: identity}, "(number)->string");
+          b.f = identity;
           return null;
         }
         """;
@@ -826,7 +814,7 @@ public class ContainerBoundaryProductionTest {
      * boundaries (ISSUE-0768): the emitted Lua field and class boundary
      * cells carry the descriptor's canonical spec text as the boundary
      * check's trailing argument, so a mismatched carried signature
-     * projects {@code (int)->int} / {@code (int)->string} — the identical
+     * projects {@code (number)->number} / {@code (number)->string} — the identical
      * tuple the oracle's boundary engine and the JVM production artifact
      * render — at the class literal expression and the assignment
      * expression origins.
@@ -841,7 +829,7 @@ public class ContainerBoundaryProductionTest {
                 CLASS_LITERAL_FUNCTION_MISMATCH_SOURCE, 17, 18,
                 new Tuple("E8001", "expected function", "function", "null")),
             new FocusedFailure("class field assignment function mismatch",
-                CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, 16, 3,
+                CLASS_FIELD_FUNCTION_MISMATCH_SOURCE, 17, 3,
                 new Tuple("E8010",
                     "function signature mismatch: expected (number)->number, got (number)->string",
                     "(number)->number", "(number)->string")));
@@ -849,7 +837,7 @@ public class ContainerBoundaryProductionTest {
 
     /**
      * The array-element assignment cell (ISSUE-0767): a mismatched
-     * function reaches an {@code ((x: int) => int)[]} element through the
+     * function reaches an {@code ((x: number) => number)[]} element through the
      * element assignment's descriptor check, so the cell must publish
      * the canonical signature texts and the assignment expression's own
      * origin on every consumer (the oracle's
@@ -866,8 +854,8 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let xs: ((x: number) => number)[] = [identity];
-          let holder: table = { g: asString };
-          xs[0] = holder.g;
+          signature.replaceSignature({value: identity}, "(number)->string");
+          xs[0] = identity;
           return null;
         }
         """;
@@ -889,8 +877,8 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let xs: (((x: number) => number) | null)[] = [identity];
-          let holder: table = { g: asString };
-          xs[0] = holder.g;
+          signature.replaceSignature({value: identity}, "(number)->string");
+          xs[0] = identity;
           return null;
         }
         """;
@@ -900,7 +888,7 @@ public class ContainerBoundaryProductionTest {
      * {@code ((x: number) => number)[]} receives a typed array with a
      * deleted element, so the field boundary's array recursion must project
      * the canonical element text {@code (number)->number} and actual
-     * {@code nil} in its E8003 row, never the internal descriptor dialect.
+     * {@code undefined} in its E8003 row, never the internal descriptor dialect.
      */
     private static final String CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE = """
         function identity(x: number): number {
@@ -936,19 +924,19 @@ public class ContainerBoundaryProductionTest {
 
         driveFocusedFailures(
             new FocusedFailure("array element function mismatch",
-                ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE, 12, 3,
+                ARRAY_ELEMENT_FUNCTION_MISMATCH_SOURCE, 13, 3,
                 new Tuple("E8010",
                     "function signature mismatch: expected (number)->number, got (number)->string",
                     "(number)->number", "(number)->string")),
             new FocusedFailure("array element nullable function mismatch",
-                ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE, 12, 3,
+                ARRAY_ELEMENT_NULLABLE_FUNCTION_MISMATCH_SOURCE, 13, 3,
                 new Tuple("E8010",
                     "function signature mismatch: expected (number)->number, got (number)->string",
                     "(number)->number", "(number)->string")),
             new FocusedFailure("class field function array element mismatch",
                 CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 12, 16,
                 new Tuple("E8003", "array element 1 type mismatch",
-                    "(number)->number", "nil")));
+                    "(number)->number", "undefined")));
     }
 
     private record FocusedFailure(String label, String source, int line, int column,
@@ -1018,8 +1006,7 @@ public class ContainerBoundaryProductionTest {
             String hostStem, String hostSpecifier, int line, int column, Tuple pinned)
             throws Exception {
         int[] calls = { 0 };
-        SemanticOracle.HostResponder responder = hostStem == null ? null
-            : focusedArrayHostResponder(calls);
+        SemanticOracle.HostResponder responder = focusedArrayHostResponder(calls);
         SemanticRuntimeModel.ConsumerRun oracle =
             SemanticOracle.executeProjectInits(drive.project(), drive.tables(),
                 drive.registries(), responder);
@@ -1115,6 +1102,24 @@ public class ContainerBoundaryProductionTest {
             public SyncOutcome call(ModuleId module, String export,
                     RuntimeDescriptor.Func descriptor,
                     List<SemanticOracle.Value> args) {
+                if ("replaceSignature".equals(export)) {
+                    var holder = (SemanticOracle.Value.TableValue) args.get(0);
+                    var value = (SemanticOracle.Value.FuncValue) holder.entries().get("value");
+                    var text = (SemanticOracle.Value.StrValue) args.get(1);
+                    CanonicalProjectionParityTest.hostileOracleSignature(value,
+                        (RuntimeDescriptor.Func) RuntimeDescriptor.parseCanonicalText(text.value()));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.BoolValue(true));
+                }
+                if ("replaceFirst".equals(export) || "replaceAt".equals(export)) {
+                    var holder = (SemanticOracle.Value.TableValue) args.get(0);
+                    var replacement = (SemanticOracle.Value.TableValue) args.get(1);
+                    var slots = (SemanticOracle.Value.ArrayValue) holder.entries().get("slots");
+                    var value = (SemanticOracle.Value.ArrayValue) replacement.entries().get("value");
+                    int index = export.equals("replaceAt")
+                        ? (int) ((SemanticOracle.Value.NumValue) args.get(2)).value() : 0;
+                    slots.elements().set(index, value.elements().get(index));
+                    return new SyncOutcome.Returned(new SemanticOracle.Value.BoolValue(true));
+                }
                 if (!"host.array_return".equals(module.path())
                         || !"split".equals(export)) {
                     return new SyncOutcome.Thrown("E9001", "unknown host call "
@@ -1140,6 +1145,10 @@ public class ContainerBoundaryProductionTest {
             String hostSpecifier) throws Exception {
         Path src = root.resolve("src");
         Files.createDirectories(src);
+        boolean mutation = source.contains("mutation.replace");
+        boolean signature = source.contains("signature.replaceSignature");
+        if (mutation) source = "import * as mutation from \"host/container_mutation\";\n" + source;
+        if (signature) source = "import * as signature from \"host/signature_mutation\";\n" + source;
         Files.writeString(src.resolve("main.deal"), source, StandardCharsets.UTF_8);
         Map<String, String> externals = null;
         if (hostStem != null) {
@@ -1154,6 +1163,16 @@ public class ContainerBoundaryProductionTest {
             externals.put(hostSpecifier, declaration.toAbsolutePath().toString());
             externals.put(hostSpecifier.replace('.', '/'),
                 declaration.toAbsolutePath().toString());
+        }
+        for (String fixture : List.of("container_mutation", "signature_mutation")) {
+            if (!(fixture.equals("container_mutation") ? mutation : signature)) continue;
+            if (externals == null) externals = new LinkedHashMap<>();
+            Path declaration = root.resolve("host/" + fixture + ".d.deal");
+            Files.createDirectories(declaration.getParent());
+            Files.writeString(declaration, Files.readString(
+                CORPUS.resolve("host-fixtures/" + fixture + ".d.deal"))
+                .replaceAll("(?m)^// @.*\\R", ""));
+            externals.put("host/" + fixture, declaration.toAbsolutePath().toString());
         }
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(
             src.resolve("main.deal").toAbsolutePath(), root.resolve("out"), false,
@@ -1178,8 +1197,7 @@ public class ContainerBoundaryProductionTest {
         Map<ModuleId, CanonicalModuleIdentity> identities = new LinkedHashMap<>();
         for (ModuleId declaration : orchestrator.hostDeclarationSurface().moduleIds()) {
             identities.put(declaration,
-                new CanonicalModuleIdentity.ExternalModule(hostStem == null
-                    ? declaration.path() : declaration.path().replace('/', '.')));
+                new CanonicalModuleIdentity.ExternalModule(declaration.path().replace('/', '.')));
         }
         String modulePath = built.input().entryModule().path();
         String luaSource = Files.readString(root.resolve("out").resolve(
@@ -1206,7 +1224,7 @@ public class ContainerBoundaryProductionTest {
         LoweredModuleUnit unit = result.project().modules().get(fixtureModule);
         Optional<CompilerDiagnostic> gate = SemanticIrValidator.validate(
             result.project(), new SemanticIrValidator.ComparisonFacts(
-                unit.interfaceHash(), SemanticProfile.DEAL_V1_4_BINARY64,
+                unit.interfaceHash(), SemanticProfile.DEAL_V1_5_BINARY64,
                 ReleaseConfiguration.releaseCapabilityRegistry()
                     .capabilityRegistryHash()));
         check(gate.isEmpty(), spec.what() + ": the closed schema and bindings gates "
@@ -1451,6 +1469,12 @@ public class ContainerBoundaryProductionTest {
             Path artifact = workspace.resolve("project.lua");
             Files.writeString(artifact, chunk, StandardCharsets.UTF_8);
             deployRuntime(workspace);
+            for (String fixture : List.of("container_mutation", "signature_mutation")) {
+                if (!chunk.contains(fixture)) continue;
+                Files.createDirectories(workspace.resolve("host"));
+                Files.copy(CORPUS.resolve("host-fixtures/" + fixture + ".lua"),
+                    workspace.resolve("host/" + fixture + ".lua"));
+            }
             if (hostModule != null) {
                 Path hostDir = workspace.resolve("host");
                 Files.createDirectories(hostDir);
@@ -1548,6 +1572,18 @@ public class ContainerBoundaryProductionTest {
             String probeName = jvmProbeName();
             Path artifact = directory.resolve(className + ".java");
             Path probe = directory.resolve(probeName + ".java");
+            for (String fixture : List.of("container_mutation", "signature_mutation")) {
+                String hostClass = JvmBackend.classNameFor("host." + fixture);
+                if (!source.contains(hostClass)) continue;
+                Path host = workspace.resolve(hostClass + ".java");
+                if (!Files.exists(host)) {
+                    Files.writeString(host, Files.readString(
+                        CORPUS.resolve("host-fixtures/" + fixture + ".java"))
+                        .replace("\nfinal class ", "\npublic final class ")
+                        .replaceFirst("^final class ", "public final class "));
+                    sources.add(host.toString());
+                }
+            }
             Files.writeString(artifact, "package " + packageName + ";\n" + source,
                 StandardCharsets.UTF_8);
             Files.writeString(probe, "package " + packageName + ";\n"
@@ -1601,6 +1637,13 @@ public class ContainerBoundaryProductionTest {
                 source, StandardCharsets.UTF_8);
             List<String> sources = new ArrayList<>();
             sources.add(className + ".java");
+            for (String fixture : List.of("container_mutation", "signature_mutation")) {
+                String hostClass = JvmBackend.classNameFor("host." + fixture);
+                if (!source.contains(hostClass)) continue;
+                Files.copy(CORPUS.resolve("host-fixtures/" + fixture + ".java"),
+                    workspace.resolve(hostClass + ".java"));
+                sources.add(hostClass + ".java");
+            }
             if (hostModule != null) {
                 String hostClass = JvmBackend.classNameFor(hostModule);
                 Files.copy(hostImplementation, workspace.resolve(hostClass + ".java"));

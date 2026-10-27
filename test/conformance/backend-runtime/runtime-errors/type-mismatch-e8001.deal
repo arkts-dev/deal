@@ -6,8 +6,8 @@
 function needInt(x: number): number { return x; }
 
 export function test_runtime_type_mismatch(): number {
-  let t: table = { value: "not-int" };
-  return needInt(t.value);
+  let t: Record<string, unknown> = { value: "not-number" };
+  return needInt(t.value as number);
 }
 
 export function main(): null {

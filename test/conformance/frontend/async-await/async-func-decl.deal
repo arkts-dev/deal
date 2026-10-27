@@ -3,7 +3,7 @@
 // @expected: compile-ok
 // @features: async, functions
 
-async function fetchUser(id: number): string {
+async function fetchUser(id: number): Promise<string> {
   return "user";
 }
 

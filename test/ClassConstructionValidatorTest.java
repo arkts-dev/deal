@@ -161,7 +161,7 @@ public class ClassConstructionValidatorTest {
     }
 
     private static PipelineSlice pipeline(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -209,7 +209,7 @@ public class ClassConstructionValidatorTest {
             return null;
         }
         return new LoweredSlice(SemanticLowerer.lowerModuleClassCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
+            SemanticProfile.DEAL_V1_5_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
             REGISTRY_HASH, pipeline.ownInterface(),
             SemanticIdAllocator.over(List.of(MODULE))), pipeline.ownInterface());
     }
@@ -319,7 +319,7 @@ public class ClassConstructionValidatorTest {
             "the failure detail carries capability CLASSES");
         check(diagnostic.message().contains("module 'main'"),
             "the failure detail carries the module");
-        check(diagnostic.message().contains("semanticProfile DEAL_V1_4_BINARY64"),
+        check(diagnostic.message().contains("semanticProfile DEAL_V1_5_BINARY64"),
             "the failure detail carries the semantic profile");
         check(diagnostic.message().contains("irVersion deal.semantic-ir/2"),
             "the failure detail carries the IR version");
@@ -385,7 +385,7 @@ public class ClassConstructionValidatorTest {
             p.x = 9;
             p.note = "a";
             delete p.note;
-            let hasNote: boolean = has(p.note);
+            let hasNote: boolean = Object.hasOwn(p, "note");
             """;
         LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
@@ -661,7 +661,7 @@ public class ClassConstructionValidatorTest {
               y?: number;
             }
             let p: Point = {x: 1};
-            let v: number | null = p.y;
+            let v: number | undefined = p.y;
             p.x = 9;
             delete p.y;
             """;
@@ -729,23 +729,23 @@ public class ClassConstructionValidatorTest {
     /**
      * The optional null read at the validator (ISSUE-0883): the read result
      * of an optional field whose declared type is {@code null} is the
-     * {@code null} atom — {@code null | null} canonicalizes to {@code null}
-     * — so the layout-derived expected descriptor never builds the
-     * forbidden {@code ?null} wrapper. The read arm validates cleanly, and a
+     * {@code null | undefined} union: absence is undefined and present null
+     * remains null. The canonical descriptor wraps Undefined with the null
+     * flag, never the forbidden {@code ?null} wrapper. The read arm validates cleanly, and a
      * read that publishes the wrong wrap (the op result and its boundary
      * child both retyped to {@code ?string}) fails the pinned
      * FIELD_OPERATION_SHAPE rule instead of crashing.
      */
     private static void testOptionalNullFieldReadArm() {
         System.out.println("-- optional null read: the read-result descriptor is the "
-            + "null atom, never ?null --");
+            + "null|undefined, never ?null --");
 
         LoweredSlice lowered = lowerModule("""
             class Box {
               n?: null;
             }
             let b: Box = {};
-            let n: null = b.n;
+            let n: null | undefined = b.n;
             """);
         SemanticLowerer.ClassDeclarationCoreResult result =
             lowered == null ? null : lowered.result();
@@ -764,8 +764,8 @@ public class ClassConstructionValidatorTest {
         if (read == null) {
             return;
         }
-        check(read.resultType() == RuntimeDescriptor.Null.INSTANCE,
-            "the FIELD_READ publishes the null atom; got " + read.resultType());
+        check(read.resultType().equals(RuntimeDescriptor.optionalRead(RuntimeDescriptor.Null.INSTANCE)),
+            "the FIELD_READ publishes null|undefined; got " + read.resultType());
         List<SemanticOp> children = childrenOf(unit, read);
         check(children.size() == 2,
             "the read parents exactly two boundary children; got " + children.size());
@@ -775,11 +775,11 @@ public class ClassConstructionValidatorTest {
             return;
         }
         check(fieldBoundary.kind() == BoundaryKind.OPTIONAL_FIELD_READ
-                && fieldBoundary.descriptor() == RuntimeDescriptor.Null.INSTANCE,
-            "the OPTIONAL_FIELD_READ descriptor is the null atom; got "
+                && fieldBoundary.descriptor().equals(RuntimeDescriptor.optionalRead(RuntimeDescriptor.Null.INSTANCE)),
+            "the OPTIONAL_FIELD_READ descriptor is null|undefined; got "
                 + fieldBoundary.kind() + " " + fieldBoundary.descriptor());
 
-        // The layout-derived expected descriptor must be the null atom: the
+        // The layout-derived expected descriptor must retain both states: the
         // clean re-validation of the lowered unit is the regression (a raw
         // ?null construction throws out of the validator instead).
         check(ClassConstructionValidator.validate(unit, result.lowering().table(),
@@ -822,7 +822,7 @@ public class ClassConstructionValidatorTest {
               y?: number;
             }
             let p: Point = {x: 1};
-            let v: number | null = p.y;
+            let v: number | undefined = p.y;
             p.x = 9;
             delete p.y;
             """;
@@ -1177,8 +1177,8 @@ public class ClassConstructionValidatorTest {
             }
             let p: Point = {x: 1, tag: "p"};
             p.x = 9;
-            let v: string | null = p.note;
-            let hasNote: boolean = has(p.note);
+            let v: string | undefined = p.note;
+            let hasNote: boolean = Object.hasOwn(p, "note");
             """;
         LoweredSlice lowered = lowerModule(source);
         SemanticLowerer.ClassDeclarationCoreResult result =
@@ -1204,7 +1204,7 @@ public class ClassConstructionValidatorTest {
                 + "layout, fieldBoundaries, classId)");
         Optional<CompilerDiagnostic> revalidated = SemanticIrValidator.validateText(dumpText,
             new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-                SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH));
+                SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH));
         check(revalidated.isEmpty(),
             "the dumped class unit re-validates from the dump text: " + revalidated);
 
@@ -1852,9 +1852,9 @@ public class ClassConstructionValidatorTest {
     /**
      * The declaration-seed field-operation rule with an optional null field
      * (ISSUE-0883): the seed's read-result descriptor of an optional field
-     * declared {@code null} is the {@code null} atom (its two states are the
-     * missing and present-null reads, both language {@code null}), so a
-     * transported FIELD_READ publishing {@code null} and its
+     * declared {@code null} is {@code null | undefined} (the two states are
+     * missing and present-null reads), so a transported FIELD_READ publishing
+     * that union and its
      * OPTIONAL_FIELD_READ boundary agree with the registration, while any
      * other nullable wrap of the read disagrees with a normal violation
      * instead of aborting the check.
@@ -1865,15 +1865,15 @@ public class ClassConstructionValidatorTest {
 
         ClassRegistrationSeeds withNull = withEndpointExtraField("n",
             RuntimeDescriptor.Null.INSTANCE, false);
-        // The optional ?string control keeps its one nullable wrap.
+        // The optional nullable-string control retains both independent flags.
         check(ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
-                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "note", "?string"),
-                    rawFieldReadBoundary(new OpId(MODULE, 1L), "?string")))).isEmpty(),
-            "the optional ?string field read agrees with its registration");
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "note", "?!string"),
+                    rawFieldReadBoundary(new OpId(MODULE, 1L), "?!string")))).isEmpty(),
+            "the optional nullable string read retains both nullish members");
         check(ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
-                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "null"),
-                    rawFieldReadBoundary(new OpId(MODULE, 1L), "null")))).isEmpty(),
-            "the optional null field read publishing the null atom agrees with its "
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "null|undefined"),
+                    rawFieldReadBoundary(new OpId(MODULE, 1L), "null|undefined")))).isEmpty(),
+            "the optional null field read publishing null|undefined agrees with its "
                 + "registration");
 
         Optional<ClassConstructionValidator.SeedModuleViolation> wrong =
@@ -1885,11 +1885,11 @@ public class ClassConstructionValidatorTest {
             "a read publishing a nullable wrap over the null atom rejects: " + wrong);
         Optional<ClassConstructionValidator.SeedModuleViolation> boundary =
             ClassConstructionValidator.checkProjectSeedModuleCoherence(withNull,
-                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "null"),
+                List.of(unitWithRawOps(rawFieldRead(FACADE_ENDPOINT, "n", "null|undefined"),
                     rawFieldReadBoundary(new OpId(MODULE, 1L), "?string"))));
         check(boundary.isPresent() && boundary.get().detail().contains(
                 BoundaryKind.OPTIONAL_FIELD_READ.name()),
-            "a boundary descriptor that disagrees with the null atom rejects: "
+            "a boundary descriptor that disagrees with null|undefined rejects: "
                 + boundary);
     }
 
@@ -1945,8 +1945,8 @@ public class ClassConstructionValidatorTest {
 
     /** One raw unit carrying exactly the given raw operations. */
     private static RawUnit unitWithOps(List<RawOp> ops) {
-        return new RawUnit(MODULE.path(), SemanticProfile.DEAL_V1_4_BINARY64.name(),
-            "interface-digest-1", LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64,
+        return new RawUnit(MODULE.path(), SemanticProfile.DEAL_V1_5_BINARY64.name(),
+            "interface-digest-1", LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64,
                 REGISTRY_HASH),
             List.of(), List.of(), List.of(), List.of(),
             new ModuleInitPlan(List.of(), new BlockId(0)), List.of(), List.of(), ops,
@@ -2006,7 +2006,14 @@ public class ClassConstructionValidatorTest {
                 true),
             Types.array(Types.func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE)),
             Types.nullable(Types.func(List.of(Type.Number.INSTANCE), Type.String.INSTANCE)),
-            Types.array(Types.array(Type.Number.INSTANCE)));
+            Types.array(Types.array(Type.Number.INSTANCE)),
+            Type.Undefined.INSTANCE,
+            Type.Unknown.INSTANCE,
+            Types.optionalRead(Type.String.INSTANCE),
+            Types.optionalRead(Types.nullable(Type.String.INSTANCE)),
+            Types.optionalRead(Type.Null.INSTANCE),
+            Types.optionalRead(Types.func(List.of(Type.Unknown.INSTANCE), Type.Void.INSTANCE)),
+            Types.func(List.of(Type.Unknown.INSTANCE), Type.Void.INSTANCE, true));
         ModuleId formsModule = new ModuleId("forms.host");
         ClassId formsClass = new ClassId(EXTERNAL_PREFIX + "forms/host", "Forms");
         List<FieldInterface> declaredFields = new ArrayList<>();

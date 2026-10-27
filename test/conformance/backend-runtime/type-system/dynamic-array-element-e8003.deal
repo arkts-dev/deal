@@ -1,14 +1,19 @@
 // @spec: Type system — Array runtime checks
-// @description: Dynamic array with wrong element type fails when assigned to number[]
+// @description: A closure-cleared number refinement fails at the second array construction element with E8003, independently from assertions.
 // @expected: runtime-error E8003
 // @features: type-system, arrays, runtime-errors
 
 import * as json from "std/json";
 
 export function test_dynamic_array_element_runtime_error(): number {
-  let t: table = json.parse("{\"values\":[1,\"bad\"]}");
-  let xs: number[] = t.values;
-  return xs[0];
+  let value: number | null = 7;
+  let clear: () => void = function(): void { value = null; };
+  if (value !== null) {
+    clear();
+    let xs: number[] = [1, value];
+    return xs[0];
+  }
+  throw { code: "TEST_FAIL", message: "array element branch skipped" };
 }
 
 export function main(): null {

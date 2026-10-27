@@ -1,7 +1,7 @@
 // @spec: Classes
-// @description: Corner-case subject has-required-field-reject — Existing runtime filename is misleading; pin actual forbidden required-field subject. (basis: Field access: has argument must declared optional field)
+// @description: Class presence rejects an undeclared literal field even beside a required field
 // @expected: compile-error E4005
 // @features: v1.2, frontend, reject
 
 class C {x:number;}
-export function f(c:C): boolean {return has(c.x);}
+export function f(c:C): boolean {return Object.hasOwn(c, "y");}

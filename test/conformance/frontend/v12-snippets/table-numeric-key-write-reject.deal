@@ -3,4 +3,4 @@
 // @expected: compile-error E3018
 // @features: v1.2, frontend, reject
 
-export function f(): null {let t: table = {}; t[1] = 2; return null;}
+export function f(): null {let t: Record<string, unknown> = {}; t[1] = 2; return null;}

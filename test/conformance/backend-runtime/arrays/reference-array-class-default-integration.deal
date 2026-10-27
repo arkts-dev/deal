@@ -8,11 +8,11 @@ import * as json from "std/json";
 
 function identity(b: number[]): number[] { return b; }
 
-async function echoAsync(b: number[]): number[] { return b; }
+async function echoAsync(b: number[]): Promise<number[]> { return b; }
 
 function badBytes(): number[] {
-  let holder: table = { b: "not-number[]" };
-  return holder.b;
+  let holder: Record<string, unknown> = { b: "not-number[]" };
+  return holder.b as number[];
 }
 
 class PlanBox {
@@ -22,7 +22,7 @@ class PlanBox {
   made: number[];
   shared: number[];
   syncFn: (b: number[]) => number[];
-  asyncFn: async (b: number[]) => number[];
+  asyncFn: (b: number[]) => Promise<number[]>;
 }
 
 class BadBox {
@@ -34,7 +34,7 @@ function makeBox(): PlanBox {
     shared: host.sharedArray(), syncFn: identity, asyncFn: echoAsync};
 }
 
-export async function test_array_class_default_integration(): number {
+export async function test_array_class_default_integration(): Promise<number> {
   if (host.callCount() !== 0) {
     throw { code: "TEST_FAIL", message: "construction expression ran at module load" };
   }
@@ -71,7 +71,7 @@ export async function test_array_class_default_integration(): number {
   try {
     let bad: BadBox = {payload: badBytes()};
   } catch (e) {
-    caught = e.code === "E8001";
+    caught = (e as Error).code === "E8001";
   }
   if (!caught) {
     throw { code: "TEST_FAIL", message: "validation failure did not raise E8001" };
@@ -79,15 +79,15 @@ export async function test_array_class_default_integration(): number {
   // All provided expressions run in source order before declaration-order
   // field validation. The host effect survives the rejected boundary;
   // the target binding must remain the original instance.
-  let holderBad: table = { b: "not-number[]" };
+  let holderBad: Record<string, unknown> = { b: "not-number[]" };
   let providedCaught: boolean = false;
   let target: PlanBox = a;
   try {
-    let supplied: number[] = holderBad.b;
+    let supplied: number[] = holderBad.b as number[];
     target = {buf: supplied, nested: [[0]], deep: [[[0]]], made: host.makeArray(2),
       shared: host.sharedArray(), syncFn: identity, asyncFn: echoAsync};
   } catch (e) {
-    providedCaught = e.code === "E8001";
+    providedCaught = (e as Error).code === "E8001";
   }
   if (!providedCaught) {
     throw { code: "TEST_FAIL", message: "dynamic provided-value read did not raise E8001" };
@@ -100,10 +100,10 @@ export async function test_array_class_default_integration(): number {
   if (c2.buf.length !== 2 || host.callCount() !== 3) {
     throw { code: "TEST_FAIL", message: "post-failure attempt did not construct cleanly" };
   }
-  let encoded: string = json.stringify({ box: a.buf });
-  let decoded: table = json.parse(encoded);
-  let box: number[] = decoded.box;
-  if (box.length !== 2 || box[0] !== 200 || box[1] !== 0) {
+  let encoded: string = json.stringify({ box: a.buf }) as string;
+  let decoded: Record<string, unknown> = json.parse(encoded);
+  let box: unknown[] = decoded.box as unknown[];
+  if (box.length !== 2 || (box[0] as number) !== 200 || (box[1] as number) !== 0) {
     throw { code: "TEST_FAIL", message: "array JSON encoding mismatch" };
   }
   return 0;

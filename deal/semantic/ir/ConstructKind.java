@@ -15,6 +15,10 @@ public enum ConstructKind {
     UNARY_ARITHMETIC_COMPARISON("UNARY/BINARY; logical operators use selector-bearing BRANCH",
         List.of(SemanticOpKind.UNARY, SemanticOpKind.BINARY, SemanticOpKind.BRANCH)),
 
+    /** Required common form: {@code BOUNDARY(ASSERTION)} preserving the checked value. */
+    CHECKED_ASSERTION("BOUNDARY(ASSERTION) preserving the checked value",
+        List.of(SemanticOpKind.BOUNDARY)),
+
     /** Required common form: {@code STRING_CONCAT} with every fragment/interpolation in source order. */
     STRING_CONCAT_TEMPLATE("STRING_CONCAT with every fragment/interpolation in source order",
         List.of(SemanticOpKind.STRING_CONCAT)),
@@ -47,9 +51,9 @@ public enum ConstructKind {
     ARRAY_OBJECT_LITERAL("ARRAY_NEW (ARRAY_LITERAL_ELEMENT boundaries), TABLE_NEW",
         List.of(SemanticOpKind.ARRAY_NEW, SemanticOpKind.TABLE_NEW)),
 
-    /** Required common form: {@code CLASS_NEW} (local and imported); imported defaults via
+    /** Required common form: {@code CLASS_NEW} (local and imported); declaring layout via
      * the owner's {@code CLASS_FACTORY} or the retained ABI. */
-    CLASS_OBJECT_LITERAL("CLASS_NEW (local and imported); imported defaults via the owner's "
+    CLASS_OBJECT_LITERAL("CLASS_NEW (local and imported); declaring layout via the owner's "
         + "CLASS_FACTORY or the retained ABI",
         List.of(SemanticOpKind.CLASS_NEW, SemanticOpKind.CLASS_FACTORY)),
 
@@ -101,7 +105,7 @@ public enum ConstructKind {
     TRY_CATCH_THROW("TRY_CATCH, THROW",
         List.of(SemanticOpKind.TRY_CATCH, SemanticOpKind.THROW)),
 
-    CLASS_DECLARATION("layout, defaults, factory, and export metadata",
+    CLASS_DECLARATION("layout, factory, and export metadata",
         List.of(SemanticOpKind.CLASS_FACTORY,
             SemanticOpKind.EXPORT_PUBLISH)),
 

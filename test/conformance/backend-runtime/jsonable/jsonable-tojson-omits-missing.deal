@@ -20,7 +20,7 @@ export function test_toJson_omits_missing(): null {
     if (c2.name !== "test") {
       throw { code: "TEST_FAIL", message: "name mismatch" };
     }
-    if (has(c2.debug)) {
+    if (Object.hasOwn(c2, "debug")) {
       throw {code: "TEST_FAIL", message: "omitted optional became present"};
     }
   } else {
@@ -30,11 +30,11 @@ export function test_toJson_omits_missing(): null {
   // Also test that fromJson with explicit optional field works
   let c3: Config | null = Config$fromJson("{\"name\":\"withDebug\",\"debug\":true}");
   if (c3 !== null) {
-    if (c3.name !== "withDebug" || !has(c3.debug)) {
+    if (c3.name !== "withDebug" || !Object.hasOwn(c3, "debug")) {
       throw { code: "TEST_FAIL", message: "withDebug name or presence mismatch" };
     }
-    let debug: boolean | null = c3.debug;
-    if (debug !== null) {
+    let debug: boolean | undefined = c3.debug;
+    if (debug !== undefined) {
       if (!debug) { throw {code: "TEST_FAIL", message: "explicit true was lost"}; }
     } else {
       throw {code: "TEST_FAIL", message: "explicit true became null"};

@@ -5,7 +5,7 @@ import deal.identity.CanonicalClassIdentity;
 import java.util.List;
 
 public sealed interface Type
-    permits Type.Null,
+    permits Type.Null, Type.Undefined, Type.Unknown, Type.Void,
            Type.Boolean,
            Type.Number,
            Type.String,
@@ -20,6 +20,9 @@ public sealed interface Type
 
     /** The {@code null} literal type. */
     enum Null implements Type { INSTANCE }
+    enum Undefined implements Type { INSTANCE }
+    enum Unknown implements Type { INSTANCE }
+    enum Void implements Type { INSTANCE }
 
     enum Boolean implements Type { INSTANCE }
     enum Number implements Type { INSTANCE }
@@ -52,13 +55,15 @@ public sealed interface Type
      *   <li>inner is not instanceof Nullable</li>
      * </ul>
      */
-    record Nullable(Type inner) implements Type {
+    record Nullable(Type inner, boolean admitsNull, boolean admitsUndefined) implements Type {
+        public Nullable(Type inner) { this(inner, true, false); }
         public Nullable {
-            if (inner == null) throw new IllegalArgumentException("inner must not be null");
-            if (inner instanceof Null) throw new IllegalArgumentException(
-                "Nullable inner must not be null; use Null.INSTANCE directly");
-            if (inner instanceof Nullable) throw new IllegalArgumentException(
-                "Nullable inner must not be another Nullable; flatten at construction");
+            if (inner == null || inner instanceof Nullable || inner instanceof Unknown
+                    || inner instanceof Void || (!admitsNull && !admitsUndefined)
+                    || (inner instanceof Null && admitsNull)
+                    || (inner instanceof Undefined && admitsUndefined)) {
+                throw new IllegalArgumentException("Invalid canonical nullish type");
+            }
         }
     }
 

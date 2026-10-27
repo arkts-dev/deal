@@ -4,8 +4,8 @@
 // @features: tables, dynamic-read, unicode
 
 export function main(): null {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   t["😀"] = 7;
-  let n: number = t["😀"];
+  let n: number = t["😀"] as number;
   return null;
 }

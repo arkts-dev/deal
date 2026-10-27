@@ -1,13 +1,14 @@
 // @spec: Runtime execution model — Source locations for jsonable helper errors
-// @description: @jsonable helper failure path preserves runtime error code from std/json unsupported value
+// @description: A std/json cycle failure preserves its runtime code and exact call origin.
 // @expected: runtime-error E8001
 // @features: source-location, jsonable, runtime-errors
 
 import * as json from "std/json";
 
 export function test_source_location_json_error(): string {
-  let t: table = { bad: function(): number { return 1; } };
-  return json.stringify(t);
+  let t: Record<string, unknown> = {};
+  t.self = t;
+  return json.stringify(t) as string;
 }
 
 export function main(): null {

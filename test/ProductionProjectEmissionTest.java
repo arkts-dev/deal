@@ -23,7 +23,7 @@ import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.distribution.DistributionHome;
+import deal.module.CheckoutResources;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -117,35 +117,35 @@ public class ProductionProjectEmissionTest {
     // ProductionProjectEmission directly)
     // =========================================================================
 
-    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { code: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { code: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { code: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v: number of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { code: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { code: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { code: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { code: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { code: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { code: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e;\n    if (e.code !== \"SHADOW_X\") { throw { code: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
+    static final String SHADOWING_SOURCE = "export function main(): null {\n  let x: number = 3;\n  {\n    let x: number = x + 1;\n    if (x !== 4) { throw { code: \"SHADOW_FAIL\", message: \"shadowing initializer\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"block outer restored\" }; }\n  if (true) {\n    let x: number = 9;\n    if (x !== 9) { throw { code: \"SHADOW_FAIL\", message: \"if-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"if-body outer restored\" }; }\n  while (false) {\n    let x: number = 11;\n    if (x !== 11) { throw { code: \"SHADOW_FAIL\", message: \"loop-body shadow\" }; }\n  }\n  if (x !== 3) { throw { code: \"SHADOW_FAIL\", message: \"loop-body outer restored\" }; }\n  let sum: number = 0;\n  let values: number[] = [1.0, 2];\n  for (let v of values) {\n    let before: number = v;\n    let v: number = 10;\n    sum = sum + before + v;\n  }\n  if (sum !== 23) { throw { code: \"SHADOW_FAIL\", message: \"for-of shadow\" }; }\n  let h: number = 3;\n  let hsum: number = 0;\n  { let v14Loop0: number = h + 1; while (hsum < 9) { let h: number = v14Loop0; { hsum = hsum + h; } v14Loop0 = h;  } }\n  if (hsum !== 12) { throw { code: \"SHADOW_FAIL\", message: \"for-head initializer\" }; }\n  if (h !== 3) { throw { code: \"SHADOW_FAIL\", message: \"for-head outer restored\" }; }\n  let nl: string | null = \"ab\";\n  if (nl !== null) {\n    { let v14Loop1: number = 0; while (false) { let nl: number = v14Loop1; {} v14Loop1 = nl;  } }\n    let nlText: string = nl;\n    if (nlText !== \"ab\") { throw { code: \"SHADOW_FAIL\", message: \"for-head shadow restored\" }; }\n  }\n  let nb: string | null = \"cd\";\n  if (nb !== null) {\n    { let nb: number = 0; if (true) {} else {} }\n    let nbText: string = nb;\n    if (nbText !== \"cd\") { throw { code: \"SHADOW_FAIL\", message: \"branch shadow restored\" }; }\n  }\n  try {\n    throw { code: \"SHADOW_X\", message: \"catch shadow\" };\n  } catch (e) {\n    let e: Error = e as Error;\n    if (e.code !== \"SHADOW_X\") { throw { code: \"SHADOW_FAIL\", message: \"catch shadow\" }; }\n  }\n  return null;\n}\n";
 
     static final String DYNAMIC_TABLE_SOURCE = """
         export function main(): null {
-          let t: table = { x: 7 };
+          let t: Record<string, unknown> = { x: 7 };
           let k: string = "x";
-          let n: number = t[k];
+          let n: number = t[k] as number;
           if (n !== 7) { throw { code: "DYN_FAIL", message: "variable key" }; }
-          let u: table = {};
+          let u: Record<string, unknown> = {};
           let mk: () => string = function(): string { return "y"; };
           u[mk()] = 9;
-          let m: number = u[mk()];
+          let m: number = u[mk()] as number;
           if (m !== 9) { throw { code: "DYN_FAIL", message: "effectful key" }; }
-          let q: table = {};
-          let miss: number | null = q[k];
-          if (miss !== null) { throw { code: "DYN_FAIL", message: "missing" }; }
-          let v: table = { s: 1 };
-          let nn: number | null = v["s"];
+          let q: Record<string, unknown> = {};
+          let miss: number | undefined = q[k] as number | undefined;
+          if (miss !== undefined) { throw { code: "DYN_FAIL", message: "missing" }; }
+          let v: Record<string, unknown> = { s: 1 };
+          let nn: number | null = v["s"] as number | null;
           let got: number = 0;
           if (nn !== null) { got = nn; }
           if (got !== 1) { throw { code: "DYN_FAIL", message: "nullable" }; }
           let order: number = 0;
-          let receiver: () => table = function(): table { order = order * 10 + 1; return u; };
+          let receiver: () => Record<string, unknown> = function(): Record<string, unknown> { order = order * 10 + 1; return u; };
           let key: () => string = function(): string { order = order * 10 + 2; return "y"; };
           let value: () => number = function(): number { order = order * 10 + 3; return 11; };
           receiver()[key()] = value();
           if (order !== 123) { throw { code: "DYN_FAIL", message: "write evaluation order" }; }
           order = 0;
-          let ordered: number = receiver()[key()];
+          let ordered: number = receiver()[key()] as number;
           if (order !== 12 || ordered !== 11) { throw { code: "DYN_FAIL", message: "read evaluation order" }; }
           return null;
         }
@@ -300,7 +300,7 @@ public class ProductionProjectEmissionTest {
 
     /** The async library of the cross-module async fixture. */
     private static final String ASYNC_LIB_SOURCE = """
-        export async function getValue(): number {
+        export async function getValue(): Promise<number> {
           return 42;
         }
         """;
@@ -316,7 +316,7 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        export async function worker(): number {
+        export async function worker(): Promise<number> {
           return await lib.getValue();
         }
         """;
@@ -332,11 +332,11 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        async function compute(): number {
+        async function compute(): Promise<number> {
           return 1;
         }
 
-        export async function worker(): number {
+        export async function worker(): Promise<number> {
           return await compute();
         }
         """;
@@ -348,7 +348,7 @@ public class ProductionProjectEmissionTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-        DistributionHome distributionHome) implements AutoCloseable {
+        CheckoutResources checkoutResources) implements AutoCloseable {
         public void close() { deleteRecursively(root); }
     }
 
@@ -359,7 +359,7 @@ public class ProductionProjectEmissionTest {
      * ProductionProjectEmission with.
      */
     private static CompilerInvocation fixtureInvocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -391,6 +391,11 @@ public class ProductionProjectEmissionTest {
         CompilationOrchestrator orchestrator = new CompilationOrchestrator(entry, output,
             false, false, false, false, backend, resolvedExternals,
             List.of(src.toAbsolutePath()), null, null, invocation);
+        var contextField = CompilationOrchestrator.class.getDeclaredField("context");
+        contextField.setAccessible(true);
+        var context = (deal.project.ProjectContext) contextField.get(orchestrator);
+        check("1.5".equals(context.languageVersion()) && "1.5".equals(context.stdlibVersion()),
+            "isolated-phase context uses the active language and stdlib versions");
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
@@ -429,7 +434,7 @@ public class ProductionProjectEmissionTest {
         }
         return new Fixture(root, built.input(), built.index(), manifests.manifests(),
             surface, identities,
-            DistributionHome.forManifestDirectory(src.toString()));
+            CheckoutResources.forManifestDirectory(src.toString()));
     }
 
     private static SymbolTable copyScope(SymbolTable scope,
@@ -470,7 +475,7 @@ public class ProductionProjectEmissionTest {
         return new Fixture(fixture.root(), new CheckedProjectInput(checked.invocation(),
             checked.entryModule(), modules, checked.releaseStateHash()), fixture.index(),
             fixture.manifests(), fixture.surface(),
-            fixture.declarationIdentities(), fixture.distributionHome());
+            fixture.declarationIdentities(), fixture.checkoutResources());
     }
 
     private static Fixture twoModuleFixture(String appSource) throws Exception {
@@ -499,7 +504,7 @@ public class ProductionProjectEmissionTest {
      * {@code REEVALUATE_THUNK} capture mode (the source expression is
      * re-executed on every invocation, so the source value's execution class
      * is selected at execution) — assigned to a longer target signature
-     * (docs/spec-v1.4.md §Function type compatibility: M &lt;= N with the
+     * (docs/spec-v1.5.md §Function type compatibility: M &lt;= N with the
      * extra target parameters accepted and silently ignored; §Arity
      * extension adapter). The production lowering produces the adapter from
      * the call result and the invocation records the closed dynamic
@@ -527,8 +532,8 @@ public class ProductionProjectEmissionTest {
           return function(a: number): number { return a; };
         }
 
-        export async function runAsync(): null {
-          let g: async (a: number, b: number) => number = makeAsync();
+        export async function runAsync(): Promise<null> {
+          let g: (a: number, b: number) => Promise<number> = makeAsync();
           let r: number = await g(3, 4);
           if (r !== 3) {
             throw { code: "ARITY_ASYNC_ADAPTER", message: "the adapted await did not run" };
@@ -537,8 +542,8 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        function makeAsync(): async (a: number) => number {
-          return async function(a: number): number { return a; };
+        function makeAsync(): (a: number) => Promise<number> {
+          return async function(a: number): Promise<number> { return a; };
         }
         """;
 
@@ -548,7 +553,7 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The module-level declaration-order shapes (docs/spec-v1.4.md §Name
+     * The module-level declaration-order shapes (docs/spec-v1.5.md §Name
      * resolution: {@code class} and {@code function} declarations are
      * hoisted within the module, function bodies may reference classes
      * declared later in the same module, and class fields may reference
@@ -674,7 +679,7 @@ public class ProductionProjectEmissionTest {
           return a + b;
         }
 
-        export async function getValue(): number {
+        export async function getValue(): Promise<number> {
           return 42;
         }
         """;
@@ -711,7 +716,7 @@ public class ProductionProjectEmissionTest {
           return null;
         }
 
-        export async function worker(): number {
+        export async function worker(): Promise<number> {
           return await lib.getValue();
         }
         """;
@@ -774,15 +779,15 @@ public class ProductionProjectEmissionTest {
     private static final String AWAIT_ADAPTER_APP_SOURCE = """
         import * as console from "std/console";
 
-        export async function entry(): number {
+        export async function entry(): Promise<number> {
           return await worker();
         }
 
-        export async function entryAsync(): number {
+        export async function entryAsync(): Promise<number> {
           return await asyncWorker();
         }
 
-        async function worker(): number {
+        async function worker(): Promise<number> {
           let f: (a: number, b: number) => number = await make();
           let first: number = f(1, 2);
           let second: number = f(3, 4);
@@ -793,8 +798,8 @@ public class ProductionProjectEmissionTest {
           return first;
         }
 
-        async function asyncWorker(): number {
-          let f: async (a: number, b: number) => number = await makeAsync();
+        async function asyncWorker(): Promise<number> {
+          let f: (a: number, b: number) => Promise<number> = await makeAsync();
           let first: number = await f(1, 2);
           let second: number = await f(3, 4);
           if (first !== 41 || second !== 43) {
@@ -804,12 +809,12 @@ public class ProductionProjectEmissionTest {
           return first;
         }
 
-        async function make(): (a: number) => number {
+        async function make(): Promise<(a: number) => number> {
           return function(a: number): number { return a + 40; };
         }
 
-        async function makeAsync(): async (a: number) => number {
-          return async function(a: number): number { return a + 40; };
+        async function makeAsync(): Promise<(a: number) => Promise<number>> {
+          return async function(a: number): Promise<number> { return a + 40; };
         }
 
         export function main(): null {
@@ -826,12 +831,12 @@ public class ProductionProjectEmissionTest {
     private static final String ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE = """
         import * as console from "std/console";
 
-        export async function entry(): number {
+        export async function entry(): Promise<number> {
           return await worker();
         }
 
-        async function worker(): number {
-          let f: async (a: number, b: number) => number = make();
+        async function worker(): Promise<number> {
+          let f: (a: number, b: number) => Promise<number> = make();
           let first: number = await f(1, 2);
           let second: number = await f(3, 4);
           if (first !== 41 || second !== 43) {
@@ -841,8 +846,8 @@ public class ProductionProjectEmissionTest {
           return first;
         }
 
-        function make(): async (a: number) => number {
-          return async function(a: number): number { return a + 40; };
+        function make(): (a: number) => Promise<number> {
+          return async function(a: number): Promise<number> { return a + 40; };
         }
 
         export function main(): null {
@@ -851,12 +856,10 @@ public class ProductionProjectEmissionTest {
         """;
 
     /**
-     * Mutual and self-referential function-valued class defaults: the enclosed
-     * class literals are deferred to the call, so every construction terminates
-     * and no construction cycle exists even though each class's default names
-     * the other (and {@code Self} names itself).
+     * Supplied recursive callable fields defer their bodies until invocation.
+     * Mutual and self-returning callables construct finite nominal values.
      */
-    private static final String DEFERRED_DEFAULT_APP_SOURCE = """
+    private static final String RECURSIVE_CALLABLE_APP_SOURCE = """
         import * as console from "std/console";
         export function main(): null {
           let a: A = {makeB: makeB};
@@ -865,7 +868,7 @@ public class ProductionProjectEmissionTest {
           if (a.makeB().n !== 2 || b.makeA().makeB().n !== 2 || self.make().n !== 3) {
             throw {code: "JS_PROBE", message: "provided recursive callable"};
           }
-          console.log("PROBE|JS|DEFERRED-DEFAULTS");
+          console.log("PROBE|JS|RECURSIVE-CALLABLES");
           return null;
         }
         function makeA(): A { return {makeB: makeB}; }
@@ -877,13 +880,10 @@ public class ProductionProjectEmissionTest {
         """;
 
     /**
-     * Class-default construction terminated by the fields the literals provide:
-     * a provided field skips its default (docs/spec-v1.4.md §Construction), so
-     * the self-referential {@code Self} and the mutually defaulting {@code A}/
-     * {@code B} pair each construct only the shape their literal supplied and
-     * never re-enter their own default.
+     * Finite structural values for self-referential and mutually recursive
+     * class layouts. Every required field is supplied explicitly.
      */
-    private static final String PROVIDED_FIELD_DEFAULT_APP_SOURCE = """
+    private static final String NESTED_RECURSIVE_FIELDS_APP_SOURCE = """
         import * as console from "std/console";
 
         export function main(): null {
@@ -910,7 +910,7 @@ public class ProductionProjectEmissionTest {
           } else {
             throw { code: "JS_PROBE", message: "mutual default a" };
           }
-          console.log("PROBE|JS|PROVIDED-DEFAULTS");
+          console.log("PROBE|JS|NESTED-FIELDS");
           return null;
         }
 
@@ -977,7 +977,7 @@ public class ProductionProjectEmissionTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            java.util.Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
+            java.util.Set.of(), backend, sourceMapExplicit, fixture.checkoutResources(), stager);
     }
 
     private record Emission(ProductionProjectEmission.Result result, String stderr) {
@@ -1275,7 +1275,7 @@ public class ProductionProjectEmissionTest {
     /**
      * The two v1.4 source shapes the integrated JS route rejected before
      * rendering (acceptance remediation of the JS production migration):
-     * docs/spec-v1.4.md §Name resolution, Declaration order requires a
+     * docs/spec-v1.5.md §Name resolution, Declaration order requires a
      * function body — and a class field — to reference a class declared
      * later in the same module, and the arity-extension adapter of
      * §Function type compatibility admits a call-result source that is
@@ -1535,8 +1535,8 @@ public class ProductionProjectEmissionTest {
     /**
      * The declaration-order shapes through the public production route: an
      * earlier function body constructs a literal of a later-declared class
-     * and of a later-declared class whose omitted required field default
-     * calls a module function (docs/spec-v1.4.md §Name resolution). The one
+     * and of a later-declared class supplied with a module function's result
+     * (docs/spec-v1.5.md §Name resolution). The one
      * production lowering resolves both from the hoisted structural
      * declaration facts; the complete set stages and publishes, and the
      * published CommonJS artifact executes both constructions under Node.
@@ -1822,21 +1822,21 @@ public class ProductionProjectEmissionTest {
         return count;
     }
 
-    /** Mutual and self-referential function-valued class defaults. */
-    private static void testDeferredClassDefaults() throws Exception {
+    /** Execute supplied mutually recursive and self-returning callable fields. */
+    private static void testSuppliedRecursiveCallables() throws Exception {
         Path root = Files.createTempDirectory("js-deferred-defaults-");
         try {
-            writeFileIn(root, "src/app.deal", DEFERRED_DEFAULT_APP_SOURCE);
+            writeFileIn(root, "src/app.deal", RECURSIVE_CALLABLE_APP_SOURCE);
             Path out = root.resolve("out");
             CompilationOrchestrator orchestrator = compileJs(root,
                 root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
             check(orchestrator.diagnostics().isEmpty(),
-                "mutual function-valued class defaults compile through the"
+                "supplied recursive callables compile through the"
                     + " public JS arm: " + orchestrator.diagnostics());
             ExecutableLoweredProject produced = orchestrator.producedProject();
             LoweredModuleUnit app = produced == null ? null
                 : produced.modules().get(new ModuleId("app"));
-            check(app != null, "the deferred-default project records its entry unit");
+            check(app != null, "the recursive-callable project records its entry unit");
             if (app == null) {
                 return;
             }
@@ -1871,72 +1871,62 @@ public class ProductionProjectEmissionTest {
                 }
             }
             check(constructions >= 5,
-                "the entry body and the deferred defaults construct the"
+                "the entry body and callable bodies construct the"
                     + " module-level classes: " + constructions);
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
-            assertEmitterRun("mutual and self defaults construct only at the deferred call",
-                run, 0, "PROBE|JS|DEFERRED-DEFAULTS\n");
+            assertEmitterRun("mutual and self callable bodies construct at invocation",
+                run, 0, "PROBE|JS|RECURSIVE-CALLABLES\n");
         } finally {
             deleteRecursively(root);
         }
     }
 
-    /**
-     * A class default whose literal provides the recursive field terminates:
-     * the construction skips the provided field's default, so neither the
-     * self-referential nor the mutual variant re-enters its own default.
-     */
-    private static void testProvidedFieldDefaultTermination()
+    /** Nested supplied recursive fields construct finite values. */
+    private static void testNestedRecursiveFields()
             throws Exception {
         Path root = Files.createTempDirectory("js-provided-defaults-");
         try {
-            writeFileIn(root, "src/app.deal", PROVIDED_FIELD_DEFAULT_APP_SOURCE);
+            writeFileIn(root, "src/app.deal", NESTED_RECURSIVE_FIELDS_APP_SOURCE);
             Path out = root.resolve("out");
             CompilationOrchestrator orchestrator = compileJs(root,
                 root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
             check(orchestrator.diagnostics().isEmpty(),
-                "the provided-field class defaults compile through the public"
+                "the nested supplied fields compile through the public"
                     + " JS arm (a supplied field adds no construction edge): "
                     + orchestrator.diagnostics());
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
-            assertEmitterRun("self and mutual provided-field defaults terminate",
-                run, 0, "PROBE|JS|PROVIDED-DEFAULTS\n");
+            assertEmitterRun("self and mutual nested supplied fields terminate",
+                run, 0, "PROBE|JS|NESTED-FIELDS\n");
         } finally {
             deleteRecursively(root);
         }
     }
 
     /**
-     * A recursive class default is plan availability, never execution demand
-     * (ISSUE-0865): the self-defaulting {@code Node} compiles and keeps the
-     * construction's supplied {@code next} because no construction of the
-     * program evaluates that default, and the same program with the field
-     * omitted still fails closed with the named cycle rule — the finite
-     * override case and the genuinely non-terminating construction stay
-     * distinguishable. The mutual pair covers the two-declaration form on the
-     * same construction sites.
+     * Recursive layouts permit finite supplied values but do not make their
+     * required nullable fields optional. Omission rejects before publication.
      */
-    private static void testSuppressedRecursiveDefaultDemand()
+    private static void testRequiredRecursiveFields()
             throws Exception {
-        System.out.println("-- a suppressed recursive class default admits the finite "
-            + "construction and a demanded one stays fail-closed --");
+        System.out.println("-- supplied recursive nullable fields admit finite "
+            + "construction and omission stays fail-closed --");
         Path root = Files.createTempDirectory("js-suppressed-default-");
         try {
-            writeFileIn(root, "src/app.deal", SUPPRESSED_RECURSIVE_DEFAULT_APP_SOURCE);
+            writeFileIn(root, "src/app.deal", SUPPLIED_RECURSIVE_FIELDS_APP_SOURCE);
             Path out = root.resolve("out");
             CompilationOrchestrator orchestrator = compileJs(root,
                 root.resolve("src/app.deal").toAbsolutePath(), out, false, Map.of());
             check(orchestrator.diagnostics().isEmpty(),
-                "the suppressed recursive default admits the finite"
+                "the supplied recursive nullable fields admit finite"
                     + " construction: " + orchestrator.diagnostics());
             check(Files.exists(out.resolve("app.js")),
                 "the admitted compile publishes the entry artifact");
             ProcessOutcome run = runProcess(List.of("node", "app.js"), out);
             assertEmitterRun("the supplied recursive fields keep their values",
-                run, 0, "PROBE|JS|SUPPRESSED-DEFAULTS\n");
+                run, 0, "PROBE|JS|SUPPLIED-FIELDS\n");
 
             writeFileIn(root, "src/demanded.deal",
-                DEMANDED_RECURSIVE_DEFAULT_APP_SOURCE);
+                MISSING_RECURSIVE_FIELD_APP_SOURCE);
             Path rejected = root.resolve("out-demanded");
             CompilationOrchestrator demanded = compileJs(root,
                 root.resolve("src/demanded.deal").toAbsolutePath(), rejected,
@@ -1952,13 +1942,8 @@ public class ProductionProjectEmissionTest {
         }
     }
 
-    /**
-     * The finite construction that overrides a recursive class default: the
-     * self-defaulting {@code Node} and the mutually defaulting {@code A}/{@code B}
-     * pair both supply the recursive field at the construction site, so the
-     * default is never evaluated and the supplied value must survive.
-     */
-    private static final String SUPPRESSED_RECURSIVE_DEFAULT_APP_SOURCE = """
+    /** Explicit nullable leaves terminate recursive supplied-field values. */
+    private static final String SUPPLIED_RECURSIVE_FIELDS_APP_SOURCE = """
         import * as console from "std/console";
 
         export function main(): null {
@@ -1974,7 +1959,7 @@ public class ProductionProjectEmissionTest {
           if (b.a !== null) {
             throw { code: "JS_PROBE", message: "mutual override lost" };
           }
-          console.log("PROBE|JS|SUPPRESSED-DEFAULTS");
+          console.log("PROBE|JS|SUPPLIED-FIELDS");
           return null;
         }
 
@@ -1991,13 +1976,8 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
-    /**
-     * The same recursive defaults with the recursive field omitted at the
-     * construction site: that construction evaluates the default, which
-     * constructs the class whose own omitted default constructs it again, so
-     * the program has no terminating reading and stays a named E6005.
-     */
-    private static final String DEMANDED_RECURSIVE_DEFAULT_APP_SOURCE = """
+    /** A missing required nullable field rejects with E4001. */
+    private static final String MISSING_RECURSIVE_FIELD_APP_SOURCE = """
         export function main(): null {
           let n: Node = {};
           return null;
@@ -2008,8 +1988,8 @@ public class ProductionProjectEmissionTest {
         }
         """;
 
-    /** A direct default construction cycle stays fail-closed with the named rule. */
-    private static void testDirectDefaultConstructionCycleFailsClosed() throws Exception {
+    /** Retired recursive field-initializer syntax rejects with E1007. */
+    private static void testRecursiveInitializerSyntaxRejects() throws Exception {
         Path root = Files.createTempDirectory("js-cyclic-defaults-");
         try {
             writeFileIn(root, "src/app.deal", """
@@ -2178,7 +2158,7 @@ public class ProductionProjectEmissionTest {
                 fixture.surface(), Map.of(),
                 BuiltinErrorDeclaration.synthesized(
                     fixture.checkedProject().modules().get(0).ast().span()),
-                java.util.Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
+                java.util.Set.of(), Backend.JS, false, fixture.checkoutResources(), stager);
             check(!result.emitted(),
                 "the incomplete structural companion fails the JS arm closed");
             checkEq(1, result.diagnostics().size(),
@@ -2341,12 +2321,12 @@ public class ProductionProjectEmissionTest {
     /**
      * The project-local stdlib override of the JS arm: the deployment copy is
      * the project's own {@code <manifestDir>/std} implementation, exactly the
-     * one {@link DistributionHome} precedence every backend consumes — the
-     * JavaScript arm neither re-derives nor prefers the distribution copy.
+     * one {@link CheckoutResources} lookup every backend consumes — the
+     * JavaScript arm preserves project-local overrides.
      */
     private static void testJsStdlibOverride() throws Exception {
         System.out.println("-- the JS arm stages the project-local stdlib"
-            + " override through the one distribution precedence --");
+            + " override through the checkout resource lookup --");
         Fixture fixture = jsFixture();
         try {
             String override = """
@@ -2367,7 +2347,7 @@ public class ProductionProjectEmissionTest {
                     "the staged stdlib copy is the project-local override");
                 check(stager.stagedSet().artifact("std/console.js").isPresent(),
                     "the untouched stdlib implementations keep their"
-                        + " distribution copies");
+                        + " checkout copies");
             } finally {
                 stager.discard();
             }
@@ -2379,7 +2359,7 @@ public class ProductionProjectEmissionTest {
     /**
      * The missing-runtime negative of the JS arm (the preserved E6000): the
      * resolution is observed in an isolated process whose working directory
-     * and distribution surface carry no runtime, so the checkout development
+     * carry no runtime, so the checkout
      * fallback cannot satisfy the copy. The pinned text and its exact
      * missing-anchor note are unchanged, and nothing is published.
      */
@@ -4554,10 +4534,10 @@ public class ProductionProjectEmissionTest {
             testDeclarationOrderAndCallResultAdapter();
             testAwaitAdapterSource();
             testAsyncCallResultAdapterShape();
-            testDeferredClassDefaults();
-            testDirectDefaultConstructionCycleFailsClosed();
-            testProvidedFieldDefaultTermination();
-            testSuppressedRecursiveDefaultDemand();
+            testSuppliedRecursiveCallables();
+            testRecursiveInitializerSyntaxRejects();
+            testNestedRecursiveFields();
+            testRequiredRecursiveFields();
             DefaultLuaRun defaultRun = testOneArtifactPerTarget(fixture);
             testOneMainProbe();
             testJvmToolchain(fixture);

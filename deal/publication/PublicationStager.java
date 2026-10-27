@@ -1,9 +1,8 @@
 package deal.publication;
 
-import deal.distribution.DistributionHome;
+import deal.module.CheckoutResources;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
@@ -81,13 +80,9 @@ import java.util.stream.Stream;
  * publish start</b>; otherwise it removes the stale trees. The current
  * invocation's own stage tree is excluded by name.</p>
  *
- * <p><b>Distribution copies (D6).</b> The runtime and stdlib deployment
- * copies resolve through {@link DistributionHome} in the pinned
- * three-tier order — project-local surface first, then the language
- * distribution (classpath resources, then the {@code DEAL_HOME}
- * filesystem layout), then the checkout CWD dev fallback — so the
- * transactional set is content-correct outside the checkout and a
- * project-local {@code std/} override always stages its own bytes.</p>
+ * <p>Runtime copies come from the checkout; stdlib implementations may
+ * be overridden by project-local files. Copies join the same transaction
+ * as generated artifacts.</p>
  */
 public final class PublicationStager implements AutoCloseable {
 
@@ -322,55 +317,33 @@ public final class PublicationStager implements AutoCloseable {
         return target;
     }
 
-    /**
-     * Stages the runtime library copy ({@code deal/runtime.lua} or
-     * {@code deal/runtime.js}) resolved through {@link DistributionHome}
-     * in the pinned order — classpath resources, then the
-     * {@code DEAL_HOME} filesystem layout, then the checkout CWD dev
-     * fallback (no project-local location is pinned for the runtime,
-     * D6).
-     *
-     */
-    public Optional<DistributionHome.ResolvedSource> stageRuntimeCopy(
-            String runtimeFileName, DistributionHome home)
+    /** Stage a runtime library from the source checkout. */
+    public Optional<Path> stageRuntimeCopy(
+            String runtimeFileName, CheckoutResources home)
             throws IOException {
         Objects.requireNonNull(runtimeFileName, "runtimeFileName");
         Objects.requireNonNull(home, "home");
-        Optional<DistributionHome.ResolvedSource> source =
-            home.resolveRuntimeSource(runtimeFileName);
+        Optional<Path> source = home.resolveRuntimeSource(runtimeFileName);
         if (source.isEmpty()) {
             return Optional.empty();
         }
-        try (InputStream in = source.get().open()) {
-            stage(runtimeFileName, in.readAllBytes());
-        }
+        stage(runtimeFileName, Files.readAllBytes(source.get()));
         return source;
     }
 
-    /**
-     * Stages one spec-listed stdlib implementation copy
-     * ({@code std/<moduleName>.<extension>}) resolved through
-     * {@link DistributionHome} in the pinned order — project-local
-     * surface first, then the language distribution, then the checkout
-     * CWD dev fallback (D6) — so a project-local {@code std/} override
-     * always stages its own bytes.
-     *
-     */
-    public Optional<DistributionHome.ResolvedSource> stageStdlibCopy(
-            String moduleName, String extension, DistributionHome home)
+    /** Stage a project-local stdlib implementation, or its checkout file. */
+    public Optional<Path> stageStdlibCopy(
+            String moduleName, String extension, CheckoutResources home)
             throws IOException {
         Objects.requireNonNull(moduleName, "moduleName");
         Objects.requireNonNull(extension, "extension");
         Objects.requireNonNull(home, "home");
-        Optional<DistributionHome.ResolvedSource> source =
-            home.resolveStdlibImplementation(moduleName, extension);
+        Optional<Path> source = home.resolveStdlibImplementation(moduleName, extension);
         if (source.isEmpty()) {
             return Optional.empty();
         }
         String relativePath = "std/" + moduleName + "." + extension;
-        try (InputStream in = source.get().open()) {
-            stage(relativePath, in.readAllBytes());
-        }
+        stage(relativePath, Files.readAllBytes(source.get()));
         return source;
     }
 

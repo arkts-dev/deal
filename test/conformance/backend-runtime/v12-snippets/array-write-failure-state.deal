@@ -10,7 +10,7 @@ export function main(): null {
  function index(): number {trace = trace + "I"; return 2;}
  function value(): number {trace = trace + "V"; return 9;}
  try {receiver()[index()] = value(); trace = trace + "X";} catch(e) {
-  if(e.code !== "E8002") {throw {code:"TEST_FAIL",message:"wrong bounds code"};} trace = trace + "C";
+  if((e as Error).code !== "E8002") {throw {code:"TEST_FAIL",message:"wrong bounds code"};} trace = trace + "C";
  }
  if(trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) {throw {code:"TEST_FAIL",message:"failed write: " + trace};}
  alias[alias.length] = 8;

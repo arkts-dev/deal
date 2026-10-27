@@ -11,7 +11,7 @@ export function main(): null {
   };
   if (xs !== null) {
     clear();
-    for (let n: number of xs) {
+    for (let n of xs) {
       throw { code: "TEST_FAIL", message: "the loop body must not run" };
     }
   }

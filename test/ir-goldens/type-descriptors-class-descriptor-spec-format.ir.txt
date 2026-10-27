@@ -17,4 +17,5 @@ module @test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.d
           call : @test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.deal/User @test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.deal:7:15-7:24
             ident makeUser : ()->@test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.deal/User @test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.deal:7:15-7:22
         return @test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.deal:8:1-9:1
+          [boundary: return]
           literal null : null @test/ir-goldens/fixtures/type-descriptors-class-descriptor-spec-format.deal:8:8-8:11

@@ -1,7 +1,9 @@
 module @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:1-5:1
   function f: null @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:1-5:1
     body
-      let t: table @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:22-4:46
+      let t: record @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:22-4:64
         [boundary: var-annotation]
-        object : table @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:37-4:38
-      return @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:41-4:49
+        object : record @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:55-4:56
+      return @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:59-4:72
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/type-descriptors-primitive-table.deal:4:66-4:69

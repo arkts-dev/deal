@@ -3,38 +3,38 @@
 // @expected: runtime-ok
 // @features: number[], async, functions
 
-async function echo(b: number[]): number[] {
+async function echo(b: number[]): Promise<number[]> {
   return b;
 }
 
-async function countArr(a: number[][]): number {
+async function countArr(a: number[][]): Promise<number> {
   return a.length;
 }
 
-async function applyBytes(f: async (b: number[]) => number[], b: number[]): number[] {
+async function applyBytes(f: (b: number[]) => Promise<number[]>, b: number[]): Promise<number[]> {
   return await f(b);
 }
 
-async function failEcho(b: number[]): number[] {
+async function failEcho(b: number[]): Promise<number[]> {
   throw { code: "E_TEST", message: "boom" };
 }
 
 export class Holder {
-  cb: async (b: number[]) => number[];
-  maybe: (async (b: number[]) => number[]) | null;
+  cb: (b: number[]) => Promise<number[]>;
+  maybe: ((b: number[]) => Promise<number[]>) | null;
   n: number;
 }
 
-export async function test_array_async_closure(): number {
-  let f: async (b: number[]) => number[] = echo;
+export async function test_array_async_closure(): Promise<number> {
+  let f: (b: number[]) => Promise<number[]> = echo;
   let out: number[] = await f([0, 0]);
   if (out.length !== 2) {
     throw { code: "TEST_FAIL", message: "async number[] value failed" };
   }
-  let fs: ((async (b: number[]) => number[]) | null)[] = [];
+  let fs: (((b: number[]) => Promise<number[]>) | null)[] = [];
   fs[fs.length] = echo;
   fs[fs.length] = null;
-  let g: (async (b: number[]) => number[]) | null = fs[0];
+  let g: ((b: number[]) => Promise<number[]>) | null = fs[0];
   if (g !== null) {
     let again: number[] = await g([0, 0, 0]);
     if (again[0] !== 0) {
@@ -44,7 +44,7 @@ export async function test_array_async_closure(): number {
     throw { code: "TEST_FAIL", message: "containerized async value lost" };
   }
   // async function expression: awaited value roundtrip
-  let f2: async (b: number[]) => number[] = async function(b: number[]): number[] {
+  let f2: (b: number[]) => Promise<number[]> = async function(b: number[]): Promise<number[]> {
     let echoed: number[] = []; while (echoed.length < b.length) { echoed[echoed.length] = 0; }
     echoed[0] = b[0];
     return echoed;
@@ -66,7 +66,7 @@ export async function test_array_async_closure(): number {
   }
   // discard await evaluates exactly once with the completion check
   let hits: number = 0;
-  async function counter(b: number[]): number[] {
+  async function counter(b: number[]): Promise<number[]> {
     hits = hits + 1;
     return b;
   }
@@ -79,7 +79,7 @@ export async function test_array_async_closure(): number {
   try {
     await failEcho([0]);
   } catch (e) {
-    caught = e.code === "E_TEST";
+    caught = (e as Error).code === "E_TEST";
   }
   if (!caught) {
     throw { code: "TEST_FAIL", message: "async error propagation failed" };
@@ -91,12 +91,12 @@ export async function test_array_async_closure(): number {
   if (viaField.length !== 5 || h.n !== 9) {
     throw { code: "TEST_FAIL", message: "class field async invoke failed" };
   }
-  let m: (async (b: number[]) => number[]) | null = h.maybe;
+  let m: ((b: number[]) => Promise<number[]>) | null = h.maybe;
   if (m !== null) {
     throw { code: "TEST_FAIL", message: "nullable field default failed" };
   }
   h.maybe = echo;
-  let m2: (async (b: number[]) => number[]) | null = h.maybe;
+  let m2: ((b: number[]) => Promise<number[]>) | null = h.maybe;
   if (m2 !== null) {
     let viaMaybe: number[] = await m2([0, 0, 0, 0, 0, 0]);
     if (viaMaybe.length !== 6) {

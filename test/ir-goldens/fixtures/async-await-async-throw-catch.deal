@@ -1,4 +1,4 @@
 // IR golden fixture: async-await-async-throw-catch
 // Migrated IR-containment pin for legacy case 'async-throw-catch' (ISSUE-0358).
 
-export async function f(): string { try { throw { code: "E_TEST", message: "test error" }; return "unreachable"; } catch (e) { return e.code; } }
+export async function f(): Promise<string> { try { throw { code: "E_TEST", message: "test error" }; return "unreachable"; } catch (e) { let error: Error = e as Error; return error.code; } }

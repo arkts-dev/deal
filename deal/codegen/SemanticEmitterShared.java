@@ -20,6 +20,7 @@ public final class SemanticEmitterShared {
      * {@code class}, {@code err}, or {@code nullable:&lt;inner&gt;}.
      */
     public static String staticKind(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof RuntimeDescriptor.Undefined || descriptor instanceof RuntimeDescriptor.Void) return "undefined";
         if (descriptor == null) {
             return "ref";
         }
@@ -66,6 +67,9 @@ public final class SemanticEmitterShared {
      * carried signature all use.
      */
     public static String descriptorText(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof RuntimeDescriptor.Undefined) return "undefined";
+        if (descriptor instanceof RuntimeDescriptor.Void) return "void";
+        if (descriptor instanceof RuntimeDescriptor.Unknown) return "unknown";
         if (descriptor instanceof RuntimeDescriptor.Null) {
             return "null";
         }
@@ -80,7 +84,7 @@ public final class SemanticEmitterShared {
             return "string";
         }
         if (descriptor instanceof RuntimeDescriptor.Table) {
-            return "table";
+            return "record";
         }
         if (descriptor instanceof RuntimeDescriptor.Class cls) {
             return cls.classId().text();
@@ -89,7 +93,9 @@ public final class SemanticEmitterShared {
             return "array(" + descriptorText(array.element()) + ")";
         }
         if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
-            return "nullable(" + descriptorText(nullable.inner()) + ")";
+            return (nullable.admitsNull() ? "nullable" : "")
+                + (nullable.admitsUndefined() ? "undefinedable" : "")
+                + "(" + descriptorText(nullable.inner()) + ")";
         }
         if (descriptor instanceof RuntimeDescriptor.Func func) {
             StringBuilder params = new StringBuilder();

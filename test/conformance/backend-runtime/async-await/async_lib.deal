@@ -5,10 +5,10 @@
 // explicit classification, and companions must keep compiling standalone.
 // @spec: Async/Await — cross-module companion module
 
-export async function getAnswer(): number {
+export async function getAnswer(): Promise<number> {
   return 42;
 }
 
-export async function greet(name: string): string {
+export async function greet(name: string): Promise<string> {
   return "Hello, " + name;
 }

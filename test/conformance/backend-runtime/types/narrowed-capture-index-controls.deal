@@ -7,7 +7,8 @@ function expectNoError(what: string): null {
   throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
-function expectCaught(e: Error, what: string, code: string): null {
+function expectCaught(value: unknown, what: string, code: string): null {
+  let e: Error = value as Error;
   if (e.code !== code) {
     throw { code: "CONTROL_FAIL", message: what + ": expected " + code + ", got " + e.code };
   }
@@ -42,10 +43,10 @@ export function main(): null {
       expectEqual("array receiver write", maybeRow[0], 6);
     }
   }
-  let config: table | null = { a: 1 };
+  let config: Record<string, unknown> | null = { a: 1 };
   if (config !== null) {
     config["a"] = 2;
-    let stored: number = config["a"];
+    let stored: number = config["a"] as number;
     expectEqual("table receiver write", stored, 2);
   }
 
@@ -105,7 +106,7 @@ export function main(): null {
       expectCaught(e, "table receiver write", "E8001");
     }
     try {
-      let stored: number = config["a"];
+      let stored: unknown = config["a"];
       expectNoError("table receiver read");
     } catch (e) {
       expectCaught(e, "table receiver read", "E8001");

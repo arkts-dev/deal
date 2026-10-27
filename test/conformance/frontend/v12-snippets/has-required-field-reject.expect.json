@@ -5,6 +5,6 @@
     "code": "E4005",
     "line": 7,
     "column": 41,
-    "message": "'has' argument must be an optional class field; 'x' is required"
+    "message": "Field 'y' not declared in class 'C'"
   }
 }

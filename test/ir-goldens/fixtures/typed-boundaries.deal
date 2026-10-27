@@ -1,7 +1,7 @@
 // IR golden fixture: typed-boundaries
 // Tests various typed boundary annotations:
 // - var-annotation, assignment, param-entry, return
-// - class-default, class-construct
+// - structural class construction
 // - field-write
 
 class Counter {
@@ -17,4 +17,5 @@ function main(): null {
     let c: Counter = { count: 0 };
     let n: number = increment(c);
     n = 42;
+    return null;
 }

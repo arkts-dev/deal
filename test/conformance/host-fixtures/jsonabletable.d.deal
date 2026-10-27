@@ -1,31 +1,17 @@
 // @expected: host-fixture
-// @description: Host-module declaration fixture (host-module-abi D6) —
-// resolved on demand by the host-fixture registry; the discovery walk
-// skips test/conformance/host-fixtures/ entirely.
-// Host fixture declaration for the three-lane @jsonable plain-table
-// content conformance test (ISSUE-0868): the declared table-typed returns
-// carry the JSON-shaped data a @jsonable class helper's toJson walk must
-// accept as a plain Lua table (LuaJIT), a runtime table (JVM), or a
-// runtime table Map (JS) — an object, a nested object with an array
-// member, and a self-referential table for the closed cycle arm. The
-// makeParsed return is the deployment's own std/json decode graph of
-// {"v":0.1,"w":1e17} (ISSUE-0900): a host-returned decoded object keeps
-// its per-slot numeric-variant marks, so the class walk must classify it
-// by its content keys and spell the marked slots by their own variant.
-// The closed arms' returns carry content the finite acyclic JSON domain
-// excludes: a non-finite numeric leaf (an object member, a nested plain
-// table's member and an array element), an object value and an object key
-// that are not Unicode scalar sequences (at the root object and inside a
-// nested one).
+// @description: Three-backend Record ingress for descriptor-directed @jsonable walkers.
+// Object, nested-array, decoded fractional, cyclic, nonfinite and malformed
+// Unicode graphs remain distinct inputs; the generated walker owns each
+// serialization outcome after host return admission.
 
-export function makeTable(): table;
-export function makeNested(): table;
-export function makeParsed(): table;
-export function makeCycle(): table;
-export function makeInfinite(): table;
-export function makeNotANumber(): table;
-export function makeNestedInfinite(): table;
-export function makeInfiniteElements(): table;
-export function makeBadKey(): table;
-export function makeNestedBadKey(): table;
-export function makeBadString(): table;
+export function makeTable(): Record<string, unknown>;
+export function makeNested(): Record<string, unknown>;
+export function makeParsed(): Record<string, unknown>;
+export function makeCycle(): Record<string, unknown>;
+export function makeInfinite(): Record<string, unknown>;
+export function makeNotANumber(): Record<string, unknown>;
+export function makeNestedInfinite(): Record<string, unknown>;
+export function makeInfiniteElements(): Record<string, unknown>;
+export function makeBadKey(): Record<string, unknown>;
+export function makeNestedBadKey(): Record<string, unknown>;
+export function makeBadString(): Record<string, unknown>;

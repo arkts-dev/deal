@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): null {for(let ch:string of "abc") {} return null;}
+export function f(): null {for(let ch of "abc") {let scalar:string = ch;} return null;}

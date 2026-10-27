@@ -1,10 +1,10 @@
 // @spec: Tables — Reading table fields
-// @description: A chained table read with no contextual target type is E3003 (v1.2 defect snippet 56, a retained negative regression)
+// @description: A Record child read is unknown and cannot be used as a member receiver
 // @expected: compile-error E3003
 // @features: tables, dynamic-read, chaining
 
 export function main(): null {
-  let t: table = { child: { x: 7 } };
+  let t: Record<string, unknown> = { child: { x: 7 } };
   let n: number = t.child.x;
   return null;
 }

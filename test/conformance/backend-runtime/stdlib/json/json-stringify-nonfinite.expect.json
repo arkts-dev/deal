@@ -1,25 +1,9 @@
 {
   "version": 1,
-  "backends": [
-    "luajit",
-    "jvm",
-    "js"
-  ],
+  "backends": ["luajit", "jvm", "js"],
   "expected": {
-    "mode": "runtime-error",
-    "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"unsupported type for JSON encoding: number\",\"sourceFile\":\"backend-runtime/stdlib/json/json-stringify-nonfinite.deal\",\"line\":11,\"column\":10,\"expected\":\"string, number, boolean, or table\",\"actual\":\"number\"}\n",
-      "stderr": ""
-    },
-    "exitCode": 1,
-    "error": {
-      "code": "E8001",
-      "message": "unsupported type for JSON encoding: number",
-      "sourceFile": "backend-runtime/stdlib/json/json-stringify-nonfinite.deal",
-      "line": 11,
-      "column": 10,
-      "expected": "string, number, boolean, or table",
-      "actual": "number"
-    }
+    "mode": "runtime-ok",
+    "transcript": {"stdout": "", "stderr": ""},
+    "exitCode": 0
   }
 }

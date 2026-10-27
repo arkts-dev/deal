@@ -5,7 +5,7 @@
 
 import * as tbl from "std/table";
 
-export function test_table_keys(t: table): string[] {
+export function test_table_keys(t: Record<string, unknown>): string[] {
   return tbl.keys(t);
 }
 

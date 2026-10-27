@@ -5,12 +5,14 @@ class Profile {
 }
 
 function nickState(profile: Profile): string {
-  if (!has(profile.nick)) {
+  if (!Object.hasOwn(profile, "nick")) {
     return "missing";
   }
-  let nick: string | null = profile.nick;
+  let nick: string | null | undefined = profile.nick;
   if (nick !== null) {
-    return nick;
+    if (nick !== undefined) {
+      return nick;
+    }
   }
   return "null";
 }

@@ -1,13 +1,18 @@
 // @spec: Type system — Runtime checked function parameter boundaries
-// @description: Passing a dynamic table value to an int parameter fails with E8001
+// @description: A closure-cleared number refinement fails at parameter admission with E8001, without replacing the parameter check by a checked assertion.
 // @expected: runtime-error E8001
 // @features: type-system, functions, runtime-errors
 
 function needInt(x: number): number { return x; }
 
 export function test_dynamic_to_int_param_runtime_error(): number {
-  let t: table = { value: "bad" };
-  return needInt(t.value);
+  let value: number | null = 7;
+  let clear: () => void = function(): void { value = null; };
+  if (value !== null) {
+    clear();
+    return needInt(value);
+  }
+  throw { code: "TEST_FAIL", message: "refined parameter branch skipped" };
 }
 
 export function main(): null {

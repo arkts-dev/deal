@@ -22,7 +22,7 @@ export function test_plan_phase_order(): null {
   try {
     target = { b: pick(), a: probe.nextValue() };
   } catch (e) {
-    caught = e;
+    caught = e as Error;
   }
   if (caught !== null) {
     if (caught.code !== "E8002") {

@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: async, await, nested-await
 
-async function one(): number { return 1; }
-async function two(): number { return 2; }
+async function one(): Promise<number> { return 1; }
+async function two(): Promise<number> { return 2; }
 function add(a: number, b: number): number { return a + b; }
 
-export async function test_nested_await_arguments(): number {
+export async function test_nested_await_arguments(): Promise<number> {
   let result: number = add(await one(), await two());
   if (result !== 3) { throw { code: "TEST_FAIL", message: "nested await arguments failed" }; }
   return result;

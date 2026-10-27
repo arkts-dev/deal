@@ -1,0 +1,4 @@
+// @expected: host-fixture
+// @description: Adversarial host mutation of an admitted callable's carried signature.
+// Keep the callable body and identity; only the transport descriptor changes.
+export function replaceSignature(holder: Record<string, unknown>, descriptor: string): boolean;

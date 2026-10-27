@@ -5,7 +5,7 @@
 
 import * as host from "host/async_shape_bad";
 
-export async function test_host_async_shape_bad(): string {
+export async function test_host_async_shape_bad(): Promise<string> {
   let fetched: string = await host.fetchValue();
   return fetched;
 }

@@ -1,89 +1,47 @@
 // @spec: Standard library declarations — std/json.d.deal
-// @description: JSON numbers preserve binary64 values, padded exponents and zero-sign serialization
+// @description: JSON numbers preserve binary64 values across signed32 boundaries, padded exponents and zero-sign serialization
 // @expected: runtime-ok
-// @features: stdlib, json, int, v1.2, v1.4
+// @features: stdlib, json, number
 
 import * as json from "std/json";
 import * as str from "std/string";
 
+function value(text: string): number {
+  let parsed: Record<string, unknown> = json.parse(text);
+  return parsed.v as number;
+}
+
+function roundtrip(text: string, expected: number): null {
+  let parsed: Record<string, unknown> = json.parse(text);
+  if ((parsed.v as number) !== expected) {
+    throw {code: "TEST_FAIL", message: "numeric parse mismatch"};
+  }
+  let encoded: string = json.stringify(parsed) as string;
+  if (value(encoded) !== expected) {
+    throw {code: "TEST_FAIL", message: "numeric roundtrip mismatch"};
+  }
+  return null;
+}
+
 export function main(): null {
-  let t: table = json.parse("{\"a\":2147483647,\"b\":2147483648,\"c\":-2147483648,\"d\":-2147483649,\"z\":-0}");
-  let a: number = t.a;
-  let c: number = t.c;
-  let b: number = t.b;
-  let d: number = t.d;
-  let big: number = 2147483647 + 1.0;
-  let negbig: number = (-2147483648) - 1.0;
-  if (a !== 2147483647) {
-    throw { code: "TEST_FAIL", message: "2147483647 must map to int" };
+  let t: Record<string, unknown> = json.parse("{\"a\":2147483647,\"b\":2147483648,\"c\":-2147483648,\"d\":-2147483649,\"z\":-0}");
+  if ((t.a as number) !== 2147483647 || (t.c as number) !== -2147483648) {
+    throw {code: "TEST_FAIL", message: "signed32 boundary values"};
   }
-  if (c !== -2147483648) {
-    throw { code: "TEST_FAIL", message: "-2147483648 must map to int" };
+  if ((t.b as number) !== 2147483647 + 1 || (t.d as number) !== -2147483648 - 1) {
+    throw {code: "TEST_FAIL", message: "values outside signed32"};
   }
-  if (b !== big) {
-    throw { code: "TEST_FAIL", message: "2147483648 must map to number" };
+  let z: number = t.z as number;
+  if (1 / z !== -1 / 0) { throw {code: "TEST_FAIL", message: "parse lost negative zero"}; }
+  let s: string = json.stringify(t) as string;
+  if (!str.contains(s, "\"z\":0") || str.contains(s, "-0")) {
+    throw {code: "TEST_FAIL", message: "stringify must normalize negative zero"};
   }
-  if (d !== negbig) {
-    throw { code: "TEST_FAIL", message: "-2147483649 must map to number" };
-  }
-  let z: number = t.z;
-  if (1 / z !== -1 / 0) { throw { code: "TEST_FAIL", message: "parse lost negative zero" }; }
-  let s: string = json.stringify(t);
-  if (!str.contains(s, "\"z\":0")) {
-    throw { code: "TEST_FAIL", message: "-0 must normalize to 0" };
-  }
-  if (str.contains(s, "-0")) {
-    throw { code: "TEST_FAIL", message: "stringify output must not carry -0" };
-  }
-  // The number variant's canonical text is the shortest round-trippable
-  // decimal spelling (E-notation outside [1e-3, 1e7)), so the text itself
-  // proves which variant the negative boundary token selected: the
-  // signed32 check compares the magnitude before the sign is applied, so
-  // -2147483649 and -9999999999 are the number variant on every backend.
-  let below: string = json.stringify(json.parse("{\"v\":-2147483649}"));
-  let belowParsed: table = json.parse(below);
-  let belowValue: number = belowParsed.v;
-  if (belowValue !== -2147483649) {
-    throw { code: "TEST_FAIL", message: "-2147483649 must be the number variant (-2.147483649E9)" };
-  }
-  let far: string = json.stringify(json.parse("{\"v\":-9999999999}"));
-  let farParsed: table = json.parse(far);
-  let farValue: number = farParsed.v;
-  if (farValue !== -9999999999) {
-    throw { code: "TEST_FAIL", message: "-9999999999 must be the number variant (-9.999999999E9)" };
-  }
-  let lower: string = json.stringify(json.parse("{\"v\":-2147483648}"));
-  let lowerParsed: table = json.parse(lower);
-  let lowerValue: number = lowerParsed.v;
-  if (lowerValue !== -2147483648) {
-    throw { code: "TEST_FAIL", message: "-2147483648 must be the int variant" };
-  }
-  // The exponent magnitude accumulates digits with bounded saturation:
-  // leading zeroes contribute nothing, so a zero-padded exponent text
-  // longer than 18 characters whose mathematical value is small stays
-  // exactly classified. 1e0000000000000000001 is the integral 10.
-  let padded: table = json.parse("{\"v\":1e0000000000000000001}");
-  let paddedValue: number = padded.v;
-  if (paddedValue !== 10) {
-    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must decode to the int 10" };
-  }
-  let paddedText: string = json.stringify(padded);
-  let paddedTextParsed: table = json.parse(paddedText);
-  let paddedTextValue: number = paddedTextParsed.v;
-  if (paddedTextValue !== 10) {
-    throw { code: "TEST_FAIL", message: "a zero-padded long exponent must stay the int variant" };
-  }
-  let paddedZero: string = json.stringify(json.parse("{\"v\":1e00000000000000000000}"));
-  let paddedZeroParsed: table = json.parse(paddedZero);
-  let paddedZeroValue: number = paddedZeroParsed.v;
-  if (paddedZeroValue !== 1) {
-    throw { code: "TEST_FAIL", message: "a zero-valued zero-padded exponent must stay the int variant" };
-  }
-  let paddedFraction: string = json.stringify(json.parse("{\"v\":100e-000000000000000000002}"));
-  let paddedFractionParsed: table = json.parse(paddedFraction);
-  let paddedFractionValue: number = paddedFractionParsed.v;
-  if (paddedFractionValue !== 1) {
-    throw { code: "TEST_FAIL", message: "a zero-padded negative exponent must stay the int variant" };
-  }
+  roundtrip("{\"v\":-2147483649}", -2147483649);
+  roundtrip("{\"v\":-9999999999}", -9999999999);
+  roundtrip("{\"v\":-2147483648}", -2147483648);
+  roundtrip("{\"v\":1e0000000000000000001}", 10);
+  roundtrip("{\"v\":1e00000000000000000000}", 1);
+  roundtrip("{\"v\":100e-000000000000000000002}", 1);
   return null;
 }

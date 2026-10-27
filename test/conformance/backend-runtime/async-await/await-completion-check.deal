@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: async-await
 
-async function answer(): number {
+async function answer(): Promise<number> {
   return 42;
 }
 
-export async function test_await_completion_check(): number {
+export async function test_await_completion_check(): Promise<number> {
   let v: number = await answer();
   if (v !== 42) {
     throw { code: "TEST_FAIL", message: "completion value mismatch" };

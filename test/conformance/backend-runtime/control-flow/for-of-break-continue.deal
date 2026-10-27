@@ -6,7 +6,7 @@
 export function test_break(): number {
   let xs: number[] = [1, 2, 3, 4, 5];
   let total: number = 0;
-  for (let x: number of xs) {
+  for (let x of xs) {
     if (x === 3) { break; }
     total = total + x;
   }
@@ -19,7 +19,7 @@ export function test_break(): number {
 export function test_continue(): number {
   let xs: number[] = [1, 2, 3, 4, 5];
   let total: number = 0;
-  for (let x: number of xs) {
+  for (let x of xs) {
     if (x === 3) { continue; }
     total = total + x;
   }

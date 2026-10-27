@@ -165,10 +165,30 @@ public final class SemanticTable<V> {
      *
      */
     public List<String> keys() {
-        if (liveKeys != null) {
-            return List.copyOf(liveKeys.get());
+        return ownKeyOrder(liveKeys != null ? liveKeys.get() : keys);
+    }
+
+    /** ECMAScript own-key order: canonical uint32 indices first, then creation order. */
+    public static List<String> ownKeyOrder(java.util.Collection<String> input) {
+        List<String> ordered = new ArrayList<>(input);
+        ordered.sort((left, right) -> {
+            long a = arrayIndex(left), b = arrayIndex(right);
+            if (a < 0) return b < 0 ? 0 : 1;
+            if (b < 0) return -1;
+            return Long.compare(a, b);
+        });
+        return List.copyOf(ordered);
+    }
+
+    private static long arrayIndex(String key) {
+        if (key.isEmpty() || key.length() > 10 || key.length() > 1 && key.charAt(0) == '0') return -1;
+        long value = 0;
+        for (int i = 0; i < key.length(); i++) {
+            char digit = key.charAt(i);
+            if (digit < '0' || digit > '9') return -1;
+            value = value * 10 + digit - '0';
         }
-        return List.copyOf(keys);
+        return value < 4294967295L ? value : -1;
     }
 
     /**

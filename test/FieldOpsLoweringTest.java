@@ -125,7 +125,7 @@ public class FieldOpsLoweringTest {
 
     /** The foundation detector's project facts of the slice (index + coverage). */
     private static PipelineSlice pipeline(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -178,7 +178,7 @@ public class FieldOpsLoweringTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClassCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
+            SemanticProfile.DEAL_V1_5_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
             REGISTRY_HASH, pipeline.ownInterface(),
             SemanticIdAllocator.over(List.of(MODULE)));
     }
@@ -332,13 +332,13 @@ public class FieldOpsLoweringTest {
     // =========================================================================
 
     private static void testOptionalFieldReadArm() {
-        System.out.println("-- optional-field read: the checker's nullable-wrapped "
+        System.out.println("-- optional-field read: the checker's undefined-admitting "
             + "result descriptor --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Point { x: number; tag?: string; }
             let p: Point = {x: 1};
-            let t: string | null = p.tag;
+            let t: string | undefined = p.tag;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -357,9 +357,9 @@ public class FieldOpsLoweringTest {
         }
         SemanticOp read = reads.get(0);
         RuntimeDescriptor nullableString =
-            new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE);
+            new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE, false, true);
         check(read.resultType().equals(nullableString),
-            "the result type is the nullable-wrapped checked result descriptor ?string; got "
+            "the result type is the undefined-admitting checked result descriptor !string; got "
                 + read.resultType());
         List<SemanticOp> children = childrenOf(unit, read);
         check(children.size() == 2,
@@ -368,7 +368,7 @@ public class FieldOpsLoweringTest {
                 && children.get(1).payload() instanceof KindPayload.BoundaryPayload payload) {
             check(payload.kind() == BoundaryKind.OPTIONAL_FIELD_READ
                     && payload.descriptor().equals(nullableString),
-                "child 2 carries descriptor ?string (the optional field's nullable-wrapped "
+                "child 2 carries descriptor !string (the optional field's undefined-admitting "
                     + "type); got " + payload.kind() + " "
                     + payload.descriptor().canonicalSpecText());
         }
@@ -380,27 +380,24 @@ public class FieldOpsLoweringTest {
 
     /**
      * The optional null read (ISSUE-0883): an optional field whose declared
-     * type is {@code null} reads as language {@code null} — the spec's
-     * {@code T | null} with {@code T = null} canonicalizes to {@code null} —
-     * so the FIELD_READ result descriptor and its OPTIONAL_FIELD_READ
-     * boundary are the {@code null} atom itself, never the forbidden
-     * {@code ?null} wrapper. The retained optional {@code T} and optional
-     * nullable {@code T} wraps stay exactly one nullable wrap deep. The
+     * type is {@code null} reads as {@code null | undefined}. The FIELD_READ
+     * result and OPTIONAL_FIELD_READ boundary retain that independent
+     * absence member; optional string and nullable string fields respectively
+     * retain undefined-only and both nullish flags. The
      * slice lowers through the production validator, so a raw
      * {@code new RuntimeDescriptor.Nullable(null)} at either read-result
      * site fails the slice with the constructor's exception instead of
      * validating.
      */
     private static void testOptionalNullFieldReadArm() {
-        System.out.println("-- optional null read: the read result canonicalizes to "
-            + "the null atom (never ?null) --");
+        System.out.println("-- optional null read: null and undefined remain distinct --");
 
         SemanticLowerer.ClassDeclarationCoreResult result = lowerModule("""
             class Box { n?: null; tag?: string; maybe?: string | null; }
             let b: Box = {};
-            let n: null = b.n;
-            let tag: string | null = b.tag;
-            let maybe: string | null = b.maybe;
+            let n: null | undefined = b.n;
+            let tag: string | undefined = b.tag;
+            let maybe: string | null | undefined = b.maybe;
             """);
         check(result != null && result.lowering() != null && !result.lowering().hasErrors()
                 && result.lowering().unit() != null,
@@ -415,13 +412,14 @@ public class FieldOpsLoweringTest {
         List<SemanticOp> reads = ofKind(unit.ops(), SemanticOpKind.FIELD_READ);
         check(reads.size() == 3, "exactly three FIELD_READ ops; got " + reads.size());
         RuntimeDescriptor nullableString =
-            new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE);
+            new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE, false, true);
         for (SemanticOp read : reads) {
             KindPayload.FieldReadPayload payload =
                 (KindPayload.FieldReadPayload) read.payload();
             RuntimeDescriptor expected = switch (payload.field()) {
-                case "n" -> RuntimeDescriptor.Null.INSTANCE;
-                case "tag", "maybe" -> nullableString;
+                case "n" -> new RuntimeDescriptor.Nullable(RuntimeDescriptor.Undefined.INSTANCE, true, false);
+                case "tag" -> nullableString;
+                case "maybe" -> new RuntimeDescriptor.Nullable(RuntimeDescriptor.String.INSTANCE, true, true);
                 default -> null;
             };
             if (expected == null) {
@@ -796,8 +794,8 @@ public class FieldOpsLoweringTest {
             class Box { nick?: string | null; other?: number; }
             function f(box: Box | null): null {
               if (box !== null) {
-                let present: boolean = has(box.nick);
-                let absent: boolean = has(box.other);
+                let present: boolean = Object.hasOwn(box, "nick");
+                let absent: boolean = Object.hasOwn(box, "other");
               }
               return null;
             }
@@ -914,9 +912,9 @@ public class FieldOpsLoweringTest {
             export class Point { x: number; tag?: string; }
             let p: Point = {tag: "t", x: 42};
             let xv: number = p.x;
-            let hasTag: boolean = has(p.tag);
+            let hasTag: boolean = Object.hasOwn(p, "tag");
             delete p.tag;
-            let hasTag2: boolean = has(p.tag);
+            let hasTag2: boolean = Object.hasOwn(p, "tag");
             p.x = 99;
             let xv2: number = p.x;
             """);
@@ -1177,6 +1175,7 @@ public class FieldOpsLoweringTest {
     private static BoundaryValueView valueView(Value value) {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
+            case Value.Undefined ignored -> BoundaryValueView.of(ActualKind.UNDEFINED);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
@@ -1205,7 +1204,7 @@ public class FieldOpsLoweringTest {
             let p: Point = {x: 1};
             let xv: number = p.x;
             p.y = 3;
-            let b: boolean = has(p.y);
+            let b: boolean = Object.hasOwn(p, "y");
             delete p.y;
             let l: Line = {a: 1};
             """;
@@ -1226,7 +1225,7 @@ public class FieldOpsLoweringTest {
             "the two repetitions produce byte-identical SemanticIrDumper dumps");
         check(SemanticIrValidator.validate(first.lowering().unit(),
                 new SemanticIrValidator.ComparisonFacts(first.lowering().unit().interfaceHash(),
-                    SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH)).isEmpty(),
+                    SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH)).isEmpty(),
             "the field-op-bearing unit passes the closed SemanticIrValidator");
     }
 
@@ -1341,7 +1340,7 @@ public class FieldOpsLoweringTest {
             p.x = 9;
             p.y = 3;
             delete p.y;
-            let b: boolean = has(p.y);
+            let b: boolean = Object.hasOwn(p, "y");
             """);
         testFieldWriteArm(fieldMutations);
         testFieldDeleteArm(fieldMutations);

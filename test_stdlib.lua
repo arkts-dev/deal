@@ -663,14 +663,8 @@ end)
 test("json.stringify keeps the pure integer-keyed array and string-keyed object forms", function()
   local array = json.stringify.f({ "a", "b" })
   assert(array == '["a","b"]', "the pure integer-keyed table is the array: " .. tostring(array))
-  -- A hole in an admitted array form is the internal missing slot, never a
-  -- fabricated JSON null and never an object member.
-  local hole = assert_error_code(function()
-    json.stringify.f({ [2] = "b" })
-  end, "E8001")
-  assert(hole.message == "unsupported type for JSON encoding: nil",
-    "the missing slot token: " .. tostring(hole.message))
-  assert(hole.actual == "nil", "the missing slot actual token: " .. tostring(hole.actual))
+  assert(json.stringify.f({ [2] = "b" }) == '[null,"b"]',
+    "a hole in an admitted array substitutes null")
   local object = json.stringify.f({ name = "test" })
   assert(object == '{"name":"test"}', "the pure string-keyed table is the object: " .. tostring(object))
   local numericString = json.stringify.f({ ["1"] = "a" })
@@ -788,18 +782,13 @@ test("json null round-trip", function()
   assert(decoded.b == 42)
 end)
 
-test("json.stringify with non-table raises error", function()
-  local err = assert_error(function() json.stringify.f("not a table") end)
-  assert(type(err) == "table", "error should be a table")
+test("json.stringify admits scalar strings", function()
+  assert(json.stringify.f("not a table") == '"not a table"', "scalar string root")
 end)
 
-test("json.stringify rejects unsupported nested types", function()
-  -- A table containing a function should cause an error during encoding
-  local t = { a = 1, fn = function() end }
-  local err = assert_error(function() json.stringify.f(t) end)
-  assert(type(err) == "table", "error should be a table")
-  assert(err.code ~= nil, "error should have a code")
-  assert(string.find(err.message, "unsupported") ~= nil, "error message should mention unsupported type")
+test("json.stringify rejects raw foreign function roots at unknown ingress", function()
+  local err = assert_error_code(function() json.stringify.f(function() end) end, "E8001")
+  assert(err.message == "unknown primitive type: unknown", "foreign function rejects at unknown boundary")
 end)
 
 test("json.parse with non-string raises error", function()
@@ -807,53 +796,32 @@ test("json.parse with non-string raises error", function()
   assert(type(err) == "table", "error should be a table")
 end)
 
--- A nonfinite number is not JSON data: the shipped realization publishes the
--- closed JSON_STRINGIFY_UNSUPPORTED arm's own tuple (E8001 "unsupported type
--- for JSON encoding: number", expected "string, number, boolean, or table",
--- actual "number") — exactly the tuple the emitted LuaJIT chunk, the JS
--- realization and the JVM runtime publish for the same subject. When the
--- call site is supplied the tuple's origin fields are pinned too: the arm
--- reports the caller's forwarded span, never the stdlib interior.
-local function assert_nonfinite_stringify_error(fn, label, file, line, column)
-  local err = assert_error_code(fn, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: number",
-    label .. ": message " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table",
-    label .. ": expected " .. tostring(err.expected))
-  assert(err.actual == "number", label .. ": actual " .. tostring(err.actual))
-  if file ~= nil then
-    assert(err.file == file and err.line == line and err.column == column,
-      label .. ": the tuple carries the call-site triplet, got "
-        .. tostring(err.file) .. ":" .. tostring(err.line) .. ":" .. tostring(err.column))
-  end
-  return err
+-- Generic unknown-input stringify substitutes null for nonfinite leaves;
+-- descriptor-directed @jsonable rejection is exercised independently.
+local function assert_nonfinite_substitution(fn, expected, label)
+  local text = fn()
+  assert(text == expected, label .. ": expected " .. expected .. ", got " .. tostring(text))
 end
 
-test("json.stringify rejects NaN with E8001", function()
-  assert_nonfinite_stringify_error(function() json.stringify.f({ x = 0.0/0.0 }) end,
-    "NaN member")
+test("json.stringify substitutes null for NaN", function()
+  assert_nonfinite_substitution(function() return json.stringify.f({ x = 0.0/0.0 }) end,
+    '{"x":null}', "NaN member")
 end)
 
-test("json.stringify rejects Infinity with E8001", function()
-  assert_nonfinite_stringify_error(function() json.stringify.f({ x = 1.0/0.0 }) end,
-    "Infinity member")
+test("json.stringify substitutes null for Infinity", function()
+  assert_nonfinite_substitution(function() return json.stringify.f({ x = 1.0/0.0 }) end,
+    '{"x":null}', "Infinity member")
 end)
 
-test("json.stringify rejects negative Infinity with E8001", function()
-  assert_nonfinite_stringify_error(function() json.stringify.f({ x = -1.0/0.0 }) end,
-    "negative Infinity member")
+test("json.stringify substitutes null for negative Infinity", function()
+  assert_nonfinite_substitution(function() return json.stringify.f({ x = -1.0/0.0 }) end,
+    '{"x":null}', "negative Infinity member")
 end)
 
--- The same closed tuple through a forwarded call site: the shipped realization
--- and the compiled lanes publish identical code/message/expected/actual; only
--- the origin differs, and it is the caller's span (the corpus fixture
--- stdlib/json/json-stringify-nonfinite pins the same tuple for luajit, jvm
--- and js).
-test("json.stringify nonfinite tuple matches the compiled-lane pin", function()
-  local err = assert_nonfinite_stringify_error(function()
-    json.stringify.f({ x = 1.0/0.0 }, "caller.deal", 7, 9)
-  end, "forwarded nonfinite", "caller.deal", 7, 9)
-  assert(err.code == "E8001", "the closed arm code, got: " .. tostring(err.code))
+test("json.stringify substitutes null through a forwarded call site", function()
+  assert_nonfinite_substitution(function()
+    return json.stringify.f({ x = 1.0/0.0 }, "caller.deal", 7, 9)
+  end, '{"x":null}', "forwarded nonfinite")
 end)
 
 test("json.stringify accepts finite numbers unchanged", function()
@@ -861,14 +829,15 @@ test("json.stringify accepts finite numbers unchanged", function()
   assert(result == '{"x":42}' or string.find(result, '"x":42') ~= nil, "finite number should encode correctly, got: " .. tostring(result))
 end)
 
-test("json.stringify rejects NaN in nested object", function()
-  assert_nonfinite_stringify_error(
-    function() json.stringify.f({ data = { val = 0.0/0.0 } }) end, "nested NaN")
+test("json.stringify substitutes null for NaN in nested object", function()
+  assert_nonfinite_substitution(
+    function() return json.stringify.f({ data = { val = 0.0/0.0 } }) end,
+    '{"data":{"val":null}}', "nested NaN")
 end)
 
-test("json.stringify rejects Infinity in array", function()
-  assert_nonfinite_stringify_error(function() json.stringify.f({ 1, 2, 1.0/0.0 }) end,
-    "array Infinity")
+test("json.stringify substitutes null for Infinity in array", function()
+  assert_nonfinite_substitution(function() return json.stringify.f({ 1, 2, 1.0/0.0 }) end,
+    '[1,2,null]', "array Infinity")
 end)
 
 -- ===========================================================================
@@ -1148,17 +1117,8 @@ test("json.stringify projects a numeric-variant carrier to its number (v1.4)", f
   assert(string.find(text, '"k"', 1, true) == nil
       and string.find(text, '"d"', 1, true) == nil,
     "the carrier's private k/d fields never surface, got: " .. text)
-  -- A carried non-finite number keeps the closed JSON_STRINGIFY_UNSUPPORTED
-  -- rejection (the arm's own number tuple).
-  local err = assert_error_code(function()
-    json.stringify.f({ v = carrier("number", 0.0 / 0.0) })
-  end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: number",
-    "a carried NaN keeps the closed arm, got: " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table",
-    "a carried NaN keeps the closed expected token, got: " .. tostring(err.expected))
-  assert(err.actual == "number",
-    "a carried NaN keeps the closed actual token, got: " .. tostring(err.actual))
+  assert(json.stringify.f({ v = carrier("number", 0.0 / 0.0) }) == '{"v":null}',
+    "carried NaN uses generic null substitution")
 end)
 
 -- The chunk table carrier (ISSUE-0839): a DEAL table crossing from an
@@ -1211,11 +1171,11 @@ test("json.stringify encodes the chunk table carrier over its user keys (v1.4)",
   cyc.self = cyc
   assert_json_error(function() json.stringify.f(cyc) end,
     "cyclic value cannot be encoded as JSON")
-  local bad = { [__K.t] = true, [__K.keys] = { fn = true },
-    [__K.order] = { "fn" }, fn = function() end }
-  local err = assert_error_code(function() json.stringify.f(bad) end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: function",
-    "a non-JSON member keeps the unsupported arm, got: " .. tostring(err.message))
+  local callable = require("deal.runtime").function_("()->void", function() end)
+  local omitted = { [__K.t] = true, [__K.keys] = { fn = true },
+    [__K.order] = { "fn" }, fn = callable }
+  assert(json.stringify.f(omitted) == '{}', "tagged function member is omitted")
+  assert(omitted.fn == callable, "serialization retains callable identity")
 end)
 
 -- A plain table the emitted chunk wrote through MEMBER_WRITE: __orderAdd
@@ -1455,20 +1415,15 @@ end)
 -- carrier-kind token instead of encoding private carrier fields. A carrier
 -- is rejected at the declared (table) parameter cell first; a carrier
 -- nested in a table is the walk's own arm.
-test("json.stringify rejects a class instance with the closed table token", function()
+test("json.stringify traverses a class instance without carrier keys", function()
   local __rt = require("deal.runtime")
   local inst = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1})
-  local err = assert_error_code(function() json.stringify.f({ c = inst }) end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: table",
-    "class instance message, got: " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table", "class instance expected text")
-  assert(err.actual == "table", "class instance actual token, got: " .. tostring(err.actual))
+  local decoded = json.parse.f(json.stringify.f({ c = inst }))
+  assert(decoded.c.a == 1 and decoded.c[__K.kind] == nil, "class public field only")
 end)
 
-test("json.stringify rejects a carrier at the declared table parameter cell", function()
-  -- The (table) parameter is the strict table split: a produced carrier of
-  -- another kind never passes it, and the tuple is the shared typed-boundary
-  -- admission with the carrier's own kind token.
+test("Record parameters reject nominal carriers independently of generic stringify", function()
+  -- table.keys retains its Record parameter; generic stringify accepts unknown.
   local __rt = require("deal.runtime")
   local cases = {
     { name = "class instance", value = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1}),
@@ -1492,7 +1447,7 @@ test("json.stringify rejects a carrier at the declared table parameter cell", fu
       -- Control: the dense array form is a table value at a table cell.
       assert(json.stringify.f(case.value) == "[1,2]", case.name .. ": array encodes")
     else
-      local err = assert_error_code(function() json.stringify.f(case.value) end, "E8001")
+      local err = assert_error_code(function() require("std.table").keys.f(case.value) end, "E8001")
       assert(err.message == "expected table", case.name .. ": message, got: "
         .. tostring(err.message))
       assert(err.expected == "table", case.name .. ": expected token")
@@ -1502,22 +1457,17 @@ test("json.stringify rejects a carrier at the declared table parameter cell", fu
   end
 end)
 
-test("json.stringify rejects an Error instance with the closed table token", function()
+test("json.stringify exposes only code/message of an Error instance", function()
   local __rt = require("deal.runtime")
-  local ev = __rt.error_value("E1", "boom", nil, nil, nil)
-  local err = assert_error_code(function() json.stringify.f({ e = ev }) end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: table",
-    "Error instance message, got: " .. tostring(err.message))
-  assert(err.actual == "table", "Error instance actual token, got: " .. tostring(err.actual))
+  local ev = __rt.error_value("E1", "boom", "secret.deal", 9, 3)
+  assert(json.stringify.f({ e = ev }) == '{"e":{"code":"E1","message":"boom"}}', "Error public fields only")
 end)
 
-test("json.stringify rejects a function wrapper with the closed function token", function()
+test("json.stringify omits tagged function members and yields undefined for their root", function()
   local __rt = require("deal.runtime")
   local wrapper = __rt.function_("()->null", function() return __rt.__NULL end)
-  local err = assert_error_code(function() json.stringify.f({ f = wrapper }) end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: function",
-    "function wrapper message, got: " .. tostring(err.message))
-  assert(err.actual == "function", "function wrapper actual token, got: " .. tostring(err.actual))
+  assert(json.stringify.f({ f = wrapper }) == '{}', "function member omission")
+  assert(json.stringify.f(wrapper) == __rt.__UNDEFINED, "function root")
 end)
 
 test("json.stringify rejects a decoded async handle with the closed table token", function()
@@ -1529,36 +1479,18 @@ test("json.stringify rejects a decoded async handle with the closed table token"
   assert(err.actual == "table", "async handle actual token, got: " .. tostring(err.actual))
 end)
 
-test("json.stringify rejects the absent marker with the closed nil token", function()
+test("json.stringify omits undefined members and yields undefined for their root", function()
   local __rt = require("deal.runtime")
-  local err = assert_error_code(function()
-    json.stringify.f({ m = __rt.__MISSING })
-  end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: nil",
-    "absent marker message, got: " .. tostring(err.message))
-  assert(err.actual == "nil", "absent marker actual token, got: " .. tostring(err.actual))
+  assert(json.stringify.f({ m = __rt.__MISSING }) == '{}', "undefined member omission")
+  assert(json.stringify.f(__rt.__MISSING) == __rt.__UNDEFINED, "undefined root")
 end)
 
--- A missing array slot is never JSON null (v1.4): only __rt.__NULL is the
--- null carrier. A deleted element of a decoded array leaves a hole the
--- encoder must reject through the closed unsupported/nil arm — exactly the
--- emitted chunk's missing-slot arm and the JVM/JS walks — instead of
--- fabricating a present "null" the source document never carried.
-test("json.stringify rejects a deleted decoded-array slot with the closed nil token", function()
+-- Generic stringify substitutes null for array absence without repairing it.
+test("json.stringify substitutes null for a deleted decoded-array slot", function()
   local doc = json.parse.f('{"xs":[1,2]}')
   doc.xs[1] = nil
-  local err = assert_error_code(function()
-    json.stringify.f(doc, "caller.deal", 12, 9)
-  end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: nil",
-    "deleted slot message, got: " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table",
-    "deleted slot expected text, got: " .. tostring(err.expected))
-  assert(err.actual == "nil", "deleted slot actual token, got: " .. tostring(err.actual))
-  assert(err.file == "caller.deal" and err.line == 12 and err.column == 9,
-    "the missing-slot tuple carries the call-site triplet")
-  -- A present language null in the same array frame stays the one JSON
-  -- null: the nil rejection never widens to __rt.__NULL.
+  assert(json.stringify.f(doc, "caller.deal", 12, 9) == '{"xs":[null,2.0]}', "hole substitution")
+  assert(doc.xs[1] == nil, "deleted slot remains absent")
   assert(json.stringify.f(json.parse.f('{"xs":[null,2]}')) == '{"xs":[null,2.0]}',
     "a decoded present null still encodes as null")
 end)
@@ -1566,49 +1498,30 @@ end)
 -- The inferred (unmarked) array frame applies the same rule: the numeric-key
 -- inference classifies a sparse plain table as an array, so its absent slot
 -- is the missing value, not a fabricated JSON null.
-test("json.stringify rejects a sparse plain table with the closed nil token", function()
-  local err = assert_error_code(function()
-    json.stringify.f({ [2] = 2 }, "caller.deal", 3, 1)
-  end, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: nil",
-    "sparse plain table message, got: " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table",
-    "sparse plain table expected text, got: " .. tostring(err.expected))
-  assert(err.actual == "nil", "sparse plain table actual token, got: " .. tostring(err.actual))
-  assert(err.file == "caller.deal" and err.line == 3 and err.column == 1,
-    "the inferred-frame missing-slot tuple carries the call-site triplet")
+test("json.stringify substitutes null in sparse inferred arrays", function()
+  assert(json.stringify.f({ [2] = 2 }, "caller.deal", 3, 1) == '[null,2]', "sparse array")
   -- The dense counterpart keeps encoding as the array of its elements.
   assert(json.stringify.f({ 1, 2 }) == '[1,2]', "the dense inferred array still encodes")
 end)
 
--- The emitted chunk's own carrier marks (the __stdJsonKind vocabulary the
--- emitted stringify walker classifies): a class instance tagged with
--- __c/__id, the builtin Error value tagged with __d, and a function
--- carrier tagged with __fn/__f/__csig are rejected through the same
--- closed arm with the same tokens, so the shipped std/json.lua and the
--- emitted walker agree on every carrier form a caller can hand over.
-test("json.stringify rejects the emitted chunk carrier marks with the pinned arm (v1.4)", function()
+-- Chunk-shaped carriers use shared private metadata, never their transport keys.
+test("json.stringify projects emitted class/Error carriers and omits callable members", function()
   local __rt = require("deal.runtime")
   local carriers = {
     { name = "emitted class instance", actual = "table",
-      value = { [__K.c] = true, [__K.id] = "@m/C", [__K.f] = {}, [__K.p] = {} } },
+      value = { [__K.c] = true, [__K.id] = "@m/C", [__K.f] = {}, [__K.p] = {}, [__K.classOrder] = {} },
+      expected = '{"payload":{}}' },
     { name = "emitted Error value", actual = "table",
-      value = { [__K.d] = true, code = "E1", m = "boom", o = nil, e = nil, a = nil } },
+      value = { [__K.d] = true, code = "E1", m = "boom", o = nil, e = nil, a = nil },
+      expected = '{"payload":{"code":"E1","message":"boom"}}' },
     { name = "emitted function carrier", actual = "function",
-      value = { [__K.fn] = function() end, [__K.csig] = "()->null", [__K.fid] = nil } },
+      value = { [__K.fn] = function() end, [__K.csig] = "()->null", [__K.fid] = nil }, expected = '{}' },
     { name = "emitted function instance", actual = "function",
-      value = { [__K.f] = {}, [__K.sig] = "()->null" } },
+      value = { [__K.f] = {}, [__K.sig] = "()->null" }, expected = '{}' },
   }
   for _, carrier in ipairs(carriers) do
-    local err = assert_error_code(function()
-      json.stringify.f({ payload = carrier.value })
-    end, "E8001")
-    assert(err.message == "unsupported type for JSON encoding: " .. carrier.actual,
-      carrier.name .. ": message mismatch: " .. tostring(err.message))
-    assert(err.expected == "string, number, boolean, or table",
-      carrier.name .. ": expected mismatch: " .. tostring(err.expected))
-    assert(err.actual == carrier.actual,
-      carrier.name .. ": actual mismatch: " .. tostring(err.actual))
+    local text = json.stringify.f({ payload = carrier.value })
+    assert(text == carrier.expected, carrier.name .. ": unexpected projection " .. tostring(text))
   end
   -- The valid JSON-shaped carriers are unchanged by the marker arm.
   assert(json.stringify.f({ ok = 1 }) == '{"ok":1}', "a plain table still serializes")
@@ -1639,7 +1552,7 @@ test("a user table with carrier-like string keys encodes as data (v1.4)", functi
   assert(back.data == 9, "the ordinary key survives")
   -- The same table is the table value at the table boundary (its string keys
   -- never select a carrier arm).
-  assert(__rt.check_type("table", forged) == forged,
+  assert(__rt.check_type("record", forged) == forged,
     "a table with carrier-like keys is the table value")
 end)
 

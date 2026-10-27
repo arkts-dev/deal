@@ -15,6 +15,7 @@ public class ComparisonExecutorTest {
     private static int failed;
     private static final ComparisonOperandView NULL = ComparisonOperandView.Null.INSTANCE;
     private static final ComparisonOperandView MISSING = ComparisonOperandView.Missing.INSTANCE;
+    private static final ComparisonOperandView UNDEFINED = ComparisonOperandView.Undefined.INSTANCE;
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor NUMBER = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor STRING = RuntimeDescriptor.String.INSTANCE;
@@ -146,7 +147,8 @@ public class ComparisonExecutorTest {
         return switch (selector) {
             case NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE,
                  STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
-                 BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
+                 BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, UNDEFINED_EQ, UNDEFINED_NE,
+                 NULLABLE_UNDEFINED_EQ, NULLABLE_UNDEFINED_NE, NULLABLE_EQ, NULLABLE_NE,
                  NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE -> true;
             case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE -> false;
         };
@@ -157,6 +159,7 @@ public class ComparisonExecutorTest {
             if (!isComparisonSelector(selector)) { continue; }
             String name = selector.name();
             boolean nullable = name.startsWith("NULLABLE"), namedSide = name.startsWith("NULLABLE_NULL");
+            boolean undefinedOnly = name.contains("UNDEFINED");
             List<RuntimeDescriptor> descriptors = nullable ? List.of(NUMBER, STRING, BOOLEAN, ARRAY, TABLE, CLASS, FUNC)
                 : name.startsWith("REFERENCE") ? List.of(ARRAY, TABLE, CLASS, FUNC)
                 : List.of(name.startsWith("NUMBER") ? NUMBER
@@ -167,16 +170,18 @@ public class ComparisonExecutorTest {
                 List<NullableSide> sides = namedSide ? List.of(NullableSide.LEFT, NullableSide.RIGHT)
                     : nullable ? List.of(NullableSide.LEFT, NullableSide.RIGHT, NullableSide.BOTH) : java.util.Collections.singletonList(null);
                 for (NullableSide side : sides) {
-                    for (ComparisonOperandView left : List.of(NULL, MISSING)) {
-                        for (ComparisonOperandView right : List.of(NULL, MISSING)) {
-                            exact(new ComparisonRow(selector, left, right, inner, side, name.endsWith("_EQ")));
+                    for (ComparisonOperandView left : List.of(NULL, UNDEFINED, MISSING)) {
+                        for (ComparisonOperandView right : List.of(NULL, UNDEFINED, MISSING)) {
+                            boolean equal = left == NULL ? right == NULL && !undefinedOnly : right != NULL;
+                            exact(new ComparisonRow(selector, left, right, inner, side,
+                                name.endsWith("_EQ") ? equal : name.endsWith("_NE") && !equal));
                         }
                         if (name.startsWith("NULL_")) { continue; }
                         ComparisonOperandView value = valueFor(descriptor);
                         for (boolean swap : List.of(false, true)) {
                             boolean expected = name.endsWith("_NE");
                             if (namedSide) {
-                                boolean namedNull = side == NullableSide.LEFT ? !swap : swap;
+                                boolean namedNull = left == NULL && (side == NullableSide.LEFT ? !swap : swap);
                                 expected = name.endsWith("_EQ") == namedNull;
                             }
                             exact(new ComparisonRow(selector, swap ? value : left, swap ? left : value, inner, side, expected));
@@ -190,11 +195,11 @@ public class ComparisonExecutorTest {
     /**
      * {@code NULLABLE_NULL_*}: a present boolean is never null, false
      * included, at either declared side and in both operand orders; the
-     * null and internal missing operands remain the null-equivalent pair.
+     * missing reads undefined and is never equivalent to null.
      */
     private static void testNullableNullBooleanRows() {
         for (NullableSide side : List.of(NullableSide.LEFT, NullableSide.RIGHT)) {
-            for (ComparisonOperandView nullish : List.of(NULL, MISSING)) {
+            for (ComparisonOperandView nullish : List.of(NULL, UNDEFINED, MISSING)) {
                 for (boolean present : List.of(false, true)) {
                     ComparisonOperandView value = b(present);
                     ComparisonOperandView presentNamedLeft =
@@ -210,9 +215,9 @@ public class ComparisonExecutorTest {
                     ComparisonOperandView nullNamedRight =
                         side == NullableSide.LEFT ? value : nullish;
                     exact(new ComparisonRow(BinarySelector.NULLABLE_NULL_EQ,
-                        nullNamedLeft, nullNamedRight, BOOLEAN, side, true));
+                        nullNamedLeft, nullNamedRight, BOOLEAN, side, nullish == NULL));
                     exact(new ComparisonRow(BinarySelector.NULLABLE_NULL_NE,
-                        nullNamedLeft, nullNamedRight, BOOLEAN, side, false));
+                        nullNamedLeft, nullNamedRight, BOOLEAN, side, nullish != NULL));
                 }
             }
         }

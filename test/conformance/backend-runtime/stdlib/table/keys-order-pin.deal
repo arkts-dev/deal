@@ -6,7 +6,7 @@
 import * as tables from "std/table";
 
 export function test_table_keys_order_pin(): null {
-  let t: table = { zero: 0, one: 1, two: 2, filler: 3 };
+  let t: Record<string, unknown> = { zero: 0, one: 1, two: 2, filler: 3 };
   delete t.filler;
   let ks: string[] = tables.keys(t);
   if (ks.length !== 3) {

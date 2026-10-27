@@ -112,8 +112,8 @@ public class DynamicProducerRuleTest {
     private static final String MEMBER_READ_SOURCE = """
         export function main(): null {
           let id: (x: number) => number = function(x: number): number { return x; };
-          let holder: table = { g: id };
-          let g: (x: number) => number = holder.g;
+          let holder: Record<string, unknown> = { g: id };
+          let g: (x: number) => number = holder.g as (x: number) => number;
           let r: number = g(1);
           return null;
         }
@@ -149,17 +149,17 @@ public class DynamicProducerRuleTest {
         """;
 
     /**
-     * The optional-read envelope: the declared type is a nullable function,
-     * so the read lowers the {@code OPTIONAL_READ} envelope (a nullable
-     * result descriptor) and the narrowed value-position load of the
-     * guarded cell is the function-typed materialization.
+     * A declared optional callable field reads as function | undefined;
+     * the narrowed value-position load of the guarded cell is the
+     * function-typed materialization, never the raw Record read.
      */
     private static final String OPTIONAL_READ_SOURCE = """
+        class OptionalHolder { g?: (x: number) => number; }
         export function main(): null {
           let id: (x: number) => number = function(x: number): number { return x; };
-          let holder: table = { g: id };
-          let f: ((x: number) => number) | null = holder.g;
-          if (f !== null) {
+          let holder: OptionalHolder = { g: id };
+          let f: ((x: number) => number) | undefined = holder.g;
+          if (f !== undefined) {
             let r: number = f(1);
           }
           return null;
@@ -188,16 +188,16 @@ public class DynamicProducerRuleTest {
      * callee publishes the same shape over a runtime-resolved callee.
      */
     private static final String AWAIT_SOURCE = """
-        async function makeAsync(): (x: number) => number {
+        async function makeAsync(): Promise<(x: number) => number> {
           return function(x: number): number { return x; };
         }
 
-        async function run(): number {
+        async function run(): Promise<number> {
           let g: (x: number) => number = await makeAsync();
           return g(1);
         }
 
-        async function apply(f: async () => ((x: number) => number)): number {
+        async function apply(f: () => Promise<(x: number) => number>): Promise<number> {
           let g: (x: number) => number = await f();
           return g(1);
         }
@@ -212,7 +212,7 @@ public class DynamicProducerRuleTest {
         export function main(): null {
           let id: (x: number) => number = function(x: number): number { return x; };
           let fns: ((x: number) => number)[] = [id];
-          for (let f: (x: number) => number of fns) {
+          for (let f of fns) {
             let r: number = f(1);
           }
           return null;
@@ -304,7 +304,7 @@ public class DynamicProducerRuleTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -372,7 +372,7 @@ public class DynamicProducerRuleTest {
         LoweredModuleUnit unit = lowerer.buildUnit(
             fixture.manifests().get(0).constructCoverage(),
             fixture.module().imports().stream().map(ResolvedImport::resolvedModuleId).toList(),
-            SemanticProfile.DEAL_V1_4_BINARY64,
+            SemanticProfile.DEAL_V1_5_BINARY64,
             fixture.index().interfaceIndexDigest(), REGISTRY_HASH,
             ContainerClaimingSeam.E9_GATE_ACTIVATION);
         return new RawLowering(unit, lowerer.bodyTable(), lowerer.pinnedWriteFacts());
@@ -384,7 +384,7 @@ public class DynamicProducerRuleTest {
 
     private static SemanticIrValidator.ComparisonFacts facts(LoweredModuleUnit unit) {
         return new SemanticIrValidator.ComparisonFacts(unit.interfaceHash(),
-            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH);
     }
 
     /** The closed schema rules and the bindings production rules in one pass. */
@@ -580,9 +580,15 @@ public class DynamicProducerRuleTest {
             return;
         }
         LoweredModuleUnit unit = raw.unit();
-        SemanticOp read = onlyOp(unit, SemanticOpKind.MEMBER_READ, "the member read");
+        SemanticOp rawRead = onlyOp(unit, SemanticOpKind.MEMBER_READ, "the member read");
+        check(rawRead != null && rawRead.resultType() == RuntimeDescriptor.Unknown.INSTANCE,
+            "raw Record member reads remain unknown");
+        SemanticOp read = checkedFunctionAssertion(unit);
+        check(read != null && read.payload() instanceof KindPayload.BoundaryPayload boundary
+                && boundary.input().equals(rawRead.result()),
+            "the callable assertion consumes the original unknown member value");
         assertDynamicRecord(unit, read,
-            "the function-typed member read");
+            "the checked function assertion following the member read");
         check(dynamicIdentitiesOf(unit).size() == 1, "the member-read fixture registers "
             + "exactly one dynamic identity; got " + dynamicIdentitiesOf(unit).size());
         assertGatePasses(raw, "the member-read unit");
@@ -633,7 +639,7 @@ public class DynamicProducerRuleTest {
     }
 
     private static void testOptionalReadEnvelope() {
-        System.out.println("-- the optional-read envelope: the nullable read and its "
+        System.out.println("-- the optional-field read: the undefined-admitting read and its "
             + "narrowed value-position load --");
         Fixture fixture = fixture(OPTIONAL_READ_SOURCE, "optional read");
         if (fixture == null) {
@@ -644,12 +650,13 @@ public class DynamicProducerRuleTest {
             return;
         }
         LoweredModuleUnit unit = raw.unit();
-        SemanticOp optional = onlyOp(unit, SemanticOpKind.OPTIONAL_READ,
-            "the optional-read envelope");
+        SemanticOp optional = onlyOp(unit, SemanticOpKind.FIELD_READ,
+            "the declared optional-field read");
         check(optional != null && optional.result() instanceof ValueId value
                 && optional.resultType() instanceof RuntimeDescriptor.Nullable nullable
-                && nullable.inner() instanceof RuntimeDescriptor.Func,
-            "the envelope publishes the nullable function descriptor; got "
+                && nullable.inner() instanceof RuntimeDescriptor.Func
+                && !nullable.admitsNull() && nullable.admitsUndefined(),
+            "the optional field publishes function | undefined, never fabricated null; got "
                 + (optional == null ? "no envelope" : optional.resultType()));
         if (optional != null && optional.result() instanceof ValueId identity) {
             // The envelope's result is not a function-typed result: the
@@ -915,7 +922,7 @@ public class DynamicProducerRuleTest {
         import * as console from "std/console";
 
         export function main(): null {
-          let f: (x: string) => null = console.log;
+          let f: (x: string) => void = console.log;
           return null;
         }
         """;
@@ -924,8 +931,8 @@ public class DynamicProducerRuleTest {
         import * as console from "std/console";
 
         export function main(): null {
-          let c: table = console;
-          let g: (x: string) => null = c.log;
+          let c: Record<string, unknown> = console;
+          let g: (x: string) => void = c.log as (x: string) => void;
           return null;
         }
         """;
@@ -1020,7 +1027,7 @@ public class DynamicProducerRuleTest {
         Optional<CompilerDiagnostic> schema = SemanticIrValidator.validate(lowered.project(),
             new SemanticIrValidator.ComparisonFacts(
                 lowered.project().interfaceIndex().interfaceIndexDigest(),
-                SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH));
+                SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH));
         check(schema.isEmpty(), "the two-module project passes the closed schema rules: "
             + schema.map(CompilerDiagnostic::message).orElse(""));
     }
@@ -1060,7 +1067,7 @@ public class DynamicProducerRuleTest {
             SemanticLowerer.ProjectLoweringResult lowered, String what) {
         SemanticIrValidator.ComparisonFacts facts = new SemanticIrValidator.ComparisonFacts(
             lowered.project().interfaceIndex().interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH);
         Optional<CompilerDiagnostic> typed = SemanticIrValidator.validate(
             lowered.project(), facts);
         check(typed.isEmpty(), what + ": the closed schema rules admit the lowered "
@@ -1092,8 +1099,10 @@ public class DynamicProducerRuleTest {
         }
         SemanticOp read = null;
         long functionTypedReads = 0;
-        for (SemanticOp op : ofKind(app, SemanticOpKind.MEMBER_READ)) {
-            if (op.result() instanceof ValueId value
+        for (SemanticOp op : ofKind(app, SemanticOpKind.BOUNDARY)) {
+            if (op.payload() instanceof KindPayload.BoundaryPayload boundary
+                    && boundary.kind() == deal.semantic.ir.BoundaryKind.ASSERTION
+                    && op.result() instanceof ValueId value
                     && op.resultType() instanceof RuntimeDescriptor.Func) {
                 functionTypedReads++;
                 read = op;
@@ -1138,6 +1147,12 @@ public class DynamicProducerRuleTest {
             unit.bodyTable(), unit.classFactories(), unit.classBindingFacts());
     }
 
+    private static SemanticOp checkedFunctionAssertion(LoweredModuleUnit unit) {
+        return unit.ops().stream().filter(op -> op.resultType() instanceof RuntimeDescriptor.Func
+            && op.payload() instanceof KindPayload.BoundaryPayload boundary
+            && boundary.kind() == deal.semantic.ir.BoundaryKind.ASSERTION).findFirst().orElse(null);
+    }
+
     private static void testNegativeSeeds(RawLowering raw) {
         System.out.println("-- negative seeds: the dropped registration, the static "
             + "producing position, and the duplicate key --");
@@ -1145,7 +1160,7 @@ public class DynamicProducerRuleTest {
             return;
         }
         LoweredModuleUnit unit = raw.unit();
-        SemanticOp read = onlyOp(unit, SemanticOpKind.MEMBER_READ, "the member read");
+        SemanticOp read = checkedFunctionAssertion(unit);
         if (read != null && read.result() instanceof ValueId identity) {
             Optional<CompilerDiagnostic> dropped = SemanticIrValidator.validate(
                 withoutRegistration(unit, identity), facts(unit));

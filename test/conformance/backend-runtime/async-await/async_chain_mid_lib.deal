@@ -5,12 +5,12 @@
 // explicit classification, and companions must keep compiling standalone.
 import * as deep from "./async_chain_deep_lib";
 
-export async function midAnswer(): number {
+export async function midAnswer(): Promise<number> {
   let x: number = await deep.deepAnswer();
   return x + 2;
 }
 
-export async function midText(): string {
+export async function midText(): Promise<string> {
   let s: string = await deep.deepText();
   return "mid-" + s;
 }

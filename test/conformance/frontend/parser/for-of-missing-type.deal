@@ -1,11 +1,11 @@
 // @spec: Syntactic grammar — malformed for-of
-// @description: Missing type annotation in for-of loop is rejected
+// @description: Explicit type annotation in for-of loop is rejected; bindings must be inferred
 // @expected: compile-error E1013
 // @features: parser, for-of, diagnostics
 
 export function main(): null {
 let xs: number[] = [1, 2];
-for (let x of xs) {
+for (let x: number of xs) {
 }
 
 return null;

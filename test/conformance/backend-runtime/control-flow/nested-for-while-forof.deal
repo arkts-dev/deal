@@ -9,7 +9,7 @@ export function test_nested_loop_mix(): number {
   { let v14Loop0: number = 0; while (v14Loop0 < 2) { let i: number = v14Loop0; {
     let j: number = 0;
     while (j < 2) {
-      for (let v: number of values) {
+      for (let v of values) {
         total = total + v;
       }
       j = j + 1;

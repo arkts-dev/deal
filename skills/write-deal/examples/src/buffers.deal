@@ -2,7 +2,7 @@ import * as check from "./check";
 
 function sum(values: number[]): number {
   let total: number = 0;
-  for (let value: number of values) {
+  for (let value of values) {
     total = total + value;
   }
   return total;
@@ -12,14 +12,14 @@ function boundsWriteRejected(values: number[]): boolean {
   try {
     values[values.length + 1] = 1;
   } catch (e) {
-    return e.code === "E8002";
+    return (e as Error).code === "E8002";
   }
   return false;
 }
 
 function copyValues(source: number[]): number[] {
   let copy: number[] = [];
-  for (let value: number of source) {
+  for (let value of source) {
     copy[copy.length] = value;
   }
   return copy;

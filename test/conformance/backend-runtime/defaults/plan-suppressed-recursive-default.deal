@@ -39,19 +39,19 @@ export function test_suppressed_self_default_keeps_override(): null {
   check(probe.valueCount() === base + 2, "plain values invoke no producer");
   check(explicit.stamp === 5, "provided stamp");
   check(explicit.next === null, "provided null");
-  check(!has(explicit.tag), "omitted optional stays absent");
-  let absentTag: string | null = explicit.tag;
-  check(absentTag === null, "absent optional reads null");
+  check(!Object.hasOwn(explicit, "tag"), "omitted optional stays absent");
+  let absentTag: string | null | undefined = explicit.tag;
+  check(absentTag === undefined, "absent optional reads undefined");
   let presentNull: Node = {stamp: nextStamp(), next: null, tag: null};
   check(probe.valueCount() === base + 3, "present-null construction producer count");
-  check(has(presentNull.tag), "explicit null is present");
-  let nullTag: string | null = presentNull.tag;
+  check(Object.hasOwn(presentNull, "tag"), "explicit null is present");
+  let nullTag: string | null | undefined = presentNull.tag;
   check(nullTag === null, "present optional retains null");
   let presentText: Node = {stamp: nextStamp(), next: second, tag: "kept"};
   check(probe.valueCount() === base + 4, "present-value construction producer count");
-  let textTag: string | null = presentText.tag;
+  let textTag: string | null | undefined = presentText.tag;
   check(textTag !== null, "present optional retains value");
-  if (textTag !== null) { check(textTag === "kept", "provided text"); }
+  if (textTag !== null) { if (textTag !== undefined) { check(textTag === "kept", "provided text"); } else { check(false, "provided text became undefined"); } }
   let textNext: Node | null = presentText.next;
   if (textNext !== null) {
     check(textNext === second, "recursive chain retains identity");

@@ -10,6 +10,6 @@ function greet(name: string): string {
     return "Hello, " + name;
 }
 
-function noop(): null {
+function noop(): void {
     return;
 }

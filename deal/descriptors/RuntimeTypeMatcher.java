@@ -118,7 +118,9 @@ public final class RuntimeTypeMatcher {
             return checkArray(array.element(), value, range);
         }
         if (atom instanceof DescriptorAst.NullableAtom nullable) {
-            return checkNullable(nullable.inner(), value, range);
+            if (nullable.admitsNull() && model.isNull(value)
+                    || nullable.admitsUndefined() && model.isUndefined(value)) return value;
+            return checkAtom(nullable.inner(), value, range);
         }
         DescriptorAst.FunctionAtom fn = (DescriptorAst.FunctionAtom) atom;
         return checkFunction(fn, value, range);
@@ -163,7 +165,19 @@ public final class RuntimeTypeMatcher {
                 }
                 return failure("E8001", "expected number, got " + actualKind(value, range), range);
             }
-            case "table" -> {
+            case "undefined", "void" -> {
+                if (model.isUndefined(value)) return value;
+                return failure("E8001", "expected undefined, got " + actualKind(value, range), range);
+            }
+            case "unknown" -> {
+                if (model.isString(value)) return checkPrimitive("string", value, range);
+                if (model.isNull(value) || model.isUndefined(value) || model.isBoolean(value)
+                        || model.isNumber(value) || model.isString(value) || model.isTable(value)
+                        || model.isArray(value) || model.classIdentityText(value) != null
+                        || model.functionDescriptorText(value) != null) return value;
+                return failure("E8001", "expected unknown, got " + actualKind(value, range), range);
+            }
+            case "record" -> {
                 if (model.isTable(value)) {
                     return value;
                 }
@@ -272,6 +286,7 @@ public final class RuntimeTypeMatcher {
      * never a fabricated closed token.</p>
      */
     private String actualKind(Object value, RuntimeSourceLocation range) {
+        if (model.isUndefined(value)) return "undefined";
         if (model.isNull(value)) {
             return "null";
         }

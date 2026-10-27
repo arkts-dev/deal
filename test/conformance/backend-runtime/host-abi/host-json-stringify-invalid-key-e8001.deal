@@ -7,8 +7,8 @@ import * as host from "host/jsonabletable";
 import * as json from "std/json";
 
 export function test_json_stringify_invalid_key(): string {
-  let t: table = host.makeBadKey();
-  return json.stringify(t);
+  let t: Record<string, unknown> = host.makeBadKey();
+  return json.stringify(t) as string;
 }
 
 export function main(): null {

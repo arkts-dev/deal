@@ -4,7 +4,7 @@ package deal.ast;
  * Root sealed interface for all expression AST nodes.
  */
 public sealed interface ExpressionNode
-    permits LiteralExpr,
+    permits AssertionExpr, InstanceofExpr, LiteralExpr,
             IdentifierExpr,
             BinaryExpr,
             UnaryExpr,

@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: async, await, state
 
-async function inc(x: number): number { return x + 1; }
+async function inc(x: number): Promise<number> { return x + 1; }
 
-export async function test_multiple_await_state(): number {
+export async function test_multiple_await_state(): Promise<number> {
   let x: number = 0;
   x = await inc(x);
   x = await inc(x);

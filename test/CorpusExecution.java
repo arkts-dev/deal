@@ -15,9 +15,10 @@ final class CorpusExecution {
     static final String RECEIPT = "__corpus_calls.txt";
 
     static void controls() throws Exception {
-        String source = "export function first(): int { return 1; } "
-            + "export async function second(): int { return 2; } export function main(): null {}";
+        String source = "export function first(): number { return 1; } "
+            + "export async function second(): Promise<number> { return 2; } export function main(): null { return null; }";
         var parsed = new deal.parser.Parser(new deal.lexer.Lexer(source, "control.deal").tokenize().tokens(), "control.deal").parse();
+        if (!parsed.diagnostics().isEmpty()) throw new AssertionError(parsed.diagnostics());
         if (!probes(parsed.program(), false).equals(List.of(new Probe("main", false),
                 new Probe("first", false), new Probe("second", true)))) throw new AssertionError("dropped/reordered parsed probe");
         boolean rejected = false;

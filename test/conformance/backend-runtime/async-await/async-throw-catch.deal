@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async, error-handling, runtime
 
-export async function f(): string {
+export async function f(): Promise<string> {
   let intendedCatchRan: boolean = false;
   let fallbackCatchRan: boolean = false;
   let normalRan: boolean = false;
@@ -16,11 +16,11 @@ export async function f(): string {
       normalRan = true;
     } catch (e) {
       intendedCatchRan = true;
-      intendedCode = e.code;
+      intendedCode = (e as Error).code;
     }
   } catch (e) {
     fallbackCatchRan = true;
-    fallbackCode = e.code;
+    fallbackCode = (e as Error).code;
   }
 
   if (intendedCatchRan !== true ||

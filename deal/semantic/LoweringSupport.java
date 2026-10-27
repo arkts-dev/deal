@@ -1,5 +1,8 @@
 package deal.semantic;
 
+import deal.ast.AssertionExpr;
+import deal.ast.InstanceofExpr;
+
 import deal.ast.ArrayLiteralExpr;
 import deal.ast.AssignmentExpr;
 import deal.ast.AwaitExpression;
@@ -456,6 +459,14 @@ public final class LoweringSupport {
                 scan.cover(ConstructKind.SCALAR_LITERAL);
             }
             case IdentifierExpr ignored -> scan.cover(ConstructKind.IDENTIFIER);
+            case AssertionExpr assertion -> {
+                scan.cover(ConstructKind.CHECKED_ASSERTION);
+                walkExpression(assertion.value(), module, scan, checkerScope);
+            }
+            case InstanceofExpr test -> {
+                scan.cover(ConstructKind.UNARY_ARITHMETIC_COMPARISON);
+                walkExpression(test.value(), module, scan, checkerScope);
+            }
             case BinaryExpr binaryExpr -> {
                 Type type = checkedType(module, binaryExpr);
                 // `string +` lowers to STRING_CONCAT (S4); every other
@@ -605,6 +616,7 @@ public final class LoweringSupport {
                 // has() expression lowers to HAS_FIELD.
                 scan.classConstruct = true;
                 walkExpression(hasExpr.object(), module, scan, checkerScope);
+                if (hasExpr.key() != null) walkExpression(hasExpr.key(), module, scan, checkerScope);
             }
             case AssignmentExpr assignmentExpr -> {
                 scan.cover(ConstructKind.ASSIGNMENT);

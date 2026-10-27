@@ -212,6 +212,11 @@ public final class ChainOperandCompletion {
                                                       Set<OpId> structuralOwned) {
         Map<ValueId, SemanticOp> producers = new HashMap<>();
         for (SemanticOp op : unit.ops()) {
+            // Identity-preserving loads and enclosing ASSIGNs may publish
+            // the same ValueId later. They cannot produce an earlier
+            // child's operands: selecting one would move a future binding
+            // read before its initialization (or re-enter the owning chain).
+            if (op.opId().equals(child.opId())) break;
             if (op.result() instanceof ValueId valueId) {
                 producers.put(valueId, op);
             }

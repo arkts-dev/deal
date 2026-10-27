@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: control-flow, for, closures
 
-function testBodyStoreFeedsUpdateAndTest(): null {
+function testBodyStoreFeedsUpdateAndTest(): void {
   let visits: number = 0;
   { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
     visits = visits + 1;
@@ -15,7 +15,7 @@ function testBodyStoreFeedsUpdateAndTest(): null {
   return;
 }
 
-function testOmittedUpdateStillCarries(): null {
+function testOmittedUpdateStillCarries(): void {
   let visits: number = 0;
   { let v14Loop1: number = 0; while (v14Loop1 < 2) { let i: number = v14Loop1; {
     visits = visits + 1;
@@ -28,7 +28,7 @@ function testOmittedUpdateStillCarries(): null {
   return;
 }
 
-function testContinueInTryAfterStore(): null {
+function testContinueInTryAfterStore(): void {
   let visits: number = 0;
   { let v14Loop2: number = 0; while (v14Loop2 < 3) { let i: number = v14Loop2; {
     visits = visits + 1;
@@ -45,7 +45,7 @@ function testContinueInTryAfterStore(): null {
   return;
 }
 
-function testContinueInNestedBlocks(): null {
+function testContinueInNestedBlocks(): void {
   let hits: number = 0;
   let second: number = 0;
   { let v14Loop3: number = 0; while (v14Loop3 < 3) { let i: number = v14Loop3; {
@@ -64,11 +64,11 @@ function testContinueInNestedBlocks(): null {
   return;
 }
 
-function testClosureMutationFeedsUpdate(): null {
+function testClosureMutationFeedsUpdate(): void {
   let visits: number = 0;
   { let v14Loop4: number = 0; while (v14Loop4 < 4) { let i: number = v14Loop4; {
     visits = visits + 1;
-    let mutate: () => null = function(): null { i = i + 1; return; };
+    let mutate: () => void = function(): void { i = i + 1; return; };
     mutate();
   } v14Loop4 = i; v14Loop4 = v14Loop4 + 1; } }
   if (visits !== 2) {
@@ -77,7 +77,7 @@ function testClosureMutationFeedsUpdate(): null {
   return;
 }
 
-function testUpdateReadsOtherState(): null {
+function testUpdateReadsOtherState(): void {
   let total: number = 0;
   let step: number = 1;
   { let v14Loop5: number = 0; while (v14Loop5 < 6) { let i: number = v14Loop5; {
@@ -91,7 +91,7 @@ function testUpdateReadsOtherState(): null {
   return;
 }
 
-function testBreakBeforeUpdate(): null {
+function testBreakBeforeUpdate(): void {
   let visits: number = 0;
   let updates: number = 0;
   function bump(x: number): number {
@@ -109,7 +109,7 @@ function testBreakBeforeUpdate(): null {
   return;
 }
 
-function testNestedLoopsTransferTheirOwnBinding(): null {
+function testNestedLoopsTransferTheirOwnBinding(): void {
   let outer: number = 0;
   let inner: number = 0;
   { let v14Loop7: number = 0; while (v14Loop7 < 2) { let i: number = v14Loop7; {
@@ -126,7 +126,7 @@ function testNestedLoopsTransferTheirOwnBinding(): null {
   return;
 }
 
-function testCapturesStayPerIteration(): null {
+function testCapturesStayPerIteration(): void {
   let fs: (() => number)[] = [
     function(): number { return -1; },
     function(): number { return -1; }
@@ -146,7 +146,7 @@ function testCapturesStayPerIteration(): null {
   return;
 }
 
-function testStringCounterStore(): null {
+function testStringCounterStore(): void {
   let visits: number = 0;
   { let v14Loop10: string = ""; while (v14Loop10 !== "aa") { let s: string = v14Loop10; {
     visits = visits + 1;
@@ -158,7 +158,7 @@ function testStringCounterStore(): null {
   return;
 }
 
-function testNumberCounterStore(): null {
+function testNumberCounterStore(): void {
   let visits: number = 0;
   { let v14Loop11: number = 0.0; while (v14Loop11 < 1.5) { let n: number = v14Loop11; {
     visits = visits + 1;
@@ -170,7 +170,7 @@ function testNumberCounterStore(): null {
   return;
 }
 
-function testReturnAndThrowSkipUpdate(): null {
+function testReturnAndThrowSkipUpdate(): void {
   let calls: number = 0;
   function next(x: number): number {
     calls = calls + 1;

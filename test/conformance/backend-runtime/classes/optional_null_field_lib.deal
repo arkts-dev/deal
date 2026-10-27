@@ -8,7 +8,7 @@ export class LibBox {
   maybe?: string | null;
 }
 
-export function readMissing(b: LibBox): null {
+export function readMissing(b: LibBox): null | undefined {
   return b.n;
 }
 

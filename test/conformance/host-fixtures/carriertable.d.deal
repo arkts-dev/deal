@@ -18,11 +18,11 @@ export class Widget {
 export class Board {
   title: string;
   widgets: Widget[];
-  meta: table;
+  meta: Record<string, unknown>;
 }
 
-export async function describeAsync(w: Widget, g: (x: number) => number): string;
-export function makeTable(): table;
+export function describeAsync(w: Widget, g: (x: number) => number): Promise<string>;
+export function makeTable(): Record<string, unknown>;
 export function tableIntact(): boolean;
-export function describeTable(t: table): string;
+export function describeTable(t: Record<string, unknown>): string;
 export function makeBoard(): Board;

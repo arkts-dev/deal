@@ -5,12 +5,12 @@
 
 import * as c from "std/console";
 export function main(): null {
- let t: table = {}; let proto: string = "__proto__"; let ctor: string = "constructor"; let own: string = "hasOwnProperty";
+ let t: Record<string, unknown> = {}; let proto: string = "__proto__"; let ctor: string = "constructor"; let own: string = "hasOwnProperty";
  t[proto] = 11; t[ctor] = 12; t[own] = 13;
- let a: number = t[proto]; let b: number = t[ctor]; let d: number = t[own];
+ let a: number = t[proto] as number; let b: number = t[ctor] as number; let d: number = t[own] as number;
  if(a !== 11 || b !== 12 || d !== 13) {throw {code:"TEST_FAIL",message:"host object meta-key leaked"};}
- delete t[proto]; let absent: number | null = t[proto];
- if(absent !== null) {throw {code:"TEST_FAIL",message:"delete meta-key failed"};}
- t[proto] = 14; let again: number = t[proto]; if(again !== 14) {throw {code:"TEST_FAIL",message:"rewrite meta-key failed"};}
+ delete t[proto]; let absent: unknown = t[proto];
+ if(absent !== undefined || Object.hasOwn(t, proto)) {throw {code:"TEST_FAIL",message:"delete meta-key failed"};}
+ t[proto] = 14; let again: number = t[proto] as number; if(again !== 14) {throw {code:"TEST_FAIL",message:"rewrite meta-key failed"};}
  c.log("backend-sensitive-table-keys"); return null;
 }

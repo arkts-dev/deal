@@ -1851,8 +1851,10 @@ public final class DefaultSemanticSerializer {
                     + " (broken IR)", node.span());
                 return null;
             }
-            Type varType = resolveTypeNode(input, fos.varType(),
-                enclosingScope, node.span());
+            Type iterable = input.checkResult() == null ? null : input.checkResult().typeMap().get(fos.iterable());
+            Type varType = fos.varType() == null
+                ? (iterable instanceof Type.Array array ? array.element() : Type.String.INSTANCE)
+                : resolveTypeNode(input, fos.varType(), enclosingScope, node.span());
             if (failed) {
                 return null;
             }
@@ -1890,8 +1892,7 @@ public final class DefaultSemanticSerializer {
             SymbolTable scope = enterScope(enclosingScope);
             defineIn(scope, ts.catchVar(),
                 new Symbol.VariableSymbol(ts.catchVar(),
-                    Types.classType("Error",
-                        NameResolver.intrinsicErrorIdentity()),
+                    Type.Unknown.INSTANCE,
                     true),
                 node.span());
             if (failed) {

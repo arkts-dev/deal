@@ -71,6 +71,7 @@ public final class JsonClassAlgorithmAdapter {
     /** Maps one parsed E8 value into the executor's view (always JSON-shaped). */
     private static ClassOpsExecutor.Value fromStdlib(SharedStdlibSemantics.Value value) {
         return switch (value) {
+            case SharedStdlibSemantics.Value.Undefined ignored -> ClassOpsExecutor.Value.Undefined.INSTANCE;
             case SharedStdlibSemantics.Value.Null ignored ->
                 ClassOpsExecutor.Value.Null.INSTANCE;
             case SharedStdlibSemantics.Value.Bool bool ->
@@ -237,6 +238,7 @@ public final class JsonClassAlgorithmAdapter {
      */
     private static SharedStdlibSemantics.Value toStdlib(ClassOpsExecutor.Value value) {
         return switch (value) {
+            case ClassOpsExecutor.Value.Undefined ignored -> SharedStdlibSemantics.Value.Undefined.INSTANCE;
             case ClassOpsExecutor.Value.Null ignored ->
                 SharedStdlibSemantics.Value.Null.INSTANCE;
             case ClassOpsExecutor.Value.Bool bool ->
@@ -360,6 +362,9 @@ public final class JsonClassAlgorithmAdapter {
     private static void walkForFirstFailure(ClassOpsExecutor.Value value,
                                             String pinnedPath, Set<Object> path) {
         switch (value) {
+            case ClassOpsExecutor.Value.Undefined ignored -> throw new FirstFailure(
+                pinnedPath,
+                FailureProjections.typedBoundaryToken(ActualKind.UNDEFINED, null), false);
             case ClassOpsExecutor.Value.Null ignored -> {
                 // A JSON-shaped leaf: no failure.
             }

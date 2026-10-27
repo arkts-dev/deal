@@ -4,7 +4,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"parameter 1 type mismatch: expected boolean\",\"sourceFile\":\"backend-runtime/host-abi/host-boolean-param-mismatch-e8010.deal\",\"line\":10,\"column\":10,\"expected\":\"boolean\",\"actual\":\"number\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"parameter 1 type mismatch: expected boolean\",\"sourceFile\":\"backend-runtime/host-abi/host-boolean-param-mismatch-e8010.deal\",\"line\":13,\"column\":12,\"expected\":\"boolean\",\"actual\":\"table\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -12,10 +12,10 @@
       "code": "E8010",
       "message": "parameter 1 type mismatch: expected boolean",
       "sourceFile": "backend-runtime/host-abi/host-boolean-param-mismatch-e8010.deal",
-      "line": 10,
-      "column": 10,
+      "line": 13,
+      "column": 12,
       "expected": "boolean",
-      "actual": "number"
+      "actual": "table"
     }
   }
 }

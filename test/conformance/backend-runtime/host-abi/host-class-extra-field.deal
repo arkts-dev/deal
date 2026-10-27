@@ -10,7 +10,7 @@ export function test_host_class_extra_field(): null {
     port: 9000,
     fallback: null,
   };
-  if (c.port !== 9000 || !has(c.fallback) || c.fallback !== null || has(c.peers)) {
+  if (c.port !== 9000 || !Object.hasOwn(c, "fallback") || c.fallback !== null || Object.hasOwn(c, "peers")) {
     throw {code: "TEST_FAIL", message: "host structural field presence mismatch"};
   }
   return null;

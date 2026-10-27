@@ -1,14 +1,17 @@
 // @spec: Functions — Arity extension adapter
-// @description: A table-produced function value keeps the exact typed-boundary check: a carried shorter signature never silently adapts at a parameter cell, and the pinned E8010 tuple names the declared parameter signature and the value's own carried signature.
+// @description: A host-invalidated callable keeps its identity through Record storage but its carried shorter signature fails the declared parameter's exact E8010 check, without an assertion masking that boundary.
 // @expected: runtime-error E8010
 // @features: functions, arity-extension, descriptors, runtime-errors
 
+import * as host from "host/signature_mutation";
 function one(x: number): number { return x; }
 
 function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
 export function main(): null {
-  let holder: table = { f: one };
-  let r: number = needPair(holder.f);
+  let source: (x: number, y: number) => number = function(x: number, y: number): number { return x + y; };
+  if (!host.replaceSignature({value: source}, "(number)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  let holder: Record<string, unknown> = { f: source };
+  let r: number = needPair(source);
   return null;
 }

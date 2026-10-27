@@ -4,7 +4,7 @@ import * as strings from "std/string";
 function csvLabels(text: string): string[] {
   let result: string[] = [];
   let parts: string[] = strings.split(text, ",");
-  for (let part: string of parts) {
+  for (let part of parts) {
     let label: string = strings.trim(part);
     if (label !== "") {
       result[result.length] = `item: ${label}`;
@@ -18,7 +18,7 @@ export function exercise(): null {
   check.require(labels.length === 2, "empty labels removed");
   check.require(labels[0] === "item: Ada" && labels[1] === "item: Grace", "string interpolation");
   let initials: string = "";
-  for (let character: string of "AG") {
+  for (let character of "AG") {
     initials = initials + character;
   }
   check.require(initials === "AG", "string iteration");

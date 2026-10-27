@@ -6,7 +6,7 @@
 import * as tables from "std/table";
 
 export function test_table_keys_decimal_string_names(): null {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   t["1"] = 10;
   t["2"] = 20;
   t["3"] = 30;

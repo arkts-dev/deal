@@ -4,8 +4,8 @@
 // @features: runtime, int, conversion, error
 
 export function test_int_null(): number {
-  let input: table = { value: null };
-  let result: number = input.value;
+  let input: Record<string, unknown> = { value: null };
+  let result: number = input.value as number;
   return result;
 }
 

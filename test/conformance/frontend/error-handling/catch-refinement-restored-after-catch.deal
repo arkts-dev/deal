@@ -1,5 +1,5 @@
 // @spec: Error handling — try / catch; Nullable semantics
-// @description: The catch scope restores the same-named outer refinement on exit: each nested catch and nested block reads its own Error binding, a renamed catch leaves the refined outer binding readable, and the outer number refinement is usable after the outer catch
+// @description: The catch scope restores the same-named outer refinement on exit: each nested catch and nested block checks its own unknown binding as Error, a renamed catch leaves the refined outer binding readable, and the outer number refinement is usable after the outer catch
 // @expected: compile-ok
 // @features: error-handling, try-catch, nullable, narrowing, shadowing, blocks
 
@@ -12,12 +12,12 @@ export function main(): null {
       try {
         throw { code: "C_INNER", message: "inner" };
       } catch (e) {
-        let inner: Error = e;
-        let innerMessage: string = e.message;
+        let inner: Error = e as Error;
+        let innerMessage: string = inner.message;
       }
-      let outer: Error = e;
+      let outer: Error = e as Error;
       {
-        let block: Error = e;
+        let block: Error = e as Error;
       }
     }
     let afterCatch: number = e;
@@ -27,7 +27,8 @@ export function main(): null {
     try {
       throw { code: "C_RENAMED", message: "renamed" };
     } catch (err) {
-      let message: string = err.message;
+      let captured: Error = err as Error;
+      let message: string = captured.message;
       let refined: number = renamed;
     }
     let afterRenamedCatch: number = renamed;

@@ -1,6 +1,6 @@
 "use strict";
 
-// DEAL Standard Library: std/string — v1.4 (JavaScript backend).
+// DEAL Standard Library: std/string — v1.5 (JavaScript backend).
 // The hand-written CommonJS string module (js-stdlib-modules D1/D5,
 // js-backend-runtime D9): the eight .d.deal members exported as
 // $rt.function wrappers with the exact spec signature strings, parameter
@@ -8,7 +8,7 @@
 // check receiving the forwarded trailing span parameters ($file, $line,
 // $column), so parameter and return errors report the DEAL call site.
 // String lengths and positions are measured in Unicode scalar values
-// (code points, v1.4); search/replace/split are plain-text (never Lua
+// (code points, v1.5); search/replace/split are plain-text (never Lua
 // patterns); trim strips the Lua %s set (space, tab, newline, vertical
 // tab, form feed, carriage return) exactly.
 //
@@ -44,7 +44,7 @@ $string.length = $rt.function("(string)->number", function(s, $file, $line, $col
 });
 
 // substring(s: string, start: int, end: int): string — the substring at
-// 0-based scalar positions [start, end) with the v1.4 clamping
+// 0-based scalar positions [start, end) with the v1.5 clamping
 // (js-stdlib-modules D5): negative start behaves as 0; negative end
 // behaves as 0 (yields ""); end beyond the scalar length clamps to the
 // length; start >= end yields ""; start beyond the string yields "".
@@ -135,12 +135,12 @@ $string.split = $rt.function("(string,string)->[string]", function(s, sep, $file
   $rt.checkString(s, $file, $line, $column);
   $rt.checkString(sep, $file, $line, $column);
   if (s === "") {
-    return $rt.checkArray("[string]", [], $file, $line, $column);
+    return $rt.checkArray("[string]", $rt.tagArray([], "string"), $file, $line, $column);
   }
   if (sep === "") {
-    return $rt.checkArray("[string]", $rt.scalars(s), $file, $line, $column);
+    return $rt.checkArray("[string]", $rt.tagArray($rt.scalars(s), "string"), $file, $line, $column);
   }
-  return $rt.checkArray("[string]", s.split(sep), $file, $line, $column);
+  return $rt.checkArray("[string]", $rt.tagArray(s.split(sep), "string"), $file, $line, $column);
 });
 
 // trim(s: string): string — strips the leading and trailing Lua %s set

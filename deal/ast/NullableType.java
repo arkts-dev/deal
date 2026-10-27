@@ -1,4 +1,6 @@
 package deal.ast;
 
-/** T | null — a nullable type wrapping an inner type. */
-public record NullableType(Span span, TypeNode innerType) implements TypeNode {}
+/** A source nullish-union member; duplicates are diagnosed during resolution. */
+public record NullableType(Span span, TypeNode innerType, boolean undefinedMember) implements TypeNode {
+    public NullableType(Span span, TypeNode innerType) { this(span, innerType, false); }
+}

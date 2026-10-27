@@ -1,12 +1,12 @@
 // @spec: Tables
-// @description: Calling a function-valued table field directly is rejected: the callee is not one of the five direct read positions, so the read itself is E3003 and the call is never admitted through a table.
-// @expected: compile-error E3003
+// @description: A function-valued Record field is unknown and cannot be called without checking its signature
+// @expected: compile-error E3008
 // @features: tables, functions, diagnostics
 
 function plusOne(value: number): number { return value + 1; }
 
 export function main(): null {
-  let t: table = { fn: plusOne };
+  let t: Record<string, unknown> = { fn: plusOne };
   let value: number = t.fn(1);
   return null;
 }

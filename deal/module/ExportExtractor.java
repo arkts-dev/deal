@@ -259,7 +259,7 @@ public final class ExportExtractor {
                 Type inner = resolveTypeNodeSimple(nt2.innerType(), classMap);
                 if (inner == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                 try {
-                    yield Types.nullable(inner);
+                    yield Types.withNullish(inner, nt2.undefinedMember(), true);
                 } catch (IllegalArgumentException e) {
                     yield Type.Error.INSTANCE;
                 }
@@ -282,7 +282,10 @@ public final class ExportExtractor {
             case "boolean" -> Type.Boolean.INSTANCE;
             case "number" -> Type.Number.INSTANCE;
             case "string" -> Type.String.INSTANCE;
-            case "table" -> Type.Table.INSTANCE;
+            case "Record<string, unknown>" -> Type.Table.INSTANCE;
+            case "unknown" -> Type.Unknown.INSTANCE;
+            case "undefined" -> Type.Undefined.INSTANCE;
+            case "void" -> Type.Void.INSTANCE;
             case "Error" -> errorClassType();
             default -> {
                 if (classMap.containsKey(name)) {

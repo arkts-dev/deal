@@ -7,7 +7,7 @@ export function test_rethrow_preserves_code(): null {
   try {
     throw { code: "USER_RETHROW", message: "boom" };
   } catch (e) {
-    throw e;
+    throw e as Error;
   }
   return null;
 }

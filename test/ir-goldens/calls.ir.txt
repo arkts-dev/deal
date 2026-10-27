@@ -1,4 +1,4 @@
-module @test/ir-goldens/fixtures/calls.deal:4:1-15:1
+module @test/ir-goldens/fixtures/calls.deal:4:1-16:1
   function add: number @test/ir-goldens/fixtures/calls.deal:4:1-8:8
     param a: number @test/ir-goldens/fixtures/calls.deal:4:14-4:23
       [boundary: param-entry]
@@ -20,10 +20,13 @@ module @test/ir-goldens/fixtures/calls.deal:4:1-15:1
           ident add : (number,number)->number @test/ir-goldens/fixtures/calls.deal:9:12-9:14
           ident x : number @test/ir-goldens/fixtures/calls.deal:9:16-9:16
           ident x : number @test/ir-goldens/fixtures/calls.deal:9:19-9:19
-  function main: null @test/ir-goldens/fixtures/calls.deal:12:1-15:1
+  function main: null @test/ir-goldens/fixtures/calls.deal:12:1-16:1
     body
-      let r: number @test/ir-goldens/fixtures/calls.deal:13:5-14:1
+      let r: number @test/ir-goldens/fixtures/calls.deal:13:5-14:10
         [boundary: var-annotation]
         call : number @test/ir-goldens/fixtures/calls.deal:13:21-13:29
           ident double : (number)->number @test/ir-goldens/fixtures/calls.deal:13:21-13:26
           literal 5.0 : number @test/ir-goldens/fixtures/calls.deal:13:28-13:28
+      return @test/ir-goldens/fixtures/calls.deal:14:5-15:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/calls.deal:14:12-14:15

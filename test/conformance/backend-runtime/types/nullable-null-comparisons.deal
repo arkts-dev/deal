@@ -128,23 +128,24 @@ export function main(): null {
   expectFalse("array null !== null", third !== null);
 
   // Optional nullable fields: absence, present null, and present false
-  // stay three distinct states; only absence and present null are null
-  // at a direct read, never a present false.
+  // stay distinct: absence reads undefined; present null remains null;
+  // neither is a present false.
   let missing: Flags = {};
   let presentNull: Flags = { flag: null };
   let presentFalse: Flags = { flag: false };
   let presentTrue: Flags = { flag: true };
-  expectFalse("missing field is not present", has(missing.flag));
-  expectTrue("present null field is present", has(presentNull.flag));
-  expectTrue("present false field is present", has(presentFalse.flag));
-  expectTrue("present true field is present", has(presentTrue.flag));
+  expectFalse("missing field is not present", Object.hasOwn(missing, "flag"));
+  expectTrue("present null field is present", Object.hasOwn(presentNull, "flag"));
+  expectTrue("present false field is present", Object.hasOwn(presentFalse, "flag"));
+  expectTrue("present true field is present", Object.hasOwn(presentTrue, "flag"));
 
-  let missingRead: boolean | null = missing.flag;
-  let nullRead: boolean | null = presentNull.flag;
-  let falseRead: boolean | null = presentFalse.flag;
-  let trueRead: boolean | null = presentTrue.flag;
-  expectTrue("missing direct read is null", missingRead === null);
-  expectFalse("missing direct read is not non-null", missingRead !== null);
+  let missingRead: boolean | null | undefined = missing.flag;
+  let nullRead: boolean | null | undefined = presentNull.flag;
+  let falseRead: boolean | null | undefined = presentFalse.flag;
+  let trueRead: boolean | null | undefined = presentTrue.flag;
+  expectTrue("missing direct read is undefined", missingRead === undefined);
+  expectFalse("missing direct read is not null", missingRead === null);
+  expectTrue("missing direct read is non-null", missingRead !== null);
   expectTrue("present null direct read is null", nullRead === null);
   expectFalse("present null direct read is not non-null", nullRead !== null);
   expectFalse("present false direct read is not null", falseRead === null);
@@ -154,29 +155,30 @@ export function main(): null {
 
   let presentFalseNarrowed: boolean = false;
   if (falseRead !== null) {
-    let narrowed: boolean = falseRead;
-    if (!narrowed) {
-      presentFalseNarrowed = true;
+    if (falseRead !== undefined) {
+      let narrowed: boolean = falseRead;
+      if (!narrowed) { presentFalseNarrowed = true; }
     }
   }
   expectTrue("present false direct read narrows to false", presentFalseNarrowed);
 
   let presentTrueNarrowed: boolean = false;
   if (trueRead !== null) {
-    let narrowed: boolean = trueRead;
-    if (narrowed) {
-      presentTrueNarrowed = true;
+    if (trueRead !== undefined) {
+      let narrowed: boolean = trueRead;
+      if (narrowed) { presentTrueNarrowed = true; }
     }
   }
   expectTrue("present true direct read narrows to true", presentTrueNarrowed);
 
   // Deleting the present false returns the field to absence: the direct
-  // read is null again, while the false value was never conflated with it.
+  // read is undefined again, while false was never conflated with it.
   delete presentFalse.flag;
-  expectFalse("deleted field is missing", has(presentFalse.flag));
-  let deletedRead: boolean | null = presentFalse.flag;
-  expectTrue("deleted direct read is null", deletedRead === null);
-  expectFalse("deleted direct read is not non-null", deletedRead !== null);
+  expectFalse("deleted field is missing", Object.hasOwn(presentFalse, "flag"));
+  let deletedRead: boolean | null | undefined = presentFalse.flag;
+  expectTrue("deleted direct read is undefined", deletedRead === undefined);
+  expectFalse("deleted direct read is not null", deletedRead === null);
+  expectTrue("deleted direct read is non-null", deletedRead !== null);
 
   console.log("OK");
   return null;

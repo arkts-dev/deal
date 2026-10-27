@@ -5,12 +5,13 @@
 
 import * as console from "std/console";
 
+function log(): void {
+  console.log("hello");
+}
+
 export function test_console_log(): null {
-  let result: null = console.log("hello");
-  if (result !== null) {
-    throw { code: "TEST_FAIL", message: "console.log must complete with the declared null result" };
-  }
-  return result;
+  log();
+  return null;
 }
 
 export function main(): null {

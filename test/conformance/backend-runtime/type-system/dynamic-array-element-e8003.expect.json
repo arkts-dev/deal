@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8003\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8003\",\"message\":\"array element 2 type mismatch\",\"sourceFile\":\"backend-runtime/type-system/dynamic-array-element-e8003.deal\",\"line\":10,\"column\":11,\"expected\":\"number\",\"actual\":\"string\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8003\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8003\",\"message\":\"array element 2 type mismatch\",\"sourceFile\":\"backend-runtime/type-system/dynamic-array-element-e8003.deal\",\"line\":13,\"column\":28,\"expected\":\"number\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -16,10 +16,10 @@
       "code": "E8003",
       "message": "array element 2 type mismatch",
       "sourceFile": "backend-runtime/type-system/dynamic-array-element-e8003.deal",
-      "line": 10,
-      "column": 11,
+      "line": 13,
+      "column": 28,
       "expected": "number",
-      "actual": "string"
+      "actual": "null"
     }
   }
 }

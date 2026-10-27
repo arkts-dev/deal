@@ -2,13 +2,11 @@ package deal.module;
 
 import deal.ast.*;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.distribution.DistributionHome;
 import deal.lexer.*;
 import deal.parser.*;
 import deal.types.Type;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -57,64 +55,6 @@ public final class StdlibModuleResolver {
             }
             Map<String, Map<String, Type>> built = buildStdlibExports(
                 surfacePath);
-            CACHE.put(key, built);
-            return built;
-        }
-    }
-
-    /**
-     * Returns the export map for all spec-listed stdlib modules,
-     * resolving each declaration file through {@link DistributionHome}
-     * in the pinned three-tier order of
-     * {@code release-distribution-packaging-and-discovery} D3 —
-     * project-local surface first, then the language distribution
-     * (classpath resources, then the {@code DEAL_HOME} filesystem
-     * layout), then the checkout CWD dev fallback — resource-aware
-     * (each declaration reads as a file stream or a resource stream).
-     * A module absent at every tier is omitted from the map (the
-     * authoritative missing-import failure is E2003 at the import span
-     * from {@link SourceModuleResolver}); an unreadable or unparsable
-     * declaration contributes nothing (the same omission semantics as
-     * the surface-path overload). Cached per resolution identity for
-     * the lifetime of the JVM.
-     *
-     */
-    public static Map<String, Map<String, Type>> stdlibExports(
-            DistributionHome home) {
-        Objects.requireNonNull(home, "home");
-        String key = home.cacheIdentity() + "|resolver-declarations";
-        synchronized (StdlibModuleResolver.class) {
-            Map<String, Map<String, Type>> cached = CACHE.get(key);
-            if (cached != null) {
-                return cached;
-            }
-            Map<String, Map<String, Type>> all = new LinkedHashMap<>();
-            for (String modulePath : SPEC_STDLIB_MODULES) {
-                String name = modulePath.substring("std/".length());
-                Optional<DistributionHome.ResolvedSource> source =
-                    home.resolveStdlibDeclaration(name);
-                if (source.isEmpty()) {
-                    // Absent at every tier: the module is omitted (the
-                    // authoritative failure is E2003 at the import span).
-                    continue;
-                }
-                try (InputStream in = source.get().open()) {
-                    String text = new String(in.readAllBytes(),
-                        StandardCharsets.UTF_8);
-                    Map<String, Type> exports = parseAndExtract(text,
-                        modulePath + ".d.deal", modulePath);
-                    all.put(modulePath, Collections.unmodifiableMap(exports));
-                } catch (IOException e) {
-                    // Unreadable declaration source: same omission
-                    // semantics as the surface-path overload.
-                } catch (RuntimeException e) {
-                    // A declaration that cannot be parsed contributes
-                    // nothing here; the production path surfaces its own
-                    // diagnostics during module discovery/checking.
-                }
-            }
-            Map<String, Map<String, Type>> built =
-                Collections.unmodifiableMap(all);
             CACHE.put(key, built);
             return built;
         }

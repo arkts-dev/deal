@@ -124,7 +124,7 @@ public class UnreachableTailProductionTest {
     }
 
     private static final String DEAL_JSON =
-        "{\n  \"languageVersion\": \"1.4\",\n  \"moduleRoots\": [\"src\"],\n"
+        "{\n  \"languageVersion\": \"1.5\",\n  \"moduleRoots\": [\"src\"],\n"
             + "  \"output\": \"out\",\n  \"backend\": \"luajit\"\n}\n";
 
     private static CompilerInvocation productionInvocation() {
@@ -142,7 +142,7 @@ public class UnreachableTailProductionTest {
      * {@code break}/{@code continue}, at the pinned source lines the
      * assertions read back from the ops' origins.
      */
-    private static final String TAIL_BATTERY_SOURCE = "function returnsTail(): null {\n  return null;\n  let returnTail: number = 2;\n  returnTail = 3;\n}\nfunction throwsTail(): null {\n  try {\n    \"boom\";\n  } catch (err) {\n    throw err;\n    let throwTail: number = 4;\n  }\n  return null;\n}\nfunction breaksTail(): null {\n  {  while (true) { {\n    break;\n    let breakTail: number = 5;\n  }  } }\n  return null;\n}\nfunction continuesTail(): null {\n  {  while (true) { {\n    {  continue; }\n    let continueTail: number = 6;\n  }  } }\n  return null;\n}\n";
+    private static final String TAIL_BATTERY_SOURCE = "function returnsTail(): null {\n  return null;\n  let returnTail: number = 2;\n  returnTail = 3;\n}\nfunction throwsTail(): null {\n  try {\n    \"boom\";\n  } catch (err) {\n    throw err as Error;\n    let throwTail: number = 4;\n  }\n  return null;\n}\nfunction breaksTail(): null {\n  {  while (true) { {\n    break;\n    let breakTail: number = 5;\n  }  } }\n  return null;\n}\nfunction continuesTail(): void {\n  {  while (true) { {\n    {  continue; }\n    let continueTail: number = 6;\n  }  } }\n  return;\n}\n";
 
     private record CheckedSlice(ProgramNode program, SymbolTable symbols,
                                 CheckResult checks) {
@@ -208,7 +208,7 @@ public class UnreachableTailProductionTest {
         Map<ConstructKind, List<SemanticOpKind>> coverage =
             manifests.manifests().get(0).constructCoverage();
         SemanticLowerer.LoweringResult lowering =
-            SemanticLowerer.lowerModuleFullProgram(input, SemanticProfile.DEAL_V1_4_BINARY64,
+            SemanticLowerer.lowerModuleFullProgram(input, SemanticProfile.DEAL_V1_5_BINARY64,
                 coverage, INTERFACE_HASH, REGISTRY_HASH,
                 SemanticIdAllocator.over(List.of(MODULE)));
         // A clean result is the full lowering stack's acceptance: the
@@ -1157,7 +1157,7 @@ public class UnreachableTailProductionTest {
         export function main(): null {
           let arr: number[] = [1, 2, 3];
           let n: number = 0;
-          for (let x: number of arr) {
+          for (let x of arr) {
             try {
               break;
               "foreachBreakTail";
@@ -1176,7 +1176,7 @@ public class UnreachableTailProductionTest {
         export function main(): null {
           let arr: number[] = [1, 2, 3];
           let sum: number = 0;
-          for (let x: number of arr) {
+          for (let x of arr) {
             try {
               continue;
               "foreachContinueTail";

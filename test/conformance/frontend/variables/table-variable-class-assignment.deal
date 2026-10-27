@@ -5,7 +5,7 @@
 
 class Box { n: number; }
 export function main(): null {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   let b: Box = {n: 0};
   t = b;
   return null;

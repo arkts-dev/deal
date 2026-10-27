@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Imported class parameter checks
-// @description: Dynamic table with bad imported class field fails at imported class function boundary
+// @description: A closure-cleared imported nominal refinement fails at the defining module's parameter boundary.
 // @expected: runtime-error E8001
 // @features: classes, modules, runtime-errors
 
@@ -7,8 +7,13 @@ import * as json from "std/json";
 import * as Lib from "./imported_class_lib";
 
 export function test_dynamic_bad_imported_class_param(): number {
-  let holder: table = { item: json.parse("{\"value\":\"bad\"}") };
-  return Lib.needBox(holder.item);
+  let item: Lib.Box | null = {value: 7};
+  let clear: () => void = function(): void { item = null; };
+  if (item !== null) {
+    clear();
+    return Lib.needBox(item);
+  }
+  throw { code: "TEST_FAIL", message: "imported refinement branch skipped" };
 }
 
 export function main(): null {

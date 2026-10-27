@@ -1,39 +1,24 @@
 -- DEAL Standard Library: std/json
 -- Provides JSON encoding and decoding (simple pure-Lua implementation).
 --
--- Unicode conformance (v1.4, RFC 8259): parse accepts exactly the section 7
+-- Unicode conformance (v1.5, RFC 8259): parse accepts exactly the section 7
 -- escape set (" \ / b f n r t u), \uXXXX must carry exactly four hex digits
 -- and decodes to UTF-8, surrogate pairs combine to one supplementary scalar,
 -- lone surrogates and raw control characters (U+0000-U+001F) are rejected,
 -- and stringify refuses to emit strings that are not scalar-valid UTF-8.
 --
--- Exact decimal classification, decoded-key duplicates, the declared
--- (string)->table parse exit, and stringify
--- shape rejection (DEAL v1.4): parse classifies the numeric lexeme's
--- exact mathematical decimal value before any binary64 rounding — an
--- integral value inside [-2147483648, 2147483647] becomes DEAL int
--- (-0/-0.0 normalize to 0) and every other lexeme becomes number. The
--- decoded object/array graph records that variant per slot in the
--- container's private [__K.nK] marks (a number-variant leaf is marked,
--- an int-variant leaf is unmarked) at every depth, and the encoder
--- renders a marked leaf through the canonical decimal text, so the
--- shipped realization keeps exactly the classification the emitted
--- LuaJIT prelude, the JS runtime and the JVM runtime keep; a
--- member key whose decoded scalar text equals an earlier key of the same
--- object is a parse failure ("duplicate key" at the second key's opening
--- quote). stringify raises Error on non-JSON-shaped values through the
--- closed unsupported-carrier arm: every unsupported carrier — the
--- reference runtime's __kind-tagged function wrapper (function), class
--- or Error instance and decoded async handle (table), the emitted
--- chunk's own __c/__d class and Error marks (table) and __fn/__f/__csig
--- function marks (function), plus the internal absent marker and every
--- absent or deleted slot (nil) — a hole in a marked decoded array or in
--- an inferred sparse table included — renders that arm's own text with
--- its closed carrier-kind token instead of encoding private carrier
--- fields or a fabricated JSON null (only __rt.__NULL is a JSON null);
--- a path-local container re-entry keeps the closed "cyclic value cannot
--- be encoded as JSON" arm. There is no fixed nesting-depth bound. Object
--- key order follows Lua iteration order.
+-- Parsing rounds numeric tokens to binary64, preserving negative zero;
+-- duplicate decoded keys reject at the second key's opening quote.
+-- The declared (string)->record result rejects non-object roots.
+-- Stringify accepts unknown: undefined/functions omit from objects, become
+-- null in arrays and yield undefined at the top level. Nonfinite numbers
+-- become null; both zero signs encode as 0. Finite values roundtrip.
+-- Private metadata selects carriers without inspecting user hooks. Class
+-- fields use declaration order and present fields only; Error exposes
+-- code/message, never transport metadata. Own object index keys precede
+-- other keys in creation order. Path-local cycles reject, shared children
+-- repeat. Explicit frames keep finite depth independent of the call stack.
+-- Descriptor-directed generated @jsonable walks remain a separate contract.
 --
 -- parse's declared (string)->table exit (ISSUE-0824) rejects the two
 -- non-table decode carriers with the shared typed-boundary tuple
@@ -44,7 +29,7 @@
 -- decoded array or null never masquerades as a table return. Nested
 -- containers and the top-level scalar results keep their representation.
 --
--- Decoded arrays keep their array shape (DEAL v1.4 JSON containers): every
+-- Decoded arrays keep their array shape (DEAL v1.5 JSON containers): every
 -- array the parser completes carries the private array carrier pair — the
 -- array mark and the array's logical length — that the emitted chunk and
 -- the LuaJIT host projection write, so a nested array, empty arrays
@@ -57,10 +42,9 @@
 -- tables keep the existing numeric-key inference and object encoding.
 --
 -- The other two runtime carriers keep their JSON shape (ISSUE-0839): a
--- numeric-variant carrier ({[__K.jn] = true, k = "int"|"number", d = n})
--- encodes as the number it carries with its recorded variant spelling —
--- the int variant's integer text, the number variant's canonical
--- Double.toString decimal text — and a chunk table carrier ([__K.t] with
+-- numeric carrier ({[__K.jn] = true, k = "number", d = n})
+-- encodes its binary64 payload with round-trippable decimal text, and a
+-- chunk table carrier ([__K.t] with
 -- the presence map [__K.keys] and the insertion-order list [__K.order])
 -- encodes as an object over exactly its user string keys in the recorded
 -- order. A table a chunk wrote outside TABLE_NEW carries only the
@@ -336,8 +320,8 @@ end
 -- the path-local cycle guard (entered on open, removed on close).
 --
 -- The walk is carrier-complete, exactly the emitted chunk's JSON_STRINGIFY
--- walk: a numeric-variant carrier ({[__K.jn] = true, k = "int"|"number",
--- d = value}) renders the number it carries with its recorded variant
+-- walk: a numeric carrier ({[__K.jn] = true, k = "number",
+-- d = value}) renders its binary64 payload with decimal
 -- spelling; the chunk table carrier ([__K.t] with [__K.keys]/[__K.order])
 -- renders exactly its user string keys in the recorded insertion order;
 -- the array carrier ([__K.a]/[__K.n]) renders its elements; and the
@@ -350,11 +334,39 @@ end
 -- can carry — is not JSON-shaped and takes the closed unsupported arm.
 -- Only the language-null carrier __rt.__NULL renders 'null': a raw nil is
 -- the missing value in every frame and takes the closed unsupported arm.
+local function omitted(v)
+  if v == nil or v == __rt.__MISSING or v == __rt.__UNDEFINED or type(v) == 'function' then return true end
+  if type(v) ~= 'table' then return false end
+  local kind = rawget(v, __K.kind)
+  if kind == 'class' or rawget(v, __K.c) or rawget(v, __K.d) then return false end
+  return kind == 'function' or rawget(v, __K.fn) ~= nil
+    or rawget(v, __K.f) ~= nil or rawget(v, __K.csig) ~= nil
+end
+
+local function own_key_order(keys)
+  local ranks = {}
+  for i = 1, #keys do ranks[keys[i]] = i end
+  local function index(key)
+    if key ~= '0' and not string.match(key, '^[1-9][0-9]*$') then return nil end
+    local n = tonumber(key)
+    if n ~= nil and n < 4294967295 then return n end
+    return nil
+  end
+  table.sort(keys, function(a, b)
+    local x, y = index(a), index(b)
+    if x ~= nil then return y == nil or x < y end
+    if y ~= nil then return false end
+    return ranks[a] < ranks[b]
+  end)
+end
+
 local function encode_value(v, file, line, column, path)
+  if omitted(v) then return __rt.__UNDEFINED end
   if type(path) ~= "table" then path = {} end
   local out = {}
   local frames = {}
   local emit = function(val, isNumber)
+    if omitted(val) then out[#out + 1] = 'null'; return end
     if val == __rt.__NULL then
       out[#out + 1] = 'null'
       return
@@ -376,16 +388,11 @@ local function encode_value(v, file, line, column, path)
       out[#out + 1] = '"' .. escape(val, file, line, column) .. '"'
       return
     elseif t == 'number' then
-      -- A nonfinite number is not a JSON value: the closed
-      -- JSON_STRINGIFY_UNSUPPORTED arm's number token (the emitted
-      -- chunk's, the JS runtime's and the JVM runtime's projection),
-      -- never a private NaN/Infinity message.
-      if val ~= val then
-        unsupported(val, file, line, column)
+      -- JSON substitutes null for every nonfinite number.
+      if val ~= val or val == math.huge or val == -math.huge then
+        out[#out + 1] = 'null'; return
       end
-      if val == math.huge or val == -math.huge then
-        unsupported(val, file, line, column)
-      end
+      if val == 0 then out[#out + 1] = '0'; return end
       -- A marked number-variant slot keeps the closed decimal spelling;
       -- an unmarked number keeps the module's existing %.17g encoding.
       if isNumber then
@@ -398,39 +405,37 @@ local function encode_value(v, file, line, column, path)
       out[#out + 1] = val and 'true' or 'false'
       return
     elseif t == 'table' then
-      -- The numeric-variant carrier is the number it carries: the decoded
-      -- JSON graph's numeric leaf and the read-side variant materialization
-      -- hold this shape, and the int/number variant decides the spelling
-      -- (the int variant is the integer text, the number variant the
-      -- canonical decimal text with its fractional digit). The carrier is
-      -- never enumerated as an object holding k/d.
-      if val[__K.jn] then
+      -- A decoded or read-side numeric carrier holds one binary64 value.
+      -- Never enumerate its private transport fields as object members.
+      if rawget(val, __K.jn) then
         local carried = val.d
         if type(carried) ~= 'number' then
           unsupported(val, file, line, column)
         end
-        if carried ~= carried then
-          unsupported(carried, file, line, column)
+        if carried ~= carried or carried == math.huge or carried == -math.huge then
+          out[#out + 1] = 'null'; return
         end
-        if carried == math.huge or carried == -math.huge then
-          unsupported(carried, file, line, column)
-        end
-        if val.k == 'int' then
-          out[#out + 1] = tostring(carried)
-        else
-          out[#out + 1] = json_number_text(carried)
-        end
+        if carried == 0 then out[#out + 1] = '0'; return end
+        out[#out + 1] = json_number_text(carried)
         return
       end
-      -- The closed carrier rejection (the emitted chunk's sfValue arm order):
-      -- a function wrapper, a class instance, the builtin
-      -- Error instance, and a decoded async handle are never JSON-shaped
-      -- table contents — each renders the JSON_STRINGIFY_UNSUPPORTED arm
-      -- with its own closed token instead of encoding private carrier
-      -- fields. The projection reads the produced carrier marks only: a
-      -- plain table is JSON-shaped whatever string keys it carries, so no
-      -- user table key can select a carrier arm.
-      local carrierKind = type(val) == 'table' and val[__K.kind] or nil
+      -- Nominal carriers serialize only declared fields, without exposing
+      -- carrier/transport metadata or losing the original cycle identity.
+      -- Callable omission occurs before this arm; async handles reject.
+      local carrierKind = rawget(val, __K.kind)
+      if carrierKind == 'class' or rawget(val, __K.c) or rawget(val, __K.d) then
+        local identity = rawget(val, __K.id) or rawget(val, __K.classname)
+        local order = rawget(val, __K.classOrder) or __K.classOrders[identity]
+        if identity == 'Error' or rawget(val, __K.d) then order = {'code', 'message'} end
+        if type(order) ~= 'table' then unsupported(val, file, line, column) end
+        if path[val] then
+          error(__rt._err('E8001', 'cyclic value cannot be encoded as JSON', file, line, column))
+        end
+        path[val] = true
+        out[#out + 1] = '{'
+        frames[#frames + 1] = {kind = 'class', value = val, keys = order, index = 1, sorted = true}
+        return
+      end
       if carrierKind == "function"
           or carrierKind == "class" or carrierKind == "async"
           or val[__K.c] or val[__K.d]
@@ -559,6 +564,10 @@ local function encode_value(v, file, line, column, path)
   emit(v, false)
   while #frames > 0 do
     local frame = frames[#frames]
+    if frame.keys ~= nil and not frame.sorted then
+      own_key_order(frame.keys)
+      frame.sorted = true
+    end
     if frame.kind == 'array' then
       if frame.index > frame.maxIdx then
         out[#out + 1] = ']'
@@ -578,20 +587,24 @@ local function encode_value(v, file, line, column, path)
       else
         local k = frame.keys[frame.index]
         frame.index = frame.index + 1
-        if frame.index > 2 then out[#out + 1] = ',' end
-        -- Every object member key is a user string key: the inference
-        -- admits no other key form, so no member text is composed from a
-        -- numeric or arbitrary carrier.
-        out[#out + 1] = '"' .. escape(k, file, line, column) .. '"'
-        out[#out + 1] = ':'
-        local element = frame.value[k]
-        if element == nil and frame.presence ~= nil
-            and frame.presence[k] == true then
-          -- A recorded present null member: the chunk's JSON_PARSE graph
-          -- keeps it as a presence/order key with no stored value.
-          out[#out + 1] = 'null'
-        else
-          emit(element, frame.marks ~= nil and frame.marks[k] == true)
+        local element
+        if frame.kind == 'class' then
+          local fields = rawget(frame.value, __K.f)
+          local presence = rawget(frame.value, __K.p)
+          if rawget(frame.value, __K.d) then
+            if k == 'message' then element = rawget(frame.value, 'm')
+            else element = rawget(frame.value, 'code') end
+          elseif type(fields) == 'table' then
+            if type(presence) ~= 'table' or rawget(presence, k) then element = rawget(fields, k) end
+          else element = rawget(frame.value, k) end
+        else element = frame.value[k] end
+        local presentNull = element == nil and frame.presence ~= nil and frame.presence[k] == true
+        if presentNull or not omitted(element) then
+          if (frame.emitted or 0) > 0 then out[#out + 1] = ',' end
+          frame.emitted = (frame.emitted or 0) + 1
+          out[#out + 1] = '"' .. escape(k, file, line, column) .. '":'
+          if presentNull then out[#out + 1] = 'null'
+          else emit(element, frame.marks ~= nil and frame.marks[k] == true) end
         end
       end
     end
@@ -599,18 +612,17 @@ local function encode_value(v, file, line, column, path)
   return table.concat(out)
 end
 
---- Encode a value to a JSON string. The trailing span triplet carries
--- the call site (ISSUE-0598), so every encode-side E8001 (function,
--- bytes, NaN/Infinity, invalid UTF-8 leaves) reports it byte-exact.
-json.stringify = __rt.function_("(table)->string", function(v, file, line, column)
-  __rt.check_table(v, file, line, column)
+--- Encode unknown to string or undefined. The trailing span triplet
+-- attributes cycle, invalid Unicode and unsupported-carrier failures.
+json.stringify = __rt.function_("(unknown)->!string", function(v, file, line, column)
+  __rt.check_type("unknown", v, file, line, column)
   return encode_value(v, file, line, column, {})
 end)
 
 --- Decode a JSON string to a Lua table. The trailing span triplet
 -- carries the call site (ISSUE-0598): the entry string gate, every
 -- parse error, and the declared (string)->table exit report it.
-json.parse = __rt.function_("(string)->table", function(s, file, line, column)
+json.parse = __rt.function_("(string)->record", function(s, file, line, column)
   __rt.check_string(s, file, line, column)
   -- Simple recursive descent parser
   local pos = 1
@@ -691,8 +703,8 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
   -- a frame on the stack and returns the __OPENED sentinel. The frame loop
   -- of parse_value then drives the open container.
   local __OPENED = {}
-  -- One value at the cursor: a scalar returns its value and its recorded
-  -- int/number variant, a container opens a frame on the stack and
+  -- One value at the cursor: a scalar returns its binary64 payload and
+  -- numeric marker; a container opens a frame on the stack and
   -- returns the __OPENED sentinel (a container carries no number mark of
   -- its own; its slots record their own).
   local function parse_scalar_or_open(frames)
@@ -741,11 +753,9 @@ json.parse = __rt.function_("(string)->table", function(s, file, line, column)
     local completed
     local completed_number = false
     local have_completed = false
-    -- The per-slot variant record: a completed number-variant leaf marks
-    -- its own slot in the container's private [__K.nK] map (the same map
-    -- __numKey writes and the encoder reads); an int-variant leaf records
-    -- nothing. The map is a table-object key, so no decoded member name
-    -- can shadow it and the encoder never enumerates it.
+    -- A numeric leaf marks its slot in the private [__K.nK] map, the same
+    -- map __numKey writes and the encoder reads. This table-object key
+    -- cannot be shadowed by decoded member names or enumerated as data.
     local function mark_number(container, slot)
       local marks = container[__K.nK]
       if type(marks) ~= 'table' then

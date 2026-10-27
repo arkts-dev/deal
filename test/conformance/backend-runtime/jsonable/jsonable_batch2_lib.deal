@@ -20,7 +20,7 @@ export class MaybeChild {
 
 // @jsonable
 export class TableWrap {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function child(v: number): Child {

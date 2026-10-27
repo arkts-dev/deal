@@ -7,34 +7,34 @@ import * as json from "std/json";
 
 // @jsonable
 export class Holder {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function test_tojson_deep_and_alias(): null {
   let h: Holder = { data: {} };
-  let cur: table = h.data;
+  let cur: Record<string, unknown> = h.data;
   { let v14Loop0: number = 0; while (v14Loop0 < 600) { let i: number = v14Loop0; {
-    let next: table = {};
+    let next: Record<string, unknown> = {};
     cur.next = next;
     cur = next;
   } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }
-  let shared: table = { v: 1 };
+  let shared: Record<string, unknown> = { v: 1 };
   h.data.aliasA = shared;
   h.data.aliasB = shared;
   let text: string = Holder$toJson(h);
-  let decoded: table = json.parse(text);
-  let data: table = decoded.data;
-  let aliasA: table = data.aliasA;
-  let aliasB: table = data.aliasB;
-  let a: number = aliasA.v;
-  let b: number = aliasB.v;
+  let decoded: Record<string, unknown> = json.parse(text);
+  let data: Record<string, unknown> = decoded.data as Record<string, unknown>;
+  let aliasA: Record<string, unknown> = data.aliasA as Record<string, unknown>;
+  let aliasB: Record<string, unknown> = data.aliasB as Record<string, unknown>;
+  let a: number = aliasA.v as number;
+  let b: number = aliasB.v as number;
   if (aliasA === aliasB || a !== 1 || b !== 1) {
     throw { code: "TEST_FAIL", message: "the shared acyclic child must serialize twice with its value" };
   }
-  let cursor: table = data;
+  let cursor: Record<string, unknown> = data;
   let depth: number = 0;
   while (depth < 600) {
-    let next: table = cursor.next;
+    let next: Record<string, unknown> = cursor.next as Record<string, unknown>;
     cursor = next;
     depth = depth + 1;
   }

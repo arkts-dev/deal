@@ -4,10 +4,11 @@
 // @features: tables, mutation
 
 export function test_nested_table_read_write(): number {
-  let t: table = { inner: {} };
-  let inner: table = t.inner;
+  let seed: Record<string, unknown> = {};
+  let t: Record<string, unknown> = { inner: seed };
+  let inner: Record<string, unknown> = t.inner as Record<string, unknown>;
   inner.value = 7;
-  let result: number = inner.value;
+  let result: number = inner.value as number;
   if (result !== 7) { throw { code: "TEST_FAIL", message: "nested table read/write failed" }; }
   return result;
 }

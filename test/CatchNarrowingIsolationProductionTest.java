@@ -24,7 +24,7 @@ import java.util.stream.Stream;
 /**
  * The catch-variable narrowing isolation regression (ISSUE-0888): the catch
  * identifier declares a fresh {@code Error} binding
- * (docs/spec-v1.4.md §try / catch), so a same-named outer binding's null
+ * (docs/spec-v1.5.md §try / catch), so a same-named outer binding's null
  * refinement never types the catch read and never overrides the catch
  * binding's own Error facts, while the catch scope's exit restores the
  * outer refinement the language did not invalidate (§Name resolution —
@@ -356,7 +356,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   }
                   return null;
                 }
-                """, "E3001", 7, 29, 1, "Cannot assign Error to string"),
+                """, "E3001", 7, 29, 1, "Cannot assign unknown to string"),
             new Rejection("number-refined catch binding transferred to number",
                 """
                 export function main(): null {
@@ -370,7 +370,7 @@ public final class CatchNarrowingIsolationProductionTest {
                   }
                   return null;
                 }
-                """, "E3001", 7, 29, 1, "Cannot assign Error to number"),
+                """, "E3001", 7, 29, 1, "Cannot assign unknown to number"),
             new Rejection("enclosing binding assigned inside the catch",
                 """
                 export function main(): null {
@@ -388,18 +388,18 @@ public final class CatchNarrowingIsolationProductionTest {
                 """, "E3001", 9, 27, 5, "Cannot assign number | null to number"),
             new Rejection("awaited resumption inside the catch",
                 """
-                async function echoInt(value: number): number {
+                async function echoInt(value: number): Promise<number> {
                   return value;
                 }
 
-                async function probe(e: number | null): number {
+                async function probe(e: number | null): Promise<number> {
                   if (e !== null) {
                     try {
                       throw { code: "C_AWAIT", message: "await" };
                     } catch (e) {
-                      let captured: Error = e;
+                      let captured: Error = e as Error;
                       let resumed: number = await echoInt(1);
-                      let afterResume: Error = e;
+                      let afterResume: Error = e as Error;
                     }
                     let unsound: number = e;
                   }
@@ -412,17 +412,17 @@ public final class CatchNarrowingIsolationProductionTest {
                 """, "E3001", 14, 27, 1, "Cannot assign number | null to number"),
             new Rejection("awaited resumption inside the try block",
                 """
-                async function echoInt(value: number): number {
+                async function echoInt(value: number): Promise<number> {
                   return value;
                 }
 
-                async function probe(e: number | null): number {
+                async function probe(e: number | null): Promise<number> {
                   if (e !== null) {
                     try {
                       let resumed: number = await echoInt(1);
                       throw { code: "C_AWAIT_TRY", message: "await" };
                     } catch (e) {
-                      let captured: Error = e;
+                      let captured: Error = e as Error;
                     }
                     let unsound: number = e;
                   }

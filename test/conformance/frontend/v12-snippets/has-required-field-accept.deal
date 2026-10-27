@@ -1,7 +1,7 @@
 // @spec: Classes
-// @description: Corner-case subject has-required-field-accept — Existing runtime filename is misleading; pin actual forbidden required-field subject. (basis: Field access: has argument must declared optional field)
+// @description: Class presence accepts a declared required field independently of optionality
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-class C {x?:number;}
-export function f(c:C): boolean {return has(c.x);}
+class C {x:number;}
+export function f(c:C): boolean {return Object.hasOwn(c, "x");}

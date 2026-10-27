@@ -11,7 +11,7 @@ function outer(): null {
   try {
     inner();
   } catch (e) {
-    throw e;
+    throw e as Error;
   }
   return null;
 }

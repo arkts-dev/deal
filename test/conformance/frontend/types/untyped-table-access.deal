@@ -1,11 +1,12 @@
 // @spec: Type system — Type-of-expression rules
-// @description: Table field read requires contextual target type
-// @expected: compile-error E3003
+// @description: Record field reads infer unknown, but numeric consumption requires checking
+// @expected: compile-error E3001
 // @features: type-system, tables
 
 export function main(): null {
-let t: table = {};
+let t: Record<string, unknown> = {};
 let v = t.x;
+let n: number = v;
 
 return null;
 }

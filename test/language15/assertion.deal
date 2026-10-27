@@ -1,0 +1,6 @@
+// A checked assertion has its own construct row, not a fictitious UNARY row.
+// No unary, binary or logical operation can mask a missing assertion mapping.
+export function main(): null {
+  let value: unknown = null;
+  return value as null;
+}

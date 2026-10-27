@@ -5,7 +5,7 @@
 
 import * as Lib from "./imported_async_source_lib";
 
-export async function test_source_imported_async_error(): number {
+export async function test_source_imported_async_error(): Promise<number> {
   return await Lib.fail();
 }
 

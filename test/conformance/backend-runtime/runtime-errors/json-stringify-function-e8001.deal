@@ -1,15 +1,31 @@
 // @spec: Standard library declarations — json
-// @description: std/json rejects unsupported values with E8001
-// @expected: runtime-error E8001
-// @features: stdlib, json, runtime-errors
+// @description: stringify omits callable properties, substitutes null in arrays, and returns undefined for a top-level callable without changing identity
+// @expected: runtime-ok
+// @features: stdlib, json, functions
 
 import * as json from "std/json";
 
-export function test_json_stringify_function_error(): string {
-  let t: table = { f: function(): number { return 1; } };
-  return json.stringify(t);
-}
-
-export function main(): null {
+export function test_json_stringify_function_error(): null {
+  let f: () => number = function(): number { return 1; };
+  let t: Record<string, unknown> = { f: f, present: null, missing: undefined };
+  if ((json.stringify(t) as string) !== "{\"present\":null}") {
+    throw {code: "TEST_FAIL", message: "callable and undefined property omission"};
+  }
+  if (!Object.hasOwn(t, "f") || !Object.hasOwn(t, "missing")) {
+    throw {code: "TEST_FAIL", message: "serialization deleted properties"};
+  }
+  let retained: () => number = t.f as () => number;
+  if (retained !== f || retained() !== 1) {
+    throw {code: "TEST_FAIL", message: "serialization changed callable identity"};
+  }
+  if (json.stringify(f) !== undefined) {
+    throw {code: "TEST_FAIL", message: "top-level callable serialization"};
+  }
+  let entries: unknown[] = [f, undefined, null];
+  if ((json.stringify(entries) as string) !== "[null,null,null]") {
+    throw {code: "TEST_FAIL", message: "callable array substitution"};
+  }
   return null;
 }
+
+export function main(): null { return null; }

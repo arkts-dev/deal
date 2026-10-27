@@ -11,4 +11,5 @@ function double(x: number): number {
 
 function main(): null {
     let r: number = double(5);
+    return null;
 }

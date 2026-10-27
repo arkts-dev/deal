@@ -12,4 +12,4 @@ export class Target {
   name: string;
 }
 
-export async function describeAsync(t: Target, g: (x: number) => number): string;
+export function describeAsync(t: Target, g: (x: number) => number): Promise<string>;

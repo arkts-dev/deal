@@ -1,4 +1,4 @@
-module @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-21:1
+module @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-22:1
   class Counter @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-9:1
     field count: number @test/ir-goldens/fixtures/typed-boundaries.deal:8:5-9:1
   function increment: number @test/ir-goldens/fixtures/typed-boundaries.deal:11:1-16:8
@@ -18,7 +18,7 @@ module @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-21:1
         [boundary: return]
         member .count : number @test/ir-goldens/fixtures/typed-boundaries.deal:13:12-13:18
           ident c : @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:13:12-13:12
-  function main: null @test/ir-goldens/fixtures/typed-boundaries.deal:16:1-21:1
+  function main: null @test/ir-goldens/fixtures/typed-boundaries.deal:16:1-22:1
     body
       let c: @test/ir-goldens/fixtures/typed-boundaries.deal/Counter @test/ir-goldens/fixtures/typed-boundaries.deal:17:5-18:7
         [boundary: var-annotation]
@@ -35,3 +35,6 @@ module @test/ir-goldens/fixtures/typed-boundaries.deal:7:1-21:1
           [boundary: assignment]
           ident n : number @test/ir-goldens/fixtures/typed-boundaries.deal:19:5-19:5
           literal 42.0 : number @test/ir-goldens/fixtures/typed-boundaries.deal:19:9-19:10
+      return @test/ir-goldens/fixtures/typed-boundaries.deal:20:5-21:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/typed-boundaries.deal:20:12-20:15

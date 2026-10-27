@@ -7,4 +7,5 @@ function main(): null {
     let y = 200;
     let z: number[] = [1, 2, 3];
     x = 500;
+    return null;
 }

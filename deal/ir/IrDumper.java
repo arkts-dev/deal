@@ -32,6 +32,7 @@ import java.util.*;
 public final class IrDumper implements Visitor<String> {
 
     private final Map<ExpressionNode, Type> typeMap;
+    private final Map<InstanceofExpr, Type.Class> instanceofTargets;
     private final SymbolTable symbolTable;
     private final String modulePath;
     private final boolean isDeclFile;
@@ -95,6 +96,14 @@ public final class IrDumper implements Visitor<String> {
     private IrDumper(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
                      String modulePath, boolean isDeclFile,
                      CanonicalClassIdentityIndex identityIndex) {
+        this(typeMap, symbolTable, modulePath, isDeclFile, identityIndex, Map.of());
+    }
+
+    private IrDumper(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                     String modulePath, boolean isDeclFile,
+                     CanonicalClassIdentityIndex identityIndex,
+                     Map<InstanceofExpr, Type.Class> instanceofTargets) {
+        this.instanceofTargets = Map.copyOf(instanceofTargets);
         this.typeMap = Collections.unmodifiableMap(new HashMap<>(typeMap));
         this.symbolTable = symbolTable != null ? symbolTable : new SymbolTable();
         this.modulePath = modulePath;
@@ -129,7 +138,7 @@ public final class IrDumper implements Visitor<String> {
             return "";
         }
         IrDumper dumper = new IrDumper(result.typeMap(), result.symbolTable(),
-            modulePath, false, identityIndex);
+            modulePath, false, identityIndex, result.instanceofTargets());
         return dumper.visit(program);
     }
 
@@ -199,11 +208,18 @@ public final class IrDumper implements Visitor<String> {
     private String typeNodeToSpecDescriptor(TypeNode tn) {
         if (tn == null) return "null";
         return switch (tn) {
-            case NamedType nt -> nt.name();
+            case NamedType nt -> nt.name().equals("Record<string, unknown>") ? "record" : nt.name();
             case ArrayType at -> "[" + typeNodeToSpecDescriptor(at.elementType()) + "]";
-            case NullableType nlt -> "?" + typeNodeToSpecDescriptor(nlt.innerType());
+            case NullableType nlt -> {
+                String inner = typeNodeToSpecDescriptor(nlt.innerType());
+                if (!nlt.undefinedMember() && inner.equals("undefined")
+                        || nlt.undefinedMember() && inner.equals("null")) yield "null|undefined";
+                if (inner.startsWith("?") && nlt.undefinedMember()) yield "?!" + inner.substring(1);
+                if (inner.startsWith("!") && !nlt.undefinedMember()) yield "?!" + inner.substring(1);
+                yield (nlt.undefinedMember() ? "!" : "?") + inner;
+            }
             case FunctionType ft -> {
-                StringBuilder sb = new StringBuilder("(");
+                StringBuilder sb = new StringBuilder(ft.isAsync() ? "async(" : "(");
                 for (int i = 0; i < ft.params().size(); i++) {
                     if (i > 0) sb.append(",");
                     sb.append(typeNodeToSpecDescriptor(ft.params().get(i).type()));
@@ -283,6 +299,8 @@ public final class IrDumper implements Visitor<String> {
     private String dispatchExpr(ExpressionNode expr) {
         if (expr == null) return "";
         return switch (expr) {
+            case AssertionExpr assertion   -> visit(assertion);
+            case InstanceofExpr test       -> visit(test);
             case LiteralExpr le            -> visit(le);
             case IdentifierExpr ie         -> visit(ie);
             case BinaryExpr be             -> visit(be);
@@ -484,8 +502,7 @@ public final class IrDumper implements Visitor<String> {
     public String visit(ReturnStatement node) {
         StringBuilder sb = new StringBuilder();
         sb.append(indent()).append("return ").append(spanStr(node.span())).append("\n");
-        if (currentReturnType != null && !(currentReturnType instanceof Type.Null)
-                 ) {
+        if (currentReturnType != null && !(currentReturnType instanceof Type.Void)) {
             String boundaryKind = currentFunctionIsAsync ? "async-completion" : "return";
             sb.append(indent()).append("  ").append(boundary(boundaryKind)).append("\n");
         }
@@ -848,15 +865,45 @@ public final class IrDumper implements Visitor<String> {
     }
 
     @Override
+    public String visit(AssertionExpr node) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(indent()).append("assert as ").append(specTypeDescriptor(typeOf(node)))
+            .append(" ").append(spanStr(node.span())).append("\n");
+        sb.append(indent()).append("  ").append(boundary("assertion")).append("\n");
+        pushIndent();
+        sb.append(dispatchExpr(node.value()));
+        popIndent();
+        return sb.toString();
+    }
+
+    @Override
+    public String visit(InstanceofExpr node) {
+        Type.Class target = instanceofTargets.get(node);
+        if (target == null) {
+            throw new IllegalStateException("Missing instanceof class fact in IR dump");
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(indent()).append("instanceof ").append(specTypeDescriptor(target))
+            .append(" : boolean ").append(spanStr(node.span())).append("\n");
+        pushIndent();
+        sb.append(dispatchExpr(node.value()));
+        popIndent();
+        return sb.toString();
+    }
+
+    @Override
     public String visit(HasExpr node) {
         String typeStr = hasType(node) ? specTypeDescriptor(typeOf(node))
             : (isDeclFile ? "[no-expr-in-decl]" : "?");
         StringBuilder sb = new StringBuilder();
-        sb.append(indent()).append("has .").append(node.field())
+        sb.append(indent()).append("Object.hasOwn").append(node.field() == null ? " []" : " ." + node.field())
             .append(" : ").append(typeStr)
             .append(" ").append(spanStr(node.span())).append("\n");
         pushIndent();
         sb.append(dispatchExpr(node.object()));
+        if (node.key() != null) {
+            sb.append(dispatchExpr(node.key()));
+        }
         popIndent();
         return sb.toString();
     }
@@ -977,7 +1024,7 @@ public final class IrDumper implements Visitor<String> {
 
     private String unaryOpStr(UnaryOp op) {
         return switch (op) {
-            case NOT -> "!"; case NEG -> "-";
+            case NOT -> "!"; case NEG -> "-"; case TYPEOF -> "typeof ";
         };
     }
 }

@@ -6,7 +6,7 @@
 class Box { value: number; }
 
 export function test_bad_class_field_runtime_type(): Box {
-  let t: table = { value: "bad" };
+  let t: Record<string, unknown> = { value: "bad" };
   let b: Box = t;
   return b;
 }

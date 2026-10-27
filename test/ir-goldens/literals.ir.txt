@@ -1,5 +1,5 @@
-module @test/ir-goldens/fixtures/literals.deal:4:1-12:1
-  function main: null @test/ir-goldens/fixtures/literals.deal:4:1-12:1
+module @test/ir-goldens/fixtures/literals.deal:4:1-13:1
+  function main: null @test/ir-goldens/fixtures/literals.deal:4:1-13:1
     body
       let a: number @test/ir-goldens/fixtures/literals.deal:5:5-6:7
         [boundary: var-annotation]
@@ -16,6 +16,9 @@ module @test/ir-goldens/fixtures/literals.deal:4:1-12:1
       let e: boolean @test/ir-goldens/fixtures/literals.deal:9:5-10:7
         [boundary: var-annotation]
         literal false : boolean @test/ir-goldens/fixtures/literals.deal:9:22-9:26
-      let f: null @test/ir-goldens/fixtures/literals.deal:10:5-11:1
+      let f: null @test/ir-goldens/fixtures/literals.deal:10:5-11:10
         [boundary: var-annotation]
         literal null : null @test/ir-goldens/fixtures/literals.deal:10:19-10:22
+      return @test/ir-goldens/fixtures/literals.deal:11:5-12:1
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/literals.deal:11:12-11:15

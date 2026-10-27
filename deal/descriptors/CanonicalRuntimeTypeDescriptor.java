@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The canonical runtime type descriptor service (DEAL v1.2): one
+ * The canonical runtime type descriptor service (DEAL v1.5): one
  * per-compilation instance over the compilation's
  * {@link CanonicalClassIdentityIndex} and the module-identity layer's
  * module-path classification (design source
@@ -22,11 +22,12 @@ import java.util.Objects;
  *
  * <pre>
  * descriptor := primitive | error | class | array | nullable | function
- * primitive  := "null" | "boolean" | "int" | "number" | "string" | "table"
+ * primitive  := "null" | "undefined" | "unknown" | "void"
+ *             | "boolean" | "number" | "string" | "record"
  * error      := "Error"
  * class      := "@" component ("/" component)+
  * array      := "[" descriptor "]"
- * nullable   := "?" descriptor
+ * nullable   := ("?" | "!" | "?!") descriptor | "null|undefined"
  * function   := "async"? "(" (descriptor ("," descriptor)*)? ")" "-&gt;" descriptor
  * </pre>
  *
@@ -36,12 +37,12 @@ import java.util.Objects;
  * (arrays, nullables, and sync/async function signatures included). The
  * {@code "@" ...} class production remains the sole form for every other
  * class identity; the reserved {@code $builtin} namespace never forms a
- * class atom in v1.4 (the superseded v1.2 spellings {@code @/Error} and
+ * class atom in v1.5 (the superseded spellings {@code @/Error} and
  * {@code @$builtin/Error} are rejected, never decoded).</p>
  *
  * <p>A component is a non-empty maximal scalar run that is not
  * {@code .}/{@code ..} as a whole component and is free of U+0000,
- * C0/DEL controls, Unicode whitespace, {@code @ [ ] ? ( ) , /}, and
+ * C0/DEL controls, Unicode whitespace, {@code @ [ ] ? ! | ( ) , /}, and
  * contiguous {@code -&gt;}.  The final component is the class name and must
  * match the source identifier shape {@code [A-Za-z_][A-Za-z0-9_]*}; all
  * other components are text-opaque (dots are legal inside non-final
@@ -110,14 +111,14 @@ public final class CanonicalRuntimeTypeDescriptor {
 
     /**
      * The reserved first component of the superseded v1.2 builtin
-     * descriptor namespace.  No v1.4 class atom carries it; the builtin
+     * descriptor namespace.  No v1.5 class atom carries it; the builtin
      * {@code Error} class is exactly {@link #ERROR_DESCRIPTOR}.
      */
     private static final String BUILTIN_NAMESPACE_COMPONENT = "$builtin";
 
     /** The canonical primitive keywords, in grammar order. */
     private static final List<String> PRIMITIVE_KEYWORDS =
-        List.of("null", "boolean", "number", "string", "table");
+        List.of("null", "undefined", "unknown", "void", "boolean", "number", "string", "record");
 
     // =========================================================================
     // Per-compilation encode service
@@ -160,17 +161,22 @@ public final class CanonicalRuntimeTypeDescriptor {
         Objects.requireNonNull(type, "type must not be null");
         return switch (type) {
             case Type.Null ignored -> "null";
+            case Type.Undefined ignored -> "undefined";
+            case Type.Unknown ignored -> "unknown";
+            case Type.Void ignored -> "void";
             case Type.Boolean ignored -> "boolean";
 
             case Type.Number ignored -> "number";
             case Type.String ignored -> "string";
-            case Type.Table ignored -> "table";
+            case Type.Table ignored -> "record";
             case Type.Error ignored -> throw new IllegalStateException(
                 "Type.Error reached a descriptor production site: the internal "
                     + "checker sentinel has no canonical descriptor and must never "
                     + "be emitted (internal invariant violation)");
             case Type.Array arr -> "[" + encode(arr.element()) + "]";
-            case Type.Nullable n -> "?" + encode(n.inner());
+            case Type.Nullable n -> n.inner() instanceof Type.Undefined && n.admitsNull()
+                ? "null|undefined"
+                : (n.admitsNull() ? "?" : "") + (n.admitsUndefined() ? "!" : "") + encode(n.inner());
             case Type.Class cls -> encodeClass(cls);
             case Type.Func f -> encodeFunction(f);
         };
@@ -282,7 +288,8 @@ public final class CanonicalRuntimeTypeDescriptor {
             return "[" + render(a.element()) + "]";
         }
         if (ast instanceof DescriptorAst.NullableAtom n) {
-            return "?" + render(n.inner());
+            if (n.admitsNull() && n.inner() instanceof DescriptorAst.PrimitiveAtom p && p.name().equals("undefined")) return "null|undefined";
+            return (n.admitsNull() ? "?" : "") + (n.admitsUndefined() ? "!" : "") + render(n.inner());
         }
         DescriptorAst.FunctionAtom f = (DescriptorAst.FunctionAtom) ast;
         StringBuilder sb = new StringBuilder();
@@ -331,8 +338,12 @@ public final class CanonicalRuntimeTypeDescriptor {
             if (cp == '[') {
                 return parseArray();
             }
-            if (cp == '?') {
+            if (cp == '?' || cp == '!') {
                 return parseNullable();
+            }
+            if (matchKeyword("null|undefined")) {
+                pos += 14;
+                return new DescriptorAst.NullableAtom(new DescriptorAst.PrimitiveAtom("undefined"), true, false);
             }
             if (cp == '(') {
                 return parseFunction(false);
@@ -432,7 +443,13 @@ public final class CanonicalRuntimeTypeDescriptor {
 
         /** {@code ? descriptor} with the pinned nested-nullable/null-inner rejections. */
         private DescriptorParseResult parseNullable() {
-            pos++; // consume '?'
+            boolean admitsNull = cps[pos] == '?';
+            boolean admitsUndefined = !admitsNull;
+            pos++;
+            if (admitsNull && pos < cps.length && cps[pos] == '!') {
+                admitsUndefined = true;
+                pos++;
+            }
             int innerStart = pos;
             DescriptorParseResult inner = parseDescriptor();
             if (inner instanceof DescriptorSyntaxError error) {
@@ -446,13 +463,15 @@ public final class CanonicalRuntimeTypeDescriptor {
                     "nested nullable at scalar offset " + innerStart);
             }
             if (innerAst instanceof DescriptorAst.PrimitiveAtom p
-                    && p.name().equals("null")) {
+                    && (p.name().equals("unknown") || p.name().equals("void")
+                        || (admitsNull && p.name().equals("null"))
+                        || (admitsUndefined && p.name().equals("undefined")))) {
                 return new DescriptorSyntaxError(
                     innerStart,
                     DescriptorSyntaxError.Kind.NULL_INNER,
                     "nullable of null at scalar offset " + innerStart);
             }
-            return new DescriptorAst.NullableAtom(innerAst);
+            return new DescriptorAst.NullableAtom(innerAst, admitsNull, admitsUndefined);
         }
 
         /**
@@ -567,14 +586,14 @@ public final class CanonicalRuntimeTypeDescriptor {
                 }
                 if (!hasSeparator
                         && component.equals(BUILTIN_NAMESPACE_COMPONENT)) {
-                    // The superseded v1.2 builtin namespace: no v1.4 class
+                    // The superseded builtin namespace: no v1.5 class
                     // atom carries it, and the builtin Error class is
                     // exactly the bare "Error" token.
                     return new DescriptorSyntaxError(
                         componentStart,
                         DescriptorSyntaxError.Kind.INVALID_CLASS_ATOM,
                         "the reserved '" + BUILTIN_NAMESPACE_COMPONENT
-                            + "' descriptor namespace forms no v1.4 class atom "
+                            + "' descriptor namespace forms no v1.5 class atom "
                             + "at scalar offset " + componentStart);
                 }
                 if (pos < cps.length && cps[pos] == '/') {

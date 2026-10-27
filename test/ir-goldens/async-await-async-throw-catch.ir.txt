@@ -3,19 +3,24 @@ module @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:1-5:1
     [boundary: export]
     async function f: string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:8-5:1
       body
-        try @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:37-4:145
-          block @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:41-4:114
-            throw @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:43-4:97
-              object : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:49-4:89
+        try @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:46-4:189
+          block @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:50-4:123
+            throw @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:52-4:106
+              object : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:58-4:98
                 [boundary: class-construct]
-                literal "E_TEST" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:57-4:64
-                literal "test error" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:76-4:87
-            return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:92-4:114
+                literal "E_TEST" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:66-4:73
+                literal "test error" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:85-4:96
+            return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:101-4:123
               [boundary: async-completion]
-              literal "unreachable" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:99-4:111
-        catch e @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:126-4:143
-          block @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:126-4:143
-            return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:128-4:143
+              literal "unreachable" : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:108-4:120
+        catch e @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:135-4:187
+          block @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:135-4:187
+            let error: Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:137-4:173
+              [boundary: var-annotation]
+              assert as Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:156-4:165
+                [boundary: assertion]
+                ident e : unknown @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:156-4:156
+            return @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:168-4:187
               [boundary: async-completion]
-              member .code : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:135-4:140
-                ident e : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:135-4:135
+              member .code : string @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:175-4:184
+                ident error : Error @test/ir-goldens/fixtures/async-await-async-throw-catch.deal:4:175-4:179

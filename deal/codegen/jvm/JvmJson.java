@@ -637,8 +637,27 @@ public final class JvmJson {
         return null;
     }
 
+    /** Translate JSON-plan nullish prefixes into the runtime descriptor dialect. */
+    private static String runtimeDescriptor(String descriptor) {
+        for (String prefix : List.of("nullable:", "undefinedable:", "nullish:")) {
+            if (descriptor.startsWith(prefix)) {
+                String kind = prefix.equals("nullish:") ? "nullableundefinedable"
+                    : prefix.substring(0, prefix.length() - 1);
+                return kind + "(" + runtimeDescriptor(descriptor.substring(prefix.length())) + ")";
+            }
+        }
+        if (descriptor.startsWith("array("))
+            return "array(" + runtimeDescriptor(descriptor.substring(6, descriptor.length() - 1)) + ")";
+        return descriptor.equals("table") ? "record" : descriptor;
+    }
+
     /** One provided value's decode against a declared descriptor. */
     private static Object decodeRaw(String descriptor, Object raw) {
+        if (descriptor.equals("undefined")) return FAIL;
+        if (descriptor.startsWith("undefinedable:") || descriptor.startsWith("nullish:")) {
+            if (descriptor.startsWith("nullish:") && raw == JNULL) return null;
+            return decodeRaw(descriptor.substring(descriptor.indexOf(':') + 1), raw);
+        }
         if (descriptor.startsWith("nullable:")) {
             if (raw == JNULL) {
                 return null;
@@ -652,6 +671,7 @@ public final class JvmJson {
             String inner = descriptor.substring("array(".length(),
                 descriptor.length() - 1);
             JvmRuntime.Array out = new JvmRuntime.Array(0);
+            out.elementDescriptor = runtimeDescriptor(inner);
             for (int i = 0; i < array.elements.size(); i++) {
                 Object element = decodeRaw(inner, array.elements.get(i));
                 if (element == FAIL) {
@@ -696,7 +716,7 @@ public final class JvmJson {
             }
             case "table" -> {
                 // A table field accepts only a JSON object
-                // (docs/spec-v1.4.md:695): an array-shaped value of any
+                // (docs/spec-v1.5.md:695): an array-shaped value of any
                 // length, the empty array included, is a rejection —
                 // never an empty table.
                 return raw instanceof JvmRuntime.Table ? toLanguage(raw) : FAIL;
@@ -791,6 +811,11 @@ public final class JvmJson {
     }
 
     private static boolean conforms(String descriptor, Object value) {
+        if (descriptor.equals("undefined")) return value == JvmRuntime.UNDEFINED;
+        if (descriptor.startsWith("undefinedable:") || descriptor.startsWith("nullish:")) {
+            if (value == JvmRuntime.UNDEFINED || descriptor.startsWith("nullish:") && value == null) return true;
+            return conforms(descriptor.substring(descriptor.indexOf(':') + 1), value);
+        }
         if (descriptor.startsWith("nullable:")) {
             if (value == null) {
                 return true;
@@ -866,6 +891,7 @@ public final class JvmJson {
                 String fieldPath = path.isEmpty() ? field.name : path + "." + field.name;
                 String encoded = encodeField(field.descriptor, fieldValue, fieldPath,
                     visited);
+                if (encoded == null) continue;
                 if (!first) {
                     out.append(',');
                 }
@@ -882,6 +908,15 @@ public final class JvmJson {
 
     private static String encodeField(String descriptor, Object value, String path,
                                       java.util.IdentityHashMap<Object, Boolean> visited) {
+        if (descriptor.startsWith("undefinedable:") || descriptor.startsWith("nullish:")) {
+            if (value == JvmRuntime.UNDEFINED) return null;
+            if (descriptor.startsWith("nullish:") && value == null) return "null";
+            return encodeField(descriptor.substring(descriptor.indexOf(':') + 1), value, path, visited);
+        }
+        if (descriptor.equals("undefined")) {
+            if (value == JvmRuntime.UNDEFINED) return null;
+            throw new Projection(path, actualToken(value));
+        }
         if (descriptor.startsWith("nullable:")) {
             if (value == null) {
                 return "null";
@@ -904,8 +939,8 @@ public final class JvmJson {
                     if (i > 0) {
                         out.append(',');
                     }
-                    out.append(encodeField(inner, array.elements.get(i),
-                        path + "[" + i + "]", visited));
+                    String encoded = encodeField(inner, array.elements.get(i), path + "[" + i + "]", visited);
+                    out.append(encoded == null ? "null" : encoded);
                 }
                 out.append(']');
                 return out.toString();
@@ -940,9 +975,7 @@ public final class JvmJson {
                     throw new Projection(path, actualToken(value));
                 }
                 double number = numeric.doubleValue();
-                if (!Double.isFinite(number)) {
-                    throw new Projection(path, actualToken(value));
-                }
+                if (!Double.isFinite(number)) yield "null";
                 yield number == 0 ? "0" : Double.toString(number);
             }
             case "string" -> {

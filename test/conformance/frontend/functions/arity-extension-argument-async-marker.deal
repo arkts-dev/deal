@@ -5,7 +5,7 @@
 
 function syncOne(x: number): number { return x; }
 
-function needAsyncPair(f: async (x: number, y: number) => number): number { return 1; }
+function needAsyncPair(f: (x: number, y: number) => Promise<number>): number { return 1; }
 
 export function main(): null {
   let r: number = needAsyncPair(syncOne);

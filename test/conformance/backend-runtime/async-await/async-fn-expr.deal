@@ -3,8 +3,8 @@
 // @expected: runtime-ok
 // @features: async-await
 
-export async function test_async_expr(): number {
-  let f: async () => number = async function(): number {
+export async function test_async_expr(): Promise<number> {
+  let f: () => Promise<number> = async function(): Promise<number> {
     return 42;
   };
   let result: number = await f();

@@ -28,7 +28,8 @@ export function test_array_write_validation_after_rhs(): null {
   try {
     pick(l, 1)[record(l, 5)] = badValue(l);
     throw { code: "TEST_FAIL", message: "expected E8002 before completing" };
-  } catch (e) {
+  } catch (value) {
+    let e: Error = value as Error;
     if (e.code !== "E8002") {
       throw { code: "TEST_FAIL", message: "expected E8002, got " + e.code };
     }

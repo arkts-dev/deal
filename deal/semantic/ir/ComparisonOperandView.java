@@ -3,12 +3,14 @@ package deal.semantic.ir;
 import java.util.Objects;
 
 public sealed interface ComparisonOperandView
-    permits ComparisonOperandView.Null,
+    permits ComparisonOperandView.Undefined, ComparisonOperandView.Null,
             ComparisonOperandView.Missing,
             ComparisonOperandView.Boolean,
             ComparisonOperandView.Number,
             ComparisonOperandView.String,
             ComparisonOperandView.Ref {
+
+    enum Undefined implements ComparisonOperandView { INSTANCE }
 
     /** Language null ({@link ActualKind#NULL}). */
     enum Null implements ComparisonOperandView {

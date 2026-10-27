@@ -1,0 +1,28 @@
+import * as nominal from "./nominal";
+class Same { other: string; }
+export function main(): null {
+  let foreign = nominal.make();
+  let foreignUnknown: unknown = foreign;
+  if (!(foreignUnknown instanceof nominal.Same)) { throw {code: "FAIL", message: "imported nominal target"}; }
+  if (foreignUnknown instanceof Same) { throw {code: "FAIL", message: "same spelling is not nominal identity"}; }
+  if (foreignUnknown instanceof nominal.Same) {
+    if (foreignUnknown.value !== 41) { throw {code: "FAIL", message: "imported nominal refinement"}; }
+  }
+  let foreignChecked = foreignUnknown as nominal.Same;
+  if (foreignChecked !== foreign) { throw {code: "FAIL", message: "imported assertion identity"}; }
+  if (foreignChecked.value !== 41) { throw {code: "FAIL", message: "imported class layout"}; }
+  let local: Same = {other: "local"};
+  let localUnknown: unknown = local;
+  if (!(localUnknown instanceof Same)) { throw {code: "FAIL", message: "local nominal target"}; }
+  if (localUnknown instanceof nominal.Same) { throw {code: "FAIL", message: "imported nominal distinction"}; }
+  let mutableUnknown: unknown = 10;
+  let mutateUnknown: () => void = function(): void { mutableUnknown = "changed"; };
+  let staleRejected: boolean = false;
+  if (typeof mutableUnknown === "number") {
+    mutateUnknown();
+    try { let invalidNumber: number = mutableUnknown + 1; }
+    catch (e) { if (e instanceof Error) { staleRejected = e.code === "E8001"; } }
+  }
+  if (!staleRejected) { throw {code: "FAIL", message: "stale unknown refinement must check consumption"}; }
+  return null;
+}

@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: number[], async, closures, capture, v1.2
 
-export async function check(): number {
+export async function check(): Promise<number> {
   let b: number[] = [0];
-  let set: async (n: number) => null = async function(n: number): null {
+  let set: (n: number) => Promise<null> = async function(n: number): Promise<null> {
     b[0] = n;
     return null;
   };

@@ -3,4 +3,6 @@ module @test/ir-goldens/fixtures/type-descriptors-array-of-nullable-int.deal:4:1
     param a: [?number] @test/ir-goldens/fixtures/type-descriptors-array-of-nullable-int.deal:4:12-4:32
       [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/type-descriptors-array-of-nullable-int.deal:4:42-4:50
+      return @test/ir-goldens/fixtures/type-descriptors-array-of-nullable-int.deal:4:42-4:55
+        [boundary: return]
+        literal null : null @test/ir-goldens/fixtures/type-descriptors-array-of-nullable-int.deal:4:49-4:52

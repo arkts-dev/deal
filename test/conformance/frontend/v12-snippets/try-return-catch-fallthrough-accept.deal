@@ -3,4 +3,4 @@
 // @expected: compile-ok
 // @features: v1.2, frontend, accept-control
 
-export function f(): number {try {return 1;} catch(e) {throw e;}}
+export function f(): number {try {return 1;} catch(e) {throw e as Error;}}

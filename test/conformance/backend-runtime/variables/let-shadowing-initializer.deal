@@ -38,7 +38,7 @@ export function test_let_shadowing_initializer(): null {
   }
   let sum: number = 0;
   let values: number[] = [1, 2];
-  for (let v: number of values) {
+  for (let v of values) {
     let before: number = v;
     let v: number = 10;
     sum = sum + before + v;
@@ -49,7 +49,7 @@ export function test_let_shadowing_initializer(): null {
   try {
     throw { code: "SHADOW_X", message: "catch shadow" };
   } catch (e) {
-    let e: Error = e;
+    let e: Error = e as Error;
     if (e.code !== "SHADOW_X") {
       throw { code: "TEST_FAIL", message: "catch shadow missed the catch binding" };
     }

@@ -852,7 +852,7 @@ public final class ModuleIdentityResolverTest {
         }
         writeText(dir.resolve("std/io.d.deal"), "export function read(): string;\n");
         writeText(dir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.4\"\n}\n");
+            "{\n  \"languageVersion\": \"1.5\"\n}\n");
 
         ProjectLocator.LocateResult located =
             ProjectLocator.locate(dir.resolve("main.deal").toString(), null);
@@ -911,7 +911,7 @@ public final class ModuleIdentityResolverTest {
         Files.createSymbolicLink(overlapDir.resolve("std/console.d.deal"),
             outside.resolve("console.d.deal"));
         writeText(overlapDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.4\",\n"
+            "{\n  \"languageVersion\": \"1.5\",\n"
                 + "  \"externals\": {\n"
                 + "    \"bad/console\": {\"declaration\": \"" + resolvedTarget
                 + "\"}\n"
@@ -970,7 +970,7 @@ public final class ModuleIdentityResolverTest {
         // src/link/shared.deal lies outside the root.
         Files.createSymbolicLink(dir.resolve("src/link"), outside);
 
-        String manifest = "{\n  \"languageVersion\": \"1.4\",\n"
+        String manifest = "{\n  \"languageVersion\": \"1.5\",\n"
             + "  \"moduleRoots\": [\"src\", \"lib\", \"lib/utils\"],\n"
             + "  \"externals\": {\n"
             + "    \"host/extra\": { \"declaration\": \"decl/extra.d.deal\" }\n"
@@ -1096,7 +1096,7 @@ public final class ModuleIdentityResolverTest {
         writeText(overlapDir.resolve("main.deal"),
             "export function main(): null { }\n");
         writeText(overlapDir.resolve("deal.json"),
-            "{\n  \"languageVersion\": \"1.4\",\n"
+            "{\n  \"languageVersion\": \"1.5\",\n"
                 + "  \"externals\": {\n"
                 + "    \"bad/console\": { \"declaration\": \"std/console.d.deal\" }\n"
                 + "  }\n}\n");

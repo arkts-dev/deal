@@ -1,4 +1,4 @@
-# DEAL — Language Specification v1.4
+# DEAL — Language Specification v1.5
 
 DEAL (Directly Embeddable Agentic Language) is a statically typed language with TypeScript syntax and runtime-enforced types. The primary target is safe, embeddable AI scripting with explicit interoperability boundaries. This document defines the feature set, type system, and runtime execution model.
 
@@ -8,34 +8,9 @@ Features not described in this specification do not exist in the language.
 
 ## Lexical elements
 
-- Identifiers: `[a-zA-Z_$][a-zA-Z0-9_$]*`
-  - User-declared identifiers must not contain `$`.
-  - Compiler-generated identifiers may contain `$`.
-  - Generated identifiers are source-visible only when this specification defines them, such as `C$fromJson` and `C$toJson`.
-  - A user declaration, import alias, parameter, field, or local variable containing `$` is a compile-time error.
-- Keywords are defined by `Keyword` in the [lexical grammar](#lexical-grammar-normative).
-  - `async` and `await` are keywords. They cannot be used as identifiers, type names, field names, import aliases, or parameter names.
-  - `async` is a function/type marker and does not participate in name resolution.
-  - `await` is expression syntax and does not participate in name resolution.
-- Literals:
- - `null`
- - boolean: `true`, `false`
- - number: decimal digits, optionally with a fraction or exponent (e.g., `123`, `3.14`, `0.0`, `1e308`, `1.0e-3`)
-  - string: `"..."` and `'...'` with `\n`, `\t`, `\\`, `\"`, `\'`
-  - template literal: `` `...${expr}...` ``
-- Operators:
- - `+ - * /`
- - `=== !== < <= > >=`
- - `&& || !`
- - `=` (assignment)
- - `.` (member access)
- - `[]` (index access)
- - `,` (separator)
- - `|` (nullable union)
- - `?` (optional field modifier)
- - `;` (statement terminator)
-- Punctuation: `{ } ( ) [ ] : ; , =>`
-- Comments: `// ... end-of-line`, `/* ... */`
+- Tokens and property-name rules are defined by the [lexical grammar](#lexical-grammar-normative). Follow TypeScript module identifier rules by position: `switch`/`enum` cannot name bindings.
+- User-declared identifiers must not contain `$`. Compiler-generated names containing `$` are source-visible only when specified, such as `C$fromJson` and `C$toJson`.
+- `Record`, `Promise`, `Object`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
 
@@ -98,19 +73,23 @@ Token ::= Keyword | Identifier | Literal | Operator | Punctuator
 
 Keyword ::= 'let' | 'class' | 'function' | 'async' | 'await' | 'return' | 'if' | 'else'
           | 'while' | 'for' | 'break' | 'continue'
- | 'null' | 'true' | 'false'
-          | 'import' | 'export' | 'from' | 'as' | 'delete' | 'has'
+          | 'null' | 'true' | 'false' | 'typeof' | 'instanceof'
+          | 'import' | 'export' | 'from' | 'as' | 'delete'
           | 'try' | 'catch' | 'throw' | 'of'
 
 Identifier ::= [a-zA-Z_$] [a-zA-Z0-9_$]*
+/* Property-position Identifier also admits TypeScript keyword property names. */
 
-Literal ::= NullLiteral | BooleanLiteral | NumberLiteral | StringLiteral | TemplateLiteral
+Literal ::= NullLiteral | UndefinedLiteral | BooleanLiteral | NumberLiteral | StringLiteral | TemplateLiteral
 
 NullLiteral ::= 'null'
+UndefinedLiteral ::= 'undefined'
 BooleanLiteral ::= 'true' | 'false'
-NumberLiteral ::= [0-9]+
- | ([0-9]* '.' [0-9]+ ([eE] [+-]? [0-9]+)?)
- | ([0-9]+ [eE] [+-]? [0-9]+)
+DecimalInteger ::= '0' | [1-9] [0-9]*
+NumberLiteral ::= DecimalInteger
+ | (DecimalInteger? '.' [0-9]+ ([eE] [+-]? [0-9]+)?)
+ | (DecimalInteger [eE] [+-]? [0-9]+)
+/* No leading-zero integer part except the single digit 0. */
 StringLiteral ::= '"' StringCharacter* '"' | '\'' StringCharacter* '\''
 
 TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
@@ -136,7 +115,7 @@ Punctuator ::= '{' | '}' | '(' | ')' | '[' | ']' | ':' | ';' | ',' | '?'
 
 ### Syntactic grammar (normative)
 
-This grammar defines the statement/expression separation, block semantics, assignment targets, table key syntax, function-call expression form, and operator precedence.
+This grammar defines the statement/expression separation, block semantics, assignment targets, record key syntax, function-call expression form, and operator precedence.
 
 ```antlr
 Program ::= ImportDeclaration* TopLevelDeclaration*
@@ -165,15 +144,17 @@ ClassDeclaration ::= 'class' Identifier '{' ClassField* '}'
 
 ClassField ::= Identifier '?'? ':' Type ';'
 
-FunctionDeclaration ::= 'async'? 'function' Identifier '(' ParameterList? ')' ':' Type Block
+FunctionDeclaration ::= AsyncPrefix? 'function' Identifier '(' ParameterList? ')' ':' ReturnType Block
 
-ExternalFunctionDeclaration ::= 'async'? 'function' Identifier '(' ParameterList? ')' ':' Type ';' /* declaration files only */
+AsyncPrefix ::= 'async' /* line-break restrictions: Semicolon rules */
+
+ExternalFunctionDeclaration ::= 'function' Identifier '(' ParameterList? ')' ':' ReturnType ';' /* declaration files only */
 
 ParameterList ::= Parameter (',' Parameter)*
 
 Parameter ::= Identifier ':' Type
 
-ReturnType ::= ':' Type
+ReturnType ::= Type | 'void' | 'Promise' '<' (Type | 'void') '>'
 
 VariableDeclaration ::= 'let' Identifier TypeAnnotation? '=' Expression ';'
 
@@ -187,7 +168,7 @@ IfStatement ::= 'if' '(' Expression ')' Block ('else' (IfStatement | Block))?
 
 WhileStatement ::= 'while' '(' Expression ')' Block
 
-ForOfStatement  ::= 'for' '(' 'let' Identifier ':' Type 'of' Expression ')' Block
+ForOfStatement  ::= 'for' '(' 'let' Identifier 'of' Expression ')' Block
 
 BreakStatement ::= 'break' ';'
 
@@ -210,18 +191,6 @@ ImplementationExport ::= 'export' (FunctionDeclaration | ClassDeclaration)
 
 DeclarationExport ::= 'export' (ExternalFunctionDeclaration | ClassDeclaration)
 
-/* Expressions — precedence groups (highest to lowest):
- * 1. Primary (literal, identifier, parenthesized expression)
- * 2. Member / Index / Call
- * 3. Unary
- * 4. Multiplicative
- * 5. Additive
- * 6. Relational
- * 7. Equality
- * 8. Logical AND
- * 9. Logical OR
- */
-
 Expression ::= AssignmentExpression
 
 AssignmentExpression ::= LogicalOrExpression
@@ -233,13 +202,16 @@ LogicalAndExpression ::= EqualityExpression ('&&' EqualityExpression)*
 
 EqualityExpression ::= RelationalExpression (('===' | '!==') RelationalExpression)?
 
-RelationalExpression ::= AdditiveExpression (('<' | '<=' | '>' | '>=') AdditiveExpression)?
+RelationalExpression ::= AdditiveExpression (('<' | '<=' | '>' | '>=') AdditiveExpression
+                         | 'instanceof' ClassReference | 'as' Type)?
+
+ClassReference ::= Identifier ('.' Identifier)?
 
 AdditiveExpression ::= MultiplicativeExpression (('+' | '-') MultiplicativeExpression)*
 
 MultiplicativeExpression ::= UnaryExpression (('*' | '/') UnaryExpression)*
 
-UnaryExpression ::= ('!' | '-') UnaryExpression
+UnaryExpression ::= ('!' | '-' | 'typeof') UnaryExpression
                   | AwaitExpression
                   | PostfixExpression
 
@@ -256,6 +228,7 @@ Arguments ::= '(' ArgumentList? ')'
 ArgumentList ::= Expression (',' Expression)*
 
 PrimaryExpression ::= NullLiteral
+ | UndefinedLiteral
  | BooleanLiteral
  | NumberLiteral
   | StringLiteral
@@ -265,9 +238,6 @@ PrimaryExpression ::= NullLiteral
  | ArrayLiteral
  | ObjectLiteral
  | FunctionExpression
- | HasExpression
-
-HasExpression ::= 'has' '(' PostfixExpression '.' Identifier ')'
 
 ArrayLiteral ::= '[' ElementList? ']'
 
@@ -279,36 +249,19 @@ PropertyList ::= Property (',' Property)* ','?
 
 Property ::= Identifier ':' Expression
 
-FunctionExpression ::= 'async'? 'function' '(' ParameterList? ')' ':' Type Block
+FunctionExpression ::= AsyncPrefix? 'function' '(' ParameterList? ')' ':' ReturnType Block
 
 LeftHandSideExpression ::= Identifier
  | PostfixExpression
 ```
 
-### Operator precedence table
-
-| Precedence | Operator | Associativity |
-|---|---|---|
-| 1 | `.` `[]` `()` | left |
-| 2 | `!` `-` (unary) | right |
-| 3 | `*` `/` | left |
-| 4 | `+` `-` (binary) | left |
-| 5 | `<` `<=` `>` `>=` | none |
-| 6 | `===` `!==` | none |
-| 7 | `&&` | left |
-| 8 | `\|\|` | left |
-
 ### Semicolon rules
 
-Semicolons are required only where shown in the grammar.
+Require grammatical semicolons; no automatic insertion. Forbid line terminators, including in comments, between throw/return and their operands or async and function. Bare `return;` remains valid.
 
 ### Statement/expression separation
 
-- A module consists of zero or more `ImportDeclaration`s followed by zero or more `TopLevelDeclaration`s. `ImportDeclaration` is not allowed after any non-import top-level declaration.
-- At module top level, only `ImportDeclaration`, `FunctionDeclaration`, `ClassDeclaration`, and `ExportDeclaration` are allowed. Everything else is a compile-time error.
-- `Statement` remains the grammar for block/function bodies; imports, exports, and class declarations are not statements.
-- `if`, `while`, `for` bodies must be blocks `{ ... }`. No statement-without-brace forms.
-- `ExpressionStatement` is a bare expression (including function calls) followed by a required semicolon.
+`if`, `while` and `for` bodies require `{ ... }`.
 - `Block` is a statement-list and is not an expression. Blocks do not produce values.
 
 Semantics:
@@ -317,7 +270,7 @@ Semantics:
 - A `while` loop evaluates the condition before each iteration.
 - `break` exits the nearest enclosing loop.
 - `continue` proceeds to the next iteration of the nearest enclosing loop.
-- `return` in function body immediately transfers control to the caller. `return` with no expression is valid only for `null` return type and returns language `null`.
+- `return` transfers control to the caller; result rules are defined in [Return type requirements](#return-type-requirements).
 
 ### Assignment targets
 
@@ -329,13 +282,13 @@ a.b // member access
 a[b] // index into array
 ```
 
-No destructuring, no property shorthand mutation for class destructuring.
+No destructuring.
 
-Assignment to member/index of an array and table respectively:
+Assignment to member/index of an array and record respectively:
 
 ```ts
 xs[0] = 5; // array element write — runtime element-type check
-t.key = "value"; // table field write — no runtime type check
+t.key = "value"; // record field write — no runtime type check
 ```
 
 ---
@@ -345,109 +298,66 @@ t.key = "value"; // table field write — no runtime type check
 ### Type algebra (canonical forms)
 
 ```txt
-Type :=
- null
- boolean
- number
-  string
-  table
-  Error
-  ClassName // nominal record type
- Array<Type> // surface: T[]
- Nullable<Type> // surface: T | null
- Function(sync, params, return)
- Function(async, params, return)
+Type := null | undefined | boolean | number | string | unknown
+      | RecordValue | Error | ClassName | Array<Type>
+      | Nullish<Base, flags> | Function(sync, params, result)
+      | Function(async, params, result)
+Result := Type | void
 ```
 
-No other union types exist. `Nullable` is the sole union constructor.
+`RecordValue` spells `Record<string, unknown>`. Nullish flags add null/undefined to a base. Unknown accepts all data but authorizes no unchecked operations. `void` and `Promise<R>` are allowed only in function result positions.
 
 ### Type grammar (normative)
 
 ```antlr
-Type ::= FunctionType | NullableType
+Type ::= FunctionType | NullishType
 
-NullableType ::= ArrayType ('|' 'null')?
- | 'null' '|' ArrayType
+NullishType ::= (NullishMember '|')* ArrayType ('|' NullishMember)*
+NullishMember ::= 'null' | 'undefined'
 
 ArrayType ::= PrimaryType ('[' ']')*
 
-PrimaryType ::= BuiltinType
- | Identifier
- | Identifier '.' Identifier
- | '(' Type ')'
+PrimaryType ::= BuiltinType | Identifier | Identifier '.' Identifier | '(' Type ')'
+ | 'Record' '<' 'string' ',' 'unknown' '>'
 
-BuiltinType ::= 'null' | 'boolean' | 'number' | 'string' | 'table' | 'Error'
+BuiltinType ::= 'null' | 'undefined' | 'boolean' | 'number' | 'string' | 'unknown' | 'Error'
 
-FunctionType ::= 'async'? '(' FunctionTypeParams? ')' '=>' Type
+FunctionType ::= '(' FunctionTypeParams? ')' '=>' ReturnType
 
 FunctionTypeParams ::= FunctionTypeParam (',' FunctionTypeParam)*
-
 FunctionTypeParam ::= Identifier ':' Type
 ```
 
 Constraints:
 
-- `T | null` and `null | T` canonicalize to `Nullable<T>`.
-- General unions such as `A | B` are invalid.
-- `null | null`, `(T | null) | null`, and `T | null | null` are invalid.
-- Identifier in a type context must not be a keyword.
-- `Error` is a builtin nominal class type. User code must not declare a class named `Error`.
+- Permit `T | null`, `T | undefined`, `T | null | undefined` and `null | undefined`. Flatten parentheses; reject duplicates, canonicalize null before undefined. Unknown absorbs nullish members. Reject other unions.
+- Record/Promise applications are closed builtins, not general generics. `Promise<R>` denotes an async signature with result R, requiring async on implementation bodies but not external declarations. Reject promise variables, nesting and unions.
+- Void is result-only, including `Promise<void>`; discard void calls as statements, never data.
+- Error is builtin nominal and cannot be redeclared.
 
-### Surface syntax
+### Narrowing and checked assertions
 
-```ts
-null
-boolean
-number
-string
-table
-Error
-
-T[] // array of T
-T[][] // array of array of T
-
-T | null // nullable wrapper; T must not be null or Nullable<U>
-null | T // equivalent
-
-(p1: T1, ..., pN: TN) => R
-async (p1: T1, ..., pN: TN) => R
-
-ClassName // nominal record
-```
-
-### Nullable semantics
-
-`Nullable<T>` is a distinct type constructor with restricted assignment.
-
-Assignment rules:
-
-```txt
-T -> T OK
-null -> null OK
-T -> T | null OK (wrapping)
-null -> T | null OK
-T | null -> T error (must narrow)
-T | null -> T | null OK (same T)
-T | null -> U | null error (different T)
-```
-
-Supports basic null flow narrowing:
+Basic narrowing:
 
 ```ts
-let n: number | null = 1;
-
+let n: number | null | undefined = 1;
 if (n !== null) {
- let i: number = n; // OK: narrowed to number in this block
-}
-
-if (n === null) {
- // n is null here
-} else {
- let i: number = n; // OK: narrowed to number in else block
+ if (n !== undefined) { let i: number = n; }
 }
 ```
 
-Narrowing supports only locals and parameters compared directly with `null` using `!==` or `===`, not property paths:
+Narrow locals/parameters only. Null/undefined `===`/`!==` tests select/remove that member; unknown complements stay unknown.
+
+```ts
+function use(value: string | undefined): void {
+ if (value === undefined) {
+  return;
+ } else {
+  let text: string = value; // narrowed
+ }
+ let text: string = value; // error: outside narrowing block
+}
+```
 
 ```ts
 class Profile { nick: string | null; }
@@ -457,18 +367,16 @@ if (p.nick !== null) {
 }
 ```
 
-Outside a narrowing block:
-
-```ts
-let i: number = n; // compile-time Error
-```
-
 Narrowing invalidation:
 
 - Direct assignment invalidates the binding's refinement.
 - Calls do not invalidate refinements. Indirect captured-binding mutation can therefore cause a later runtime type check to fail.
 - Narrowing does not cross function boundaries or loop back-edges.
 - `await` invalidates all enclosing-function refinements.
+
+`typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/records/classes). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
+
+`e as T` evaluates once, descriptor-checks data type T, and raises E8001 on mismatch; no coercion/construction. Allow unknown sources or compatibility in either direction. Array checks require a compatible persistent element descriptor, not merely currently matching elements.
 
 ```ts
 let x: string | null = "a";
@@ -492,14 +400,14 @@ if (x !== null) {
 ```
 
 ```ts
-async function tick(): null { return null; }
-async function use(x: string | null): null {
+async function tick(): Promise<void> { return; }
+async function use(x: string | null): Promise<void> {
  if (x !== null) {
   let before: string = x; // OK
   await tick();
   let after: string = x; // error: narrowing was invalidated
  }
- return null;
+ return;
 }
 ```
 
@@ -513,7 +421,12 @@ Type equality:
 
 Two types are equal iff their canonical forms are identical. Class types are equal by declared class symbol only. Function types are equal by exact async marker, parameter list, and return type.
 
-Value equality: `===` and `!==` are valid only when operand types are equal. Exception: `T | null` may be compared with `null`.
+Value equality: `===` and `!==` require equal types, except a nullish type may compare with its singleton members; `unknown` may compare with null or undefined.
+
+- Null and undefined each equal only themselves.
+- Booleans compare by value; numbers use IEEE 754 equality (`NaN === NaN` is false).
+- Strings compare by Unicode scalar-value sequence.
+- Arrays, records, classes and functions compare by reference identity.
 
 `==` and `!=` are not valid operators.
 
@@ -544,6 +457,7 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 | Expression | Type |
 |---|---|
 | `null` | `null` |
+| `undefined` | `undefined` |
 | `true`, `false` | `boolean` |
 | `123`, `1.5`, `1e3` | `number` |
 | `"abc"` | `string` |
@@ -563,13 +477,15 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 | `-a` where `a: number` | `number` |
 | any other unary `-` | error |
 | array literal `[e1, ..., eN]` | `T[]` where all `e_i` have the same `T` |
-| table literal `{ p: e, ... }` | `table` |
+| record literal `{ p: e, ... }` | `Record<string, unknown>` with target context |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
 | index `a[b]` where `a: T[]`, `b: number` | `T` |
-| member `a.p` where `a: table` | **error** unless the surrounding context provides a target type |
-| member `a.p` where `a: ClassName` | required field: declared field type; optional field `p?: T`: `T \| null`; optional nullable field `p?: T \| null`: `T \| null` |
-| call `f(e1, ..., eN)` where `f: (p1: T1, ..., pN: TN) => R` | `R` |
-| `await f(e1, ..., eN)` where `f: async (p1: T1, ..., pN: TN) => R` | `R` |
+| record member/index read | `unknown`; absent key yields undefined |
+| class member `a.p` | declared type; optional adds undefined |
+| sync call `f(...)` | declared result, including void |
+| `await f(...)` for `f: (...) => Promise<R>` | `R`, including void |
+| `typeof e` / `e instanceof C` | `string` / `boolean` |
+| `e as T` | `T` |
 | `e.code` where `e: Error` | `string` |
 | `e.message` where `e: Error` | `string` |
 
@@ -579,12 +495,10 @@ String concatenation uses `+`. Both operands must be `string`. No implicit strin
 let x: T_target = expr;
 ```
 
-1. Infer type of `expr` → `T_expr`
-2. If `T_expr` equals `T_target` exactly → OK
-3. If `T_target` is `Nullable<T>` and `T_expr` equals `T` → OK
-4. If `T_target` is `Nullable<T>` and `T_expr` equals `null` → OK
-5. If both are function types satisfying [Function type compatibility](#function-type-compatibility) → OK
-6. Otherwise → compile-time Error
+1. Infer the RHS type, using target context for literals.
+2. Accept equal types, nullish widening with an unchanged base, singleton null/undefined into a target admitting that member, or any data value into unknown.
+3. Accept direct function compatibility under [Function type compatibility](#function-type-compatibility), not lifted through arrays/nullish wrappers.
+4. Otherwise reject; unknown-to-concrete assignment needs explicit validation.
 
 ---
 
@@ -630,26 +544,22 @@ export class User {
 
 **Jsonable field types.** A `// @jsonable` class may contain fields of:
 
-- `null`
-- `boolean`
-- `number`
-- `string`
-- `table`
-- `T[]` where `T` is jsonable
-- `T | null` where `T` is jsonable
+- `null`, `undefined`, `boolean`, `number`, `string`
+- `Record<string, unknown>`
+- `T[]` and nullish unions where the base is jsonable
 - class type `C` with visible generated or declared `C$fromJson` and `C$toJson` of the signatures below
 
 Non-jsonable fields produce compile-time errors at their declarations.
 
-Circular `@jsonable` dependencies, including through arrays and nullables, are compile-time errors.
+Circular `@jsonable` dependencies, including through arrays and nullish wrappers, are compile-time errors.
 
 In declaration files, `// @jsonable` has no effect; compatible `C$fromJson` and `C$toJson` functions may be declared explicitly.
 
 **Generated functions.** For a `@jsonable` class `C`, the compiler emits two module-level export functions:
 
 ```ts
-C$fromJson(s: string): C | null
-C$toJson(v: C): string
+export function C$fromJson(s: string): C | null;
+export function C$toJson(v: C): string;
 ```
 
 **fromJson.** Parses an object; rejects extra keys, missing required-present keys, and duplicate decoded property names at every object nesting level. Decodes fields recursively in declaration order; missing optionals stay absent. Failure returns `null`, never throws or publishes partial instances.
@@ -658,17 +568,18 @@ C$toJson(v: C): string
 let invalid: User | null = User$fromJson("{\"name\":\"Ada\",\"naem\":\"Bob\"}"); // null: extra key
 ```
 
-**toJson.** Serializes declared fields, omitting absent optionals and preserving nullable `null`. Raises `Error` (`E8001`) if any serialized number is non-finite.
+**toJson.** Applies [JSON encoding](#json-encoding) to declared fields; class input guarantees a string. Required undefined-valued fields are omitted, so encoded JSON need not decode successfully.
 
-For a `table` field, `fromJson` accepts only a JSON object and maps it to a DEAL table as untyped JSON-shaped data. `toJson` accepts only acyclic JSON-shaped table values: string-keyed objects, arrays, and `null`/`boolean`/`number`/`string` leaves. Otherwise, it raises `Error`.
+Record fields decode object roots to dynamic data. JSON decoding never creates stored undefined. Required fields must be present even when their type admits undefined.
 
-**Optional-nullable roundtrip.** The three states of `field?: T | null` are preserved exactly:
+**Optional-field encoding.** For JSON-representable values:
 
 | State | fromJson input | toJson output |
 |---|---|---|
 | missing | key absent | key omitted |
 | present, null | `"field": null` | `"field": null` |
 | present, value | `"field": value` | `"field": value` |
+| present, undefined | no JSON representation | key omitted |
 
 **Usage:**
 
@@ -709,7 +620,7 @@ let missing: User = { name: "Ada" }; // compile-time error: required fields omit
 - Every required-present field must occur exactly once. Optional fields may be omitted. Extra fields are rejected.
 - Validate the supplied field values; tag and publish the instance only after successful validation. Failure retains earlier expression effects but publishes no partial instance.
 
-Missing required fields in literals are compile-time errors. At untyped boundaries, invalid class shapes or field values raise the applicable boundary error.
+Missing required literal fields are compile-time errors; untyped-boundary violations raise the applicable boundary error.
 
 ### Field access
 
@@ -719,49 +630,27 @@ Reading a required-present field yields the field type:
 let n: string = u.name; // OK
 ```
 
-Reading an optional field yields `T | null`. If the field is missing, the direct read produces language `null`. This keeps optional-field use null-safe while still allowing presence checks when the caller must distinguish missing from explicit JSON null.
-
-```ts
-let nick: string | null = u.nick; // OK
-let nick2: string = u.nick; // error: string | null is not string
-```
-
-Optional nullable corner case:
+Optional reads add undefined to the declared type; absence yields undefined. Writes use the declared type without adding undefined. Thus optionality and stored value type remain independent.
 
 ```ts
 class Profile {
- nick?: string | null;
+ nick?: string | null | undefined;
 }
+let p: Profile = {};
+let absent = p.nick;             // string | null | undefined; value undefined
+p.nick = undefined;              // now present
+let present = Object.hasOwn(p, "nick"); // true
+p.nick = null;                   // present-null
 ```
 
-Semantics for `nick?: string | null`:
-
-```txt
-missing -> direct read returns null, has(obj.nick) is false
-present null -> direct read returns null, has(obj.nick) is true
-present str -> direct read returns string, has(obj.nick) is true
-```
-
-The language provides a compiler intrinsic:
+`Object.hasOwn(obj, key)` returns boolean: own presence, without narrowing. Evaluate receiver then key once. Classes require a literal declared-field name; records accept string expressions. No general Object API or literal-string types.
 
 ```ts
-has(obj.field): boolean
-```
-
-The argument must syntactically be a class field access. The field must be a declared optional field. This avoids source-level literal-string types while keeping the field name compile-time checked.
-
-`has(obj.field)` tests field presence only. It does not narrow the static type of `obj.field`.
-
-```ts
-class Profile {
- nick?: string | null;
-}
-
+class Profile { nick?: string | null; }
 let p: Profile = { nick: null };
-
-if (has(p.nick)) {
- let a: string | null = p.nick; // OK
- let b: string = p.nick; // error: present field may still be null
+if (Object.hasOwn(p, "nick")) {
+ let value: string | null | undefined = p.nick; // valid
+ let text: string = p.nick; // error: presence test does not narrow
 }
 ```
 
@@ -795,13 +684,13 @@ let empty: User[] = [];
 
 Nested object literals receive their field's class target type; elements of a contextually typed `C[]` receive class type `C`.
 
-### Class vs table
+### Class vs record
 
-`class` and `table` are **invariant and distinct**. No implicit conversion.
+Class types and `Record<string, unknown>` are distinct; no implicit conversion.
 
 ```ts
 let u: User = { name: "Ada", address: { city: "A", zip: 1 }, tags: [], friends: [] };
-let t: table = {}; 
+let t: Record<string, unknown> = {};
 t = u; // Error
 u = t; // Error
 ```
@@ -841,27 +730,16 @@ u.nick = "Ada"; // OK for nick?: string | null
 u.nick = null; // OK for nick?: string | null
 ```
 
-After deleting an optional field, a subsequent assignment makes it present again:
+Assignment after deletion restores presence. Storing undefined requires a declared undefined member (or unknown), including at host boundaries:
 
 ```ts
-class User {
- nick?: string;
-}
-
-let u: User = {};
-let a: boolean = has(u.nick); // false
-
-u.nick = "Ada";
-let b: boolean = has(u.nick); // true
-
-delete u.nick;
-let c: boolean = has(u.nick); // false
-
-u.nick = "Bob";
-let d: boolean = has(u.nick); // true
+class Options { label?: string; raw?: string | undefined; }
+let options: Options = {};
+options.label = undefined; // error
+options.raw = undefined;   // present
+Object.hasOwn(options, "raw"); // true
+delete options.raw;        // absent
 ```
-
-Extra fields are rejected in object literals, nested object literals, arrays of class literals, and runtime typed boundaries.
 
 ---
 
@@ -870,20 +748,18 @@ Extra fields are rejected in object literals, nested object literals, arrays of 
 ### Function declaration
 
 ```ts
-function name(p1: T1, ..., pN: TN): R {
- body
+function name(p1: T1, p2: T2): R {
  return expr;
 }
 ```
 
-- Parameter and return types are required.
-- Return type may be `T`, `T | null`, or `null`.
-- Parameters cannot be optional; nullable parameters use explicit `T | null`.
+- Parameter and result annotations are required; parameters cannot be optional.
+- Result annotations follow [Type grammar](#type-grammar-normative); body checking follows the rules below.
 
 ### Return type requirements
 
-- Every `return` expression must have type `R`.
-- The function body must not “fall off” without a return.
+- Value returns satisfy normal assignment compatibility with the result type, unwrapping Promise for async implementations.
+- Only void-result bodies may fall through or use bare return; both produce undefined. Reject value returns from them. This applies equally to `Promise<void>`. `return null;` is an explicit null result.
 
 ```ts
 function f(): null { // ok
@@ -902,8 +778,8 @@ function findName(): string | null { // ok: returns null or string
 
 An `M`-parameter function is assignable to an `N`-parameter function target **iff**:
 
-- Async markers match: both absent or both `async`.
-- Return types are identical, including nullable wrappers.
+- Async status matches, as determined by the signature's Promise result notation.
+- Result types are identical, including void and nullish members.
 - `M <= N`.
 - Corresponding first `M` parameter types are identical.
 
@@ -932,12 +808,10 @@ Function runtime types include the async marker, observable through checking and
 
 Compile-time call checking:
 
-- Number of arguments must match the function type, except when calling a target produced by arity extension.
-- Argument expression types must equal parameter types exactly, except assignment into `T | null` parameters accepts `T` or `null`.
-- Return value has the declared return type.
-- Direct calls with wrong argument types are compile-time errors.
-- A direct call to an async function without `await` is a compile-time error.
-- `await` may be applied only to a direct async function call.
+- Argument count must match the callable's target signature, including after arity extension.
+- Arguments satisfy normal assignment compatibility, including nullish widening and unknown targets.
+- Wrong argument types are compile-time errors; results follow the signature.
+- Async call placement follows [await](#await).
 
 Runtime call checking:
 
@@ -954,13 +828,7 @@ let f: (x: number) => number = function(x: number): number {
 };
 ```
 
-Rules:
-
-- Parameter types are required.
-- Return type annotation is required.
-- Return analysis is the same as for function declarations.
-- The expression produces a typed function value with the declared signature.
-- Function expressions may appear wherever expressions are allowed.
+The expression produces a value with its declared signature and may occur wherever expressions are allowed.
 
 ### Closures and captured variables
 
@@ -986,7 +854,7 @@ For a `for-of` loop, each iteration creates a fresh iteration binding for variab
 ```ts
 let fs: (() => number)[] = [];
 
-for (let i: number of [0, 1, 2]) {
+for (let i of [0, 1, 2]) {
  fs[fs.length] = function(): number {
  return i;
  };
@@ -1021,7 +889,7 @@ let z = 1.0; // number inferred
 
 ### Inference rules
 
-Inference is allowed when the initializer has a complete static type without dynamic table lookup or unknown external boundary:
+Infer complete initializer types, including unknown from record reads; unresolved external signatures remain errors:
 
 ```ts
 let a = null; // null
@@ -1032,6 +900,7 @@ let e = "hi"; // string
 let f = [1, 2, 3]; // number[]
 let g = [1.0, 2.0]; // number[]
 let h = add(1, 2); // number, if add has a statically known function type
+let field = t.someField; // unknown; validate before typed use
 ```
 
 Object literals and empty arrays require context.
@@ -1039,8 +908,7 @@ Object literals and empty arrays require context.
 Disallowed:
 
 ```ts
-let h = t.someField; // error — dynamic table field must annotate
-let i = unknown.f(1, 2); // error — dynamic table calls are forbidden
+let i = t.f(1, 2); // error — unknown is not callable
 let j = []; // error — no element type
 let l = [1, "1"]; // error — mixed types
 let m = { }; // error — must annotate
@@ -1059,20 +927,16 @@ Not allowed within the same block scope.
 
 Resolution order for an identifier expression:
 
-1. Local variables and parameters in the innermost block scope.
-2. Enclosing block scopes.
-3. Module-level declarations.
-4. Imported module bindings.
-5. Compiler intrinsic `has` and prelude symbols.
+1. Locals/parameters in the innermost block, then enclosing scopes.
+2. Module declarations, then imported module bindings.
+3. Prelude symbols.
 
-Shadowing:
+Shadowing follows [Lexical elements](#lexical-elements) builtin-name restrictions and these scope rules:
 
 - Inner block variables may shadow outer block variables.
 - Parameters may not shadow other parameters.
 - Module-level declarations may not shadow imports.
 - Imports may not shadow module-level declarations.
-- Redeclaration in the same scope is an error.
-
 Declaration order:
 
 - `class` and `function` declarations are hoisted within the module for name resolution.
@@ -1082,7 +946,7 @@ Declaration order:
 
 ### Definite return analysis
 
-A function with return type `R` must return on all reachable paths.
+For the bodies requiring a value return under [Return type requirements](#return-type-requirements), analyze reachable paths as follows.
 
 Definitely-returning statements:
 
@@ -1094,118 +958,50 @@ Loops are not assumed to return unless they contain an unconditional `return` be
 
 ---
 
-## Tables
+## Records
 
-### Table type and semantics
+### Record type and semantics
 
-`table` is a dynamic key-value container supporting `string` keys. It is distinct from `class` types.
-
-The value `null` is distinct from field absence. Storing `null` in a table field makes the field present. Deleting a field makes it absent. The two are distinguishable.
+`Record<string, unknown>` is a string-keyed container with observable reference identity and absent/present-undefined/present-null states.
 
 ```ts
-t.p = null; // field exists, value is null
-delete t.p; // field is removed entirely
+let data: Record<string, unknown> = { name: "Ada" };
+let value = data.name;             // unknown
+let name = value as string;        // checked, no coercion
+let missing = data.missing;        // unknown holding undefined
 ```
 
-Tables are data containers. Calling through a table is not allowed.
+### Reading and writing fields
+
+Member/string-index reads infer unknown regardless of context. Reject `let name: string = data.name;`; assert or narrow first. Calls require a checked function signature, preserving identity.
+
+Writes accept all data, including undefined/unknown, without a field schema or retagging stored values. Keys are strings; literal properties use identifiers only.
 
 ```ts
-let r: number = t.f(1, 2); // compile-time Error
+data.name = undefined;             // present-undefined
+Object.hasOwn(data, "name");       // true
+delete data.name;
+Object.hasOwn(data, "name");       // false
+data.name = null;                  // present-null
 ```
 
-### Reading table fields
+### Literal keys and deletion
 
 ```ts
-let t: table = { x: 1 };
-
-let y = t.x; // compile-time Error
-let y: number = t.x; // ok — runtime check inserted
+let data: Record<string, unknown> = { name: "Ada", age: 36 };
+// Quoted/computed literal keys are unsupported; use indexed writes:
+let key: string = "extra";
+data[key] = 1;
+delete data[key];
 ```
 
-Contextual type checking algorithm for table reads:
-
-Given expression `E = t.key` or `E = t[idx]` where `t: table`:
-
-Allowed contexts:
-
-1. `let x: T = E`
- - runtime-check `E` against `T`
-
-2. `x = E`, where `x: T`
- - runtime-check `E` against `T`
-
-3. `return E` inside function returning `R`
- - runtime-check `E` against `R`
-
-4. `f(E)`, where corresponding parameter type is `T`
- - runtime-check `E` against `T`
-
-5. `if (E)`
- - runtime-check `E` against `boolean`
-
-Otherwise:
-- compile-time error `E3003`
-
-### Writing table fields
-
-For `t.key = value` or `t[idx] = value` where `t: table`:
-
-- `key` must be an identifier; `idx` must have static type `string`.
-- `value` may be any type; no field-level schema is enforced at compile time or runtime.
-- The stored value is written directly to the underlying container; no runtime type check is performed.
-
-```ts
-t.f1 = 1;
-t.f2 = 1.0;
-t.f3 = "abc";
-t.f4 = null;
-t.f5 = [1, 2, 3];
-t.f6 = t;
-```
-
-```ts
-t.key = null; // field exists, value is null
-delete t.key; // field is removed
-```
-
-Index keys must be `string`.
-
-### Table literals and key syntax
-
-```ts
-let t: table = { a: 1, b: "x" };
-```
-
-Table/object literal property names are restricted to identifiers:
-
-```ts
-{ name: "Ada", age: 36 } // OK
-{ "name": "Ada" } // Error
-{ [k]: 1 } // Error
-```
-
-Dynamic keys use assignment after construction:
-
-```ts
-let t: table = {};
-t[key] = 1;
-```
-
-### Deletion
-
-```ts
-delete t.key;
-```
-
-Backend: removes the key from the container
+Deletion removes an own key. Reads of absent keys yield undefined; present keys may hold any data value. Stored classes/arrays/functions retain their tags, element descriptors and identities.
 
 ## Arrays
 
 ### Array type and semantics
 
-`T[]` is a 0-based array.
-
-Supported element types: all types, including `class` types, nullable types, arrays, functions.
+`T[]` is invariant in T and admits every data type as its element type. Its persistent element descriptor governs all writes, including through unknown extraction and host aliases.
 
 ### Indexing
 
@@ -1220,7 +1016,7 @@ let x: number = xs[0]; // ok
 
 Array indexes must have type `number`. Reads require an integral number in `0..length-1`; otherwise raise `E8002`. Negative zero indexes zero.
 
-Optional nullable arrays follow target typing:
+Nullish array elements follow target typing:
 
 ```ts
 let xs: (number | null)[] = [1, null, 3];
@@ -1248,7 +1044,7 @@ xs[2] = 2; // runtime error if length is 1
 Array `length` is a read-only intrinsic of type `number`: the exact element count. Assignment to `.length` is a compile-time error.
 
 ```ts
-for (let value: number of xs) {
+for (let value of xs) {
  // consume each value
 }
 let i: number = 0;
@@ -1266,13 +1062,13 @@ DEAL has no implicit truthiness. Conditions must be statically `boolean`.
 
 ```ts
 if (x) { } // OK only if x: boolean
-if (t.value) { } // error unless t.value is contextually checked as boolean
+if (t.value) { } // error: unknown is not boolean
 ```
 
-Dynamic table values require explicit boolean target/context:
+Dynamic record values need narrowing/assertion:
 
 ```ts
-let b: boolean = t.flag;
+let b = t.flag as boolean;
 if (b) { }
 ```
 
@@ -1280,9 +1076,9 @@ if (b) { }
 
 ```ts
 if (boolean_expr) {
- ...
+ consume();
 } else {
- ...
+ recover();
 }
 ```
 
@@ -1290,7 +1086,7 @@ if (boolean_expr) {
 
 ```ts
 while (boolean_expr) {
- ...
+ consume();
 }
 ```
 
@@ -1299,21 +1095,17 @@ while (boolean_expr) {
 
 ```ts
 let xs: number[] = [1, 2, 3];
-for (let x: number of xs) {
+for (let x of xs) {
   // x: number, each element in order
 }
 
 let s: string = "abc";
-for (let c: string of s) {
+for (let c of s) {
   // c: string, one Unicode scalar value
 }
 ```
 
-Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings yield successive scalars. Loop-variable types are `T` or `string`; see [Closures and captured variables](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
-
-### Break / Continue
-
-Supported inside loops.
+Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings yield successive scalars. Infer `T` or `string`; reject binding annotations. See [Closures](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
 
 ---
 
@@ -1321,7 +1113,7 @@ Supported inside loops.
 
 ### Error type
 
-`Error` is a builtin class. Its shape is equivalent to this descriptive pseudo-source; user code must not declare it:
+The builtin Error shape is equivalent to this descriptive pseudo-source:
 
 ```ts
 class Error {
@@ -1347,11 +1139,13 @@ throw { code: "E_LIMIT", message: "index out of range" };
 try {
   let x: number = xs[99];
 } catch (e) {
-  // e: Error
+  if (e instanceof Error) {
+    let message: string = e.message;
+  }
 }
 ```
 
-`try`/`catch` is a statement, not an expression. The bound variable `e` has type `Error`. If no error occurs, the `catch` block is skipped. If an error occurs in the `try` block (via `throw` or a runtime error), execution jumps to `catch` and continues after the `catch` block.
+Catch binds the identical Error as unknown; narrow before field access or rethrow. Host failures normalize to Error. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
 
 If the `try` block has a definite `return`, the `catch` block must also have a definite `return` or `throw`. Both return expressions must satisfy the enclosing function's return type.
 
@@ -1375,72 +1169,42 @@ try {
 
 ### async function
 
-An `async` function returns its declared type directly. The `async` marker is part of the function type. Callers use `await` to suspend until the function completes.
+Async implementations use Promise result annotations under [Type grammar](#type-grammar-normative) and [Return type requirements](#return-type-requirements):
 
 ```ts
 import * as http from "host/http";
 
-async function fetchUser(path: string): User | null {
+async function fetchUser(path: string): Promise<User | null> {
   let json: string = await http.get(path);
   return User$fromJson(json);
 }
 ```
 
-`async` function expressions are supported:
+Async function expressions use the same result notation:
 
 ```ts
-let f: async (path: string) => User | null = async function(path: string): User | null {
+let f: (path: string) => Promise<User | null> = async function(path: string): Promise<User | null> {
   return await fetchUser(path);
 };
 ```
 
 ### await
 
-`await` suspends execution of the enclosing `async` function until the awaited `async` call completes, then evaluates to the call's return value. `await` is only valid inside an `async` function body.
-
 ```ts
 let u: User | null = await fetchUser("/user/42");
 ```
 
-Compile-time rules:
-- `await E` is valid only inside an `async` function body.
-- `E` must be a direct call expression.
-- The callee of `E` must have async function type `async (...) => R`.
-- The type of `await E` is `R`.
-- `await` applied to a non-`async` call is a compile-time error.
-- An async function call without `await` is a compile-time error.
+Require `await E` inside async bodies, where E is a call with signature `(...) => Promise<R>`. Reject async calls outside immediate await and await of sync calls. Callees may be statically or dynamically resolved.
 
 ### Async operation semantics
 
-An async function call creates an internal async operation. The operation is not a source-language value and cannot be stored, passed, returned, compared, or inspected.
+Calls create internal operations, not data: no storage, passing, returning, comparison or inspection, including through unknown.
 
-Each async operation completes exactly once, either with a value of the function's declared return type or by raising `Error`.
+Each operation completes once with the Promise result (undefined for void), or an Error.
 
-`await` waits for that operation to complete. If it completes with a value, `await` evaluates to that value. If it raises `Error`, `await` raises that `Error`.
+Await yields the completion value or raises the identical completion Error at the await expression, handled by ordinary catch rules.
 
-An `Error` raised by an awaited operation is caught by the nearest enclosing `catch` around the `await`.
-
-Within one async function invocation, evaluation before an `await` happens before evaluation resumed after that `await`.
-
-DEAL defines no source-level concurrent start, scheduling, cancellation, polling, task, future, promise, or shared-memory concurrency primitive.
-
-Mutable DEAL values are not concurrently shared by source-language semantics. Host values crossing untyped boundaries are validated as DEAL values or remain backend-defined opaque host values.
-
-### Backend lowering
-
-Async/await is lowered backend-specifically.
-
-A backend must preserve these source-level rules:
-
-- async functions have async function type `async (...) => R`
-- async calls must appear as the operand of `await`
-- `await` may appear only inside an async function body
-- `await` evaluates to the declared return type `R`
-- no source-level coroutine, promise, future, or task type exists
-
-Backend strategies are not source-language observable.
-
-All async function completion values cross the typed boundary defined in the backend conformance contract.
+Pre-await effects precede resumed effects. There are no source-level concurrent starts, scheduling, cancellation, polling or shared-memory primitives.
 
 ---
 
@@ -1470,8 +1234,8 @@ export class Point {
 ### Export forms
 
 ```ts
-export function name(p1: T1, p2: T2): R { ... }
-export class Name { ... }
+export function name(p1: T1, p2: T2): R { return result; }
+export class Name { field: T; }
 ```
 
 Declaration files additionally support external function declarations:
@@ -1515,7 +1279,7 @@ export function main(): null {
 }
 ```
 
-Imported module members are not dynamic table reads. They are statically typed member accesses over the module type.
+Imported module members are not dynamic record reads. They are statically typed member accesses over the module type.
 
 ### Module resolution
 
@@ -1556,7 +1320,6 @@ Rules:
 
 - Function declarations end with `;` and have no body.
 - `export class` describes the runtime class shape.
-- `export let` is forbidden.
 - No top-level ambient declarations in implementation `.deal` files.
 - Declaration files may describe host modules.
 
@@ -1566,8 +1329,8 @@ Host ABI:
 - The declaration path is resolved relative to the manifest directory unless absolute paths are permitted by host policy.
 - Host module runtime object must expose exported names from its `.d.deal` declaration.
 - Extra host exports are ignored; missing declared exports are load-time errors.
-- Every call/value crossing the host boundary is runtime-checked.
-- External declaration files may declare async functions. A host function declared as `async (...) => R` must return a backend async operation accepted by the backend's `await` lowering. Source code cannot observe that operation except through `await`.
+- Crossings follow [Typed boundaries](#typed-boundaries).
+- External `function f(...): Promise<R>;` has no async modifier; the host must supply an operation compatible with [Async operation semantics](#async-operation-semantics).
 
 ### Package manifest
 
@@ -1575,11 +1338,11 @@ A project may define `deal.json` at its root:
 
 ```json
 {
- "languageVersion": "1.4",
+ "languageVersion": "1.5",
  "moduleRoots": ["src"],
  "output": "build/lua",
  "backend": "luajit",
- "stdlib": "1.4",
+ "stdlib": "1.5",
  "dependencies": {},
  "externals": {
   "host/log": {
@@ -1591,7 +1354,7 @@ A project may define `deal.json` at its root:
 
 Rules:
 
-- `languageVersion` must be `"1.4"` and governs all source and declaration files in the project.
+- `languageVersion` must be `"1.5"` and governs all source and declaration files in the project.
 - `moduleRoots` participate in import resolution.
 - DEAL has no package registry. `dependencies` is reserved for local/package-manager integration later.
 - Standard library modules may be described by bundled `.d.deal` files, but are resolved as part of the language distribution rather than as project external host modules.
@@ -1604,8 +1367,8 @@ The compiler ships practical minimal standard modules. All are imported explicit
 #### `std/console.d.deal`
 
 ```ts
-export function log(x: string): null;
-export function error(x: string): null;
+export function log(x: string): void;
+export function error(x: string): void;
 ```
 
 #### `std/string.d.deal`
@@ -1631,21 +1394,23 @@ Lengths and positions count Unicode scalars; lengths are exact. Searches are lit
 #### `std/table.d.deal`
 
 ```ts
-export function keys(t: table): string[];
+export function keys(t: Record<string, unknown>): string[];
 ```
 
-Returns each present string key once, including null-valued keys; order is unspecified.
+Returns present string keys, including null/undefined-valued keys; order is unspecified.
 
 #### `std/json.d.deal`
 
 ```ts
-export function parse(s: string): table;
-export function stringify(t: table): string;
+export function parse(s: string): Record<string, unknown>;
+export function stringify(value: unknown): string | undefined;
 ```
 
-`parse` requires an object root; malformed JSON, duplicate keys, and other roots raise `Error`. JSON numeric tokens follow [Numbers](#numbers) in both `parse` and generated class decoding. Finite numbers stringify as valid JSON numbers that roundtrip to the same binary64 value, except negative zero serializes as `0`.
+`parse` requires an object root; malformed JSON, duplicate decoded keys and other roots raise Error. Numeric tokens follow [Numbers](#numbers), also in class decoding.
 
-`stringify` raises `Error` for non-JSON values, non-finite numbers, or cycles.
+##### JSON encoding
+
+Use JavaScript JSON.stringify value rules: omit undefined/function-valued properties; encode such array elements as null; top-level undefined/function yields undefined. Non-finite numbers become null; finite numbers roundtrip except negative zero becomes `0`. Preserve null; reject cycles, not shared acyclic children. Own-key order: array-index keys ascending, then creation order (declared fields use declaration order). No serialization hooks.
 
 #### `std/math.d.deal`
 
@@ -1671,7 +1436,7 @@ import * as strings from "std/string";
 import * as json from "std/json";
 
 let parts: string[] = strings.split("a,b", ",");
-let t: table = json.parse("{\"name\":\"Ada\"}");
+let t: Record<string, unknown> = json.parse("{\"name\":\"Ada\"}");
 ```
 
 ### Host APIs
@@ -1692,16 +1457,16 @@ Any value crossing from an untyped host context into DEAL is checked:
 let f: (x: number) => number = lib.f;
 ```
 
-Target-typed table member reads and declared function-signature checks are supported. Dynamic table calls are forbidden. Explicit class/table conversion syntax is deferred.
+Unknown preserves supported DEAL data identity, not arbitrary opaque host objects. Reject unsupported host ingress. Assertions use [Narrowing and checked assertions](#narrowing-and-checked-assertions); validation follows the [conformance contract](#backend-conformance-contract).
 
 
-#### Function ABI decision
+#### Function ABI
 
 Function representation and invocation are backend-defined, preserving signature checks and identity.
 
 ### Host error and debugging
 
-Errors propagate through wrappers, modules, and calls. `catch` reifies them as `Error`; uncaught errors escape as `DEALRuntimeError`:
+Uncaught Errors escape as `DEALRuntimeError` with:
 
 ```txt
 code
@@ -1729,73 +1494,63 @@ cause (if applicable)
 
 | Semantic value | Runtime role |
 |---|---|
-| `null` | JSON null / language null |
-| missing optional field | field absence state |
+| `null` | JSON/language null |
+| `undefined` | distinct language value; missing reads and void completion |
+| missing field | presence state, distinct from stored undefined |
 
 ### Backend conformance contract
 
-A conforming backend preserves the observable behavior defined by this specification.
+Accepted implementation/declaration sources must parse as TypeScript. Conformance tests cover the following observable behavior across backends, including host ingress and egress:
 
 Observable behavior includes:
 
-- compile-time diagnostics
+- compile-time diagnostics, including reserved identifiers, leading-zero literals and forbidden line breaks
 - successful runtime values
 - runtime error codes and source locations
 - module import/export behavior
 - host boundary behavior
-- `null` and missing-field semantics
+- null, undefined, missing-field and own-presence semantics
+- unknown extraction, checked assertions, narrowing and void results
 - class nominal identity
 - function type identity, including the async marker
 - evaluation order
 - binary64 arithmetic, signed-zero behavior, and discrete-position validation
-- `@jsonable` serialization behavior
+- JSON encoding/decoding, including generated class helpers
 
 A backend may choose any internal representation, including erased, partially erased, statically typed, boxed, unboxed, interpreted, source-generated, or bytecode-generated representation, if observable behavior is unchanged.
-
-A backend may omit a runtime check when static backend representation proves that the value already satisfies the DEAL type and no untyped boundary can have produced it.
-
-A backend is non-conforming if it erases DEAL types in a way that allows a runtime value to cross a typed boundary without equivalent validation.
 
 #### Typed boundaries
 
 A typed boundary is a point where a runtime value is accepted as, stored as, returned as, exported as, or reconstructed as a declared DEAL type.
 
-Backends must validate values at every typed boundary unless the validation is statically proven redundant.
+Validate every typed boundary unless the backend proves the value satisfies the type despite any untyped ingress; type erasure cannot weaken validation.
 
-Typed boundaries are exactly:
+Typed boundaries are:
 
-- variable declaration with annotation: `let x: T = e`
+- variable initialization with declared or inferred type T
 - assignment to a variable with declared or inferred type `T`
 - assignment to a declared class field of type `T`
 - assignment to an array element of `T[]`
-- function parameter entry
-- function return
-- async function completion value
+- parameter entry and return/completion of source, external and standard-library functions
 - class object literal construction
 - class value received from an untyped boundary
-- optional field read that converts missing to `null`
-- table read in contextual target type `T`
+- optional field read adding undefined for absence
+- checked `as T` extraction; raw record reads retain unknown
 - value read from imported module member
 - value exposed through module export table
 - value crossing from host into DEAL through `.d.deal`
 - value crossing from DEAL into host through `.d.deal`
-- standard-library function parameter and return
-- external declaration function parameter and return
 - `@jsonable` `fromJson` field validation
 - `@jsonable` `toJson` field serialization input validation
 
 ### Runtime type descriptor format
 
 ```txt
-RuntimeTypeDescriptor :=
- PrimitiveDescriptor
- | ClassDescriptor
- | ArrayDescriptor
- | NullableDescriptor
- | FunctionDescriptor
+RuntimeTypeDescriptor := PrimitiveDescriptor | ClassDescriptor
+                       | ArrayDescriptor | NullishDescriptor | FunctionDescriptor
 
 PrimitiveDescriptor :=
- "null" | "boolean" | "number" | "string" | "table" | "Error"
+ "null" | "undefined" | "boolean" | "number" | "string" | "record" | "unknown" | "Error"
 
 ClassDescriptor :=
   "@" ModuleRoot "/" ModuleRelativePath "/" ClassName
@@ -1806,11 +1561,14 @@ ModuleRelativePath := /* path components from module root to defining file, e.g.
 ArrayDescriptor :=
  "[" RuntimeTypeDescriptor "]"
 
-NullableDescriptor :=
- "?" RuntimeTypeDescriptor
+NullishDescriptor :=
+ ("?" | "!" | "?!") RuntimeTypeDescriptor /* null, undefined, both */
+ | "null|undefined"
 
 FunctionDescriptor :=
- AsyncMarker? "(" ParamDescriptorList? ")" "->" RuntimeTypeDescriptor
+ AsyncMarker? "(" ParamDescriptorList? ")" "->" ResultDescriptor
+
+ResultDescriptor := RuntimeTypeDescriptor | "void"
 
 AsyncMarker :=
  "async"
@@ -1833,29 +1591,18 @@ number // number
 [?@src/app/User] // (User | null)[]
 (number,string)->boolean // (x:number,y:string)=>boolean
 ()->null // () => null
-async(number)->string // async (x:number)=>string
+async(number)->string // (x:number)=>Promise<string>
+?!number // number | null | undefined
+!string // string | undefined
+()->void // () => void
+async()->void // () => Promise<void>
 ```
 
-Constraint: `NullableDescriptor` inner type must not be `null` and must not be another `NullableDescriptor`.
-
-Equality semantics for `===`:
-
-- `null === null` is true by sentinel identity.
-- Booleans compare by value.
-- `number` compares by IEEE 754 equality: `NaN === NaN` is `false`; `NaN !== NaN` is `true`.
-- Strings compare by Unicode scalar-value sequence.
-- Arrays, tables, classes, and functions compare by reference identity.
-- Values of different static types cannot be compared, except `T | null` vs `null`.
-
-### Class runtime
-
-See [Construction](#construction) and [Field access](#field-access).
+Nullish prefixes require a non-nullish/non-unknown base; no nesting. Descriptors encode canonical types from [Type grammar](#type-grammar-normative), including result-only void. They are internal ABI text, not source syntax.
 
 ## Backend contracts
 
-The following sections define required value mappings for supported backends. These mappings are representation contracts, not additional source-language semantics.
-
-When a backend mapping conflicts with the source-language semantics or the backend conformance contract, the source-language semantics and backend conformance contract are authoritative.
+These representation mappings preserve, and cannot override, the source semantics and [conformance contract](#backend-conformance-contract). Helper sketches and recommended implementations are illustrative, not additional semantic authorities.
 
 ### LuaJIT backend contract
 
@@ -1863,15 +1610,15 @@ When a backend mapping conflicts with the source-language semantics or the backe
 
 | Type | LuaJIT representation |
 |---|---|
-| `null` | unique sentinel `__NULL` |
+| `null` / `undefined` | distinct sentinels `__NULL` / `__UNDEFINED` |
 | missing optional field | absent key or `__MISSING` internally |
 | `boolean` | Lua boolean |
 | `number` | Lua number |
 | `string` | Lua string containing valid UTF-8 |
-| `table` | Lua table |
+| `Record<string, unknown>` | Lua table |
 | `ClassName` | Lua table tagged with class symbol |
 | `T[]` | Lua table with 1-based contiguous storage |
-| `T | null` | either representation of `T` or `__NULL` |
+| nullish / unknown | base value or applicable sentinel / validated tagged data |
 | `(params) => R` | wrapper table `{ __kind = "function", sig, f }` |
 | module type | Lua export table |
 
@@ -1889,11 +1636,12 @@ A LuaJIT backend may implement async lowering with internal coroutines, continua
 
 #### Runtime library
 
-Generated into every module or available as a shared runtime module:
+Illustrative helper pseudocode, embedded or shared; [Typed boundaries](#typed-boundaries) owns validation, failures and permitted check elision, not these sketches' helper names or diagnostic strings:
 
 ```lua
 local __NULL = {} -- JSON null
-local __MISSING = {} -- missing optional field
+local __UNDEFINED = {} -- stored undefined; never nil
+local __MISSING = {} -- absence only
 ```
 
 ```lua
@@ -1904,8 +1652,9 @@ function __rt.check_null(v)
  return v
 end
 
-function __rt.check_nullable(inner_check, v)
- if v == __NULL then return v end
+function __rt.check_nullish(inner_check, v, null_ok, undefined_ok)
+ if null_ok and v == __NULL then return v end
+ if undefined_ok and v == __UNDEFINED then return v end
  return inner_check(v)
 end
 
@@ -1926,24 +1675,20 @@ function __rt.check_string(v)
  return v
 end
 
-function __rt.check_table(v)
- if type(v) ~= "table" then error("runtime: expected table") end
- return v
+function __rt.check_record(v)
+ if not __rt.is_record(v) then error("runtime: expected record") end
+ return v -- distinguish records from class/array/function/sentinel tables
 end
 
-function __rt.check_array(array_descriptor, value)
- if type(value) ~= "table" then error("runtime: expected array") end
- local element_descriptor = __rt.array_element_descriptor(array_descriptor)
- local i = 1
- while i <= #value do
- __rt.check_type(element_descriptor, value[i])
- i = i + 1
+function __rt.check_array(expected, value)
+ if not __rt.array_descriptor_matches(expected, value) then
+ error("runtime: incompatible persistent array type")
  end
  return value
 end
 
 function __rt.check_type(expected, value)
- -- dispatched check by runtime type descriptor, including nullable, class shapes, arrays
+ -- descriptor dispatch: nullish, unknown, nominal classes, persistent array types
 end
 
 function __rt.check_function_sig(expected_sig, sig, f)
@@ -1968,7 +1713,7 @@ end
 
 #### Function wrapper
 
-Every declared function is wrapped so that argument and return checks are inlined:
+Illustrative wrapper for the [typed-boundary rules](#typed-boundaries):
 
 ```lua
 local add = __rt.function_("(number,number)->number", function(x, y)
@@ -1983,7 +1728,7 @@ local result = __rt.check_number(add.f(1, 2))
 
 #### Arity extension adapter
 
-When a shorter function is assigned to a longer target signature, the compiler emits an adapter:
+Illustrative adapter for [Function type compatibility](#function-type-compatibility):
 
 ```lua
 local one = __rt.function_("(number)->number", function(x)
@@ -2004,7 +1749,7 @@ __rt.class_("User",
 )
 ```
 
-Optional fields not provided are represented internally via key absence (`nil`) or side-table metadata. Direct source-level field reads translate missing to `__NULL`; `has(obj.field)` distinguishes missing from explicit `null`.
+Missing fields use nil/metadata; translate missing reads and void completion to `__UNDEFINED`. Stored undefined uses that sentinel, never nil, preserving presence and contiguous arrays.
 
 ### JVM backend contract
 
@@ -2012,45 +1757,28 @@ Optional fields not provided are represented internally via key absence (`nil`) 
 
 | Type | JVM representation |
 |---|---|
-| `null` | Java `null` reference |
-| missing optional field | per-field presence bit or `Missing` sentinel |
+| `null` / `undefined` | Java null / unique `Undefined` singleton |
+| missing optional field | presence bit or distinct `Missing` sentinel |
 | `boolean` | primitive `boolean` |
 | `number` | primitive `double` |
-| `string` | `java.lang.String` with no unpaired surrogate code units |
-| `table` | `TTable` runtime object, e.g. ordered map |
+| `string` | non-null `java.lang.String` with no unpaired surrogate code units |
+| `Record<string, unknown>` | `DealTable` runtime object |
 | `ClassName` | generated record class or `TClassObject` runtime shape |
-| `T[]` | `TArray<T>` runtime object or specialized primitive array |
-| `T | null` | nullable JVM reference or tagged nullable wrapper for primitives |
-| `(params) => R` | generated function wrapper with descriptor |
+| `T[]` | `DealArray<T>` runtime object or specialized primitive array |
+| nullish / unknown | nullable/tagged payload with distinct undefined / boxed validated data |
+| `(params) => R` | generated `DealFunction` wrapper with descriptor |
+| `(params) => Promise<R>` | `DealAsyncFunction` wrapper with async descriptor |
 | module type | generated module object/export map |
 
 #### JVM implementation
 
 A conforming JVM backend emits Java source, JVM bytecode, or an interpreter over checked DEAL IR.
 
-The JVM backend must preserve the backend conformance contract.
+JVM primitives, final classes, verifier-checked bytecode, signatures and JIT optimization may establish the proofs required by [Typed boundaries](#typed-boundaries).
 
-The JVM backend may use JVM primitive types, final classes, verifier-checked bytecode, method signatures, and JIT optimization to prove typed-boundary checks redundant.
+At dynamic boundaries box booleans/numbers as Boolean/Double; statically typed storage may stay primitive. Required fields use their type's representation; optional fields add a presence bit, independently of nullish payload tags.
 
-Recommended JVM representation:
-
-| DEAL type | JVM representation |
-|---|---|
-| `boolean` | `boolean` where statically known; boxed `Boolean` at dynamic boundaries |
-| `number` | `double` where statically known; boxed `Double` at dynamic boundaries |
-| `string` | non-null `java.lang.String` with no unpaired surrogate code units |
-| `null` | as defined in [JVM value mapping](#jvm-value-mapping) |
-| required class field `T` | Java field of representation of `T` |
-| required nullable field `T | null` | nullable representation or tagged wrapper |
-| optional field `p?: T` | presence bit plus field storage |
-| optional nullable field `p?: T | null` | presence bit plus nullable storage |
-| `table` | `DealTable` |
-| `T[]` | `DealArray<T>` or specialized primitive array wrapper |
-| `(…) => R` | `DealFunction` wrapper with runtime descriptor |
-| `async (…) => R` | `DealAsyncFunction` wrapper with runtime descriptor |
-| module type | generated module class or export object |
-
-The JVM backend must not expose Java `null` as DEAL `null` across untyped boundaries without validation.
+Validate Java null at ingress under [Typed boundaries](#typed-boundaries). Void completion uses the Undefined singleton; absence retains separate presence metadata.
 
 A JVM backend may implement async lowering with virtual threads, blocking calls, futures, or explicit state machines.
 
@@ -2091,7 +1819,7 @@ Examples:
 ```txt
 E3001: cannot assign string to number
 E3002: cannot infer type of empty array literal
-E3003: table field read requires contextual target type
+E3003: unknown value requires narrowing or a checked assertion
 E4001: required class field is missing
 E5001: function argument count mismatch
 E7001: declaration file cannot contain executable statement
@@ -2131,5 +1859,5 @@ Evaluation is strict and left-to-right:
 4. Short-circuit `&&` and `||`.
 5. Function calls create a new local scope.
 6. Class object literals follow [Construction](#construction).
-7. Table object literal construction evaluates properties left-to-right and stores values as dynamic fields.
+7. Record object literal construction evaluates properties left-to-right and stores values as dynamic fields.
 

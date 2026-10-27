@@ -1,4 +1,4 @@
-// DEAL v1.4 capability demo: one module that exercises the active
+// DEAL v1.5 capability demo: one module that exercises the active
 // language and standard library surface. Compile it with any supported
 // production backend and run its exported main:
 //   deal compile src/main.deal --backend luajit|jvm|js --output <dir>
@@ -22,7 +22,7 @@ class Profile {
   active: boolean;
   address: Address;
   tags: string[];
-  meta: table;
+  meta: Record<string, unknown>;
 }
 
 class Point {
@@ -43,7 +43,7 @@ function assertBoolean(value: boolean, message: string): null {
 
 function sumAll(values: number[]): number {
   let total: number = 0;
-  for (let value: number of values) {
+  for (let value of values) {
     total = total + value;
   }
   return total;
@@ -72,8 +72,8 @@ function chooseName(name: string | null): string {
 }
 
 function describeProfile(p: Profile): string {
-  let nick: string | null = p.nick;
-  if (nick !== null) {
+  let nick: string | undefined = p.nick;
+  if (nick !== undefined) {
     return `${p.name} aka ${nick} from ${p.address.city}`;
   }
   return `${p.name} from ${p.address.city}`;
@@ -84,7 +84,7 @@ function useArrays(): number {
   values[values.length] = 4;
   values[0] = 10;
   let total: number = 0;
-  for (let value: number of values) {
+  for (let value of values) {
     total = total + value;
   }
   return total;
@@ -108,26 +108,26 @@ function useStrings(): string {
 }
 
 function useTables(): number {
-  let data: table = { name: "Ada", score: 7 };
+  let data: Record<string, unknown> = { name: "Ada", score: 7 };
   data.extra = true;
   data.note = null;
-  let score: number = data.score;
+  let score: number = data.score as number;
   let keys: string[] = tables.keys(data);
   delete data.note;
   return score + keys.length;
 }
 
 function useJson(): string {
-  let raw: table = json.parse("{\"name\":\"Ada\",\"score\":7}");
-  let name: string = raw.name;
-  let score: number = raw.score;
+  let raw: Record<string, unknown> = json.parse("{\"name\":\"Ada\",\"score\":7}");
+  let name: string = raw.name as string;
+  let score: number = raw.score as number;
   if (name !== "Ada") {
     fail("json name mismatch");
   }
   if (score !== 7) {
     fail("json score mismatch");
   }
-  return json.stringify(raw);
+  return json.stringify(raw) as string;
 }
 
 function useMath(): number {
@@ -150,11 +150,11 @@ function useClasses(): string {
     tags: ["math", "code"],
     meta: { score: 99 },
   };
-  assertBoolean(has(p.nick), "nick should be present");
+  assertBoolean(Object.hasOwn(p, "nick"), "nick should be present");
   let q: Profile = { name: "Grace", bio: null, active: true,
     address: { city: "Arlington", zip: 2000 }, tags: [], meta: {} };
-  assertBoolean(!has(q.nick), "nick should be missing");
-  let score: number = p.meta.score;
+  assertBoolean(!Object.hasOwn(q, "nick"), "nick should be missing");
+  let score: number = p.meta.score as number;
   assertBoolean(score === 99, "table field in class mismatch");
   return `${describeProfile(p)} / ${describeProfile(q)}`;
 }
@@ -177,15 +177,15 @@ function useErrors(): string {
     let missing: number = values[99];
     return "unexpected array read success";
   } catch (e) {
-    return e.code;
+    return (e as Error).code;
   }
 }
 
-async function delayedDouble(x: number): number {
+async function delayedDouble(x: number): Promise<number> {
   return x * 2;
 }
 
-async function delayedAdd(a: number, b: number): number {
+async function delayedAdd(a: number, b: number): Promise<number> {
   let left: number = await delayedDouble(a);
   let right: number = await delayedDouble(b);
   return left + right;
@@ -213,11 +213,11 @@ export function demo_summary(): string {
   assertBoolean(tableScore > 7, "table score mismatch");
   assertBoolean(mathScore === 25, "math score mismatch");
   assertBoolean(functionScore === 97, "function score mismatch");
-  console.log("DEAL v1.4 capabilities demo");
+  console.log("DEAL v1.5 capabilities demo");
   return `${selected}|${stringsResult}|${classesResult}|${jsonResult}|${errorCode}`;
 }
 
-export async function demo_async(): number {
+export async function demo_async(): Promise<number> {
   return await delayedAdd(10, 20);
 }
 

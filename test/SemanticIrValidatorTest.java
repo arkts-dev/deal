@@ -115,9 +115,9 @@ public class SemanticIrValidatorTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final SemanticIrValidator.ComparisonFacts FACTS =
-        new SemanticIrValidator.ComparisonFacts(IFACE, SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+        new SemanticIrValidator.ComparisonFacts(IFACE, SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor BOOL = RuntimeDescriptor.Boolean.INSTANCE;
@@ -184,7 +184,7 @@ public class SemanticIrValidatorTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> bindings,
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, new ModuleId(module), IFACE, LCH, caps, coverage,
+            SemanticProfile.DEAL_V1_5_BINARY64, new ModuleId(module), IFACE, LCH, caps, coverage,
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
             bindings, ops, membership(ops, bindings),
             new ClassFactoryRegistry(Map.of()),
@@ -246,7 +246,7 @@ public class SemanticIrValidatorTest {
     private static SemanticIrValidator.ComparisonFacts projectFacts(
             ProjectInterfaceIndex index) {
         return new SemanticIrValidator.ComparisonFacts(index.interfaceIndexDigest(),
-            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+            SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
     }
 
     private static ExecutableLoweredProject profileProject() {
@@ -261,7 +261,7 @@ public class SemanticIrValidatorTest {
             modules.put(module, withInterfaceHash(unit(module.path(), Set.of(), Map.of(), Map.of(),
                 List.of(constOp())), index.interfaceIndexDigest()));
         }
-        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_4_BINARY64, index, modules,
+        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_5_BINARY64, index, modules,
             MOD, ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -639,7 +639,7 @@ public class SemanticIrValidatorTest {
                     MOD_B, new ExternalModuleInterface(MOD_B, ExternalModuleKind.IMPLEMENTATION,
                         List.of(), List.of(), List.of(), InitializationMode.ONCE_AFTER_DEPENDENCIES)));
             ExecutableLoweredProject project = new ExecutableLoweredProject(
-                SemanticProfile.DEAL_V1_4_BINARY64, index,
+                SemanticProfile.DEAL_V1_5_BINARY64, index,
                 new LinkedHashMap<>() {{
                     put(MOD, caller);
                     put(MOD_B, callee);
@@ -731,7 +731,7 @@ public class SemanticIrValidatorTest {
         // R-PROFILE: interfaceHash mismatch.
         assertE6005(SemanticIrValidator.validate(
                 new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-                    SemanticProfile.DEAL_V1_4_BINARY64, MOD, "wrong-interface-digest", LCH, Set.of(),
+                    SemanticProfile.DEAL_V1_5_BINARY64, MOD, "wrong-interface-digest", LCH, Set.of(),
                     Map.of(), Map.of(), Map.of(),
                     new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
                     List.of(constOp()), new StructuredBodyTable(Map.of(), Map.of()),
@@ -741,12 +741,12 @@ public class SemanticIrValidatorTest {
         // R-PROFILE: loweringContextHash computed by T3's helper for a
         // different profile/registry-hash pair.
         {
-            String wrongHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64,
+            String wrongHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64,
                 "different-registry-hash");
             check(!wrongHash.equals(LCH), "the foreign-pair hash differs (T3 precondition)");
             assertE6005(SemanticIrValidator.validate(
                     new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-                        SemanticProfile.DEAL_V1_4_BINARY64, MOD, IFACE, wrongHash, Set.of(),
+                        SemanticProfile.DEAL_V1_5_BINARY64, MOD, IFACE, wrongHash, Set.of(),
                         Map.of(), Map.of(), Map.of(),
                         new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(),
                         Map.of(), List.of(constOp()),
@@ -834,9 +834,10 @@ public class SemanticIrValidatorTest {
         }
 
         String profileText = SemanticIrValidator.toUnitText(unit(List.of(constOp())));
-        for (String profile : List.of("LEGACY_SAFE_INT", "DEAL_V1_2_INT32", "DEAL_V1_3_INT32")) {
+        for (String profile : List.of("LEGACY_SAFE_INT", "DEAL_V1_2_INT32", "DEAL_V1_3_INT32",
+                "DEAL_V1_4_BINARY64")) {
             assertE6005(SemanticIrValidator.validateText(substituteUnitLeaf(profileText,
-                    "semanticProfile", "DEAL_V1_4_BINARY64", profile), FACTS),
+                    "semanticProfile", "DEAL_V1_5_BINARY64", profile), FACTS),
                 "R-PROFILE", profile);
         }
 
@@ -848,9 +849,10 @@ public class SemanticIrValidatorTest {
             assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
                 "project injection base");
             String text = SemanticIrValidator.toProjectText(project);
-            for (String profile : List.of("LEGACY_SAFE_INT", "DEAL_V1_2_INT32", "DEAL_V1_3_INT32")) {
+            for (String profile : List.of("LEGACY_SAFE_INT", "DEAL_V1_2_INT32", "DEAL_V1_3_INT32",
+                    "DEAL_V1_4_BINARY64")) {
                 assertE6005(SemanticIrValidator.validateText(substituteProjectUnitLeaf(text,
-                        1, "semanticProfile", "DEAL_V1_4_BINARY64", profile), projectFacts(index)),
+                        1, "semanticProfile", "DEAL_V1_5_BINARY64", profile), projectFacts(index)),
                     "R-PROFILE", profile);
             }
         }
@@ -995,7 +997,7 @@ public class SemanticIrValidatorTest {
         {
             LoweredModuleUnit base = unit(List.of(constOp()));
             String text = substituteUnitLeaf(SemanticIrValidator.toUnitText(base),
-                "semanticProfile", "DEAL_V1_4_BINARY64", "LEGACY_SAFE_INT");
+                "semanticProfile", "DEAL_V1_5_BINARY64", "LEGACY_SAFE_INT");
             Optional<CompilerDiagnostic> first = SemanticIrValidator.validateText(text, FACTS);
             Optional<CompilerDiagnostic> second = SemanticIrValidator.validateText(text, FACTS);
             check(first.isPresent() && first.get().message().equals(second.get().message()),
@@ -1229,13 +1231,21 @@ public class SemanticIrValidatorTest {
         // fully satisfies its other claims still fails at the claim name
         // and no lowering path admits a conflict-claiming module.
         {
+            SemanticOp booleanValue = op(SemanticOpKind.CONST,
+                new KindPayload.ConstPayload(new ScalarValue.Boolean(true)),
+                nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null);
+            KindPayload.UnaryPayload notPayload = new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT);
+            OperationContractSnapshot notContract = contractFor(SemanticOpKind.UNARY,
+                notPayload, BOOL, List.of(BOOL), FailurePolicyId.NO_DEAL_FAILURE, "placeholder");
+            notContract = contractFor(SemanticOpKind.UNARY, notPayload, BOOL, List.of(BOOL),
+                FailurePolicyId.NO_DEAL_FAILURE, ContractSnapshotCanonicalizer.digest(notContract));
+            SemanticOp not = new SemanticOp(nextOpId(), SemanticOpKind.UNARY, origin(null),
+                nextValue(), BOOL, List.of((ValueId) booleanValue.result()), List.of(BOOL),
+                notPayload, FailurePolicyId.NO_DEAL_FAILURE, notContract);
             LoweredModuleUnit completed = unit("mod.a",
                 Set.of(SemanticCapability.FOUNDATION_VALUES),
                 Map.of(), Map.of(), List.of(
-                    constOp(),
-                    op(SemanticOpKind.UNARY,
-                        new KindPayload.UnaryPayload(UnarySelector.BOOL_NOT),
-                        nextValue(), BOOL, FailurePolicyId.NO_DEAL_FAILURE, null),
+                    constOp(), booleanValue, not,
                     op(SemanticOpKind.BINARY,
                         new KindPayload.BinaryPayload(BinarySelector.NUMBER_ADD, null, null),
                         nextValue(), INT, FailurePolicyId.NO_DEAL_FAILURE, null),
@@ -1273,7 +1283,7 @@ public class SemanticIrValidatorTest {
             ClassFactoryRegistry classFactories,
             ClassBindingFacts classBindingFacts) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(),
+            SemanticProfile.DEAL_V1_5_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(),
             classLayouts, functions, moduleInit, exportPlan, bindings, ops, bodyTable,
             classFactories, classBindingFacts);
     }
@@ -1841,7 +1851,7 @@ public class SemanticIrValidatorTest {
             new ValueId(63), new RuntimeDescriptor.Class(point),
             FailurePolicyId.CLASS_CONSTRUCTION, null));
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, MOD, interfaceHash, LCH, Set.of(), Map.of(),
+            SemanticProfile.DEAL_V1_5_BINARY64, MOD, interfaceHash, LCH, Set.of(), Map.of(),
             Map.of(point, layout), Map.of(),
             new ModuleInitPlan(List.of(), new BlockId(0)), ExportPlan.empty(), Map.of(),
             ops, membership(ops, Map.of()),
@@ -1889,7 +1899,7 @@ public class SemanticIrValidatorTest {
             index.interfaceIndexDigest()));
         modules.put(MOD, classTransportUnit(index.interfaceIndexDigest()));
         ExecutableLoweredProject project = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_4_BINARY64, index, modules, MOD,
+            SemanticProfile.DEAL_V1_5_BINARY64, index, modules, MOD,
             ClassRegistrationSeeds.builtinErrorOnly());
         assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
             "the project transport fixture");
@@ -1908,7 +1918,7 @@ public class SemanticIrValidatorTest {
             ContractSnapshotCanonicalizer.parseProject(parseObj(text));
         checkEq("deal.semantic-ir/2", parsed.formatVersion(),
             "the parsed project keeps the /2 envelope");
-        checkEq("DEAL_V1_4_BINARY64", parsed.semanticProfile(),
+        checkEq("DEAL_V1_5_BINARY64", parsed.semanticProfile(),
             "the parsed project keeps the profile as supplied");
         checkEq("mod.a", parsed.entryModule(), "the parsed project keeps the entry module");
         checkEq(index, parsed.interfaceIndex(),
@@ -1964,7 +1974,7 @@ public class SemanticIrValidatorTest {
         // Mandatory empties: the empty seed set and the empty index entry
         // lists stay present and empty, distinct from absent.
         ExecutableLoweredProject emptySeeds = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_4_BINARY64, index, modules, MOD,
+            SemanticProfile.DEAL_V1_5_BINARY64, index, modules, MOD,
             new ClassRegistrationSeeds(Map.of()));
         String emptyText = SemanticIrValidator.toProjectText(emptySeeds);
         check(emptyText.contains("\"classSeeds\":[]"),
@@ -1989,7 +1999,7 @@ public class SemanticIrValidatorTest {
                 new ClassLayout(new ClassId("mod.a", "Point"), List.of()),
                 ConstructionProvider.LOCAL)));
         ExecutableLoweredProject detachedProject = new ExecutableLoweredProject(
-            SemanticProfile.DEAL_V1_4_BINARY64, index, modules, MOD, detachedSeeds);
+            SemanticProfile.DEAL_V1_5_BINARY64, index, modules, MOD, detachedSeeds);
         String detachedText = SemanticIrValidator.toProjectText(detachedProject);
         check(detachedText.contains("\"key\":{\"modulePath\":\"mod.a\",\"name\":\"Other\"")
                 && detachedText.contains("\"layout\":{\"classId\":{\"modulePath\":\"mod.a\","
@@ -2183,7 +2193,7 @@ public class SemanticIrValidatorTest {
             List<SemanticOp> ops,
             StructuredBodyTable table) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, MOD, interfaceHash, LCH, Set.of(), coverage,
+            SemanticProfile.DEAL_V1_5_BINARY64, MOD, interfaceHash, LCH, Set.of(), coverage,
             layouts, functions, moduleInit, exportPlan, Map.of(), ops, table,
             new ClassFactoryRegistry(Map.of()), ClassBindingFacts.empty());
     }
@@ -2217,7 +2227,7 @@ public class SemanticIrValidatorTest {
         StructuredBodyTable table = new StructuredBodyTable(
             Map.of(new BlockId(0), List.of(constOp)), Map.of(constOp, new BlockId(0)));
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, MOD_B, interfaceHash, LCH, Set.of(), Map.of(),
+            SemanticProfile.DEAL_V1_5_BINARY64, MOD_B, interfaceHash, LCH, Set.of(), Map.of(),
             Map.of(), Map.of(), new ModuleInitPlan(List.of(), new BlockId(0)),
             ExportPlan.empty(), Map.of(),
             List.of(opWith(constOp, SemanticOpKind.CONST,
@@ -2231,7 +2241,7 @@ public class SemanticIrValidatorTest {
         Map<ModuleId, LoweredModuleUnit> modules = new LinkedHashMap<>();
         modules.put(MOD_B, batteryDependencyUnit(index.interfaceIndexDigest()));
         modules.put(MOD, unit);
-        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_4_BINARY64, index, modules,
+        return new ExecutableLoweredProject(SemanticProfile.DEAL_V1_5_BINARY64, index, modules,
             MOD, ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -2610,7 +2620,7 @@ public class SemanticIrValidatorTest {
     }
 
     // =========================================================================
-    // 12. Explicit profile transport and the v1.4 activation boundary
+    // 12. Explicit profile transport and the v1.5 activation boundary
     // =========================================================================
 
     /**
@@ -2625,7 +2635,7 @@ public class SemanticIrValidatorTest {
      */
     private static void assertProfileText(String text, SemanticIrValidator.ComparisonFacts facts,
             String surface) {
-        check(text.contains("\"semanticProfile\":\"DEAL_V1_4_BINARY64\""),
+        check(text.contains("\"semanticProfile\":\"DEAL_V1_5_BINARY64\""),
             surface + " text carries the owner profile");
         check(!text.contains("DEAL_V1_2_INT32") && !text.contains("LEGACY_SAFE_INT"),
             surface + " transport contains no removed profile");
@@ -2635,14 +2645,14 @@ public class SemanticIrValidatorTest {
     }
 
     private static void testExplicitProfileTransport() {
-        System.out.println("-- Explicit semanticProfile transport and the v1.4 owner --");
+        System.out.println("-- Explicit semanticProfile transport and the v1.5 owner --");
 
         // The admitted name is the owner's value, not an independent literal,
         // and the owner is a closed single-member set with unchanged peer
         // format versions (no speculative bump).
         checkEq(1, SemanticProfile.values().length,
             "the single-profile owner carries exactly one member");
-        checkEq(SemanticProfile.DEAL_V1_4_BINARY64.name(), SemanticIrValidator.ADMITTED_PROFILE,
+        checkEq(SemanticProfile.DEAL_V1_5_BINARY64.name(), SemanticIrValidator.ADMITTED_PROFILE,
             "the admitted profile name is the owner's value");
         checkEq("deal.semantic-interface/1", ProjectInterfaceIndex.FORMAT_VERSION,
             "the interface format is unchanged (no speculative bump)");
@@ -2653,9 +2663,9 @@ public class SemanticIrValidatorTest {
 
         // The typed unit carries the owner's profile and the raw transport
         // preserves it explicitly at the unit surface.
-        checkEq(SemanticProfile.DEAL_V1_4_BINARY64, base.semanticProfile(),
+        checkEq(SemanticProfile.DEAL_V1_5_BINARY64, base.semanticProfile(),
             "the typed unit carries the owner profile");
-        checkEq(SemanticProfile.DEAL_V1_4_BINARY64.name(),
+        checkEq(SemanticProfile.DEAL_V1_5_BINARY64.name(),
             RawUnit.fromTyped(base).semanticProfile(),
             "the raw transport carries the profile name explicitly");
 
@@ -2663,7 +2673,7 @@ public class SemanticIrValidatorTest {
         // admission/transport output mentions a removed profile.
         String text = SemanticIrValidator.toUnitText(base);
 
-        checkEq(LCH, LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY),
+        checkEq(LCH, LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY),
             "the carried loweringContextHash is the owner/capability derivation");
 
         // A carried removed v1.2 value whose loweringContextHash equals the
@@ -2679,7 +2689,7 @@ public class SemanticIrValidatorTest {
         // A carried profile that disagrees with the supplied facts rejects at
         // the same R-PROFILE relation; the derivation consumes the supplied
         // capability-registry hash, so a foreign pair rejects at the hash.
-        String wrongRegistryHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64,
+        String wrongRegistryHash = LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64,
             REGISTRY + "-other");
         check(!wrongRegistryHash.equals(LCH),
             "the foreign registry hash changes the derivation (precondition)");
@@ -2695,10 +2705,10 @@ public class SemanticIrValidatorTest {
         ProjectInterfaceIndex index = project.interfaceIndex();
         assertPass(SemanticIrValidator.validate(project, projectFacts(index)),
             "the owner-profile project admits");
-        checkEq(SemanticProfile.DEAL_V1_4_BINARY64, project.semanticProfile(),
+        checkEq(SemanticProfile.DEAL_V1_5_BINARY64, project.semanticProfile(),
             "the typed project carries the owner profile");
         for (LoweredModuleUnit carried : project.modules().values()) {
-            checkEq(SemanticProfile.DEAL_V1_4_BINARY64, carried.semanticProfile(),
+            checkEq(SemanticProfile.DEAL_V1_5_BINARY64, carried.semanticProfile(),
                 "unit " + carried.moduleId() + " carries the owner profile");
         }
         String projectText = SemanticIrValidator.toProjectText(project);

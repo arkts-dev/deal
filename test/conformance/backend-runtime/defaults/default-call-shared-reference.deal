@@ -60,7 +60,7 @@ export function main(): null {
   try {
     target = {xs: failProvide()};
   } catch (e) {
-    failed = e.code === "DEFAULT_FAIL";
+    failed = (e as Error).code === "DEFAULT_FAIL";
   }
   if (!failed || state.calls() !== 5 || target !== originalTarget || target.xs !== supplied) {
     throw { code: "DEFAULT_FAILURE", message: "the failing producer retried, lost effects or published a partial target" };

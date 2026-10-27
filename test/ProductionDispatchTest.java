@@ -96,7 +96,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit"
@@ -105,7 +105,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JVM = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "jvm"
@@ -448,7 +448,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer assignment collision (review 0005): the
      * assignment inside a shadowing let's own initializer targets the
      * enclosing binding — the pending declaration is not visible there
-     * (docs/spec-v1.4.md §Name resolution — Declaration order) — so the constructed
+     * (docs/spec-v1.5.md §Name resolution — Declaration order) — so the constructed
      * literal keeps the enclosing binding's declared provider. The
      * pre-fix recorder resolved the not-yet-visible inner declaration,
      * so the same-named sibling's class was constructed and the
@@ -484,7 +484,7 @@ public class ProductionDispatchTest {
 
     private static final String DEAL_JSON_JS = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "js"
@@ -493,7 +493,7 @@ public class ProductionDispatchTest {
 
     private static final String HOST_DEAL_JSON_LUA = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src"],
           "output": "out",
           "backend": "luajit",
@@ -544,7 +544,7 @@ public class ProductionDispatchTest {
           return "lib";
         }
 
-        export async function load(): number {
+        export async function load(): Promise<number> {
           return 7;
         }
         """;
@@ -566,7 +566,7 @@ public class ProductionDispatchTest {
           return "app";
         }
 
-        export async function worker(): number {
+        export async function worker(): Promise<number> {
           return await lib.load();
         }
         """;
@@ -623,7 +623,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_NEWLINE_ROOT = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src\\nline"],
           "output": "out",
           "backend": "luajit"
@@ -637,7 +637,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_UNICODE_ROOT = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src\\\\u000aline"],
           "output": "out",
           "backend": "luajit"
@@ -652,7 +652,7 @@ public class ProductionDispatchTest {
      */
     private static final String DEAL_JSON_CONTROL_ROOT = """
         {
-          "languageVersion": "1.4",
+          "languageVersion": "1.5",
           "moduleRoots": ["src\\u0007\\u000b\\u000c\\u001fline"],
           "output": "out",
           "backend": "luajit"
@@ -821,7 +821,7 @@ public class ProductionDispatchTest {
 
     /** The cross-module async library. */
     private static final String ASYNC_LIB_SOURCE = """
-        export async function getValue(): number {
+        export async function getValue(): Promise<number> {
           return 42;
         }
         """;
@@ -834,7 +834,7 @@ public class ProductionDispatchTest {
           return null;
         }
 
-        async function worker(): number {
+        async function worker(): Promise<number> {
           return await lib.getValue();
         }
         """;
@@ -850,11 +850,11 @@ public class ProductionDispatchTest {
           return null;
         }
 
-        async function compute(): number {
+        async function compute(): Promise<number> {
           return 1;
         }
 
-        export async function worker(): number {
+        export async function worker(): Promise<number> {
           return await compute();
         }
         """;
@@ -1099,13 +1099,13 @@ public class ProductionDispatchTest {
             "the harness metadata resolves the one release-owned production "
                 + "invocation (no purpose or profile selection)");
         checkEq(productionInvocation(),
-            CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+            CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
                 CapabilityRegistry.releaseRegistry()),
             "every resolution over the one release state and registry "
                 + "produces the same record");
         check(productionInvocation().semanticProfile()
-                == SemanticProfile.DEAL_V1_4_BINARY64,
-            "the production invocation carries the single DEAL_V1_4_BINARY64 "
+                == SemanticProfile.DEAL_V1_5_BINARY64,
+            "the production invocation carries the single DEAL_V1_5_BINARY64 "
                 + "profile");
     }
 
@@ -1394,7 +1394,7 @@ public class ProductionDispatchTest {
             + "  let w: number = y.a;\n"
             + "  let q: number = wrap().a;\n"
             + "  let z = ir.make();\n"
-            + "  let had: boolean = has(z.nick);\n"
+            + "  let had: boolean = Object.hasOwn(z, \"nick\");\n"
             + "  delete z.nick;\n"
             + "  if (v === 7 && n === 7 && w === 11 && q === 7 && !had) {\n"
             + "    console.log(\"ok\");\n"
@@ -1658,8 +1658,8 @@ public class ProductionDispatchTest {
         try {
             write(project, "deal.json", """
                 {
-                  "languageVersion": "1.4",
-                  "stdlib": "1.4",
+                  "languageVersion": "1.5",
+                  "stdlib": "1.5",
                   "moduleRoots": ["src"],
                   "dependencies": {},
                   "externals": {},
@@ -1746,8 +1746,8 @@ public class ProductionDispatchTest {
             try {
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.4",
-                      "stdlib": "1.4",
+                      "languageVersion": "1.5",
+                      "stdlib": "1.5",
                       "moduleRoots": ["src"],
                       "dependencies": {},
                       "externals": {"model": {"declaration": "bindings/model.d.deal"}},
@@ -1834,8 +1834,8 @@ public class ProductionDispatchTest {
                 String label = name + " " + backend;
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.4",
-                      "stdlib": "1.4",
+                      "languageVersion": "1.5",
+                      "stdlib": "1.5",
                       "moduleRoots": ["src"],
                       "dependencies": {},
                       "externals": {},
@@ -2151,7 +2151,7 @@ public class ProductionDispatchTest {
      * The shadowing-initializer crossing (review 0005; ISSUE-0809 review
      * cycle 2): the assignment inside a shadowing let's own initializer
      * targets the enclosing binding (the pending declaration is not
-     * visible there, docs/spec-v1.4.md §Name resolution — Declaration
+     * visible there, docs/spec-v1.5.md §Name resolution — Declaration
      * order), so the constructed literal carries that binding's declared
      * provider — the enclosing annotation names {@code ir} even when the
      * not-yet-visible inner declaration names the same-named sibling
@@ -2617,7 +2617,7 @@ public class ProductionDispatchTest {
 
         Path removed = Files.createTempDirectory("production-dispatch-native-rejected-");
         try {
-            write(removed, "deal.json", "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
+            write(removed, "deal.json", "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"],\"output\":\"out\"}");
             write(removed, "src/main.deal", "// @extern-c\nexport function main(): null { return null; }\n");
             for (String backend : List.of("js", "luajit", "jvm")) {
                 ProjectOutcome rejected = runProductionCli("compile",
@@ -2731,7 +2731,7 @@ public class ProductionDispatchTest {
             String expectedMessage = "FRONTEND".equals(capability) ? originText : "Common semantic lowering failed: module '"
                 + offendingModule + "', capability " + capability
                 + ", validatorRule " + rule
-                + ", semanticProfile DEAL_V1_4_BINARY64, irVersion deal.semantic-ir/2"
+                + ", semanticProfile DEAL_V1_5_BINARY64, irVersion deal.semantic-ir/2"
                 + ", origin " + originText;
             String humanLine = offending + ":" + startLine + ":" + startColumn
                 + "-" + endLine + ":" + endColumn + ": ERROR " + expectedCode + ": "
@@ -4396,7 +4396,7 @@ public class ProductionDispatchTest {
             let bad: number = pick(l2, 1)[record(l2, 2) + 4];
             boundsCode = "NOFAIL";
           } catch (e) {
-            boundsCode = e.code;
+            boundsCode = (e as Error).code;
           }
           if (boundsCode !== "E8002") {
             throw { code: "TEST_FAIL", message: "out-of-range read must raise E8002" };
@@ -4412,7 +4412,7 @@ public class ProductionDispatchTest {
             let bad: number | null = nullable[3];
             nullableCode = "NOFAIL";
           } catch (e) {
-            nullableCode = e.code;
+            nullableCode = (e as Error).code;
           }
           if (nullableCode !== "E8002") {
             throw { code: "TEST_FAIL", message: "nullable out-of-range read must raise E8002" };
@@ -4423,7 +4423,7 @@ public class ProductionDispatchTest {
             let bad: number = empty[0];
             emptyCode = "NOFAIL";
           } catch (e) {
-            emptyCode = e.code;
+            emptyCode = (e as Error).code;
           }
           if (emptyCode !== "E8002") {
             throw { code: "TEST_FAIL", message: "empty-array read must raise E8002" };
@@ -4443,8 +4443,9 @@ public class ProductionDispatchTest {
           }
           let deletedNullable: (number | null)[] = [1.0, 2, 3];
           delete deletedNullable[1];
-          if (deletedNullable[1] !== null) {
-            throw { code: "TEST_FAIL", message: "in-range deleted nullable slot must read null" };
+          let deletedRead: unknown = deletedNullable[1];
+          if (deletedRead !== undefined) {
+            throw { code: "TEST_FAIL", message: "in-range deleted nullable slot must read undefined" };
           }
           let plain: number[] = [7];
           delete plain[0];
@@ -4453,7 +4454,7 @@ public class ProductionDispatchTest {
             let bad: number = plain[0];
             deletedCode = "NOFAIL";
           } catch (e) {
-            deletedCode = e.code;
+            deletedCode = (e as Error).code;
           }
           if (deletedCode !== "E8001") {
             throw { code: "TEST_FAIL", message: "in-range deleted non-nullable slot must keep E8001" };
@@ -4466,13 +4467,14 @@ public class ProductionDispatchTest {
           if (writes.length !== 2 || alias[1] !== 8) {
             throw { code: "TEST_FAIL", message: "append-at-length write lost" };
           }
-          let badValue: table = { bad: "not-number" };
+          let badValue: number | null = 1;
+          let clear: () => void = function(): void { badValue = null; };
           let writeCode: string = "";
           try {
-            writes[0] = badValue.bad;
+            if (badValue !== null) { clear(); writes[0] = badValue; }
             writeCode = "NOFAIL";
           } catch (e) {
-            writeCode = e.code;
+            writeCode = (e as Error).code;
           }
           if (writeCode !== "E8001") {
             throw { code: "TEST_FAIL", message: "failed element write must raise E8001" };
@@ -4539,27 +4541,27 @@ public class ProductionDispatchTest {
         }
 
         export function arrayCarrier(): string {
-          let doc: table = json.parse("{\\"xs\\":[1.0,2.0]}");
-          return json.stringify(doc.xs);
+          let doc: Record<string, unknown> = json.parse("{\\"xs\\":[1.0,2.0]}");
+          return json.stringify(doc.xs) as string;
         }
 
         export function nullCarrier(): string {
-          let doc: table = json.parse("{\\"n\\":null}");
-          return json.stringify(doc.n);
+          let doc: Record<string, unknown> = json.parse("{\\"n\\":null}");
+          return json.stringify(doc.n) as string;
         }
 
         export function classCarrier(): string {
-          let holder: table = {};
+          let holder: Record<string, unknown> = {};
           let box: Box = {label: "b"};
           holder.box = box;
-          return json.stringify(holder.box);
+          return json.stringify(holder.box) as string;
         }
 
         export function errorCarrier(): string {
-          let holder: table = {};
+          let holder: Record<string, unknown> = {};
           let failure: Error = {code: "", message: ""};
           holder.failure = failure;
-          return json.stringify(holder.failure);
+          return json.stringify(holder.failure) as string;
         }
 
         export function main(): null {
@@ -4617,15 +4619,10 @@ public class ProductionDispatchTest {
             int[] errorAt = argumentPositionOf(JSON_CARRIER_TUPLE_V13_SOURCE,
                 "json.stringify(holder.failure)", "holder.failure");
             String expected = String.join("\n",
-                "arrayCarrier|E8001|expected table|table|array|" + sourceFile
-                    + ":" + arrayAt[0] + ":" + arrayAt[1],
-                "nullCarrier|E8001|expected table|table|null|" + sourceFile
-                    + ":" + nullAt[0] + ":" + nullAt[1],
-                "classCarrier|E8001|expected table|table|@src/main.deal/Box|" + sourceFile
-                    + ":" + classAt[0] + ":" + classAt[1],
-                "errorCarrier|E8001|expected table|table|Error|" + sourceFile
-                    + ":" + errorAt[0] + ":" + errorAt[1],
-                "");
+                "arrayCarrier|admitted|[1.0,2.0]",
+                "nullCarrier|admitted|null",
+                "classCarrier|admitted|{\"label\":\"b\"}",
+                "errorCarrier|admitted|{\"code\":\"\",\"message\":\"\"}", "");
             for (String backend : List.of("js", "luajit", "jvm")) {
                 write(project, "deal.json", switch (backend) {
                     case "js" -> DEAL_JSON_JS;
@@ -4748,9 +4745,9 @@ public class ProductionDispatchTest {
             for (int i = 2; i < args.length; i++) {
                 String name = args[i];
                 try {
-                    ((deal.codegen.jvm.JvmRuntime.FunctionValue)
+                    Object value = ((deal.codegen.jvm.JvmRuntime.FunctionValue)
                         surface.read(name)).fn.invoke(new Object[0]);
-                    System.out.println(name + "|admitted|");
+                    System.out.println(name + "|admitted|" + value);
                 } catch (deal.codegen.jvm.JvmRuntime.DealError error) {
                     System.out.println(name + "|" + error.code + "|"
                         + error.msg + "|"
@@ -4840,7 +4837,7 @@ public class ProductionDispatchTest {
                 // {@code conformance} at the corpus-relative path the
                 // sidecar pins, so the artifact's own source coordinate and
                 // the class identity are the published fixture's.
-                write(project, "deal.json", "{\n  \"languageVersion\": \"1.4\","
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.5\","
                     + "\n  \"moduleRoots\": [\"conformance\"],"
                     + "\n  \"output\": \"out\","
                     + "\n  \"backend\": \"" + backend + "\"\n}\n");
@@ -5189,7 +5186,7 @@ public class ProductionDispatchTest {
                 "boundary-corpus-" + export + "-" + backend + "-");
             try {
                 write(project, entryRel, source);
-                write(project, "deal.json", "{\n  \"languageVersion\": \"1.4\","
+                write(project, "deal.json", "{\n  \"languageVersion\": \"1.5\","
                     + "\n  \"moduleRoots\": [\"conformance\"],"
                     + "\n  \"output\": \"out\","
                     + "\n  \"backend\": \"" + backend + "\"\n}\n");
@@ -5350,11 +5347,9 @@ public class ProductionDispatchTest {
     // =========================================================================
 
     /**
-     * The v1.4 deployment-completeness contract through the public CLI in a
-     * child JVM whose distribution surface is exactly the assembled classpath
-     * resource root (the process CWD is the project, so the checkout dev
-     * fallback cannot repair it): a distribution that provides the runtime but
-     * not a spec-listed stdlib implementation is missing required content — the
+     * Deployment completeness through the public CLI in an isolated child
+     * working directory containing source-tree runtime and stdlib files.
+     * A checkout missing a spec-listed stdlib implementation is incomplete: the
      * compile fails with the pinned E6000 and the absent output root stays
      * absent — while the complete surface publishes the artifact, its default
      * source-map sidecar, the runtime and all six stdlib copies on both
@@ -5362,7 +5357,7 @@ public class ProductionDispatchTest {
      */
     private static void testMissingDeploymentContentFails() throws Exception {
         System.out.println("-- deployment completeness: a spec-listed stdlib "
-            + "implementation the resolved distribution surface does not provide "
+            + "implementation the checkout does not provide "
             + "fails the compile with the pinned E6000 and publishes nothing on "
             + "both targets; the complete surface publishes the artifact, its "
             + "default sidecar, the runtime and all six stdlib copies --");
@@ -5372,8 +5367,6 @@ public class ProductionDispatchTest {
             "production-dispatch-deploy-partial-");
         Path complete = Files.createTempDirectory(
             "production-dispatch-deploy-complete-");
-        Path emptyHome = Files.createTempDirectory(
-            "production-dispatch-deploy-home-");
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/main.deal", TRIVIAL_MAIN_SOURCE);
@@ -5397,25 +5390,23 @@ public class ProductionDispatchTest {
             for (String backend : List.of("luajit", "js")) {
                 String extension = backend.equals("luajit") ? "lua" : "js";
                 Path missingOut = project.resolve("out-" + extension + "-missing");
-                ProcessOutcome missing = runCliSubprocess(project, partial,
-                    emptyHome, "compile",
+                ProcessOutcome missing = runCliSubprocess(partial, "compile",
                     project.resolve("src/main.deal").toAbsolutePath().toString(),
                     "--backend", backend, "--output", missingOut.toString());
                 checkEq(1, missing.exitCode(), "the incomplete " + backend
-                    + " distribution fails the compile: " + missing.output());
+                    + " checkout fails the compile: " + missing.output());
                 check(missing.output().contains(
                         "E6000: Stdlib module not found: std/time." + extension),
                     backend + ": the pinned missing-stdlib E6000: " + missing.output());
                 check(!Files.exists(missingOut), backend
                     + ": missing content publishes nothing (the absent root stays absent)");
                 Path out = project.resolve("build/" + backend);
-                ProcessOutcome compiled = runCliSubprocess(project, complete,
-                    emptyHome, "compile",
+                ProcessOutcome compiled = runCliSubprocess(complete, "compile",
                     project.resolve("src/main.deal").toAbsolutePath().toString(),
                     "--backend", backend, "--output",
                     out.toAbsolutePath().toString());
                 check(compiled.exitCode() == 0,
-                    "the complete " + backend + " distribution compiles: exit="
+                    "the complete " + backend + " checkout compiles: exit="
                         + compiled.exitCode() + " output=" + compiled.output());
                 if (compiled.exitCode() != 0) {
                     continue;
@@ -5436,7 +5427,7 @@ public class ProductionDispatchTest {
                             Files.readAllBytes(complete.resolve(relative)),
                             Files.readAllBytes(out.resolve(relative))),
                         "the published " + relative + " bytes are the deployed "
-                            + "distribution bytes");
+                            + "checkout bytes");
                 }
                 if (backend.equals("luajit")) {
                     verifyPublishedSidecar(project, out, "main.deal.map.json",
@@ -5457,30 +5448,23 @@ public class ProductionDispatchTest {
             deleteRecursively(project);
             deleteRecursively(partial);
             deleteRecursively(complete);
-            deleteRecursively(emptyHome);
         }
     }
 
-    /**
-     * Runs the public CLI in a child JVM whose classpath is the compiler's
-     * own classpath plus the given distribution resource root, in the given
-     * working directory, with {@code DEAL_HOME} pinned to an empty directory:
-     * the child's resolvable distribution surface is exactly the resource
-     * root (no checkout fallback, no inherited home).
-     */
+    /** Run the public CLI against files in an isolated working directory. */
     private static ProcessOutcome runCliSubprocess(Path workingDir,
-            Path resources, Path dealHome, String... args) throws Exception {
+            String... args) throws Exception {
         List<String> command = new ArrayList<>(List.of("java", "-ea", "-cp",
-            absoluteClasspath() + File.pathSeparator + resources));
+            absoluteClasspath()));
         command.add("deal.Main");
         command.addAll(List.of(args));
         BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
-            command, workingDir, Map.of("DEAL_HOME", dealHome.toString()));
+            command, workingDir, Map.of());
         return new ProcessOutcome(result.exitCode(),
             result.stdout() + result.stderr());
     }
 
-    /** Copies one checkout resource into an assembled distribution root. */
+    /** Copy one resource into an isolated source-tree fixture. */
     private static void copyRepoFile(Path relative, Path target)
             throws IOException {
         Files.createDirectories(target.getParent());
@@ -6332,7 +6316,7 @@ public class ProductionDispatchTest {
             if (produced == null) {
                 return;
             }
-            checkEq(SemanticProfile.DEAL_V1_4_BINARY64,
+            checkEq(SemanticProfile.DEAL_V1_5_BINARY64,
                 produced.semanticProfile(),
                 "the produced project is the sole v1.4 profile");
             check(produced.modules().containsKey(produced.entryModule()),
@@ -6371,7 +6355,7 @@ public class ProductionDispatchTest {
         try {
             write(js, "deal.json", """
                 {
-                  "languageVersion": "1.4",
+                  "languageVersion": "1.5",
                   "moduleRoots": ["src"],
                   "output": "out",
                   "backend": "js"
@@ -6558,12 +6542,12 @@ public class ProductionDispatchTest {
 
     /** Subject 9 (exact raw body). */
     private static final String TABLE_CONDITION_CONTEXT_REJECT =
-        "export function f(): boolean {let t: table = {flag:true};"
+        "export function f(): boolean {let t: Record<string, unknown> = {flag:true};"
             + " while(t.flag) {return true;} return false;}\n";
 
     /** Subject 10 (exact raw body). */
     private static final String TABLE_LOGICAL_CONTEXT_REJECT =
-        "export function f(): boolean {let t: table = {flag:true};"
+        "export function f(): boolean {let t: Record<string, unknown> = {flag:true};"
             + " return t.flag && true;}\n";
 
     /** Subject 11 (exact raw body). */
@@ -6589,34 +6573,34 @@ public class ProductionDispatchTest {
      * literal element is not the position's own expression.
      */
     private static final String NESTED_ARRAY_LITERAL_READ_REJECT =
-        "export function f(): number {let t: table = {n:1};"
+        "export function f(): number {let t: Record<string, unknown> = {n:1};"
             + " let xs: number[] = [t.n]; return xs[0];}\n";
 
     /** The same admission's class literal field value. */
     private static final String NESTED_CLASS_LITERAL_READ_REJECT =
         "class Box {n: number;}\n"
-            + "export function f(): number {let t: table = {n:1};"
+            + "export function f(): number {let t: Record<string, unknown> = {n:1};"
             + " let b: Box = {n:t.n}; return b.n;}\n";
 
     /** The same admission's template interpolation part. */
     private static final String NESTED_TEMPLATE_READ_REJECT =
-        "export function f(): string {let t: table = {s:\"a\"};"
+        "export function f(): string {let t: Record<string, unknown> = {s:\"a\"};"
             + " let v: string = `v${t.s}`; return v;}\n";
 
     /** The computed form of the nested array literal element. */
     private static final String NESTED_COMPUTED_LITERAL_READ_REJECT =
-        "export function f(): number {let t: table = {n:1};"
+        "export function f(): number {let t: Record<string, unknown> = {n:1};"
             + " let xs: number[] = [t[\"n\"]]; return xs[0];}\n";
 
     /** The computed form of the class literal field value. */
     private static final String NESTED_COMPUTED_CLASS_READ_REJECT =
         "class Box {n: number;}\n"
-            + "export function f(): number {let t: table = {n:1};"
+            + "export function f(): number {let t: Record<string, unknown> = {n:1};"
             + " let b: Box = {n:t[\"n\"]}; return b.n;}\n";
 
     /** The computed form of the template interpolation part. */
     private static final String NESTED_COMPUTED_TEMPLATE_READ_REJECT =
-        "export function f(): string {let t: table = {s:\"a\"};"
+        "export function f(): string {let t: Record<string, unknown> = {s:\"a\"};"
             + " let v: string = `v${t[\"s\"]}`; return v;}\n";
 
     /**
@@ -6630,19 +6614,19 @@ public class ProductionDispatchTest {
         import * as c from "std/console";
         class Box {n: number;}
         function take(n: number): number {return n;}
-        function readN(t: table): number {return t.n;}
+        function readN(t: Record<string, unknown>): number {return t.n as number;}
         export function main(): null {
-         let t: table = {n: 1, flag: true, s: "a"};
-         let n: number = (t.n);
-         let computed: number = t["n"];
-         n = t.n;
-         n = take(t.n) + n;
-         if (t.flag) {n = n + 1;}
+         let t: Record<string, unknown> = {n: 1, flag: true, s: "a"};
+         let n: number = (t.n as number);
+         let computed: number = t["n"] as number;
+         n = t.n as number;
+         n = take(t.n as number) + n;
+         if (t.flag as boolean) {n = n + 1;}
          n = n + readN(t);
          let xs: number[] = [n];
          let b: Box = {n: n};
          let bs: Box[] = [{n: n}];
-         let v: string = t.s;
+         let v: string = t.s as string;
          let s: string = `v${v}`;
          if (computed !== 1 || xs[0] !== 4 || b.n !== 4 || bs[0].n !== 4 || s !== "va") {
           throw {code: "TEST_FAIL", message: "direct read admission"};
@@ -6671,27 +6655,27 @@ public class ProductionDispatchTest {
             checkCornerCaseReject(backend, "nested-array-literal-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_ARRAY_LITERAL_READ_REJECT),
-                "E3003", "src/subject.deal", 1, 72, 1, 75, null);
+                "E3011", "src/subject.deal", 1, 90, 1, 93, null);
             checkCornerCaseReject(backend, "nested-class-literal-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_CLASS_LITERAL_READ_REJECT),
-                "E3003", "src/subject.deal", 2, 68, 2, 71, null);
+                "E4003", "src/subject.deal", 2, 84, 2, 89, null);
             checkCornerCaseReject(backend, "nested-template-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_TEMPLATE_READ_REJECT),
-                "E3003", "src/subject.deal", 1, 74, 1, 77, null);
+                "E3016", "src/subject.deal", 1, 92, 1, 95, null);
             checkCornerCaseReject(backend, "nested-computed-literal-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_COMPUTED_LITERAL_READ_REJECT),
-                "E3003", "src/subject.deal", 1, 72, 1, 78, null);
+                "E3011", "src/subject.deal", 1, 90, 1, 96, null);
             checkCornerCaseReject(backend, "nested-computed-class-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_COMPUTED_CLASS_READ_REJECT),
-                "E3003", "src/subject.deal", 2, 68, 2, 74, null);
+                "E4003", "src/subject.deal", 2, 84, 2, 92, null);
             checkCornerCaseReject(backend, "nested-computed-template-read",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", NESTED_COMPUTED_TEMPLATE_READ_REJECT),
-                "E3003", "src/subject.deal", 1, 74, 1, 80, null);
+                "E3016", "src/subject.deal", 1, 92, 1, 98, null);
 
             // The legal control compiles and completes normally on every
             // target.
@@ -6734,11 +6718,11 @@ public class ProductionDispatchTest {
             checkCornerCaseReject(backend, "table-condition-context-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", TABLE_CONDITION_CONTEXT_REJECT),
-                "E3003", "src/subject.deal", 1, 65, 1, 71, null);
+                "E3007", "src/subject.deal", 1, 83, 1, 89, null);
             checkCornerCaseReject(backend, "table-logical-context-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
                     "src/subject.deal", TABLE_LOGICAL_CONTEXT_REJECT),
-                "E3003", "src/subject.deal", 1, 66, 1, 72, null);
+                "E3007", "src/subject.deal", 1, 84, 1, 90, null);
             checkCornerCaseReject(backend,
                 "try-return-catch-fallthrough-reject",
                 Map.of("src/main.deal", QUIET_SUBJECT_ENTRY,
@@ -6852,7 +6836,7 @@ public class ProductionDispatchTest {
                     declaration);
                 write(project, "deal.json", """
                     {
-                      "languageVersion": "1.4",
+                      "languageVersion": "1.5",
                       "moduleRoots": ["src"],
                       "output": "out",
                       "backend": "%s",
@@ -7125,7 +7109,7 @@ public class ProductionDispatchTest {
                 try {
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.4",
+                          "languageVersion": "1.5",
                           "moduleRoots": ["src"],
                           "output": "out",
                           "backend": "%s",
@@ -7342,7 +7326,7 @@ public class ProductionDispatchTest {
                     }
                     write(project, "deal.json", """
                         {
-                          "languageVersion": "1.4",
+                          "languageVersion": "1.5",
                           "moduleRoots": ["src"],
                           "output": "out",
                           "backend": "%s"%s

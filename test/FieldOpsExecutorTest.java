@@ -372,6 +372,7 @@ public class FieldOpsExecutorTest {
     private static BoundaryValueView valueView(Value value) {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
+            case Value.Undefined ignored -> BoundaryValueView.of(ActualKind.UNDEFINED);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());
@@ -445,8 +446,8 @@ public class FieldOpsExecutorTest {
         Outcome<Value> yRead = ClassOpsExecutor.executeFieldRead(y.op(), base.heap(),
             y.receiverBoundary(), y.fieldBoundary(), layouts, realDelegate(null));
         check(yRead instanceof Outcome.Success<Value> ySuccess
-                && ySuccess.value() == Value.Null.INSTANCE,
-            "reading the omitted optional y pre-maps missing to null and the nullable "
+                && ySuccess.value() == Value.Undefined.INSTANCE,
+            "reading the omitted optional y maps missing to undefined and the optional "
                 + "boundary passes; got " + yRead);
     }
 
@@ -461,10 +462,9 @@ public class FieldOpsExecutorTest {
         Outcome<Value> presentNull = ClassOpsExecutor.executeFieldRead(yRead.op(),
             nullY.heap(), yRead.receiverBoundary(), yRead.fieldBoundary(), layouts,
             realDelegate(null));
-        check(presentNull instanceof Outcome.Success<Value> presentNullSuccess
-                && presentNullSuccess.value() == Value.Null.INSTANCE,
-            "reading a present-null optional field publishes null (present null passes the "
-                + "nullable descriptor); got " + presentNull);
+        check(presentNull instanceof Outcome.Failure<Value> rejectedNull
+                && "null".equals(rejectedNull.failure().failure().actual()),
+            "an optional number field does not admit present null; got " + presentNull);
 
         // y present-value through T2's CLASS_NEW (provided y = 7).
         BaseInstanceFixture valueY = valueSeed.copy();
@@ -491,7 +491,7 @@ public class FieldOpsExecutorTest {
                 && requiredFail.failure().failure().code() == DiagnosticCode.E8001
                 && "expected number".equals(requiredFail.failure().failure().message())
                 && "number".equals(requiredFail.failure().failure().expected())
-                && "null".equals(requiredFail.failure().failure().actual())
+                && "undefined".equals(requiredFail.failure().failure().actual())
                 && requiredFail.failure().origin().equals(xRead.op().origin()),
             "a missing required field pre-maps to null and the non-nullable descriptor "
                 + "fails E8001 'expected number' at the op origin; got "
@@ -512,8 +512,9 @@ public class FieldOpsExecutorTest {
 
         RuntimeDescriptor nullDescriptor = RuntimeDescriptor.Null.INSTANCE;
         ClassLayout nullLayout = layout(field("x", INT, true), field("n", nullDescriptor, false));
-        check(nullLayout.fields().get(1).readResultDescriptor() == nullDescriptor,
-            "the optional null field's read-result descriptor is the null atom");
+        RuntimeDescriptor expectedRead = RuntimeDescriptor.optionalRead(nullDescriptor);
+        check(nullLayout.fields().get(1).readResultDescriptor().equals(expectedRead),
+            "the optional null field reads null | undefined");
         check(optionalIntReadWraps(nullLayout),
             "the required x:int control keeps its declared descriptor, and an"
                 + " optional int field reads as the one ?int wrap");
@@ -522,15 +523,15 @@ public class FieldOpsExecutorTest {
         // The missing state: the pre-mapped null crosses the null descriptor.
         BaseInstanceFixture missing = baseInstance(Map.of("x", new Value.Number(1)), nullLayout);
         FieldReadFixture read = fieldReadFixture(BASE_REF, CLS, "n", nullLayout);
-        check(read.op().resultType() == nullDescriptor,
-            "the FIELD_READ publishes the null-atom result descriptor; got "
+        check(read.op().resultType().equals(expectedRead),
+            "the FIELD_READ publishes null | undefined; got "
                 + read.op().resultType());
         Outcome<Value> missingRead = ClassOpsExecutor.executeFieldRead(read.op(),
             missing.heap(), read.receiverBoundary(), read.fieldBoundary(), layouts,
             realDelegate(null));
         check(missingRead instanceof Outcome.Success<Value> missingSuccess
-                && missingSuccess.value() == Value.Null.INSTANCE,
-            "reading the omitted optional null field publishes language null; got "
+                && missingSuccess.value() == Value.Undefined.INSTANCE,
+            "reading the omitted optional null field publishes undefined; got "
                 + missingRead);
 
         // The present-null state: the explicit null crosses the same descriptor.
@@ -568,7 +569,7 @@ public class FieldOpsExecutorTest {
         return required.readResultDescriptor() == INT
             && optionalProbe.fields().get(0).readResultDescriptor()
                 instanceof RuntimeDescriptor.Nullable nullable
-            && nullable.inner() == INT;
+            && nullable.inner() == INT && nullable.admitsUndefined() && !nullable.admitsNull();
     }
 
     private static void testNominalReceiverFailures() {

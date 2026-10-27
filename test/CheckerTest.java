@@ -166,7 +166,7 @@ public class CheckerTest {
         Path project = root.resolve(name);
         Files.createDirectories(project.resolve("src"));
         Files.writeString(project.resolve("deal.json"),
-            "{\"languageVersion\":\"1.4\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
+            "{\"languageVersion\":\"1.5\",\"backend\":\"js\",\"moduleRoots\":[\"src\"]}\n");
         Path entry = project.resolve("src/main.deal");
         Files.writeString(entry, source);
         return entry;
@@ -426,7 +426,7 @@ public class CheckerTest {
         // F3: Class field default null for nullable fields
         testClassFieldDefaultNull();
 
-        testVoidTypeNameProducesE3004();
+        testVoidResultRejectsDataReturn();
 
         // Runtime intrinsics: int() and number()
         testIntrinsicIntRejectsIntLiteral();
@@ -834,7 +834,7 @@ public class CheckerTest {
 
         out = checkProgram(
             "function f(): null {\n"
-            + "  let t: table = {};\n"
+            + "  let t: Record<string, unknown> = {};\n"
             + "  let a: boolean = t === t;\n"
             + "  return null;\n"
             + "}"
@@ -893,8 +893,8 @@ public class CheckerTest {
         System.out.println("-- Assignment: contextual typing on RHS --");
         CheckerOutput out = checkProgram(
             "let x: string = \"hello\";\n" +
-            "let t: table = { value: \"world\" };\n" +
-            "x = t.value;"
+            "let t: Record<string, unknown> = { value: \"world\" };\n" +
+            "x = t.value as string;"
         );
         assertNoErrors(out, "assignment RHS contextual typing for table read");
     }
@@ -903,7 +903,7 @@ public class CheckerTest {
     static void testTableWrite() {
         System.out.println("-- Table Write (should not trigger E3003) --");
         CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\" };\n" +
+            "let t: Record<string, unknown> = { name: \"A\" };\n" +
             "t.name = \"B\";"
         );
         assertNoErrors(out, "table member write allowed without E3003");
@@ -917,13 +917,13 @@ public class CheckerTest {
     static void testTableIndexWriteStringKeyAccepted() {
         System.out.println("-- Table Index Write String Key Accepted --");
         CheckerOutput lit = checkProgram(
-            "let t: table = { data: 1 };\n" +
+            "let t: Record<string, unknown> = { data: 1 };\n" +
             "t[\"key\"] = 42;"
         );
         assertNoErrors(lit, "string literal table index write");
         assertNoErrors(lit, "table index write allowed without E3007");
         CheckerOutput var = checkProgram(
-            "let t: table = { data: 1 };\n" +
+            "let t: Record<string, unknown> = { data: 1 };\n" +
             "let k: string = \"key\";\n" +
             "t[k] = 42;"
         );
@@ -935,7 +935,7 @@ public class CheckerTest {
         // int literal key: E3018 at the index expression's span (line 2,
         // column 3 — the `0` inside `t[0]`), never at the target/value.
         CheckerOutput lit = checkProgram(
-            "let t: table = { data: 1 };\n" +
+            "let t: Record<string, unknown> = { data: 1 };\n" +
             "t[0] = 42;"
         );
         assertError(lit, "E3018", "number literal table index write");
@@ -946,7 +946,7 @@ public class CheckerTest {
 
         // int-typed variable key
         CheckerOutput var = checkProgram(
-            "let t: table = { data: 1 };\n" +
+            "let t: Record<string, unknown> = { data: 1 };\n" +
             "let k: number = 0;\n" +
             "t[k] = 42;"
         );
@@ -960,7 +960,7 @@ public class CheckerTest {
     static void testTableIndexDeleteStringKeyAccepted() {
         System.out.println("-- Table Index Delete String Key Accepted --");
         CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
+            "let t: Record<string, unknown> = { x: 1 };\n" +
             "let k: string = \"x\";\n" +
             "delete t[k];"
         );
@@ -970,7 +970,7 @@ public class CheckerTest {
     static void testTableIndexDeleteNonStringKeyRejected() {
         System.out.println("-- Table Index Delete Non-String Key Rejected (E3018) --");
         CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
+            "let t: Record<string, unknown> = { x: 1 };\n" +
             "delete t[0];"
         );
         assertError(out, "E3018", "number literal table index delete");
@@ -988,7 +988,7 @@ public class CheckerTest {
     static void testTableIndexReadUnaffected() {
         System.out.println("-- Table Index Read Unaffected by E3018 --");
         CheckerOutput out = checkProgram(
-            "let t: table = { data: 1 };\n" +
+            "let t: Record<string, unknown> = { data: 1 };\n" +
             "let v: number = t[0];"
         );
         assertError(out, "E3007", "table index read keeps E3007");
@@ -1116,7 +1116,7 @@ public class CheckerTest {
     static void testTableLengthWriteUnaffected() {
         System.out.println("-- Table .length Write Unaffected --");
         CheckerOutput out = checkProgram(
-            "let t: table = { length: 1 };\n" +
+            "let t: Record<string, unknown> = { length: 1 };\n" +
             "t.length = 5;"
         );
         assertNoErrors(out, "table .length write is still allowed");
@@ -1139,7 +1139,7 @@ public class CheckerTest {
     static void testTableLiteral() {
         System.out.println("-- Table Literal --");
         CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\", age: 30 };"
+            "let t: Record<string, unknown> = { name: \"A\", age: 30 };"
         );
         assertNoErrors(out, "table literal");
     }
@@ -1147,8 +1147,8 @@ public class CheckerTest {
     static void testTableReadWithContext() {
         System.out.println("-- Table Read with Context --");
         CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\" };\n" +
-            "let x: string = t.name;"
+            "let t: Record<string, unknown> = { name: \"A\" };\n" +
+            "let x: string = t.name as string;"
         );
         assertNoErrors(out, "table read with context");
     }
@@ -1156,10 +1156,13 @@ public class CheckerTest {
     static void testTableReadWithoutContext() {
         System.out.println("-- Table Read without Context --");
         CheckerOutput out = checkProgram(
-            "let t: table = { name: \"A\" };\n" +
+            "let t: Record<string, unknown> = { name: \"A\" };\n" +
             "let x = t.name;"
         );
-        assertError(out, "E3003", "table read without context");
+        assertNoErrors(out, "uncontextualized Record read infers safe unknown");
+        check(out.result.symbolTable().resolve("x") instanceof Symbol.VariableSymbol variable
+                && variable.type() == Type.Unknown.INSTANCE,
+            "the inferred Record read cannot acquire the stored value's concrete type");
     }
 
     // =========================================================================
@@ -1214,9 +1217,9 @@ public class CheckerTest {
     static void testFunctionCallContextualTyping() {
         System.out.println("-- Function Call Contextual Typing --");
         CheckerOutput out = checkProgram(
-            "function f(s: string): null {}\n" +
-            "let t: table = { value: \"hello\" };\n" +
-            "f(t.value);\n"
+            "function f(s: string): null {return null;}\n" +
+            "let t: Record<string, unknown> = { value: \"hello\" };\n" +
+            "f(t.value as string);\n"
         );
         assertNoErrors(out, "function call contextual typing for table read");
     }
@@ -1268,7 +1271,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "function outer(): null {\n" +
             "  function inner(): number { return 42; }\n" +
-            "  return;\n" +
+            "  return null;\n" +
             "}"
         );
         assertNoErrors(out, "nested function return type resolved correctly");
@@ -1281,26 +1284,23 @@ public class CheckerTest {
     static void testIfConditionContextualTyping() {
         System.out.println("-- F6: If condition contextual typing --");
         CheckerOutput out = checkProgram(
-            "let t: table = { flag: true };\n" +
-            "if (t.flag) { let x: number = 1; }"
+            "let t: Record<string, unknown> = { flag: true };\n" +
+            "if (t.flag as boolean) { let x: number = 1; }"
         );
         assertNoErrors(out, "if condition table read has boolean context");
     }
 
     static void testWhileConditionContextualTyping() {
         System.out.println("-- F6: While condition contextual typing --");
-        // The v1.4 admission list is closed (docs/spec-v1.4.md "Reading
-        // table fields"): a loop condition requires boolean checking but
-        // grants no contextual-read permission, so a table read in the
-        // condition is E3003 at the read while the boolean requirement
-        // still applies to every non-read condition.
+        // Record reads stay unknown in every condition position. Conditions
+        // require boolean; contextual position never grants a concrete type.
         CheckerOutput read = checkProgram(
-            "let t: table = { flag: true };\n" +
+            "let t: Record<string, unknown> = { flag: true };\n" +
             "while (t.flag) { break; }"
         );
-        assertError(read, "E3003", "while condition table read rejects E3003");
+        assertError(read, "E3007", "unknown Record read is not a boolean condition");
         CheckerOutput booleanRequirement = checkProgram(
-            "let t: table = { flag: true };\n" +
+            "let t: Record<string, unknown> = { flag: true };\n" +
             "while (t) { break; }"
         );
         assertError(booleanRequirement, "E3007",
@@ -1310,48 +1310,43 @@ public class CheckerTest {
     static void testForConditionContextualTyping() {
         System.out.println("-- F6: For condition contextual typing --");
         CheckerOutput read = checkProgram(
-            "let t: table = { flag: true };\n{ let v14Loop0: number = 0; while (v14Loop0 < 10 && t.flag) { let i: number = v14Loop0; { break; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }"
+            "let t: Record<string, unknown> = { flag: true };\n{ let v14Loop0: number = 0; while (v14Loop0 < 10 && t.flag) { let i: number = v14Loop0; { break; } v14Loop0 = i; v14Loop0 = v14Loop0 + 1; } }"
         );
-        assertError(read, "E3003",
-            "for condition table read rejects E3003");
+        assertError(read, "E3007",
+            "unknown logical operand rejects independently of the loop condition");
         CheckerOutput booleanRequirement = checkProgram(
-            "let t: table = { flag: true };\n{ let v14Loop1: number = 0; while (t) { let i: number = v14Loop1; { break; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }"
+            "let t: Record<string, unknown> = { flag: true };\n{ let v14Loop1: number = 0; while (t) { let i: number = v14Loop1; { break; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }"
         );
         assertError(booleanRequirement, "E3007",
             "for condition still requires boolean");
     }
 
     /**
-     * The retained corner-case frontend contracts (ISSUE-0815 subjects
-     * 9-11 plus their legal controls): the closed v1.4 contextual table-read
-     * admission rejects the loop-condition and composite-operand reads with
-     * E3003 at the read, the try/catch-local obligation rejects a
-     * definitely-returning try with a fallthrough catch with E5002 at the
-     * catch block even behind a later return, and the legal controls — the
-     * five direct read positions, the throw-only try with a fallthrough
-     * catch, and catch return/throw — keep compiling.
+     * Retained corner cases: unknown Record reads reject concrete condition
+     * and logical consumers at their own ranges. The independent catch
+     * obligation remains E5002, including recursive and expression bodies.
+     * Explicit extraction controls preserve direct storage, argument,
+     * condition and return consumers; Error extraction preserves catch throws.
      */
     static void testRetainedCornerCaseFrontendContract() {
         System.out.println("-- retained corner-case frontend contract:"
             + " contextual-read negatives and the catch obligation --");
 
-        // Subject 9: a while condition grants boolean checking but no
-        // contextual-read permission.
+        // Subject 9: an unknown read cannot act as a boolean condition.
         CheckerOutput whileRead = checkProgram(
-            "export function f(): boolean {let t: table = {flag:true};"
+            "export function f(): boolean {let t: Record<string, unknown> = {flag:true};"
                 + " while(t.flag) {return true;} return false;}\n");
-        assertError(whileRead, "E3003", "while-condition table read rejects E3003");
-        checkExactRange(whileRead, "E3003", 1, 65, 1, 71,
+        assertError(whileRead, "E3007", "unknown Record read cannot serve as a condition");
+        checkExactRange(whileRead, "E3007", 1, 83, 1, 89,
             "the while-condition read carries its own exact range");
 
-        // Subject 10: the t.flag operand of && does not inherit the
-        // enclosing return's permission.
+        // Subject 10: a logical operand cannot inherit the return's concrete type.
         CheckerOutput logicalRead = checkProgram(
-            "export function f(): boolean {let t: table = {flag:true};"
+            "export function f(): boolean {let t: Record<string, unknown> = {flag:true};"
                 + " return t.flag && true;}\n");
-        assertError(logicalRead, "E3003",
-            "composite-operand table read rejects E3003");
-        checkExactRange(logicalRead, "E3003", 1, 66, 1, 72,
+        assertError(logicalRead, "E3007",
+            "unknown Record read cannot serve as a logical operand");
+        checkExactRange(logicalRead, "E3007", 1, 84, 1, 90,
             "the composite operand carries its own exact range");
 
         // Subject 11: a definitely-returning try with a fallthrough catch
@@ -1395,141 +1390,134 @@ public class CheckerTest {
             "export function f(): number {try {return 1;} catch(e) {return 2;}}\n"),
             "a returning catch stays legal");
         assertNoErrors(checkProgram(
-            "export function f(): number {try {return 1;} catch(e) {throw e;}}\n"),
+            "export function f(): number {try {return 1;} catch(e) {throw e as Error;}}\n"),
             "a throwing catch stays legal");
 
-        // Legal controls: all five admitted direct read positions.
+        // Legal controls: explicit extraction in every concrete direct position.
         assertNoErrors(checkProgram(
-            "export function f(t: table): number {let x: number = t.n; x = t.n;"
-                + " if (t.flag) {return t.n;} return x;}\n"),
+            "export function f(t: Record<string, unknown>): number {let x: number = t.n as number; x = t.n as number;"
+                + " if (t.flag as boolean) {return t.n as number;} return x;}\n"),
             "the direct let/assignment/if/return reads stay admitted");
         assertNoErrors(checkProgram(
             "function g(n: number): null {return null;}"
-                + " export function f(t: table): null {g(t.n); return null;}\n"),
+                + " export function f(t: Record<string, unknown>): null {g(t.n as number); return null;}\n"),
             "the direct argument read stays admitted");
     }
 
     /**
-     * The closed direct contextual-read admission (docs/spec-v1.3.md
-     * §Reading table fields): only the position's own outermost
-     * expression may be the read. A read nested in an array literal
-     * element, a class literal field value or a template interpolation
-     * part is E3003 at the read — the dotted and the computed form
-     * alike — and the surrounding literal's own diagnostic never
-     * replaces or doubles it.
+     * Unknown Record reads in nested literal/template positions cannot
+     * inherit concrete types from their consumers. Dotted and computed
+     * forms independently pin array-element, class-property and template
+     * diagnostics and exact owner ranges; no contextual-read exception exists.
      */
     static void testV13NestedLiteralReadRejected() {
-        System.out.println("-- nested literal/template table reads reject E3003 --");
+        System.out.println("-- nested unknown reads reject concrete literal/template consumers --");
 
         // Array literal element (dotted).
         CheckerOutput arrayElement = checkProgram(
-            "let t: table = {x:1}; let xs: number[] = [t.x];");
-        assertError(arrayElement, "E3003",
-            "array literal element table read rejects E3003");
-        checkExactRange(arrayElement, "E3003", 1, 43, 1, 46,
+            "let t: Record<string, unknown> = {x:1}; let xs: number[] = [t.x];");
+        assertError(arrayElement, "E3011",
+            "unknown array literal element cannot acquire number from context");
+        checkExactRange(arrayElement, "E3011", 1, 61, 1, 64,
             "the array element read carries its own exact range");
-        checkNoCode(arrayElement, "E3011",
-            "the rejected element is not re-reported as a mixed literal");
+        checkNoCode(arrayElement, "E3003",
+            "unknown array elements do not use retired contextual-read rejection");
 
         // Computed array literal element: the static string key grants no
         // admission either.
         CheckerOutput computedElement = checkProgram(
-            "let t: table = {x:1}; let xs: number[] = [t[\"x\"]];");
-        assertError(computedElement, "E3003",
-            "computed array literal element table read rejects E3003");
-        checkExactRange(computedElement, "E3003", 1, 43, 1, 49,
+            "let t: Record<string, unknown> = {x:1}; let xs: number[] = [t[\"x\"]];");
+        assertError(computedElement, "E3011",
+            "unknown computed array element rejects a concrete consumer");
+        checkExactRange(computedElement, "E3011", 1, 61, 1, 67,
             "the computed element read carries its own exact range");
 
         // Class literal field value.
         CheckerOutput classField = checkProgram(
-            "class Box {n: number;} let t: table = {x:1};"
+            "class Box {n: number;} let t: Record<string, unknown> = {x:1};"
                 + " let b: Box = {n:t.x};");
-        assertError(classField, "E3003",
-            "class literal field table read rejects E3003");
-        checkExactRange(classField, "E3003", 1, 62, 1, 65,
+        assertError(classField, "E4003",
+            "unknown class field read rejects its concrete field consumer");
+        checkExactRange(classField, "E4003", 1, 78, 1, 83,
             "the class literal field read carries its own exact range");
-        checkNoCode(classField, "E4003",
-            "the rejected field value is not re-reported as a field type mismatch");
+        checkNoCode(classField, "E3003",
+            "unknown field read does not use retired contextual-read rejection");
 
         // Computed class literal field value: the static string key grants
         // no admission either.
         CheckerOutput computedField = checkProgram(
-            "class Box {n: number;} let t: table = {x:1};"
+            "class Box {n: number;} let t: Record<string, unknown> = {x:1};"
                 + " let b: Box = {n:t[\"x\"]};");
-        assertError(computedField, "E3003",
-            "computed class literal field table read rejects E3003");
-        checkExactRange(computedField, "E3003", 1, 62, 1, 68,
+        assertError(computedField, "E4003",
+            "unknown computed field read rejects its concrete field consumer");
+        checkExactRange(computedField, "E4003", 1, 78, 1, 86,
             "the computed field read carries its own exact range");
 
         // A class literal nested in an array literal keeps the read's own
         // diagnostic at the read.
         CheckerOutput nestedClass = checkProgram(
-            "class Box {n: number;} let t: table = {x:1};"
+            "class Box {n: number;} let t: Record<string, unknown> = {x:1};"
                 + " let bs: Box[] = [{n:t.x}];");
-        assertError(nestedClass, "E3003",
-            "a read nested two literals deep rejects E3003");
-        checkExactRange(nestedClass, "E3003", 1, 66, 1, 69,
+        assertError(nestedClass, "E4003",
+            "a nested unknown field read still rejects its concrete field consumer");
+        checkExactRange(nestedClass, "E4003", 1, 82, 1, 87,
             "the doubly nested read carries its own exact range");
 
-        // Template interpolation: the part's string requirement is not a
-        // dynamic-read context, and the already-rejected part is never
-        // re-reported as E3016.
+        // Template interpolation requires string; a safe unknown read fails
+        // through E3016 rather than a retired contextual-read diagnostic.
         CheckerOutput interpolation = checkProgram(
-            "let t: table = {s:\"a\"}; let n: string = `v${t.s}`;");
-        assertError(interpolation, "E3003",
-            "template interpolation table read rejects E3003");
-        checkExactRange(interpolation, "E3003", 1, 45, 1, 48,
+            "let t: Record<string, unknown> = {s:\"a\"}; let n: string = `v${t.s}`;");
+        assertError(interpolation, "E3016",
+            "unknown template interpolation rejects its string consumer");
+        checkExactRange(interpolation, "E3016", 1, 63, 1, 66,
             "the interpolation read carries its own exact range");
-        checkNoCode(interpolation, "E3016",
-            "the rejected interpolation part is not re-reported as E3016");
+        checkNoCode(interpolation, "E3003",
+            "unknown interpolation uses the consumer rule, not retired read context");
 
         // The computed interpolation form rejects at its own read too.
         CheckerOutput computedInterpolation = checkProgram(
-            "let t: table = {s:\"a\"}; let n: string = `a${t[\"s\"]}`;");
-        assertError(computedInterpolation, "E3003",
-            "computed interpolation table read rejects E3003");
-        checkExactRange(computedInterpolation, "E3003", 1, 45, 1, 51,
+            "let t: Record<string, unknown> = {s:\"a\"}; let n: string = `a${t[\"s\"]}`;");
+        assertError(computedInterpolation, "E3016",
+            "unknown computed interpolation rejects its string consumer");
+        checkExactRange(computedInterpolation, "E3016", 1, 63, 1, 69,
             "the computed interpolation read carries its own exact range");
-        checkNoCode(computedInterpolation, "E3016",
-            "the rejected computed part is not re-reported as E3016");
+        checkNoCode(computedInterpolation, "E3003",
+            "computed interpolation does not use retired contextual-read rejection");
     }
 
     /**
-     * The direct-read controls of the same admission: all five admitted
-     * positions (parenthesized forms included), the computed direct read,
-     * an explicitly typed intermediate used inside an array/class literal,
-     * contextual class and array construction, and an ordinary template
-     * interpolation of a statically typed string.
+     * Explicitly asserted direct-read controls retain all five concrete
+     * consumers, parenthesized/computed forms, array/class intermediates,
+     * assignment stores and an ordinary template over a checked string.
      */
     static void testV13DirectContextualReadControls() {
-        System.out.println("-- the five direct read positions and typed"
-            + " intermediates stay admitted --");
+        System.out.println("-- explicit read assertions and typed intermediates stay admitted --");
 
         assertNoErrors(checkProgram(
             "function take(n: number): number {return n;}"
-                + " function readN(t: table): number {return t.n;}"
-                + " let t: table = {n:1, flag:true};"
-                + " let a: number = (t.n); a = t.n; a = take(t.n);"
-                + " if (t.flag) {a = 1;} a = readN(t);"),
+                + " function readN(t: Record<string, unknown>): number {return t.n as number;}"
+                + " let t: Record<string, unknown> = {n:1, flag:true};"
+                + " let a: number = (t.n as number); a = t.n as number; a = take(t.n as number);"
+                + " if (t.flag as boolean) {a = 1;} a = readN(t);"),
             "the five direct positions (parenthesized initializer included)"
                 + " stay admitted");
 
         assertNoErrors(checkProgram(
-            "let t: table = {n:1}; let c: number = t[\"n\"];"),
+            "let t: Record<string, unknown> = {n:1}; let c: number = t[\"n\"] as number;"),
             "the direct computed read stays admitted");
 
         assertNoErrors(checkProgram(
-            "class Box {n: number;} let t: table = {n:1, s:\"a\"};"
-                + " let v: number = t.n; let xs: number[] = [v];"
+            "class Box {n: number;} let t: Record<string, unknown> = {n:1, s:\"a\"};"
+                + " let v: number = t.n as number; let xs: number[] = [v];"
                 + " let b: Box = {n: v}; let bs: Box[] = [{n: v}];"
-                + " let sv: string = t.s; let s: string = `v${sv}`;"),
+                + " let sv: string = t.s as string; let s: string = `v${sv}`;"),
             "a typed intermediate inside literals, contextual class/array"
                 + " construction and an ordinary template stay admitted");
 
         assertNoErrors(checkProgram(
-            "class Box {n: number;} let t: table = {x:1};"
-                + " let xs: number[] = [0]; xs[0] = t.x;"
-                + " let b: Box = {n:0}; b.n = t.x;"),
+            "class Box {n: number;} let t: Record<string, unknown> = {x:1};"
+                + " let xs: number[] = [0]; xs[0] = t.x as number;"
+                + " let b: Box = {n:0}; b.n = t.x as number;"),
             "an assignment value is a direct position: the array-element"
                 + " and class-field write values stay admitted");
     }
@@ -1613,7 +1601,7 @@ public class CheckerTest {
             "provided arithmetic records number type");
 
         CheckerOutput call = checkProgram(
-            "function noise(): null { return; }\n"
+            "function noise(): null { return null; }\n"
             + "function wrap(x: null): string { return \"w\"; }\n"
             + "class P { x: string; }\n"
             + "let p: P = {x: wrap(noise())};"
@@ -1628,7 +1616,7 @@ public class CheckerTest {
     static void testDeleteTableField() {
         System.out.println("-- F10: Delete table field --");
         CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
+            "let t: Record<string, unknown> = { x: 1 };\n" +
             "delete t.x;"
         );
         assertNoErrors(out, "delete table field should not trigger E3003");
@@ -1637,7 +1625,7 @@ public class CheckerTest {
     static void testDeleteTableIndex() {
         System.out.println("-- F10: Delete table index --");
         CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
+            "let t: Record<string, unknown> = { x: 1 };\n" +
             "delete t[\"x\"];"
         );
         assertNoErrors(out, "delete table index should not trigger E3007");
@@ -1700,7 +1688,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "class User { name: string; age?: number; }\n" +
             "let u: User = { name: \"A\" };\n" +
-            "let a: number | null = u.age;"
+            "let a: number | undefined = u.age;"
         );
         assertNoErrors(out, "class optional field");
     }
@@ -1731,7 +1719,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: the supported null narrowing is binding-based
-     * only (docs/spec-v1.4.md §Nullable semantics — "No property-path
+     * only (docs/spec-v1.5.md §Nullable semantics — "No property-path
      * narrowing"), so a nullable member-path receiver stays rejected even
      * after a {@code path !== null} test, and an assignment to a narrowed
      * binding invalidates its refinement (the later dereference is
@@ -1773,7 +1761,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: only the declaration-owning scope clears its
-     * pending let name (docs/spec-v1.4.md §Name resolution — Declaration order and §Scope),
+     * pending let name (docs/spec-v1.5.md §Name resolution — Declaration order and §Scope),
      * so an inner block's same-name declaration never makes an enclosing
      * block's later declaration visible to an earlier reference.
      */
@@ -1798,7 +1786,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a shadowing declaration's initializer is checked
      * before the outer refinement is cleared, so it reads the enclosing
-     * binding with its current narrowing (docs/spec-v1.4.md §Name resolution —
+     * binding with its current narrowing (docs/spec-v1.5.md §Name resolution —
      * Declaration order and §Nullable semantics).
      */
     static void testShadowingInitializerReadsEnclosingNarrowing() {
@@ -1819,7 +1807,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: an await inside a shadowing block invalidates the
      * enclosing async function's refinements together with the snapshot a
-     * shadowing declaration removed (docs/spec-v1.4.md §Nullable
+     * shadowing declaration removed (docs/spec-v1.5.md §Nullable
      * semantics): the block exit must not resurrect the invalidated
      * refinement. The no-await block exit still restores it, and an await
      * inside a nested function body stays scoped to that function.
@@ -1828,8 +1816,8 @@ public class CheckerTest {
         System.out.println("-- an await inside a shadowing block does not leave the "
             + "invalidated refinement restorable --");
         CheckerOutput out = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    {\n" +
@@ -1846,7 +1834,7 @@ public class CheckerTest {
                 + "must not restore it");
 
         CheckerOutput restored = checkProgram("""
-            async function positiveTick(): null { return null; }
+            async function positiveTick(): Promise<null> { return null; }
             export function restoredBlock(): null {
               let x: string | null = "ok";
               if (x !== null) {
@@ -1855,12 +1843,12 @@ public class CheckerTest {
               }
               return null;
             }
-            export async function nestedAwait(): null {
+            export async function nestedAwait(): Promise<null> {
               let x: string | null = "ok";
               if (x !== null) {
                 {
                   let x: number = 0;
-                  let f = async function(): null { await positiveTick(); return null; };
+                  let f = async function(): Promise<null> { await positiveTick(); return null; };
                 }
                 let s: string = x;
               }
@@ -1871,19 +1859,19 @@ public class CheckerTest {
               if (x !== null) {
                 {
                   let x: number = 0;
-                  for (let n: number of [1]) { let z: number = n; }
+                  for (let n of [1]) { let z: number = n; }
                 }
                 let s: string = x;
               }
               return null;
             }
-            export async function nestedLoopAwait(): null {
+            export async function nestedLoopAwait(): Promise<null> {
               let x: string | null = "ok";
               if (x !== null) {
                 {
                   let x: number = 0;
-                  for (let n: number of [1]) {
-                    let f = async function(): null { await positiveTick(); return null; };
+                  for (let n of [1]) {
+                    let f = async function(): Promise<null> { await positiveTick(); return null; };
                   }
                 }
                 let s: string = x;
@@ -1898,13 +1886,13 @@ public class CheckerTest {
             "an await inside a nested function body is scoped to that function");
 
         CheckerOutput loopAwait = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    {\n" +
             "      let x: number = 0;\n" +
-            "      for (let n: number of [1]) { await tick(); }\n" +
+            "      for (let n of [1]) { await tick(); }\n" +
             "    }\n" +
             "    let s: string = x;\n" +
             "  }\n" +
@@ -1916,8 +1904,8 @@ public class CheckerTest {
                 + "refinements; the loop exit must not restore them");
 
         CheckerOutput whileAwait = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    {\n" +
@@ -1934,7 +1922,7 @@ public class CheckerTest {
                 + "refinements; the loop exit must not restore them");
 
         CheckerOutput forAwait = checkProgram(
-            "async function tick(): null { return null; }\nexport async function run(): null {\n  let x: string | null = \"ok\";\n  if (x !== null) {\n    {\n      let x: number = 0;\n      { let v14Loop2: number = 0; while (false) { let n: number = v14Loop2; { await tick(); } v14Loop2 = n; v14Loop2 = v14Loop2 + 1; } }\n    }\n    let s: string = x;\n  }\n  return null;\n}"
+            "async function tick(): Promise<null> { return null; }\nexport async function run(): Promise<null> {\n  let x: string | null = \"ok\";\n  if (x !== null) {\n    {\n      let x: number = 0;\n      { let v14Loop2: number = 0; while (false) { let n: number = v14Loop2; { await tick(); } v14Loop2 = n; v14Loop2 = v14Loop2 + 1; } }\n    }\n    let s: string = x;\n  }\n  return null;\n}"
         );
         assertError(forAwait, "E3001",
             "an await inside a C-style for body invalidates the enclosing "
@@ -1951,7 +1939,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review: an assignment inside a shadowing declaration's
-     * initializer targets the enclosing binding (docs/spec-v1.4.md
+     * initializer targets the enclosing binding (docs/spec-v1.5.md
      * §Name resolution — Declaration order), so its gate is the enclosing binding's
      * declared type — never the not-yet-visible inner declaration's type.
      */
@@ -1986,7 +1974,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review: a loop-local declaration of the same name is a
      * distinct binding, so the loop back-edge invalidates only the
-     * bindings actually assigned in the body (docs/spec-v1.4.md §Nullable
+     * bindings actually assigned in the body (docs/spec-v1.5.md §Nullable
      * semantics): the enclosing refinement survives, while an assignment
      * to the enclosing binding still invalidates it.
      */
@@ -2025,7 +2013,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: an if without else propagates the
      * invalidation an assignment or an await inside its then arm applied
-     * (docs/spec-v1.4.md §Nullable semantics: an assignment invalidates
+     * (docs/spec-v1.5.md §Nullable semantics: an assignment invalidates
      * the refinement and an await invalidates every refinement of the
      * enclosing async function), while a harmless arm leaves the incoming
      * refinement intact. Both the with-else and the without-else joins
@@ -2049,8 +2037,8 @@ public class CheckerTest {
                 + "at the join");
 
         CheckerOutput awaited = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    if (true) { await tick(); }\n" +
@@ -2078,8 +2066,8 @@ public class CheckerTest {
                 + "join");
 
         CheckerOutput elseAwaited = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    if (false) { } else { await tick(); }\n" +
@@ -2110,7 +2098,7 @@ public class CheckerTest {
      * ISSUE-0717 review cycle 3: a shadowing declaration's saved
      * refinement survives an if/else join inside the shadowing block but
      * is never restored when a path invalidated it with an await
-     * (docs/spec-v1.4.md §Nullable semantics).
+     * (docs/spec-v1.5.md §Nullable semantics).
      */
     static void testShadowStateSurvivesBranch() {
         System.out.println("-- the shadow snapshot survives a branch join "
@@ -2129,8 +2117,8 @@ public class CheckerTest {
             "the shadow snapshot survives the harmless if/else");
 
         CheckerOutput awaitThen = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    { let x: number = 0; if (true) { await tick(); } else {} }\n" +
@@ -2143,8 +2131,8 @@ public class CheckerTest {
             "an await on one branch prevents the snapshot's restoration");
 
         CheckerOutput awaitElse = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "export async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "export async function run(): Promise<null> {\n" +
             "  let x: string | null = \"ok\";\n" +
             "  if (x !== null) {\n" +
             "    { let x: number = 0; if (false) {} else { await tick(); } }\n" +
@@ -2160,7 +2148,7 @@ public class CheckerTest {
     /**
      * ISSUE-0717 review cycle 3: the for-of back-edge invalidates every
      * binding assigned in the body exactly like while and C-style for
-     * (docs/spec-v1.4.md §Nullable semantics), and a same-named
+     * (docs/spec-v1.5.md §Nullable semantics), and a same-named
      * iteration binding is a distinct binding that leaves the enclosing
      * refinement intact.
      */
@@ -2171,7 +2159,7 @@ public class CheckerTest {
             "export function main(): null {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
-            "    for (let n: number of [1]) { x = null; }\n" +
+            "    for (let n of [1]) { x = null; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2185,7 +2173,7 @@ public class CheckerTest {
             "export function main(): null {\n" +
             "  let x: string | null = \"a\";\n" +
             "  if (x !== null) {\n" +
-            "    for (let x: string of [\"z\"]) { x = \"b\"; }\n" +
+            "    for (let x of [\"z\"]) { x = \"b\"; }\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -2444,8 +2432,8 @@ public class CheckerTest {
                 + "after the try");
 
         CheckerOutput awaitRegion = checkProgram(
-            "async function tick(): null { return null; }\n" +
-            "async function run(): null {\n" +
+            "async function tick(): Promise<null> { return null; }\n" +
+            "async function run(): Promise<null> {\n" +
             "  let n: number | null = 1;\n" +
             "  if (n !== null) {\n" +
             "    try { let n: number = 2; await tick(); } catch (e) {}\n" +
@@ -2462,7 +2450,7 @@ public class CheckerTest {
 
     /**
      * ISSUE-0717 review cycle 3: a C-style for's loop-head let is visible
-     * only after its declaration (docs/spec-v1.4.md §Name resolution — Declaration order;
+     * only after its declaration (docs/spec-v1.5.md §Name resolution — Declaration order;
      * the loop desugars to block-local scope plus a while loop): its
      * initializer resolves to an enclosing binding, a self reference is
      * E2001, and the loop-head shadow ends with the loop.
@@ -2514,7 +2502,7 @@ public class CheckerTest {
             Path crossing = root.resolve("crossing");
             Files.createDirectories(crossing.resolve("src"));
             Files.writeString(crossing.resolve("deal.json"),
-                "{\"languageVersion\":\"1.4\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.5\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(crossing.resolve("src/a.deal"),
                 "export class Item { value: number; }\n"
@@ -2546,7 +2534,7 @@ public class CheckerTest {
             Path control = root.resolve("control");
             Files.createDirectories(control.resolve("src"));
             Files.writeString(control.resolve("deal.json"),
-                "{\"languageVersion\":\"1.4\",\"backend\":\"js\","
+                "{\"languageVersion\":\"1.5\",\"backend\":\"js\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.writeString(control.resolve("src/a.deal"),
                 "export class Item { value: number; }\n"
@@ -2567,11 +2555,11 @@ public class CheckerTest {
                     + "import * as aAgain from \"././a\";\n"
                     + "import * as b from \"./b\";\n"
                     + "export function main(): null {\n"
-                    + "  let t: table = { item: a.make() };\n"
-                    + "  let own: a.Item = t.item;\n"
+                    + "  let t: Record<string, unknown> = { item: a.make() };\n"
+                    + "  let own: a.Item = t.item as a.Item;\n"
                     + "  let again: aAgain.Item = own;\n"
-                    + "  let tb: table = { item: b.make() };\n"
-                    + "  let other: b.Item = tb.item;\n"
+                    + "  let tb: Record<string, unknown> = { item: b.make() };\n"
+                    + "  let other: b.Item = tb.item as b.Item;\n"
                     + "  if (a.read(own) !== 1 || a.read(again) !== 1) {\n"
                     + "    throw { code: \"WRONG_A\", message: \"a\" };\n"
                     + "  }\n"
@@ -3276,9 +3264,11 @@ public class CheckerTest {
     static void testNestedClass() {
         System.out.println("-- Nested Class --");
         CheckerOutput out = checkProgram(
-            "function make(): null { class Inner { x: number; } let i: Inner = { x: 1 }; }"
+            "function make(): null { class Inner { x: number; } let i: Inner = { x: 1 }; return null; }"
         );
-        assertNoErrors(out, "nested class inside function");
+        check(deal.module.ModuleShapeValidator.validate(out.program(), "test.deal", false)
+                .stream().anyMatch(d -> "E1057".equals(d.code())),
+            "the module-shape owner rejects local classes with E1057");
     }
 
     // F2: Error class construction
@@ -3346,21 +3336,21 @@ public class CheckerTest {
     // =========================================================================
 
     static void testHasRequiredField() {
-        System.out.println("-- has() on Required Field --");
+        System.out.println("-- Object.hasOwn on Required Field --");
         CheckerOutput out = checkProgram(
             "class Point { x: number; y: number; }\n" +
             "let p: Point = { x: 1, y: 2 };\n" +
-            "let b: boolean = has(p.x);"
+            "let b: boolean = Object.hasOwn(p, \"x\");"
         );
-        assertError(out, "E4005", "has on required field");
+        assertNoErrors(out, "presence is legal for a declared required field");
     }
 
     static void testHasOptionalField() {
-        System.out.println("-- has() on Optional Field --");
+        System.out.println("-- Object.hasOwn on Optional Field --");
         CheckerOutput out = checkProgram(
             "class User { name: string; age?: number; }\n" +
             "let u: User = { name: \"A\" };\n" +
-            "let b: boolean = has(u.age);"
+            "let b: boolean = Object.hasOwn(u, \"age\");"
         );
         assertNoErrors(out, "has on optional field");
     }
@@ -3515,12 +3505,15 @@ public class CheckerTest {
     }
 
     static void testInference_tableReadError() {
-        System.out.println("-- Type Inference: table read error --");
+        System.out.println("-- Type Inference: Record read remains unknown --");
         CheckerOutput out = checkProgram(
-            "let t: table = { x: 1 };\n" +
+            "let t: Record<string, unknown> = { x: 1 };\n" +
             "let x = t.x;"
         );
-        assertError(out, "E3003", "table read inference error");
+        assertNoErrors(out, "Record read supports safe unknown inference");
+        check(out.result.symbolTable().resolve("x") instanceof Symbol.VariableSymbol variable
+                && variable.type() == Type.Unknown.INSTANCE,
+            "Record field contents never confer an inferred concrete type");
     }
 
     // F4: IndexExpr inference
@@ -3688,17 +3681,17 @@ public class CheckerTest {
         assertNoErrors(out, "provided null for required nullable field is legal");
     }
 
-    static void testVoidTypeNameProducesE3004() {
-        System.out.println("-- ISSUE-0040: void type name produces E3004 --");
-        // void is no longer a recognized type name; produces E3004
+    static void testVoidResultRejectsDataReturn() {
+        System.out.println("-- void results cannot return number data --");
         CheckerOutput out = checkProgram(
             "function f(): void { return 42; }"
         );
-        List<CompilerDiagnostic> diags = out.result.diagnostics();
-        boolean hasE3004 = diags.stream()
-            .anyMatch(d -> d.code().equals("E3004") && d.message().contains("void"));
-        check(hasE3004,
-            "void type name should produce E3004 'Unknown type', got: " + diags);
+        assertErrorMessage(out, "E5003", "Return type mismatch: expected void, got number",
+            "void is a result-only type, not an unknown type or a data return");
+        assertNoErrors(checkProgram("function f(): void { return; }"),
+            "bare return is valid for void");
+        assertNoErrors(checkProgram("function f(): void {}"),
+            "fallthrough is valid for void");
     }
 
     // =========================================================================
@@ -3747,16 +3740,16 @@ public class CheckerTest {
 
         out = checkProgram(
             "function f(s: string): null {\n" +
-            "  for (let c: number of s) { }\n" +
+            "  for (let c of s) { let invalid: number = c; }\n" +
             "  return null;\n" +
             "}"
         );
-        assertError(out, "E3015", "for-of over string requires string loop var");
+        assertError(out, "E3001", "the inferred string loop value cannot initialize number");
 
         out = checkProgram(
             "function f(s: string): number {\n" +
             "  let n: number = 0;\n" +
-            "  for (let c: string of s) { n = n + 1; }\n" +
+            "  for (let c of s) { n = n + 1; }\n" +
             "  return n;\n" +
             "}"
         );
@@ -3772,7 +3765,7 @@ public class CheckerTest {
 
         CheckerOutput out = checkProgram("let b: bytes = null;");
         assertError(out, "E3004", "an undeclared bytes type is an unknown name");
-        out = checkProgram("let b: table = bytes(4);");
+        out = checkProgram("let b: unknown = bytes(4);");
         assertError(out, "E2001", "an undeclared bytes value is an unknown name");
 
         // A module-level class supplies the ordinary named type.
@@ -3868,7 +3861,7 @@ public class CheckerTest {
         System.out.println("-- For-of Scoping: loop var in body --");
         CheckerOutput out = checkProgram(
             "function f(xs: number[]): null {\n" +
-            "  for (let x: number of xs) {\n" +
+            "  for (let x of xs) {\n" +
             "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3883,7 +3876,7 @@ public class CheckerTest {
         // The iterable x should resolve to outer scope. If there is no outer x, E2001.
         CheckerOutput out = checkProgram(
             "function f(): null {\n" +
-            "  for (let x: number of x) {\n" +
+            "  for (let x of x) {\n" +
             "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3897,7 +3890,7 @@ public class CheckerTest {
         // The iterable x should resolve to the outer x (the parameter).
         CheckerOutput out = checkProgram(
             "function f(x: number[]): null {\n" +
-            "  for (let x: number of x) {\n" +
+            "  for (let x of x) {\n" +
             "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3910,7 +3903,7 @@ public class CheckerTest {
         System.out.println("-- For-of Scoping: break inside --");
         CheckerOutput out = checkProgram(
             "function f(xs: number[]): null {\n" +
-            "  for (let x: number of xs) {\n" +
+            "  for (let x of xs) {\n" +
             "    break;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3923,7 +3916,7 @@ public class CheckerTest {
         System.out.println("-- For-of Scoping: continue inside --");
         CheckerOutput out = checkProgram(
             "function f(xs: number[]): null {\n" +
-            "  for (let x: number of xs) {\n" +
+            "  for (let x of xs) {\n" +
             "    continue;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3936,7 +3929,7 @@ public class CheckerTest {
         System.out.println("-- For-of Type Check: string correct --");
         CheckerOutput out = checkProgram(
             "function f(s: string): null {\n" +
-            "  for (let c: string of s) {\n" +
+            "  for (let c of s) {\n" +
             "    let d: string = c;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3949,7 +3942,7 @@ public class CheckerTest {
         System.out.println("-- For-of Type Check: non-iterable (boolean) -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(b: boolean): null {\n" +
-            "  for (let x: number of b) {\n" +
+            "  for (let x of b) {\n" +
             "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3961,8 +3954,8 @@ public class CheckerTest {
     static void testForOfTypeCheck_tableIterable() {
         System.out.println("-- For-of Type Check: non-iterable (table) -> E3015 --");
         CheckerOutput out = checkProgram(
-            "function f(t: table): null {\n" +
-            "  for (let x: number of t) {\n" +
+            "function f(t: Record<string, unknown>): null {\n" +
+            "  for (let x of t) {\n" +
             "    let y: number = x;\n" +
             "  }\n" +
             "  return null;\n" +
@@ -3975,26 +3968,26 @@ public class CheckerTest {
         System.out.println("-- For-of Type Check: array wrong var type -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(xs: number[]): null {\n" +
-            "  for (let x: string of xs) {\n" +
+            "  for (let x of xs) {\n" +
             "    let y: string = x;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
-        assertError(out, "E3015", "for-of over number[] with string var -> E3015");
+        assertError(out, "E3001", "inferred number element rejects a string consumer");
     }
 
     static void testForOfTypeCheck_stringWrongVarType() {
         System.out.println("-- For-of Type Check: string wrong var type -> E3015 --");
         CheckerOutput out = checkProgram(
             "function f(s: string): null {\n" +
-            "  for (let c: number of s) {\n" +
+            "  for (let c of s) {\n" +
             "    let d: number = c;\n" +
             "  }\n" +
             "  return null;\n" +
             "}"
         );
-        assertError(out, "E3015", "for-of over string with number var -> E3015");
+        assertError(out, "E3001", "inferred string element rejects a number consumer");
     }
 
     static void testTemplateLiteral_stringParts() {
@@ -4024,6 +4017,7 @@ public class CheckerTest {
             "function f(name: string): null {\n" +
             "  let msg = `Hello ${name}`;\n" +
             "  let s: string = msg;\n" +
+            "  return null;\n" +
             "}"
         );
         assertNoErrors(out, "template literal infers string type");
@@ -4144,7 +4138,7 @@ public class CheckerTest {
 
         CheckerOutput out = checkProgram(
             "function f(xs: number[]): null {\n" +
-            "  for (let x$: number of xs) { }\n" +
+            "  for (let x$ of xs) { }\n" +
             "  return null;\n" +
             "}"
         );
@@ -4201,10 +4195,10 @@ public class CheckerTest {
             "export function main(): null {\n"
             + "  try {\n"
             + "    try { throw {code: \"TEST\", message: \"test\"}; } catch (inner) {\n"
-            + "      let msg: string = inner.message;\n"
+            + "      let msg: string = (inner as Error).message;\n"
             + "    }\n"
             + "  } catch (outer) {\n"
-            + "    let code: string = outer.code;\n"
+            + "    let code: string = (outer as Error).code;\n"
             + "  }\n"
             + "  return null;\n"
             + "}\n");
@@ -4228,11 +4222,11 @@ public class CheckerTest {
         // no such data-key route: it stays the declared-field rejection.
         CheckerOutput tableData = checkProgram(
             "export function main(): null {\n"
-            + "  let t: table = { bad$key: 1 };\n"
-            + "  let direct: number = t.bad$key;\n"
+            + "  let t: Record<string, unknown> = { bad$key: 1 };\n"
+            + "  let direct: number = t.bad$key as number;\n"
             + "  let key: string = \"bad$key\";\n"
             + "  t[key] = direct;\n"
-            + "  let indexed: number = t[key];\n"
+            + "  let indexed: number = t[key] as number;\n"
             + "  let text: string = \"price$\";\n"
             + "  let tpl: string = `tag$${text}`;\n"
             + "  return null;\n"
@@ -4403,7 +4397,7 @@ public class CheckerTest {
             "  c: number;\n" +
             "  d: number;\n" +
             "  e: string;\n" +
-            "  f: table;\n" +
+            "  f: Record<string, unknown>;\n" +
             "}"
         );
         assertNoErrors(out, "all primitive types are jsonable");
@@ -4654,7 +4648,7 @@ public class CheckerTest {
             "export function main(): null {\n" +
             "  let a: Other.Point = { x: 1 };\n" +
             "  let x: number = a.x;\n" +
-            "  let tag: boolean = has(a.tag);\n" +
+            "  let tag: boolean = Object.hasOwn(a, \"tag\");\n" +
             "  let p: Point = { y: \"s\" };\n" +
             "  let y: string = p.y;\n" +
             "  return null;\n" +
@@ -4886,7 +4880,7 @@ public class CheckerTest {
             + "export function main(): null {\n"
             + "  let y: Other.Point = {};\n"
             + "  let y2: Other.Point = y;\n"
-            + "  let n: number | null = y2.nick;\n"
+            + "  let n: number | undefined = y2.nick;\n"
             + "  let p: Point = {};\n"
             + "  let p2: Point = p;\n"
             + "  return null;\n"
@@ -4957,7 +4951,7 @@ public class CheckerTest {
                 + "class Point { nick: number; }\n";
             CheckerOutput resolved = checkProgramWithModule(local
                 + "export function main(): null {\n"
-                + "  if (has(Other.make().nick)) { return null; }\n"
+                + "  if (Object.hasOwn(Other.make(), \"nick\")) { return null; }\n"
                 + "  let v: number = Other.make().a;\n"
                 + "  let y = Other.make();\n"
                 + "  delete y.nick;\n"
@@ -4972,20 +4966,19 @@ public class CheckerTest {
                     + "declaration (" + order + ")");
 
             // The reversed requirement direction: the imported provider's
-            // `nick` is required while the local same-identity declaration
-            // declares it optional — the imported declaration still owns
-            // the decisions, so both are refused.
+            // `nick` is required while the local declaration is optional.
+            // Presence is legal for both; deletion must still consult the
+            // imported declaration and reject its required field.
             String optionalLocal = "import * as Other from \"./strict\";\n"
                 + "class Point { nick?: string; }\n";
             CheckerOutput hasRequired = checkProgramWithModule(optionalLocal
                 + "export function main(): null {\n"
-                + "  if (has(Other.make().nick)) { return null; }\n"
+                + "  if (Object.hasOwn(Other.make(), \"nick\")) { return null; }\n"
                 + "  return null;\n"
                 + "}\n", resolver);
-            assertError(hasRequired, "E4005",
-                "a required field of the receiver's declared provider is not "
-                    + "silently accepted because a local same-identity "
-                    + "declaration is optional (" + order + ")");
+            assertNoErrors(hasRequired,
+                "the receiver provider's declared required field permits presence "
+                    + "independently of the local optional declaration (" + order + ")");
             CheckerOutput deleteRequired = checkProgramWithModule(optionalLocal
                 + "export function main(): null {\n"
                 + "  let y = Other.make();\n"
@@ -5105,7 +5098,7 @@ public class CheckerTest {
         System.out.println("-- Name Resolution: async function decl isAsync --");
 
         CheckerOutput out = checkProgram(
-            "async function f(): number { return 5; }");
+            "async function f(): Promise<number> { return 5; }");
 
         assertNoErrors(out, "async function decl resolution");
 
@@ -5143,7 +5136,7 @@ public class CheckerTest {
 
     /**
      * Verify that a function type annotation with async (e.g.,
-     * {@code async (int) => string}) resolves with isAsync=true.
+     * {@code (n: number) => Promise<string>}) resolves with isAsync=true.
      */
     static void testNameResolution_asyncFuncTypeAnnotationIsAsync() {
         System.out.println("-- Name Resolution: async function type annotation isAsync --");
@@ -5153,7 +5146,7 @@ public class CheckerTest {
         // resolves with isAsync=true.  We use a helper that only runs
         // name resolution (not full type checking) to avoid spurious
         // type errors from the initializer expression.
-        String source = "let f: async (p: number) => string = null;";
+        String source = "let f: (p: number) => Promise<string> = null;";
         LexResult lex = new Lexer(source, "test.deal").tokenize();
         ParseResult parse = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         check(!parse.hasErrors(), "Parser: no errors");
@@ -5202,9 +5195,9 @@ public class CheckerTest {
         //
         // Also declare g as a sync function so it can be referenced.
         CheckerOutput out = checkProgram(
-            "function g(cb: function(): number): number { return cb(); }\n"
-            + "async function f(): number {\n"
-            + "    return await g(async function(): number {\n"
+            "async function g(cb: () => Promise<number>): Promise<number> { return await cb(); }\n"
+            + "async function f(): Promise<number> {\n"
+            + "    return await g(async function(): Promise<number> {\n"
             + "        let n: number = 42;\n"
             + "        return n;\n"
             + "    });\n"
@@ -5224,7 +5217,7 @@ public class CheckerTest {
         System.out.println("-- E3012: await outside async function --");
         // await inside a sync function body
         CheckerOutput out = checkProgram(
-            "async function g(): number { return 5; }" +
+            "async function g(): Promise<number> { return 5; }" +
             "function f(): number { return await g(); }"
         );
         assertError(out, "E3012", "await outside async function → E3012");
@@ -5235,7 +5228,7 @@ public class CheckerTest {
         System.out.println("-- E3013: await on non-async call --");
         CheckerOutput out = checkProgram(
             "function syncFunc(): number { return 42; }" +
-            "async function f(): number {" +
+            "async function f(): Promise<number> {" +
             "  return await syncFunc();" +
             "}"
         );
@@ -5246,7 +5239,7 @@ public class CheckerTest {
     static void testAsyncCallWithoutAwait_E3014() {
         System.out.println("-- E3014: async call without await --");
         CheckerOutput out = checkProgram(
-            "async function g(): number { return 5; }" +
+            "async function g(): Promise<number> { return 5; }" +
             "function f(): null {" +
             "  let x: number = g();" +
             "  return null;" +
@@ -5259,8 +5252,8 @@ public class CheckerTest {
     static void testAwaitAsyncCallNoE3014() {
         System.out.println("-- E3014 suppression: await asyncCall() no E3014 --");
         CheckerOutput out = checkProgram(
-            "async function g(): number { return 5; }" +
-            "async function f(): number {" +
+            "async function g(): Promise<number> { return 5; }" +
+            "async function f(): Promise<number> {" +
             "  return await g();" +
             "}"
         );
@@ -5271,9 +5264,9 @@ public class CheckerTest {
     static void testNestedAwaitSuppression() {
         System.out.println("-- E3014 suppression: nested await --");
         CheckerOutput out = checkProgram(
-            "async function inner(): number { return 42; }" +
-            "async function outer(x: number): number { return x; }" +
-            "async function f(): number {" +
+            "async function inner(): Promise<number> { return 42; }" +
+            "async function outer(x: number): Promise<number> { return x; }" +
+            "async function f(): Promise<number> {" +
             "  return await outer(await inner());" +
             "}"
         );
@@ -5288,8 +5281,8 @@ public class CheckerTest {
         // After await, a variable narrowed via if (x !== null) reverts to its
         // nullable declared type. So using it as non-null after await → E3001.
         CheckerOutput out = checkProgram(
-            "async function g(): number { return 5; }" +
-            "async function f(n: number | null): number {" +
+            "async function g(): Promise<number> { return 5; }" +
+            "async function f(n: number | null): Promise<number> {" +
             "  if (n !== null) {" +
             "    let x: number = n;" +  // narrowed — ok
             "    let result: number = await g();" +  // await invalidates narrowing
@@ -5382,15 +5375,14 @@ public class CheckerTest {
     }
 
     /**
-     * The catch identifier is a fresh `Error` binding (docs/spec-v1.3.md
-     * §try / catch: "The bound variable e has type Error"), so a same-named
+     * The catch identifier is a fresh unknown binding, so a same-named
      * outer binding's null refinement never types the catch read and never
      * outlives — or overrides — the outer binding's own flow facts
      * (ISSUE-0888).
      */
     static void testCatchBindingNarrowingIsolation() {
         System.out.println("-- Catch binding isolated from same-named outer refinements --");
-        Type errorType = intrinsicErrorType();
+        Type catchType = Type.Unknown.INSTANCE;
 
         // -- The positive: an int-refined outer binding does not type the
         //    catch read, and the refinement is restored after the catch.
@@ -5399,22 +5391,22 @@ public class CheckerTest {
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C_INT\", message: \"c\" }; }" +
-            "    catch (e) { let captured: Error = e; }" +
+            "    catch (e) { let captured: unknown = e; let error: Error = e as Error; }" +
             "    let afterCatch: number = e;" +
             "  }" +
             "  return null;" +
             "}";
         CheckerOutput out = checkProgram(intRefined);
-        assertNoErrors(out, "the catch Error read under an number refinement");
+        assertNoErrors(out, "the unknown catch read and checked Error extraction under a number refinement");
         IfStatement refinedIf = findStatement(out.program().statements(), IfStatement.class);
         check(refinedIf != null, "the number-refinement source carries its if statement");
         TryStatement tryStatement = refinedIf == null ? null
             : findStatement(refinedIf.thenBlock(), TryStatement.class);
         check(tryStatement != null, "the number-refinement source carries its try statement");
         if (tryStatement != null) {
-            check(Types.equals(errorType, readTypeAt(out,
+            check(Types.equals(catchType, readTypeAt(out,
                     tryStatement.catchBlock().statements(), 0)),
-                "the catch read's checked type is the Error class type, got "
+                "the unrefined catch read's checked type is unknown, got "
                     + readTypeAt(out, tryStatement.catchBlock().statements(), 0));
         }
         check(Types.equals(Type.Number.INSTANCE, readTypeAt(out,
@@ -5429,15 +5421,15 @@ public class CheckerTest {
             "  let e: number | null = null;" +
             "  if (e === null) {" +
             "    try { throw { code: \"C_NULL\", message: \"n\" }; }" +
-            "    catch (e) { let captured: Error = e; }" +
+            "    catch (e) { let captured: unknown = e; let error: Error = e as Error; }" +
             "  }" +
             "  return null;" +
             "}");
-        assertNoErrors(nullRefined, "the catch Error read under a null refinement");
+        assertNoErrors(nullRefined, "the unknown catch read under a null refinement");
         TryStatement nullTry = findStatement(nullRefined.program().statements(), TryStatement.class);
-        check(nullTry != null && Types.equals(errorType,
+        check(nullTry != null && Types.equals(catchType,
                 readTypeAt(nullRefined, nullTry.catchBlock().statements(), 0)),
-            "the null-refined catch read's checked type is the Error class type");
+            "the same-named catch read stays unknown under an outer null refinement");
 
         // -- The unsound inverse: a string refinement must not turn the
         //    catch binding into a string.
@@ -5451,7 +5443,7 @@ public class CheckerTest {
             "  return null;" +
             "}");
         assertErrorMessage(stringTransfer, "E3001",
-            "Cannot assign Error to string",
+            "Cannot assign unknown to string",
             "a string-refined catch binding is not a string");
 
         // -- The reported defect's mirror: the catch binding is never the
@@ -5466,7 +5458,7 @@ public class CheckerTest {
             "  return null;" +
             "}");
         assertErrorMessage(intTransfer, "E3001",
-            "Cannot assign Error to number",
+            "Cannot assign unknown to number",
             "an number-refined catch binding is not an number");
 
         // -- A try-block declaration shadows a distinct binding, so the
@@ -5560,11 +5552,11 @@ public class CheckerTest {
         //    language invalidated: an await clears it and an assignment to
         //    the enclosing binding removes it.
         CheckerOutput awaited = checkProgram(
-            "async function g(): number { return 5; }" +
-            "async function f(e: number | null): number {" +
+            "async function g(): Promise<number> { return 5; }" +
+            "async function f(e: number | null): Promise<number> {" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C_AWAIT\", message: \"a\" }; }" +
-            "    catch (e) { let captured: Error = e; let resumed: number = await g(); }" +
+            "    catch (e) { let captured: Error = e as Error; let resumed: number = await g(); }" +
             "    let unsound: number = e;" +
             "  }" +
             "  return 0;" +
@@ -5585,13 +5577,13 @@ public class CheckerTest {
             "a catch-block assignment to the enclosing binding invalidates its refinement");
 
         // -- The resolver's own fact: the catch identifier is a distinct
-        //    binding declared with the Error type.
+        //    binding declared with unknown.
         String source =
             "export function main(): null {" +
             "  let e: number | null = 1;" +
             "  if (e !== null) {" +
             "    try { throw { code: \"C\", message: \"c\" }; }" +
-            "    catch (e) { let captured: Error = e; }" +
+            "    catch (e) { let captured: unknown = e; }" +
             "  }" +
             "  return null;" +
             "}";
@@ -5605,8 +5597,8 @@ public class CheckerTest {
         SymbolTable catchScope = resolvedTry == null ? null : nr.scopeMap().get(resolvedTry);
         Symbol catchSymbol = catchScope == null ? null : catchScope.resolveLocal("e");
         check(catchSymbol instanceof Symbol.VariableSymbol catchVar
-                && Types.equals(errorType, catchVar.type()),
-            "the catch identifier declares the Error type, got " + catchSymbol);
+                && Types.equals(catchType, catchVar.type()),
+            "the catch identifier declares unknown, got " + catchSymbol);
         SymbolTable bodyScope = main == null ? null : nr.scopeMap().get(main.body());
         Symbol outerSymbol = bodyScope == null ? null : bodyScope.resolve("e");
         check(outerSymbol != null && outerSymbol != catchSymbol,
@@ -5620,7 +5612,7 @@ public class CheckerTest {
         // constructs an AwaitExpression. The TypeChecker must handle it
         // gracefully.
         CheckerOutput out = checkProgram(
-            "async function f(): null {" +
+            "async function f(): Promise<null> {" +
             "  await 42;" +
             "  return null;" +
             "}"
@@ -5642,7 +5634,7 @@ public class CheckerTest {
     static void testAsyncFuncNotAssignableToSync() {
         System.out.println("-- async function type not assignable to sync --");
         CheckerOutput out = checkProgram(
-            "async function g(): number { return 5; }" +
+            "async function g(): Promise<number> { return 5; }" +
             "let f: (x: number) => number = g;"
         );
         assertError(out, "E3001", "async func not assignable to sync → E3001");
@@ -5653,7 +5645,7 @@ public class CheckerTest {
         System.out.println("-- sync function type not assignable to async --");
         CheckerOutput out = checkProgram(
             "function g(): number { return 5; }" +
-            "let f: async (x: number) => number = g;"
+            "let f: (x: number) => Promise<number> = g;"
         );
         assertError(out, "E3001", "sync func not assignable to async → E3001");
     }
@@ -5662,9 +5654,9 @@ public class CheckerTest {
     static void testUnawaitedAsyncInArgument_E3014() {
         System.out.println("-- E3014: unawaited async in argument position --");
         CheckerOutput out = checkProgram(
-            "async function inner(): number { return 42; }" +
+            "async function inner(): Promise<number> { return 42; }" +
             "function outer(x: number): number { return x; }" +
-            "async function f(): number {" +
+            "async function f(): Promise<number> {" +
             "  return await outer(inner());" +
             "}"
         );
@@ -5957,7 +5949,7 @@ public class CheckerTest {
         }
         try {
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\":\"1.4\",\"backend\":\"luajit\","
+                "{\"languageVersion\":\"1.5\",\"backend\":\"luajit\","
                     + "\"moduleRoots\":[\"src\"]}\n");
             Files.createDirectories(root.resolve("src"));
             // z is a's import dependency: buildCheckOrder is

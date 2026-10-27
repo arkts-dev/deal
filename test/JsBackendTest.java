@@ -761,7 +761,7 @@ public class JsBackendTest {
      * {@code console.log("async-extended-argument-order")} output retained —
      * is published through the public {@code deal compile} entry under the
      * v1.2 manifest (the emitted artifact carries the
-     * {@code DEAL_V1_4_BINARY64} selector), and a real node process then
+     * {@code DEAL_V1_5_BINARY64} selector), and a real node process then
      * requires the published artifact and invokes the export through the
      * production host ABI {@code $rt.invokeAsyncExport}. The subject's own
      * output is the only stdout write, so the node transcript is the
@@ -778,11 +778,11 @@ public class JsBackendTest {
 
             export function main(): null { return null; }
 
-            export async function run(): null {
+            export async function run(): Promise<null> {
               let trace: string = "";
-              async function value(s: string, x: number): number { trace = trace + s; return x; }
-              async function small(x: number): number { trace = trace + "F"; return x; }
-              let f: async (x: number, y: number) => number = small;
+              async function value(s: string, x: number): Promise<number> { trace = trace + s; return x; }
+              async function small(x: number): Promise<number> { trace = trace + "F"; return x; }
+              let f: (x: number, y: number) => Promise<number> = small;
               let r: number = await f(await value("A", 7), await value("B", 8));
               if (r !== 7 || trace !== "ABF") {
                 throw { code: "ARITY_FAIL", message: "async extended arguments: " + trace };
@@ -817,13 +817,13 @@ public class JsBackendTest {
         System.out.println("-- Node: the async $error result carries the"
             + " complete ErrorDetail --");
         JsEmission res = checkedEmission(prepareJs("""
-            async function fail(): number {
-              let t: table = {value: "bad"};
-              let x: number = t.value;
+            async function fail(): Promise<number> {
+              let t: Record<string, unknown> = {value: "bad"};
+              let x: number = t.value as number;
               return x;
             }
             export function main(): null { return null; }
-            export async function oracle(): number { return await fail(); }
+            export async function oracle(): Promise<number> { return await fail(); }
             """, "async-detail"));
         NodeResult result = runArtifactScript(res, String.join("\n",
             "\"use strict\";",
@@ -872,11 +872,13 @@ public class JsBackendTest {
                 String call = "return " + (async ? "await " : "") + "helper.fail();";
                 PublishedProject published = publishCornerCaseProject(name,
                     COMPANION_DIRECT_HELPER_SOURCE.replace("export function",
-                        "export " + prefix + "function"),
+                        "export " + prefix + "function")
+                        .replace("fail(): number", async ? "fail(): Promise<number>" : "fail(): number"),
                     COMPANION_DIRECT_MAIN_SOURCE
                         .replace("export function run", "export " + prefix + "function run")
+                        .replace("run(): number", async ? "run(): Promise<number>" : "run(): number")
                         .replace("return helper.fail();", rethrow
-                            ? "try {" + call + "} catch(e) {throw e;}" : call));
+                            ? "try {" + call + "} catch(e) {throw e as Error;}" : call));
                 try {
                     assertCornerCasePublished(name, published.root(), mode);
                     if (!async && !rethrow) {
@@ -949,7 +951,7 @@ public class JsBackendTest {
         Path root = Files.createTempDirectory("jstest_corner_case_" + name + "_");
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.4\", \"moduleRoots\": [\"src\"],"
+            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
                 + " \"output\": \"out\", \"backend\": \"js\"}\n",
             StandardCharsets.UTF_8);
         Files.writeString(root.resolve("src/helper.deal"), helperSource,
@@ -1014,24 +1016,24 @@ public class JsBackendTest {
             + " receiver/index/RHS order before the bounds gate --");
         NodeResult run = runInvokerNode("""
             export function main(): null { return null; }
-            export async function oracle(): number {
+            export async function oracle(): Promise<number> {
               let xs: number[] = [7];
               let alias: number[] = xs;
               let trace: string = "";
-              async function value(): number { trace = trace + "V"; return 9; }
+              async function value(): Promise<number> { trace = trace + "V"; return 9; }
               function index(): number { trace = trace + "I"; return 2; }
               function receiver(): number[] { trace = trace + "R"; return xs; }
               try { receiver()[index()] = await value(); trace = trace + "X"; }
-              catch (e) { if (e.code !== "E8002") { return 0; } trace = trace + "C"; }
+              catch (e) { if ((e as Error).code !== "E8002") { return 0; } trace = trace + "C"; }
               if (trace !== "RIVC" || alias.length !== 1 || alias[0] !== 7) { return 0; }
               alias[alias.length] = 8;
               if (xs.length !== 2 || xs[1] !== 8) { return 0; }
-              let zero: table = {value: -0.0};
+              let zero: Record<string, unknown> = {value: -0.0};
               function admitted(x: number): number {
                 if (1.0 / x < 0.0) { return 1; }
                 return 0;
               }
-              return admitted(zero.value);
+              return admitted(zero.value as number);
             }
             """, "invoker-await-write", "oracle", "number");
         check(run.exitCode() == 0 && run.output().equals("INVOKE_OK: 1"),
@@ -1044,7 +1046,7 @@ public class JsBackendTest {
      * public JS surface: the two-module project (the entry imports the
      * companion module) is published through the public {@code deal
      * compile} entry under the v1.2 manifest — the emitted artifact
-     * carries the {@code DEAL_V1_4_BINARY64} selector — and a real node
+     * carries the {@code DEAL_V1_5_BINARY64} selector — and a real node
      * process then requires the published entry and invokes the exported
      * wrappers exactly as the package's exported-wrapper host does:
      * {@code main} first, then the throwing exported {@code run} under
@@ -1219,8 +1221,8 @@ public class JsBackendTest {
     private static final String COMPANION_DIRECT_HELPER_SOURCE =
         String.join("\n",
             "export function fail(): number {",
-            "  let t: table = {value: \"bad\"};",
-            "  let x: number = t.value;",
+            "  let t: Record<string, unknown> = {value: \"bad\"};",
+            "  let x: number = t.value as number;",
             "  return x;",
             "}",
             "");
@@ -1351,7 +1353,7 @@ public class JsBackendTest {
         try {
             Files.createDirectories(root.resolve("src"));
             Files.writeString(root.resolve("deal.json"),
-                "{\"languageVersion\": \"1.4\","
+                "{\"languageVersion\": \"1.5\","
                     + " \"moduleRoots\": [\"src\"],"
                     + " \"output\": \"out\","
                     + " \"backend\": \"js\"}\n",
@@ -1505,7 +1507,7 @@ public class JsBackendTest {
 
         StrictManifestParser.StrictManifestParseResult ok =
             StrictManifestParser.parse("deal.json",
-                "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
+                "{\"languageVersion\": \"1.5\", \"backend\": \"js\"}");
         check(ok.manifest() != null && ok.failure() == null,
             "deal.json backend js parses strictly: " + ok.failure());
         if (ok.manifest() != null) {
@@ -1514,8 +1516,8 @@ public class JsBackendTest {
         }
 
         for (String bad : new String[] {
-                "{\"languageVersion\": \"1.4\", \"backend\": \"  Js \"}",
-                "{\"languageVersion\": \"1.4\", \"backend\": \"wasm\"}"}) {
+                "{\"languageVersion\": \"1.5\", \"backend\": \"  Js \"}",
+                "{\"languageVersion\": \"1.5\", \"backend\": \"wasm\"}"}) {
             StrictManifestParser.StrictManifestParseResult r =
                 StrictManifestParser.parse("deal.json", bad);
             check(r.manifest() == null && r.failure() != null,
@@ -1540,7 +1542,7 @@ public class JsBackendTest {
         // A valid strict manifest without a backend field: the CLI
         // alias is the backend-selection authority.
         Files.writeString(proj.resolve("deal.json"),
-            "{\"languageVersion\": \"1.4\", \"moduleRoots\": [\"src\"]}\n",
+            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"]}\n",
             StandardCharsets.UTF_8);
         Path entry = proj.resolve("src/cli_js_main.deal");
         Files.writeString(entry, """
@@ -1658,13 +1660,13 @@ public class JsBackendTest {
 
         JsEmission res = generate("""
             class Holder {
-              static: number;
+              eval: number;
             }
             export function test(): number {
-              let static: number = 1;
+              let value: number = 1;
               let eval: number = 2;
-              let h: Holder = { static: 3 };
-              return static + eval + h.static;
+              let h: Holder = { eval: 3 };
+              return value + eval + h.eval;
             }
             """, "reserved");
         check(res != null && !res.hasErrors(), "reserved-word codegen clean: "
@@ -1676,12 +1678,12 @@ public class JsBackendTest {
             "reserved-word bindings never become reserved JS identifiers");
         check(js.contains("= $rt.undefined;"),
             "a reserved-word binding lowers to a generated cell");
-        check(js.contains(", \"static\", "),
+        check(js.contains(", \"eval\", "),
             "provided literal keeps the raw property key");
-        check(js.contains("[\"static\"]")
-                || js.contains(", \"static\")"),
+        check(js.contains("[\"eval\"]")
+                || js.contains(", \"eval\")"),
             "property position keeps the raw key");
-        check(js.contains("\"static\"")
+        check(js.contains("\"eval\"")
                 && !js.contains("// Class default"),
             "the structural layout keys the field by the raw name");
         check(js.contains("$rt.publishModule(\"Main\", \"test\","),
@@ -1699,7 +1701,7 @@ public class JsBackendTest {
             function maybe(s: string | null): string | null { return s; }
             function maybeUser(u: User | null): User | null { return u; }
             function go(f: (x: number) => number, v: number): number { return f(v); }
-            async function aget(): number { return 1; }
+            async function aget(): Promise<number> { return 1; }
             export function test(): number { return add(1, 2); }
             """, "wrappers");
         check(res != null && !res.hasErrors(), "wrapper codegen clean: "
@@ -1742,13 +1744,13 @@ public class JsBackendTest {
         JsEmission res = generate("""
             class User { name: string; }
             export function test(): number {
-              let t: table = {};
-              let b: number[] = t.arr;
-              let a: number = t.n;
-              let m: number | null = t.m;
-              let u: User | null = t.u;
-              let c: User = t.c;
-              let g: (x: number) => number = t.g;
+              let t: Record<string, unknown> = {};
+              let b: number[] = t.arr as number[];
+              let a: number = t.n as number;
+              let m: number | null = t.m as number | null;
+              let u: User | null = t.u as User | null;
+              let c: User = t.c as User;
+              let g: (x: number) => number = t.g as (x: number) => number;
               return a;
             }
             """, "checksites");
@@ -1882,13 +1884,13 @@ public class JsBackendTest {
         check(js.contains("$rt.jsonToJson(\"@Main/Main.deal/U\", "),
             "the toJson walker call carries the identity backstop");
         check(js.contains("{ name: \"name\", jtype: \"string\", optional: false, "
-                + "nullable: false }")
+                + "nullable: false, undefinedable: false }")
                 && js.contains("{ name: \"nick\", jtype: \"string\", "
-                + "optional: true, nullable: true }")
+                + "optional: true, nullable: true, undefinedable: false }")
                 && js.contains("{ name: \"age\", jtype: \"number\", optional: false, "
-                + "nullable: false }"),
+                + "nullable: false, undefinedable: false }"),
             "U$fields is the declaration-order descriptor array with one "
-                + "role per key (name/jtype/optional/nullable/hasDefault)");
+                + "role per key (name/jtype/optional/nullable/undefinedable)");
         check(!js.contains("hasDefault") && !js.contains("evaluator:"),
             "the structural field metadata has no initializer hook");
     }
@@ -1927,7 +1929,7 @@ public class JsBackendTest {
                   if (j1 !== "{\\"name\\":\\"A\\",\\"age\\":0}") { return 0; }
                   let m2: U | null = U$fromJson(j1);
                   if (m2 !== null) {
-                    if (has(m2.nick)) { return 0; }
+                    if (Object.hasOwn(m2, "nick")) { return 0; }
                   } else { return 0; }
                   let extra: U | null = U$fromJson("{\\"name\\":\\"Ada\\",\\"extra\\":1}");
                   if (extra !== null) { return 0; }
@@ -1958,7 +1960,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: cross-module @jsonable fields references and roundtrip --");
 
         writeFile("xjson_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\"}");
         writeFile("xjson_proj/src/lib_a.deal", """
             // @jsonable
             export class Inner {
@@ -2389,11 +2391,11 @@ public class JsBackendTest {
             export function __proto__(): number { return 1; }
             export function test(): number {
               let p: P = { __proto__: 7 };
-              if (!has(p.__proto__)) { return 0; }
+              if (!Object.hasOwn(p, "__proto__")) { return 0; }
               p.__proto__ = 9;
-              let read: number | null = p.__proto__;
+              let read: number | undefined = p.__proto__;
               let out: number = 0;
-              if (read !== null) { out = read; }
+              if (read !== undefined) { out = read; }
               return out;
             }
             """, "protoemit");
@@ -2457,7 +2459,7 @@ public class JsBackendTest {
               try {
                 throw { code: "C", message: "m" };
               } catch (e) {
-                throw e;
+                throw e as Error;
               }
               return null;
             }
@@ -2584,7 +2586,7 @@ public class JsBackendTest {
               let xs: number[] = [1, 2, 3];
               delete xs[1];
               let n: number = 0;
-              for (let x: number of xs) { n = n + 1; }
+              for (let x of xs) { n = n + 1; }
               return n;
             }
             """, "hygiene");
@@ -2653,12 +2655,12 @@ public class JsBackendTest {
     private static String shadowTestSource() {
         return """
             export function test(): number {
-              let undefined: number = 7;
+              let eval: number = 7;
               let xs: number[] = [1, 2, 3];
               delete xs[1];
               let n: number = 0;
-              for (let x: number of xs) { n = n + 1; }
-              return undefined + xs.length + n;
+              for (let x of xs) { n = n + 1; }
+              return eval + xs.length + n;
             }
             """;
     }
@@ -2778,8 +2780,10 @@ public class JsBackendTest {
         JsEmission defer = generate("""
             import * as h from "./hostmod";
             export function test(): number {
-              let holder: table = { item: "x" };
-              return h.hostFn(holder.item);
+              let item: number | null = 1;
+              let clear: () => void = function(): void { item = null; };
+              if (item !== null) { clear(); return h.hostFn(item); }
+              return 0;
             }
             """, "host-abi-defer", "Main",
             Map.of("hostmod.d.deal", fnDeclSource), false);
@@ -2788,9 +2792,8 @@ public class JsBackendTest {
                 + (defer == null ? "<null>" : defer.diagnostics()));
         if (defer != null && !defer.hasErrors()) {
             String js = defer.source();
-            check(js.contains(".get(" + q + "item" + q + ")"),
-                "the host-call argument is the raw table read (D4 "
-                    + "read-site deferral, no pre-check): " + js);
+            check(js.contains("[\"hostFn\"].$f("),
+                "the invalidated value reaches the host-call parameter cell: " + js);
             check(!js.contains("checkType(" + q + "number" + q
                     + ", holder"),
                 "no read-site checkType wraps the host-call argument");
@@ -2880,7 +2883,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: host ABI end-to-end under node (ISSUE-0328) --");
 
         writeFile("hostjs_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\",\n"
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\",\n"
             + " \"externals\": {\"host/cfg\": {\"declaration\": "
             + "\"bindings/cfg.d.deal\"}}}\n");
         writeFile("hostjs_proj/bindings/cfg.d.deal", """
@@ -3185,7 +3188,7 @@ public class JsBackendTest {
         // (2) The full orchestrator project: two same-file aliases and one
         // cross-unit import of one resolved host file.
         writeFile("occ_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\",\n"
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\",\n"
             + " \"externals\": {\"host/echo\": {\"declaration\": "
             + "\"../bindings/echo.d.deal\"}}}\n");
         writeFile("occ_proj/bindings/echo.d.deal", """
@@ -3216,7 +3219,7 @@ public class JsBackendTest {
               }
               let xs: number[] = [1, 2, 3];
               let sum: number = 0;
-              for (let e: number of xs) {
+              for (let e of xs) {
                 sum = sum + e;
                 if (e === 1) { delete xs[1]; }
               }
@@ -3225,7 +3228,7 @@ public class JsBackendTest {
               }
               let ys: number[] = [1, 2];
               let appended: number = 0;
-              for (let e: number of ys) {
+              for (let e of ys) {
                 appended = appended + e;
                 if (e === 1) { ys[ys.length] = 7; }
               }
@@ -3233,7 +3236,7 @@ public class JsBackendTest {
                 throw { code: "APPEND_VISIT", message: "appended element" };
               }
               let once: number = 0;
-              for (let e: number of h1.values()) {
+              for (let e of h1.values()) {
                 once = once + e;
               }
               if (once !== 3) {
@@ -3323,7 +3326,7 @@ public class JsBackendTest {
         // the earlier implementation read the provider/declaration order
         // on these paths.
         writeFile("ord_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\",\n"
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\",\n"
             + " \"externals\": {\"host/ord\": {\"declaration\": "
             + "\"../bindings/ord.d.deal\"}}}\n");
         writeFile("ord_proj/bindings/ord.d.deal", """
@@ -3599,7 +3602,7 @@ public class JsBackendTest {
             + " signed-32 gate from runtime load in every module --");
 
         writeFile("js_int32_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\"}");
         writeFile("js_int32_proj/src/app/lib.deal",
             "export function ping(): string { return \"pong\"; }");
         writeFile("js_int32_proj/src/app/main.deal",
@@ -3617,7 +3620,7 @@ public class JsBackendTest {
 
         StrictManifestParser.StrictManifestParseResult strictJs =
             StrictManifestParser.parse("deal.json",
-                "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
+                "{\"languageVersion\": \"1.5\", \"backend\": \"js\"}");
         check(strictJs.manifest() != null && strictJs.failure() == null,
             "int32 plumb deal.json backend js parses strictly: "
                 + strictJs.failure());
@@ -3627,7 +3630,7 @@ public class JsBackendTest {
         }
 
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
-            ReleaseState.V1_4_ACTIVE, CapabilityRegistry.releaseRegistry());
+            ReleaseState.V1_5_ACTIVE, CapabilityRegistry.releaseRegistry());
 
         CompilationOrchestrator active = new CompilationOrchestrator(
             entryFile, outputDir, false, false, false, false, Backend.JS,
@@ -3868,11 +3871,11 @@ public class JsBackendTest {
               return b;
             }
             export function test(): number {
-              let t: table = {};
-              t.extra = "wrong-kind";
+              let extra: number | null = 1;
+              let clear: () => void = function(): void { extra = null; };
               let b: number[] = [0];
               let wide: (b: number[], extra: number) => number[] = step;
-              wide(b, t.extra);
+              if (extra !== null) { clear(); wide(b, extra); }
               return 0;
             }
             """, "array-closure-adapter-checkint");
@@ -3897,22 +3900,22 @@ public class JsBackendTest {
 
 
         NodeResult run = runDealNode("""
-            async function bump(b: number[]): number[] {
+            async function bump(b: number[]): Promise<number[]> {
               b[0] = b[0] + 1;
               return b;
             }
-            class Box { f: async (b: number[]) => number[]; }
-            export async function test(): number {
+            class Box { f: (b: number[]) => Promise<number[]>; }
+            export async function test(): Promise<number> {
               let b: number[] = [0];
-              let afs: (async (b: number[]) => number[])[] = [bump, bump];
+              let afs: ((b: number[]) => Promise<number[]>)[] = [bump, bump];
               let out: number[] = await afs[1](b);
               if (out[0] !== 1 || b[0] !== 1) { return 0; }
               let box: Box = { f: bump };
               let out2: number[] = await box.f(b);
               if (out2[0] !== 2 || b[0] !== 2) { return 0; }
-              let t: table = {};
+              let t: Record<string, unknown> = {};
               t.f = bump;
-              let g: async (b: number[]) => number[] = t.f;
+              let g: (b: number[]) => Promise<number[]> = t.f as (b: number[]) => Promise<number[]>;
               let out3: number[] = await g(b);
               if (out3[0] !== 3 || b[0] !== 3) { return 0; }
               return 1;
@@ -3972,12 +3975,12 @@ public class JsBackendTest {
               xs[0] = inner;
               xs[1] = null;
               let deep: (number[][])[] | null = [inner];
-              let t: table = {};
+              let t: Record<string, unknown> = {};
               t.xs = xs;
               t.deep = deep;
-              let back: (number[][] | null)[] = t.xs;
+              let back: (number[][] | null)[] = t.xs as (number[][] | null)[];
               let again: (number[][] | null)[] = passDeep(back);
-              let backTop: (number[][])[] | null = t.deep;
+              let backTop: (number[][])[] | null = t.deep as (number[][])[] | null;
               let againTop: (number[][])[] | null = idTop(backTop);
               if (again.length !== 2) { return 0; }
               inner[0][0] = 9;
@@ -3997,9 +4000,9 @@ public class JsBackendTest {
         // inner mismatch naming the failing descriptor.
         NodeResult badDepth2 = runDealNode("""
             export function test(): number {
-              let t: table = {};
-              t.bad = [[7]];
-              let back: (number[][] | null)[] = t.bad;
+              let value: number[] | null = [7];
+              let clear: () => void = function(): void { value = null; };
+              if (value !== null) { clear(); let back: number[][] = [value]; }
               return 0;
             }
             """, "array-closure-deep-negative-d2");
@@ -4014,9 +4017,9 @@ public class JsBackendTest {
 
         NodeResult badDepth3 = runDealNode("""
             export function test(): number {
-              let t: table = {};
-              t.bad = [42];
-              let back: (number[][])[] | null = t.bad;
+              let value: number[][] | null = [[42]];
+              let clear: () => void = function(): void { value = null; };
+              if (value !== null) { clear(); let back: number[][][] = [value]; }
               return 0;
             }
             """, "array-closure-deep-negative-d3");
@@ -4042,12 +4045,12 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: async([number])->[number] across a module boundary --");
 
         writeFile("arrayx_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\"}");
         writeFile("arrayx_proj/src/array_closure_lib.deal", """
             export function syncId(b: number[]): number[] {
               return b;
             }
-            export async function tx(b: number[]): number[] {
+            export async function tx(b: number[]): Promise<number[]> {
               b[0] = b[0] + 5;
               return b;
             }
@@ -4064,7 +4067,7 @@ public class JsBackendTest {
               }
               return 1;
             }
-            export async function asyncBridge(): number {
+            export async function asyncBridge(): Promise<number> {
               let b: number[] = [0, 0];
               let out: number[] = await lib.tx(b);
               if (out[0] !== 5 || b[0] !== 5) {
@@ -4172,10 +4175,10 @@ public class JsBackendTest {
             }
             """},
             {"closure-pin-async-container", """
-            async function bump(b: number[]): number[] { b[0] = b[0] + 1; return b; }
-            class Box { f: async (b: number[]) => number[]; }
-            export async function test(): number {
-              let afs: (async (b: number[]) => number[])[] = [bump];
+            async function bump(b: number[]): Promise<number[]> { b[0] = b[0] + 1; return b; }
+            class Box { f: (b: number[]) => Promise<number[]>; }
+            export async function test(): Promise<number> {
+              let afs: ((b: number[]) => Promise<number[]>)[] = [bump];
               let box: Box = { f: bump };
               let b: number[] = [0];
               let x: number[] = await afs[0](b);
@@ -4190,12 +4193,12 @@ public class JsBackendTest {
             export function test(): number {
               let xs: (number[][] | null)[] = [];
               let deep: (number[][])[] | null = [[[0]]];
-              let t: table = {};
+              let t: Record<string, unknown> = {};
               t.xs = xs;
               t.deep = deep;
-              let back: (number[][] | null)[] = t.xs;
+              let back: (number[][] | null)[] = t.xs as (number[][] | null)[];
               let again: (number[][] | null)[] = passDeep(back);
-              let backTop: (number[][])[] | null = t.deep;
+              let backTop: (number[][])[] | null = t.deep as (number[][])[] | null;
               return again.length;
             }
             """}
@@ -4310,7 +4313,7 @@ public class JsBackendTest {
             export function test(): number {
               let s: string = "𝒜B";
               let n: number = 0;
-              for (let c: string of s) { n = n + 1; }
+              for (let c of s) { n = n + 1; }
               let len: number = strings.length(s);
               let sub: string = strings.substring(s, 0, 1);
               let parts: string[] = strings.split(s, "");
@@ -4332,21 +4335,21 @@ public class JsBackendTest {
             class Tri { field?: number | null; }
             export function test(): number {
               let missing: Tri = {};
-              if (has(missing.field)) { return 0; }
-              if (missing.field !== null) { return 0; }
+              if (Object.hasOwn(missing, "field")) { return 0; }
+              if (missing.field !== undefined) { return 0; }
               let explicitNull: Tri = { field: null };
-              if (!has(explicitNull.field) || explicitNull.field !== null) { return 0; }
+              if (!Object.hasOwn(explicitNull, "field") || explicitNull.field !== null) { return 0; }
               let value: Tri = { field: 5 };
-              if (!has(value.field)) { return 0; }
-              let v: number | null = value.field;
-              if (v !== null) {
+              if (!Object.hasOwn(value, "field")) { return 0; }
+              let v: unknown = value.field;
+              if (typeof v === "number") {
                 if (v !== 5) { return 0; }
               } else {
                 return 0;
               }
               delete value.field;
-              if (has(value.field)) { return 0; }
-              if (value.field !== null) { return 0; }
+              if (Object.hasOwn(value, "field")) { return 0; }
+              if (value.field !== undefined) { return 0; }
               return 1;
             }
             """, "three-state");
@@ -4359,16 +4362,16 @@ public class JsBackendTest {
 
         NodeResult table = runDealNode("""
             export function test(): number {
-              let t: table = {};
+              let t: Record<string, unknown> = {};
               t.x = "v";
               delete t.x;
-              let after: string | null = t.x;
-              if (after !== null) { return 0; }
+              let after: string | undefined = t.x as string | undefined;
+              if (after !== undefined) { return 0; }
               return 1;
             }
             """, "nil-table");
         check(table.exitCode() == 0 && table.output().equals("1"),
-            "a deleted table field reads as null contextually: " + table.output());
+            "a deleted Record field reads as undefined: " + table.output());
 
         NodeResult arr = runDealNode("""
             export function test(): number {
@@ -4413,15 +4416,26 @@ public class JsBackendTest {
     private static void testE8010SignatureMismatch() throws Exception {
         System.out.println("-- Node: E8010 signature mismatch --");
 
-        NodeResult run = runDealNode("""
-            function add(a: number, b: number): number { return a + b; }
-            export function test(): number {
-              let t: table = {};
-              t.g = add;
-              let f: (x: number) => number = t.g;
-              return f(1);
-            }
+        PreparedJs prepared = prepareJs("""
+            export function add(a: number): number { return a; }
+            function invoke(f: (x: number) => number): number { return f(1); }
+            export function test(): number { return invoke(add); }
             """, "e8010");
+        Path dir = deployArtifacts(checkedEmission(prepared), "Main.js");
+        NodeResult run;
+        try {
+            // Fixture-only hostile mutation after valid function admission.
+            Files.writeString(dir.resolve("probe.js"), """
+                const m = require('./Main.js');
+                m.add.$sig = '(number,number)->number';
+                try { m.test.$f(); } catch(e) {
+                  console.log('DEAL_ERROR_CODE: ' + e.$dealCode);
+                  console.log(e.message);
+                  process.exitCode = 1;
+                }
+                """);
+            run = runNodeScript(dir, "probe.js");
+        } finally { deleteDir(dir); }
         check(run.exitCode() == 1 && run.output().contains("DEAL_ERROR_CODE: E8010")
                 && run.output().contains(
                     "function signature mismatch: expected (number)->number, got (number,number)->number"),
@@ -4454,8 +4468,8 @@ public class JsBackendTest {
             class User { name: string; }
             export function test(): number {
               let u: User = { name: "a" };
-              let t: table = { item: u };
-              let u2: User = t.item;
+              let t: Record<string, unknown> = { item: u };
+              let u2: User = t.item as User;
               if (u2.name !== "a") { return 0; }
               return 1;
             }
@@ -4468,15 +4482,15 @@ public class JsBackendTest {
             class Other { name: string; }
             export function test(): number {
               let o: Other = { name: "b" };
-              let t: table = { item: o };
-              let bad: User = t.item;
+              let t: Record<string, unknown> = { item: o };
+              let bad: User = t.item as User;
               return 0;
             }
             """, "identity-wrong");
         check(wrong.exitCode() == 1
                 && wrong.output().contains("DEAL_ERROR_CODE: E8001")
                 && wrong.output().contains(
-                    "expected instance of @Main/Main.deal/User, got @Main/Main.deal/Other"),
+                    "expected class instance"),
             "a wrong-identity instance fails the boundary with E8001 naming "
                 + "both identities: " + wrong.output());
 
@@ -4720,9 +4734,9 @@ public class JsBackendTest {
                     CanonicalModuleIdentity.BuiltinModule.INSTANCE,
                     "Error")))),
             "encode(Type) emits the bare Error atom for the builtin Error type");
-        check("async(table)->table".equals(service.encode(
+        check("async(record)->record".equals(service.encode(
                 new Type.Func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE, true))),
-            "encode(Type) emits async(table)->table");
+            "encode(Type) emits async(record)->record");
 
         boolean absentIdentityThrows = false;
         try {
@@ -4765,7 +4779,7 @@ public class JsBackendTest {
               try {
                 throw { code: "", message: "x" };
               } catch (e) {
-                if (e.code === "" && e.message === "x") { return 1; }
+                if ((e as Error).code === "" && (e as Error).message === "x") { return 1; }
                 return 0;
               }
               return 0;
@@ -4774,7 +4788,7 @@ public class JsBackendTest {
               try {
                 throw { code: "C", message: "" };
               } catch (e) {
-                if (e.code === "C" && e.message === "") { return 1; }
+                if ((e as Error).code === "C" && (e as Error).message === "") { return 1; }
                 return 0;
               }
               return 0;
@@ -4814,7 +4828,7 @@ public class JsBackendTest {
               try {
                 throw { code: "USER_RETHROW", message: "boom" };
               } catch (e) {
-                throw e;
+                throw e as Error;
               }
               return null;
             }
@@ -4822,7 +4836,7 @@ public class JsBackendTest {
               try {
                 inner();
               } catch (e) {
-                if (e.code === "USER_RETHROW" && e.message === "boom") { return 1; }
+                if ((e as Error).code === "USER_RETHROW" && (e as Error).message === "boom") { return 1; }
                 return 0;
               }
               return 0;
@@ -4837,7 +4851,7 @@ public class JsBackendTest {
               try {
                 throw { code: "SHIM_CODE", message: "shim" };
               } catch (e) {
-                throw e;
+                throw e as Error;
               }
               return null;
             }
@@ -4862,27 +4876,27 @@ public class JsBackendTest {
               delete xs[1];
               if (xs.length !== 3) { return 0; }
               let first: number | null = xs[0];
-              let deleted: number | null = xs[1];
+              let deleted: unknown = xs[1];
               let last: number | null = xs[2];
               if (first !== null) {
                 if (first !== 1) { return 0; }
               } else {
                 return 0;
               }
-              if (deleted !== null) { return 0; }
+              if (deleted !== undefined) { return 0; }
               if (last !== null) {
                 if (last !== 3) { return 0; }
               } else {
                 return 0;
               }
               let n: number = 0;
-              for (let x: number of xs) { n = n + 1; }
+              for (let x of xs) { n = n + 1; }
               if (n !== 1) { return 0; }
               return 1;
             }
             """, "del-valid");
         check(valid.exitCode() == 0 && valid.output().equals("1"),
-            "a valid delete nil-outs via $rt.undefined (nullable read null, "
+            "a valid delete stores undefined (unknown read stays undefined, "
                 + "for-of stops at the deleted element, length unchanged): "
                 + valid.output());
 
@@ -4931,9 +4945,10 @@ public class JsBackendTest {
         NodeResult located = runDealNode("""
             function g(line: number): number { return line + 1; }
             export function test(): number {
-              let t: table = {};
-              t.v = "not-number";
-              return g(t.v);
+              let value: number | null = 1;
+              let clear: () => void = function(): void { value = null; };
+              if (value !== null) { clear(); return g(value); }
+              return 0;
             }
             """, "span-located");
         check(located.exitCode() == 1
@@ -4962,40 +4977,32 @@ public class JsBackendTest {
               // null); neither is admitted as a table.
               let arrayOutcome: string = "";
               try {
-                let arr: table = json.parse("[1,2]");
+                let arr: Record<string, unknown> = json.parse("[1,2]");
                 arrayOutcome = "accepted";
               } catch (e) {
-                arrayOutcome = e.code + ":" + e.message;
+                arrayOutcome = (e as Error).code + ":" + (e as Error).message;
               }
               if (arrayOutcome !== "E8001:expected table") { return 0; }
               let nullOutcome: string = "";
               try {
-                let n: table = json.parse("null");
+                let n: Record<string, unknown> = json.parse("null");
                 nullOutcome = "accepted";
               } catch (e) {
-                nullOutcome = e.code + ":" + e.message;
+                nullOutcome = (e as Error).code + ":" + (e as Error).message;
               }
               if (nullOutcome !== "E8001:expected table") { return 0; }
-              let p: table = { __proto__: "x" };
-              let ps: string = json.stringify(p);
+              let p: Record<string, unknown> = { __proto__: "x" };
+              let ps: string = json.stringify(p) as string;
               if (ps !== "{\\"__proto__\\":\\"x\\"}") { return 0; }
-              let pr: table = json.parse(ps);
-              let prs: string = json.stringify(pr);
+              let pr: Record<string, unknown> = json.parse(ps);
+              let prs: string = json.stringify(pr) as string;
               if (prs !== "{\\"__proto__\\":\\"x\\"}") { return 0; }
               let u: User = { name: "Ada" };
-              let g: table = { u: u };
-              // A class instance inside table content is not JSON-shaped:
-              // the walk rejects it with the closed unsupported-type arm
-              // (class values are never implicitly table arguments).
-              let rejected: boolean = false;
-              try {
-                let gs: string = json.stringify(g);
-              } catch (e) {
-                if (e.code === "E8001" && e.message === "unsupported type for JSON encoding: table") {
-                  rejected = true;
-                }
-              }
-              if (!rejected) { return 0; }
+              let g: Record<string, unknown> = { u: u };
+              // Generic stringify includes nominal public fields; this is
+              // distinct from generated @jsonable dynamic Record walkers.
+              let gs: string = json.stringify(g) as string;
+              if (gs !== "{\\"u\\":{\\"name\\":\\"Ada\\"}}") { return 0; }
               return 1;
             }
             """, "json-roundtrip");
@@ -5012,11 +5019,11 @@ public class JsBackendTest {
         NodeResult tuple = runArtifactScript(checkedEmission(prepareJs("""
             import * as json from "std/json";
             export function test_array(): null {
-              let t: table = json.parse("[1,2]");
+              let t: Record<string, unknown> = json.parse("[1,2]");
               return null;
             }
             export function test_null(): null {
-              let t: table = json.parse("null");
+              let t: Record<string, unknown> = json.parse("null");
               return null;
             }
             """, "json-table-boundary")), """
@@ -5058,10 +5065,16 @@ public class JsBackendTest {
         JsEmission res = checkedEmission(prepareJs("""
             import * as json from "std/json";
 
-            export function test(): number {
-              let t: table = json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
-              let xs: table[][] = t.values;
-              return xs[0].length;
+            export function decoded(): Record<string, unknown> {
+              return json.parse("{\\"values\\":[[\\"x\\"],[\\"y\\"]]}");
+            }
+            export function create(): Record<string, unknown> {
+              let slots: Record<string, unknown>[][] = [[]];
+              let run: () => number = function(): number {
+                let xs: Record<string, unknown>[][] = [slots[0]];
+                return xs[0].length;
+              };
+              return {slots: slots, run: run};
             }
             """, "json-element-kind"));
         NodeResult result = runArtifactScript(res, String.join("\n",
@@ -5069,7 +5082,10 @@ public class JsBackendTest {
             "const $rt = require(\"./deal/runtime\");",
             "const $entry = require(\"./Main\");",
             "try {",
-            "  $entry.test.$f();",
+            "  const decoded = $entry.decoded.$f().get('values');",
+            "  const holder = $entry.create.$f();",
+            "  holder.get('slots')[0] = $rt.arrayAt(decoded, 0);",
+            "  holder.get('run').$f();",
             "  process.stdout.write(\"ELEMENT: no error\");",
             "} catch (e) {",
             "  const $err = $rt.reifyError(e);",
@@ -5078,7 +5094,7 @@ public class JsBackendTest {
             "}",
             ""));
         check(result.exitCode() == 0 && result.output().equals(
-                "ELEMENT: E8003|array element 1 type mismatch|[table]|table"),
+                "ELEMENT: E8003|array element 1 type mismatch|[record]|table"),
             "the emitted artifact reports the failing decoded-array element"
                 + " as the reference `table` kind (the fixture's pinned"
                 + " tuple): " + result.output());
@@ -5109,8 +5125,8 @@ public class JsBackendTest {
             }
 
             export function test(): number {
-              let t: table = json.parse("{\\"items\\":[[1,2],[3,4]]}");
-              let xs: number[][] = t.items;
+              let t: Record<string, unknown> = json.parse("{\\"items\\":[[1,2],[3,4]]}");
+              let xs: number[][] = t.items as number[][];
               let first: number[] = xs[0];
               let alias: number[] = xs[0];
               if (first !== alias) { return 0; }
@@ -5120,9 +5136,9 @@ public class JsBackendTest {
               first[1] = 9;
               if (alias[1] !== 9) { return 0; }
               if (xs[0][1] !== 9) { return 0; }
-              if (!equivalent(json.stringify(t), "{\\"items\\":[[1,9],[3,4]]}")) { return 0; }
-              let emptyT: table = json.parse("{\\"items\\":[]}");
-              let empty: number[] = emptyT.items;
+              if (!equivalent(json.stringify(t) as string, "{\\"items\\":[[1,9],[3,4]]}")) { return 0; }
+              let emptyT: Record<string, unknown> = json.parse("{\\"items\\":[]}");
+              let empty: number[] = emptyT.items as number[];
               if (empty.length !== 0) { return 0; }
               delete xs[0];
               if (xs.length !== 2) { return 0; }
@@ -5130,15 +5146,15 @@ public class JsBackendTest {
               try {
                 let gone: number[] = xs[0];
               } catch (e) {
-                if (e.code === "E8001" && e.message === "expected array") { deleted = true; }
+                if ((e as Error).code === "E8001" && (e as Error).message === "expected array") { deleted = true; }
               }
               if (!deleted) { return 0; }
               let caught: boolean = false;
               try {
                 let oob: number[] = xs[2];
               } catch (e) {
-                if (e.code === "E8002"
-                    && e.message === "array index out of bounds") { caught = true; }
+                if ((e as Error).code === "E8002"
+                    && (e as Error).message === "array index out of bounds") { caught = true; }
               }
               if (!caught) { return 0; }
               return 1;
@@ -5188,54 +5204,54 @@ public class JsBackendTest {
             }
 
             export function test(): number {
-              let t: table = json.parse("{\\"values\\":[1,2]}");
+              let t: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
               let b: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              b.nums = t.values;
+              b.nums = t.values as number[];
               if (!equivalent(Box$toJson(b), "{\\"nums\\":[1,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let n: table = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
+              let n: Record<string, unknown> = json.parse("{\\"values\\":[[\\"a\\"],[\\"b\\",\\"c\\"]]}");
               let c: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              c.tags = n.values;
+              c.tags = n.values as string[][];
               if (!equivalent(Box$toJson(c), "{\\"nums\\":[],\\"tags\\":[[\\"a\\"],[\\"b\\",\\"c\\"]],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               let alias: number[] = b.nums;
               alias[0] = 7;
               if (!equivalent(Box$toJson(b), "{\\"nums\\":[7,2],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let empty: table = json.parse("{\\"values\\":[]}");
+              let empty: Record<string, unknown> = json.parse("{\\"values\\":[]}");
               let e: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              e.nums = empty.values;
+              e.nums = empty.values as number[];
               if (!equivalent(Box$toJson(e), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let mixed: table = json.parse("{\\"values\\":[1,null]}");
+              let mixed: Record<string, unknown> = json.parse("{\\"values\\":[1,null]}");
               let m: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              m.maybe = mixed.values;
+              m.maybe = mixed.values as (number | null)[];
               if (!equivalent(Box$toJson(m), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[1,null],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               // A decoded array's number slots keep the graph's own
               // classification: 1, 1.0 and -0.0 are number-classified and
               // spell as integers, 1.5 keeps the number spelling.
-              let numv: table = json.parse("{\\"values\\":[1,1.0,10]}");
+              let numv: Record<string, unknown> = json.parse("{\\"values\\":[1,1.0,10]}");
               let nb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nb.ns = numv.values;
+              nb.ns = numv.values as number[];
               if (!equivalent(Box$toJson(nb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1,1,10],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let nfrac: table = json.parse("{\\"values\\":[1.5,-0.0]}");
+              let nfrac: Record<string, unknown> = json.parse("{\\"values\\":[1.5,-0.0]}");
               let fb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              fb.ns = nfrac.values;
+              fb.ns = nfrac.values as number[];
               if (!equivalent(Box$toJson(fb), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[1.5,0],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
-              let nnull: table = json.parse("{\\"values\\":[1,null,2]}");
+              let nnull: Record<string, unknown> = json.parse("{\\"values\\":[1,null,2]}");
               let nm: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nm.nmaybe = nnull.values;
+              nm.nmaybe = nnull.values as (number | null)[];
               if (!equivalent(Box$toJson(nm), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[1,null,2],\\"nnested\\":[]}")) { return 0; }
-              let nnest: table = json.parse("{\\"values\\":[[1],[2,3]]}");
+              let nnest: Record<string, unknown> = json.parse("{\\"values\\":[[1],[2,3]]}");
               let nn: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              nn.nnested = nnest.values;
+              nn.nnested = nnest.values as number[][];
               if (!equivalent(Box$toJson(nn), "{\\"nums\\":[],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[[1],[2,3]]}")) { return 0; }
               // A decoded slot carrying the number variant is a number in
               // the shared classification even when its double is
               // integral, so the number row fails exactly like the other
               // lanes instead of re-rendering it as an number.
-              let nv: table = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let nv: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
               let vb: Box = {nums: [], tags: [], maybe: [], ns: [], nmaybe: [], nnested: []};
-              vb.nums = nv.values;
+              vb.nums = nv.values as number[];
               let intnum: string = "";
               try { intnum = Box$toJson(vb); }
-              catch (e) { intnum = e.code + "|" + e.message; }
+              catch (e) { intnum = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(intnum, "{\\"nums\\":[2147483647],\\"tags\\":[],\\"maybe\\":[],\\"ns\\":[],\\"nmaybe\\":[],\\"nnested\\":[]}")) { return 0; }
               return 1;
             }
@@ -5307,67 +5323,67 @@ public class JsBackendTest {
               // (1) The committed write records the written value's own
               // variant: a decoded number-variant slot rewritten with an
               // number expression is an number slot afterwards.
-              let t1: table = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let t1: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
               let b: WBox = {nums: []};
-              b.nums = t1.values;
+              b.nums = t1.values as number[];
               let alias: number[] = b.nums;
               alias[0] = 7;
               if (!equivalent(WBox$toJson(b), "{\\"nums\\":[7]}")) { return 0; }
-              let t2: table = json.parse("{\\"values\\":[2147483647.00000001]}");
-              let xs2: number[] = t2.values;
+              let t2: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let xs2: number[] = t2.values as number[];
               xs2[0] = 7;
-              if (!equivalent(json.stringify(t2), "{\\"values\\":[7]}")) { return 0; }
+              if (!equivalent(json.stringify(t2) as string, "{\\"values\\":[7]}")) { return 0; }
               // A number-typed write sets the mark, so the slot spells the
               // canonical decimal text.
-              let t3: table = json.parse("{\\"values\\":[1]}");
-              let xs3: number[] = t3.values;
+              let t3: Record<string, unknown> = json.parse("{\\"values\\":[1]}");
+              let xs3: number[] = t3.values as number[];
               xs3[0] = 1e21;
-              if (!equivalent(json.stringify(t3), "{\\"values\\":[1.0E21]}")) { return 0; }
+              if (!equivalent(json.stringify(t3) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
               // Delete then rewrite: the cleared mark never survives the
               // rewrite.
-              let t3b: table = json.parse("{\\"values\\":[1]}");
-              let nsb: number[] = t3b.values;
+              let t3b: Record<string, unknown> = json.parse("{\\"values\\":[1]}");
+              let nsb: number[] = t3b.values as number[];
               delete nsb[0];
               nsb[0] = 1e21;
-              if (!equivalent(json.stringify(t3b), "{\\"values\\":[1.0E21]}")) { return 0; }
+              if (!equivalent(json.stringify(t3b) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
               // A delete whose checked index is a read-side variant
               // carrier: an index equal to the length is the guarded
               // no-op (the carrier's numeric value, not the object, is
               // compared to the length) and an in-range carrier index
               // still commits exactly one slot.
-              let t3c: table = json.parse("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
-              let xsA: number[] = t3c.a;
-              let xsB: number[] = t3c.b;
+              let t3c: Record<string, unknown> = json.parse("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
+              let xsA: number[] = t3c.a as number[];
+              let xsB: number[] = t3c.b as number[];
               delete xsA[xsB[0]];
               if (xsA.length !== 2) { return 0; }
-              if (!equivalent(json.stringify(t3c), "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
-              let t3d: table = json.parse("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
-              let xsC: number[] = t3d.a;
-              let xsD: number[] = t3d.b;
+              if (!equivalent(json.stringify(t3c) as string, "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
+              let t3d: Record<string, unknown> = json.parse("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
+              let xsC: number[] = t3d.a as number[];
+              let xsD: number[] = t3d.b as number[];
               delete xsC[xsD[0]];
               if (xsC.length !== 3) { return 0; }
               let gone: boolean = false;
               try {
                 let missing: number = xsC[1];
               } catch (e) {
-                if (e.code === "E8001" && e.message === "expected number") { gone = true; }
+                if ((e as Error).code === "E8001" && (e as Error).message === "expected number") { gone = true; }
               }
               if (!gone) { return 0; }
               let dnil: string = "";
-              try { dnil = json.stringify(t3d); } catch (e) { dnil = e.code + "|" + e.message; }
-              if (dnil !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
+              try { dnil = json.stringify(t3d) as string; } catch (e) { dnil = (e as Error).code + "|" + (e as Error).message; }
+              if (!equivalent(dnil, "{\\"a\\":[1,null,3],\\"b\\":[1]}")) { return 0; }
 
               // (2) The element read materializes the slot's own variant at
               // the positions the declared kind cannot express.
-              let t4: table = json.parse("{\\"values\\":[2147483647.00000001]}");
-              let xs4: number[] = t4.values;
+              let t4: Record<string, unknown> = json.parse("{\\"values\\":[2147483647.00000001]}");
+              let xs4: number[] = t4.values as number[];
               let ib: IBox = {n: 0};
               ib.n = xs4[0];
               let r1: string = "";
-              try { r1 = IBox$toJson(ib); } catch (e) { r1 = e.code + "|" + e.message; }
+              try { r1 = IBox$toJson(ib); } catch (e) { r1 = (e as Error).code + "|" + (e as Error).message; }
               if (!equivalent(r1, "{\\"n\\":2147483647}")) { return 0; }
-              let t5: table = json.parse("{\\"values\\":[1]}");
-              let xs5: number[] = t5.values;
+              let t5: Record<string, unknown> = json.parse("{\\"values\\":[1]}");
+              let xs5: number[] = t5.values as number[];
               let nb: NBox = {n: 0};
               nb.n = xs5[0];
               if (!equivalent(NBox$toJson(nb), "{\\"n\\":1}")) { return 0; }
@@ -5387,7 +5403,7 @@ public class JsBackendTest {
               if (rest !== 0) { return 0; }
               let count: number = 0;
               let total: number = 0.0;
-              for (let v: number of xs5) {
+              for (let v of xs5) {
                 count = count + 1;
                 total = total + v;
               }
@@ -5401,37 +5417,37 @@ public class JsBackendTest {
               // boundary (the plain path's v = v + 0), so number(-0.0) is
               // the number zero and the following number()/write spells 0.0
               // on every lane.
-              let tz: table = json.parse("{\\"ys\\":[1.5]}");
-              let negZero: number[] = tz.ys;
+              let tz: Record<string, unknown> = json.parse("{\\"ys\\":[1.5]}");
+              let negZero: number[] = tz.ys as number[];
               negZero[0] = -0.0;
               let zn: number = (negZero[0]);
               negZero[0] = zn;
-              if (1 / zn >= 0 || json.stringify(tz) !== "{\\"ys\\":[0]}") { return 0; }
+              if (1 / zn >= 0 || (json.stringify(tz) as string) !== "{\\"ys\\":[0]}") { return 0; }
 
               // (3) A deleted slot is the internal missing value: both
               // encode walks raise the closed nil failure; a genuinely
               // present null element keeps its JSON null slot.
-              let t6: table = json.parse("{\\"values\\":[1,2]}");
-              let xs6: number[] = t6.values;
+              let t6: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
+              let xs6: number[] = t6.values as number[];
               delete xs6[0];
               let d1: string = "";
-              try { d1 = json.stringify(t6); } catch (e) { d1 = e.code + "|" + e.message; }
-              if (d1 !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
-              let t7: table = json.parse("{\\"values\\":[1,2]}");
+              try { d1 = json.stringify(t6) as string; } catch (e) { d1 = (e as Error).code + "|" + (e as Error).message; }
+              if (!equivalent(d1, "{\\"values\\":[null,2]}")) { return 0; }
+              let t7: Record<string, unknown> = json.parse("{\\"values\\":[1,2]}");
               let db: WBox = {nums: []};
-              db.nums = t7.values;
+              db.nums = t7.values as number[];
               let ys: number[] = db.nums;
               delete ys[0];
               let d2: string = "";
-              try { d2 = WBox$toJson(db); } catch (e) { d2 = e.code + "|" + e.message; }
-              if (d2 !== "E8001|value at nums[0] is not JSON serializable: nil") { return 0; }
+              try { d2 = WBox$toJson(db); } catch (e) { d2 = (e as Error).code + "|" + (e as Error).message; }
+              if (d2 !== "E8001|value at nums[0] is not JSON serializable: undefined") { return 0; }
               let zs: number[] = [1,2];
               delete zs[0];
               let d3: string = "";
-              try { d3 = json.stringify({xs: zs}); } catch (e) { d3 = e.code + "|" + e.message; }
-              if (d3 !== "E8001|unsupported type for JSON encoding: nil") { return 0; }
-              let t8: table = json.parse("{\\"values\\":[1,null,2]}");
-              if (!equivalent(json.stringify(t8), "{\\"values\\":[1,null,2]}")) { return 0; }
+              try { d3 = json.stringify({xs: zs}) as string; } catch (e) { d3 = (e as Error).code + "|" + (e as Error).message; }
+              if (!equivalent(d3, "{\\"xs\\":[null,2]}")) { return 0; }
+              let t8: Record<string, unknown> = json.parse("{\\"values\\":[1,null,2]}");
+              if (!equivalent(json.stringify(t8) as string, "{\\"values\\":[1,null,2]}")) { return 0; }
               return 1;
             }
             """, "json-decoded-array-variant");
@@ -5469,7 +5485,7 @@ public class JsBackendTest {
             + " completions project read carriers --");
 
         writeFile("carrier_proj/deal.json", """
-            {"languageVersion": "1.4", "backend": "js",
+            {"languageVersion": "1.5", "backend": "js",
              "moduleRoots": ["src"], "output": "out",
              "externals": {"host/probe": {"declaration": "bindings/probe.d.deal"}}}
             """);
@@ -5477,7 +5493,7 @@ public class JsBackendTest {
             export function isNumber(x: number): boolean;
             export function isInteger(x: number): boolean;
             export function isAbsent(x: number | null): boolean;
-            export async function echo(x: number): number;
+            export function echo(x: number): Promise<number>;
             """);
         writeFile("carrier_proj/src/main.deal", """
             import * as json from "std/json";
@@ -5485,16 +5501,16 @@ public class JsBackendTest {
 
             export function main(): null { return null; }
 
-            export async function probe(): number {
-              let t: table = json.parse("{\\"xs\\":[7.5,1]}");
-              let xs: number[] = t.xs;
+            export async function probe(): Promise<number> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[7.5,1]}");
+              let xs: number[] = t.xs as number[];
               let count: number = 0;
               if (h.isNumber(xs[0])) { count = count + 1; }
               if (h.isNumber(xs[1])) { count = count + 2; }
               if (h.isInteger(xs[1])) { count = count + 4; }
               if (h.isAbsent(null)) { count = count + 8; }
-              let nt: table = json.parse("{\\"ys\\":[null]}");
-              let nys: (number | null)[] = nt.ys;
+              let nt: Record<string, unknown> = json.parse("{\\"ys\\":[null]}");
+              let nys: (number | null)[] = nt.ys as (number | null)[];
               if (h.isAbsent(nys[0])) { count = count + 64; }
               let echoed: number = await h.echo(xs[0]);
               if (echoed === 7.5) { count = count + 16; }
@@ -5502,28 +5518,28 @@ public class JsBackendTest {
               return count;
             }
 
-            export async function run(): number {
-              let t: table = json.parse("{\\"xs\\":[7.5]}");
-              let xs: number[] = t.xs;
+            export async function run(): Promise<number> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[7.5]}");
+              let xs: number[] = t.xs as number[];
               return xs[0];
             }
 
-            export async function nested(): number[] {
-              let t: table = json.parse("{\\"xs\\":[1,7.5]}");
-              let xs: number[] = t.xs;
+            export async function nested(): Promise<number[]> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1,7.5]}");
+              let xs: number[] = t.xs as number[];
               return [xs[0], xs[1], 8.25];
             }
 
-            export async function shared(): number[][] {
-              let t: table = json.parse("{\\"xs\\":[1]}");
-              let xs: number[] = t.xs;
+            export async function shared(): Promise<number[][]> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1]}");
+              let xs: number[] = t.xs as number[];
               return [xs, xs];
             }
 
-            export async function tabled(): table {
-              let t: table = json.parse("{\\"xs\\":[7.5]}");
-              let xs: number[] = t.xs;
-              let out: table = { x: xs[0] };
+            export async function tabled(): Promise<Record<string, unknown>> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[7.5]}");
+              let xs: number[] = t.xs as number[];
+              let out: Record<string, unknown> = { x: xs[0] };
               return out;
             }
             """);
@@ -5560,7 +5576,7 @@ public class JsBackendTest {
             "    && JSON.stringify($nested.$value) === \"[1,7.5,8.25]\"",
             "    ? \"ok\" : \"bad:\" + JSON.stringify($nested)));",
             "  const $shared = await $rt.invokeAsyncExport($entry, \"shared\", \"[[number]]\");",
-            "  const $tabled = await $rt.invokeAsyncExport($entry, \"tabled\", \"table\");",
+            "  const $tabled = await $rt.invokeAsyncExport($entry, \"tabled\", \"record\");",
             "  $out.push(\"tabled=\" + ($tabled.$ok === true",
             "    && typeof $rt.tableGet($tabled.$value, \"x\") === \"number\"",
             "    && $rt.tableGet($tabled.$value, \"x\") === 7.5",
@@ -5624,7 +5640,7 @@ public class JsBackendTest {
             + " carrier-complete --");
 
         writeFile("hostparam_proj/deal.json", """
-            {"languageVersion": "1.4", "backend": "js",
+            {"languageVersion": "1.5", "backend": "js",
              "moduleRoots": ["src"], "output": "out",
              "externals": {
                "host/rest_join": {"declaration": "bindings/rest_join.d.deal"},
@@ -5660,25 +5676,25 @@ public class JsBackendTest {
             export function main(): null { return null; }
 
             export function run(): string {
-              let t: table = json.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
-              let xs: string[] = t.items;
+              let t: Record<string, unknown> = json.parse("{\\"items\\":[\\"a\\",\\"b\\"]}");
+              let xs: string[] = t.items as string[];
               let joined: string = host.join("-", xs);
               let shape: string = host.shape(xs);
               let empty: string[] = [];
               let joinedEmpty: string = host.join("+", empty);
 
-              let u: table = json.parse("{\\"nums\\":[1,null,3]}");
-              let ns: (number | null)[] = u.nums;
+              let u: Record<string, unknown> = json.parse("{\\"nums\\":[1,null,3]}");
+              let ns: (number | null)[] = u.nums as (number | null)[];
               let observed: string = host.observe(ns, ns);
 
-              let v: table = json.parse("{\\"ms\\":[1e17,1.5]}");
-              let ms: number[] = v.ms;
+              let v: Record<string, unknown> = json.parse("{\\"ms\\":[1e17,1.5]}");
+              let ms: number[] = v.ms as number[];
               let echoed: number[] = host.echoNumbers(ms);
-              let box: table = { xs: echoed };
-              let variants: string = json.stringify(box);
+              let box: Record<string, unknown> = { xs: echoed };
+              let variants: string = json.stringify(box) as string;
 
-              let w: table = json.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
-              let tags: string[] = w.tags;
+              let w: Record<string, unknown> = json.parse("{\\"tags\\":[\\"x\\",\\"y\\"]}");
+              let tags: string[] = w.tags as string[];
               let sc: cfg.ServerConfig = { port: 7, endpoint: { path: "/p" },
                 tags: tags, note: null };
               let field: string = cfg.describe(sc);
@@ -5691,10 +5707,11 @@ public class JsBackendTest {
                 + "field=" + field;
             }
 
-            export function nullParam(): table {
-              let t: table = { v: null };
-              let x: number = host.echoInt(t.v);
-              return { ok: x };
+            export function nullParam(): Record<string, unknown> {
+              let value: number | null = 1;
+              let clear: () => void = function(): void { value = null; };
+              if (value !== null) { clear(); let x: number = host.echoInt(value); return { ok: x }; }
+              return {};
             }
 
             export function nullReturn(): number {
@@ -5853,7 +5870,7 @@ public class JsBackendTest {
             + " the decoded carriers --");
 
         writeFile("completion_proj/deal.json", """
-            {"languageVersion": "1.4", "backend": "js",
+            {"languageVersion": "1.5", "backend": "js",
              "moduleRoots": ["src"], "output": "out"}
             """);
         writeFile("completion_proj/src/main.deal", """
@@ -5866,27 +5883,27 @@ public class JsBackendTest {
 
             export function main(): null { return null; }
 
-            export async function decoded(): table {
+            export async function decoded(): Promise<Record<string, unknown>> {
               return json.parse("{\\"n\\":1e17,\\"i\\":2,\\"xs\\":[1.5,1],\\"z\\":null}");
             }
 
-            export async function nullable(): (number | null)[] {
-              let t: table = json.parse("{\\"xs\\":[1,null]}");
-              let xs: (number | null)[] = t.xs;
+            export async function nullable(): Promise<(number | null)[]> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1,null]}");
+              let xs: (number | null)[] = t.xs as (number | null)[];
               return xs;
             }
 
-            export async function box(): C {
-              let t: table = json.parse("{\\"xs\\":[1]}");
-              let xs: number[] = t.xs;
+            export async function box(): Promise<C> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1]}");
+              let xs: number[] = t.xs as number[];
               let c: C = {n: 0};
               c.n = xs[0];
               return c;
             }
 
-            export async function aliased(): table {
-              let t: table = json.parse("{\\"xs\\":[1.5]}");
-              let xs: number[] = t.xs;
+            export async function aliased(): Promise<Record<string, unknown>> {
+              let t: Record<string, unknown> = json.parse("{\\"xs\\":[1.5]}");
+              let xs: number[] = t.xs as number[];
               return { a: xs, b: xs };
             }
             """);
@@ -5926,7 +5943,7 @@ public class JsBackendTest {
             "  return $walk(v);",
             "};",
             "(async () => {",
-            "  const $decoded = await $rt.invokeAsyncExport($entry, \"decoded\", \"table\");",
+            "  const $decoded = await $rt.invokeAsyncExport($entry, \"decoded\", \"record\");",
             "  if ($decoded.$ok !== true) {",
             "    $out.push(\"decoded=FAIL:\" + JSON.stringify($decoded));",
             "  } else {",
@@ -5936,7 +5953,7 @@ public class JsBackendTest {
             "    $out.push(\"decodedNull=\" + $rt.tableGet($d, \"z\"));",
             "    $out.push(\"decodedNullTable=\" + $rt.isJsonNullTable($rt.tableGet($d, \"z\")));",
             "    $out.push(\"decodedInt=\" + $rt.tableGet($d, \"i\"));",
-            "    $out.push(\"decodedCheck=\" + ($rt.checkType(\"table\", $d) === $d));",
+            "    $out.push(\"decodedCheck=\" + ($rt.checkType(\"record\", $d) === $d));",
             "  }",
             "  const $nullable = await $rt.invokeAsyncExport($entry, \"nullable\", \"[?number]\");",
             "  if ($nullable.$ok !== true) {",
@@ -5961,7 +5978,7 @@ public class JsBackendTest {
             "    $out.push(\"boxCheck=\" + ($rt.checkType($entry.C.$classname, $b) === $b));",
             "    $out.push(\"boxCarrier=\" + $hasCarrier($b));",
             "  }",
-            "  const $aliased = await $rt.invokeAsyncExport($entry, \"aliased\", \"table\");",
+            "  const $aliased = await $rt.invokeAsyncExport($entry, \"aliased\", \"record\");",
             "  if ($aliased.$ok !== true) {",
             "    $out.push(\"alias=FAIL:\" + JSON.stringify($aliased));",
             "  } else {",
@@ -6009,15 +6026,12 @@ public class JsBackendTest {
         NodeResult run = runDealNode("""
             import * as json from "std/json";
             export function test(): string {
-              let t: table = { f: function(): number { return 1; } };
-              return json.stringify(t);
+              let t: Record<string, unknown> = { f: function(): number { return 1; } };
+              return json.stringify(t) as string;
             }
             """, "json-function");
-        check(run.exitCode() == 1
-                && run.output().contains("DEAL_ERROR_CODE: E8001")
-                && run.output().contains(
-                    "unsupported type for JSON encoding: function"),
-            "a stored function value raises E8001 from stringify: "
+        check(run.exitCode() == 0 && run.output().equals("{}"),
+            "generic stringify omits a function-valued Record member: "
                 + run.output());
     }
 
@@ -6118,7 +6132,7 @@ public class JsBackendTest {
               let nb: number = applyNumber(number, 7);
               let wide: (x: number, y: number) => number = number;
               let c: number = wide(9.0, 1.0);
-              let g: (x: string) => null = console.log;
+              let g: (x: string) => void = console.log;
               g("intrinsic-console-value");
               if (a === 3 && b === 4 && nb === 7.0 && c === 9) { return 1; }
               return 0;
@@ -6134,10 +6148,10 @@ public class JsBackendTest {
         System.out.println("-- Node: async completion and error propagation --");
 
         NodeResult ok = runDealNode("""
-            async function g(): number { return 42; }
-            async function greet(name: string): string { return "hi-" + name; }
-            async function noop(): null { return; }
-            export async function test(): string {
+            async function g(): Promise<number> { return 42; }
+            async function greet(name: string): Promise<string> { return "hi-" + name; }
+            async function noop(): Promise<void> { return; }
+            export async function test(): Promise<string> {
               await noop();
               let x: number = await g();
               if (x !== 42) { return "bad"; }
@@ -6150,8 +6164,8 @@ public class JsBackendTest {
 
         NodeResult bad = runDealNode("""
             import * as math from "std/math";
-            async function bomb(): number { return math.sqrt(-1); }
-            export async function test(): number { return await bomb(); }
+            async function bomb(): Promise<number> { return math.sqrt(-1); }
+            export async function test(): Promise<number> { return await bomb(); }
             """, "async-err");
         check(bad.exitCode() == 1 && bad.output().contains("DEAL_ERROR_CODE: E8001"),
             "an awaited error propagates natively at the await site, exit 1: "
@@ -6167,17 +6181,17 @@ public class JsBackendTest {
         // completion check, and the int[] closure exercised end to end
         // inside the oracle (js-v12-int32-int[] D5).
         NodeResult ok = runInvokerNode("""
-            async function bump(b: number[]): number[] {
+            async function bump(b: number[]): Promise<number[]> {
               b[0] = b[0] + 1;
               return b;
             }
-            class Holder { f: async (b: number[]) => number[]; }
+            class Holder { f: (b: number[]) => Promise<number[]>; }
             export function main(): null { return null; }
-            export async function oracle(): null {
+            export async function oracle(): Promise<null> {
               let b: number[] = [0, 0];
               b[0] = 1;
               b[1] = 41;
-              let f: async (b: number[]) => number[] = bump;
+              let f: (b: number[]) => Promise<number[]> = bump;
               let h: Holder = { f: f };
               let out: number[] = await h.f(b);
               if (out[0] !== 2 || b[0] !== 2 || b[1] !== 41) {
@@ -6211,8 +6225,8 @@ public class JsBackendTest {
         PreparedJs negatives = prepareJs("""
             export class Payload { v: number; }
             export function main(): null { return null; }
-            export async function oracle(): null { return null; }
-            export async function takes(i: number): number { return i; }
+            export async function oracle(): Promise<null> { return null; }
+            export async function takes(i: number): Promise<number> { return i; }
             """, "invoker-wrong-name");
         JsEmission negativeEmission = checkedEmission(negatives);
         Path negativeDir = deployArtifacts(negativeEmission, "Main.js");
@@ -6236,7 +6250,7 @@ public class JsBackendTest {
             deleteDir(negativeDir);
         }
         NodeResult noMain = runInvokerNodeNoMain("""
-            export async function oracle(): null { return null; }
+            export async function oracle(): Promise<null> { return null; }
             """, "invoker-no-main", "oracle", "null");
         check(noMain.exitCode() == 0 && noMain.output().equals(
                 "INVOKE_FAILURE: missing main"),
@@ -6246,11 +6260,11 @@ public class JsBackendTest {
         // DEAL-error signal with the exact source location of the failing call.
         NodeResult rejected = runInvokerNode("""
             import * as math from "std/math";
-            async function bomb(): number {
+            async function bomb(): Promise<number> {
               return math.sqrt(-1);
             }
             export function main(): null { return null; }
-            export async function oracle(): null {
+            export async function oracle(): Promise<null> {
               await bomb();
               return null;
             }
@@ -6310,7 +6324,7 @@ public class JsBackendTest {
         // main-then-invoke run.
         NodeResult counted = runCounterNode("""
             export function main(): null { return null; }
-            export async function oracle(): null { return null; }
+            export async function oracle(): Promise<null> { return null; }
             """, "invoker-once");
         check(counted.exitCode() == 0 && counted.output().equals(
                 "INVOKE_ONCE_OK: main=1 oracle=1 value=null"),
@@ -6327,7 +6341,7 @@ public class JsBackendTest {
 
         writeFile("js_proj/deal.json", """
             {
-              "languageVersion": "1.4",
+              "languageVersion": "1.5",
               "backend": "js"
             }""");
         writeFile("js_proj/src/orch_main.deal", """
@@ -6417,7 +6431,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: nested module artifacts and relative requires --");
 
         writeFile("nest_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\"}");
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\"}");
         writeFile("nest_proj/src/app/lib.deal",
             "export function tag(): string { return \"nested-module-ok\"; }");
         writeFile("nest_proj/src/app/main.deal", """
@@ -6479,7 +6493,7 @@ public class JsBackendTest {
         System.out.println("-- Orchestrator: no-partial-artifact on rejection --");
 
         writeFile("rej_proj/deal.json",
-            "{\"languageVersion\": \"1.4\", \"backend\": \"js\","
+            "{\"languageVersion\": \"1.5\", \"backend\": \"js\","
                 + " \"moduleRoots\": [\"src\"], \"externals\": {"
                 + " \"ffi\": {\"declaration\": \"src/ffi.d.deal\""
                 + "}}}");
@@ -6541,7 +6555,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_backend_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\"\n}\n",
+                "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"js\"\n}\n",
                 StandardCharsets.UTF_8);
             Files.writeString(projectDir.resolve("main.deal"),
                 "export function main(): null { return null; }\n",
@@ -6571,7 +6585,7 @@ public class JsBackendTest {
 
             // An unknown backend stays a configuration error (E2010).
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n"
+                "{\n  \"languageVersion\": \"1.5\",\n"
                     + "  \"backend\": \"python\"\n}\n",
                 StandardCharsets.UTF_8);
             ProjectLocator.LocateResult badResult = ProjectLocator.locate(
@@ -6590,7 +6604,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_cli_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\",\n"
+                "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
@@ -6713,8 +6727,8 @@ public class JsBackendTest {
         try {
             Files.writeString(projectDir.resolve("deal.json"), """
                 {
-                  "languageVersion": "1.4",
-                  "stdlib": "1.4",
+                  "languageVersion": "1.5",
+                  "stdlib": "1.5",
                   "moduleRoots": ["src"],
                   "backend": "js",
                   "output": "build/js",
@@ -6811,7 +6825,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_deploy_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\",\n"
+                "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"]\n}\n",
                 StandardCharsets.UTF_8);
             Path entry = projectDir.resolve("main.deal");
@@ -6868,7 +6882,7 @@ public class JsBackendTest {
         try {
             projectDir = Files.createTempDirectory("deal_js_reject_test_");
             Files.writeString(projectDir.resolve("deal.json"),
-                "{\n  \"languageVersion\": \"1.4\",\n  \"backend\": \"js\",\n"
+                "{\n  \"languageVersion\": \"1.5\",\n  \"backend\": \"js\",\n"
                     + "  \"moduleRoots\": [\".\"],\n"
                     + "  \"externals\": {\"ffi\": {\"declaration\":"
                     + " \"ffi.d.deal\"}}\n}\n",

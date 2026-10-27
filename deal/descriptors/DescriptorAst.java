@@ -72,7 +72,8 @@ public sealed interface DescriptorAst extends DescriptorParseResult
     }
 
     /** A nullable descriptor atom {@code ?D}. */
-    record NullableAtom(DescriptorAst inner) implements DescriptorAst {
+    record NullableAtom(DescriptorAst inner, boolean admitsNull, boolean admitsUndefined) implements DescriptorAst {
+        public NullableAtom(DescriptorAst inner) { this(inner, true, false); }
         public NullableAtom {
             Objects.requireNonNull(inner, "inner must not be null");
         }

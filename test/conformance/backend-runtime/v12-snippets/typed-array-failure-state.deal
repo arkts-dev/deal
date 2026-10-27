@@ -1,13 +1,13 @@
 // @spec: Runtime execution model
-// @description: Corner-case subject typed-array-failure-state — Bad dynamic replacement AND append preserve previous element and length. (basis: Typed boundaries: array element assignment; Array writes)
+// @description: Rejected checked unknown replacement and append preserve previous element, alias identity and length. (basis: Checked assertions; array assignment publication)
 // @expected: runtime-ok
 // @features: v1.2, runtime, corner-case
 
 import * as c from "std/console";
 export function main(): null {
- let xs: number[] = [7]; let alias: number[] = xs; let t: table = {bad:"not-int"}; let count: number = 0;
- try {xs[0] = t.bad;} catch(e) {count = count + 1;}
- try {xs[xs.length] = t.bad;} catch(e) {count = count + 1;}
+ let xs: number[] = [7]; let alias: number[] = xs; let t: Record<string, unknown> = {bad:"not-int"}; let count: number = 0;
+ try {xs[0] = t.bad as number;} catch(e) {count = count + 1;}
+ try {xs[xs.length] = t.bad as number;} catch(e) {count = count + 1;}
  if(count !== 2 || alias.length !== 1 || alias[0] !== 7) {throw {code:"TEST_FAIL",message:"failed element checks mutated storage"};}
  c.log("typed-array-failure-state"); return null;
 }

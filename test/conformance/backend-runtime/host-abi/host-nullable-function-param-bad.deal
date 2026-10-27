@@ -4,14 +4,16 @@
 // @features: modules, host-abi, functions, runtime-errors
 
 import * as host from "host/nullable_fn";
+import * as mutation from "host/signature_mutation";
 
 function badFn(s: string): number {
   return 1;
 }
 
 export function test_host_nullable_function_param_bad(): number {
-  let holder: table = { cb: badFn };
-  return host.register(holder.cb);
+  let source: (x: number) => number = function(x: number): number { return x; };
+  if (!mutation.replaceSignature({value: source}, "(string)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  return host.register(source);
 }
 
 export function main(): null {

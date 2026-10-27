@@ -66,7 +66,7 @@ public class DeclaredBodyCarrierProductionTest {
     private static final Set<String> RECURSION_CASES = Set.of(
         "direct-accum", "alias-accum", "direct-accum-fail", "alias-accum-fail", "seq-await");
     private static final String DEAL_JSON =
-        "{\"languageVersion\":\"1.4\",\"moduleRoots\":[\"src\"],"
+        "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"],"
             + "\"output\":\"out\",\"backend\":\"luajit\"}\n";
 
     private record FailurePin(String code, String anchor) {}
@@ -168,8 +168,8 @@ public class DeclaredBodyCarrierProductionTest {
             null, "null", 1, 0, false, false),
         body("acyclic-sibling-async", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let c: async () => number = make(10);
+            export async function drive(): Promise<number> {
+              let c: () => Promise<number> = make(10);
               let v: number = await c();
               if (v === 10) {
                 console.log("declared-body-sibling-async-ok");
@@ -179,18 +179,18 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            function make(base: number): async () => number {
-              async function target(): number { return base; }
-              async function caller(): number { return await target(); }
+            function make(base: number): () => Promise<number> {
+              async function target(): Promise<number> { return base; }
+              async function caller(): Promise<number> { return await target(); }
               return caller;
             }
             """, List.of("declared-body-sibling-async-ok"), "drive", "num:0x1.4p3",
             1, 0, false, false),
         body("two-escaped-instances-async", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async () => number = make(10);
-              let b: async () => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: () => Promise<number> = make(10);
+              let b: () => Promise<number> = make(20);
               let av: number = await a();
               if (av === 10) {
                 console.log("declared-body-async-instance-a-ok");
@@ -206,9 +206,9 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             export function main(): null { return null; }
-            function make(base: number): async () => number {
-              async function target(): number { return base; }
-              async function caller(): number { return await target(); }
+            function make(base: number): () => Promise<number> {
+              async function target(): Promise<number> { return base; }
+              async function caller(): Promise<number> { return await target(); }
               return caller;
             }
             """, List.of("declared-body-async-instance-a-ok",
@@ -233,7 +233,7 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("declared-body-forward-alias-ok"), null, "null", 0, 0, false, false),
         body("forward-alias-async", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await g();
               if (v === 5) {
                 console.log("declared-body-forward-alias-async-ok");
@@ -243,12 +243,12 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            async function g(): number {
-              let alias: async () => number = f;
+            async function g(): Promise<number> {
+              let alias: () => Promise<number> = f;
               return await alias();
             }
-            async function f(): number { return await helper(); }
-            async function helper(): number { return 5; }
+            async function f(): Promise<number> { return await helper(); }
+            async function helper(): Promise<number> { return 5; }
             """, List.of("declared-body-forward-alias-async-ok"), "drive", "num:0x1.4p2",
             0, 0, false, false),
         body("forward-alias-exported", """
@@ -271,7 +271,7 @@ public class DeclaredBodyCarrierProductionTest {
             0, 1, false, false),
         body("forward-alias-exported-async", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await g();
               if (v === 5) {
                 console.log("declared-body-forward-alias-exported-async-ok");
@@ -281,12 +281,12 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            async function g(): number {
-              let alias: async () => number = f;
+            async function g(): Promise<number> {
+              let alias: () => Promise<number> = f;
               return await alias();
             }
-            async function helper(): number { return 5; }
-            export async function f(): number { return await helper(); }
+            async function helper(): Promise<number> { return 5; }
+            export async function f(): Promise<number> { return await helper(); }
             """, List.of("declared-body-forward-alias-exported-async-ok"), "drive", "num:0x1.4p2",
             0, 1, false, false),
         body("forward-alias-exported-reverse", """
@@ -309,14 +309,14 @@ public class DeclaredBodyCarrierProductionTest {
             0, 1, false, false),
         body("forward-alias-exported-async-reverse", """
             import * as console from "std/console";
-            export async function f(): number { return await helper(); }
-            async function helper(): number { return 5; }
-            async function g(): number {
-              let alias: async () => number = f;
+            export async function f(): Promise<number> { return await helper(); }
+            async function helper(): Promise<number> { return 5; }
+            async function g(): Promise<number> {
+              let alias: () => Promise<number> = f;
               return await alias();
             }
             export function main(): null { return null; }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await g();
               if (v === 5) {
                 console.log("declared-body-forward-alias-exported-async-reverse-ok");
@@ -329,7 +329,7 @@ public class DeclaredBodyCarrierProductionTest {
             "drive", "num:0x1.4p2", 0, 1, false, false),
         body("exported-direct-await-async", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f();
               if (v === 5) {
                 console.log("declared-body-exported-direct-await-ok");
@@ -339,13 +339,13 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            export async function f(): number { return 5; }
+            export async function f(): Promise<number> { return 5; }
             """, List.of("declared-body-exported-direct-await-ok"), "drive", "num:0x1.4p2",
             0, 1, false, false),
         body("forward-alias-exported-async-recursive", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let alias: async (n: number) => number = f;
+            export async function drive(): Promise<number> {
+              let alias: (n: number) => Promise<number> = f;
               let v: number = await alias(1);
               if (v === 1) {
                 console.log("declared-body-recursive-alias-ok");
@@ -355,7 +355,7 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            export async function f(n: number): number {
+            export async function f(n: number): Promise<number> {
               let result: number = 0;
               if (n > 0) {
                 let nested: number = await f(n - 1);
@@ -367,7 +367,7 @@ public class DeclaredBodyCarrierProductionTest {
             0, 2, true, false),
         body("exported-direct-await-async-recursive", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(1);
               if (v === 1) {
                 console.log("declared-body-direct-recursive-ok");
@@ -377,7 +377,7 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            export async function f(n: number): number {
+            export async function f(n: number): Promise<number> {
               let result: number = 0;
               if (n > 0) {
                 let nested: number = await f(n - 1);
@@ -389,7 +389,7 @@ public class DeclaredBodyCarrierProductionTest {
             0, 2, true, false),
         body("exported-recursive-enclosing-state", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(3);
               if (v === 12) {
                 console.log("declared-body-enclosing-state-ok");
@@ -399,7 +399,7 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            export async function f(n: number): number {
+            export async function f(n: number): Promise<number> {
               let step: number = n;
               if (n <= 0) { return 0; }
               let nested: number = await f(n - 1);
@@ -409,8 +409,8 @@ public class DeclaredBodyCarrierProductionTest {
             0, 2, true, false),
         body("forward-alias-exported-async-deep", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let alias: async (n: number) => number = f;
+            export async function drive(): Promise<number> {
+              let alias: (n: number) => Promise<number> = f;
               let v: number = await alias(3);
               if (v === 3) {
                 console.log("declared-body-recursive-deep-ok");
@@ -420,7 +420,7 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            export async function f(n: number): number {
+            export async function f(n: number): Promise<number> {
               let result: number = 0;
               if (n > 0) {
                 let nested: number = await f(n - 1);
@@ -502,7 +502,7 @@ public class DeclaredBodyCarrierProductionTest {
             1, 0, true, false),
         body("module-group-forward-alias-async", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(1);
               if (v === 42) {
                 console.log("declared-body-module-group-forward-alias-async-ok");
@@ -512,22 +512,22 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            async function f(n: number): number {
-              let alias: async (n: number) => number = h;
+            async function f(n: number): Promise<number> {
+              let alias: (n: number) => Promise<number> = h;
               if (n <= 0) { return await alias(0); }
               return await g(n - 1);
             }
-            async function g(n: number): number { return await f(n); }
-            async function h(n: number): number {
+            async function g(n: number): Promise<number> { return await f(n); }
+            async function h(n: number): Promise<number> {
               if (n <= 0) { return 42; }
               return await j(n - 1);
             }
-            async function j(n: number): number { return await h(n); }
+            async function j(n: number): Promise<number> { return await h(n); }
             """, List.of("declared-body-module-group-forward-alias-async-ok"),
             "drive", "num:0x1.5p5", 1, 0, true, false),
         body("module-group-reverse-alias-async", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(1);
               if (v === 42) {
                 console.log("declared-body-module-group-reverse-alias-async-ok");
@@ -537,17 +537,17 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            async function h(n: number): number {
+            async function h(n: number): Promise<number> {
               if (n <= 0) { return 42; }
               return await j(n - 1);
             }
-            async function j(n: number): number { return await h(n); }
-            async function f(n: number): number {
-              let alias: async (n: number) => number = h;
+            async function j(n: number): Promise<number> { return await h(n); }
+            async function f(n: number): Promise<number> {
+              let alias: (n: number) => Promise<number> = h;
               if (n <= 0) { return await alias(0); }
               return await g(n - 1);
             }
-            async function g(n: number): number { return await f(n); }
+            async function g(n: number): Promise<number> { return await f(n); }
             """, List.of("declared-body-module-group-reverse-alias-async-ok"),
             "drive", "num:0x1.5p5", 1, 0, true, false),
         body("forward-alias-exported-adapter", """
@@ -580,8 +580,8 @@ public class DeclaredBodyCarrierProductionTest {
             null, "null", 0, 0, false, true),
         body("forward-alias-exported-adapter-async", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let alias: async (n: number, extra: number) => number = f;
+            export async function drive(): Promise<number> {
+              let alias: (n: number, extra: number) => Promise<number> = f;
               let v: number = await alias(1, 7);
               if (v === 10) {
                 console.log("declared-body-forward-alias-exported-adapter-async-ok");
@@ -591,14 +591,14 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            export async function f(n: number): number { return n * 10; }
+            export async function f(n: number): Promise<number> { return n * 10; }
             """, List.of("declared-body-forward-alias-exported-adapter-async-ok"),
             "drive", "num:0x1.4p3", 0, 1, false, true),
         body("forward-alias-exported-adapter-async-reverse", """
             import * as console from "std/console";
-            export async function f(n: number): number { return n * 10; }
-            export async function drive(): number {
-              let alias: async (n: number, extra: number) => number = f;
+            export async function f(n: number): Promise<number> { return n * 10; }
+            export async function drive(): Promise<number> {
+              let alias: (n: number, extra: number) => Promise<number> = f;
               let v: number = await alias(1, 7);
               if (v === 10) {
                 console.log("declared-body-forward-alias-exported-adapter-async-reverse-ok");
@@ -613,9 +613,9 @@ public class DeclaredBodyCarrierProductionTest {
         body("adapter-over-async-external", """
             import * as console from "std/console";
             import * as Lib from "./adapter_lib";
-            export async function drive(): number {
-              let src: async (x: number) => number = Lib.plus;
-              let f: async (a: number, b: number) => number = src;
+            export async function drive(): Promise<number> {
+              let src: (x: number) => Promise<number> = Lib.plus;
+              let f: (a: number, b: number) => Promise<number> = src;
               let v: number = await f(1, 2);
               if (v === 2) {
                 console.log("declared-body-adapter-external-ok");
@@ -627,12 +627,12 @@ public class DeclaredBodyCarrierProductionTest {
             export function main(): null { return null; }
             """, List.of("declared-body-adapter-external-ok"), "drive", "num:0x1.0p1",
             0, 0, false, false, Map.of("adapter_lib.deal", """
-                export async function plus(x: number): number { return x + 1; }
+                export async function plus(x: number): Promise<number> { return x + 1; }
                 """)),
         body("escaped-nested-source-adapter-async", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let c: async () => number = make(10);
+            export async function drive(): Promise<number> {
+              let c: () => Promise<number> = make(10);
               let v: number = await c();
               if (v === 10) {
                 console.log("declared-body-nested-source-adapter-ok");
@@ -642,10 +642,10 @@ public class DeclaredBodyCarrierProductionTest {
               return v;
             }
             export function main(): null { return null; }
-            function make(base: number): async () => number {
-              async function target(): number { return base; }
-              async function caller(): number {
-                let wide: async (extra: number) => number = target;
+            function make(base: number): () => Promise<number> {
+              async function target(): Promise<number> { return base; }
+              async function caller(): Promise<number> {
+                let wide: (extra: number) => Promise<number> = target;
                 return await wide(0);
               }
               return caller;
@@ -654,9 +654,9 @@ public class DeclaredBodyCarrierProductionTest {
             1, 0, false, false),
         body("two-escaped-nested-source-adapters-async", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async () => number = make(10);
-              let b: async () => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: () => Promise<number> = make(10);
+              let b: () => Promise<number> = make(20);
               let av: number = await a();
               if (av === 10) {
                 console.log("declared-body-nested-adapter-instance-a-ok");
@@ -672,10 +672,10 @@ public class DeclaredBodyCarrierProductionTest {
               return av + bv;
             }
             export function main(): null { return null; }
-            function make(base: number): async () => number {
-              async function target(): number { return base; }
-              async function caller(): number {
-                let wide: async (extra: number) => number = target;
+            function make(base: number): () => Promise<number> {
+              async function target(): Promise<number> { return base; }
+              async function caller(): Promise<number> {
+                let wide: (extra: number) => Promise<number> = target;
                 return await wide(0);
               }
               return caller;
@@ -706,10 +706,10 @@ public class DeclaredBodyCarrierProductionTest {
         group("called-implicit", """
             import * as console from "std/console";
             export function main(): null {
-              function f(n: number): null {
+              function f(n: number): void {
                 if (n > 0) { g(n - 1); }
               }
-              function g(n: number): null {
+              function g(n: number): void {
                 if (n > 1) { f(n - 1); }
               }
               f(4);
@@ -847,8 +847,8 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of(), false, List.of(false, false), false, false),
         group("never-called-implicit", """
             export function main(): null {
-              function f(): null { let gRef: () => null = g; }
-              function g(): null { let fRef: () => null = f; }
+              function f(): void { let gRef: () => void = g; }
+              function g(): void { let fRef: () => void = f; }
               return null;
             }
             """, List.of(), false, List.of(false, false), true, false),
@@ -989,17 +989,18 @@ public class DeclaredBodyCarrierProductionTest {
                 let fRef: (n: number) => number = f;
                 return n;
               }
-              let t: table = { x: "wrong" };
-              f(t.x);
+              let value: number | null = 1;
+              let clear: () => void = function(): void { value = null; };
+              if (value !== null) { clear(); f(value); }
               return null;
             }
             """, List.of(), false, List.of(true, false), false, false,
             new FailurePin("E8001", "function f(n: "), null, "null", false),
         group("async-escaped-two-groups", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 10) {
                 console.log("async-escaped-group-a-ok");
@@ -1014,29 +1015,31 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 return await g(n - 1);
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
             """, List.of("async-escaped-group-a-ok", "async-escaped-group-b-ok"),
             true, List.of(true, true), false, false, null, "drive", "num:0x1.ep4", false),
         group("async-param-origin", """
-            export async function drive(): number {
-              let bad: table = { x: "wrong" };
-              let a: async (n: number) => number = make(10, bad);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
               return await a(3);
             }
-            function make(base: number, bad: table): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
-                return await g(bad.x);
+                let value: number | null = 1;
+                let clear: () => void = function(): void { value = null; };
+                if (value !== null) { clear(); return await g(value); }
+                return base;
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
@@ -1044,9 +1047,9 @@ public class DeclaredBodyCarrierProductionTest {
             new FailurePin("E8001", "async function g(n: "), "drive", "null", false),
         group("async-escaped-two-groups-alias", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 10) {
                 console.log("async-escaped-group-alias-a-ok");
@@ -1061,13 +1064,13 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
-                let sibling: async (n: number) => number = g;
+                let sibling: (n: number) => Promise<number> = g;
                 return await sibling(n - 1);
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
@@ -1075,9 +1078,9 @@ public class DeclaredBodyCarrierProductionTest {
             true, List.of(true, true), false, false, null, "drive", "num:0x1.ep4", false),
         group("async-escaped-two-groups-alias-later", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 10) {
                 console.log("async-escaped-group-alias-later-a-ok");
@@ -1092,11 +1095,11 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function g(n: number): number { return await f(n); }
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function g(n: number): Promise<number> { return await f(n); }
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
-                let sibling: async (n: number) => number = g;
+                let sibling: (n: number) => Promise<number> = g;
                 return await sibling(n - 1);
               }
               return f;
@@ -1107,9 +1110,9 @@ public class DeclaredBodyCarrierProductionTest {
             false, false, null, "drive", "num:0x1.ep4", false),
         group("async-escaped-two-groups-param", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 13) {
                 console.log("async-escaped-group-param-a-ok");
@@ -1124,13 +1127,13 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 await g(n - 1);
                 return base + n;
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
@@ -1138,9 +1141,9 @@ public class DeclaredBodyCarrierProductionTest {
             true, List.of(true, true), false, false, null, "drive", "num:0x1.2p5", false),
         group("async-escaped-two-groups-alias-param", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 13) {
                 console.log("async-escaped-group-alias-param-a-ok");
@@ -1155,14 +1158,14 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
-                let sibling: async (n: number) => number = g;
+                let sibling: (n: number) => Promise<number> = g;
                 await sibling(n - 1);
                 return base + n;
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
@@ -1171,9 +1174,9 @@ public class DeclaredBodyCarrierProductionTest {
             false, false, null, "drive", "num:0x1.2p5", false),
         group("async-escaped-two-groups-captured", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 16) {
                 console.log("async-escaped-group-captured-a-ok");
@@ -1188,15 +1191,15 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let m: number = n;
                 let get: () => number = function(): number { return n + m; };
                 await g(n - 1);
                 return base + n + m;
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
@@ -1205,9 +1208,9 @@ public class DeclaredBodyCarrierProductionTest {
             false, false, null, "drive", "num:0x1.5p5", false),
         group("async-escaped-two-groups-alias-captured", """
             import * as console from "std/console";
-            export async function drive(): number {
-              let a: async (n: number) => number = make(10);
-              let b: async (n: number) => number = make(20);
+            export async function drive(): Promise<number> {
+              let a: (n: number) => Promise<number> = make(10);
+              let b: (n: number) => Promise<number> = make(20);
               let av: number = await a(3);
               if (av === 16) {
                 console.log("async-escaped-group-alias-captured-a-ok");
@@ -1222,16 +1225,16 @@ public class DeclaredBodyCarrierProductionTest {
               }
               return av + bv;
             }
-            function make(base: number): async (n: number) => number {
-              async function f(n: number): number {
+            function make(base: number): (n: number) => Promise<number> {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) { return base; }
                 let m: number = n;
                 let get: () => number = function(): number { return n + m; };
-                let sibling: async (n: number) => number = g;
+                let sibling: (n: number) => Promise<number> = g;
                 await sibling(n - 1);
                 return base + n + m;
               }
-              async function g(n: number): number { return await f(n); }
+              async function g(n: number): Promise<number> { return await f(n); }
               return f;
             }
             export function main(): null { return null; }
@@ -1273,14 +1276,14 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("self-alias-module-sync-ok"), null, "null", false),
         self("nested-async", """
             import * as console from "std/console";
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let base: number = 5;
-              async function f(n: number): number {
+              async function f(n: number): Promise<number> {
                 if (n <= 0) {
                   console.log("self-alias-nested-async-leaf");
                   return base;
                 }
-                let again: async (n: number) => number = f;
+                let again: (n: number) => Promise<number> = f;
                 return await again(n - 1);
               }
               let v: number = await f(4);
@@ -1296,15 +1299,15 @@ public class DeclaredBodyCarrierProductionTest {
             "drive", "num:0x1.4p2", true),
         self("module-async", """
             import * as console from "std/console";
-            async function f(n: number): number {
+            async function f(n: number): Promise<number> {
               if (n <= 0) {
                 console.log("self-alias-module-async-leaf");
                 return 5;
               }
-              let again: async (n: number) => number = f;
+              let again: (n: number) => Promise<number> = f;
               return await again(n - 1);
             }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(4);
               if (v === 5) {
                 console.log("self-alias-module-async-ok");
@@ -1318,12 +1321,12 @@ public class DeclaredBodyCarrierProductionTest {
             "drive", "num:0x1.4p2", false),
         self("direct-accum", """
             import * as console from "std/console";
-            async function f(n: number): number {
+            async function f(n: number): Promise<number> {
               if (n <= 0) { return 0; }
               let v: number = await f(n - 1);
               return n + v;
             }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(3);
               if (v === 6) {
                 console.log("async-recursion-direct-ok");
@@ -1336,13 +1339,13 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("async-recursion-direct-ok"), "drive", "num:0x1.8p2", false),
         self("alias-accum", """
             import * as console from "std/console";
-            async function f(n: number): number {
+            async function f(n: number): Promise<number> {
               if (n <= 0) { return 0; }
-              let again: async (n: number) => number = f;
+              let again: (n: number) => Promise<number> = f;
               let v: number = await again(n - 1);
               return n + v;
             }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let v: number = await f(3);
               if (v === 6) {
                 console.log("async-recursion-alias-ok");
@@ -1355,20 +1358,20 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("async-recursion-alias-ok"), "drive", "num:0x1.8p2", false),
         self("direct-accum-fail", """
             import * as console from "std/console";
-            async function f(n: number): number {
+            async function f(n: number): Promise<number> {
               if (n <= 0) { return 0; }
               let v: number = await f(n - 1);
               let values: number[] = [1];
               let q: number = values[n - 2];
               return n + v + q;
             }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               try {
                 let v: number = await f(3);
                 console.log("async-recursion-direct-fail-bad");
                 return v;
               } catch (e) {
-                console.log("async-recursion-direct-fail:" + e.code);
+                console.log("async-recursion-direct-fail:" + (e as Error).code);
                 return 1;
               }
             }
@@ -1376,21 +1379,21 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("async-recursion-direct-fail:E8002"), "drive", "num:0x1.0p0", false),
         self("alias-accum-fail", """
             import * as console from "std/console";
-            async function f(n: number): number {
+            async function f(n: number): Promise<number> {
               if (n <= 0) { return 0; }
-              let again: async (n: number) => number = f;
+              let again: (n: number) => Promise<number> = f;
               let v: number = await again(n - 1);
               let values: number[] = [1];
               let q: number = values[n - 2];
               return n + v + q;
             }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               try {
                 let v: number = await f(3);
                 console.log("async-recursion-alias-fail-bad");
                 return v;
               } catch (e) {
-                console.log("async-recursion-alias-fail:" + e.code);
+                console.log("async-recursion-alias-fail:" + (e as Error).code);
                 return 1;
               }
             }
@@ -1398,13 +1401,13 @@ public class DeclaredBodyCarrierProductionTest {
             """, List.of("async-recursion-alias-fail:E8002"), "drive", "num:0x1.0p0", false),
         self("seq-await", """
             import * as console from "std/console";
-            async function step(n: number): number { return n; }
-            async function fail(n: number): number {
+            async function step(n: number): Promise<number> { return n; }
+            async function fail(n: number): Promise<number> {
               let values: number[] = [1];
               let q: number = values[n];
               return q;
             }
-            export async function drive(): number {
+            export async function drive(): Promise<number> {
               let i: number = 0;
               let total: number = 0;
               while (i < 100) {
@@ -1415,7 +1418,7 @@ public class DeclaredBodyCarrierProductionTest {
                 let bad: number = await fail(1);
                 console.log("seq-await-fail-bad");
               } catch (e) {
-                console.log("seq-await-fail:" + e.code);
+                console.log("seq-await-fail:" + (e as Error).code);
               }
               return total;
             }
@@ -1901,7 +1904,7 @@ public class DeclaredBodyCarrierProductionTest {
                         && testCase.failure().code().equals(failure.error().code())
                         && origin != null && origin.equals(failure.error().origin())
                         && "expected number".equals(failure.error().message())
-                        && "number".equals(failure.error().expected()) && "string".equals(failure.error().actual()),
+                        && "number".equals(failure.error().expected()) && "null".equals(failure.error().actual()),
                     testCase.name() + " [" + run.consumer() + "]: exact annotation-origin failure tuple " + run.terminal());
             }
         }

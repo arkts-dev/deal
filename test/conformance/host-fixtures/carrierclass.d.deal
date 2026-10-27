@@ -28,13 +28,13 @@ export class Holder {
   items: Config[];
 }
 
-export async function describeAsync(c: Config): number;
-export async function makeAsync(): Config;
+export function describeAsync(c: Config): Promise<number>;
+export function makeAsync(): Promise<Config>;
 export function makeSync(): Config;
 export function makeAll(): Config[];
 export function maybeMake(flag: boolean): Config | null;
 export function describeOrNull(c: Config | null): number;
-export async function maybeMakeAsync(flag: boolean): Config | null;
+export function maybeMakeAsync(flag: boolean): Promise<Config | null>;
 export function makeHolder(): Holder;
 export function consume(cb: (c: Config) => Config): number;
 export function makeWrongKind(): Holder;

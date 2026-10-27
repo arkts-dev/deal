@@ -29,6 +29,8 @@ public final class FailureProjections {
     public enum CarrierKind {
         /** The absent marker (Lua {@code nil}, the JVM missing sentinel). */
         ABSENT,
+        /** The distinct DEAL undefined value. */
+        UNDEFINED,
         /** The DEAL language-null sentinel. */
         LANGUAGE_NULL,
         /** A boolean carrier. */
@@ -54,7 +56,7 @@ public final class FailureProjections {
 
     /**
      * The typed-boundary projection's token (P2 item 1): the absent marker
-     * is {@code nil}, the language-null sentinel {@code null}, the closed
+     * reads as {@code undefined}, the language-null sentinel {@code null}, the closed
      * kinds their own tokens, and a class instance its carried canonical
      * class atom (never a target class name, never the {@code class:}
      * IR/trace spelling).
@@ -63,8 +65,9 @@ public final class FailureProjections {
     public static String typedBoundaryToken(ActualKind kind, String classId) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case MISSING -> "nil";
+            case MISSING -> "undefined";
             case NULL -> "null";
+            case UNDEFINED -> "undefined";
             case BOOLEAN -> "boolean";
             case NUMBER -> "number";
             case STRING -> "string";
@@ -108,6 +111,7 @@ public final class FailureProjections {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
             case ABSENT -> "nil";
+            case UNDEFINED -> "undefined";
             case LANGUAGE_NULL -> "table";
             case BOOLEAN -> "boolean";
             case STRING -> "string";
@@ -127,6 +131,9 @@ public final class FailureProjections {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
         return switch (descriptor) {
             case RuntimeDescriptor.Null ignored -> "null";
+            case RuntimeDescriptor.Undefined ignored -> "undefined";
+            case RuntimeDescriptor.Unknown ignored -> "unknown";
+            case RuntimeDescriptor.Void ignored -> "undefined";
             case RuntimeDescriptor.Boolean ignored -> "boolean";
 
             case RuntimeDescriptor.Number ignored -> "number";

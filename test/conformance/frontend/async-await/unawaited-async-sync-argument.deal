@@ -3,10 +3,10 @@
 // @expected: compile-error E3014
 // @features: async, await, diagnostics
 
-async function fetch(): number { return 7; }
+async function fetch(): Promise<number> { return 7; }
 function consume(x: number): number { return x; }
 
-async function test_nested_sync_argument(): number {
+async function test_nested_sync_argument(): Promise<number> {
   return consume(fetch());
 }
 

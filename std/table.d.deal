@@ -1,2 +1,2 @@
 // DEAL Standard Library: std/table (declaration)
-export function keys(t: table): string[];
+export function keys(t: Record<string, unknown>): string[];

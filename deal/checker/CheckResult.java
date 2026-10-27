@@ -2,6 +2,7 @@ package deal.checker;
 
 import deal.ast.ClassDeclaration;
 import deal.ast.ExpressionNode;
+import deal.ast.InstanceofExpr;
 import deal.ast.StatementNode;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.types.Type;
@@ -19,8 +20,20 @@ public record CheckResult(
     Map<ClassDeclaration, SymbolTable> classScopes,
     Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
     Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations,
-    Set<ExpressionNode> narrowedReads
+    Set<ExpressionNode> narrowedReads,
+    Map<InstanceofExpr, Type.Class> instanceofTargets
 ) {
+
+    public CheckResult(Map<ExpressionNode, Type> typeMap, SymbolTable symbolTable,
+                       Map<StatementNode, SymbolTable> scopeMap,
+                       List<CompilerDiagnostic> diagnostics,
+                       Map<ClassDeclaration, SymbolTable> classScopes,
+                       Map<ExpressionNode, ClassDeclaration> constructedClassDecls,
+                       Map<ExpressionNode, Symbol.ClassSymbol> exactClassDeclarations,
+                       Set<ExpressionNode> narrowedReads) {
+        this(typeMap, symbolTable, scopeMap, diagnostics, classScopes,
+            constructedClassDecls, exactClassDeclarations, narrowedReads, Map.of());
+    }
 
     /**
      * Convenience constructor for callers without the narrowing facts
@@ -92,6 +105,7 @@ public record CheckResult(
             throw new IllegalArgumentException(
                 "exactClassDeclarations must not be null");
         }
+        instanceofTargets = Map.copyOf(Objects.requireNonNull(instanceofTargets, "instanceofTargets"));
         narrowedReads = Set.copyOf(
             Objects.requireNonNull(narrowedReads, "narrowedReads must not be null"));
     }

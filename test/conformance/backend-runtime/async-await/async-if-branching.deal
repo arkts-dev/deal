@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: async, await, control-flow, runtime
 
-async function g(x: number): number { return x * 2; }
+async function g(x: number): Promise<number> { return x * 2; }
 
-async function branchValue(n: number): number {
+async function branchValue(n: number): Promise<number> {
   if (n > 0) {
     return await g(n);
   } else {
@@ -13,7 +13,7 @@ async function branchValue(n: number): number {
   }
 }
 
-export async function f(): number {
+export async function f(): Promise<number> {
   let positive: number = await branchValue(5);
   if (positive !== 10) {
     throw { code: "TEST_FAIL", message: "positive branch await result mismatch" };

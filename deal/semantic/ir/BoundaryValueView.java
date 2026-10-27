@@ -12,8 +12,21 @@ public record BoundaryValueView(
     RuntimeDescriptor.Func functionSignature,
     List<BoundaryValueView> elements,
     boolean decodedArrayMark,
-    UnicodeScalars.Defect unicodeDefect
+    UnicodeScalars.Defect unicodeDefect,
+    RuntimeDescriptor arrayElementDescriptor
 ) {
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+                             RuntimeDescriptor.Func functionSignature,
+                             List<BoundaryValueView> elements, boolean decodedArrayMark,
+                             UnicodeScalars.Defect unicodeDefect) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark, unicodeDefect, null);
+    }
+
+    public BoundaryValueView withArrayElementDescriptor(RuntimeDescriptor descriptor) {
+        if (kind != ActualKind.ARRAY) throw new IllegalArgumentException("Only arrays carry element descriptors");
+        return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
+            decodedArrayMark, unicodeDefect, descriptor);
+    }
 
     /**
      * The classification-only view constructor: every kind but
@@ -171,7 +184,7 @@ public record BoundaryValueView(
     public static BoundaryValueView of(ActualKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case NULL, MISSING, BOOLEAN, STRING, TABLE, ASYNC_OPERATION,
+            case NULL, UNDEFINED, MISSING, BOOLEAN, STRING, TABLE, ASYNC_OPERATION,
                  NOTHING, INVALID_UNICODE ->
                 new BoundaryValueView(kind, null, null, null, null, false);
             case CLASS, NUMBER, FUNCTION, ARRAY ->

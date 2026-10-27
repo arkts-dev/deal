@@ -28,7 +28,7 @@ export class Farm {
   primary: Endpoint;
 }
 
-export async function describeAsync(s: ServerConfig, g: (x: number) => number): string;
-export async function make(): ServerConfig;
+export function describeAsync(s: ServerConfig, g: (x: number) => number): Promise<string>;
+export function make(): Promise<ServerConfig>;
 export function makeAll(): ServerConfig[];
 export function makeFarm(): Farm;

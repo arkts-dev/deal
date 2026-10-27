@@ -29,8 +29,8 @@ export function test_array_module_identity(): string {
   if (c[0] !== 1) {
     throw { code: "TEST_FAIL", message: "imported transform content mismatch" };
   }
-  let holder: table = { f: f };
-  let g: (x: number[]) => number[] = holder.f;
+  let holder: Record<string, unknown> = { f: f };
+  let g: (x: number[]) => number[] = holder.f as (x: number[]) => number[];
   let d: number[] = [0];
   let ret2: number[] = g(d);
   if (!(ret2 === d) || d[0] !== 1) {

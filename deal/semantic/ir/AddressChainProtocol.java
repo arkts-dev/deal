@@ -28,13 +28,13 @@ import java.util.Optional;
  * receiver, its eight-child adapted form {@code [containerOp, keyOp,
  * rhsOp, FUNCTION_ADAPT adapterOp, lengthOp, normalizeOp, boundaryOp,
  * commitOp]} (an arity-extension adapter over the materialized RHS
- * value), and its seven-child binding-source form whose valueOp is the
- * adapter itself (the adapter evaluates nothing at the position);
+ * value);
  * {@code CLASS_FIELD} write = {@code [containerOp, valueOp,
  * commitOp(FIELD_WRITE)]}, its four-child adapted form {@code
- * [containerOp, rhsOp, FUNCTION_ADAPT adapterOp, commitOp(FIELD_WRITE)]},
- * and its three-child binding-source form whose valueOp is the adapter
- * itself. {@code DELETE}: {@code TABLE_SLOT} member =
+ * [containerOp, rhsOp, FUNCTION_ADAPT adapterOp, commitOp(FIELD_WRITE)]}.
+ * Every assignment adapter captures the materialized RHS in VALUE mode;
+ * ASSIGN publishes the RHS identity/type while commits store the adapter.
+ * {@code DELETE}: {@code TABLE_SLOT} member =
  * {@code [containerOp, commitOp(MEMBER_DELETE)]}; {@code TABLE_SLOT}
  * index = {@code [containerOp, keyOp, normalizeOp(TABLE_WRITE),
  * commitOp(INDEX_DELETE)]}; {@code CLASS_FIELD} = {@code [containerOp,
@@ -94,7 +94,7 @@ import java.util.Optional;
  * {@link FailureContractRegistry} with a {@link LoweringFailureDetail}
  * naming the module, capability {@code EVALUATION_ORDER}, the pinned rule
  * {@link #RULE_ADDRESS_CHAIN_SHAPE} or {@link #RULE_SINGLE_EVALUATION},
- * profile {@code DEAL_V1_4_BINARY64}, IR version
+ * profile {@code DEAL_V1_5_BINARY64}, IR version
  * {@code deal.semantic-ir/2}, and the offending op origin. The foundation
  * validator's closed 14-condition rule set is unchanged: chain-shape
  * validation is a production-time check in exactly the slot the foundation
@@ -158,6 +158,35 @@ public final class AddressChainProtocol {
                 Optional<CompilerDiagnostic> shape = checkChainShape(unit, op, ops);
                 if (shape.isPresent()) {
                     return shape;
+                }
+                if (op.payload() instanceof KindPayload.AssignPayload assign) {
+                    int rhsIndex = switch (assign.targetKind()) {
+                        case VARIABLE -> 0;
+                        case TABLE_SLOT -> assign.childOps().size() == 3 ? 1 : 2;
+                        case ARRAY_SLOT -> 2;
+                        case CLASS_FIELD -> 1;
+                    };
+                    SemanticOp rhs = ops.get(assign.childOps().get(rhsIndex));
+                    if (!Objects.equals(op.result(), rhs.result())
+                            || !Objects.equals(op.resultType(), rhs.resultType())) {
+                        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, op,
+                            "ASSIGN must publish the original RHS identity and descriptor, not the stored value");
+                    }
+                    if (rhs.kind() == SemanticOpKind.FUNCTION_ADAPT) {
+                        return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, op,
+                            "ASSIGN requires an original RHS child before its storage adapter");
+                    }
+                    if (rhsIndex + 1 < assign.childOps().size()) {
+                        SemanticOp next = ops.get(assign.childOps().get(rhsIndex + 1));
+                        if (next.payload() instanceof KindPayload.FunctionAdaptPayload adapter
+                                && (adapter.mode() != CaptureMode.VALUE
+                                    || !(adapter.source() instanceof AdaptSourceRef.Value value)
+                                    || !value.value().equals(rhs.result())
+                                    || !next.operands().equals(List.of(rhs.result())))) {
+                            return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, op,
+                                "assignment storage adapter must capture the evaluated RHS in VALUE mode");
+                        }
+                    }
                 }
             }
         }
@@ -540,9 +569,7 @@ public final class AddressChainProtocol {
         // commitOp(INDEX_WRITE)], its eight-child form
         // [containerOp, keyOp, rhsOp, FUNCTION_ADAPT adapterOp, lengthOp,
         // normalizeOp, boundaryOp, commitOp] (an arity-extension adapter over
-        // the materialized RHS value), and the seven-child binding-source
-        // form whose valueOp is the adapter itself (the adapter evaluates
-        // nothing at the position).
+        // the materialized RHS value). ASSIGN yields the RHS, not the adapter.
         if (children.size() != 7 && children.size() != 8) {
             return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
                 "no closed ASSIGN ARRAY_SLOT chain shape with " + children.size() + " children; "
@@ -551,8 +578,7 @@ public final class AddressChainProtocol {
                     + "boundaryOp(ARRAY_ELEMENT_ASSIGNMENT + ARRAY_WRITE_BOUNDS_THEN_ELEMENT), "
                     + "commitOp(INDEX_WRITE)], [containerOp, keyOp, rhsOp, "
                     + "FUNCTION_ADAPT adapterOp, lengthOp, normalizeOp, boundaryOp, "
-                    + "commitOp], and [containerOp, keyOp, FUNCTION_ADAPT adapterOp, "
-                    + "lengthOp, normalizeOp, boundaryOp, commitOp]");
+                    + "commitOp]");
         }
         boolean adapter = children.size() == 8;
         CompilerDiagnostic[] childFailure = new CompilerDiagnostic[1];
@@ -612,10 +638,6 @@ public final class AddressChainProtocol {
                 return failure;
             }
             committed = (ValueId) c[adapterPos].result();
-        } else if (c[valuePos].kind() == SemanticOpKind.FUNCTION_ADAPT) {
-            // The binding-source adapter form: the adapter is the chain's
-            // committed value (no materialized RHS child exists).
-            committed = (ValueId) c[valuePos].result();
         }
         failure = checkArrayLengthAndNormalize(unit, chain, c, lengthPos, normalizePos,
             boundaryPos);
@@ -782,15 +804,12 @@ public final class AddressChainProtocol {
         // The closed shapes: [containerOp, valueOp, FIELD_WRITE commitOp],
         // its four-child form [containerOp, rhsOp, FUNCTION_ADAPT adapterOp,
         // FIELD_WRITE commitOp] (an arity-extension adapter over the
-        // materialized RHS value), and the three-child binding-source form
-        // whose valueOp is the adapter itself (the adapter evaluates nothing
-        // at the position).
+        // materialized RHS value). ASSIGN yields the RHS, not the adapter.
         if (children.size() != 3 && children.size() != 4) {
             return fail(unit, RULE_ADDRESS_CHAIN_SHAPE, chain,
                 "no closed ASSIGN CLASS_FIELD chain shape with " + children.size()
                     + " children; the closed shapes are [containerOp, valueOp, FIELD_WRITE "
                     + "commitOp], [containerOp, rhsOp, FUNCTION_ADAPT adapterOp, "
-                    + "FIELD_WRITE commitOp], and [containerOp, FUNCTION_ADAPT adapterOp, "
                     + "FIELD_WRITE commitOp]");
         }
         boolean adapter = children.size() == 4;

@@ -1,11 +1,11 @@
-// @spec: Classes — @jsonable table fields
-// @description: @jsonable table fields roundtrip JSON object values; a decoded table leaf keeps its exact decimal variant, so a negative magnitude below the signed32 lower bound stays the number variant and a long zero-padded exponent whose value is small stays the int variant (v1.4)
+// @spec: Classes — @jsonable Record fields
+// @description: Generated Record field walkers roundtrip object values and binary64 numeric leaves, including negative boundary values and long zero-padded exponents.
 // @expected: runtime-ok
 // @features: jsonable, table, roundtrip, v1.4
 
 // @jsonable
 export class Wrapper {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function test_jsonable_table_field(): null {
@@ -13,28 +13,26 @@ export function test_jsonable_table_field(): null {
   let json: string = Wrapper$toJson(w);
   let w2: Wrapper | null = Wrapper$fromJson(json);
   if (w2 !== null) {
-    let count: number = w2.data.count;
-    let name: string = w2.data.name;
+    let count: number = w2.data.count as number;
+    let name: string = w2.data.name as string;
     if (count !== 3 || name !== "deal") {
       throw { code: "TEST_FAIL", message: "table field roundtrip mismatch" };
     }
   } else {
     throw { code: "TEST_FAIL", message: "fromJson returned null" };
   }
-  // The exact decimal classification of a decoded table leaf: the
-  // canonical text proves which variant the token selected. The signed32
-  // check compares the magnitude before the sign is applied, so
-  // -2147483649 is the number variant and -2147483648 stays the int.
+  // Values on either side of the signed32 edge retain their binary64
+  // value through generated decode, encode, and decode.
   let below: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":-2147483649}}");
   if (below !== null) {
     let text: string = Wrapper$toJson(below);
     let decoded: Wrapper | null = Wrapper$fromJson(text);
     if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
-    let payload: table = {};
+    let payload: Record<string, unknown> = {};
     if (decoded !== null) { payload = decoded.data; }
-    let value: number = payload.v;
+    let value: number = payload.v as number;
     if (value !== -2147483649) {
-      throw { code: "TEST_FAIL", message: "-2147483649 must stay the number variant" };
+      throw { code: "TEST_FAIL", message: "-2147483649 changed value" };
     }
   } else {
     throw { code: "TEST_FAIL", message: "a negative boundary token must decode" };
@@ -44,11 +42,11 @@ export function test_jsonable_table_field(): null {
     let text: string = Wrapper$toJson(lower);
     let decoded: Wrapper | null = Wrapper$fromJson(text);
     if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
-    let payload: table = {};
+    let payload: Record<string, unknown> = {};
     if (decoded !== null) { payload = decoded.data; }
-    let value: number = payload.v;
+    let value: number = payload.v as number;
     if (value !== -2147483648) {
-      throw { code: "TEST_FAIL", message: "-2147483648 must stay the int variant" };
+      throw { code: "TEST_FAIL", message: "-2147483648 changed value" };
     }
   } else {
     throw { code: "TEST_FAIL", message: "the negative signed32 edge must decode" };
@@ -58,19 +56,17 @@ export function test_jsonable_table_field(): null {
     let text: string = Wrapper$toJson(far);
     let decoded: Wrapper | null = Wrapper$fromJson(text);
     if (decoded === null) { throw { code: "TEST_FAIL", message: "roundtrip rejected object" }; }
-    let payload: table = {};
+    let payload: Record<string, unknown> = {};
     if (decoded !== null) { payload = decoded.data; }
-    let value: number = payload.v;
+    let value: number = payload.v as number;
     if (value !== -9999999999) {
-      throw { code: "TEST_FAIL", message: "-9999999999 must stay the number variant" };
+      throw { code: "TEST_FAIL", message: "-9999999999 changed value" };
     }
   } else {
     throw { code: "TEST_FAIL", message: "a far negative boundary token must decode" };
   }
-  // The exponent magnitude accumulates digits with bounded saturation:
-  // leading zeroes contribute nothing, so a zero-padded exponent text
-  // longer than 18 characters whose value is small stays exactly
-  // classified (1e0000000000000000001 is the integral 10).
+  // Leading exponent zeroes do not change the binary64 value, even when
+  // the exponent token is longer than 18 characters.
   let padded: Wrapper | null = Wrapper$fromJson("{\"data\":{\"v\":1e0000000000000000001}}");
   if (padded !== null) {
     let text: string = Wrapper$toJson(padded);
@@ -78,8 +74,8 @@ export function test_jsonable_table_field(): null {
     if (again === null) {
       throw { code: "TEST_FAIL", message: "padded exponent roundtrip rejected" };
     } else {
-      let data: table = again.data;
-      let value: number = data.v;
+      let data: Record<string, unknown> = again.data;
+      let value: number = data.v as number;
       if (value !== 10) { throw { code: "TEST_FAIL", message: "padded exponent value changed" }; }
     }
   } else {

@@ -6,4 +6,5 @@ function main(): null {
     let x: number = a[0];
     let y: number = a[2];
     let empty: number[] = [];
+    return null;
 }

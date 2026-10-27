@@ -232,16 +232,16 @@ local function carrier_key_table()
   }
 end
 
-test("a table with carrier-like string keys is the table value (v1.4)", function()
+test("a table with carrier-like string keys is the table value", function()
   local t = carrier_key_table()
   assert(__rt.check_table(t) == t, "the carrier-key table is a table")
-  assert(__rt.check_type("table", t) == t, "the table descriptor admits it")
+  assert(__rt.check_type("record", t) == t, "the Record descriptor admits it")
   assert(__rt.typed_kind(t) == "table", "its projected kind is table")
   assert(__rt.typed_kind(__rt.__NULL) == "null")
-  assert(__rt.typed_kind(__rt.__MISSING) == "nil")
+  assert(__rt.typed_kind(__rt.__MISSING) == "undefined")
 end)
 
-test("forged class carriers are rejected at a class descriptor (v1.4)", function()
+test("forged class carriers are rejected at a class descriptor", function()
   local forged = carrier_key_table()
   assert_boundary_error(function() __rt.check_type("@m/C", forged) end,
     "E8001", "expected class instance", "class", "table")
@@ -251,7 +251,7 @@ end)
 
 
 
-test("forged function carriers are rejected at a function descriptor (v1.4)", function()
+test("forged function carriers are rejected at a function descriptor", function()
   local forged = carrier_key_table()
   assert_boundary_error(function() __rt.check_type("()->null", forged) end,
     "E8001", "expected function", "function", "table")
@@ -260,7 +260,7 @@ test("forged function carriers are rejected at a function descriptor (v1.4)", fu
     "the produced function wrapper is admitted")
 end)
 
-test("non-arrays are rejected at an array descriptor (v1.4)", function()
+test("non-arrays are rejected at an array descriptor", function()
   -- A plain object, a class instance, a function wrapper, the language null
   -- and the absent marker are not arrays; the language null is never the
   -- empty array.
@@ -275,7 +275,7 @@ test("non-arrays are rejected at an array descriptor (v1.4)", function()
   assert_boundary_error(function() __rt.check_type("[number]", __rt.__NULL) end,
     "E8001", "expected array", "array", "null")
   assert_boundary_error(function() __rt.check_type("[number]", __rt.__MISSING) end,
-    "E8001", "expected array", "array", "nil")
+    "E8001", "expected array", "array", "undefined")
   -- A carrier-key table is not an array either.
   assert_boundary_error(function()
     __rt.check_type("[number]", carrier_key_table())
@@ -290,7 +290,7 @@ test("non-arrays are rejected at an array descriptor (v1.4)", function()
   assert(__rt.check_type("[number]", {}) ~= nil, "the empty dense array is admitted")
 end)
 
-test("array element failures keep the E8003 wrap over a carrier (v1.4)", function()
+test("array element failures keep the E8003 wrap over a carrier", function()
   local carrier = { [__K.a] = true, [__K.n] = 2, 1, "bad" }
   local err = assert_error(function() __rt.check_type("[number]", carrier) end, "E8003")
   assert(err.message == "array element 2 type mismatch", err.message)
@@ -298,7 +298,7 @@ test("array element failures keep the E8003 wrap over a carrier (v1.4)", functio
   assert(err.actual == "string", tostring(err.actual))
 end)
 
-test("carriers are rejected at a table descriptor (v1.4)", function()
+test("carriers are rejected at a table descriptor", function()
   assert_boundary_error(function()
     __rt.check_table(__rt.class_plan_("@m/C", {}, {}))
   end, "E8001", "expected table", "table", "@m/C")
@@ -326,7 +326,7 @@ test("carriers are rejected at a table descriptor (v1.4)", function()
     "the chunk function carrier projects the function token")
   assert_boundary_error(function() __rt.check_table(chunkFn) end,
     "E8001", "expected table", "table", "function")
-  assert_boundary_error(function() __rt.check_type("table", chunkFn) end,
+  assert_boundary_error(function() __rt.check_type("record", chunkFn) end,
     "E8001", "expected table", "table", "function")
   local markedFn = { [__K.f] = function() end }
   assert(__rt.typed_kind(markedFn) == "function",
@@ -337,13 +337,13 @@ test("carriers are rejected at a table descriptor (v1.4)", function()
   assert_boundary_error(function() __rt.check_table(__rt.__NULL) end,
     "E8001", "expected table", "table", "null")
   assert_boundary_error(function() __rt.check_table(__rt.__MISSING) end,
-    "E8001", "expected table", "table", "nil")
+    "E8001", "expected table", "table", "undefined")
   -- A plain table stays the table value, whatever its string keys.
   assert(__rt.check_table(carrier_key_table()) ~= nil,
     "a carrier-key table is a table at the table cell")
 end)
 
-test("a class instance may declare fields named after the carrier keys (v1.4)", function()
+test("a class instance may declare fields named after the carrier keys", function()
   local instance = __rt.class_plan_("@m/Tagged",
     {{name="__kind",descriptor="string",optional=false}, {name="__c",descriptor="number",optional=false}, {name="__keys",descriptor="string",optional=false}},
     { __kind = "user-kind", __c = 1, __keys = "keys" })
@@ -364,7 +364,7 @@ end)
 -- canonical class atom (exactly Error for the builtin) and never the raw Lua
 -- table spelling, at every non-class boundary as well as at the class and
 -- function rows' wrong-kind arms.
-test("a class instance publishes its carried class atom at every boundary (v1.4)", function()
+test("a class instance publishes its carried class atom at every boundary", function()
   local instance = __rt.class_plan_("@m/C", {{name="a",descriptor="number",optional=false}}, {a=1})
   assert(__rt.typed_kind(instance) == "@m/C", "the instance's closed token is its atom")
   -- The primitive rows.
@@ -386,7 +386,7 @@ test("a class instance publishes its carried class atom at every boundary (v1.4)
     "E8001", "expected instance of @m/D, got @m/C", "@m/D", "@m/C")
 end)
 
-test("the builtin Error publishes the canonical Error atom at every boundary (v1.4)", function()
+test("the builtin Error publishes the canonical Error atom at every boundary", function()
   local err_value = __rt.error_value("E_USER", "boom")
   assert(__rt.typed_kind(err_value) == "Error",
     "the Error value's closed token is the canonical builtin atom")
@@ -411,7 +411,7 @@ test("the builtin Error publishes the canonical Error atom at every boundary (v1
   end, "E8001", "expected instance of Error, got @m/C", "Error", "@m/C")
 end)
 
-test("every other carrier keeps its own closed token at a boundary (v1.4)", function()
+test("every other carrier keeps its own closed token at a boundary", function()
   -- The array, function, async, null and absent carriers never
   -- project the raw table spelling of a primitive row, and each of them is
   -- rejected at the class and function rows by its own token.
@@ -425,7 +425,7 @@ test("every other carrier keeps its own closed token at a boundary (v1.4)", func
   for _, carrier in ipairs({
     { "array", array }, { "function", wrapper },
     { "async-operation", handle }, { "null", __rt.__NULL },
-    { "nil", __rt.__MISSING },
+    { "undefined", __rt.__MISSING },
   }) do
     local token, value = carrier[1], carrier[2]
     assert(__rt.typed_kind(value) == token, "the carrier's closed token is " .. token)
@@ -472,18 +472,16 @@ test("number carriers preserve binary64 payload and identity", function()
   end
 end)
 
-test("the number row admits both variants and keeps the carrier (v1.4)", function()
-  local number_variant = number_carrier("number", 1e17)
-  assert(__rt.check_number(number_variant) == number_variant,
-    "the number-variant carrier is admitted")
-  local int_variant = number_carrier("number", 3)
-  assert(__rt.check_type("number", int_variant) == int_variant,
-    "the number-variant carrier is admitted at a number boundary")
-  assert(__rt.typed_kind(number_variant) == "number",
-    "the number-variant carrier projects its own token")
+test("the number row preserves wide and integral carrier identity", function()
+  for _, value in ipairs({1e17, 3}) do
+    local carrier = number_carrier("number", value)
+    assert(__rt.check_number(carrier) == carrier)
+    assert(__rt.check_type("number", carrier) == carrier)
+    assert(__rt.typed_kind(carrier) == "number")
+  end
 end)
 
-test("a numeric carrier keeps its own token at a non-numeric boundary (v1.4)", function()
+test("a numeric carrier keeps its own token at a non-numeric boundary", function()
   assert_boundary_error(function()
     __rt.check_type("string", number_carrier("number", 1))
   end, "E8001", "expected string", "string", "number")
@@ -491,11 +489,11 @@ test("a numeric carrier keeps its own token at a non-numeric boundary (v1.4)", f
     __rt.check_type("boolean", number_carrier("number", 1))
   end, "E8001", "expected boolean", "boolean", "number")
   assert_boundary_error(function()
-    __rt.check_type("table", number_carrier("number", 1))
+    __rt.check_type("record", number_carrier("number", 1))
   end, "E8001", "expected table", "table", "number")
 end)
 
-test("an array of numeric carriers crosses the array descriptor (v1.4)", function()
+test("an array of numeric carriers crosses the array descriptor", function()
   local values = { [__K.a] = true, [__K.n] = 3,
     [1] = number_carrier("number", 1), [2] = number_carrier("number", 2.5),
     [3] = __rt.__NULL }
@@ -649,7 +647,7 @@ end)
 
 test("check_type('table', {}) passes", function()
   local t = {}
-  assert(__rt.check_type("table", t) == t)
+  assert(__rt.check_type("record", t) == t)
 end)
 
 test("check_type('[number]', {1,2}) passes", function()
@@ -800,7 +798,7 @@ test("the host parameter cell rejects a chunk function carrier at a table parame
   -- table-declared host parameter takes the closed parameter cell instead
   -- of exposing the internal carrier table to the host.
   local raw = function(item) return __rt.__NULL end
-  local wrapped = __rt.from_lua_function("(table)->null", raw)
+  local wrapped = __rt.from_lua_function("(record)->null", raw)
   local before = #host_arm_calls
   local before_inner = #host_inner_calls
   local err = assert_error(function()
@@ -936,8 +934,8 @@ test("deep copy: __MISSING preserved by identity", function()
   assert(copy.a == __rt.__MISSING)
 end)
 
-test("deep copy: nested tables are independent", function()
-  local plan = {field("data", "table")}
+test("deep copy: nested Records are independent", function()
+  local plan = {field("data", "record")}
   local a = __rt.class_plan_("C", plan, {data = {x = {y = 1}}})
   local b = __rt.class_plan_("C", plan, {data = {x = {y = 1}}})
   a.data.x.y = 99
@@ -1305,7 +1303,7 @@ test("check_type Error rejects non-Error class instances", function()
 end)
 
 test("check_type rejects the superseded builtin Error aliases", function()
-  -- The canonical builtin atom is exactly the bare "Error" (v1.4
+  -- The canonical builtin atom is exactly the bare "Error" (v1.5
   -- DescriptorV13); the superseded v1.2 spellings do not decode.
   local e = __rt.error_value("E8001", "boom")
   for _, alias in ipairs({"@/Error", "@$builtin/Error"}) do
@@ -1573,8 +1571,8 @@ test("class_ with default array deep-copied independently", function()
   assert(a.items[1] == 99)
 end)
 
-test("class_ with default table deep-copied independently", function()
-  local plan = {field("data", "table")}
+test("class_ with supplied Record copied independently", function()
+  local plan = {field("data", "record")}
   local a = __rt.class_plan_("C", plan, {data = {x=1,y=2}})
   local b = __rt.class_plan_("C", plan, {data = {x=1,y=2}})
   a.data.x = 99
@@ -2576,7 +2574,7 @@ local function assert_parse_rejected(text)
 end
 
 test("canonical parser accepts every primitive keyword", function()
-  local keywords = { "null", "boolean", "number", "number", "string", "table" }
+  local keywords = { "null", "undefined", "unknown", "void", "boolean", "number", "string", "record" }
   for _, kw in ipairs(keywords) do
     local ast = assert_parse_ok(kw)
     assert(ast.kind == "primitive", kw .. " parsed with kind " .. tostring(ast.kind))
@@ -2586,10 +2584,10 @@ end)
 
 test("canonical parser accepts composite shapes with byte-exact text", function()
   local shapes = {
-    "[number]", "[[table]]", "?number", "?[?table]", "()->null", "(number)->number",
+    "[number]", "[[record]]", "?number", "?[?record]", "()->null", "(number)->number",
     "(number,string)->boolean", "async()->number", "async(number)->?string",
-    "?(number)->number", "[?(table)->table]", "async()->async()->number",
-    "(table)->table", "?table", "[table]",
+    "?(number)->number", "[?(record)->record]", "async()->async()->number",
+    "(record)->record", "?record", "[record]",
   }
   for _, t in ipairs(shapes) do
     assert_parse_ok(t)
@@ -2597,14 +2595,14 @@ test("canonical parser accepts composite shapes with byte-exact text", function(
 end)
 
 test("canonical parser builds nested atom structure", function()
-  local ast = assert_parse_ok("[?(table)->table]")
+  local ast = assert_parse_ok("[?(record)->record]")
   assert(ast.kind == "array")
   assert(ast.element.kind == "nullable")
   assert(ast.element.inner.kind == "function")
   assert(ast.element.inner.isAsync == false)
   assert(#ast.element.inner.params == 1)
-  assert(ast.element.inner.params[1].name == "table")
-  assert(ast.element.inner.ret.name == "table")
+  assert(ast.element.inner.params[1].name == "record")
+  assert(ast.element.inner.ret.name == "record")
   local fn = assert_parse_ok("async()->number")
   assert(fn.kind == "function" and fn.isAsync == true)
   assert(#fn.params == 0 and fn.ret.name == "number")
@@ -2709,14 +2707,19 @@ test("check_canonical_type accepts every primitive row", function()
   assert(__rt.check_canonical_type("number", 42) == 42)
   assert(__rt.check_canonical_type("number", 1.5) == 1.5)
   assert(__rt.check_canonical_type("string", "s") == "s")
-  assert(__rt.check_canonical_type("table", {}) ~= nil)
+  assert(__rt.check_canonical_type("record", {}) ~= nil)
+  assert(__rt.check_canonical_type("undefined", __rt.__UNDEFINED) == __rt.__UNDEFINED)
+  assert(__rt.check_canonical_type("void", __rt.__UNDEFINED) == __rt.__UNDEFINED)
+  for _, value in ipairs({true, 1.5, "s", __rt.__NULL, __rt.__UNDEFINED}) do
+    assert(__rt.check_canonical_type("unknown", value) == value)
+  end
 end)
 
 
 
 
 
-test("check_canonical_type number row shares the int32 gate", function()
+test("check_canonical_type number row preserves binary64",  function()
   assert_error(function() __rt.check_canonical_type("number", "x") end, "E8001")
   assert(__rt.check_canonical_type("number", 2147483648) == 2147483648)
   assert(__rt.check_canonical_type("number", -2147483649) == -2147483649)

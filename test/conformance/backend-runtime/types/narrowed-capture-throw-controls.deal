@@ -7,7 +7,8 @@ function expectNoError(what: string): null {
   throw { code: "CONTROL_FAIL", message: what + ": no error was raised" };
 }
 
-function expectCaught(e: Error, what: string, code: string, message: string): null {
+function expectCaught(value: unknown, what: string, code: string, message: string): null {
+  let e: Error = value as Error;
   if (e.code !== code || e.message !== message) {
     throw { code: "CONTROL_FAIL", message: what + ": expected " + code + " " + message
       + ", got " + e.code + " " + e.message };
@@ -49,7 +50,7 @@ function relayInvalidated(): null {
   return null;
 }
 
-async function settle(tag: string): string {
+async function settle(tag: string): Promise<string> {
   return tag;
 }
 
@@ -62,7 +63,8 @@ export function main(): null {
   let unchangedCaught: boolean = false;
   try {
     throw original;
-  } catch (caught) {
+  } catch (value) {
+    let caught: Error = value as Error;
     if (caught !== original || caught !== alias) {
       throw { code: "CONTROL_FAIL", message: "the unchanged throw lost the Error identity" };
     }
@@ -151,7 +153,8 @@ export function main(): null {
       try {
         throw e;
         expectNoError("rethrow");
-      } catch (inner) {
+      } catch (value) {
+        let inner: Error = value as Error;
         inner.message = "rethrown";
         throw inner;
       }
@@ -187,7 +190,7 @@ export function main(): null {
 // The async operand: the awaited statement keeps the same clearing capture,
 // and the cleared binding's throw is admitted as the catchable canonical
 // DEAL error inside the async body (never an infrastructure failure).
-export async function test_async_throw_caught(): number {
+export async function test_async_throw_caught(): Promise<number> {
   let tag: string = await settle("async");
   expectTrue("the await completed", tag === "async");
   let e: Error | null = { code: "ASYNC", message: "async" };

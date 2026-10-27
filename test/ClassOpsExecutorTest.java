@@ -276,6 +276,7 @@ public class ClassOpsExecutorTest {
     private static BoundaryValueView valueView(Value value) {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
+            case Value.Undefined ignored -> BoundaryValueView.of(ActualKind.UNDEFINED);
             case Value.Bool bool -> BoundaryValueView.of(ActualKind.BOOLEAN);
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar().actualKind());

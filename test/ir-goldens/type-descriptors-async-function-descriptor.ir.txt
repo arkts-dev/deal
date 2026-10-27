@@ -3,15 +3,16 @@ module @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal
     param x: number @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:4:22-4:31
       [boundary: param-entry]
     body
-      return @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:4:43-4:58
+      return @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:4:52-4:67
         [boundary: async-completion]
-        literal "data" : string @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:4:50-4:55
+        literal "data" : string @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:4:59-4:64
   export @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:5:1-9:1
     [boundary: export]
     function main: null @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:5:8-9:1
       body
         let f: async(number)->string @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:6:1-7:6
           [boundary: var-annotation]
-          ident fetch : async(number)->string @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:6:38-6:42
+          ident fetch : async(number)->string @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:6:41-6:45
         return @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:7:1-8:1
+          [boundary: return]
           literal null : null @test/ir-goldens/fixtures/type-descriptors-async-function-descriptor.deal:7:8-7:11

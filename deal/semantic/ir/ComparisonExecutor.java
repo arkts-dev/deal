@@ -42,6 +42,17 @@ public final class ComparisonExecutor {
         Objects.requireNonNull(selector, "selector must not be null");
         Objects.requireNonNull(left, "left must not be null");
         Objects.requireNonNull(right, "right must not be null");
+        if (selector == BinarySelector.UNDEFINED_EQ || selector == BinarySelector.UNDEFINED_NE
+                || selector == BinarySelector.NULLABLE_UNDEFINED_EQ || selector == BinarySelector.NULLABLE_UNDEFINED_NE) {
+            boolean equal = isUndefined(left) && isUndefined(right);
+            return selector == BinarySelector.UNDEFINED_EQ || selector == BinarySelector.NULLABLE_UNDEFINED_EQ ? equal : !equal;
+        }
+        if (isUndefined(left) || isUndefined(right)) {
+            boolean equal = isUndefined(left) && isUndefined(right);
+            if (selector.name().endsWith("_EQ")) return equal;
+            if (selector.name().endsWith("_NE")) return !equal;
+            return false;
+        }
         return switch (selector) {
             case NULLABLE_NULL_EQ, NULLABLE_NULL_NE -> {
                 requireNullableInner(innerDescriptor);
@@ -103,8 +114,11 @@ public final class ComparisonExecutor {
      * at both operand positions.
      */
     private static boolean isNullish(ComparisonOperandView view) {
-        return view instanceof ComparisonOperandView.Null
-            || view instanceof ComparisonOperandView.Missing;
+        return view instanceof ComparisonOperandView.Null;
+    }
+
+    private static boolean isUndefined(ComparisonOperandView view) {
+        return view instanceof ComparisonOperandView.Undefined || view instanceof ComparisonOperandView.Missing;
     }
 
     // =========================================================================
@@ -181,7 +195,9 @@ case NUMBER_EQ -> numberView(left).value() == numberView(right).value();
     private static boolean nullableInnerEquals(RuntimeDescriptor inner, ComparisonOperandView left,
                                                ComparisonOperandView right) {
         return switch (inner) {
-
+            case RuntimeDescriptor.Undefined ignored -> left == right;
+            case RuntimeDescriptor.Unknown ignored -> throw new Defect("Unknown is not an equality base");
+            case RuntimeDescriptor.Void ignored -> throw new Defect("Void cannot be compared");
             case RuntimeDescriptor.Number ignored -> numberEq(left, right);
             case RuntimeDescriptor.String ignored -> stringEq(left, right);
             case RuntimeDescriptor.Boolean ignored -> booleanEq(left, right);

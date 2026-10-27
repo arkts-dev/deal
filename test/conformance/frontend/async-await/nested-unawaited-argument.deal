@@ -3,10 +3,10 @@
 // @expected: compile-error E3014
 // @features: async, await, diagnostics
 
-async function inner(): number { return 1; }
-async function outer(x: number): number { return x; }
+async function inner(): Promise<number> { return 1; }
+async function outer(x: number): Promise<number> { return x; }
 
-async function test_nested_unawaited_argument(): number {
+async function test_nested_unawaited_argument(): Promise<number> {
   return await outer(inner());
 }
 

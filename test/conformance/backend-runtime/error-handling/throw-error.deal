@@ -10,7 +10,7 @@ export function test_throw(): string {
     throw { code: "E_TEST", message: "test error" };
   } catch (e) {
     catchRan = true;
-    caughtCode = e.code;
+    caughtCode = (e as Error).code;
   }
   if (catchRan !== true) {
     throw { code: "TEST_FAIL", message: "expected throw did not reach its catch" };

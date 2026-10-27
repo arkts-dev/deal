@@ -270,7 +270,7 @@ public class JsonClassExecutorTest {
         List<Value> unsupported = List.of(function,
             instanceOf(layoutOf(POINT, field("x", INT, true)), Map.of("x", new Value.Number(1))),
             Value.string("\uD800"), Value.Missing.INSTANCE);
-        List<String> tokens = List.of("function", "@corpus.json/Point", "invalid-unicode", "nil");
+        List<String> tokens = List.of("function", "@corpus.json/Point", "invalid-unicode", "undefined");
         for (int i = 0; i < unsupported.size(); i++) {
             assertStringifyFailure(rawTable(Map.of("k", unsupported.get(i))),
                 "data", "data.k", tokens.get(i), false);
@@ -724,13 +724,13 @@ public class JsonClassExecutorTest {
         check(productionMissingFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().code() == DiagnosticCode.E8001
                 && failure.failure().failure().message().equals(
-                    "value at data.k is not JSON serializable: nil")
+                    "value at data.k is not JSON serializable: undefined")
                 && failure.failure().origin().equals(callOrigin)
                 && !failure.failure().origin().equals(op.origin())
                 && failure.failure().failure().expected() == null
-                && failure.failure().failure().actual().equals("nil"),
+                && failure.failure().failure().actual().equals("undefined"),
             "the production adapter's walk projects the missing-in-table failure at "
-                + "data.k as the complete walk tuple (E8001, the typed-boundary nil token "
+                + "data.k as the complete walk tuple (E8001, the typed-boundary undefined token "
                 + "as actual, no expected field, and the call origin)");
 
         // A dotted table key: E8's dot-joined failure path is ambiguous
@@ -871,21 +871,22 @@ public class JsonClassExecutorTest {
                     "value at  is not JSON serializable: number"),
             "a non-class root fails with its actual-kind token");
 
-        // A nonfinite number fails with the number token.
+        // A nonfinite declared number follows JSON encoding, unlike Record content.
         ClassLayout nanLayout = layoutOf(POINT, field("x", NUMBER, true));
         ValueId nanClassId = nextValue();
         SemanticOp nanOp = jsonToOp(nanLayout, nanClassId);
         Value.Class nanField = instanceOf(nanLayout,
             Map.of("x", new Value.Number(Double.NaN)));
-        Outcome<Value> nanFailure = ClassOpsExecutor.executeJsonToClass(nanOp,
+        Outcome<Value> nanOutcome = ClassOpsExecutor.executeJsonToClass(nanOp,
             Map.of(nanClassId, nanField), Map.of(POINT, nanLayout),
             JsonClassAlgorithmAdapter.stringifier(), callOrigin);
-        check(nanFailure instanceof Outcome.Failure<Value> failure
-                && failure.failure().failure().message().equals(
-                    "value at x is not JSON serializable: number"),
-            "a nonfinite number fails with the number token");
+        check(nanOutcome instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.String text
+                && text.scalar() instanceof UnicodeScalars.Valid valid
+                && valid.carrier().equals("{\"x\":null}"),
+            "a nonfinite declared number encodes as null");
 
-        // A missing required field: path "name", actual "missing".
+        // A missing required field: path "name", actual undefined.
         Value.Class missingRequired = instanceOf(point, Map.of(
             "age", new Value.Number(1),
             "home", instanceOf(nested, Map.of("city", Value.string("c"))),
@@ -896,8 +897,8 @@ public class JsonClassExecutorTest {
             callOrigin);
         check(missingFailure instanceof Outcome.Failure<Value> failure
                 && failure.failure().failure().message().equals(
-                    "value at name is not JSON serializable: nil"),
-            "a missing required field fails with the typed-boundary nil token");
+                    "value at name is not JSON serializable: undefined"),
+            "a missing required field fails with the typed-boundary undefined token");
 
         // A null on a non-nullable field: actual null.
         Value.Class nullRequired = instanceOf(point, Map.of(

@@ -32,6 +32,24 @@ public final class JvmRuntime {
     // Values
     // =========================================================================
 
+    public static final Object UNDEFINED = new Object() {
+        @Override public String toString() { return "undefined"; }
+    };
+
+    public static String typeOf(Object value) {
+        if (value == UNDEFINED || value == MISSING) return "undefined";
+        if (value instanceof Boolean) return "boolean";
+        if (value instanceof Number) return "number";
+        if (value instanceof String) return "string";
+        if (value instanceof FunctionValue) return "function";
+        return "object";
+    }
+
+    public static boolean isInstance(Object value, String descriptor) {
+        return value instanceof ClassInstance instance && descriptor.equals(instance.classIdText())
+            || value instanceof ErrorValue && descriptor.equals("Error");
+    }
+
     /** The internal missing sentinel (past-end array reads). */
     public static final Object MISSING = new Object() {
         @Override public String toString() {
@@ -161,6 +179,11 @@ public final class JvmRuntime {
         /** The canonical {@code @modulePath/ClassName} identity text. */
         String classIdText();
 
+        /** Present-field iteration uses declaration order, never reflection. */
+        default List<String> fieldNames() {
+            throw new IllegalStateException("Class carrier has no declaration-order fields");
+        }
+
         /** Presence of one field: a present field (present null included) is present. */
         boolean isPresent(String field);
 
@@ -205,6 +228,7 @@ public final class JvmRuntime {
     public static final class Array {
         public final List<Object> elements = new ArrayList<>();
         public int length;
+        public String elementDescriptor;
         /**
          * The decoded-array mark (B3): set only by the stdlib JSON reader
          * ({@link JsonReader#parseArray}) at every decoded nesting depth.
@@ -250,6 +274,9 @@ public final class JvmRuntime {
         public String classIdText() {
             return deal.semantic.ir.ClassId.ERROR.text();
         }
+
+        @Override
+        public List<String> fieldNames() { return List.of("code", "message"); }
 
         @Override
         public boolean isPresent(String field) {
@@ -628,6 +655,10 @@ public final class JvmRuntime {
 
     /** The closed atom encoding (first-observation allocation ids). */
     public static String atom(Object v, String kind) {
+        if (v instanceof ErrorValue error) {
+            return "err:" + error.code + ":" + esc(error.message);
+        }
+        if (v == UNDEFINED) return "undefined";
         if (v == MISSING) {
             return "missing";
         }
@@ -1066,8 +1097,8 @@ public final class JvmRuntime {
      * the fallback for carriers outside the closed value kinds).
      */
     public static String actualOf(String staticKind, Object v) {
-        if (v == MISSING) {
-            return "nil";
+        if (v == MISSING || v == UNDEFINED) {
+            return "undefined";
         }
         if (v == null) {
             return "null";
@@ -1357,8 +1388,21 @@ public final class JvmRuntime {
      */
     private static Object bcheck(String desc, String staticKind, Object v,
             boolean completion, String canon, boolean hostCompletionCrossing) {
-        String actual = completion ? completionActualOf(staticKind, v)
+        if (v == MISSING) v = UNDEFINED;
+        String actual = v == UNDEFINED ? "undefined" : completion ? completionActualOf(staticKind, v)
             : actualOf(staticKind, v);
+        if ("undefined".equals(desc) || "void".equals(desc)) {
+            if (v == UNDEFINED) return v;
+            throw kindFailure("undefined", actual, completion);
+        }
+        if ("unknown".equals(desc)) {
+            if (v instanceof String) return bcheck("string", "string", v, completion, null, hostCompletionCrossing);
+            if (v == null || v == UNDEFINED || v instanceof Boolean || v instanceof Number
+                    || v instanceof String || v instanceof Table || v instanceof Array
+                    || v instanceof FunctionValue || v instanceof ClassInstance || v instanceof ErrorValue) return v;
+            // A foreign JVM object has no DEAL static-kind authority.
+            throw kindFailure("unknown", "table", completion);
+        }
         if ("null".equals(desc)) {
             if (v == null) {
                 return v;
@@ -1399,7 +1443,7 @@ public final class JvmRuntime {
             }
             throw kindFailure("string", actual, completion);
         }
-        if ("table".equals(desc)) {
+        if ("record".equals(desc)) {
             if (v instanceof Table) {
                 return v;
             }
@@ -1428,6 +1472,8 @@ public final class JvmRuntime {
         if (desc.startsWith("array(")) {
             if (v instanceof Array array) {
                 String inner = desc.substring(6, desc.length() - 1);
+                if (array.elementDescriptor != null && !array.elementDescriptor.equals(inner))
+                    throw fail("E8001", "array element descriptor mismatch", "-", desc, "array");
                 String innerCanonical = innerCanon(canon, "[", "]");
                 if (innerCanonical == null) {
                     innerCanonical = canonicalDesc(inner);
@@ -1458,12 +1504,14 @@ public final class JvmRuntime {
             }
             throw kindFailure("array", actual, completion);
         }
-        if (desc.startsWith("nullable(")) {
-            if (v == null || v == MISSING) {
-                return null;
-            }
-            return bcheck(desc.substring(9, desc.length() - 1), staticKind, v,
-                completion, innerCanon(canon, "?", ""), hostCompletionCrossing);
+        if (desc.startsWith("nullable(") || desc.startsWith("undefinedable(")
+                || desc.startsWith("nullableundefinedable(")) {
+            boolean nullAllowed = desc.startsWith("nullable");
+            boolean undefinedAllowed = desc.startsWith("undefinedable") || desc.startsWith("nullableundefinedable");
+            if (nullAllowed && v == null || undefinedAllowed && v == UNDEFINED) return v;
+            String prefix = (nullAllowed ? "?" : "") + (undefinedAllowed ? "!" : "");
+            String inner = desc.substring(desc.indexOf('(') + 1, desc.length() - 1);
+            return bcheck(inner, staticKind, v, completion, innerCanon(canon, prefix, ""), hostCompletionCrossing);
         }
         if (desc.startsWith("function(")) {
             if (v instanceof FunctionValue function) {
@@ -2152,8 +2200,14 @@ public final class JvmRuntime {
 
     public static boolean cmp(String selector, String kindL, Object l, String kindR,
                               Object r, String side) {
-        boolean leftNullish = l == null || l == MISSING;
-        boolean rightNullish = r == null || r == MISSING;
+        boolean leftUndefined = l == UNDEFINED || l == MISSING;
+        boolean rightUndefined = r == UNDEFINED || r == MISSING;
+        if (leftUndefined || rightUndefined || selector.contains("UNDEFINED")) {
+            boolean equal = leftUndefined && rightUndefined;
+            return selector.endsWith("_EQ") ? equal : selector.endsWith("_NE") ? !equal : false;
+        }
+        boolean leftNullish = l == null;
+        boolean rightNullish = r == null;
         if (leftNullish || rightNullish) {
             if ("NULLABLE_NULL_EQ".equals(selector)) {
                 Object named = "LEFT".equals(side) ? l : r;
@@ -2470,10 +2524,13 @@ case "NUMBER_ADD" -> {
                     int[] input = codePointsOf((String) args[0]);
                     int[] separator = codePointsOf((String) args[1]);
                     if (input.length == 0) {
-                        return new Array(0);
+                        Array empty = new Array(0);
+                        empty.elementDescriptor = "string";
+                        return empty;
                     }
                     if (separator.length == 0) {
                         Array singles = new Array(input.length);
+                        singles.elementDescriptor = "string";
                         for (int codePoint : input) {
                             singles.elements.add(new String(
                                 new int[] {codePoint}, 0, 1));
@@ -2481,6 +2538,7 @@ case "NUMBER_ADD" -> {
                         return singles;
                     }
                     Array parts = new Array(0);
+                    parts.elementDescriptor = "string";
                     int cursor = 0;
                     int occurrence;
                     while ((occurrence = indexOfSubsequence(input, separator, cursor))
@@ -2508,6 +2566,7 @@ case "NUMBER_ADD" -> {
                 case "TABLE_KEYS" -> {
                     Table table = (Table) args[0];
                     Array keys = new Array(table.entries.size());
+                    keys.elementDescriptor = "string";
                     for (String key : table.entries.keySet()) {
                         keys.elements.add(key);
                     }
@@ -2517,7 +2576,8 @@ case "NUMBER_ADD" -> {
                     return jsonParse((String) args[0]);
                 }
                 case "JSON_STRINGIFY" -> {
-                    Table root = (Table) args[0];
+                    Object root = args[0];
+                    if (root == UNDEFINED || root == MISSING || root instanceof FunctionValue) return UNDEFINED;
                     StringBuilder out = new StringBuilder();
                     java.util.Set<Object> path =
                         java.util.Collections.newSetFromMap(new IdentityHashMap<>());
@@ -2573,11 +2633,11 @@ case "NUMBER_ADD" -> {
         switch (fn) {
             case "CONSOLE_LOG" -> {
                 console(consoleText(args));
-                return null;
+                return UNDEFINED;
             }
             case "CONSOLE_ERROR" -> {
                 consoleError(consoleText(args));
-                return null;
+                return UNDEFINED;
             }
             default -> {
                 return stdlib(kind, fn, opKey, digest, parent, origin, args);
@@ -3062,19 +3122,30 @@ case "NUMBER_ADD" -> {
 
         final Table table;
         final Array array;
+        final ClassInstance instance;
         final List<String> keys;
         int index;
+        int emitted;
 
         StringifyFrame(Table table, List<String> keys) {
             this.table = table;
             this.array = null;
+            this.instance = null;
             this.keys = keys;
         }
 
         StringifyFrame(Array array) {
             this.table = null;
             this.array = array;
+            this.instance = null;
             this.keys = null;
+        }
+
+        StringifyFrame(ClassInstance instance) {
+            this.table = null;
+            this.array = null;
+            this.instance = instance;
+            this.keys = instance.fieldNames();
         }
     }
 
@@ -3091,7 +3162,7 @@ case "NUMBER_ADD" -> {
         appendJsonValue(out, value, path, stack);
         while (!stack.isEmpty()) {
             StringifyFrame frame = stack.peek();
-            if (frame.table == null) {
+            if (frame.array != null) {
                 if (frame.index < frame.array.elements.size()) {
                     int i = frame.index++;
                     if (i > 0) {
@@ -3116,15 +3187,16 @@ case "NUMBER_ADD" -> {
                 if (!JvmJson.validScalars(key)) {
                     throw jsonEncodingFailure(key);
                 }
-                if (i > 0) {
-                    out.append(',');
-                }
+                if (frame.instance != null && !frame.instance.isPresent(key)) continue;
+                Object member = frame.instance != null ? frame.instance.read(key) : frame.table.entries.get(key);
+                if (member == UNDEFINED || member == MISSING || member instanceof FunctionValue) continue;
+                if (frame.emitted++ > 0) out.append(',');
                 appendJsonString(out, key);
                 out.append(':');
-                appendJsonValue(out, frame.table.entries.get(key), path, stack);
+                appendJsonValue(out, member, path, stack);
             } else {
                 out.append('}');
-                path.remove(frame.table);
+                path.remove(frame.instance != null ? frame.instance : frame.table);
                 stack.pop();
             }
         }
@@ -3139,16 +3211,13 @@ case "NUMBER_ADD" -> {
     private static void appendJsonValue(StringBuilder out, Object value,
                                         java.util.Set<Object> path,
                                         Deque<StringifyFrame> stack) {
-        if (value == null) {
+        if (value == null || value == UNDEFINED || value == MISSING || value instanceof FunctionValue) {
             out.append("null");
         } else if (value instanceof Boolean bool) {
             out.append(bool ? "true" : "false");
         } else if (value instanceof Number numeric) {
             double d = numeric.doubleValue();
-            if (!Double.isFinite(d)) {
-                throw jsonEncodingFailure(numeric);
-            }
-            out.append(d == 0 ? "0" : Double.toString(d));
+            out.append(!Double.isFinite(d) ? "null" : d == 0 ? "0" : Double.toString(d));
         } else if (value instanceof String string) {
             // An invalid scalar sequence is still a string carrier: it
             // rejects through the closed JSON_STRINGIFY_UNSUPPORTED arm
@@ -3164,7 +3233,7 @@ case "NUMBER_ADD" -> {
             }
             out.append('{');
             stack.push(new StringifyFrame(table,
-                new ArrayList<>(table.entries.keySet())));
+                deal.semantic.ir.SemanticTable.ownKeyOrder(table.entries.keySet())));
         } else if (value instanceof Array array) {
             if (!path.add(array)) {
                 throw jsonCycleFailure();
@@ -3175,10 +3244,10 @@ case "NUMBER_ADD" -> {
             throw jsonEncodingFailure(value);
         } else if (value instanceof FunctionValue) {
             throw jsonEncodingFailure(value);
-        } else if (value instanceof ClassInstance) {
-            // A class instance (the builtin Error value included) is a
-            // table-carried value on the carrier-kind projection.
-            throw jsonEncodingFailure(value);
+        } else if (value instanceof ClassInstance instance) {
+            if (!path.add(instance)) throw jsonCycleFailure();
+            out.append('{');
+            stack.push(new StringifyFrame(instance));
         } else {
             throw jsonEncodingFailure(value);
         }
@@ -3260,12 +3329,7 @@ case "NUMBER_ADD" -> {
             List.of(atom(elem, elemKind)), null, null);
         ev(currentModule(), bKey, "SUCCESS", "BOUNDARY", bDigest, bParent, List.of(),
             atom(elem, elemKind), null);
-        if (elem == MISSING) {
-            if (nullable) {
-                return null;
-            }
-            return MISSING;
-        }
+        if (elem == MISSING) return UNDEFINED;
         return elem;
     }
 
@@ -3635,12 +3699,15 @@ case "NUMBER_ADD" -> {
      * The JSON text of one checked async-export completion over the
      * JSON-encodable surface: the same production value walk the
      * {@code JSON_STRINGIFY} stdlib row uses, so the host surface encodes
-     * with the artifact's one JSON algorithm. An unsupported value
-     * (a function carrier, an absent slot, a class instance, a
-     * cycle, a non-finite number) raises — the emitted host surface
-     * classifies that raise as a representation failure.
+     * with the artifact's one JSON algorithm: declared class/Error data,
+     * null substitution for nonfinite numbers and array holes/functions.
+     * A root without a JSON representation and cycles raise; the emitted
+     * host surface classifies that raise as a representation failure.
      */
     public static String jsonText(Object value) {
+        if (value == UNDEFINED || value == MISSING || value instanceof FunctionValue) {
+            throw new IllegalArgumentException("completion has no JSON representation");
+        }
         StringBuilder out = new StringBuilder();
         try {
             stringifyValue(out, value, java.util.Collections.newSetFromMap(

@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/type-system/dynamic-return-e8001.deal\",\"line\":8,\"column\":10,\"expected\":\"number\",\"actual\":\"string\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected number\",\"sourceFile\":\"backend-runtime/type-system/dynamic-return-e8001.deal\",\"line\":11,\"column\":5,\"expected\":\"number\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -16,10 +16,10 @@
       "code": "E8001",
       "message": "expected number",
       "sourceFile": "backend-runtime/type-system/dynamic-return-e8001.deal",
-      "line": 8,
-      "column": 10,
+      "line": 11,
+      "column": 5,
       "expected": "number",
-      "actual": "string"
+      "actual": "null"
     }
   }
 }

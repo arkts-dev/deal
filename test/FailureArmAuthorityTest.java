@@ -229,13 +229,13 @@ public class FailureArmAuthorityTest {
     static void testClosedProjections() {
         System.out.println("-- the two closed projections --");
         check(FailureProjections.typedBoundaryToken(
-                deal.semantic.ir.ActualKind.MISSING, null).equals("nil")
+                deal.semantic.ir.ActualKind.MISSING, null).equals("undefined")
                 && FailureProjections.typedBoundaryToken(
                     deal.semantic.ir.ActualKind.CLASS, "@src/app/User")
                     .equals("@src/app/User")
                 && FailureProjections.typedBoundaryToken(
                     deal.semantic.ir.ActualKind.NULL, null).equals("null"),
-            "the typed-boundary projection renders nil for the absent marker and the "
+            "the typed-boundary projection renders undefined for the absent marker and the "
                 + "carried canonical class atom for a class instance");
         check(FailureProjections.completionToken(deal.semantic.ir.ActualKind.NUMBER, null)
                 .equals("number")
@@ -365,7 +365,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.ModuleId entry = new deal.semantic.ir.ModuleId("arms");
         deal.semantic.ir.LoweredModuleUnit unit = new deal.semantic.ir.LoweredModuleUnit(
             deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-            deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash", "context",
+            deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash", "context",
             java.util.Set.of(), Map.of(), Map.of(), Map.of(),
             new deal.semantic.ir.ModuleInitPlan(List.of(),
                 new deal.semantic.ir.BlockId(0)),
@@ -385,7 +385,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index, modules, entry,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index, modules, entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         Map<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable> tables =
             new LinkedHashMap<>();
@@ -509,7 +509,7 @@ public class FailureArmAuthorityTest {
         checkEq("E8010", tableReturn.code().name(), "the pinned host return code");
         checkEq("return value 1 type mismatch: expected table", tableReturn.message(),
             "the pinned host return message");
-        checkEq("table", tableReturn.expected(), "the declared cell descriptor");
+        checkEq("record", tableReturn.expected(), "the runtime-dialect declared cell descriptor");
         checkEq("string", tableReturn.actual(),
             "the oracle projects the carrier-kind string actual");
         // host-bad-return / host-null-return-bad / host-prewrapped-bad: the
@@ -847,10 +847,10 @@ public class FailureArmAuthorityTest {
      * declared direct/nullable function type and their matching controls.
      */
     private static final String COMPLETION_HOST_DECLARATION = """
-        export async function fetchDirect(): (x: number) => number;
-        export async function fetchNullable(): ((x: number) => number) | null;
-        export async function fetchDirectMatch(): (x: number) => number;
-        export async function fetchNullableMatch(): ((x: number) => number) | null;
+        export function fetchDirect(): Promise<(x: number) => number>;
+        export function fetchNullable(): Promise<((x: number) => number) | null>;
+        export function fetchDirectMatch(): Promise<(x: number) => number>;
+        export function fetchNullableMatch(): Promise<((x: number) => number) | null>;
         """;
 
     /**
@@ -862,22 +862,22 @@ public class FailureArmAuthorityTest {
     private static final String COMPLETION_ENTRY_SOURCE = """
         import * as host from "host/async_fn";
 
-        export async function test_direct(): (x: number) => number {
+        export async function test_direct(): Promise<(x: number) => number> {
           let f: (x: number) => number = await host.fetchDirect();
           return f;
         }
 
-        export async function test_nullable(): ((x: number) => number) | null {
+        export async function test_nullable(): Promise<((x: number) => number) | null> {
           let f: ((x: number) => number) | null = await host.fetchNullable();
           return f;
         }
 
-        export async function test_direct_match(): (x: number) => number {
+        export async function test_direct_match(): Promise<(x: number) => number> {
           let f: (x: number) => number = await host.fetchDirectMatch();
           return f;
         }
 
-        export async function test_nullable_match(): ((x: number) => number) | null {
+        export async function test_nullable_match(): Promise<((x: number) => number) | null> {
           let f: ((x: number) => number) | null = await host.fetchNullableMatch();
           return f;
         }
@@ -980,12 +980,12 @@ public class FailureArmAuthorityTest {
      * string value and the language null itself).
      */
     private static final String NULL_COMPLETION_HOST_DECLARATION = """
-        export async function fetchNull(): null;
-        export async function fetchNullable(): number | null;
-        export async function fetchWrong(): number;
-        export async function fetchWrongNull(): number;
-        export async function fetchNullableString(): string | null;
-        export async function fetchWrongNullString(): string;
+        export function fetchNull(): Promise<null>;
+        export function fetchNullable(): Promise<number | null>;
+        export function fetchWrong(): Promise<number>;
+        export function fetchWrongNull(): Promise<number>;
+        export function fetchNullableString(): Promise<string | null>;
+        export function fetchWrongNullString(): Promise<string>;
         """;
 
     /**
@@ -997,7 +997,7 @@ public class FailureArmAuthorityTest {
     private static final String NULL_COMPLETION_ENTRY_SOURCE = """
         import * as host from "host/async_fn";
 
-        export async function test_null(): null {
+        export async function test_null(): Promise<null> {
           let v: null = await host.fetchNull();
           if (v !== null) {
             throw { code: "TEST_FAIL", message: "null completion value mismatch" };
@@ -1005,7 +1005,7 @@ public class FailureArmAuthorityTest {
           return null;
         }
 
-        export async function test_nullable(): number | null {
+        export async function test_nullable(): Promise<number | null> {
           let v: number | null = await host.fetchNullable();
           if (v !== null) {
             throw { code: "TEST_FAIL", message: "nullable completion value mismatch" };
@@ -1013,17 +1013,17 @@ public class FailureArmAuthorityTest {
           return null;
         }
 
-        export async function test_wrong(): number {
+        export async function test_wrong(): Promise<number> {
           let v: number = await host.fetchWrong();
           return v;
         }
 
-        export async function test_wrong_null(): number {
+        export async function test_wrong_null(): Promise<number> {
           let v: number = await host.fetchWrongNull();
           return v;
         }
 
-        export async function test_nullable_string(): null {
+        export async function test_nullable_string(): Promise<null> {
           let v: string | null = await host.fetchNullableString();
           if (v !== null) {
             throw { code: "TEST_FAIL", message: "nullable string completion value mismatch" };
@@ -1031,7 +1031,7 @@ public class FailureArmAuthorityTest {
           return null;
         }
 
-        export async function test_wrong_null_string(): null {
+        export async function test_wrong_null_string(): Promise<null> {
           let v: string = await host.fetchWrongNullString();
           return null;
         }
@@ -1215,7 +1215,7 @@ public class FailureArmAuthorityTest {
                 built.index(), manifests.manifests(), lua.hostDeclarationSurface(),
                 identities, BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
                 java.util.Set.of(), Backend.JVM, false,
-                deal.distribution.DistributionHome.forManifestDirectory(src.toString()),
+                deal.module.CheckoutResources.forManifestDirectory(src.toString()),
                 stager);
             if (jvm.emitted()) {
                 stager.publish();
@@ -2047,23 +2047,23 @@ public class FailureArmAuthorityTest {
             span, expectedText, "number",
             "the oracle projects a nonfinite number as number");
         // The JVM runtime leg (the same arm through the shared helper).
-        Tuple jvmMissing = checkStdJsonJvm(tableWith("m", deal.codegen.jvm.JvmRuntime.MISSING),
+        Tuple jvmMissing = checkStdJsonJvm(tableWith("v", deal.codegen.jvm.JvmRuntime.MISSING),
             span, expectedText, "nil", "the JVM runtime projects the absent marker as nil");
-        Tuple jvmClass = checkStdJsonJvm(tableWith("c",
+        Tuple jvmClass = checkStdJsonJvm(tableWith("v",
                 new deal.codegen.jvm.JvmRuntime.ErrorValue("E8001", "x")),
             span, expectedText, "table",
             "the JVM runtime projects a class instance as the table-carried value");
-        Tuple jvmFunction = checkStdJsonJvm(tableWith("f",
+        Tuple jvmFunction = checkStdJsonJvm(tableWith("v",
                 new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> null, "() -> null")),
             span, expectedText, "function",
             "the JVM runtime projects a DEAL function value as the function member");
-        Tuple jvmNumber = checkStdJsonJvm(tableWith("n", Double.valueOf(Double.NaN)),
+        Tuple jvmNumber = checkStdJsonJvm(tableWith("v", Double.valueOf(Double.NaN)),
             span, expectedText, "number",
             "the JVM runtime projects a nonfinite number as number");
         checkEq(null, firstDifferingField(oracleMissing, jvmMissing),
             "the JVM runtime renders the oracle's identical absent-marker tuple");
-        checkEq(null, firstDifferingField(oracleClass, jvmClass),
-            "the JVM runtime renders the oracle's identical class tuple");
+        checkEq("OK", jvmClass.code(),
+            "the JVM runtime traverses the legitimate Error carrier, unlike an unregistered Oracle class shell");
         checkEq(null, firstDifferingField(oracleFunction, jvmFunction),
             "the JVM runtime renders the oracle's identical function tuple");
         checkEq(null, firstDifferingField(oracleNumber, jvmNumber),
@@ -2085,27 +2085,23 @@ public class FailureArmAuthorityTest {
             ok, value = call({[__dealCarrierKeys.t] = true, [__dealCarrierKeys.order] = {"n"}, n = 0 / 0})
             row("nan", ok, value)
             """, "std-json-probe", 4);
-        checkEq("missing|E8001|" + expectedText
-                + "|nil|unsupported type for JSON encoding: nil",
-            rows.get(0), "the emitted prelude renders the arm's nil cell");
+        checkEq("missing|OK|", rows.get(0),
+            "the emitted prelude omits an absent object member");
         checkEq("class|E8001|" + expectedText
                 + "|table|unsupported type for JSON encoding: table",
             rows.get(1), "the emitted prelude renders the arm's table cell");
-        checkEq("function|E8001|" + expectedText
-                + "|function|unsupported type for JSON encoding: function",
-            rows.get(2), "the emitted prelude renders the arm's function member");
-        checkEq("nan|E8001|" + expectedText
-                + "|number|unsupported type for JSON encoding: number",
-            rows.get(3), "the emitted prelude renders the arm's number cell");
-        checkEq(null, firstDifferingField(oracleMissing,
-            luaTuple(rows.get(0), span)),
-            "the Lua artifact renders the oracle's identical absent-marker tuple");
+        checkEq("function|OK|", rows.get(2),
+            "the emitted prelude omits a function-valued object member");
+        checkEq("nan|OK|", rows.get(3),
+            "the emitted prelude substitutes null for a nonfinite number");
+        checkEq("OK", oracleMissing.code(),
+            "the Oracle and Lua agree on absent-member acceptance");
         checkEq(null, firstDifferingField(oracleClass, luaTuple(rows.get(1), span)),
             "the Lua artifact renders the oracle's identical class tuple");
-        checkEq(null, firstDifferingField(oracleFunction, luaTuple(rows.get(2), span)),
-            "the Lua artifact renders the oracle's identical function tuple");
-        checkEq(null, firstDifferingField(oracleNumber, luaTuple(rows.get(3), span)),
-            "the Lua artifact renders the oracle's identical number tuple");
+        checkEq("OK", oracleFunction.code(),
+            "the Oracle and Lua agree on function-member omission");
+        checkEq("OK", oracleNumber.code(),
+            "the Oracle and Lua agree on nonfinite substitution");
     }
 
     /** One oracle std/json rejection assertion (the arm's tuple per carrier). */
@@ -2120,6 +2116,16 @@ public class FailureArmAuthorityTest {
         deal.semantic.SharedStdlibSemantics.Outcome<
                 deal.semantic.SharedStdlibSemantics.Value> outcome =
             deal.semantic.SharedStdlibSemantics.jsonStringify(origin, table.table());
+        if (!"table".equals(actual)) {
+            String encoded = outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                    deal.semantic.SharedStdlibSemantics.Value> success
+                    && success.value() instanceof deal.semantic.SharedStdlibSemantics.Value.String text
+                    && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                ? valid.carrier() : "unexpected failure";
+            checkEq("number".equals(actual) ? "{\"v\":null}" : "{}", encoded,
+                "generic stringify substitutes/omits the formerly rejected " + actual + " member");
+            return new Tuple("OK", encoded, span, null, null);
+        }
         if (!(outcome instanceof deal.semantic.SharedStdlibSemantics.Outcome.Failure<
                 deal.semantic.SharedStdlibSemantics.Value> failure)) {
             check(false, note + " (no failure: " + outcome + ")");
@@ -2137,17 +2143,13 @@ public class FailureArmAuthorityTest {
     private static Tuple checkStdJsonJvm(deal.codegen.jvm.JvmRuntime.Table table,
                                          String span, String expected, String actual,
                                          String note) {
-        deal.codegen.jvm.JvmRuntime.DealError error = jvmFailure(
-            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_STRINGIFY",
-                "op", "digest", "parent", "origin", new Object[] {table}));
-        check(error != null, note + " (no failure thrown)");
-        if (error == null) {
-            return new Tuple("?", "?", span, expected, actual);
-        }
-        Tuple tuple = new Tuple(error.code, error.msg, span, error.expected, error.actual);
-        checkEq(new Tuple("E8001", "unsupported type for JSON encoding: " + actual, span,
-            expected, actual), tuple, note);
-        return tuple;
+        Object value = deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "JSON_STRINGIFY",
+            "op", "digest", "parent", "origin", new Object[] {table});
+        String encoded = String.valueOf(value);
+        String expectedJson = "number".equals(actual) ? "{\"v\":null}"
+            : "table".equals(actual) ? "{\"v\":{\"code\":\"E8001\",\"message\":\"x\"}}" : "{}";
+        checkEq(expectedJson, encoded, "generic JVM stringify: " + actual);
+        return new Tuple("OK", encoded, span, null, null);
     }
 
     /** One single-entry JVM table. */
@@ -2299,7 +2301,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, module, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, module, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(), Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -2779,7 +2781,7 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The nullable-inner invariant (docs/spec-v1.4.md §Runtime type descriptor format;
+     * The nullable-inner invariant (docs/spec-v1.5.md §Runtime type descriptor format;
      * {@code RuntimeDescriptor.Nullable}) holds in both descriptor
      * spellings: {@code ?null} / {@code ??inner} and the dialect
      * {@code nullable(null)} / {@code nullable(nullable(…))} fail closed at
@@ -3260,7 +3262,7 @@ public class FailureArmAuthorityTest {
                 "data", LUA_TABLE_CARRIER, "tags", "{[__dealCarrierKeys.a] = true, [__dealCarrierKeys.n] = 1, [1] = 1}"),
             Map.of("name", "n", "age", true, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags", jvmIntArray(1L))));
-        // A nonfinite value at an array(int) element: number.
+        // A nonfinite declared number-array element encodes as null.
         cases.add(walkCase("array-element-nonfinite", "JSON_TO_WALK", "tags[1]", "number",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(0.5),
@@ -3271,7 +3273,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5, "data",
                 new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 jvmNumberArray(1L, Double.POSITIVE_INFINITY))));
-        // A nonfinite value at a number-typed declared field: number.
+        // A nonfinite declared number field encodes as null.
         cases.add(walkCase("nonfinite-number-field", "JSON_TO_WALK", "ratio", "number",
             Map.of("name", walkString("n"), "age", new ClassOpsExecutor.Value.Number(1),
                 "ratio", new ClassOpsExecutor.Value.Number(Double.NaN),
@@ -3290,8 +3292,8 @@ public class FailureArmAuthorityTest {
             Map.of("name", new deal.codegen.jvm.JvmRuntime.Table(), "age", 1L,
                 "ratio", 0.5, "data", new deal.codegen.jvm.JvmRuntime.Table(), "tags",
                 jvmIntArray(1L))));
-        // An absent required value: the typed-boundary nil token.
-        cases.add(walkCase("missing-required-field", "JSON_TO_WALK", "age", "nil",
+        // An absent required value: the typed-boundary undefined token.
+        cases.add(walkCase("missing-required-field", "JSON_TO_WALK", "age", "undefined",
             Map.of("name", walkString("n"), "ratio", new ClassOpsExecutor.Value.Number(0.5),
                 "data", walkEmptyTable(), "tags", walkIntArray(1)),
             Map.of("name", luaString("n"), "ratio", "0.5",
@@ -3516,7 +3518,7 @@ public class FailureArmAuthorityTest {
             Map.of("name", "n", "age", 1L, "ratio", 0.5,
                 "data", jvmCyclicTableThenFunction(), "tags", jvmIntArray(1L))));
         // A table-content carrier under a key containing braces or the
-        // literal spelling of a placeholder: docs/spec-v1.4.md
+        // literal spelling of a placeholder: docs/spec-v1.5.md
         // §Writing table fields permits arbitrary string keys, so the walk's fieldPath carries the key
         // verbatim and the arm's parameter substitution must publish it
         // byte-for-byte on every consumer — never a producer defect, never
@@ -3595,6 +3597,31 @@ public class FailureArmAuthorityTest {
             ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> outcome =
                 ClassOpsExecutor.executeJsonToClass(op, values, layouts,
                     deal.semantic.JsonClassAlgorithmAdapter.stringifier(), opOrigin);
+            String encoded = switch (drive.label()) {
+                case "array-element-nonfinite" ->
+                    "{\"name\":\"n\",\"age\":1,\"ratio\":0.5,\"data\":{},\"tags\":[1,null]}";
+                case "nonfinite-number-field" ->
+                    "{\"name\":\"n\",\"age\":1,\"ratio\":null,\"data\":{},\"tags\":[1]}";
+                default -> null;
+            };
+            if (encoded != null) {
+                String oracleText = outcome instanceof ClassOpsExecutor.Outcome.Success<
+                        ClassOpsExecutor.Value> success
+                        && success.value() instanceof ClassOpsExecutor.Value.String text
+                        && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                    ? valid.carrier() : "unexpected failure";
+                checkEq(jsonStructure(encoded), jsonStructure(oracleText),
+                    drive.label() + ": Oracle declared-number JSON encoding");
+                String prefix = drive.label() + "|OK|";
+                check(luaRows.get(i).startsWith(prefix),
+                    drive.label() + ": real Lua completed encoding");
+                checkEq(jsonStructure(encoded), jsonStructure(luaRows.get(i).substring(prefix.length())),
+                    drive.label() + ": real Lua declared-number JSON encoding");
+                checkEq(jsonStructure(encoded), jsonStructure(
+                    deal.codegen.jvm.JvmJson.toClass(plan, drive.jvmRoot())),
+                    drive.label() + ": JVM declared-number JSON encoding");
+                continue;
+            }
             check(outcome instanceof ClassOpsExecutor.Outcome.Failure<
                     ClassOpsExecutor.Value> failure,
                 drive.label() + ": the oracle's class walk fails the value");
@@ -3940,15 +3967,10 @@ public class FailureArmAuthorityTest {
     }
 
     /**
-     * The walk arm's numeric decomposition (V2): the two numeric positions
-     * the oracle's check set fails — a nonfinite value at an int-typed
-     * declared field and a fractional value at an {@code array(int)} element,
-     * each projecting the value's own variant ({@code number}), never the
-     * declared {@code int} text beside the position, at the call origin the
-     * drive supplied. The emitted Lua walk's corrected descriptor walk fails
-     * the same positions (the walk-cases drive's
-     * {@code array-element-nonfinite} row runs that agreement through the
-     * real luajit lane), so this drive asserts the oracle's rendering alone.
+     * Declared numeric JSON encoding and a separate wrong-kind element:
+     * nonfinite numbers encode as null, while boolean in a number array
+     * retains the path-specific failure at the supplied call origin. The
+     * three-consumer drive independently covers nonfinite fields/elements.
      */
     static void testWalkOracleNumericPositions() {
         System.out.println("-- the walk arm's oracle-only numeric positions --");
@@ -3970,8 +3992,17 @@ public class FailureArmAuthorityTest {
         nonfiniteIntField.put("ratio", new ClassOpsExecutor.Value.Number(0.5));
         nonfiniteIntField.put("data", walkEmptyTable());
         nonfiniteIntField.put("tags", walkIntArray(1));
-        checkWalkOracleTuple(op, layouts, callOrigin, callOriginText,
-            "nonfinite-number-field", nonfiniteIntField, "age", "number");
+        ClassOpsExecutor.Outcome<ClassOpsExecutor.Value> nonfiniteOutcome =
+            ClassOpsExecutor.executeJsonToClass(op,
+                Map.of(((deal.semantic.ir.KindPayload.JsonToClassPayload) op.payload())
+                    .classValue(), walkOracleInstance(op, nonfiniteIntField)), layouts,
+                deal.semantic.JsonClassAlgorithmAdapter.stringifier(), callOrigin);
+        check(nonfiniteOutcome instanceof ClassOpsExecutor.Outcome.Success<
+                ClassOpsExecutor.Value> success
+                && success.value() instanceof ClassOpsExecutor.Value.String text
+                && text.scalar() instanceof deal.semantic.ir.UnicodeScalars.Valid valid
+                && valid.carrier().equals("{\"name\":\"n\",\"age\":null,\"ratio\":0.5,\"data\":{},\"tags\":[1.0]}"),
+            "nonfinite declared number encodes as null; got " + nonfiniteOutcome);
 
         Map<String, ClassOpsExecutor.Value> fractionalElement = new LinkedHashMap<>();
         fractionalElement.put("name", walkString("n"));
@@ -4498,6 +4529,41 @@ public class FailureArmAuthorityTest {
      * {@code __jsonToClassOp} result rendered through the prelude's arm
      * renderer at the op's origin.
      */
+    private static Object jsonStructure(String text) {
+        var parsed = deal.semantic.SharedStdlibSemantics.jsonParse(
+            new deal.semantic.ir.SourceOrigin("probe.deal",
+                deal.semantic.ir.SourceSpan.synthetic("probe.deal"),
+                deal.semantic.ir.SourceOriginKind.SYNTHETIC,
+                new deal.semantic.ir.AnchorId(1), null),
+            new deal.semantic.ir.UnicodeScalars.Valid(text));
+        if (!(parsed instanceof deal.semantic.SharedStdlibSemantics.Outcome.Success<
+                deal.semantic.SharedStdlibSemantics.Value> success)) {
+            throw new AssertionError("Invalid JSON result: " + text);
+        }
+        return jsonStructure(success.value());
+    }
+
+    private static Object jsonStructure(deal.semantic.SharedStdlibSemantics.Value value) {
+        return switch (value) {
+            case deal.semantic.SharedStdlibSemantics.Value.Number n -> Double.doubleToLongBits(n.value());
+            case deal.semantic.SharedStdlibSemantics.Value.Table t -> {
+                Map<String, Object> fields = new LinkedHashMap<>();
+                for (String key : t.table().keys()) {
+                    var slot = t.table().get(key);
+                    if (!(slot instanceof deal.semantic.ir.SemanticTable.Lookup.Present<
+                            deal.semantic.SharedStdlibSemantics.Value> present)) {
+                        throw new AssertionError("Parsed JSON key is absent");
+                    }
+                    fields.put(key, jsonStructure(present.value()));
+                }
+                yield fields;
+            }
+            case deal.semantic.SharedStdlibSemantics.Value.Array a ->
+                a.elements().elements().stream().map(FailureArmAuthorityTest::jsonStructure).toList();
+            default -> value;
+        };
+    }
+
     private static List<String> runWalkProbe(List<WalkCase> cases) throws Exception {
         StringBuilder body = new StringBuilder();
         body.append("local cyc = {[__dealCarrierKeys.t] = true, [__dealCarrierKeys.keys] = {self = true}}\n");
@@ -4551,14 +4617,14 @@ public class FailureArmAuthorityTest {
         body.append("  local c = cases[i]\n");
         body.append("  local ok, text, arm, params, actual = "
             + "__jsonToClassOp(\"").append(WALK_ID.text()).append("\", c.root)\n");
-        body.append("  if ok then print(c.label .. \"|OK|\") return end\n");
+        body.append("  if ok then print(c.label .. \"|OK|\" .. text) else\n");
         body.append("  local value = __arm(arm, params, \"")
             .append(WALK_SPAN).append("\", nil, actual)\n");
         body.append("  print(c.label .. \"|\" .. value.code .. \"|\" .. "
             + "(value.e == nil and \"\" or value.e) .. \"|\" .. "
             + "(value.a == nil and \"\" or value.a) .. \"|\" .. value.m .. \"|\" .. "
             + "tostring(value.o))\n");
-        body.append("end\n");
+        body.append("  end\nend\n");
         return runProbe(emittedWalkChunk(), "arm-walk", body.toString(), "walk-probe",
             cases.size());
     }
@@ -4683,7 +4749,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), Map.of(WALK_ID, walkLayout()),
                 Map.of(), new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 new deal.semantic.ir.ExportPlan(List.of()), Map.of(), ops,
@@ -4701,7 +4767,7 @@ public class FailureArmAuthorityTest {
                     List.of(), List.of(),
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         return new deal.semantic.ir.ExecutableLoweredProject(
-            deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index, modules, entry,
+            deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index, modules, entry,
             deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
     }
 
@@ -4888,8 +4954,8 @@ public class FailureArmAuthorityTest {
             BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.MISSING)),
             BoundaryContext.none()), "the oracle deleted-slot cell"), origin);
         checkEq(new Tuple("E8003", "array element 1 type mismatch", origin, "number",
-                "nil"), oracleDeleted,
-            "the oracle projects the deleted slot as the nil token");
+                "undefined"), oracleDeleted,
+            "the oracle projects the deleted slot as undefined");
         BoundaryOutcome oracleAdmitted = BoundaryExecutor.check(
             FailurePolicyId.TYPE_DESCRIPTOR, nullArray,
             BoundaryValueView.ofArray(BoundaryValueView.nullView()),
@@ -4937,7 +5003,7 @@ public class FailureArmAuthorityTest {
         checkEq("present-null|E8003|number|null|array element 1 type mismatch",
             rows.get(0), "the emitted prelude projects the present null element as "
                 + "the null token");
-        checkEq("deleted-slot|E8003|number|nil|array element 1 type mismatch",
+        checkEq("deleted-slot|E8003|number|undefined|array element 1 type mismatch",
             rows.get(1), "the emitted prelude projects the deleted slot as the "
                 + "nil token");
         checkEq("null-admission|OK|", rows.get(2),
@@ -5106,7 +5172,7 @@ public class FailureArmAuthorityTest {
             + "\"OK\" or \"MISSING\") .. \"|\")\n"
             + "print(\"chunk-null-aliases-runtime-sentinel|\" .. (__NULL == sentinel "
             + "and \"OK\" or \"MISSING\") .. \"|\")\n"
-            + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
+            + "local returned = __hostReturnCell(\"record\", {k = sentinel}, "
             + quote(WALK_SPAN) + ", false)\n"
             + "local dataRoot = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = " + quote(WALK_ID.text())
             + ", [__dealCarrierKeys.p] = {name = true, age = true, ratio = true, data = true, "
@@ -5196,7 +5262,7 @@ public class FailureArmAuthorityTest {
             + "local sentinel = rt.__MISSING\n"
             + "print(\"runtime-missing-binding|\" .. (__rtMissing == sentinel and "
             + "\"OK\" or \"MISSING\") .. \"|\")\n"
-            + "local returned = __hostReturnCell(\"table\", {k = sentinel}, "
+            + "local returned = __hostReturnCell(\"record\", {k = sentinel}, "
             + quote(WALK_SPAN) + ", false)\n"
             + "local dataRoot = {[__dealCarrierKeys.c] = true, [__dealCarrierKeys.id] = " + quote(WALK_ID.text())
             + ", [__dealCarrierKeys.p] = {name = true, age = true, ratio = true, data = true, "
@@ -5237,18 +5303,18 @@ public class FailureArmAuthorityTest {
             "the emitted chunk's own binding is the deployed runtime's absent-marker "
                 + "sentinel");
         checkEq(new Tuple("E8001",
-                "value at data.k is not JSON serializable: nil", WALK_SPAN, null,
-                "nil"), walkLuaTuple(rows.get(1)),
-            "the runtime absent marker in a host-returned table entry renders nil in "
+                "value at data.k is not JSON serializable: undefined", WALK_SPAN, null,
+                "undefined"), walkLuaTuple(rows.get(1)),
+            "the runtime absent marker in a host-returned table entry renders undefined in "
                 + "the message and the actual field");
         checkEq("plain-table-entry-control|OK|", rows.get(2),
             "the plain-table control at the same content position is the JSON-shaped "
                 + "empty object and completes the walk");
         checkEq(new Tuple("E8001",
-                "value at name is not JSON serializable: nil", WALK_SPAN, null,
-                "nil"), walkLuaTuple(rows.get(3)),
+                "value at name is not JSON serializable: undefined", WALK_SPAN, null,
+                "undefined"), walkLuaTuple(rows.get(3)),
             "the runtime absent marker at a runtime class instance's declared field "
-                + "renders nil in the message and the actual field");
+                + "renders undefined in the message and the actual field");
     }
 
     // =========================================================================
@@ -5308,8 +5374,8 @@ public class FailureArmAuthorityTest {
         System.out.println("-- the walk arm's oracle-dispatch leg --");
         List<DispatchCase> cases = new ArrayList<>();
 
-        // (1) A nonfinite value at the number-typed declared field: the
-        // construction's number boundary admits it, the walk fails it.
+        // (1) Construction admits a nonfinite declared number and the
+        // executing JSON walk encodes it as null.
         {
             DispatchIds ids = new DispatchIds();
             Map<String, DispatchValue> present = new LinkedHashMap<>();
@@ -5333,7 +5399,7 @@ public class FailureArmAuthorityTest {
             present.put("ratio", DispatchValue.NUMBER);
             present.put("data", DispatchValue.TABLE);
             present.put("tags", DispatchValue.ARRAY);
-            DispatchCase omitted = dispatchCase("dispatch-missing-required-field", "age", "nil",
+            DispatchCase omitted = dispatchCase("dispatch-missing-required-field", "age", "undefined",
                 ids, WALK_ID, walkLayout(), present, Map.of(WALK_ID, walkLayout()));
             try {
                 deal.semantic.SemanticOracle.executeProjectInits(
@@ -5360,6 +5426,12 @@ public class FailureArmAuthorityTest {
             deal.semantic.SemanticRuntimeModel.ConsumerRun run =
                 deal.semantic.SemanticOracle.executeProjectInits(
                     drive.unit().project(), drive.unit().tables(), Map.of(), null);
+            if (drive.label().equals("dispatch-nonfinite-number-field")) {
+                check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
+                    "the Oracle dispatch admits nonfinite declared-number JSON encoding: "
+                        + run.terminal());
+                continue;
+            }
             check(run.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal
                     .DealFailure,
                 drive.label() + ": the oracle dispatch terminates with the walk's DEAL "
@@ -5858,7 +5930,7 @@ public class FailureArmAuthorityTest {
         deal.semantic.ir.LoweredModuleUnit unit =
             new deal.semantic.ir.LoweredModuleUnit(
                 deal.semantic.ir.LoweredModuleUnit.FORMAT_VERSION,
-                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, entry, "hash",
+                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, entry, "hash",
                 "context", java.util.Set.of(), Map.of(), layouts, Map.of(),
                 new deal.semantic.ir.ModuleInitPlan(List.of(), initBlock),
                 deal.semantic.ir.ExportPlan.empty(), Map.of(), ops, table,
@@ -5873,7 +5945,7 @@ public class FailureArmAuthorityTest {
                     deal.semantic.ir.InitializationMode.ONCE_AFTER_DEPENDENCIES)));
         deal.semantic.ir.ExecutableLoweredProject project =
             new deal.semantic.ir.ExecutableLoweredProject(
-                deal.semantic.ir.SemanticProfile.DEAL_V1_4_BINARY64, index,
+                deal.semantic.ir.SemanticProfile.DEAL_V1_5_BINARY64, index,
                 Map.of(entry, unit), entry,
                 deal.semantic.ClassRegistrationSeeds.builtinErrorOnly());
         return new DispatchUnit(project, Map.of(entry, table), json.origin());

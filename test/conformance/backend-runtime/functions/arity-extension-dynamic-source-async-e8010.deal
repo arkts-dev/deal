@@ -3,13 +3,16 @@
 // @expected: runtime-error E8010
 // @features: functions, arity-extension, async-await, descriptors, runtime-errors
 
+import * as host from "host/signature_mutation";
 function one(x: number): number { return x; }
 
 function needPair(f: (x: number, y: number) => number): number { return f(3, 4); }
 
-export async function test_arity_extension_dynamic_source_async_e8010(): number {
-  let holder: table = { f: one };
-  return needPair(holder.f);
+export async function test_arity_extension_dynamic_source_async_e8010(): Promise<number> {
+  let source: (x: number, y: number) => number = function(x: number, y: number): number { return x + y; };
+  if (!host.replaceSignature({value: source}, "(number)->number")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  let holder: Record<string, unknown> = { f: source };
+  return needPair(source);
 }
 
 export function main(): null {

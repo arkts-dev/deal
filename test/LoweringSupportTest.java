@@ -75,7 +75,7 @@ public class LoweringSupportTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
     }
 
@@ -369,7 +369,7 @@ public class LoweringSupportTest {
 
                     export function main(): null {
                       let t = time;
-                      let g: () => number = t.nowMillis;
+                      let g: () => number = t.nowMillis as (() => number);
                       g();
                       return null;
                     }
@@ -395,8 +395,8 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    export function pick(t: table): () => number {
-                      return t.nowMillis;
+                    export function pick(t: Record<string, unknown>): () => number {
+                      return t.nowMillis as (() => number);
                     }
 
                     export function main(): null {
@@ -429,7 +429,7 @@ public class LoweringSupportTest {
                 "a.deal", """
                     import * as time from "std/time";
 
-                    export function getTime(): table {
+                    export function getTime(): Record<string, unknown> {
                       return time;
                     }
                     """,
@@ -437,8 +437,8 @@ public class LoweringSupportTest {
                     import * as a from "./a";
 
                     export function main(): null {
-                      let t: table = a.getTime();
-                      let g: () => number = t.nowMillis;
+                      let t: Record<string, unknown> = a.getTime();
+                      let g: () => number = t.nowMillis as (() => number);
                       g();
                       return null;
                     }
@@ -467,14 +467,14 @@ public class LoweringSupportTest {
                 "a.deal", """
                     import * as time from "std/time";
 
-                    export function getTime(): table {
+                    export function getTime(): Record<string, unknown> {
                       return time;
                     }
                     """,
                 "b.deal", """
                     import * as a from "./a";
 
-                    export function getTime2(): table {
+                    export function getTime2(): Record<string, unknown> {
                       return a.getTime();
                     }
                     """,
@@ -482,8 +482,8 @@ public class LoweringSupportTest {
                     import * as b from "./b";
 
                     export function main(): null {
-                      let t: table = b.getTime2();
-                      let g: () => number = t.nowMillis;
+                      let t: Record<string, unknown> = b.getTime2();
+                      let g: () => number = t.nowMillis as (() => number);
                       g();
                       return null;
                     }
@@ -674,13 +674,13 @@ public class LoweringSupportTest {
                 "main.deal", """
                     import * as time from "std/time";
 
-                    function unrelated(): table {
+                    function unrelated(): Record<string, unknown> {
                       return {};
                     }
 
                     export function main(): null {
-                      let t: table = unrelated();
-                      let g: () => number = t.nowMillis;
+                      let t: Record<string, unknown> = unrelated();
+                      let g: () => number = t.nowMillis as (() => number);
                       g();
                       return null;
                     }
@@ -707,7 +707,7 @@ public class LoweringSupportTest {
                 "a.deal", """
                     import * as time from "std/time";
 
-                    export function getTable(): table {
+                    export function getTable(): Record<string, unknown> {
                       return {};
                     }
                     """,
@@ -715,8 +715,8 @@ public class LoweringSupportTest {
                     import * as a from "./a";
 
                     export function main(): null {
-                      let t: table = a.getTable();
-                      let g: () => number = t.nowMillis;
+                      let t: Record<string, unknown> = a.getTable();
+                      let g: () => number = t.nowMillis as (() => number);
                       g();
                       return null;
                     }
@@ -986,7 +986,7 @@ public class LoweringSupportTest {
     }
 
     // =========================================================================
-    // 7. constructCoverage: the closed 23-row detector table + the S1 copy
+    // 7. constructCoverage: the closed 24-row detector table + the S1 copy
     // =========================================================================
 
     /**
@@ -1068,7 +1068,7 @@ public class LoweringSupportTest {
                       return 1;
                     }
                     """,
-                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): number { return 1; }\n\nexport async function compute(a: number[]): number {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: table = { k: 1 };\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (has(p.y)) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v: number of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
+                "main.deal", "import * as time from \"std/time\";\nimport * as helper from \"./helper\";\n\nexport class Point {\n  x: number;\n  y?: number;\n}\n\nasync function asyncOne(): Promise<number> { return 1; }\n\nexport async function compute(a: number[]): Promise<number> {\n  let sum: number = 0;\n  let n: number = 1.5;\n  let s: string = \"a\" + \"b\";\n  let t: string = `v${s}`;\n  let neg: number = -sum;\n  let eq: boolean = sum === 0 && n > 1.0;\n  let arr: number[] = [1, 2];\n  let obj: Record<string, unknown> = { k: 1 };\n  let checked: number = obj.k as number;\n  let p: Point = { x: 2, y: 4 };\n  p.y = 3;\n  delete obj.k;\n  if (Object.hasOwn(p, \"y\")) { sum = 1; } else { sum = 2; }\n  let i: number = 0;\n  while (i < a.length) {\n    if (i > 5) { break; }\n    sum = sum + a[i];\n    i = i + 1;\n  }\n  { let v14Loop0: number = 0; while (v14Loop0 < 2) { let j: number = v14Loop0; {\n    if (j === 1) { { v14Loop0 = j; v14Loop0 = v14Loop0 + 1; continue; } }\n    sum = sum + j;\n  } v14Loop0 = j; v14Loop0 = v14Loop0 + 1; } }\n  for (let v of a) { sum = sum + v; }\n  let f: () => number = function(): number { return 1; };\n  let g: () => number = f;\n  g();\n  sum = sum + g();\n  sum = sum + await asyncOne();\n  sum = sum + helper.helperFn();\n  let now: number = time.nowMillis();\n  try {\n    if (now < 0.0) { throw { code: \"E\", message: \"x\" }; }\n  } catch (e) {\n    sum = 9;\n  }\n  return sum;\n}\n\nexport function main(): null {\n  return null;\n}\n"), "main.deal");
             if (result == null) {
                 return;
             }
@@ -1077,7 +1077,7 @@ public class LoweringSupportTest {
             if (manifest == null) {
                 return;
             }
-            // The fixture exercises every one of the 23 rows carrying a
+            // The fixture exercises every one of the 24 rows carrying a
             // required common form (call, cross-module call,
             // unary/arithmetic/comparison, function
             // declaration/expression, and the K7 std.time row included) —
@@ -1087,7 +1087,7 @@ public class LoweringSupportTest {
             // the CALL row's STDLIB_CALL form, never CROSS_MODULE_CALL.
             EnumSet<ConstructKind> expected = EnumSet.allOf(ConstructKind.class);
             check(manifest.constructCoverage().keySet().equals(expected),
-                "the module's reachable constructs produce exactly the 23 rows carrying a "
+                "the module's reachable constructs produce exactly the 24 rows carrying a "
                     + "required common form; got "
                     + manifest.constructCoverage().keySet());
             for (Map.Entry<ConstructKind, List<deal.semantic.ir.SemanticOpKind>> entry
@@ -1124,10 +1124,10 @@ public class LoweringSupportTest {
         // start (S1) — the validator's pinned R-COVERAGE fact.
         LoweredModuleUnit unit = new LoweredModuleUnit(
             LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64,
+            SemanticProfile.DEAL_V1_5_BINARY64,
             manifest.moduleId(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64,
+            LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64,
                 invocation().capabilityRegistryHash()),
             manifest.capabilities(),
             manifest.constructCoverage(),
@@ -1210,7 +1210,7 @@ public class LoweringSupportTest {
                 && message.contains("capability FOUNDATION_VALUES")
                 && message.contains("validatorRule "
                     + LoweringSupport.MANIFEST_INTERNAL_ERROR_SENTINEL)
-                && message.contains("semanticProfile DEAL_V1_4_BINARY64")
+                && message.contains("semanticProfile DEAL_V1_5_BINARY64")
                 && message.contains("irVersion " + LoweredModuleUnit.FORMAT_VERSION)
                 && message.contains("origin LoweringSupport "
                     + LoweringSupport.MANIFEST_INTERNAL_ERROR_SENTINEL),
@@ -1616,7 +1616,7 @@ public class LoweringSupportTest {
             RequirementManifestResult tableField = compileAndCompute(
                 tmp.resolve("table"), Map.of("main.deal", """
                     export function main(): null {
-                      let t: table = { f: function(): number { return 7; } };
+                      let t: Record<string, unknown> = { f: function(): number { return 7; } };
                       return null;
                     }
                     """), "main.deal");

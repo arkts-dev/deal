@@ -3,16 +3,16 @@
 // @expected: runtime-ok
 // @features: async, await, try-catch, error
 
-async function boom(): number {
+async function boom(): Promise<number> {
   throw { code: "E_INNER", message: "inner" };
 }
 
-export async function test_awaited_error_catch(): null {
+export async function test_awaited_error_catch(): Promise<null> {
   try {
     let x: number = await boom();
     throw { code: "TEST_FAIL", message: "awaited throw returned a value" };
   } catch (e) {
-    if (e.code !== "E_INNER") {
+    if ((e as Error).code !== "E_INNER") {
       throw { code: "TEST_FAIL", message: "wrong error code" };
     }
   }

@@ -320,7 +320,7 @@ public record ClassRegistrationSeeds(
                                       String detail) {
         LoweringFailureDetail lowering = new LoweringFailureDetail(
             moduleId.path(), SemanticCapability.CLASSES, rule,
-            SemanticProfile.DEAL_V1_4_BINARY64,
+            SemanticProfile.DEAL_V1_5_BINARY64,
             LoweredModuleUnit.FORMAT_VERSION,
             "ClassRegistrationSeeds " + rule + " (" + detail + ")");
         return new Production(null,

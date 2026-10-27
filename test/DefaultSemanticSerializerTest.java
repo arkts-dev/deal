@@ -236,7 +236,7 @@ public class DefaultSemanticSerializerTest {
     }
 
     private static final String MANIFEST = """
-        {"languageVersion":"1.4","moduleRoots":["src"],"backend":"luajit","output":"build"}
+        {"languageVersion":"1.5","moduleRoots":["src"],"backend":"luajit","output":"build"}
         """;
 
     private static String digestOf(String content) {
@@ -267,23 +267,23 @@ public class DefaultSemanticSerializerTest {
         class HasBox { tag?: number; }
         function helper(v: number): number { return v; }
         function label(): string { return "v"; }
-        function tableOf(): table { return {k: 5}; }
+        function tableOf(): Record<string, unknown> { return {k: 5}; }
         function arrayOf(): number[] { return [1, 2]; }
         function box(): HasBox { return {tag: 1}; }
-        async function source(): number { return 3; }
+        async function source(): Promise<number> { return 3; }
         export function expressions(): number {
           let a: number = 1 + 2;
           let b: number = -3;
           let c: number[] = [1, 2];
-          let d: table = {k: 5};
+          let d: Record<string, unknown> = {k: 5};
           let e: string = `v=${label()}`;
-          let f: number = tableOf().k;
+          let f: number = tableOf().k as number;
           let g: number = arrayOf()[0];
-          let h: boolean = has(box().tag);
+          let h: boolean = Object.hasOwn(box(), "tag");
           let i: number = helper(2);
           let j: (x: number) => number = function(x: number): number { return x; };
           let l: number = (function(x: number): number { return (x = 2); })(1);
-          let m: async () => number = async function(): number { return await source(); };
+          let m: () => Promise<number> = async function(): Promise<number> { return await source(); };
           return a;
         }
         """;
@@ -307,8 +307,8 @@ public class DefaultSemanticSerializerTest {
                   if (n > 0) { total = total + 1; } else { total = total - 1; }
                   let i: number = 0;
                   while (i < 2) { i = i + 1; if (i === 1) { continue; } break; }
-                  for (let value: number of arr) { total = total + value; }
-                  let t: table = {k: 1};
+                  for (let value of arr) { total = total + value; }
+                  let t: Record<string, unknown> = {k: 1};
                   delete t.k;
                   try { if (total < 0) { throw {code: "BAD", message: "bad"}; } }
                   catch (e) { total = 0; }
@@ -437,13 +437,13 @@ public class DefaultSemanticSerializerTest {
     private static void testStructuralClassPlans() throws Exception {
         String main = """
             import * as L from "./lib";
-            export class Record { a: number; b?: string; c: number | null; }
-            export function main(): null { let r: Record = {a: L.pick(), c: null}; return null; }
+            export class Row { a: number; b?: string; c: number | null; }
+            export function main(): null { let r: Row = {a: L.pick(), c: null}; return null; }
             """;
         Compile base = project(main, "export function pick(): number { return 1; }");
         try {
             successful(base);
-            var record = base.serializedOf("main.deal", "Record");
+            var record = base.serializedOf("main.deal", "Row");
             check(record.completedPlan().orderedFields().stream().map(CompilerClassDefaultEntry::name).toList()
                     .equals(List.of("a", "b", "c")), "structural entries retain declaration order");
             check(record.completedPlan().orderedFields().get(1).optional()
@@ -459,16 +459,16 @@ public class DefaultSemanticSerializerTest {
                 if (changed.contains("b: string;")) changed = changed.replace("c: null}", "c: null, b: \"x\"}");
                 Compile variant = base.recompile(Map.of("src/main.deal", changed));
                 successful(variant);
-                check(!record.planDigest().equals(variant.serializedOf("main.deal", "Record").planDigest()),
+                check(!record.planDigest().equals(variant.serializedOf("main.deal", "Row").planDigest()),
                     "field order, descriptor and optionality independently change structural digest");
             }
             Compile moved = base.recompile(Map.of("src/main.deal", main.replace("export class", "\nexport class")));
             successful(moved);
-            check(record.canonicalPlanContent().equals(moved.serializedOf("main.deal", "Record").canonicalPlanContent()),
+            check(record.canonicalPlanContent().equals(moved.serializedOf("main.deal", "Row").canonicalPlanContent()),
                 "annotation-only source movement does not serialize executable ranges");
             Compile provider = base.recompile(Map.of("src/main.deal", main, "src/lib.deal", "export function pick(): number { return 2; }"));
             successful(provider);
-            check(record.planDigest().equals(provider.serializedOf("main.deal", "Record").planDigest()),
+            check(record.planDigest().equals(provider.serializedOf("main.deal", "Row").planDigest()),
                 "ordinary provider change never gives a structural class executable defaults");
             for (String initializer : List.of("1", "L.pick()", "function(): number { return 1; }")) {
                 Compile rejected = base.recompile(Map.of("src/main.deal", main.replace("a: number;", "a: number = " + initializer + ";")));
@@ -532,7 +532,7 @@ public class DefaultSemanticSerializerTest {
 
     private static void testHostAndJsonWrapperProviders() throws Exception {
         String manifest = """
-            {"languageVersion":"1.4","moduleRoots":["src"],"backend":"luajit","output":"build",
+            {"languageVersion":"1.5","moduleRoots":["src"],"backend":"luajit","output":"build",
              "externals":{"host/cfg":{"declaration":"bindings/cfg.d.deal"}}}
             """;
         Compile compile = new Compile(Map.of("deal.json", manifest, "src/main.deal", """
@@ -565,17 +565,17 @@ public class DefaultSemanticSerializerTest {
     private static void testScopedAndImportedProviders() throws Exception {
         Compile compile = project("""
             import * as L from "./lib";
-            class Record {text: string;}
+            class Row {text: string;}
             export function main(): null { let n: number = L.nested(2); return null; }
             """, """
-            class Record {n: number;}
+            class Row {n: number;}
             export function nested(n: number): number {
               let value: number = n;
               function inner(value: number): number { return value + 1; }
               let f: (value: number) => number = function(value: number): number {
                 let copy: number = value; return inner(copy);
               };
-              let record: Record = {n: f(value)};
+              let record: Row = {n: f(value)};
               return record.n;
             }
             """);
@@ -584,7 +584,7 @@ public class DefaultSemanticSerializerTest {
             String content = compile.providerContentOf("lib.deal", "nested");
             check(content.contains("FUNCTION_DECLARATION") && content.contains("FUNCTION_EXPRESSION"),
                 "nested declarations and expression bodies serialize inline in defining scope");
-            check(content.contains("@src/lib.deal/Record") && !content.contains("@src/main.deal/Record"),
+            check(content.contains("@src/lib.deal/Row") && !content.contains("@src/main.deal/Row"),
                 "same-spelled class target resolves the function provider's own declaration");
             var result = compile.serializationSnapshot();
             check(result.providerContents().keySet().stream().anyMatch(key -> key.lexicalDeclarationIdentity().declaredName().equals("nested")),

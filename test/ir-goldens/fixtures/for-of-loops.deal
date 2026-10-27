@@ -1,15 +1,15 @@
 // IR golden fixture: for-of-loops
 
 function testForOfArray(xs: number[]): null {
-    for (let x: number of xs) {
+    for (let x of xs) {
         let y: number = x;
     }
-    return;
+    return null;
 }
 
 function testForOfString(s: string): null {
-    for (let c: string of s) {
+    for (let c of s) {
         let d: string = c;
     }
-    return;
+    return null;
 }

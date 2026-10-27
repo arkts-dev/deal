@@ -97,7 +97,8 @@ public final class SharedValueSemantics {
 
             case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE -> FailurePolicyId.NO_DEAL_FAILURE;
             case STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE,
-                 BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE,
+                 BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, UNDEFINED_EQ, UNDEFINED_NE,
+                 NULLABLE_UNDEFINED_EQ, NULLABLE_UNDEFINED_NE, NULLABLE_EQ, NULLABLE_NE,
                  NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
                 throw new IllegalArgumentException("selector " + selector.name()
                     + " is outside the SharedValueSemantics rows (owned by the later "
@@ -120,7 +121,7 @@ public final class SharedValueSemantics {
         Objects.requireNonNull(selector, "selector must not be null");
         return switch (selector) {
 
-            case NUMBER_NEG, BOOL_NOT -> FailurePolicyId.NO_DEAL_FAILURE;
+            case NUMBER_NEG, BOOL_NOT, TYPEOF, INSTANCEOF -> FailurePolicyId.NO_DEAL_FAILURE;
         };
     }
 

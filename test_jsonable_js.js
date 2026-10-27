@@ -499,40 +499,46 @@ test("jsonToJson raises E8001 for cyclic class graphs", function() {
     "cyclic value cannot be encoded as JSON", "class self-cycle");
 });
 
-test("jsonToJson raises E8001 for cyclic table fields", function() {
+test("jsonToJson raises E8001 for cyclic Record fields", function() {
   const fields = [f("data", "table", false, false)];
-  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"table",optional:false}], {data:rt.makeTable({})}, ...LOC);
+  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
   const data = u.data;
   data.set("self", data);
   assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
     "cyclic value cannot be encoded as JSON", "table self-cycle");
 });
 
-test("jsonToJson raises E8001 for NaN/Infinity number fields", function() {
+test("jsonToJson substitutes null for nonfinite number fields without mutation", function() {
   const fields = [f("x", "number", false, false)];
   const u = rt.classPlan("@m/N", [{name:"x",descriptor:"number",optional:false}], {x:0}, ...LOC);
   rt.setProp(u, "x", NaN);
-  assertError(() => rt.jsonToJson("@m/N", u, fields, ...LOC), "E8001",
-    "value at x is not JSON serializable: number", "NaN field");
+  assertEqual(rt.jsonToJson("@m/N", u, fields, ...LOC), '{"x":null}', "NaN field substitutes null");
+  assert(Number.isNaN(u.x), "NaN storage unchanged");
   rt.setProp(u, "x", Infinity);
-  assertError(() => rt.jsonToJson("@m/N", u, fields, ...LOC), "E8001",
-    "value at x is not JSON serializable: number", "Infinity field");
+  assertEqual(rt.jsonToJson("@m/N", u, fields, ...LOC), '{"x":null}', "Infinity field substitutes null");
+  assertEqual(u.x, Infinity, "Infinity storage unchanged");
+  rt.setProp(u, "x", -Infinity);
+  assertEqual(rt.jsonToJson("@m/N", u, fields, ...LOC), '{"x":null}', "negative Infinity field substitutes null");
+  assertEqual(u.x, -Infinity, "negative Infinity storage unchanged");
 });
 
-test("jsonToJson raises E8001 for function values inside table fields", function() {
+test("jsonToJson rejects function values inside Record fields without mutation", function() {
   const fields = [f("data", "table", false, false)];
-  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"table",optional:false}], {data:rt.makeTable({})}, ...LOC);
-  u.data.set("f", rt.function("()->null", function() { return null; }));
+  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
+  const fn = rt.function("()->null", function() { return null; });
+  u.data.set("f", fn);
   assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "value at data.f is not JSON serializable: function", "function inside table");
+    "value at data.f is not JSON serializable: function", "generated Record path failure");
+  assertEqual(u.data.get("f"), fn, "function identity unchanged");
 });
 
-test("jsonToJson raises E8001 for a non-JSON-shaped table value", function() {
+test("jsonToJson rejects missing Record members without mutating storage", function() {
   const fields = [f("data", "table", false, false)];
-  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"table",optional:false}], {data:rt.makeTable({})}, ...LOC);
+  const u = rt.classPlan("@m/W", [{name:"data",descriptor:"record",optional:false}], {data:rt.makeTable({})}, ...LOC);
   u.data.set("bad", rt.MISSING);
   assertError(() => rt.jsonToJson("@m/W", u, fields, ...LOC), "E8001",
-    "value at data.bad is not JSON serializable: nil", "MISSING inside table");
+    "value at data.bad is not JSON serializable: undefined", "generated Record absence failure");
+  assertEqual(u.data.get("bad"), rt.MISSING, "missing carrier unchanged");
 });
 
 test("jsonToJson number fields enforce the boundary (E8004 range)", function() {

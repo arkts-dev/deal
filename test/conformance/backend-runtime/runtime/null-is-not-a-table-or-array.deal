@@ -6,33 +6,33 @@
 import * as json from "std/json";
 
 export function test_null_is_not_a_container(): null {
-  let holder: table = json.parse("{\"n\":null}");
+  let holder: Record<string, unknown> = json.parse("{\"n\":null}");
   let tableCode: string = "";
   try {
-    let t: table = holder.n;
+    let t: Record<string, unknown> = holder.n as Record<string, unknown>;
     tableCode = "admitted";
   } catch (e) {
-    tableCode = e.code;
+    tableCode = (e as Error).code;
   }
   if (tableCode !== "E8001") {
     throw { code: "TEST_FAIL", message: "the null value was admitted as a table: " + tableCode };
   }
   let arrayCode: string = "";
   try {
-    let xs: number[] = holder.n;
+    let xs: number[] = holder.n as number[];
     if (xs.length >= 0) {
       arrayCode = "admitted";
     }
   } catch (e) {
-    arrayCode = e.code;
+    arrayCode = (e as Error).code;
   }
   if (arrayCode !== "E8001") {
     throw { code: "TEST_FAIL", message: "the null value was admitted as an array" };
   }
   // The empty container controls: a real empty table and a real empty
   // array are values, never confused with the null sentinel.
-  let emptyTable: table = {};
-  let encoded: string = json.stringify(emptyTable);
+  let emptyTable: Record<string, unknown> = {};
+  let encoded: string = json.stringify(emptyTable) as string;
   if (encoded !== "{}") {
     throw { code: "TEST_FAIL", message: "the empty table did not encode: " + encoded };
   }

@@ -74,59 +74,72 @@ public final class NullNarrowing {
      */
     public void onIfCondition(ExpressionNode cond, boolean enterTrueBranch,
                               Function<String, Type> declaredTypeOf) {
-        // Handle !(x === null)  →  x !== null
-        if (cond instanceof UnaryExpr un && un.op() == UnaryOp.NOT) {
-            if (un.expr() instanceof BinaryExpr bin) {
-                if (bin.op() == BinaryOp.EQ && isNullLiteral(bin.right())) {
-                    // !(x === null)  →  x !== null
-                    String var = extractVarName(bin.left());
-                    if (var != null) {
-                        if (enterTrueBranch) {
-                            narrowToNonNull(var, declaredTypeOf);
-                        } else {
-                            narrowed.put(var, Type.Null.INSTANCE);
-                        }
-                    }
-                    return;
-                }
-                if (bin.op() == BinaryOp.NEQ && isNullLiteral(bin.right())) {
-                    // !(x !== null)  →  x === null
-                    String var = extractVarName(bin.left());
-                    if (var != null) {
-                        if (enterTrueBranch) {
-                            narrowed.put(var, Type.Null.INSTANCE);
-                        } else {
-                            narrowToNonNull(var, declaredTypeOf);
-                        }
-                    }
-                    return;
-                }
-            }
+        if (cond instanceof UnaryExpr unary && unary.op() == UnaryOp.NOT) {
+            onIfCondition(unary.expr(), !enterTrueBranch, declaredTypeOf);
             return;
         }
-
-        if (!(cond instanceof BinaryExpr bin)) return;
-
-        if (bin.op() == BinaryOp.NEQ && isNullLiteral(bin.right())) {
-            // x !== null
-            String var = extractVarName(bin.left());
-            if (var != null) {
-                if (enterTrueBranch) {
-                    narrowToNonNull(var, declaredTypeOf);
-                } else {
-                    narrowed.put(var, Type.Null.INSTANCE);
-                }
+        if (cond instanceof BinaryExpr comparison
+                && (comparison.op() == BinaryOp.EQ || comparison.op() == BinaryOp.NEQ)) {
+            boolean matching = (comparison.op() == BinaryOp.EQ) == enterTrueBranch;
+            ExpressionNode subject = comparison.left();
+            ExpressionNode singleton = comparison.right();
+            if (isNullish(singleton)) {
+                refineNullish(subject, singleton, matching, declaredTypeOf);
+                return;
             }
-        } else if (bin.op() == BinaryOp.EQ && isNullLiteral(bin.right())) {
-            // x === null
-            String var = extractVarName(bin.left());
-            if (var != null) {
-                if (enterTrueBranch) {
-                    narrowed.put(var, Type.Null.INSTANCE);
-                } else {
-                    narrowToNonNull(var, declaredTypeOf);
-                }
+            if (isNullish(subject)) {
+                refineNullish(singleton, subject, matching, declaredTypeOf);
+                return;
             }
+            if (singleton instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF) {
+                ExpressionNode swap = subject;
+                subject = singleton;
+                singleton = swap;
+            }
+            if (matching && subject instanceof UnaryExpr unary && unary.op() == UnaryOp.TYPEOF
+                    && unary.expr() instanceof IdentifierExpr id
+                    && singleton instanceof LiteralExpr literal
+                    && literal.value() instanceof LiteralValue.StringLiteral text
+                    && currentType(id.name(), declaredTypeOf) instanceof Type.Unknown) {
+                Type type = switch (text.value()) {
+                    case "undefined" -> Type.Undefined.INSTANCE;
+                    case "boolean" -> Type.Boolean.INSTANCE;
+                    case "number" -> Type.Number.INSTANCE;
+                    case "string" -> Type.String.INSTANCE;
+                    default -> null;
+                };
+                if (type != null) narrowed.put(id.name(), type);
+                return;
+            }
+        }
+    }
+
+    public void narrow(String name, Type type) { narrowed.put(name, type); }
+
+    private Type currentType(String name, Function<String, Type> declaredTypeOf) {
+        return narrowed.getOrDefault(name, declaredTypeOf.apply(name));
+    }
+
+    private static boolean isNullish(ExpressionNode expression) {
+        return isNullLiteral(expression) || expression instanceof IdentifierExpr id && id.name().equals("undefined");
+    }
+
+    private void refineNullish(ExpressionNode subject, ExpressionNode singleton, boolean matching,
+                               Function<String, Type> declaredTypeOf) {
+        if (!(subject instanceof IdentifierExpr id)) return;
+        boolean undefined = singleton instanceof IdentifierExpr;
+        Type current = currentType(id.name(), declaredTypeOf);
+        if (matching) {
+            narrowed.put(id.name(), undefined ? Type.Undefined.INSTANCE : Type.Null.INSTANCE);
+        } else if (current instanceof Type.Nullable n) {
+            if (undefined && n.inner() instanceof Type.Undefined && n.admitsNull()) {
+                narrowed.put(id.name(), Type.Null.INSTANCE);
+                return;
+            }
+            boolean nullFlag = n.admitsNull() && undefined;
+            boolean undefinedFlag = n.admitsUndefined() && !undefined;
+            narrowed.put(id.name(), !nullFlag && !undefinedFlag ? n.inner()
+                : new Type.Nullable(n.inner(), nullFlag, undefinedFlag));
         }
     }
 

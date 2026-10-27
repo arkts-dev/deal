@@ -61,6 +61,9 @@ public final class DescriptorService {
         Objects.requireNonNull(type, "type must not be null");
         return switch (type) {
             case Type.Null ignored -> RuntimeDescriptor.Null.INSTANCE;
+            case Type.Undefined ignored -> RuntimeDescriptor.Undefined.INSTANCE;
+            case Type.Unknown ignored -> RuntimeDescriptor.Unknown.INSTANCE;
+            case Type.Void ignored -> RuntimeDescriptor.Void.INSTANCE;
             case Type.Boolean ignored -> RuntimeDescriptor.Boolean.INSTANCE;
 
             case Type.Number ignored -> RuntimeDescriptor.Number.INSTANCE;
@@ -73,7 +76,7 @@ public final class DescriptorService {
             case Type.Class cls -> describeClass(cls);
             case Type.Array array -> new RuntimeDescriptor.Array(describe(array.element()));
             case Type.Nullable nullable ->
-                new RuntimeDescriptor.Nullable(describe(nullable.inner()));
+                new RuntimeDescriptor.Nullable(describe(nullable.inner()), nullable.admitsNull(), nullable.admitsUndefined());
             case Type.Func func -> new RuntimeDescriptor.Func(
                 func.paramTypes().stream().map(DescriptorService::describe).toList(),
                 describe(func.returnType()), func.isAsync());
@@ -146,7 +149,7 @@ public final class DescriptorService {
             module.path(),
             SemanticCapability.DESCRIPTORS,
             DESCRIPTOR_UNREPRESENTABLE,
-            SemanticProfile.DEAL_V1_4_BINARY64,
+            SemanticProfile.DEAL_V1_5_BINARY64,
             LoweredModuleUnit.FORMAT_VERSION,
             "DescriptorService " + DESCRIPTOR_UNREPRESENTABLE
                 + " (" + defect.getMessage() + ")");

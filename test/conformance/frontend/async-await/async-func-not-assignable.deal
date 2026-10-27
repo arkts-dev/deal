@@ -3,7 +3,7 @@
 // @expected: compile-error E3001
 // @features: async, types
 
-async function g(x: number): number { return x; }
+async function g(x: number): Promise<number> { return x; }
 export function main(): null { return null; }
 export function main(): null {
 

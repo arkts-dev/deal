@@ -1,5 +1,5 @@
 // @spec: Runtime execution model — Module-qualified class identity
-// @description: Two companion modules exporting same-name classes get distinct module-qualified identities; an instance crossed through an untyped table fails the foreign check with E8001 (exact descriptor compare).
+// @description: A nominally refined unknown replaced by a closure with the other module's Point fails the defining parameter boundary with E8001, preserving the exact foreign and expected identities.
 // @expected: runtime-error E8001
 // @features: modules, classes, runtime-errors
 
@@ -7,8 +7,14 @@ import * as LibA from "./modid_lib_a/lib_a";
 import * as LibB from "./modid_lib_b/lib_b";
 
 export function test_cross_module_class_identity(): number {
-  let holder: table = { item: LibA.make(5) };
-  return LibB.needBox(holder.item);
+  let seed: LibB.Point = {x: 7};
+  let item: unknown = seed;
+  let replace: () => void = function(): void { item = LibA.make(5); };
+  if (item instanceof LibB.Point) {
+    replace();
+    return LibB.needBox(item);
+  }
+  throw { code: "TEST_FAIL", message: "nominal refinement branch skipped" };
 }
 
 export function main(): null {

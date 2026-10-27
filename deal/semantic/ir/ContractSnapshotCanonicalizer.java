@@ -378,6 +378,7 @@ public final class ContractSnapshotCanonicalizer {
         Objects.requireNonNull(scalar, "scalar must not be null");
         return switch (scalar) {
             case ScalarValue.Null ignored -> CanonicalJson.nullValue();
+            case ScalarValue.Undefined ignored -> CanonicalJson.obj(CanonicalJson.e("undefined", CanonicalJson.bool(true)));
             case ScalarValue.Boolean b -> CanonicalJson.bool(b.value());
 
             case ScalarValue.Number n -> CanonicalJson.number(n.value());
@@ -690,7 +691,8 @@ public final class ContractSnapshotCanonicalizer {
             case KindPayload.ConstPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("value", scalarJson(p.value())));
             case KindPayload.UnaryPayload p -> CanonicalJson.obj(
-                CanonicalJson.e("selector", CanonicalJson.str(p.selector().name())));
+                CanonicalJson.e("selector", CanonicalJson.str(p.selector().name())),
+                CanonicalJson.e("target", p.target() == null ? CanonicalJson.nullValue() : descriptorText(p.target())));
             case KindPayload.BinaryPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("innerDescriptor", p.innerDescriptor() == null
                     ? CanonicalJson.nullValue() : descriptorText(p.innerDescriptor())),
@@ -742,7 +744,8 @@ public final class ContractSnapshotCanonicalizer {
                 CanonicalJson.e("value", p.value() == null
                     ? CanonicalJson.nullValue() : semanticIdJson(p.value())));
             case KindPayload.HasFieldPayload p -> CanonicalJson.obj(
-                CanonicalJson.e("key", CanonicalJson.str(p.key())),
+                CanonicalJson.e("dynamicKey", p.dynamicKey() == null ? CanonicalJson.nullValue() : semanticIdJson(p.dynamicKey())),
+                CanonicalJson.e("key", p.key() == null ? CanonicalJson.nullValue() : CanonicalJson.str(p.key())),
                 CanonicalJson.e("receiver", semanticIdJson(p.receiver())));
             case KindPayload.BoundaryPayload p -> CanonicalJson.obj(
                 CanonicalJson.e("descriptor", descriptorText(p.descriptor())),

@@ -4,9 +4,9 @@
 // @features: runtime-errors, chained-access
 
 export function test_chained_access_type_error(): number {
-  let t: table = { inner: { value: "bad" } };
-  let inner: table = t.inner;
-  let result: number = inner.value;
+  let t: Record<string, unknown> = { inner: { value: "bad" } };
+  let inner: Record<string, unknown> = t.inner as Record<string, unknown>;
+  let result: number = inner.value as number;
   return result;
 }
 

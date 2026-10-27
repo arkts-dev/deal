@@ -4,7 +4,7 @@
 // @features: tables, delete
 
 export function test_table_delete(): null {
-  let t: table = { x: 1, y: 2 };
+  let t: Record<string, unknown> = { x: 1, y: 2 };
   delete t.x;
   return null;
 }

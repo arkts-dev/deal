@@ -119,7 +119,7 @@ public class AddressChainLoweringTest {
 
     private static SemanticIrValidator.ComparisonFacts facts() {
         return new SemanticIrValidator.ComparisonFacts(INTERFACE_HASH,
-            SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY_HASH);
     }
 
     private static SemanticLowerer.ModuleLowerer lowerer(CheckResult checks) {
@@ -225,7 +225,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult checked = checks(
-            Map.of(target, Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
+            Map.of(target, Type.Number.INSTANCE, value, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         ValueId result = lowerer.lowerAssignment(assignment);
@@ -326,7 +326,7 @@ public class AddressChainLoweringTest {
         table.define("f", new Symbol.VariableSymbol("f", funcType, false));
         table.define("n", new Symbol.VariableSymbol("n", funcType, false));
         CheckResult checked = checks(
-            Map.of(target, funcType, value, funcType), table);
+            Map.of(target, funcType, value, funcType, assignment, funcType), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         SemanticLowerer.ForEachFrame frame = lowerer.openForEachScope("n");
@@ -376,7 +376,7 @@ public class AddressChainLoweringTest {
         SymbolTable table2 = new SymbolTable();
         table2.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         CheckResult checked2 = checks(
-            Map.of(target2, Type.Number.INSTANCE, value2, Type.Number.INSTANCE), table2);
+            Map.of(target2, Type.Number.INSTANCE, value2, Type.Number.INSTANCE, assignment2, Type.Number.INSTANCE), table2);
         SemanticLowerer.ModuleLowerer reuse = lowerer(checked2);
         ValueId firstValue = reuse.lowerAssignment(assignment2);
         ValueId secondValue = reuse.lowerAssignment(assignment2);
@@ -405,7 +405,7 @@ public class AddressChainLoweringTest {
         SymbolTable table3 = new SymbolTable();
         table3.define("k", new Symbol.VariableSymbol("k", Type.String.INSTANCE, false));
         CheckResult checked3 = checks(
-            Map.of(loopTarget, Type.String.INSTANCE, loopValue, Type.String.INSTANCE), table3);
+            Map.of(loopTarget, Type.String.INSTANCE, loopValue, Type.String.INSTANCE, loopAssign, Type.String.INSTANCE), table3);
         SemanticLowerer.ModuleLowerer frameLowerer = lowerer(checked3);
         SemanticLowerer.ForEachFrame loopFrame = frameLowerer.openForEachScope("k");
         frameLowerer.lowerAssignment(loopAssign);
@@ -439,7 +439,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("t", new Symbol.VariableSymbol("t", Type.Table.INSTANCE, false));
         CheckResult checked = checks(Map.of(receiver, Type.Table.INSTANCE, target,
-            Type.Table.INSTANCE, value, Type.Number.INSTANCE), table);
+            Type.Table.INSTANCE, value, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("t");
@@ -480,9 +480,8 @@ public class AddressChainLoweringTest {
             "the chain is TABLE_SLOT [containerOp, valueOp, MEMBER_WRITE] with no keyOp "
                 + "(the member key is a literal string)");
         check(chainOp.result().equals(committed)
-                && chainOp.resultType().equals(RuntimeDescriptor.Table.INSTANCE),
-            "ASSIGN publishes the committed value with the target position's checked "
-                + "descriptor (table)");
+                && chainOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "ASSIGN publishes the original number RHS identity and descriptor");
         check(result.equals(committed), "lowerAssignment returns the committed value");
         checkParentage("the container child", containerOp, chainOp.opId());
         checkParentage("the value child", valueOp, chainOp.opId());
@@ -507,7 +506,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("t", new Symbol.VariableSymbol("t", Type.Table.INSTANCE, false));
         CheckResult checked = checks(Map.of(receiver, Type.Table.INSTANCE, key,
-            Type.String.INSTANCE, target, Type.Table.INSTANCE, value, Type.Number.INSTANCE),
+            Type.String.INSTANCE, target, Type.Table.INSTANCE, value, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE),
             table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
@@ -564,9 +563,8 @@ public class AddressChainLoweringTest {
             "the chain is TABLE_SLOT [containerOp, keyOp, valueOp, normalizeOp, "
                 + "INDEX_WRITE]");
         check(chainOp.result().equals(committed)
-                && chainOp.resultType().equals(RuntimeDescriptor.Table.INSTANCE),
-            "ASSIGN publishes the committed value with the target position's checked "
-                + "descriptor (table)");
+                && chainOp.resultType().equals(RuntimeDescriptor.Number.INSTANCE),
+            "ASSIGN publishes the original number RHS identity and descriptor");
         check(result.equals(committed), "lowerAssignment returns the committed value");
         checkParentage("the container child", containerOp, chainOp.opId());
         checkParentage("the key child", keyOp, chainOp.opId());
@@ -594,7 +592,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("a", new Symbol.VariableSymbol("a", arrayType, false));
         CheckResult checked = checks(Map.of(receiver, arrayType, key, Type.Number.INSTANCE,
-            target, Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
+            target, Type.Number.INSTANCE, value, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("a");
@@ -703,7 +701,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("xs", new Symbol.VariableSymbol("xs", arrayType, false));
         CheckResult checked = checks(Map.of(receiver, arrayType, lengthAccess,
-            Type.Number.INSTANCE, target, Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
+            Type.Number.INSTANCE, target, Type.Number.INSTANCE, value, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("xs");
@@ -783,7 +781,7 @@ public class AddressChainLoweringTest {
         SymbolTable table = new SymbolTable();
         table.define("c", new Symbol.VariableSymbol("c", classType, false));
         CheckResult checked = checks(Map.of(receiver, classType, target, Type.Number.INSTANCE,
-            value, Type.Number.INSTANCE), table);
+            value, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("c");
@@ -1082,7 +1080,7 @@ public class AddressChainLoweringTest {
         table.define("x", new Symbol.VariableSymbol("x", Type.Number.INSTANCE, false));
         table.define("y", new Symbol.VariableSymbol("y", Type.Number.INSTANCE, false));
         CheckResult checked = checks(Map.of(outerTarget, Type.Number.INSTANCE, innerTarget,
-            Type.Number.INSTANCE, value, Type.Number.INSTANCE), table);
+            Type.Number.INSTANCE, value, Type.Number.INSTANCE, inner, Type.Number.INSTANCE, outer, Type.Number.INSTANCE), table);
 
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         ValueId result = lowerer.lowerAssignment(outer);
@@ -1276,7 +1274,7 @@ public class AddressChainLoweringTest {
         table.define("a", new Symbol.VariableSymbol("a", arrayType, false));
         CheckResult checked = checks(Map.of(target, Type.Number.INSTANCE, value,
             Type.Number.INSTANCE, receiver, arrayType, key, Type.Number.INSTANCE, indexTarget,
-            Type.Number.INSTANCE), table);
+            Type.Number.INSTANCE, assignment, Type.Number.INSTANCE), table);
         SemanticLowerer.ModuleLowerer lowerer = lowerer(checked);
         lowerer.openForEachScope("a");
         lowerer.lowerAssignment(assignment);
@@ -1289,7 +1287,7 @@ public class AddressChainLoweringTest {
             ConstructKind.ASSIGNMENT, ConstructKind.ASSIGNMENT.mappedOpKinds(),
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
         LoweredModuleUnit unit = lowerer.buildUnit(coverage, List.of(),
-            SemanticProfile.DEAL_V1_4_BINARY64, INTERFACE_HASH, REGISTRY_HASH);
+            SemanticProfile.DEAL_V1_5_BINARY64, INTERFACE_HASH, REGISTRY_HASH);
         // The manual chain slice lowers no declaration arm, so its binding
         // cells are absent; the common-admission head is the applicable
         // closed-rule gate of this partial slice (the complete admission of
@@ -1414,7 +1412,7 @@ public class AddressChainLoweringTest {
             delete {x: 1}.y;
             delete {x: 1}["z"];
             delete [1, 2][0];
-            for (let k: string of "a") {
+            for (let k of "a") {
               delete {x: 1}[k];
               delete {x: 1}[k = "b"];
             }
@@ -1438,7 +1436,7 @@ public class AddressChainLoweringTest {
             ConstructKind.DELETE, ConstructKind.DELETE.mappedOpKinds());
 
         SemanticLowerer.LoweringResult first = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(first != null && !first.hasErrors() && first.unit() != null,
             "the corpus lowers to a validated unit: " + (first == null ? "null"
@@ -1520,7 +1518,7 @@ public class AddressChainLoweringTest {
 
         // Determinism: a fresh lowering produces byte-identical dumps.
         SemanticLowerer.LoweringResult second = SemanticLowerer.lowerModule(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, coverage, INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(second != null && !second.hasErrors(),
             "the repeated lowering validates again");
@@ -1549,9 +1547,11 @@ public class AddressChainLoweringTest {
         types.put(receiver, receiverType); types.put(variable, Type.Number.INSTANCE);
         types.put(key, arm == 1 ? Type.String.INSTANCE : Type.Number.INSTANCE);
         types.put(value, Type.Number.INSTANCE); types.put(target, arm == 1 ? Type.Table.INSTANCE : Type.Number.INSTANCE);
+        AssignmentExpr assignment = assign(target, value);
+        types.put(assignment, Type.Number.INSTANCE);
         SemanticLowerer.ModuleLowerer producer = lowerer(checks(types, symbols));
         if (arm != 0) { producer.openForEachScope("r"); }
-        producer.lowerAssignment(assign(target, value));
+        producer.lowerAssignment(assignment);
         if (arm != 0) { producer.closeForEachScope(); }
         List<SemanticOp> ops = producer.ops();
         check(AddressChainProtocol.validate(protocolUnit(ops)).isEmpty(), "lowered protocol seed " + arm);
@@ -1560,7 +1560,7 @@ public class AddressChainLoweringTest {
 
     private static LoweredModuleUnit protocolUnit(List<SemanticOp> ops) {
         LoweredModuleUnit unit = lowerer(checks(Map.of(), new SymbolTable()))
-            .buildUnit(Map.of(), List.of(), SemanticProfile.DEAL_V1_4_BINARY64,
+            .buildUnit(Map.of(), List.of(), SemanticProfile.DEAL_V1_5_BINARY64,
                 INTERFACE_HASH, REGISTRY_HASH);
         // The membership of the detached fixture ops: one block that is the
         // plan's init block (a root of the block tree), so the protocol and
@@ -1674,7 +1674,7 @@ public class AddressChainLoweringTest {
             }
             """);
         SemanticLowerer.ShapeMapCoreResult adapted = SemanticLowerer.lowerModuleShapeMapCore(moduleOf(adapterSource),
-            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
         check(!adapted.lowering().hasErrors(), "adapter assignment lowers: " + adapted.lowering().diagnostics());
         if (!adapted.lowering().hasErrors()) {
@@ -1778,7 +1778,7 @@ public class AddressChainLoweringTest {
             String message = failure.get().message();
             check(message.startsWith("Common semantic lowering failed")
                     && message.contains("validatorRule " + rule + ",")
-                    && message.contains("semanticProfile DEAL_V1_4_BINARY64")
+                    && message.contains("semanticProfile DEAL_V1_5_BINARY64")
                     && message.contains("irVersion deal.semantic-ir/2")
                     && message.contains("AddressChainProtocol " + rule)
                     && message.contains(detail) && failure.get().severity().equals("error"),
@@ -1918,7 +1918,7 @@ public class AddressChainLoweringTest {
         CheckResult checked = new CheckResult(
             Map.of(receiver, arrayType, key, Type.Number.INSTANCE, target, Type.Number.INSTANCE,
                 value, Type.Number.INSTANCE, readReceiver, arrayType,
-                readKey, Type.Number.INSTANCE, read, Type.Number.INSTANCE),
+                readKey, Type.Number.INSTANCE, read, Type.Number.INSTANCE, assignment, Type.Number.INSTANCE),
             table, Map.of(), List.of(), Map.of(), Map.of(), Map.of(),
             Set.of(receiver, key, readReceiver, readKey));
 
@@ -2113,7 +2113,7 @@ public class AddressChainLoweringTest {
         table.define("t", new Symbol.VariableSymbol("t",
             new Type.Nullable(Type.Table.INSTANCE), false));
         CheckResult checked = new CheckResult(
-            Map.of(writeReceiver, Type.Table.INSTANCE, writeTarget, Type.Number.INSTANCE,
+            Map.of(write, Type.Number.INSTANCE, writeReceiver, Type.Table.INSTANCE, writeTarget, Type.Number.INSTANCE,
                 value, Type.Number.INSTANCE, deleteReceiver, Type.Table.INSTANCE,
                 deleteTarget, Type.Number.INSTANCE, readReceiver, Type.Table.INSTANCE,
                 read, Type.Number.INSTANCE),

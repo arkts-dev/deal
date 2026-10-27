@@ -1,9 +1,9 @@
 {
-  "languageVersion": "1.4",
-  "moduleRoots": ["src"],
+  "languageVersion": "1.5",
+  "moduleRoots": ["src", "serialization"],
   "output": "build/lua",
   "backend": "luajit",
-  "stdlib": "1.4",
+  "stdlib": "1.5",
   "dependencies": {},
   "externals": {}
 }

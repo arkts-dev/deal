@@ -15,7 +15,7 @@ import java.util.Set;
  * <pre>{@code
  * LoweredModuleUnit {
  *   formatVersion: "deal.semantic-ir/2",
- *   semanticProfile: DEAL_V1_4_BINARY64,           // the only admitted value
+ *   semanticProfile: DEAL_V1_5_BINARY64,           // the only admitted value
  *   moduleId, interfaceHash, loweringContextHash,
  *   requiredCapabilities,
  *   constructCoverage: Map<ConstructKind, [SemanticOpKind]>,   // enum-keyed; recorded at lowering start

@@ -5,7 +5,7 @@
 
 import * as c from "std/console";
 function fail(): number {throw {code:"RETURN",message:"expr"};}
-function recover(): number {try {return fail();} catch(e) {if(e.code!=="RETURN") {throw {code:"TEST_FAIL",message:"wrong error"};} return 9;}}
+function recover(): number {try {return fail();} catch(e) {if((e as Error).code!=="RETURN") {throw {code:"TEST_FAIL",message:"wrong error"};} return 9;}}
 export function main(): null {
  if(recover()!==9) {throw {code:"TEST_FAIL",message:"return transferred before expression evaluated"};}
  c.log("return-expression-error-to-catch"); return null;

@@ -775,7 +775,7 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
     // =========================================================================
 
     /** The closed typed-boundary kind tokens (P2 item 1). */
-    private static final Set<String> KIND_TOKENS = Set.of("null", "boolean",
+    private static final Set<String> KIND_TOKENS = Set.of("null", "undefined", "unknown", "void", "boolean",
         "number", "string", "table", "array", "function", "class");
 
     /**
@@ -785,12 +785,12 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
      * {@code class} — and a foreign text never derives a DEAL-visible
      * token.
      */
-    private static final Set<String> KIND_TEXTS = Set.of("null", "boolean",
+    private static final Set<String> KIND_TEXTS = Set.of("null", "undefined", "unknown", "void", "boolean",
         "number", "string", "table", "array", "function",
         "class instance");
 
     /** The closed typed-boundary actual tokens (P2 item 1). */
-    private static final Set<String> TYPED_BOUNDARY_TOKENS = Set.of("nil", "null",
+    private static final Set<String> TYPED_BOUNDARY_TOKENS = Set.of("nil", "null", "undefined",
         "boolean", "number", "string", "invalid-unicode", "table", "array",
         "function", "async-operation", "nothing", "NaN", "infinity");
 
@@ -799,12 +799,12 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
      * vocabulary with every numeric carrier projecting the single
      * {@code number} kind, so no bare {@code int} token exists.
      */
-    private static final Set<String> COMPLETION_TOKENS = Set.of("nil", "null", "boolean",
+    private static final Set<String> COMPLETION_TOKENS = Set.of("nil", "null", "undefined", "boolean",
         "number", "string", "invalid-unicode", "table", "array",
         "function", "async-operation", "nothing", "NaN", "infinity");
 
     /** The closed carrier-kind tokens (P2 item 2). */
-    private static final Set<String> CARRIER_KIND_TOKENS = Set.of("nil", "table",
+    private static final Set<String> CARRIER_KIND_TOKENS = Set.of("nil", "undefined", "table",
         "boolean", "number", "string", "function");
 
     /**
@@ -1063,8 +1063,8 @@ declared.add(arm(FailureArmId.ARRAY_ELEMENT_KIND,
     }
 
     /** The closed scalar spellings shared by both descriptor dialects. */
-    private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "boolean",
-        "number", "string", "table");
+    private static final List<String> DESCRIPTOR_PRIMITIVES = List.of("null", "undefined", "unknown", "void", "boolean",
+        "number", "string", "record");
 
     /**
      * The closed kind-only spellings the emitted host ABI's kind rows carry

@@ -13,7 +13,7 @@ function denominatorRejected(): boolean {
   try {
     fraction(1, 0);
   } catch (e) {
-    return e.code === "ZERO_TOTAL";
+    return (e as Error).code === "ZERO_TOTAL";
   }
   return false;
 }

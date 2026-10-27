@@ -5,7 +5,7 @@ description: Write idiomatic DEAL source, declarations, and projects. Use for .d
 
 # Write DEAL
 
-Read project instructions and `deal.json`. Use the bundled [language guide](references/language.md) and examples. The compiler's specification for the selected languageVersion remains authoritative; obtain it when a rule is unclear or the project differs from the example manifest. Resolve bundled links within this directory.
+Read project instructions and `deal.json`. Use the bundled [language guide](references/language.md) and examples. `docs/spec-v1.5.md` is the compiler's sole authoritative specification; consult it when a rule is unclear. The examples use languageVersion and stdlib 1.5. Resolve bundled links within this directory.
 
 Read the relevant rules and example before writing:
 

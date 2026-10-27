@@ -18,12 +18,12 @@ function check(condition: boolean, message: string): null {
 
 function one(x: number): number { return x; }
 
-async function asyncOne(x: number): number { return x + 100; }
+async function asyncOne(x: number): Promise<number> { return x + 100; }
 
-async function asyncZero(): number { return 7; }
+async function asyncZero(): Promise<number> { return 7; }
 
-async function widenAsync(): async (x: number, y: number) => number {
-  let source: async (x: number) => number = asyncOne;
+async function widenAsync(): Promise<(x: number, y: number) => Promise<number>> {
+  let source: (x: number) => Promise<number> = asyncOne;
   return source;
 }
 
@@ -32,16 +32,16 @@ function bumpMarker(marker: Marker): number {
   return 1;
 }
 
-export async function test_arity_extension_async(): number {
-  let source: async (x: number) => number = asyncOne;
-  let widened: async (x: number, y: number) => number = source;
+export async function test_arity_extension_async(): Promise<number> {
+  let source: (x: number) => Promise<number> = asyncOne;
+  let widened: (x: number, y: number) => Promise<number> = source;
   let first: number = await widened(1, 2);
 
-  let zeroSource: async () => number = asyncZero;
-  let oneWide: async (x: number) => number = zeroSource;
+  let zeroSource: () => Promise<number> = asyncZero;
+  let oneWide: (x: number) => Promise<number> = zeroSource;
   let second: number = await oneWide(5);
 
-  let returned: async (x: number, y: number) => number = await widenAsync();
+  let returned: (x: number, y: number) => Promise<number> = await widenAsync();
   let third: number = await returned(2, 3);
 
   let syncShort: (x: number) => number = one;
@@ -49,7 +49,7 @@ export async function test_arity_extension_async(): number {
   let fourth: number = syncWide(4, 5);
 
   let marker: Marker = {count: 0};
-  let markerWide: async (x: number, y: number) => number = source;
+  let markerWide: (x: number, y: number) => Promise<number> = source;
   let fifth: number = await markerWide(6, bumpMarker(marker));
   check(marker.count === 1, "the ignored async target argument evaluates exactly once");
 

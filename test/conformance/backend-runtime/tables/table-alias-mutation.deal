@@ -4,10 +4,10 @@
 // @features: tables, aliasing, mutation
 
 export function test_table_alias_mutation(): number {
-  let a: table = { value: 1 };
-  let b: table = a;
+  let a: Record<string, unknown> = { value: 1 };
+  let b: Record<string, unknown> = a;
   b.value = 9;
-  let result: number = a.value;
+  let result: number = a.value as number;
   if (result !== 9) { throw { code: "TEST_FAIL", message: "table alias mutation failed" }; }
   return result;
 }

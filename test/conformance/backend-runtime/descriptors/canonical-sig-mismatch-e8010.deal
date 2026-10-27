@@ -3,13 +3,15 @@
 // @expected: runtime-error E8010
 // @features: descriptors, functions, runtime-errors
 
+import * as host from "host/signature_mutation";
 function asString(x: number): string {
   return "s";
 }
 
 export function test_canonical_sig_mismatch(): number {
-  let holder: table = { f: asString };
-  let f: (x: number) => number = holder.f;
+  let source: (x: number) => number = function(x: number): number { return x; };
+  if (!host.replaceSignature({value: source}, "(number)->string")) { throw {code: "TEST_FAIL", message: "signature mutation failed"}; }
+  let f: (x: number) => number = source;
   return f(1);
 }
 

@@ -103,12 +103,12 @@ public final class SemanticIrValidator {
 
     /**
      * The only admitted unit profile name (S1): derived from the
-     * single-profile owner {@link SemanticProfile#DEAL_V1_4_BINARY64}, never a
+     * single-profile owner {@link SemanticProfile#DEAL_V1_5_BINARY64}, never a
      * duplicated spelling. A carried profile that is not the owner's value
      * rejects; the owner itself is the closed set of supported semantic
      * modes.
      */
-    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_4_BINARY64.name();
+    public static final String ADMITTED_PROFILE = SemanticProfile.DEAL_V1_5_BINARY64.name();
 
     // =========================================================================
     // Comparison facts (validator contract Input)
@@ -1853,6 +1853,79 @@ public final class SemanticIrValidator {
                 if (failure.isPresent()) {
                     return failure;
                 }
+                if (op.operands().size() != 1 || op.operandTypes().size() != 1) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "UNARY requires exactly one typed operand"));
+                }
+                boolean operandFound = false;
+                String producedType = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (op.operands().getFirst().equals(producer.resultValue())) {
+                        operandFound = true;
+                        producedType = producer.resultType();
+                    }
+                }
+                if (!operandFound) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "UNARY references an unproduced operand"));
+                }
+                String selector = optionalString(payload, "selector");
+                String operandType = op.operandTypes().getFirst();
+                String resultType = "NUMBER_NEG".equals(selector) ? "number"
+                    : "TYPEOF".equals(selector) ? "string" : "boolean";
+                String requiredOperand = "BOOL_NOT".equals(selector) ? "boolean"
+                    : "NUMBER_NEG".equals(selector) ? "number" : null;
+                if (!Objects.equals(producedType, operandType)
+                        || requiredOperand != null && !requiredOperand.equals(operandType)
+                        || !resultType.equals(op.resultType()) || op.resultValue() == null) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "UNARY operand/producer and selector result descriptors disagree"));
+                }
+                CanonicalJson.Value rawTarget = payloadValue(payload, "target");
+                if (rawTarget != null && !(rawTarget instanceof CanonicalJson.Null)
+                        && !(rawTarget instanceof CanonicalJson.Str)) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "UNARY target must be a descriptor string or null"));
+                }
+                if (!Objects.equals(op.selector(), optionalString(payload, "selector"))) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "UNARY payload and snapshot selectors disagree"));
+                }
+                String target = optionalString(payload, "target");
+                boolean instanceofSelector = "INSTANCEOF".equals(optionalString(payload, "selector"));
+                if (instanceofSelector ? !(parseDescriptorQuiet(target) instanceof RuntimeDescriptor.Class)
+                        : target != null) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "INSTANCEOF requires a nominal class target; other unary selectors forbid targets"));
+                }
+            }
+            case "HAS_FIELD" -> {
+                CanonicalJson.Value rawKey = payloadValue(payload, "key");
+                CanonicalJson.Value rawDynamic = payloadValue(payload, "dynamicKey");
+                boolean hasKey = rawKey instanceof CanonicalJson.Str;
+                boolean hasDynamic = rawDynamic instanceof CanonicalJson.Obj;
+                ValueId receiver = parseValueIdQuiet(payloadValue(payload, "receiver")
+                    instanceof CanonicalJson.Obj obj ? obj : null);
+                ValueId dynamic = parseValueIdQuiet(rawDynamic instanceof CanonicalJson.Obj obj ? obj : null);
+                if (hasKey == hasDynamic || receiver == null || hasDynamic && dynamic == null
+                        || rawKey != null && !(rawKey instanceof CanonicalJson.Null) && !hasKey
+                        || rawDynamic != null && !(rawDynamic instanceof CanonicalJson.Null) && !hasDynamic) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "HAS_FIELD requires a receiver and exactly one static string or dynamic ValueId key"));
+                }
+                boolean receiverFound = false;
+                boolean keyFound = !hasDynamic;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    receiverFound |= receiver.equals(producer.resultValue());
+                    keyFound |= hasDynamic && dynamic.equals(producer.resultValue())
+                        && "string".equals(producer.resultType());
+                }
+                if (!receiverFound || !keyFound) {
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.CONTAINERS_AND_STRINGS,
+                        origin(R_ENUM, "HAS_FIELD references an unproduced receiver or non-string dynamic key"));
+                }
             }
             case "BINARY" -> {
                 failure = checkSlotEnum(op, unit, facts, "selector", optionalString(payload, "selector"),
@@ -2315,7 +2388,7 @@ public final class SemanticIrValidator {
         return switch (selector) {
 
 
-            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE, STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE, BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, NULLABLE_EQ, NULLABLE_NE, NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE, STRING_EQ, STRING_NE, STRING_LT, STRING_LE, STRING_GT, STRING_GE, BOOLEAN_EQ, BOOLEAN_NE, NULL_EQ, NULL_NE, UNDEFINED_EQ, UNDEFINED_NE, NULLABLE_UNDEFINED_EQ, NULLABLE_UNDEFINED_NE, NULLABLE_EQ, NULLABLE_NE, NULLABLE_NULL_EQ, NULLABLE_NULL_NE, REFERENCE_EQ, REFERENCE_NE ->
                 FailurePolicyId.NO_DEAL_FAILURE;
         };
     }
@@ -2522,7 +2595,7 @@ public final class SemanticIrValidator {
                 }
                 return Optional.empty();
             }
-            case VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT, CLASS_FIELD_ASSIGNMENT,
+            case ASSERTION, VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT, CLASS_FIELD_ASSIGNMENT,
                  UNTYPED_CLASS_INPUT, OPTIONAL_FIELD_READ, CONTEXTUAL_TABLE_READ,
                  IMPORTED_MEMBER_READ, MODULE_EXPORT -> {
                 return matchesDescriptorKind(descriptor, policy)

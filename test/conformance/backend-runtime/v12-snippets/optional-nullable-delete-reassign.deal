@@ -7,10 +7,10 @@ import * as c from "std/console";
 class C {value?: number | null;}
 export function main(): null {
  let x:C={value:null}; let alias:C=x;
- if(!has(alias.value)) {throw {code:"TEST_FAIL",message:"explicit null absent"};}
- delete x.value; if(has(alias.value)) {throw {code:"TEST_FAIL",message:"deletion not shared"};}
- alias.value=null; if(!has(x.value)) {throw {code:"TEST_FAIL",message:"null assignment erased presence"};}
- let n:number | null=x.value; if(n!==null) {throw {code:"TEST_FAIL",message:"null read"};}
- x.value=4; let m:number | null=alias.value; if(m!==null) {if(m!==4) {throw {code:"TEST_FAIL",message:"value"};}} else {throw {code:"TEST_FAIL",message:"value absent"};}
+ if(!Object.hasOwn(alias, "value")) {throw {code:"TEST_FAIL",message:"explicit null absent"};}
+ delete x.value; if(Object.hasOwn(alias, "value") || alias.value !== undefined) {throw {code:"TEST_FAIL",message:"deletion not shared"};}
+ alias.value=null; if(!Object.hasOwn(x, "value")) {throw {code:"TEST_FAIL",message:"null assignment erased presence"};}
+ let n:number | null | undefined=x.value; if(n!==null) {throw {code:"TEST_FAIL",message:"null read"};}
+ x.value=4; let m:number | null | undefined=alias.value; if(m!==null) {if((m as number)!==4) {throw {code:"TEST_FAIL",message:"value"};}} else {throw {code:"TEST_FAIL",message:"value absent"};}
  c.log("optional-nullable-delete-reassign"); return null;
 }

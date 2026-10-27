@@ -10,10 +10,10 @@ export function makeCounter(start: number): Counter {
   return { value: start };
 }
 
-export function makeStep(counter: Counter, audit: table): () => number {
+export function makeStep(counter: Counter, audit: Record<string, unknown>): () => number {
   return function(): number {
     counter.value = counter.value + 1;
-    let calls: number = audit.calls;
+    let calls: number = audit.calls as number;
     audit.calls = calls + 1;
     return counter.value;
   };

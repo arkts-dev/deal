@@ -10,13 +10,15 @@ import java.util.Objects;
  * <p>Closed sealed family; no other scalar shape exists.</p>
  */
 public sealed interface ScalarValue
-    permits ScalarValue.Null, ScalarValue.Boolean,
+    permits ScalarValue.Null, ScalarValue.Undefined, ScalarValue.Boolean,
             ScalarValue.Number, ScalarValue.String {
 
     /** The canonical {@code null} scalar. */
     enum Null implements ScalarValue {
         INSTANCE
     }
+
+    enum Undefined implements ScalarValue { INSTANCE }
 
     /** A canonical boolean scalar. */
     record Boolean(boolean value) implements ScalarValue {

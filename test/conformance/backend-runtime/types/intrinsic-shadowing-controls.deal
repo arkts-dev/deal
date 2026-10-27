@@ -82,7 +82,7 @@ function catchShadow(): number {
     throw { code: "CATCH_X", message: "catch payload" };
   } catch (e) {
     let int: (x: number) => number = plus;
-    if (e.code !== "CATCH_X") {
+    if ((e as Error).code !== "CATCH_X") {
       throw { code: "TEST_FAIL", message: "catch payload changed" };
     }
     if (int(5) !== 6) {

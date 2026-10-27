@@ -251,7 +251,8 @@ public class BoundaryExecutorTest {
         record Case(BoundaryValueView view, String token) {}
         List<Case> cases = List.of(
             new Case(BoundaryValueView.nullView(), "null"),
-            new Case(BoundaryValueView.of(ActualKind.MISSING), "nil"),
+            new Case(BoundaryValueView.of(ActualKind.MISSING), "undefined"),
+            new Case(BoundaryValueView.of(ActualKind.UNDEFINED), "undefined"),
             new Case(BoundaryValueView.of(ActualKind.BOOLEAN), "boolean"),
             new Case(BoundaryValueView.ofNumber(7), "number"),
             new Case(BoundaryValueView.ofNumber(1.5), "number"),
@@ -502,11 +503,11 @@ public class BoundaryExecutorTest {
             Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "null"),
             "[number] vs [null]");
 
-        // The absent/deleted slot: E8003 with the nil token.
+        // The absent/deleted slot reads undefined, distinct from null.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, INT_ARRAY, deletedSlot),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "number", "nil",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "nil"),
+            "array element 1 type mismatch", "number", "undefined",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("number", "undefined"),
             "[number] vs a deleted slot");
 
         // The array(null) admission control: the present null passes
@@ -517,17 +518,15 @@ public class BoundaryExecutorTest {
         check(((BoundaryOutcome.Pass) admitted).value() == presentNull,
             "the array(null) admission keeps the value unchanged");
 
-        // The nullable element admits the present null too (the landed
-        // missing->null mapping is not weakened by the null distinction).
+        // A null-admitting element admits present null, not absence.
         expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_INT_ARRAY,
             presentNull), "[?number] vs present null");
 
-        // A deleted slot at the array(null) descriptor stays the absent
-        // marker's nil token (the present null distinction is exact).
+        // A deleted slot cannot satisfy the null-only descriptor.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULL_ARRAY, deletedSlot),
             FailurePolicyId.ARRAY_ELEMENT_DESCRIPTOR, DiagnosticCode.E8003,
-            "array element 1 type mismatch", "null", "nil",
-            Map.of("oneBasedIndex", "1"), expectedKindMismatch("null", "nil"),
+            "array element 1 type mismatch", "null", "undefined",
+            Map.of("oneBasedIndex", "1"), expectedKindMismatch("null", "undefined"),
             "[null] vs a deleted slot");
     }
 
@@ -568,7 +567,7 @@ public class BoundaryExecutorTest {
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING,
                 BoundaryValueView.of(ActualKind.MISSING)),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected function", "function", "nil",
+            "expected function", "function", "undefined",
             new LinkedHashMap<>(), null, "missing view vs function descriptor");
 
         // The descriptor/policy pairing is a validator cell: broken pairings fail closed.
@@ -1029,15 +1028,13 @@ public class BoundaryExecutorTest {
             null, "function", Map.of("fieldPath", "f"), null,
             "function value at f");
 
-        // The absent marker projects the typed-boundary projection's own
-        // nil token (jsonable-tojson-walk-arm-binding W1): the bound
-        // JSON_TO_WALK arm's actual and its {actual} parameter are one
-        // closed token.
+        // A missing required value projects undefined; the arm's actual
+        // field and message parameter carry the same closed token.
         expectFail(checkCell(FailurePolicyId.JSON_TO_ERROR, NUMBER,
                 BoundaryValueView.of(ActualKind.MISSING), BoundaryContext.jsonField("f")),
             FailurePolicyId.JSON_TO_ERROR, DiagnosticCode.E8001,
-            "value at f is not JSON serializable: nil",
-            null, "nil", Map.of("fieldPath", "f"), null,
+            "value at f is not JSON serializable: undefined",
+            null, "undefined", Map.of("fieldPath", "f"), null,
             "missing required value at f");
 
         // A wrong class identity projects the carried canonical class atom
@@ -1102,47 +1099,67 @@ public class BoundaryExecutorTest {
     // 12. Missing rules: the two named cells and 'got missing' elsewhere
     // =========================================================================
 
+    static void testAssertionFailures() {
+        BoundaryValueView function = BoundaryValueView.ofFunction(SYNC_INT_TO_INT);
+        BoundaryOutcome.Pass same = expectPass(
+            BoundaryExecutor.checkAssertion(SYNC_INT_TO_INT, function), "assertion keeps function");
+        if (same != null) check(same.value() == function, "assertion never wraps a function");
+        expectFail(BoundaryExecutor.checkAssertion(SYNC_INT_TO_STRING, function),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected function", "function", "function", Map.of(), null,
+            "assertion signature mismatch is E8001, not ordinary E8010");
+        expectFail(BoundaryExecutor.checkAssertion(NUMBER_ARRAY,
+            BoundaryValueView.ofArray(BoundaryValueView.of(ActualKind.STRING))),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected array", "array", "array", Map.of(), null,
+            "assertion nested mismatch is E8001, not element E8003");
+        expectFail(BoundaryExecutor.checkAssertion(USER,
+            BoundaryValueView.ofClass("@src/other/User")),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected class instance", "class", "@src/other/User", Map.of(), null,
+            "assertion nominal mismatch does not construct or retag");
+    }
+
     static void testMissingRules() {
-        System.out.println("-- missing: the named missing->null cells and 'got missing' --");
+        System.out.println("-- missing reads undefined; null admission is independent --");
 
         BoundaryValueView missing = BoundaryValueView.of(ActualKind.MISSING);
 
-        // CONTEXTUAL_TABLE_READ with a nullable descriptor (and OPTIONAL_FIELD_READ
-        // with a nullable descriptor): missing maps to null and passes.
-        BoundaryOutcome nullableMissing = checkCell(FailurePolicyId.TYPE_DESCRIPTOR,
-            NULLABLE_STRING, missing);
-        BoundaryOutcome.Pass nullablePass = expectPass(nullableMissing,
-            "nullable descriptor vs missing (missing->null mapping)");
-        check(nullablePass.value().kind() == ActualKind.NULL,
-            "the missing->null mapping publishes a language-null view");
+        expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_STRING, missing),
+            FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
+            "expected string", "string", "undefined", Map.of(), null,
+            "null admission does not admit absence");
+        RuntimeDescriptor optionalString = RuntimeDescriptor.optionalRead(STRING);
+        BoundaryOutcome.Pass optionalPass = expectPass(
+            checkCell(FailurePolicyId.TYPE_DESCRIPTOR, optionalString, missing),
+            "optional read admits missing as undefined");
+        if (optionalPass != null) check(optionalPass.value().kind() == ActualKind.UNDEFINED,
+            "optional read publishes undefined");
 
-        // CONTEXTUAL_TABLE_READ with a non-nullable descriptor — and every other
-        // cell: missing is classified as actual kind 'missing'.
+        // Non-optional concrete reads reject undefined.
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, missing),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected string", "string", "nil", new LinkedHashMap<>(), null,
+            "expected string", "string", "undefined", new LinkedHashMap<>(), null,
             "non-nullable descriptor vs missing");
 
-        // OPTIONAL_FIELD_READ pre-maps missing to null at the op before
-        // validation: the boundary sees null, so a nullable field passes and a
-        // non-nullable field projects 'got null' (never 'got missing').
+        // Present null is a separate value and requires null admission.
         BoundaryValueView nullView = BoundaryValueView.nullView();
         BoundaryOutcome mappedNullPass = checkCell(FailurePolicyId.TYPE_DESCRIPTOR,
             NULLABLE_STRING, nullView);
-        expectPass(mappedNullPass, "OPTIONAL_FIELD_READ nullable vs pre-mapped null");
+        expectPass(mappedNullPass, "null-admitting descriptor vs present null");
         expectFail(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, STRING, nullView),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
             "expected string", "string", "null", new LinkedHashMap<>(), null,
-            "OPTIONAL_FIELD_READ non-nullable vs pre-mapped null");
+            "non-nullable descriptor vs present null");
 
         // The same classification serves every other cell of the closed table.
         expectFail(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, SYNC_INT_TO_STRING, missing),
             FailurePolicyId.TYPE_DESCRIPTOR, DiagnosticCode.E8001,
-            "expected function", "function", "nil",
+            "expected function", "function", "undefined",
             new LinkedHashMap<>(), null, "function boundary vs missing");
         expectFail(checkCell(FailurePolicyId.ASYNC_COMPLETION, STRING, missing),
             FailurePolicyId.ASYNC_COMPLETION, DiagnosticCode.E8001,
-            "expected string", "string", "nil", new LinkedHashMap<>(), null,
+            "expected string", "string", "undefined", new LinkedHashMap<>(), null,
             "completion boundary vs missing");
     }
 
@@ -1204,13 +1221,12 @@ public class BoundaryExecutorTest {
             }
         }
 
-        // The only permitted conversion is the named missing->null mapping:
-        // the published value is a null view.
-        BoundaryOutcome mapped = checkCell(FailurePolicyId.TYPE_DESCRIPTOR, NULLABLE_STRING,
-            BoundaryValueView.of(ActualKind.MISSING));
-        BoundaryOutcome.Pass mappedPass = expectPass(mapped, "missing->null mapping");
-        check(mappedPass.value().kind() == ActualKind.NULL,
-            "the missing->null mapping is the only value conversion");
+        // Absence normalizes to undefined without inventing null.
+        BoundaryOutcome mapped = checkCell(FailurePolicyId.TYPE_DESCRIPTOR,
+            RuntimeDescriptor.optionalRead(STRING), BoundaryValueView.of(ActualKind.MISSING));
+        BoundaryOutcome.Pass mappedPass = expectPass(mapped, "missing->undefined mapping");
+        if (mappedPass != null) check(mappedPass.value().kind() == ActualKind.UNDEFINED,
+            "missing->undefined normalization");
     }
 
     // =========================================================================
@@ -1409,6 +1425,7 @@ public class BoundaryExecutorTest {
         testArrayE8003();
         testArrayPresentNullAndDeletedSlot();
         testFunctionSignature();
+        testAssertionFailures();
         testHostParameter();
         testHostSyncReturn();
         testAsyncCompletion();

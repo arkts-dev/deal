@@ -94,6 +94,7 @@ public class SharedStdlibSemanticsTest {
         }
         return switch (a) {
             case Value.Null ignored -> true;
+            case Value.Undefined ignored -> true;
             case Value.Bool bool -> bool.value() == ((Value.Bool) b).value();
             case Value.Number number ->
                 Double.compare(number.value(), ((Value.Number) b).value()) == 0;
@@ -795,42 +796,40 @@ public class SharedStdlibSemanticsTest {
     static void testJsonStringifyFailures() {
         System.out.println("-- JSON_STRINGIFY: first declaration-order JSON_TO_ERROR --");
 
-        expectStringifyFailure(tableOf("f", new Value.Other(ActualKind.FUNCTION, null)),
-            "f", "function", "a DEAL function value projects the pinned function member");
-        expectStringifyFailure(tableOf("m", new Value.Other(ActualKind.MISSING, null)),
-            "m", "nil", "the absent marker projects the carrier-kind nil token");
+        expectStringify(tableOf("f", new Value.Other(ActualKind.FUNCTION, null)),
+            "{}", "a function member is omitted");
+        expectStringify(tableOf("m", new Value.Other(ActualKind.MISSING, null)),
+            "{}", "a missing member reads undefined and is omitted");
         expectStringifyFailure(tableOf("a",
                 new Value.Other(ActualKind.ASYNC_OPERATION, null)),
             "a", "table", "an async-operation handle is a table-carried value");
         expectStringifyFailure(tableOf("c",
                 new Value.Other(ActualKind.CLASS, "@src/app/Admin")),
             "c", "table", "a class value is a table-carried value (never its identity)");
-        expectStringifyFailure(tableOf("n", new Value.Number(Double.NaN)),
-            "n", "number", "NaN fails with actual 'number'");
-        expectStringifyFailure(tableOf("n", new Value.Number(Double.POSITIVE_INFINITY)),
-            "n", "number", "+Infinity fails with actual 'number'");
-        expectStringifyFailure(tableOf("n", new Value.Number(Double.NEGATIVE_INFINITY)),
-            "n", "number", "-Infinity fails with actual 'number'");
+        expectStringify(tableOf("n", new Value.Number(Double.NaN)),
+            "{\"n\":null}", "NaN becomes null");
+        expectStringify(tableOf("n", new Value.Number(Double.POSITIVE_INFINITY)),
+            "{\"n\":null}", "+Infinity becomes null");
+        expectStringify(tableOf("n", new Value.Number(Double.NEGATIVE_INFINITY)),
+            "{\"n\":null}", "-Infinity becomes null");
         expectStringifyFailure(tableOf("s",
                 Value.string(UnicodeScalars.Invalid.INSTANCE)),
             "s", "string", "an invalid scalar sequence is still a string carrier");
 
-        // First declaration-order failure wins.
-        expectStringifyFailure(tableOf("a", new Value.Other(ActualKind.FUNCTION, null),
+        // Omitted members do not fail or consume comma positions.
+        expectStringify(tableOf("a", new Value.Other(ActualKind.FUNCTION, null),
                 "b", new Value.Other(ActualKind.MISSING, null)),
-            "a", "function",
-            "the first declaration-order failure wins (a before b)");
+            "{}", "multiple omitted members remain an empty object");
         expectStringifyFailure(tableOf("ok", new Value.Number(1),
                 "a", new Value.Table(tableOf("b", new Value.Other(ActualKind.FUNCTION, null),
-                    "c", new Value.Other(ActualKind.MISSING, null)))),
-            "a.b", "function",
-            "nested failures keep the pre-order walk (the inner function wins over the "
-                + "later missing field)");
-        expectStringifyFailure(tableOf("arr", Value.array(new Value.Number(1),
+                    "c", new Value.Other(ActualKind.ASYNC_OPERATION, null)))),
+            "a.c", "table",
+            "nested unsupported values fail after omitted function members");
+        expectStringify(tableOf("arr", Value.array(new Value.Number(1),
                 new Value.Other(ActualKind.FUNCTION, null))),
-            "arr.1", "function", "array elements walk in index order");
-        expectStringifyFailure(tableOf("arr", Value.array(new Value.Number(Double.NaN))),
-            "arr.0", "number", "a nonfinite element projects the number token");
+            "{\"arr\":[1.0,null]}", "array function entries become null");
+        expectStringify(tableOf("arr", Value.array(new Value.Number(Double.NaN))),
+            "{\"arr\":[null]}", "nonfinite array entries become null");
 
         // A path-local container re-entry selects the walk family's closed
         // cycle arm (no parameters, no expected/actual); a shared acyclic
@@ -927,12 +926,12 @@ public class SharedStdlibSemanticsTest {
             failingCursor.put("k", new Value.Table(next));
             failingCursor = next;
         }
-        failingCursor.put("bad", new Value.Number(Double.NaN));
+        failingCursor.put("bad", Value.string(UnicodeScalars.Invalid.INSTANCE));
         StringBuilder badPath = new StringBuilder();
         for (int i = 0; i < depth; i++) {
             badPath.append("k.");
         }
-        expectStringifyFailure(failing, badPath + "bad", "number",
+        expectStringifyFailure(failing, badPath + "bad", "string",
             "the first declaration-order failure keeps its deep fieldPath");
 
         // A path-local re-entry at depth is still the closed cycle arm.
@@ -1089,14 +1088,14 @@ public class SharedStdlibSemanticsTest {
 
         CaptureSink stdout = new CaptureSink(SharedStdlibSemantics.Channel.STDOUT);
         expectSuccess(SharedStdlibSemantics.consoleLog(origin(), valid("hi"), stdout),
-            Value.Null.INSTANCE, "console.log publishes the null result");
+            Value.Undefined.INSTANCE, "console.log publishes undefined for void");
         check(stdout.writes.size() == 1, "exactly one effect per call");
         check(Arrays.equals(stdout.writes.get(0), new byte[] {'h', 'i', '\n'}),
             "the effect bytes are the exact scalar UTF-8 bytes plus one '\\n'");
 
         CaptureSink stderr = new CaptureSink(SharedStdlibSemantics.Channel.STDERR);
         expectSuccess(SharedStdlibSemantics.consoleError(origin(), valid("err"), stderr),
-            Value.Null.INSTANCE, "console.error publishes the null result");
+            Value.Undefined.INSTANCE, "console.error publishes undefined for void");
         check(stderr.writes.size() == 1, "exactly one effect per stderr call");
         check(Arrays.equals(stderr.writes.get(0), new byte[] {'e', 'r', 'r', '\n'}),
             "stderr bytes are exact plus one '\\n'");
@@ -1216,13 +1215,13 @@ public class SharedStdlibSemanticsTest {
     }
 
     private static CompilerInvocation invocation() {
-        return CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE, CapabilityRegistry.releaseRegistry());
+        return CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE, CapabilityRegistry.releaseRegistry());
     }
 
     private static SemanticIrValidator.ComparisonFacts factsOf(
             CheckedProjectBuildResult checked) {
         return new SemanticIrValidator.ComparisonFacts(
-            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_4_BINARY64,
+            checked.index().interfaceIndexDigest(), SemanticProfile.DEAL_V1_5_BINARY64,
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash());
     }
 
@@ -1251,7 +1250,7 @@ public class SharedStdlibSemanticsTest {
             moduleIds.add(module.moduleId());
         }
         return SemanticLowerer.lowerModuleFullProgram(
-            subject, SemanticProfile.DEAL_V1_4_BINARY64, manifest.constructCoverage(),
+            subject, SemanticProfile.DEAL_V1_5_BINARY64, manifest.constructCoverage(),
             checked.index().interfaceIndexDigest(),
             CapabilityRegistry.releaseRegistry().capabilityRegistryHash(),
             SemanticIdAllocator.over(moduleIds));
@@ -1288,6 +1287,7 @@ public class SharedStdlibSemanticsTest {
     private static BoundaryValueView viewOf(Value value) {
         return switch (value) {
             case Value.Null ignored -> BoundaryValueView.of(ActualKind.NULL);
+            case Value.Undefined ignored -> BoundaryValueView.of(ActualKind.UNDEFINED);
             case Value.Bool ignored -> BoundaryValueView.of(ActualKind.BOOLEAN);
             case Value.Number number -> BoundaryValueView.ofNumber(number.value());
             case Value.String string -> BoundaryValueView.of(string.scalar()
@@ -1333,8 +1333,8 @@ public class SharedStdlibSemanticsTest {
         SemanticTable<Value> parsed = new SemanticTable<>();
         parsed.put("a", new Value.Number(1));
         return List.of(
-            seed(StdlibFunctionId.CONSOLE_LOG, Value.string("log"), Value.Null.INSTANCE),
-            seed(StdlibFunctionId.CONSOLE_ERROR, Value.string("error"), Value.Null.INSTANCE),
+            seed(StdlibFunctionId.CONSOLE_LOG, Value.string("log"), Value.Undefined.INSTANCE),
+            seed(StdlibFunctionId.CONSOLE_ERROR, Value.string("error"), Value.Undefined.INSTANCE),
             seed(StdlibFunctionId.STRING_LENGTH, Value.string("abc"), new Value.Number(3)),
             new Seed(StdlibFunctionId.STRING_SUBSTRING,
                 List.of(Value.string("abc"), new Value.Number(1), new Value.Number(2)),
@@ -1399,10 +1399,10 @@ public class SharedStdlibSemanticsTest {
                       let s6: string = str.replace("aba", "a", "z");
                       let xs7: string[] = str.split("a,b", ",");
                       let s8: string = str.trim(" x ");
-                      let t: table = {k: 1};
+                      let t: Record<string, unknown> = {k: 1};
                       let ks9: string[] = tbl.keys(t);
-                      let jt10: table = json.parse("{\\"a\\": 1}");
-                      let js11: string = json.stringify(t);
+                      let jt10: Record<string, unknown> = json.parse("{\\"a\\": 1}");
+                      let js11: string | undefined = json.stringify(t);
                       let f12: number = math.floor(1.5);
                       let f13: number = math.ceil(1.5);
                       let f14: number = math.sqrt(4.0);

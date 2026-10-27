@@ -6,9 +6,9 @@
 import * as Lib from "./table_module_lib";
 
 export function test_table_mutation_through_module(): number {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   Lib.mutate(t);
-  let result: number = t.value;
+  let result: number = t.value as number;
   if (result !== 13) { throw { code: "TEST_FAIL", message: "table mutation through module failed" }; }
   return result;
 }

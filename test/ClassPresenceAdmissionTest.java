@@ -71,16 +71,16 @@ public final class ClassPresenceAdmissionTest {
         Path root = Files.createTempDirectory("deal-class-presence-admission-");
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"), """
-            {"languageVersion":"1.4","moduleRoots":["src"],"backend":"js","output":"out"}
+            {"languageVersion":"1.5","stdlib":"1.5","moduleRoots":["src"],"backend":"js","output":"out"}
             """);
         Files.writeString(root.resolve("src/model.deal"), """
             export class Shared { required: number; nullable: string | null; optional?: number; }
             """);
         Files.writeString(root.resolve("src/main.deal"), """
             import * as model from "./model";
-            class Record { required: number; nullable: number | null; optional?: number; }
+            class LocalRecord { required: number; nullable: number | null; optional?: number; }
             export function main(): null {
-              let record: Record = {required: 1, nullable: null};
+              let record: LocalRecord = {required: 1, nullable: null};
               let error: Error = {code: "TEST", message: "complete"};
               let imported: model.Shared = {required: 2, nullable: null};
               return null;
@@ -88,6 +88,7 @@ public final class ClassPresenceAdmissionTest {
             """);
         Path source = root.resolve("src/main.deal");
         var located = ProjectLocator.locate(source.toString(), null);
+        check(located.context() != null, "v1.5 project locates: " + located);
         var owner = new CompilationOrchestrator(located.context(), source, false, false,
             false, false, null, ConformanceHarnessMetadata.invocation());
         check(owner.compile(), "baseline production compile: " + owner.diagnostics());

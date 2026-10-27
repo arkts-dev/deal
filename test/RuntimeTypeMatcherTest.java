@@ -21,6 +21,7 @@ public class RuntimeTypeMatcherTest {
 
     /** The backend null-representation double for this corpus. */
     static final Object NULL_VALUE = new Object();
+    static final Object UNDEFINED_VALUE = new Object();
 
     /** A class-tagged double value carrying real tag text. */
     static final class ClassValue {
@@ -52,6 +53,7 @@ public class RuntimeTypeMatcherTest {
         @Override public boolean isNull(Object value) {
             return value == null || value == NULL_VALUE;
         }
+        @Override public boolean isUndefined(Object value) { return value == UNDEFINED_VALUE; }
         @Override public boolean isBoolean(Object value) { return value instanceof Boolean; }
         @Override public boolean isString(Object value) { return value instanceof String; }
         @Override public String stringPayload(Object value) { return (String) value; }
@@ -184,6 +186,7 @@ public class RuntimeTypeMatcherTest {
         System.out.println("=== Running Runtime Type Matcher Tests (ISSUE-0312) ===");
 
         testNullRow();
+        testUndefinedUnknownAndNullishRows();
         testBooleanRow();
         testStringRow();
         testNumberRow();
@@ -226,6 +229,28 @@ public class RuntimeTypeMatcherTest {
             "expected null, got @x/y", "null vs class carrier publishes its atom");
         assertFailure("null", new FnValue("()->null"), "E8001",
             "expected null, got function", "null vs function");
+    }
+
+    static void testUndefinedUnknownAndNullishRows() {
+        for (String descriptor : new String[]{"undefined", "void", "!number", "?!number", "null|undefined", "unknown"}) {
+            assertPass(descriptor, UNDEFINED_VALUE, descriptor + " admits undefined by identity");
+        }
+        assertFailure("undefined", NULL_VALUE, "E8001", "expected undefined, got null", "undefined excludes null");
+        assertFailure("null", UNDEFINED_VALUE, "E8001", "expected null, got undefined", "null excludes undefined");
+        assertFailure("?number", UNDEFINED_VALUE, "E8001", "expected number, got undefined", "nullable excludes undefined");
+        assertFailure("!number", NULL_VALUE, "E8001", "expected number, got null", "undefinedable excludes null");
+        assertPass("?!number", NULL_VALUE, "nullish number admits null");
+        assertPass("null|undefined", NULL_VALUE, "nullish singleton union admits null");
+        assertPass("!number", -0.0, "undefinedable preserves negative zero");
+        for (Object value : new Object[]{NULL_VALUE, UNDEFINED_VALUE, true, -0.0, Double.NaN,
+                Double.POSITIVE_INFINITY, "valid 🌍", new TableValue(), new ArrayValue(),
+                new ClassValue("Error"), new FnValue("()->void")}) {
+            assertPass("unknown", value, "unknown admits supported data by identity");
+        }
+        assertFailure("unknown", "\ud800", "E8001", "expected string, got string with unpaired surrogate code units",
+            "unknown still validates Unicode scalars");
+        assertFailure("unknown", new Object(), "E8001", "expected unknown, got unknown", "unknown rejects foreign carrier");
+        assertFailure("number", UNDEFINED_VALUE, "E8001", "expected number, got undefined", "undefined diagnostic token");
     }
 
     // =========================================================================
@@ -307,16 +332,16 @@ public class RuntimeTypeMatcherTest {
     static void testTableRow() {
         System.out.println("-- table row --");
 
-        assertPass("table", new TableValue(), "table passes");
-        assertFailure("table", 1.0, "E8001", "expected table, got number", "table vs number");
-        assertFailure("table", new ClassValue("@x/y"), "E8001", "expected table, got @x/y",
-            "table vs class carrier publishes its atom");
-        assertFailure("table", new ClassValue("Error"), "E8001", "expected table, got Error",
-            "table vs builtin Error carrier publishes its atom");
-        assertFailure("table", new ArrayValue(), "E8001", "expected table, got array",
-            "table vs array");
-        assertFailure("table", new FnValue("()->null"), "E8001", "expected table, got function",
-            "table vs function");
+        assertPass("record", new TableValue(), "record passes");
+        assertFailure("record", 1.0, "E8001", "expected table, got number", "record vs number");
+        assertFailure("record", new ClassValue("@x/y"), "E8001", "expected table, got @x/y",
+            "record vs class carrier publishes its atom");
+        assertFailure("record", new ClassValue("Error"), "E8001", "expected table, got Error",
+            "record vs builtin Error carrier publishes its atom");
+        assertFailure("record", new ArrayValue(), "E8001", "expected table, got array",
+            "record vs array");
+        assertFailure("record", new FnValue("()->null"), "E8001", "expected table, got function",
+            "record vs function");
     }
 
     // =========================================================================

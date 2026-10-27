@@ -1,10 +1,10 @@
 // @spec: Tables — Reading table fields
-// @description: A template interpolation is not one of the five direct read positions: the interpolation must statically have type string, so a table read nested in `${}` is E3003 at the read — the dotted and the computed form alike — and never gains an undocumented dynamic-read context.
-// @expected: compile-error E3003
+// @description: Template interpolation requires string; dotted and computed Record reads remain unknown without checking
+// @expected: compile-error E3016
 // @features: tables, dynamic-read, template-literal, computed-key
 
 export function main(): null {
-  let t: table = { s: "a" };
+  let t: Record<string, unknown> = { s: "a" };
   let v: string = `a${t.s}b${t["s"]}`;
   return null;
 }

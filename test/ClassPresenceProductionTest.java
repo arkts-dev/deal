@@ -17,26 +17,26 @@ public final class ClassPresenceProductionTest {
           return null;
         }
         export function main(): null {
-          let hosted: host.Record = {value: 11, nullable: null};
+          let hosted: host.HostRecord = {value: 11, nullable: null};
           ensure(hosted.value === 11);
           ensure(hosted.nullable === null);
-          ensure(!has(hosted.optional));
+          ensure(!Object.hasOwn(hosted, "optional"));
           hosted.optional = 12;
-          ensure(has(hosted.optional));
-          let optionalValue: number | null = hosted.optional;
-          if (optionalValue !== null) { ensure(optionalValue === 12); }
+          ensure(Object.hasOwn(hosted, "optional"));
+          let optionalValue: number | undefined = hosted.optional;
+          if (optionalValue !== undefined) { ensure(optionalValue === 12); }
           else { throw {code: "CLASS_HOST", message: "provided optional"}; }
           delete hosted.optional;
-          ensure(!has(hosted.optional));
+          ensure(!Object.hasOwn(hosted, "optional"));
           let item: model.Item = {value: 7, nullable: null};
           ensure(item.value === 7);
           ensure(item.nullable === null);
-          ensure(!has(item.optional));
-          ensure(!has(item.optionalNullable));
+          ensure(!Object.hasOwn(item, "optional"));
+          ensure(!Object.hasOwn(item, "optionalNullable"));
           item.optionalNullable = null;
-          ensure(has(item.optionalNullable));
+          ensure(Object.hasOwn(item, "optionalNullable"));
           delete item.optionalNullable;
-          ensure(!has(item.optionalNullable));
+          ensure(!Object.hasOwn(item, "optionalNullable"));
           ensure(model.Item$fromJson("{}") === null);
           ensure(model.Item$fromJson("{\\"value\\":1}") === null);
           ensure(model.Item$fromJson("{\\"value\\":1,\\"nullable\\":null,\\"extra\\":2}") === null);
@@ -45,19 +45,19 @@ public final class ClassPresenceProductionTest {
           if (decoded !== null) {
             ensure(decoded.value === 3);
             ensure(decoded.nullable === null);
-            ensure(!has(decoded.optional));
-            ensure(!has(decoded.optionalNullable));
+            ensure(!Object.hasOwn(decoded, "optional"));
+            ensure(!Object.hasOwn(decoded, "optionalNullable"));
           } else { throw {code: "CLASS_DECODE", message: "required fields"}; }
           ensure(Outer$fromJson("{\\"item\\":{}}") === null);
           let outer: Outer | null = Outer$fromJson("{\\"item\\":{\\"value\\":4,\\"nullable\\":null}}");
           if (outer !== null) {
             ensure(outer.item.value === 4);
-            ensure(!has(outer.item.optionalNullable));
+            ensure(!Object.hasOwn(outer.item, "optionalNullable"));
           } else { throw {code: "CLASS_NESTED", message: "nested fields"}; }
           let present: model.Item | null = model.Item$fromJson("{\\"value\\":5,\\"nullable\\":null,\\"optionalNullable\\":null}");
           if (present !== null) {
-            ensure(has(present.optionalNullable));
-            ensure(present.optionalNullable === null);
+            ensure(Object.hasOwn(present, "optionalNullable"));
+            ensure((present.optionalNullable as number | null) === null);
           } else { throw {code: "CLASS_NULL", message: "present null"}; }
           console.log("class-presence-ok");
           return null;
@@ -102,15 +102,15 @@ public final class ClassPresenceProductionTest {
         Files.writeString(source.resolveSibling("model.deal"), MODEL);
         Files.createDirectories(project.resolve("bindings"));
         Files.writeString(project.resolve("bindings/record.d.deal"), """
-            export class Record {
+            export class HostRecord {
               value: number;
               nullable: number | null;
               optional?: number;
             }
             """);
         Files.writeString(project.resolve("deal.json"), """
-            {"languageVersion":"1.4","moduleRoots":["src"],"output":"out",
-             "backend":"js","stdlib":"1.4","dependencies":{},
+            {"languageVersion":"1.5","moduleRoots":["src"],"output":"out",
+             "backend":"js","stdlib":"1.5","dependencies":{},
              "externals":{"host/record":{"declaration":"bindings/record.d.deal"}}}
             """);
         String javaCommand = Path.of(System.getProperty("java.home"), "bin/java").toString();
@@ -121,7 +121,7 @@ public final class ClassPresenceProductionTest {
                 .map(p -> home.resolve(p).normalize().toString()).toList());
         for (String backend : List.of("js", "luajit", "jvm")) {
             Path output = project.resolve("out-" + backend);
-            List<String> compile = List.of(javaCommand, "-Ddeal.home=" + home, "-cp",
+            List<String> compile = List.of(javaCommand, "-cp",
                 classpath, "deal.Main", "compile", source.toString(), "--backend", backend,
                 "--output", output.toString());
             success(compile, home);
@@ -129,9 +129,9 @@ public final class ClassPresenceProductionTest {
             List<String> command;
             if (backend.equals("js")) {
                 Files.writeString(output.resolve("host/record.js"), """
-                    const surface = {Record: {$kind: 'class',
-                      $classname: '@$external/host/record/Record'}};
-                    Object.defineProperty(surface, 'Record_defaults', {get() {
+                    const surface = {HostRecord: {$kind: 'class',
+                      $classname: '@$external/host/record/HostRecord'}};
+                    Object.defineProperty(surface, 'HostRecord_defaults', {get() {
                       throw new Error('retired default hook was read');
                     }});
                     module.exports = surface;
@@ -139,9 +139,9 @@ public final class ClassPresenceProductionTest {
                 command = List.of("node", output.resolve("main.js").toString());
             } else if (backend.equals("luajit")) {
                 Files.writeString(output.resolve("host/record.lua"), """
-                    return setmetatable({Record = {__kind = "class",
-                      __classname = "@$external/host/record/Record"}}, {__index = function(_, k)
-                        if k == "Record_defaults" then error("retired default hook was read") end
+                    return setmetatable({HostRecord = {__kind = "class",
+                      __classname = "@$external/host/record/HostRecord"}}, {__index = function(_, k)
+                        if k == "HostRecord_defaults" then error("retired default hook was read") end
                       end})
                     """);
                 command = List.of("luajit", output.resolve("main.lua").toString());
@@ -151,7 +151,7 @@ public final class ClassPresenceProductionTest {
                 Path hostSource = project.resolve("HostRecord.java");
                 Files.writeString(hostSource, """
                     public final class HostRecord {
-                      public static Object Record_defaults() {
+                      public static Object HostRecord_defaults() {
                         throw new AssertionError("retired default hook was invoked");
                       }
                     }
@@ -179,8 +179,8 @@ public final class ClassPresenceProductionTest {
                 {"class C { x: number | null; } function f(): C { return {}; }", "E4001"},
                 {"class C { x: number; } function f(): C { return {x: \"bad\"}; }", "E4003"},
                 {"function f(): Error { return {message: \"bad\"}; }", "E4001"},
-                {"import * as h from \"host/record\"; function f(): h.Record { return {nullable: null}; }", "E4001"},
-                {"import * as h from \"host/record\"; function f(): h.Record { return {value: 1}; }", "E4001"}
+                {"import * as h from \"host/record\"; function f(): h.HostRecord { return {nullable: null}; }", "E4001"},
+                {"import * as h from \"host/record\"; function f(): h.HostRecord { return {value: 1}; }", "E4001"}
             };
             for (String[] negative : invalid) {
                 Files.writeString(source, negative[0]);

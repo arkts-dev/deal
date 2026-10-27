@@ -1,0 +1,2 @@
+export function replaceFirst(holder: Record<string, unknown>, replacement: Record<string, unknown>): boolean;
+export function replaceAt(holder: Record<string, unknown>, replacement: Record<string, unknown>, index: number): boolean;

@@ -275,14 +275,14 @@ public class JsonClassLoweringTest {
             return null;
         }
         return SemanticLowerer.lowerModuleClassCore(moduleOf(slice, MODULE, List.of()),
-            SemanticProfile.DEAL_V1_4_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
+            SemanticProfile.DEAL_V1_5_BINARY64, pipeline.coverage(), pipeline.interfaceHash(),
             REGISTRY_HASH, pipeline.ownInterface(),
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
     /** The foundation detector's project facts of the slice (index + coverage). */
     private static PipelineSlice pipeline(CheckedSlice slice) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact fact = new ModuleFact(SOURCE_ID, MODULE, false, false, slice.program(),
             Map.of(), slice.symbols(), slice.checks(), List.of());
@@ -323,7 +323,7 @@ public class JsonClassLoweringTest {
 
     /** The two-module checked project: index digest + per-module coverage rows. */
     private static ProjectFacts buildProject(CheckedSlice owner, CheckedSlice caller) {
-        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_4_ACTIVE,
+        CompilerInvocation invocation = CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
             CapabilityRegistry.releaseRegistry());
         ModuleFact ownerFact = new ModuleFact(OWNER_SOURCE_ID, OWNER, false, false,
             owner.program(), ownerExports(owner), owner.symbols(), owner.checks(), List.of());
@@ -381,7 +381,7 @@ public class JsonClassLoweringTest {
         SemanticIdAllocator allocator = SemanticIdAllocator.over(List.of(OWNER, CALLER));
         SemanticLowerer.ClassDeclarationCoreResult ownerResult =
             SemanticLowerer.lowerModuleClassCore(moduleOf(owner, OWNER, List.of()),
-                SemanticProfile.DEAL_V1_4_BINARY64, project.coverages().get(OWNER),
+                SemanticProfile.DEAL_V1_5_BINARY64, project.coverages().get(OWNER),
                 project.interfaceHash(), REGISTRY_HASH,
                 project.index().modules().get(OWNER), Map.of(), allocator);
         check(ownerResult != null && ownerResult.lowering() != null
@@ -418,7 +418,7 @@ public class JsonClassLoweringTest {
             IMPORT_SPECIFIER, OWNER, ExternalModuleKind.IMPLEMENTATION));
         SemanticLowerer.ClassDeclarationCoreResult callerResult =
             SemanticLowerer.lowerModuleClassCore(moduleOf(caller, CALLER, callerImports),
-                SemanticProfile.DEAL_V1_4_BINARY64, project.coverages().get(CALLER),
+                SemanticProfile.DEAL_V1_5_BINARY64, project.coverages().get(CALLER),
                 project.interfaceHash(), REGISTRY_HASH,
                 project.index().modules().get(CALLER), facts, allocator);
         check(callerResult != null && callerResult.lowering() != null
@@ -791,7 +791,7 @@ public class JsonClassLoweringTest {
                 new CheckedModuleInput(MODULE, "writer.deal", Path.of("writer.deal"),
                     program, slice.checks(), List.of(), List.of(),
                     CheckedModuleKind.IMPLEMENTATION),
-                SemanticProfile.DEAL_V1_4_BINARY64, pipeline.coverage(),
+                SemanticProfile.DEAL_V1_5_BINARY64, pipeline.coverage(),
                 pipeline.interfaceHash(), REGISTRY_HASH, pipeline.ownInterface(),
                 SemanticIdAllocator.over(List.of(MODULE)));
         check(result != null && result.lowering().hasErrors()

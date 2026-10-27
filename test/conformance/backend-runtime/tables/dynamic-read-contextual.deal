@@ -1,13 +1,13 @@
 // @spec: Tables — Reading table fields
-// @description: Table field read with target type is allowed
+// @description: A Record field read remains unknown until an explicit checked assertion
 // @expected: runtime-ok
 // @features: tables, dynamic-read
 
 export function test_table_read(): number {
-  let t: table = { x: 42 };
-  let v: number = t.x; // OK: contextual target type
+  let t: Record<string, unknown> = { x: 42 };
+  let v: number = t.x as number;
   if (v !== 42) {
-    throw { code: "TEST_FAIL", message: "contextual int read mismatch" };
+    throw { code: "TEST_FAIL", message: "checked number read mismatch" };
   }
   return v;
 }

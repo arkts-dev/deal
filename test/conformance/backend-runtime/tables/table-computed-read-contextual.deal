@@ -1,12 +1,12 @@
 // @spec: Tables
-// @description: A table field read is contextually checked against an existing variable on assignment.
+// @description: A checked Record field read is assigned to an existing variable.
 // @expected: runtime-ok
 // @features: tables, assignment, contextual-typing
 
 export function main(): null {
-  let t: table = { answer: 42 };
+  let t: Record<string, unknown> = { answer: 42 };
   let value: number = 0;
-  value = t.answer;
+  value = t.answer as number;
   if (value !== 42) { throw { code: "TEST_FAIL", message: "assignment context mismatch" }; }
   return null;
 }

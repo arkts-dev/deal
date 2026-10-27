@@ -2354,7 +2354,7 @@ public class DiagnosticRangeTest {
     /**
      * The real frontend pipeline — lexer → parser (with the fixture's
      * validated profile) → module shape validation → name resolution →
-     * type checking → the null-return fall-off gate — returning the error
+     * type checking (including its single definite-return decision) — returning the error
      * diagnostics in pipeline order. No backend executes.
      */
     @SuppressWarnings("deprecation")
@@ -2398,8 +2398,6 @@ public class DiagnosticRangeTest {
         CheckResult result = TypeChecker.check(filename, symTable, nr,
             parseResult.program());
         collectErrors(result.diagnostics(), errors);
-        collectErrors(deal.checker.NullReturnFallOff.diagnostics(
-            parseResult.program()), errors);
         if (resolver instanceof CorpusModuleResolver corpusResolver) {
             collectErrors(corpusResolver.ffiDiagnostics(), errors);
         }

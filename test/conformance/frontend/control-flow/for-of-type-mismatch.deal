@@ -1,10 +1,10 @@
 // @spec: Control flow — For-of — Type mismatch
-// @description: for-of loop variable type must match element type
-// @expected: compile-error E3015
+// @description: Inferred numeric array elements cannot initialize a string binding
+// @expected: compile-error E3001
 // @features: for-of, type-checking
 
 export function main(): null {
-for (let x: string of [1, 2, 3]) { }
+for (let x of [1, 2, 3]) { let invalid: string = x; }
 
 return null;
 }

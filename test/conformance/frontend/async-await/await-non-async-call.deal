@@ -5,7 +5,7 @@
 
 function syncFunc(): number { return 42; }
 
-async function f(): number {
+async function f(): Promise<number> {
   return await syncFunc();
 }
 

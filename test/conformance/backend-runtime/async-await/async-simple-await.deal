@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: async, await, runtime
 
-async function g(): number { return 42; }
+async function g(): Promise<number> { return 42; }
 
-export async function f(): number {
+export async function f(): Promise<number> {
   let x: number = await g();
   if (x !== 42) {
     throw { code: "TEST_FAIL", message: "simple await value mismatch" };

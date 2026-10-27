@@ -5,7 +5,7 @@
 
 export function main(): null {
   let count: number = 0;
-  for (let c: string of "é") {
+  for (let c of "é") {
     count = count + 1;
     if (c !== "é") {
       throw { code: "TEST_FAIL", message: "for-of unicode: scalar value mismatch" };

@@ -6,7 +6,7 @@
 export function test_array_count(): number {
   let xs: number[] = [1, 2, 3, 4, 5];
   let n: number = 0;
-  for (let x: number of xs) {
+  for (let x of xs) {
     n = n + 1;
   }
   if (n !== 5) {
@@ -18,7 +18,7 @@ export function test_array_count(): number {
 export function test_string_count(): number {
   let s: string = "hello";
   let n: number = 0;
-  for (let c: string of s) {
+  for (let c of s) {
     n = n + 1;
   }
   if (n !== 5) {

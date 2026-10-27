@@ -3,9 +3,9 @@
 // @expected: runtime-ok
 // @features: async, await, control-flow
 
-async function yes(): boolean { return true; }
+async function yes(): Promise<boolean> { return true; }
 
-export async function test_await_in_if_condition(): number {
+export async function test_await_in_if_condition(): Promise<number> {
   let result: number = 0;
   let trueBranch: boolean = false;
   let falseBranch: boolean = false;

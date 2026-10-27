@@ -4,7 +4,7 @@
 // @features: tables, dynamic-keys, diagnostics
 
 export function main(): null {
-  let t: table = {};
+  let t: Record<string, unknown> = {};
   let key: number = 1;
   let value: string = t[key];
   return null;

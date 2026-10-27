@@ -6,7 +6,7 @@
 export function test_count(): number {
   let s: string = "hello";
   let n: number = 0;
-  for (let c: string of s) {
+  for (let c of s) {
     n = n + 1;
   }
   if (n !== 5) {

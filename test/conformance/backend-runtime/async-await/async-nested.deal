@@ -6,7 +6,7 @@
 // Invocation-local stage carrier threaded through the private chain helpers.
 class ChainStage { step: number; }
 
-async function c(stage: ChainStage): number {
+async function c(stage: ChainStage): Promise<number> {
   // The innermost completion must be the first chain event: stage 0.
   if (stage.step !== 0) {
     throw { code: "TEST_FAIL", message: "c completion stage mismatch" };
@@ -15,7 +15,7 @@ async function c(stage: ChainStage): number {
   return 10;
 }
 
-async function b(stage: ChainStage): number {
+async function b(stage: ChainStage): Promise<number> {
   let v: number = await c(stage);
   // b resumes once after c's completion: stage must be 1.
   if (stage.step !== 1) {
@@ -28,7 +28,7 @@ async function b(stage: ChainStage): number {
   return v;
 }
 
-export async function a(): number {
+export async function a(): Promise<number> {
   let stage: ChainStage = { step: 0 };
   let v: number = await b(stage);
   // a resumes once after b's resume: the designed terminal stage is 2.

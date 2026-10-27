@@ -139,7 +139,7 @@ public class BindingsValidationTest {
             return null;
         }
         return SemanticLowerer.lowerModuleValidationCore(moduleOf(slice),
-            SemanticProfile.DEAL_V1_4_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
+            SemanticProfile.DEAL_V1_5_BINARY64, Map.of(), INTERFACE_HASH, REGISTRY_HASH,
             SemanticIdAllocator.over(List.of(MODULE)));
     }
 
@@ -210,7 +210,7 @@ public class BindingsValidationTest {
     private static final String IFACE = "interface-digest-1";
     private static final String REGISTRY = "capability-registry-hash-1";
     private static final String LCH =
-        LoweringContextHash.of(SemanticProfile.DEAL_V1_4_BINARY64, REGISTRY);
+        LoweringContextHash.of(SemanticProfile.DEAL_V1_5_BINARY64, REGISTRY);
 
     private static final RuntimeDescriptor INT = RuntimeDescriptor.Number.INSTANCE;
     private static final RuntimeDescriptor.Func SIG0 =
@@ -738,7 +738,7 @@ public class BindingsValidationTest {
             Map<FunctionAllocationIdentity, FunctionExecutionBinding> registry,
             List<SemanticOp> ops) {
         return new LoweredModuleUnit(LoweredModuleUnit.FORMAT_VERSION,
-            SemanticProfile.DEAL_V1_4_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
+            SemanticProfile.DEAL_V1_5_BINARY64, MOD, IFACE, LCH, Set.of(), Map.of(), Map.of(),
             functions, new ModuleInitPlan(List.of(), INIT_BLOCK), ExportPlan.empty(), registry,
             ops, new StructuredBodyTable(Map.of(), Map.of()),
             new ClassFactoryRegistry(Map.of()),
@@ -848,8 +848,125 @@ public class BindingsValidationTest {
         checkerRejects("let x: number = (x = 1);", "E2001",
             "(a) the store-to-pre-init shape");
 
-        SemanticLowerer.ValidationCoreResult result = validatedResult("function selfReference(): null { let g: () => null = selfReference; }\nfunction forwardReference(): null { let h: () => null = laterFn; }\nfunction laterFn(): null {}\nfunction even(): null { let oddRef: () => null = odd; }\nfunction odd(): null { let evenRef: () => null = even; }\nfunction parameterCapture(p: number): null {\n  let g: () => null = function(): null { let read: number = p; };\n}\nfunction catchCapture(): null {\n  try { let t = 1; }\n  catch (e) { let g: () => null = function(): null { let copy = e; }; }\n}\nfunction iterationCapture(): null {\n  for (let c: string of \"ab\") {\n    let g: () => null = function(): null { let read: string = c; };\n  }\n}\nfunction nestedSelfReference(): null {\n  function g(): null { let copy: () => null = g; }\n}\nfunction nestedCaptureChain(): null {\n  let x: number = 1;\n  function make(): null {\n    let inner: () => null = function(): null { let read: number = x; };\n  }\n}\nfunction ancestorLoads(): null {\n  let x = 1;\n  try { let t = x; } catch (e) { let y = x; }\n}\nfunction thunkCapture(): null {\n  let x = 1;\n  let s: () => null = function(): null { let read: number = x; };\n  let k: (a: number, b: number) => null = (s = function(): null { let read2: number = x; });\n}\nfunction provedLoad(): null {\n  let f: (x: number) => null = inner;\n  let g: (a: number, b: number) => null = f;\n}\nfunction inner(x: number): null {}\n", "the surviving source-level positive shapes");
+        SemanticLowerer.ValidationCoreResult result = validatedResult("""
+            function selfReference(): void { let g: () => void = selfReference; }
+            function forwardReference(): void { let h: () => void = laterFn; }
+            function laterFn(): void {}
+            function even(): void { let oddRef: () => void = odd; }
+            function odd(): void { let evenRef: () => void = even; }
+            function parameterCapture(p: number): void {
+              let g: () => void = function(): void { let read: number = p; };
+            }
+            function catchCapture(): void {
+              try { let t = 1; }
+              catch (e) { let g: () => void = function(): void { let copy = e; }; }
+            }
+            function iterationCapture(): void {
+              for (let c of "ab") {
+                let g: () => void = function(): void { let read: string = c; };
+              }
+            }
+            function nestedSelfReference(): void {
+              function g(): void { let copy: () => void = g; }
+            }
+            function nestedCaptureChain(): void {
+              let x: number = 1;
+              function make(): void {
+                let inner: () => void = function(): void { let read: number = x; };
+              }
+            }
+            function ancestorLoads(): void {
+              let x = 1;
+              try { let t = x; } catch (e) { let y = x; }
+            }
+            function assignmentCapture(): void {
+              let x = 1;
+              let s: () => void = function(): void { let read: number = x; };
+              let k: (a: number, b: number) => void = (s = function(): void { let read2: number = x; });
+            }
+            function provedLoad(): void {
+              let f: (x: number) => void = inner;
+              let g: (a: number, b: number) => void = f;
+            }
+            function inner(x: number): void {}
+            """, "the surviving source-level positive shapes");
         testCellKindInvariant(result);
+        testAssignmentSnapshotNegatives();
+    }
+
+    private static void testAssignmentSnapshotNegatives() {
+        var result = validatedResult("""
+            function snapshot(source: (x: number) => void,
+                target: (x: number, y: number) => void): void {
+              target = source;
+              source = function(x: number): void {};
+            }
+            """, "a mutable parameter assignment snapshot");
+        if (result == null) return;
+        var base = result.lowering().unit();
+        var adapter = base.ops().stream().filter(op -> op.payload()
+            instanceof KindPayload.FunctionAdaptPayload).findFirst().orElseThrow();
+        var chain = base.ops().stream().filter(op -> op.opId()
+            .equals(adapter.origin().parentOpId())).findFirst().orElseThrow();
+        var assign = (KindPayload.AssignPayload) chain.payload();
+        var producer = base.ops().stream().filter(op -> op.opId()
+            .equals(assign.childOps().getFirst())).findFirst().orElseThrow();
+        var payload = (KindPayload.FunctionAdaptPayload) adapter.payload();
+        check(payload.mode() == CaptureMode.VALUE && payload.proof() == null,
+            "assignment captures the evaluated mutable load without claiming immutability");
+        for (String fault : List.of("parent", "producer-parent", "rhs", "type", "order", "source", "future")) {
+            var changed = new ArrayList<>(base.ops());
+            SemanticOp replacement;
+            switch (fault) {
+                case "parent", "producer-parent" -> {
+                    var victim = fault.equals("parent") ? adapter : producer;
+                    replacement = opWith(victim.opId(), victim.kind(), victim.payload(),
+                        victim.result(), victim.resultType(), victim.operandTypes(), victim.operands(),
+                        victim.failurePolicy(), null);
+                    changed.set(changed.indexOf(victim), replacement);
+                }
+                case "rhs", "type", "order" -> {
+                    var children = new ArrayList<>(assign.childOps());
+                    if (fault.equals("order")) java.util.Collections.swap(children, 0, 1);
+                    replacement = opWith(chain.opId(), chain.kind(),
+                        new KindPayload.AssignPayload(assign.targetKind(), children),
+                        fault.equals("rhs") ? nextValue() : chain.result(),
+                        fault.equals("type") ? adapter.resultType() : chain.resultType(),
+                        chain.operandTypes(), chain.operands(), chain.failurePolicy(), chain.origin().parentOpId());
+                    changed.set(changed.indexOf(chain), replacement);
+                }
+                case "source" -> {
+                    replacement = opWith(adapter.opId(), adapter.kind(),
+                        new KindPayload.FunctionAdaptPayload(payload.sourceSignature(),
+                            payload.targetSignature(), CaptureMode.VALUE,
+                            new AdaptSourceRef.Value(nextValue()), null),
+                        adapter.result(), adapter.resultType(), adapter.operandTypes(), adapter.operands(),
+                        adapter.failurePolicy(), adapter.origin().parentOpId());
+                    changed.set(changed.indexOf(adapter), replacement);
+                }
+                case "future" -> {
+                    changed.remove(producer);
+                    changed.add(changed.indexOf(adapter) + 1, producer);
+                }
+                default -> throw new AssertionError(fault);
+            }
+            var mutated = new LoweredModuleUnit(base.formatVersion(), base.semanticProfile(),
+                base.moduleId(), base.interfaceHash(), base.loweringContextHash(),
+                base.requiredCapabilities(), base.constructCoverage(), base.classLayouts(),
+                base.functions(), base.moduleInit(), base.exportPlan(), base.functionBindings(),
+                changed, base.bodyTable(), base.classFactories(), base.classBindingFacts());
+            var rejected = BindingsProductionValidator.validate(mutated, mutated.bodyTable());
+            check(rejected.isPresent() && rejected.get().code().equals("E6005")
+                    && rejected.get().message().contains("validatorRule ADAPTER_SOURCE_SHAPE,")
+                    && rejected.get().message().contains("module 'main'"),
+                "forged assignment snapshot " + fault + " rejects at ADAPTER_SOURCE_SHAPE: " + rejected);
+            if (List.of("rhs", "type", "source").contains(fault)) {
+                var chainRejected = deal.semantic.ir.AddressChainProtocol.validate(mutated);
+                check(chainRejected.isPresent() && chainRejected.get().message()
+                        .contains("validatorRule ADDRESS_CHAIN_SHAPE,"),
+                    "address protocol independently rejects assignment " + fault + ": " + chainRejected);
+            }
+        }
     }
 
     // =========================================================================

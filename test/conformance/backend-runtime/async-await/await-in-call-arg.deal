@@ -3,10 +3,10 @@
 // @expected: runtime-ok
 // @features: async, await, calls
 
-async function one(): number { return 1; }
+async function one(): Promise<number> { return 1; }
 function add(a: number, b: number): number { return a + b; }
 
-export async function test_await_in_call_arg(): number {
+export async function test_await_in_call_arg(): Promise<number> {
   let result: number = add(await one(), 2);
   if (result !== 3) { throw { code: "TEST_FAIL", message: "await in call arg failed" }; }
   return result;

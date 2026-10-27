@@ -5,7 +5,7 @@
 
 import * as Lib from "./async_module_lib";
 
-export async function test_async_import_await(): number {
+export async function test_async_import_await(): Promise<number> {
   let result: number = await Lib.plusOne(4);
   if (result !== 5) { throw { code: "TEST_FAIL", message: "async import await failed" }; }
   return result;

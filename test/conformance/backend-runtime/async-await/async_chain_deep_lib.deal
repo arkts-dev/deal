@@ -3,10 +3,10 @@
 // catalog when a parent conformance fixture imports it. The v1.2 gate
 // (ISSUE-0107) removes unclassified skips: every .deal file carries an
 // explicit classification, and companions must keep compiling standalone.
-export async function deepAnswer(): number {
+export async function deepAnswer(): Promise<number> {
   return 40;
 }
 
-export async function deepText(): string {
+export async function deepText(): Promise<string> {
   return "deep";
 }

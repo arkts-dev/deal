@@ -26,7 +26,7 @@ const $time = {};
 // backend's System.currentTimeMillis()). The result is an integer with
 // % 1000 === 0, in the current-second window of Date.now(), and crosses
 // the declared number return: contemporary readings exceed the signed-32
-// range and no int terminal exists (v1.4). There are no value parameters,
+// range and no int terminal exists (v1.5). There are no value parameters,
 // so $f declares only the trailing span parameters ($file, $line, $column)
 // — the emitter passes literal call-site spans on every .$f call — and
 // forwards them to the exit check: checkNumber is the declared-return

@@ -8,7 +8,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected class instance\",\"sourceFile\":\"backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal\",\"line\":9,\"column\":21,\"expected\":\"class\",\"actual\":\"table\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"expected class instance\",\"sourceFile\":\"backend-runtime/class-runtime-errors/dynamic-bad-class-param-e8001.deal\",\"line\":9,\"column\":21,\"expected\":\"class\",\"actual\":\"null\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -19,7 +19,7 @@
       "line": 9,
       "column": 21,
       "expected": "class",
-      "actual": "table"
+      "actual": "null"
     }
   }
 }

@@ -225,13 +225,6 @@ public final class NameResolver {
     // =======================================================================
 
     private void seedIntrinsics() {
-        // F7: The `has` intrinsic is handled by HasExpr in the type checker,
-        // not via call-intrinsic path.  Store it with a boolean type for
-        // symbol-table correctness; the intrinsic resolver is dead code
-        // but kept for robustness.
-        root.define("has", new Symbol.IntrinsicSymbol("has",
-            Type.Boolean.INSTANCE, IntrinsicResolvers.HAS));
-
         Span synth = Span.synthetic(modulePath);
 
         BuiltinErrorDeclaration builtinError =
@@ -392,7 +385,7 @@ public final class NameResolver {
             }
         }
 
-        Type funcType = resolveTypeNode(fd.returnType());
+        Type funcType = resolveResultTypeNode(fd.returnType());
         List<Type> paramTypes = new ArrayList<>();
         for (Parameter p : fd.params()) {
             paramTypes.add(resolveTypeNode(p.type()));
@@ -501,6 +494,8 @@ public final class NameResolver {
                 walkExpression(bin.right());
             }
             case UnaryExpr un -> walkExpression(un.expr());
+            case AssertionExpr assertion -> { walkExpression(assertion.value()); resolveTypeNode(assertion.target()); }
+            case InstanceofExpr test -> { walkExpression(test.value()); resolveTypeNode(test.target()); }
             case CallExpr call -> {
                 walkExpression(call.callee());
                 for (ExpressionNode arg : call.args()) {
@@ -522,7 +517,7 @@ public final class NameResolver {
                     walkExpression(prop.value());
                 }
             }
-            case HasExpr has -> walkExpression(has.object());
+            case HasExpr has -> { walkExpression(has.object()); walkExpression(has.key()); }
             case AssignmentExpr assign -> {
                 walkExpression(assign.target());
                 walkExpression(assign.value());
@@ -613,6 +608,7 @@ public final class NameResolver {
         // Class fields declare names and structural type annotations only.
         for (ClassField cf : cd.fields()) {
             checkNoDollar(cf.name(), cf.span());
+            rejectVoidDataAnnotation(cf.type());
         }
 
         if (!currentScope.containsLocally(name)) {
@@ -655,7 +651,7 @@ public final class NameResolver {
         // F2: Define nested function name in the enclosing scope.
         // For module-level functions, the name is already hoisted.
         if (!currentScope.containsLocally(fd.name())) {
-            Type funcType = resolveTypeNode(fd.returnType());
+            Type funcType = resolveResultTypeNode(fd.returnType());
             List<Type> paramTypes = new ArrayList<>();
             for (Parameter p : fd.params()) {
                 paramTypes.add(resolveTypeNode(p.type()));
@@ -742,8 +738,8 @@ public final class NameResolver {
         // Walk iterable expression in PARENT scope (before scope entry)
         walkExpression(fos.iterable());
         // Resolve var type in PARENT scope
-        Type varType = resolveTypeNode(fos.varType());
-        Symbol.ClassSymbol varDeclaredClass = declaredClassSymbolOf(fos.varType());
+        Type varType = fos.varType() == null ? null : resolveTypeNode(fos.varType());
+        Symbol.ClassSymbol varDeclaredClass = fos.varType() == null ? null : declaredClassSymbolOf(fos.varType());
 
         // Check for $ in for-of loop variable name (E2008)
         checkNoDollar(fos.varName(), fos.span());
@@ -778,7 +774,7 @@ public final class NameResolver {
         scopeMap.put(ts, currentScope);
         currentScope.define(ts.catchVar(),
             new Symbol.VariableSymbol(ts.catchVar(),
-                errorClassType(), true));
+                Type.Unknown.INSTANCE, true));
         walkBlock(ts.catchBlock());
         currentScope = saved;
     }
@@ -805,6 +801,13 @@ public final class NameResolver {
      * Emits E2008 if it does.
      */
     private void checkNoDollar(String name, Span span) {
+        if (java.util.Set.of("Record", "Promise", "Object", "undefined", "switch", "enum",
+                "case", "default", "const", "var", "new", "this", "super", "extends",
+                "implements", "interface", "package", "private", "protected", "public",
+                "static", "yield", "with", "debugger", "do", "finally", "in", "instanceof",
+                "typeof", "void").contains(name)) {
+            error(DiagnosticCode.E2008, "Reserved binding identifier '" + name + "'", span);
+        }
         if (name.indexOf('$') >= 0) {
             error(DiagnosticCode.E2008, "Identifier '" + name + "' must not contain '$'", span);
         }
@@ -851,9 +854,37 @@ public final class NameResolver {
      * Resolves an AST {@link TypeNode} to an internal {@link Type}
      * against the resolver's current lexical scope.
      */
+    private void rejectVoidDataAnnotation(TypeNode node) {
+        switch (node) {
+            case NamedType named -> {
+                if (named.name().equals("void")) error(DiagnosticCode.E3005,
+                    "void is allowed only in function result positions", named.span());
+            }
+            case deal.ast.ArrayType array -> rejectVoidDataAnnotation(array.elementType());
+            case deal.ast.NullableType nullable -> rejectVoidDataAnnotation(nullable.innerType());
+            case deal.ast.FunctionType function -> {
+                for (FunctionTypeParam parameter : function.params()) rejectVoidDataAnnotation(parameter.type());
+                if (!(function.returnType() instanceof NamedType named && named.name().equals("void")))
+                    rejectVoidDataAnnotation(function.returnType());
+            }
+            case QualifiedType ignored -> {}
+        }
+    }
+
+    public Type resolveResultTypeNode(TypeNode tn) {
+        if (tn instanceof NamedType named && named.name().equals("void")) return Type.Void.INSTANCE;
+        return resolveTypeNode(tn);
+    }
+
     public Type resolveTypeNode(TypeNode tn) {
         return switch (tn) {
-            case NamedType nt -> resolveNamedType(nt);
+            case NamedType nt -> {
+                if (nt.name().equals("void")) {
+                    error(DiagnosticCode.E3005, "void is allowed only in function result positions", nt.span());
+                    yield Type.Error.INSTANCE;
+                }
+                yield resolveNamedType(nt);
+            }
             case QualifiedType qt -> resolveQualifiedType(qt);
             case deal.ast.ArrayType at -> {
                 Type elem = resolveTypeNode(at.elementType());
@@ -864,7 +895,7 @@ public final class NameResolver {
                 Type inner = resolveTypeNode(nt.innerType());
                 if (inner == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                 try {
-                    yield Types.nullable(inner);
+                    yield Types.withNullish(inner, nt.undefinedMember(), true);
                 } catch (IllegalArgumentException e) {
                     error(DiagnosticCode.E3005, "Invalid nullable type: " + e.getMessage(), tn.span());
                     yield Type.Error.INSTANCE;
@@ -877,7 +908,7 @@ public final class NameResolver {
                     if (pt == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                     paramTypes.add(pt);
                 }
-                Type ret = resolveTypeNode(ft.returnType());
+                Type ret = resolveResultTypeNode(ft.returnType());
                 if (ret == Type.Error.INSTANCE) yield Type.Error.INSTANCE;
                 yield new Type.Func(paramTypes, ret, ft.isAsync());
             }
@@ -911,7 +942,10 @@ public final class NameResolver {
             case "boolean"   -> Type.Boolean.INSTANCE;
             case "number"    -> Type.Number.INSTANCE;
             case "string"    -> Type.String.INSTANCE;
-            case "table"     -> Type.Table.INSTANCE;
+            case "Record<string, unknown>" -> Type.Table.INSTANCE;
+            case "undefined" -> Type.Undefined.INSTANCE;
+            case "unknown"   -> Type.Unknown.INSTANCE;
+            case "void"      -> Type.Void.INSTANCE;
             case "Error"     -> errorClassType();
 
             default -> {

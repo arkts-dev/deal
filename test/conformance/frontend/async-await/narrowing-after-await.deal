@@ -3,9 +3,9 @@
 // @expected: compile-error E3001
 // @features: async, await, nullable, narrowing
 
-async function g(): number { return 5; }
+async function g(): Promise<number> { return 5; }
 
-async function f(n: number | null): number {
+async function f(n: number | null): Promise<number> {
   if (n !== null) {
     let x: number = n;        // OK: narrowed to int
     let r: number = await g(); // await invalidates narrowing

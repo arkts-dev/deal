@@ -31,6 +31,10 @@ public enum BinarySelector implements ClosedSelector {
     BOOLEAN_NE,
     NULL_EQ,
     NULL_NE,
+    UNDEFINED_EQ,
+    UNDEFINED_NE,
+    NULLABLE_UNDEFINED_EQ,
+    NULLABLE_UNDEFINED_NE,
 
     // Nullable equality (inner descriptor + side mode LEFT|RIGHT|BOTH).
     NULLABLE_EQ,

@@ -1,7 +1,7 @@
 // @spec: Classes — Optional and nullable fields
-// @description: An optional field declared null reads as language null in the missing and explicit-null states (never an internal error), its presence, write and delete behavior are unchanged, and optional T / optional nullable T keep their nullable wraps
+// @description: Optional null reads distinguish undefined absence from present null across local/imported classes, calls, arrays, narrowing, deletion and generated JSON; other optional fields retain independent null/undefined admission
 // @expected: runtime-ok
-// @features: classes, optional, null, field-read, has, cross-module, jsonable
+// @features: classes, optional, null, undefined, field-read, hasOwn, cross-module, jsonable
 
 import * as console from "std/console";
 import * as Lib from "./optional_null_field_lib";
@@ -12,14 +12,13 @@ class Box {
   maybe?: string | null;
 }
 
-function require(what: string, condition: boolean): null {
+function require(what: string, condition: boolean): void {
   if (!condition) {
     throw { code: "TEST_FAIL", message: what };
   }
-  return null;
 }
 
-function readN(b: Box): null {
+function readN(b: Box): null | undefined {
   return b.n;
 }
 
@@ -28,107 +27,88 @@ function keep(b: Box): Box {
 }
 
 export function main(): null {
-  // The missing state: the direct read is language null and the field is
-  // absent.
   let missing: Box = {};
-  require("missing has is false", !has(missing.n));
-  let missingN: null = missing.n;
-  require("missing read is null", missingN === null);
+  require("missing hasOwn is false", !Object.hasOwn(missing, "n"));
+  let missingN: null | undefined = missing.n;
+  require("missing read is undefined", missingN === undefined);
 
-  // The explicit-null state: the direct read is language null and the field
-  // is present — the two states stay distinct.
   let explicitNull: Box = { n: null };
-  require("explicit null has is true", has(explicitNull.n));
-  let explicitN: null = explicitNull.n;
+  require("explicit null hasOwn is true", Object.hasOwn(explicitNull, "n"));
+  let explicitN: null | undefined = explicitNull.n;
   require("explicit null read is null", explicitN === null);
 
-  // A write of null is present; deleting it returns the field to absence and
-  // the read is null again.
   missing.n = null;
-  require("written null has is true", has(missing.n));
-  let writtenN: null = missing.n;
+  require("written null hasOwn is true", Object.hasOwn(missing, "n"));
+  let writtenN: null | undefined = missing.n;
   require("written null read is null", writtenN === null);
   delete missing.n;
-  require("deleted has is false", !has(missing.n));
-  let deletedN: null = missing.n;
-  require("deleted read is null", deletedN === null);
+  require("deleted hasOwn is false", !Object.hasOwn(missing, "n"));
+  let deletedN: null | undefined = missing.n;
+  require("deleted read is undefined", deletedN === undefined);
 
-  // Parameters and returns carry the same read: the argument position, the
-  // returned read, and a round-tripped receiver.
   let passed: Box = keep({ n: null });
-  let passedN: null = passed.n;
+  let passedN: null | undefined = passed.n;
   require("parameter read is null", passedN === null);
-  let returnedN: null = readN({ n: null });
+  let returnedN: null | undefined = readN({ n: null });
   require("returned read is null", returnedN === null);
-  let returnedMissingN: null = readN({});
-  require("returned missing read is null", returnedMissingN === null);
+  let returnedMissingN: null | undefined = readN({});
+  require("returned missing read is undefined", returnedMissingN === undefined);
 
-  // A narrowed nullable receiver reads the optional null field the same way.
   let narrowed: Box | null = { n: null };
   if (narrowed !== null) {
-    let narrowedN: null = narrowed.n;
+    let narrowedN: null | undefined = narrowed.n;
     require("narrowed receiver read is null", narrowedN === null);
-    require("narrowed receiver has is true", has(narrowed.n));
+    require("narrowed receiver hasOwn is true", Object.hasOwn(narrowed, "n"));
   }
 
-  // An array element receiver reads the optional null field the same way.
   let boxes: Box[] = [{ n: null }, {}];
-  let elementN: null = boxes[0].n;
+  let elementN: null | undefined = boxes[0].n;
   require("array element read is null", elementN === null);
-  require("array element has is true", has(boxes[0].n));
-  require("array element missing has is false", !has(boxes[1].n));
+  require("array element hasOwn is true", Object.hasOwn(boxes[0], "n"));
+  require("array element missing hasOwn is false", !Object.hasOwn(boxes[1], "n"));
 
-  // The retained optional T and optional nullable T wraps are unchanged: a
-  // present value reads as its nullable wrap, a missing one reads as null,
-  // and an explicit null is present.
   let values: Box = { tag: "x", maybe: null };
-  require("present tag has is true", has(values.tag));
-  let tag: string | null = values.tag;
-  require("present tag is not null", tag !== null);
-  require("present maybe has is true", has(values.maybe));
-  let maybe: string | null = values.maybe;
+  require("present tag hasOwn is true", Object.hasOwn(values, "tag"));
+  let tag: string | undefined = values.tag;
+  require("present tag is defined", tag !== undefined);
+  require("present maybe hasOwn is true", Object.hasOwn(values, "maybe"));
+  let maybe: string | null | undefined = values.maybe;
   require("present maybe read is null", maybe === null);
   let absent: Box = {};
-  let absentTag: string | null = absent.tag;
-  require("missing tag read is null", absentTag === null);
-  let absentMaybe: string | null = absent.maybe;
-  require("missing maybe read is null", absentMaybe === null);
+  let absentTag: string | undefined = absent.tag;
+  require("missing tag read is undefined", absentTag === undefined);
+  let absentMaybe: string | null | undefined = absent.maybe;
+  require("missing maybe read is undefined", absentMaybe === undefined);
 
-  // The imported declaration: the same absent/present-null states, the
-  // imported reader function, and the retained optional wraps.
   let importedMissing: Lib.LibBox = {};
-  require("imported missing has is false", !has(importedMissing.n));
-  let importedMissingN: null = importedMissing.n;
-  require("imported missing read is null", importedMissingN === null);
+  require("imported missing hasOwn is false", !Object.hasOwn(importedMissing, "n"));
+  let importedMissingN: null | undefined = importedMissing.n;
+  require("imported missing read is undefined", importedMissingN === undefined);
   let importedNull: Lib.LibBox = { n: null, tag: "y" };
-  require("imported explicit null has is true", has(importedNull.n));
-  let importedNullN: null = importedNull.n;
+  require("imported explicit null hasOwn is true", Object.hasOwn(importedNull, "n"));
+  let importedNullN: null | undefined = importedNull.n;
   require("imported explicit null read is null", importedNullN === null);
-  require("imported tag has is true", has(importedNull.tag));
-  let importedTag: string | null = importedNull.tag;
-  require("imported tag read is not null", importedTag !== null);
-  let importedMaybe: string | null = importedNull.maybe;
-  require("imported missing maybe read is null", importedMaybe === null);
-  let importedReturned: null = Lib.readMissing(importedMissing);
-  require("imported reader read is null", importedReturned === null);
+  require("imported tag hasOwn is true", Object.hasOwn(importedNull, "tag"));
+  let importedTag: string | undefined = importedNull.tag;
+  require("imported tag read is defined", importedTag !== undefined);
+  let importedMaybe: string | null | undefined = importedNull.maybe;
+  require("imported missing maybe read is undefined", importedMaybe === undefined);
+  let importedReturned: null | undefined = Lib.readMissing(importedMissing);
+  require("imported reader read is undefined", importedReturned === undefined);
 
-  // The applicable generated JSON path: the imported @jsonable class decodes
-  // an explicit null and an omitted optional null field, both reads are
-  // language null, presence distinguishes them, and each encodes back
-  // without a partial instance.
   let decodedNull: Lib.LibNote | null =
     Lib.LibNote$fromJson("{\"label\":\"a\",\"n\":null}");
   require("decoded explicit null is not null", decodedNull !== null);
   if (decodedNull !== null) {
-    require("decoded explicit null has is true", has(decodedNull.n));
-    let decodedN: null = decodedNull.n;
+    require("decoded explicit null hasOwn is true", Object.hasOwn(decodedNull, "n"));
+    let decodedN: null | undefined = decodedNull.n;
     require("decoded explicit null read is null", decodedN === null);
     let encoded: string = Lib.LibNote$toJson(decodedNull);
     let redecoded: Lib.LibNote | null = Lib.LibNote$fromJson(encoded);
     require("roundtrip of explicit null is not null", redecoded !== null);
     if (redecoded !== null) {
-      require("roundtrip explicit null has is true", has(redecoded.n));
-      let roundtripN: null = redecoded.n;
+      require("roundtrip explicit null hasOwn is true", Object.hasOwn(redecoded, "n"));
+      let roundtripN: null | undefined = redecoded.n;
       require("roundtrip explicit null read is null", roundtripN === null);
     }
   }
@@ -136,14 +116,15 @@ export function main(): null {
   let decodedMissing: Lib.LibNote | null = Lib.LibNote$fromJson("{\"label\":\"b\"}");
   require("decoded missing is not null", decodedMissing !== null);
   if (decodedMissing !== null) {
-    require("decoded missing has is false", !has(decodedMissing.n));
-    let decodedMissingN: null = decodedMissing.n;
-    require("decoded missing read is null", decodedMissingN === null);
+    require("decoded missing hasOwn is false", !Object.hasOwn(decodedMissing, "n"));
+    let decodedMissingN: null | undefined = decodedMissing.n;
+    require("decoded missing read is undefined", decodedMissingN === undefined);
     let encodedMissing: string = Lib.LibNote$toJson(decodedMissing);
     let redecodeMissing: Lib.LibNote | null = Lib.LibNote$fromJson(encodedMissing);
     require("roundtrip of missing is not null", redecodeMissing !== null);
     if (redecodeMissing !== null) {
-      require("roundtrip missing has is false", !has(redecodeMissing.n));
+      require("roundtrip missing hasOwn is false", !Object.hasOwn(redecodeMissing, "n"));
+      require("roundtrip missing read is undefined", redecodeMissing.n === undefined);
     }
   }
 

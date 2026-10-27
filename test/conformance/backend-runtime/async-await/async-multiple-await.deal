@@ -3,15 +3,15 @@
 // @expected: runtime-ok
 // @features: async-await
 
-async function double(x: number): number {
+async function double(x: number): Promise<number> {
   return x * 2;
 }
 
-async function triple(x: number): number {
+async function triple(x: number): Promise<number> {
   return x * 3;
 }
 
-export async function test_multiple_await(): number {
+export async function test_multiple_await(): Promise<number> {
   let stage: number = 0;
   let a: number = await double(10);
   if (a !== 20) {

@@ -31,10 +31,7 @@ public final class Types {
     public static Type canonicalize(Type type) {
         Objects.requireNonNull(type, "type must not be null");
         if (type instanceof Type.Nullable n) {
-            if (n.inner() instanceof Type.Null) {
-                throw new IllegalArgumentException("Nullable inner must not be null");
-            }
-            return new Type.Nullable(canonicalize(n.inner()));
+            return new Type.Nullable(canonicalize(n.inner()), n.admitsNull(), n.admitsUndefined());
         }
         if (type instanceof Type.Array a) {
             return new Type.Array(canonicalize(a.element()));
@@ -74,6 +71,9 @@ public final class Types {
 
         return switch (a) {
             case Type.Null ignored -> true;
+            case Type.Undefined ignored -> true;
+            case Type.Unknown ignored -> true;
+            case Type.Void ignored -> true;
             case Type.Boolean ignored -> true;
 
             case Type.Number ignored -> true;
@@ -87,7 +87,9 @@ public final class Types {
             }
             case Type.Nullable na -> {
                 Type.Nullable nb = (Type.Nullable) b;
-                yield equals(na.inner(), nb.inner());
+                yield na.admitsNull() == nb.admitsNull()
+                    && na.admitsUndefined() == nb.admitsUndefined()
+                    && equals(na.inner(), nb.inner());
             }
             case Type.Class ca -> {
                 // v1.2 identity carriage: nominal equality is canonical
@@ -175,6 +177,18 @@ public final class Types {
      * Convenience overload: checks if any function type is assignable to another.
      */
     public static boolean isAssignable(Type actual, Type target) {
+        if (target instanceof Type.Unknown) return !(actual instanceof Type.Void);
+        if (equals(actual, target)) return true;
+        if (target instanceof Type.Nullable n) {
+            if (actual instanceof Type.Null) return n.admitsNull() || n.inner() instanceof Type.Null;
+            if (actual instanceof Type.Undefined) return n.admitsUndefined() || n.inner() instanceof Type.Undefined;
+            if (actual instanceof Type.Nullable a) {
+                return equals(a.inner(), n.inner())
+                    && (!a.admitsNull() || n.admitsNull())
+                    && (!a.admitsUndefined() || n.admitsUndefined());
+            }
+            return equals(actual, n.inner());
+        }
         if (actual instanceof Type.Func af && target instanceof Type.Func tf) {
             return isAssignable(af, tf);
         }
@@ -192,7 +206,7 @@ public final class Types {
 
     /**
      * The canonical nullable wrap of one type — the spec's {@code T | null}
-     * type ({@code docs/spec-v1.4.md} §Types: {@code T | null}
+     * type ({@code docs/spec-v1.5.md} §Types: {@code T | null}
      * canonicalizes to {@code Nullable<T>}). The wrap canonicalizes its inner
      * type at construction, so an already-nullable type is its own wrap and
      * so is {@code null} itself: {@code null | null} is {@code null}, which
@@ -206,6 +220,33 @@ public final class Types {
         return inner instanceof Type.Null || inner instanceof Type.Nullable
             ? inner : nullable(inner);
     }
+
+    /** Adds a nullish member, preserving the canonical non-nullish base. */
+    public static Type withNullish(Type inner, boolean undefined, boolean rejectDuplicate) {
+        if (inner instanceof Type.Unknown) return inner;
+        boolean already = undefined ? inner instanceof Type.Undefined : inner instanceof Type.Null;
+        if (inner instanceof Type.Nullable n) {
+            already = undefined ? n.admitsUndefined() || n.inner() instanceof Type.Undefined
+                : n.admitsNull() || n.inner() instanceof Type.Null;
+            if (already) {
+                if (rejectDuplicate) throw new IllegalArgumentException("Duplicate nullish member");
+                return inner;
+            }
+            return new Type.Nullable(n.inner(), n.admitsNull() || !undefined,
+                n.admitsUndefined() || undefined);
+        }
+        if (already) {
+            if (rejectDuplicate) throw new IllegalArgumentException("Duplicate nullish member");
+            return inner;
+        }
+        if (inner instanceof Type.Undefined && !undefined) return new Type.Nullable(Type.Undefined.INSTANCE, true, false);
+        if (inner instanceof Type.Null && undefined) {
+            return new Type.Nullable(Type.Undefined.INSTANCE, true, false);
+        }
+        return new Type.Nullable(inner, !undefined, undefined);
+    }
+
+    public static Type optionalRead(Type inner) { return withNullish(inner, true, false); }
 
     /** Make an Array type, canonicalizing the element type. */
     public static Type.Array array(Type element) {

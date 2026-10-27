@@ -2,4 +2,4 @@
 // Migrated IR-containment pin for legacy case 'nullable-class-descriptor' (ISSUE-0358).
 
 class User { name: string; }
-function f(u: User | null): null { return; }
+function f(u: User | null): null { return null; }

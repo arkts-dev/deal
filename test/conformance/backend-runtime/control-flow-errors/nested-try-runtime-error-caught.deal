@@ -1,4 +1,4 @@
-import * as math from "std/math";
+import * as json from "std/json";
 // @spec: Error handling — Runtime errors through nested try
 // @description: Runtime error propagates to the nearest matching catch through nested try blocks
 // @expected: runtime-ok
@@ -12,10 +12,10 @@ export function test_nested_try_runtime_error_caught(): number {
 
   try {
     try {
-      result = math.sqrt(-1);
+      json.parse("bad");
     } catch (e) {
       innerCatchRan = true;
-      innerCode = e.code;
+      innerCode = (e as Error).code;
       result = 7;
     }
   } catch (outer) {

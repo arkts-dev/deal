@@ -24,18 +24,18 @@ public final class NumberProductionTest {
           ensure(nan !== nan);
           let a: number[] = [10, 20];
           ensure(a[-0] === 10);
-          for (let index: number of [0.5, nan, inf, -inf, -1, 3]) {
+          for (let index of [0.5, nan, inf, -inf, -1, 3]) {
             let failed: boolean = false;
             try { let value: number = a[index]; }
-            catch (e) { ensure(e.code === "E8002"); failed = true; }
+            catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
             ensure(failed);
             failed = false;
             try { a[index] = 30; }
-            catch (e) { ensure(e.code === "E8002"); failed = true; }
+            catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
             ensure(failed);
             failed = false;
             try { delete a[index]; }
-            catch (e) { ensure(e.code === "E8002"); failed = true; }
+            catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
             ensure(failed);
             ensure(a.length === 2);
             ensure(a[0] === 10);
@@ -49,33 +49,35 @@ public final class NumberProductionTest {
           ensure(text.substring("a😀b", 1, 2) === "😀");
           ensure(text.substring("a😀b", 1e100, 1e100) === "");
           ensure(text.substring("a😀b", -1e100, 1e100) === "a😀b");
-          for (let bound: number of [0.5, nan, inf, -inf]) {
+          for (let bound of [0.5, nan, inf, -inf]) {
             let failed: boolean = false;
             try { text.substring("a😀b", bound, 2); }
             catch (e) {
-              ensure(e.code === "E8001");
-              ensure(e.message === "substring bounds must be finite integers");
+              let error = e as Error;
+              ensure(error.code === "E8001");
+              ensure(error.message === "substring bounds must be finite integers");
               failed = true;
             }
             ensure(failed);
             failed = false;
             try { text.substring("a😀b", 0, bound); }
             catch (e) {
-              ensure(e.code === "E8001");
-              ensure(e.message === "substring bounds must be finite integers");
+              let error = e as Error;
+              ensure(error.code === "E8001");
+              ensure(error.message === "substring bounds must be finite integers");
               failed = true;
             }
             ensure(failed);
           }
-          let parsed: table = json.parse("{\\\"a\\\":9007199254740993,\\\"z\\\":-0,\\\"b\\\":2147483647.00000001}");
-          let rounded: number = parsed.a;
-          let zero: number = parsed.z;
-          let near: number = parsed.b;
+          let parsed: Record<string, unknown> = json.parse("{\\\"a\\\":9007199254740993,\\\"z\\\":-0,\\\"b\\\":2147483647.00000001}");
+          let rounded: number = parsed.a as number;
+          let zero: number = parsed.z as number;
+          let near: number = parsed.b as number;
           if (rounded !== 9007199254740992) { throw {code: "JSON_ROUND", message: "rounding"}; }
           if (!(1 / zero < 0)) { throw {code: "JSON_ZERO", message: "negative zero"}; }
           if (near !== 2147483647) { throw {code: "JSON_NEAR", message: "near integer"}; }
-          let zeroObject: table = {z: -0};
-          if (json.stringify(zeroObject) !== "{\\\"z\\\":0}") { throw {code: "JSON_ENCODE_ZERO", message: "zero encoding"}; }
+          let zeroObject: Record<string, unknown> = {z: -0};
+          if ((json.stringify(zeroObject) as string) !== "{\\\"z\\\":0}") { throw {code: "JSON_ENCODE_ZERO", message: "zero encoding"}; }
           let int: (x: number) => number = function(x: number): number { return x + 10; };
           let number: (x: number) => number = function(x: number): number { return x + 20; };
           ensure(int(1) === 11);
@@ -106,8 +108,8 @@ public final class NumberProductionTest {
         Files.createDirectories(source.getParent());
         Files.writeString(source, SOURCE);
         Files.writeString(project.resolve("deal.json"), """
-            {"languageVersion":"1.4","moduleRoots":["src"],"output":"out",
-             "backend":"js","stdlib":"1.4","dependencies":{},"externals":{}}
+            {"languageVersion":"1.5","moduleRoots":["src"],"output":"out",
+             "backend":"js","stdlib":"1.5","dependencies":{},"externals":{}}
             """);
         String javaCommand = Path.of(System.getProperty("java.home"), "bin/java").toString();
         String javac = Path.of(System.getProperty("java.home"), "bin/javac").toString();
@@ -117,7 +119,7 @@ public final class NumberProductionTest {
                 .map(p -> home.resolve(p).normalize().toString()).toList());
         for (String backend : List.of("js", "luajit", "jvm")) {
             Path output = project.resolve("out-" + backend);
-            run(List.of(javaCommand, "-Ddeal.home=" + home, "-cp", classpath, "deal.Main",
+            run(List.of(javaCommand, "-cp", classpath, "deal.Main",
                 "compile", source.toString(), "--backend", backend,
                 "--output", output.toString()), home);
             List<String> command;

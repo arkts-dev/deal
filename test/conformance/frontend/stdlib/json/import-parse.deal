@@ -5,7 +5,7 @@
 
 import * as json from "std/json";
 
-export function test_json_parse(s: string): table {
+export function test_json_parse(s: string): Record<string, unknown> {
   return json.parse(s);
 }
 

@@ -64,8 +64,9 @@ public final class StdlibFunctionCatalog {
         DescriptorService.describe(Type.Boolean.INSTANCE);
     private static final RuntimeDescriptor TABLE =
         DescriptorService.describe(Type.Table.INSTANCE);
-    private static final RuntimeDescriptor NULL =
-        DescriptorService.describe(Type.Null.INSTANCE);
+    private static final RuntimeDescriptor VOID = RuntimeDescriptor.Void.INSTANCE;
+    private static final RuntimeDescriptor UNKNOWN = RuntimeDescriptor.Unknown.INSTANCE;
+    private static final RuntimeDescriptor OPTIONAL_STRING = new RuntimeDescriptor.Nullable(STRING, false, true);
     private static final RuntimeDescriptor STRING_ARRAY =
         DescriptorService.describe(new Type.Array(Type.String.INSTANCE));
 
@@ -82,9 +83,9 @@ public final class StdlibFunctionCatalog {
     private static final List<Entry> ENTRIES = List.of(
         // std.console
         new Entry(StdlibFunctionId.CONSOLE_LOG, "std.console", "log",
-            List.of(STRING), NULL),
+            List.of(STRING), VOID),
         new Entry(StdlibFunctionId.CONSOLE_ERROR, "std.console", "error",
-            List.of(STRING), NULL),
+            List.of(STRING), VOID),
         // std.string
         new Entry(StdlibFunctionId.STRING_LENGTH, "std.string", "length",
             List.of(STRING), NUMBER),
@@ -109,7 +110,7 @@ public final class StdlibFunctionCatalog {
         new Entry(StdlibFunctionId.JSON_PARSE, "std.json", "parse",
             List.of(STRING), TABLE),
         new Entry(StdlibFunctionId.JSON_STRINGIFY, "std.json", "stringify",
-            List.of(TABLE), STRING),
+            List.of(UNKNOWN), OPTIONAL_STRING),
         // std.math
         new Entry(StdlibFunctionId.MATH_FLOOR, "std.math", "floor",
             List.of(NUMBER), NUMBER),

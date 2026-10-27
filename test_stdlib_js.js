@@ -97,9 +97,8 @@ function assertErrorMessage(fn, expectedCode, needle) {
 // The closed JSON_STRINGIFY_UNSUPPORTED tuple exactly as the shipped JS
 // realization publishes it: E8001, the arm's own message carrying the
 // carrier-kind token, the arm's pinned expected text, the same token as
-// actual, and the caller's forwarded span — the fields the corpus fixture
-// stdlib/json/json-stringify-nonfinite pins for the luajit/jvm/js lanes, so
-// the shipped module and the compiled lanes agree field for field.
+// actual, and the caller's forwarded span. Malformed Unicode still rejects;
+// nonfinite numbers instead use generic stringify's null substitution.
 function assertUnsupportedStringifyTuple(fn, token, label) {
   const err = assertErrorCode(fn, "E8001");
   assertEqual(err.message, "unsupported type for JSON encoding: " + token,
@@ -145,7 +144,7 @@ test("std/time loads and exports exactly the .d.deal member set", function() {
 
 test("every stdlib member is a $rt.function wrapper with the pinned signature", function() {
   const surfaces = [
-    [consoleMod, "std/console", { log: "(string)->null", error: "(string)->null" }],
+    [consoleMod, "std/console", { log: "(string)->void", error: "(string)->void" }],
     [string, "std/string", {
       length: "(string)->number",
       substring: "(string,number,number)->string",
@@ -156,8 +155,8 @@ test("every stdlib member is a $rt.function wrapper with the pinned signature", 
       split: "(string,string)->[string]",
       trim: "(string)->string",
     }],
-    [table, "std/table", { keys: "(table)->[string]" }],
-    [json, "std/json", { stringify: "(table)->string", parse: "(string)->table" }],
+    [table, "std/table", { keys: "(record)->[string]" }],
+    [json, "std/json", { stringify: "(unknown)->!string", parse: "(string)->record" }],
     [math, "std/math", {
       floor: "(number)->number",
       ceil: "(number)->number",
@@ -273,7 +272,7 @@ test("math.sqrt of a negative number raises the closed SQRT_NEGATIVE tuple", fun
 });
 
 test("valid calls return values that re-validate through the $rt checks", function() {
-  rt.checkNull(consoleMod.log.$f("x", "f.js", 1, 1), "f.js", 1, 1);
+  assertEqual(consoleMod.log.$f("x", "f.js", 1, 1), undefined, "console void result");
   assertEqual(rt.checkNumber(string.length.$f("aé中😀b", "f.js", 1, 1), "f.js", 1, 1), 5, "length result");
   assertEqual(rt.checkString(string.substring.$f("abc", 1, 3, "f.js", 1, 1), "f.js", 1, 1), "bc", "substring result");
   assertEqual(rt.checkBoolean(string.contains.$f("abc", "b", "f.js", 1, 1), "f.js", 1, 1), true, "contains result");
@@ -287,7 +286,7 @@ test("valid calls return values that re-validate through the $rt checks", functi
   assertEqual(rt.checkNumber(math.absNumber.$f(-3, "f.js", 1, 1), "f.js", 1, 1), 3, "absInt result");
   // The declared number return of std/time.nowMillis is the current epoch
   // millisecond count: a contemporary reading exceeds the signed-32 range
-  // and crosses the number boundary unchanged (no number terminal exists).
+  // and crosses the binary64 boundary unchanged.
   const now = time.nowMillis.$f("f.js", 1, 1);
   assertEqual(typeof now, "number", "nowMillis result kind");
   assert(now > 2147483647, "nowMillis result exceeds the signed-32 range");
@@ -379,7 +378,7 @@ test("table.keys returns the insertion-ordered string keys of a validated Map", 
   t2.set("2", "two");
   t2.set("1", "one");
   assertArrayEqual(table.keys.$f(t2, "f.js", 1, 1), ["2", "1"], "set order is insertion order");
-  // A present null-valued key is a present key (docs/spec-v1.4.md:1911).
+  // A present null-valued key remains present independently of value.
   const t3 = rt.makeTable({ a: 1 });
   t3.set("n", null);
   assertArrayEqual(table.keys.$f(t3, "f.js", 1, 1), ["a", "n"],
@@ -403,10 +402,10 @@ test("json.parse rejects a top-level scalar, array, or null with E8001 expected 
   const errBoolean = assertErrorMessage(function() { json.parse.$f("true", "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errBoolean.actual, "boolean", "scalar boolean actual kind");
   // The two JSON decode carriers are rejected by the same declared
-  // (string)->table exit with the shared boundary executor's own tokens:
+  // (string)->record exit with the shared boundary executor's own tokens:
   // a decoded JSON array is the array carrier, a decoded JSON null is
   // language null — never admitted as plain Maps (the cross-lane
-  // uniform v1.4 outcome).
+  // uniform diagnostic projection).
   const errArray = assertErrorMessage(function() { json.parse.$f("[1,2]", "f.js", 1, 1); }, "E8001", "expected table");
   assertEqual(errArray.expected, "table", "top-level array expected token");
   assertEqual(errArray.actual, "array", "top-level array actual kind");
@@ -425,8 +424,8 @@ test("the decoded JSON null is language null at every null-admitting boundary", 
   // plain table descriptor rejects it with the actual null token (the
   // uniform boundary outcome).
   const decodedNull = rt.jsonParseValue(null, "f.js", 1, 1);
-  assertEqual(rt.checkNullable("table", decodedNull, "f.js", 1, 1), null,
-    "?table admits the decoded null as language null");
+  assertEqual(rt.checkNullable("record", decodedNull, "f.js", 1, 1), null,
+    "?record admits the decoded null as language null");
   assertEqual(rt.checkNull(decodedNull, "f.js", 1, 1), null,
     "the null descriptor admits the decoded null");
   assert(rt.isNilEquivalent(decodedNull), "the decoded null is nil-equivalent");
@@ -523,29 +522,27 @@ test("json.parse rejects unknown escapes and malformed \\uXXXX with E8001", func
 // std/json.stringify: validation arms
 // ===========================================================================
 
-test("json.stringify rejects a stored wrapper with the function E8001", function() {
+test("json.stringify omits stored function members without changing the Record", function() {
   const t = rt.makeTable({ a: 1, fn: json.parse });
-  assertErrorMessage(function() { json.stringify.$f(t, "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: function");
+  assertEqual(JSON.stringify(JSON.parse(json.stringify.$f(t, "f.js", 1, 1))), '{"a":1}', "function member omitted");
+  assertEqual(t.get("fn"), json.parse, "original callable identity retained");
 });
 
-test("json.stringify rejects NaN with the closed unsupported tuple", function() {
-  assertUnsupportedStringifyTuple(function() { json.stringify.$f(rt.makeTable({ x: NaN }), "f.js", 1, 1); },
-    "number", "NaN member");
+test("json.stringify substitutes null for NaN at root, member and nested member", function() {
+  assertEqual(json.stringify.$f(NaN, "f.js", 1, 1), "null", "NaN root");
+  assertEqual(json.stringify.$f(rt.makeTable({ x: NaN }), "f.js", 1, 1), '{"x":null}', "NaN member");
   const nested = rt.makeTable({ val: NaN });
-  assertUnsupportedStringifyTuple(function() {
-    json.stringify.$f(rt.makeTable({ data: nested }), "f.js", 1, 1);
-  }, "number", "nested NaN");
+  assertEqual(json.stringify.$f(rt.makeTable({ data: nested }), "f.js", 1, 1),
+    '{"data":{"val":null}}', "nested NaN");
 });
 
-test("json.stringify rejects Infinity with the closed unsupported tuple", function() {
-  assertUnsupportedStringifyTuple(function() { json.stringify.$f(rt.makeTable({ x: Infinity }), "f.js", 1, 1); },
-    "number", "Infinity member");
-  assertUnsupportedStringifyTuple(function() { json.stringify.$f(rt.makeTable({ x: -Infinity }), "f.js", 1, 1); },
-    "number", "negative Infinity member");
-  assertUnsupportedStringifyTuple(function() {
-    json.stringify.$f(rt.makeTable({ data: [1, Infinity] }), "f.js", 1, 1);
-  }, "number", "array Infinity");
+test("json.stringify substitutes null for both infinities in members and arrays", function() {
+  for (const value of [Infinity, -Infinity]) {
+    assertEqual(json.stringify.$f(value, "f.js", 1, 1), "null", "infinite root");
+    assertEqual(json.stringify.$f(rt.makeTable({ x: value }), "f.js", 1, 1), '{"x":null}', "infinite member");
+    assertEqual(JSON.stringify(JSON.parse(json.stringify.$f(rt.makeTable({ data: [1, value] }), "f.js", 1, 1))),
+      '{"data":[1,null]}', "array infinity");
+  }
 });
 
 test("json.stringify rejects a self-referencing table with the cycle E8001", function() {
@@ -561,9 +558,9 @@ test("json.stringify rejects a self-referencing table with the cycle E8001", fun
     "cyclic value cannot be encoded as JSON");
 });
 
-test("json.stringify rejects a standalone MISSING with the unsupported-type E8001", function() {
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ m: rt.MISSING }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding");
+test("json.stringify omits undefined members and yields undefined for the root", function() {
+  assertEqual(json.stringify.$f(rt.MISSING, "f.js", 1, 1), undefined, "undefined root");
+  assertEqual(json.stringify.$f(rt.makeTable({ m: rt.MISSING }), "f.js", 1, 1), "{}", "undefined member");
 });
 
 test("json.stringify rejects unpaired-surrogate string values with the closed unsupported tuple", function() {
@@ -578,10 +575,8 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
     "string", "invalid scalar key");
   // The array-marked Map comes from the shared decode conversion (the
   // declared parse exit rejects a top-level array, so the decode
-  // producer is the runtime member). It can never reach the declared
-  // stringify parameter (the entry table check rejects the carrier), so
-  // the key-side arm is driven through the shared encode row the walk
-  // consumes.
+  // producer is the runtime member). Generic stringify admits this carrier;
+  // the shared encode row independently exercises malformed-key rejection.
   const marked = rt.jsonParseValue([1, 2], "f.js", 1, 1);
   marked.set("\uD800", 3);
   assertUnsupportedStringifyTuple(function() { rt.jsonStringifyText(marked, [], "f.js", 1, 1); },
@@ -592,19 +587,9 @@ test("json.stringify rejects unpaired-surrogate Map keys with E8001 (plain and m
 // JSON-shape round-trips (Verification 2)
 // ===========================================================================
 
-test("json round-trip: stringify of the null-marked decode carrier is the expected-table boundary", function() {
+test("json round-trip: decoded null stringifies but remains invalid at Record parameters", function() {
   const parsed = rt.jsonParseValue(null, "f.js", 1, 1);
-  // The decoded null is language null, not a table: the declared
-  // (table)->string entry check (the std/json.lua check_table mirror and
-  // the boundary the cataloged call's STDLIB_PARAMETER cell applies on
-  // the LuaJIT/JVM lanes) rejects it with the shared tuple.
-  const carrierErr = assertErrorMessage(function() {
-    json.stringify.$f(parsed, "f.js", 1, 1);
-  }, "E8001", "expected table");
-  assertEqual(carrierErr.expected, "table",
-    "decoded null at the stringify parameter expected token");
-  assertEqual(carrierErr.actual, "null",
-    "decoded null at the stringify parameter actual kind");
+  assertEqual(json.stringify.$f(parsed, "f.js", 1, 1), "null", "unknown stringify admits null");
   // The shared encode row the declared call delegates to still renders
   // the decoded null as the JSON null (a nested null argument position).
   assertEqual(rt.jsonStringifyText(parsed, [], "f.js", 1, 1), "null", "null round-trip");
@@ -615,19 +600,9 @@ test("json round-trip: stringify of the null-marked decode carrier is the expect
   assertEqual(err.actual, "null", "decoded null at a table parameter actual kind");
 });
 
-test("json round-trip: stringify of the array-marked decode carrier is the expected-table boundary", function() {
+test("json round-trip: decoded arrays stringify but remain invalid at Record parameters", function() {
   const parsed = rt.jsonParseValue([1, 2], "f.js", 1, 1);
-  // The decoded array is the array carrier, not a table: the declared
-  // (table)->string entry check rejects it with the shared tuple, so a
-  // JSON array read out of a table can never be stringified as if it
-  // were the declared table argument.
-  const carrierErr = assertErrorMessage(function() {
-    json.stringify.$f(parsed, "f.js", 1, 1);
-  }, "E8001", "expected table");
-  assertEqual(carrierErr.expected, "table",
-    "decoded array at the stringify parameter expected token");
-  assertEqual(carrierErr.actual, "array",
-    "decoded array at the stringify parameter actual kind");
+  assertEqual(JSON.stringify(JSON.parse(json.stringify.$f(parsed, "f.js", 1, 1))), "[1,2]", "unknown stringify admits arrays");
   // The shared encode row still renders the carrier as the JSON array
   // (its nested-table argument position).
   assertEqual(rt.jsonStringifyText(parsed, [], "f.js", 1, 1), "[1,2]", "array round-trip");
@@ -653,9 +628,9 @@ test("json round-trip: stringify of the array-marked decode carrier is the expec
 test("an array-element failure reports a decoded-array element as table", function() {
   const doc = json.parse.$f('{"values":[["x"],["y"]]}', "f.js", 1, 1);
   const err = assertErrorMessage(function() {
-    rt.checkType("[[table]]", doc.get("values"), "f.js", 10, 11);
+    rt.checkType("[[record]]", doc.get("values"), "f.js", 10, 11);
   }, "E8003", "array element 1 type mismatch");
-  assertEqual(err.expected, "[table]", "the failing element's descriptor");
+  assertEqual(err.expected, "[record]", "the failing element's descriptor");
   assertEqual(err.actual, "table", "the decoded-array element's reference kind");
   assertSpan(err, "f.js", 10, 11);
 });
@@ -663,9 +638,9 @@ test("an array-element failure reports a decoded-array element as table", functi
 test("the element-arm projection also covers a decoded-array element of a native array", function() {
   const doc = json.parse.$f('{"a":["x"]}', "f.js", 1, 1);
   const err = assertErrorMessage(function() {
-    rt.checkType("[[table]]", [doc.get("a")], "f.js", 2, 5);
+    rt.checkType("[[record]]", [doc.get("a")], "f.js", 2, 5);
   }, "E8003", "array element 1 type mismatch");
-  assertEqual(err.expected, "[table]", "the failing element's descriptor");
+  assertEqual(err.expected, "[record]", "the failing element's descriptor");
   assertEqual(err.actual, "table", "the decoded-array element's reference kind");
 });
 
@@ -689,18 +664,13 @@ test("json round-trip: a mixed-key mutation falls back to the object form", func
     "mixed-key object form");
 });
 
-// An absent (deleted) slot is the internal missing value, never a present
-// JSON null: the shared encoder rejects it as a value-representation
-// failure at the position, exactly like the LuaJIT/JVM rows
-// (test/AsyncExportInvokerProductionTest.testAbsentAndNullSlotsBothTargets
-// pins the same rule for the emitted artifacts). The carrier itself can
-// never reach the declared stringify parameter (the entry table check
-// rejects it), so the row is driven through the shared encoder.
-test("json round-trip: a missing middle index is a representation failure", function() {
+// Array absence becomes JSON null without mutating presence. This generic
+// unknown-input walker is distinct from descriptor-directed @jsonable walks.
+test("json round-trip: a missing middle index becomes null without filling the slot", function() {
   const parsed = rt.jsonParseValue([1, 2, 3], "f.js", 1, 1);
   parsed.delete("2");
-  assertErrorMessage(function() { rt.jsonStringifyText(parsed, [], "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: nil");
+  assertEqual(JSON.stringify(JSON.parse(rt.jsonStringifyText(parsed, [], "f.js", 1, 1))), "[1,null,3]", "array hole substitution");
+  assertEqual(parsed.has("2"), false, "serialization never repairs the deleted slot");
 });
 
 test("json round-trip: a __proto__-keyed table round-trips through stringify and parse", function() {
@@ -715,56 +685,35 @@ test("json round-trip: a __proto__-keyed table round-trips through stringify and
   assertEqual(reparsed.get("ok"), true, "the parse round-trip keeps the sibling entry");
 });
 
-test("json.stringify rejects a root class value at the declared table parameter", function() {
-  const defaults = function() {
-    return { ["name"]: "default-name", ["opt"]: rt.MISSING, ["nick"]: null };
-  };
+test("json.stringify traverses a root class while Record parameters retain nominal rejection", function() {
   const inst = rt.classPlan("@app.main/User", [{name:"name", descriptor:"string", optional:false}], {name:"x"}, "f.js", 9, 4);
-  // A class instance is its own carrier kind, never a table: the declared
-  // (table)->string entry check rejects it with the shared typed-boundary
-  // tuple (E8001 "expected table", expected "table"), exactly like the
-  // two decode carriers and the shared STDLIB_PARAMETER cell the
-  // LuaJIT/JVM lanes run. The actual is the carried canonical class atom
-  // (the shared FailureProjections.typedBoundaryToken for
-  // ActualKind.CLASS); "class" is only ever the expected token of a class
-  // descriptor. Root class values are not implicitly table arguments to
-  // std/json.stringify and never reach the encoder walk.
-  const err = assertErrorMessage(function() { json.stringify.$f(inst, "f.js", 9, 4); }, "E8001",
-    "expected table");
-  assertEqual(err.expected, "table", "the boundary's pinned expected text");
-  assertEqual(err.actual, "@app.main/User",
-    "the class instance projects its carried canonical class atom");
+  assertEqual(json.stringify.$f(inst, "f.js", 9, 4), '{"name":"x"}', "class root");
+  const err = assertErrorMessage(function() { table.keys.$f(inst, "f.js", 9, 4); }, "E8001", "expected table");
+  assertEqual(err.expected, "table", "Record parameter expected kind");
+  assertEqual(err.actual, "@app.main/User", "nominal actual atom retained");
   assertSpan(err, "f.js", 9, 4);
-  // The encoder row keeps its own unsupported-carrier arm for a class
-  // instance reached through table content.
-  assertErrorMessage(function() {
-    rt.jsonStringifyText(rt.makeTable({ u: inst }), [], "f.js", 1, 1);
-  }, "E8001", "unsupported type for JSON encoding: table");
+  assertEqual(rt.jsonStringifyText(rt.makeTable({ u: inst }), [], "f.js", 1, 1),
+    '{"u":{"name":"x"}}', "same class nested in Record");
 });
 
-test("json.stringify rejects a builtin Error instance at the declared table parameter", function() {
-  const err = assertErrorMessage(function() {
-    json.stringify.$f(rt.errorValue("E_X", "boom"), "f.js", 3, 5);
-  }, "E8001", "expected table");
-  assertEqual(err.expected, "table", "the boundary's pinned expected text");
-  assertEqual(err.actual, "Error",
-    "the builtin Error instance projects its carried canonical class atom");
+test("json.stringify exposes only code and message for builtin Error", function() {
+  const value = rt.errorValue("E_X", "boom");
+  assertEqual(json.stringify.$f(value, "f.js", 3, 5), '{"code":"E_X","message":"boom"}', "Error public fields");
+  const err = assertErrorMessage(function() { table.keys.$f(value, "f.js", 3, 5); }, "E8001", "expected table");
+  assertEqual(err.expected, "table", "Record parameter expected kind");
+  assertEqual(err.actual, "Error", "Error remains nominal");
   assertSpan(err, "f.js", 3, 5);
 });
 
-test("json.stringify rejects class instances inside table content", function() {
-  const defaults = function() { return { ["name"]: "n" }; };
+test("json.stringify traverses class instances in Record and array positions", function() {
   const inst = rt.classPlan("@app.main/User", [{name:"name", descriptor:"string", optional:false}], {name:"x"}, "f.js", 1, 1);
   const nested = rt.makeTable({ u: inst });
-  assertErrorMessage(function() { json.stringify.$f(nested, "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: table");
-  // The nested-array position rejects through the same closed arm.
-  assertErrorMessage(function() { json.stringify.$f(rt.makeTable({ u: [inst] }), "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: table");
+  assertEqual(json.stringify.$f(nested, "f.js", 1, 1), '{"u":{"name":"x"}}', "Record member");
+  assertEqual(json.stringify.$f(rt.makeTable({ u: [inst] }), "f.js", 1, 1), '{"u":[{"name":"x"}]}', "array member");
 });
 
 // ===========================================================================
-// Exact JSON number classification and decoded-key duplicates (v1.4)
+// Binary64 numeric decoding and decoded-key duplicates
 // ===========================================================================
 
 test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are number", function() {
@@ -812,12 +761,10 @@ test("json.parse classifies exact decimal lexemes: 1.0/1e0/-0.0 are number", fun
   assertEqual(json.stringify.$f(json.parse.$f('{"v":-1e0000000000000000001}', "f.js", 1, 1), "f.js", 1, 1),
     '{"v":-10.0}', "a negative zero-padded long exponent stays the number -10");
   // A huge exponent converts to binary64 infinity: the classification
-  // itself never overflows, and the nonfinite value then fails the
-  // finite-only encode arm.
+  // itself never overflows, and generic stringify substitutes JSON null.
   const huge = json.parse.$f('{"v":1e999999999999999999999}', "f.js", 1, 1);
   assertEqual(huge.get("v"), Infinity, "a huge exponent converts to binary64 infinity");
-  assertErrorMessage(function() { json.stringify.$f(huge, "f.js", 1, 1); }, "E8001",
-    "unsupported type for JSON encoding: number");
+  assertEqual(json.stringify.$f(huge, "f.js", 1, 1), '{"v":null}', "overflowed value substitutes null");
 });
 
 test("json.parse rejects decoded-key duplicates with the shared E8001 projection", function() {
@@ -853,18 +800,16 @@ test("json.parse/json.stringify handle deep finite nesting beyond 512 levels", f
     "a 600-deep finite object round-trips");
 });
 
-test("json.stringify rejects a top-level Array with E8001 expected table (actual array)", function() {
-  const err = assertErrorMessage(function() { json.stringify.$f([1, 2], "f.js", 1, 1); }, "E8001", "expected table");
-  assertEqual(err.actual, "array", "the actual kind label");
+test("json.stringify admits a top-level array", function() {
+  assertEqual(JSON.stringify(JSON.parse(json.stringify.$f([1, 2], "f.js", 1, 1))), "[1,2]", "array root");
 });
 
-test("json.stringify rejects a top-level wrapper with E8001 expected table (actual function)", function() {
-  const err = assertErrorMessage(function() { json.stringify.$f(json.parse, "f.js", 1, 1); }, "E8001", "expected table");
-  assertEqual(err.actual, "function", "the actual kind label");
+test("json.stringify yields undefined for a top-level wrapper", function() {
+  assertEqual(json.stringify.$f(json.parse, "f.js", 1, 1), undefined, "function root");
 });
 
-test("json.stringify rejects a top-level plain object through the checkTable fall-through", function() {
-  const err = assertErrorMessage(function() { json.stringify.$f({ a: 1 }, "f.js", 1, 1); }, "E8001", "expected table");
+test("json.stringify rejects a foreign top-level plain object at unknown ingress", function() {
+  const err = assertErrorMessage(function() { json.stringify.$f({ a: 1 }, "f.js", 1, 1); }, "E8001", "unsupported unknown ingress");
   assertEqual(err.actual, "object", "the actual kind label");
 });
 
@@ -923,13 +868,13 @@ test("time.nowMillis tracks the backend clock within its resolution", function()
 
 test("console.log/error are first-class wrapper values writing to the captured streams", function() {
   assertEqual(consoleMod.log.$kind, "function", "log $kind");
-  assertEqual(consoleMod.log.$sig, "(string)->null", "log signature");
+  assertEqual(consoleMod.log.$sig, "(string)->void", "log signature");
   assert(typeof consoleMod.log.$f === "function", "log $f is callable");
-  assertEqual(consoleMod.log.$f("x", "f.js", 1, 1), null, "log returns DEAL null");
+  assertEqual(consoleMod.log.$f("x", "f.js", 1, 1), undefined, "log returns void");
   assertEqual(consoleMod.error.$kind, "function", "error $kind");
-  assertEqual(consoleMod.error.$sig, "(string)->null", "error signature");
+  assertEqual(consoleMod.error.$sig, "(string)->void", "error signature");
   assert(typeof consoleMod.error.$f === "function", "error $f is callable");
-  assertEqual(consoleMod.error.$f("e", "f.js", 1, 1), null, "error returns DEAL null");
+  assertEqual(consoleMod.error.$f("e", "f.js", 1, 1), undefined, "error returns void");
 });
 
 // ===========================================================================

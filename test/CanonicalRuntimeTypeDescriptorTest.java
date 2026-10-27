@@ -214,7 +214,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         System.out.println("-- primitive round trips --");
 
         String[] primitives = {
-            "null", "boolean", "number", "number", "string", "table"
+            "null", "undefined", "unknown", "void", "boolean", "number", "string", "record"
         };
         for (String primitive : primitives) {
             assertAtom(primitive, "primitive " + primitive);
@@ -234,15 +234,17 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         String[] valid = {
             // Arrays / nullables, nested.
-            "[number]", "?number", "[?number]", "?[number]", "[[number]]", "[?[?[?[table]]]]",
-            "[table]", "?table", "[?table]", "?[table]",
-            // Spec examples (docs/spec-v1.4.md §Runtime type descriptor format).
+            "[number]", "?number", "[?number]", "?[number]", "[[number]]", "[?[?[?[record]]]]",
+            "[record]", "?record", "[?record]", "?[record]",
+            "!number", "?!number", "null|undefined", "[!number]", "[?!record]",
+            "(!number,?!string)->void", "async()->!record",
+            // Spec examples (docs/spec-v1.5.md §Runtime type descriptor format).
             "?[@src/app/User]", "[?@src/app/User]", "(number,string)->boolean",
             "()->null", "async(number)->string",
             // Exact sync/async functions over table at depth.
-            "(table)->table", "async(table)->table",
-            "(number,string,?[table])->table", "async(?number)->[table]",
-            "((table)->table)->null", "async((table)->table)->[table]",
+            "(record)->record", "async(record)->record",
+            "(number,string,?[record])->record", "async(?number)->[record]",
+            "((record)->record)->null", "async((record)->record)->[record]",
             // Class atoms in every position.
             "(@lib/utils/User)->null", "()->@lib/utils/User",
             "[@lib/utils/User]", "?@lib/utils/User",
@@ -460,7 +462,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
         assertAtom("[?@a/b]", "nullable class atom inside an array");
         assertAtom("[(@a/b)->null]", "function with class param inside an array");
         assertAtom("(?@a/b)->null", "nullable class atom as a function parameter");
-        assertAtom("(@lib/utils/User,Error)->[table]",
+        assertAtom("(@lib/utils/User,Error)->[record]",
             "multi-component and builtin atoms in one parameter list");
     }
 
@@ -497,11 +499,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
         DescriptorAst fn = new DescriptorAst.FunctionAtom(
             true,
             List.of(new DescriptorAst.PrimitiveAtom("number"),
-                    new DescriptorAst.ArrayAtom(new DescriptorAst.PrimitiveAtom("table"))),
+                    new DescriptorAst.ArrayAtom(new DescriptorAst.PrimitiveAtom("record"))),
             new DescriptorAst.ClassAtom("@lib/utils/User"));
-        check("async(number,[table])->@lib/utils/User".equals(
+        check("async(number,[record])->@lib/utils/User".equals(
                 CanonicalRuntimeTypeDescriptor.render(fn)),
-            "render rebuilds async(number,[table])->@lib/utils/User verbatim");
+            "render rebuilds async(number,[record])->@lib/utils/User verbatim");
         DescriptorParseResult reparsed = parseResult(CanonicalRuntimeTypeDescriptor.render(fn));
         check(reparsed.equals(fn), "parse(render(hand-built atom)) equals the atom");
 
@@ -522,8 +524,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "legacy number[] rejected");
         assertError("number|null", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
             "legacy number|null rejected");
-        assertError("table[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 5,
-            "legacy table[] rejected");
+        assertError("record[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
+            "source array suffix rejected in canonical record descriptor");
         assertError("number...", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
             "legacy number... rejected");
         assertError("User[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 4,
@@ -532,8 +534,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "legacy User|null rejected");
         assertError("?User[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 5,
             "legacy ?User[] rejected");
-        assertError("?table[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 6,
-            "legacy ?table[] rejected");
+        assertError("?record[]", DescriptorSyntaxError.Kind.TRAILING_CONTENT, 7,
+            "source array suffix rejected behind nullish wrapper");
         assertError("...number[]", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 0,
             "rest-shaped ...number[] rejected");
         assertError("(number...)", DescriptorSyntaxError.Kind.UNEXPECTED_CHARACTER, 7,
@@ -563,8 +565,8 @@ public class CanonicalRuntimeTypeDescriptorTest {
         // Nested nullables and null inners.
         assertError("??number", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
             "nested nullable ??number rejected");
-        assertError("??table", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
-            "nested nullable ??table rejected");
+        assertError("??record", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 1,
+            "nested nullable ??record rejected");
         assertError("?null", DescriptorSyntaxError.Kind.NULL_INNER, 1,
             "nullable of null rejected");
         assertError("[??number]", DescriptorSyntaxError.Kind.NESTED_NULLABLE, 2,
@@ -777,11 +779,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
     };
 
     private static final String[] LEAVES = {
-        "null", "boolean", "number", "number", "string", "table"
+        "null", "boolean", "number", "number", "string", "record"
     };
 
     private static final String[] NON_NULL_LEAVES = {
-        "boolean", "number", "number", "string", "table"
+        "boolean", "number", "number", "string", "record"
     };
 
     private static String leaf(Random rnd) {
@@ -862,13 +864,13 @@ public class CanonicalRuntimeTypeDescriptorTest {
         final int depth = 60;
 
         // Pure array nesting around table.
-        String arrayText = "[".repeat(depth) + "table" + "]".repeat(depth);
+        String arrayText = "[".repeat(depth) + "record" + "]".repeat(depth);
         assertAtom(arrayText, "array nesting at depth " + depth);
         check(maxDepth(atomOf(arrayText)) >= depth,
             "array atom tree reaches depth " + depth);
 
         // Alternating array/nullable nesting around table.
-        String alternated = "table";
+        String alternated = "record";
         for (int i = 0; i < depth; i++) {
             alternated = (i % 2 == 0) ? "[" + alternated + "]" : "?" + alternated;
         }
@@ -877,20 +879,20 @@ public class CanonicalRuntimeTypeDescriptorTest {
             "alternated atom tree reaches depth " + depth);
 
         // Exact sync/async function nesting with table through params/returns.
-        String functions = "table";
+        String functions = "record";
         for (int i = 0; i < depth; i++) {
-            functions = (i % 2 == 0 ? "async(" : "(") + functions + ")->table";
+            functions = (i % 2 == 0 ? "async(" : "(") + functions + ")->record";
         }
         assertAtom(functions, "sync/async function nesting at depth " + depth);
         check(maxDepth(atomOf(functions)) >= depth,
             "function atom tree reaches depth " + depth);
 
         // Mixed array/nullable/function nesting around table.
-        String mixed = "table";
+        String mixed = "record";
         for (int i = 0; i < depth; i++) {
             mixed = (i % 3 == 0) ? "[" + mixed + "]"
                 : (i % 3 == 1) ? "?" + mixed
-                : "async(" + mixed + ")->table";
+                : "async(" + mixed + ")->record";
         }
         assertAtom(mixed, "mixed nesting at depth " + depth);
         check(maxDepth(atomOf(mixed)) >= depth,
@@ -931,7 +933,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
     /** The canonical primitive keyword set (encode never emits a bare name). */
     private static final Set<String> PRIMITIVE_KEYWORDS_SET =
-        Set.of("null", "boolean", "number", "string", "table");
+        Set.of("null", "undefined", "unknown", "void", "boolean", "number", "string", "record");
 
     private static final Type[] PRIMITIVE_TYPES = {
         Type.Null.INSTANCE,
@@ -1098,7 +1100,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             Type.Number.INSTANCE, Type.String.INSTANCE, Type.Table.INSTANCE,
         };
         String[] texts = {
-            "null", "boolean", "number", "number", "string", "table",
+            "null", "boolean", "number", "number", "string", "record",
         };
         for (int i = 0; i < types.length; i++) {
             DescriptorAst ast = assertEncodeMember(types[i], "primitive " + texts[i]);
@@ -1113,10 +1115,10 @@ public class CanonicalRuntimeTypeDescriptorTest {
 
         check("[number]".equals(ENCODER.encode(new Type.Array(Type.Number.INSTANCE))),
             "Array(number) encodes to [number]");
-        check("[?table]".equals(ENCODER.encode(
+        check("[?record]".equals(ENCODER.encode(
                 new Type.Array(new Type.Nullable(Type.Table.INSTANCE)))),
             "Array(Nullable(table)) encodes to [?table]");
-        check("?[table]".equals(ENCODER.encode(
+        check("?[record]".equals(ENCODER.encode(
                 new Type.Nullable(new Type.Array(Type.Table.INSTANCE)))),
             "Nullable(Array(table)) encodes to ?[table]");
         check("(number,string)->boolean".equals(ENCODER.encode(
@@ -1126,11 +1128,11 @@ public class CanonicalRuntimeTypeDescriptorTest {
         check("()->null".equals(ENCODER.encode(
                 new Type.Func(List.of(), Type.Null.INSTANCE))),
             "zero-parameter sync function encodes to ()->null");
-        check("async(table)->table".equals(ENCODER.encode(
+        check("async(record)->record".equals(ENCODER.encode(
                 new Type.Func(List.of(Type.Table.INSTANCE), Type.Table.INSTANCE,
                     true))),
             "async table function encodes to async(table)->table");
-        check("async(?number)->[table]".equals(ENCODER.encode(
+        check("async(?number)->[record]".equals(ENCODER.encode(
                 new Type.Func(List.of(new Type.Nullable(Type.Number.INSTANCE)),
                     new Type.Array(Type.Table.INSTANCE), true))),
             "async function params/return encode recursively");
@@ -1602,7 +1604,7 @@ public class CanonicalRuntimeTypeDescriptorTest {
             return "string";
         }
         if (type == Type.Table.INSTANCE) {
-            return "table";
+            return "record";
         }
         throw new IllegalArgumentException("not a primitive: " + type);
     }

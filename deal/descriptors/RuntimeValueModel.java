@@ -8,6 +8,9 @@ public interface RuntimeValueModel {
      */
     boolean isNull(Object value);
 
+    /** Whether value is the backend's distinct language-undefined carrier. */
+    boolean isUndefined(Object value);
+
     /**
      * Whether {@code value} is a boolean scalar carrier (the
      * {@code boolean} row's backend scalar predicate).
@@ -41,7 +44,7 @@ public interface RuntimeValueModel {
 
     /**
      * Table-ness: whether {@code value} is the backend's table
-     * representation (the {@code table} row's predicate).
+     * representation (the canonical {@code record} row's predicate).
      */
     boolean isTable(Object value);
 

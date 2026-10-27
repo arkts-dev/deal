@@ -7,8 +7,8 @@ import * as json from "std/json";
 import * as str from "std/string";
 
 export function main(): null {
-  let doc: table = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
-  let encoded: string = json.stringify(doc);
+  let doc: Record<string, unknown> = { count: 42, ratio: 2.5, flag: true, nothing: null, name: "Ada" };
+  let encoded: string = json.stringify(doc) as string;
   if (!str.contains(encoded, "\"count\":42")) {
     throw { code: "TEST_FAIL", message: "int must serialize as a JSON number" };
   }
@@ -18,11 +18,11 @@ export function main(): null {
   if (!str.contains(encoded, "\"nothing\":null")) {
     throw { code: "TEST_FAIL", message: "null must serialize as JSON null" };
   }
-  let back: table = json.parse(encoded);
-  let count: number = back.count;
-  let ratio: number = back.ratio;
-  let flag: boolean = back.flag;
-  let name: string = back.name;
+  let back: Record<string, unknown> = json.parse(encoded);
+  let count: number = back.count as number;
+  let ratio: number = back.ratio as number;
+  let flag: boolean = back.flag as boolean;
+  let name: string = back.name as string;
   if (count !== 42) {
     throw { code: "TEST_FAIL", message: "int round-trip mismatch" };
   }

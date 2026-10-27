@@ -7,15 +7,20 @@ import * as host from "host/array_roundtrip";
 
 export function test_host_array_no_call_on_failure(): string {
   let before: number = host.callCount();
-  let holder: table = { item: "not number[]" };
+  let item: number[] | null = [7];
+  let clear: () => void = function(): void { item = null; };
   let failed: boolean = false;
-  try {
-    let x: number[] = host.echoArray(holder.item);
-  } catch (e) {
-    if (e.code !== "E8010") {
-      throw { code: "TEST_FAIL", message: "expected E8010, got " + e.code };
+  if (item !== null) {
+    clear();
+    try {
+      let x: number[] = host.echoArray(item);
+    } catch (value) {
+      let e: Error = value as Error;
+      if (e.code !== "E8010") {
+        throw { code: "TEST_FAIL", message: "expected E8010, got " + e.code };
+      }
+      failed = true;
     }
-    failed = true;
   }
   if (!failed) {
     throw { code: "TEST_FAIL", message: "no E8010 raised by the failing number[] parameter" };

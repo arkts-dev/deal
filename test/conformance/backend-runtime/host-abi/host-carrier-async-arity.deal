@@ -21,11 +21,11 @@ function bump(x: number): number {
   return y;
 }
 
-function pick(): async (t: host.Target, g: (x: number) => number) => string {
+function pick(): (t: host.Target, g: (x: number) => number) => Promise<string> {
   return host.describeAsync;
 }
 
-export async function test_arity_extended_adapter(): null {
+export async function test_arity_extended_adapter(): Promise<null> {
   let target: host.Target = { name: "target" };
   let callback: (x: number) => number = bump;
   let fixedMarker: Marker = {count: 0};
@@ -33,10 +33,10 @@ export async function test_arity_extended_adapter(): null {
     fixedMarker.count = fixedMarker.count + 1;
     return 1;
   };
-  let source: async (t: host.Target, g: (x: number) => number) => string =
+  let source: (t: host.Target, g: (x: number) => number) => Promise<string> =
     host.describeAsync;
   source = source;
-  let fixed: async (t: host.Target, g: (x: number) => number, extra: number) => string =
+  let fixed: (t: host.Target, g: (x: number) => number, extra: number) => Promise<string> =
     source;
   let fixedText: string = await fixed(target, callback, fixedExtra());
   check(fixedText === "T|target|true:42|n=2", "the statically fixed arity-extended host async call");
@@ -46,9 +46,9 @@ export async function test_arity_extended_adapter(): null {
     runtimeMarker.count = runtimeMarker.count + 1;
     return 1;
   };
-  let runtimeSource: async (t: host.Target, g: (x: number) => number) => string =
+  let runtimeSource: (t: host.Target, g: (x: number) => number) => Promise<string> =
     pick();
-  let dynamic: async (t: host.Target, g: (x: number) => number, extra: number) => string =
+  let dynamic: (t: host.Target, g: (x: number) => number, extra: number) => Promise<string> =
     runtimeSource;
   let dynamicText: string = await dynamic(target, callback, runtimeExtra());
   check(dynamicText === "T|target|true:42|n=2", "the runtime-resolved arity-extended host async call");

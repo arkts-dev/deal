@@ -22,7 +22,8 @@ function expectFailure(label: string, code: string, message: string,
   let caught: boolean = false;
   try {
     run();
-  } catch (e) {
+  } catch (value) {
+    let e: Error = value as Error;
     check(e.code === code, label + ": code was " + e.code);
     check(e.message === message, label + ": message was " + e.message);
     caught = true;
@@ -31,14 +32,14 @@ function expectFailure(label: string, code: string, message: string,
   return null;
 }
 
-export async function test_async_class_parameter(): null {
+export async function test_async_class_parameter(): Promise<null> {
   let c: host.Config = { value: 42 };
   let got: number = await host.describeAsync(c);
   check(got === 42, "the asynchronous class parameter value");
   return null;
 }
 
-export async function test_async_class_completion(): null {
+export async function test_async_class_completion(): Promise<null> {
   let made: host.Config = await host.makeAsync();
   check(made.value === 42, "the asynchronous class completion value");
   return null;
@@ -80,7 +81,7 @@ export function test_nullable_class_parameter(): null {
   return null;
 }
 
-export async function test_async_nullable_completion(): null {
+export async function test_async_nullable_completion(): Promise<null> {
   let absent: host.Config | null = await host.maybeMakeAsync(false);
   check(absent === null, "the asynchronous nullable completion absence");
   let present: host.Config | null = await host.maybeMakeAsync(true);
@@ -98,9 +99,9 @@ export function test_class_fields(): null {
   check(holder.primary.value === 42, "the nested class field value");
   let optional: host.Config | null = holder.optional;
   check(optional === null, "the present-null nullable class field");
-  let maybe: host.Config | null = holder.maybe;
-  check(maybe === null, "the absent optional nullable class field");
-  check(!has(holder.maybe), "the absent optional nullable class field stays absent");
+  let maybe: host.Config | null | undefined = holder.maybe;
+  check(maybe === undefined, "the absent optional nullable class field");
+  check(!Object.hasOwn(holder, "maybe"), "the absent optional nullable class field stays absent");
   check(holder.items.length === 1, "the class array field length");
   check(holder.items[0].value === 42, "the class array field element value");
   return null;

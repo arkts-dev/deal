@@ -3,11 +3,11 @@
 // @expected: compile-error E5003
 // @features: async-await, type-system, narrowing
 
-async function helper(): number {
+async function helper(): Promise<number> {
   return 42;
 }
 
-async function test(): number {
+async function test(): Promise<number> {
   let x: number | null = 42;
   if (x !== null) {
     await helper();

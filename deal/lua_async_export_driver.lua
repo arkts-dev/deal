@@ -1,9 +1,9 @@
 -- ===========================================================================
--- DEAL v1.4 production async-export host driver (luajit-async-export-invoker
+-- DEAL v1.5 production async-export host driver (luajit-async-export-invoker
 -- D1/D4-D9 — the driver half of the marked-line envelope protocol).
 --
 -- The production Java component LuaJitAsyncExportInvoker materializes this
--- committed distribution resource into a per-invocation temp file and
+-- committed source-tree file into a per-invocation temp file and
 -- spawns it as:
 --
 --   luajit <driver> <entryArtifact> <artifactRoot> <exportName> <returnDescriptor>

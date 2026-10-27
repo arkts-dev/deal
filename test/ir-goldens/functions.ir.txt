@@ -19,6 +19,6 @@ module @test/ir-goldens/fixtures/functions.deal:5:1-16:1
         binary + : string @test/ir-goldens/fixtures/functions.deal:10:12-10:27
           literal "Hello, " : string @test/ir-goldens/fixtures/functions.deal:10:12-10:20
           ident name : string @test/ir-goldens/fixtures/functions.deal:10:24-10:27
-  function noop: null @test/ir-goldens/fixtures/functions.deal:13:1-16:1
+  function noop: void @test/ir-goldens/fixtures/functions.deal:13:1-16:1
     body
       return @test/ir-goldens/fixtures/functions.deal:14:5-15:1

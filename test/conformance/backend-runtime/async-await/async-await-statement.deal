@@ -3,11 +3,11 @@
 // @expected: runtime-ok
 // @features: async, await, runtime
 
-export async function f(): number {
+export async function f(): Promise<number> {
   let completionState: number = 0;
   let completionCount: number = 0;
 
-  async function g(): number {
+  async function g(): Promise<number> {
     let result: number = 42;
     completionState = result;
     completionCount = completionCount + 1;

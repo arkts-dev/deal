@@ -3,7 +3,7 @@
 // @expected: compile-error E3012
 // @features: async, await
 
-async function g(): number { return 5; }
+async function g(): Promise<number> { return 5; }
 
 function f(): number {
   return await g();

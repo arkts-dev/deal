@@ -5,11 +5,11 @@
 
 // @jsonable
 export class Wrapper {
-  data: table;
+  data: Record<string, unknown>;
 }
 
 export function test_table_field_rejects_json_array(): null {
-  // docs/spec-v1.4.md:695: a table field's fromJson accepts only a JSON
+  // A Record field's descriptor-directed fromJson accepts only a JSON
   // object, so [] is a validation failure and the helper returns null.
   let rejected: Wrapper | null = Wrapper$fromJson("{\"data\":[]}");
   if (rejected !== null) {
@@ -30,7 +30,7 @@ export function test_table_field_rejects_json_array(): null {
   // to the DEAL table carrier.
   let keyed: Wrapper | null = Wrapper$fromJson("{\"data\":{\"count\":3}}");
   if (keyed !== null) {
-    let count: number = keyed.data.count;
+    let count: number = keyed.data.count as number;
     if (count !== 3) {
       throw { code: "TEST_FAIL", message: "a keyed table field value must decode" };
     }

@@ -3,7 +3,7 @@
 // @expected: runtime-ok
 // @features: async-await
 
-export async function test_no_await(): number {
+export async function test_no_await(): Promise<number> {
   let result: number = 42;
   if (result !== 42) {
     throw { code: "TEST_FAIL", message: "no-await completion value mismatch" };

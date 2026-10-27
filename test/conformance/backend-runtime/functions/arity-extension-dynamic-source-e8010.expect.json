@@ -4,7 +4,7 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected (number,number)->number, got (number)->number\",\"sourceFile\":\"backend-runtime/functions/arity-extension-dynamic-source-e8010.deal\",\"line\":8,\"column\":22,\"expected\":\"(number,number)->number\",\"actual\":\"(number)->number\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8010\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8010\",\"message\":\"function signature mismatch: expected (number,number)->number, got (number)->number\",\"sourceFile\":\"backend-runtime/functions/arity-extension-dynamic-source-e8010.deal\",\"line\":9,\"column\":22,\"expected\":\"(number,number)->number\",\"actual\":\"(number)->number\"}\n",
       "stderr": ""
     },
     "exitCode": 1,
@@ -12,7 +12,7 @@
       "code": "E8010",
       "message": "function signature mismatch: expected (number,number)->number, got (number)->number",
       "sourceFile": "backend-runtime/functions/arity-extension-dynamic-source-e8010.deal",
-      "line": 8,
+      "line": 9,
       "column": 22,
       "expected": "(number,number)->number",
       "actual": "(number)->number"

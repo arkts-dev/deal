@@ -5,7 +5,7 @@
 
 export function test_error_default_code(): null {
   let code: string = "unset";
-  try { throw { code: "", message: "expected" }; } catch (e) { code = e.code; }
+  try { throw { code: "", message: "expected" }; } catch (e) { code = (e as Error).code; }
   if (code !== "") { throw { code: "TEST_FAIL", message: "explicit Error code was not empty" }; }
   return null;
 }

@@ -1,4 +1,4 @@
 // IR golden fixture: type-descriptors-primitive-string
 // Migrated IR-containment pin for legacy case 'primitive-string' (ISSUE-0358).
 
-function f(): null { let x: string = "hello"; return; }
+function f(): null { let x: string = "hello"; return null; }
