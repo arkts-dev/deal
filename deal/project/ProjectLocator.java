@@ -52,7 +52,7 @@ public final class ProjectLocator {
     /** The valid CLI backend aliases of D1 step 3 (trim + lowercase):
      * {@code lua}/{@code luajit} (LuaJIT), {@code jvm}, and {@code js}. */
     public static final Set<String> CLI_BACKEND_ALIASES = Set.of(
-        "lua", "luajit", "jvm", "js");
+        "lua", "luajit", "jvm", "js", "llvm");
 
     // =========================================================================
     // The result channel
@@ -171,7 +171,7 @@ public final class ProjectLocator {
             if (!CLI_BACKEND_ALIASES.contains(alias)) {
                 return cliFailure("deal: unknown backend alias '"
                     + overrides.backend()
-                    + "'; supported aliases: lua, luajit, jvm, js", entryFile);
+                    + "'; supported aliases: lua, luajit, jvm, js, llvm", entryFile);
             }
             cliBackendAlias = alias;
         }

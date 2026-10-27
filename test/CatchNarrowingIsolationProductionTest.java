@@ -184,6 +184,7 @@ public final class CatchNarrowingIsolationProductionTest {
             case LUAJIT -> project.out().resolve(ENTRY_MODULE + ".lua");
             case JVM -> project.out().resolve(JvmBackend.classNameFor(ENTRY_MODULE)
                 + ".java");
+            case LLVM -> project.out().resolve(ENTRY_MODULE + ".ll");
         };
     }
 

@@ -380,6 +380,7 @@ public final class CompilationOrchestrator {
             case "luajit" -> Backend.LUAJIT;
             case "jvm" -> Backend.JVM;
             case "js" -> Backend.JS;
+            case "llvm" -> Backend.LLVM;
             default -> throw new IllegalArgumentException(
                 "unsupported effective backend: " + backendText);
         };

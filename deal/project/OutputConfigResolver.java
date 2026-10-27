@@ -24,8 +24,9 @@ import java.util.Objects;
  *   <li><b>Output precedence and classification</b> (owned here):
  *       validated CLI output &gt; validated manifest output &gt; default
  *       {@code <manifestDirectory>/build/lua},
- *       {@code <manifestDirectory>/build/jvm}, or
- *       {@code <manifestDirectory>/build/js} according to the effective
+ *       {@code <manifestDirectory>/build/jvm},
+ *       {@code <manifestDirectory>/build/js}, or
+ *       {@code <manifestDirectory>/build/llvm} according to the effective
  *       backend. A leading {@code /} is {@link Kind#ABSOLUTE_PATH} under
  *       both sources; otherwise a MANIFEST-source value resolves from the
  *       manifest directory and a CLI-source value resolves from the
@@ -96,6 +97,9 @@ public final class OutputConfigResolver {
     /** The canonical JS backend name. */
     private static final String BACKEND_JS = "js";
 
+    /** The canonical LLVM backend name ({@code llvm-native-backend-integration} D1). */
+    private static final String BACKEND_LLVM = "llvm";
+
     /** The pinned default output text for the LuaJIT backend. */
     private static final String DEFAULT_OUTPUT_LUAJIT = "build/lua";
 
@@ -104,6 +108,13 @@ public final class OutputConfigResolver {
 
     /** The pinned default output text for the JS backend. */
     private static final String DEFAULT_OUTPUT_JS = "build/js";
+
+    /**
+     * The pinned default output text for the LLVM backend (D1): the
+     * published textual module and the C11 runtime deployment set, in the
+     * sibling of the {@code build/native} product root.
+     */
+    private static final String DEFAULT_OUTPUT_LLVM = "build/llvm";
 
     // =========================================================================
     // Pinned shapes (D3 / parent D11)
@@ -224,6 +235,8 @@ public final class OutputConfigResolver {
                 decodedText = DEFAULT_OUTPUT_JVM;
             } else if (BACKEND_JS.equals(effectiveBackend)) {
                 decodedText = DEFAULT_OUTPUT_JS;
+            } else if (BACKEND_LLVM.equals(effectiveBackend)) {
+                decodedText = DEFAULT_OUTPUT_LLVM;
             } else {
                 decodedText = DEFAULT_OUTPUT_LUAJIT;
             }
@@ -273,6 +286,7 @@ public final class OutputConfigResolver {
                 case "lua", "luajit" -> BACKEND_LUAJIT;
                 case "jvm" -> BACKEND_JVM;
                 case "js" -> BACKEND_JS;
+                case "llvm" -> BACKEND_LLVM;
                 default -> throw new IllegalArgumentException(
                     "CLI backend alias did not pass the D1 step-3 validity predicate: '"
                         + cliBackendAlias + "'");
@@ -282,7 +296,7 @@ public final class OutputConfigResolver {
             return BACKEND_LUAJIT;
         }
         return switch (manifestBackend) {
-            case "luajit", "jvm", "js" -> manifestBackend;
+            case "luajit", "jvm", "js", "llvm" -> manifestBackend;
             default -> throw new IllegalArgumentException(
                 "manifest backend did not pass the D2 schema validation: '"
                     + manifestBackend + "'");

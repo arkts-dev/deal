@@ -109,6 +109,10 @@ luajit test_runtime_number.lua'
   'fg|=== Running Required-Tool Fail-Closed Preflight Tests (ISSUE-0874) ===|java -ea -cp build deal.test.ToolchainPreflightTest'
   'fg|=== Running C11 Runtime Deployment Set Tests (ISSUE-0902 D6) ===|java -ea -cp build deal.test.NativeRuntimeDeploymentTest'
   'fg|=== Running C11 Runtime ABI / Platform / Terminal Tests (ISSUE-0902) ===|java -ea -cp build deal.test.NativeRuntimeAbiTest'
+  'fg|=== Running LLVM Backend Selection Tests (ISSUE-0903 D1) ===|java -ea -cp build deal.test.LlvmBackendSelectionTest'
+  'fg|=== Running LLVM Project Emission Tests (ISSUE-0903 D2/D6) ===|java -ea -cp build deal.test.LlvmProjectEmissionTest'
+  'fg|=== Running LLVM Runtime ABI Mirror Tests (ISSUE-0903) ===|java -ea -cp build deal.test.LlvmRuntimeAbiMirrorTest'
+  'fg|=== Running LLVM Stage Classifier Tests (ISSUE-0903) ===|java -ea -cp build deal.test.LlvmStageClassifierTest'
 )
 
 # No record may carry a warning, skip or fallback line: a missing required tool

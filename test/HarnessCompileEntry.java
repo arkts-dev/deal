@@ -29,7 +29,7 @@ public final class HarnessCompileEntry {
      * release-owned compile for the same input.
      *
      * @param args the command line ({@code compile <entry> [--backend
-     *             lua|luajit|jvm|js] [--output <dir>] [--dump-ir]
+     *             lua|luajit|jvm|js|llvm] [--output <dir>] [--dump-ir]
      *             [--source-map] [--verbose] [--diagnostics-json
      *             <path>]}); non-null
      * @return the process exit code (0 on success, 1 on a compile or
@@ -70,7 +70,7 @@ public final class HarnessCompileEntry {
                 case "--backend" -> {
                     if (i + 1 >= remaining.length) {
                         System.err.println("deal: --backend requires a backend"
-                            + " name (lua|luajit|jvm|js)");
+                            + " name (lua|luajit|jvm|js|llvm)");
                         return 1;
                     }
                     backendName = remaining[++i];

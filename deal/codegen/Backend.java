@@ -10,7 +10,16 @@ public enum Backend {
 
     JVM("jvm"),
 
-    JS("js");
+    JS("js"),
+
+    /**
+     * Emits one deterministic textual LLVM module and stages the C11
+     * runtime deployment set ({@code llvm-native-backend-integration}
+     * D1/D2/D6). The target consumes the same validated lowered project as
+     * the other production arms and adds no {@code deal.semantic.Target}
+     * member and no capability route.
+     */
+    LLVM("llvm");
 
     private final String cliName;
 
@@ -26,8 +35,8 @@ public enum Backend {
     /**
      * Parses a CLI/manifest backend name. Accepts {@code "lua"} and
      * {@code "luajit"} for {@link #LUAJIT}, {@code "jvm"} for {@link #JVM},
-     * and {@code "js"} for {@link #JS}; any other value (including
-     * {@code null}) yields empty.
+     * {@code "js"} for {@link #JS}, and {@code "llvm"} for {@link #LLVM};
+     * any other value (including {@code null}) yields empty.
      */
     public static Optional<Backend> fromCliName(String name) {
         if (name == null) return Optional.empty();
@@ -35,6 +44,7 @@ public enum Backend {
             case "lua", "luajit" -> Optional.of(LUAJIT);
             case "jvm" -> Optional.of(JVM);
             case "js" -> Optional.of(JS);
+            case "llvm" -> Optional.of(LLVM);
             default -> Optional.empty();
         };
     }

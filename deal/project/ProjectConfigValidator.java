@@ -65,7 +65,7 @@ public final class ProjectConfigValidator {
                 rangeOf(document, languageVersionValue));
         }
 
-        // 2. backend — exactly "luajit" | "jvm" | "js"; absence defaults
+        // 2. backend — exactly "luajit" | "jvm" | "js" | "llvm"; absence defaults
         // to luajit.
         String backend = "luajit";
         StrictJsonValue backendValue = rootMembers.get("backend");
@@ -76,9 +76,10 @@ public final class ProjectConfigValidator {
             }
             if (!backendString.value().equals("luajit")
                     && !backendString.value().equals("jvm")
-                    && !backendString.value().equals("js")) {
+                    && !backendString.value().equals("js")
+                    && !backendString.value().equals("llvm")) {
                 return failure("deal.json: unsupported backend '" + backendString.value()
-                        + "'. Supported backends: 'luajit', 'jvm', 'js'",
+                        + "'. Supported backends: 'luajit', 'jvm', 'js', 'llvm'",
                     rangeOf(document, backendValue));
             }
             backend = backendString.value();

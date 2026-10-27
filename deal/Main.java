@@ -71,7 +71,7 @@ public final class Main {
                 }
                 case "--backend" -> {
                     if (i + 1 >= remaining.length) {
-                        System.err.println("deal: --backend requires a backend name (lua|luajit|jvm|js)");
+                        System.err.println("deal: --backend requires a backend name (lua|luajit|jvm|js|llvm)");
                         return 1;
                     }
                     backendName = remaining[++i];
@@ -112,7 +112,7 @@ public final class Main {
         // validation, root/externals conversion, effective backend and
         // output, the pinned stdlib surface, and the deployment identity.
         // The CLI overrides are the raw strings — the locator owns their
-        // validation (a valid alias lua|luajit|jvm|js overrides the
+        // validation (a valid alias lua|luajit|jvm|js|llvm overrides the
         // manifest backend; the trimmed CLI output overrides the manifest
         // output;
         // an invalid override is a CliDiagnostic and publishes no
@@ -229,11 +229,11 @@ public final class Main {
     }
 
     private static void printUsage() {
-        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
+        System.err.println("Usage: deal compile <entry.deal> [--output <dir>] [--backend <lua|luajit|jvm|js|llvm>] [--verbose] [--dump-ir] [--source-map] [--diagnostics-json <path>]");
         System.err.println();
         System.err.println("Options:");
-        System.err.println("  --output, -o <dir>   Output directory (CWD-relative; default: build/lua, build/jvm, or build/js per the effective backend)");
-        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default), jvm, or js");
+        System.err.println("  --output, -o <dir>   Output directory (CWD-relative; default: build/lua, build/jvm, build/js, or build/llvm per the effective backend)");
+        System.err.println("  --backend <name>     Code-generation backend: lua/luajit (default), jvm, js, or llvm");
         System.err.println("  --verbose, -v        Verbose output with per-module timing");
         System.err.println("  --dump-ir            Produce IR dump files at <outputDir>/<module-path>.ir.txt");
         System.err.println("  --source-map         Accepted (source comments and .deal.map.json sidecars are the default)");

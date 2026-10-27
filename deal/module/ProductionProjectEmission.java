@@ -16,6 +16,9 @@ import deal.codegen.js.JsSourceFile;
 import deal.codegen.js.RuntimeDeclarationProjection;
 import deal.codegen.js.RuntimeDeclarationSurface;
 import deal.codegen.jvm.JvmNames;
+import deal.codegen.llvm.LlvmEmissionInput;
+import deal.codegen.llvm.LlvmProjectEmission;
+import deal.codegen.llvm.LlvmSemanticEmitter;
 import deal.codegen.jvm.JvmSemanticEmitter;
 import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
@@ -149,10 +152,10 @@ public final class ProductionProjectEmission {
         Objects.requireNonNull(distributionHome, "distributionHome must not be null");
         Objects.requireNonNull(stager, "stager must not be null");
         if (backend != Backend.LUAJIT && backend != Backend.JVM
-                && backend != Backend.JS) {
+                && backend != Backend.JS && backend != Backend.LLVM) {
             throw new IllegalArgumentException(
-                "the production project emission targets LuaJIT, JVM or JS only;"
-                    + " got " + backend);
+                "the production project emission targets LuaJIT, JVM, JS or"
+                    + " LLVM only; got " + backend);
         }
 
         Optional<CompilerDiagnostic> hostImport =
@@ -178,6 +181,11 @@ public final class ProductionProjectEmission {
             return emitJsProject(project, lowering, checkedProject,
                 declarationSurface, declarationModuleIdentities, invocation,
                 distributionHome, stager);
+        }
+
+        if (backend == Backend.LLVM) {
+            return emitLlvmProject(project, lowering, checkedProject,
+                invocation, distributionHome, stager);
         }
 
         // (4) The one emission per target — with the one source-map
@@ -319,6 +327,83 @@ public final class ProductionProjectEmission {
         }
         return new Result(Outcome.EMITTED, List.of(), project,
             emission.entryArtifactRelativePath());
+    }
+
+    /**
+     * The native arm of the one production project emission
+     * ({@code llvm-native-backend-integration} D2/D6, {@code llvm-native-
+     * codegen-cfg-ssa} {@code EmitNativeProject}): one
+     * {@link LlvmSemanticEmitter} invocation over the already-lowered project
+     * produces the one textual module, then this owner stages exactly that
+     * artifact and the complete closed C11 runtime deployment set in the
+     * existing exclusive-root transaction.
+     *
+     * <p>The published set is exactly {@code <entry module path>.ll} plus
+     * every file of {@code NativeRuntime.FILES}: no per-module artifact, no
+     * source-map sidecar (C8), no generated registry, driver or product. A
+     * runtime file the distribution surface does not provide is the pinned
+     * E6000 {@code Runtime library not found: <path>} with nothing published;
+     * an emitter rejection is the one E6005 carrying the offending origin. No
+     * external tool runs here (D3), and no build product is created, modified
+     * or removed.</p>
+     */
+    private static Result emitLlvmProject(
+            ExecutableLoweredProject project,
+            SemanticLowerer.ProjectLoweringResult lowering,
+            CheckedProjectInput checkedProject,
+            CompilerInvocation invocation,
+            DistributionHome distributionHome,
+            PublicationStager stager) throws IOException {
+        LlvmEmissionInput input;
+        LlvmProjectEmission emission;
+        try {
+            input = llvmEmissionInput(project, lowering, checkedProject, stager);
+            emission = LlvmSemanticEmitter.emitProductionProject(input);
+        } catch (IllegalStateException emitterGap) {
+            return new Result(Outcome.FAILED,
+                List.of(sharedEmitterCoverage(project.entryModule().path(),
+                    emitterGap, invocation)), null, null);
+        } catch (IllegalArgumentException invalidInput) {
+            return new Result(Outcome.FAILED,
+                List.of(sharedEmitterCoverage(project.entryModule().path(),
+                    new SharedEmissionFailure(invalidInput.getMessage(),
+                        invalidInput, null), invocation)), null, null);
+        }
+        stager.stage(emission.artifactRelativePath(),
+            emission.source().getBytes(StandardCharsets.UTF_8));
+
+        // The complete closed C11 runtime deployment set (D6), resolved
+        // through the one distribution precedence. The set is staged in its
+        // pinned order after the one project artifact.
+        for (String relativeName : deal.toolchain.NativeRuntime.FILES) {
+            if (stager.stageRuntimeCopy(relativeName, distributionHome).isEmpty()) {
+                return new Result(Outcome.FAILED,
+                    List.of(runtimeLibraryMissing(relativeName)), null, null);
+            }
+        }
+        return new Result(Outcome.EMITTED, List.of(), project,
+            emission.artifactRelativePath());
+    }
+
+    /**
+     * The canonical rendering input of the native arm: the lowered project,
+     * its companions and the project-relative display name of every compiled
+     * source (the one file spelling the debug metadata and the emitted origin
+     * records carry).
+     */
+    private static LlvmEmissionInput llvmEmissionInput(
+            ExecutableLoweredProject project,
+            SemanticLowerer.ProjectLoweringResult lowering,
+            CheckedProjectInput checkedProject,
+            PublicationStager stager) {
+        java.util.Map<String, String> displayNames = new LinkedHashMap<>();
+        for (CheckedModuleInput module : checkedProject.modules()) {
+            displayNames.put(module.sourceId(),
+                SourceMapPaths.sourceDisplay(module.sourceId(),
+                    stager.publicationRoot()));
+        }
+        return new LlvmEmissionInput(project, lowering.tables(),
+            lowering.registries(), displayNames);
     }
 
     /**
