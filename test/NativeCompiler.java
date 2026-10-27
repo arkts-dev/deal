@@ -38,16 +38,19 @@ import java.util.stream.Stream;
  */
 public final class NativeCompiler {
 
-    /** The pinned target triple (D4). */
-    public static final String TARGET_TRIPLE = "x86_64-pc-linux-gnu";
+    /** The pinned target triple (D4), the production seam's own value. */
+    public static final String TARGET_TRIPLE =
+        deal.toolchain.NativeToolchain.TARGET_TRIPLE;
 
-    /** The accepted clang/LLVM major window (D4). */
-    public static final int MINIMUM_MAJOR = 14;
-    public static final int MAXIMUM_MAJOR = 16;
+    /** The accepted clang/LLVM major window (D4), from the production seam. */
+    public static final int MINIMUM_MAJOR =
+        deal.toolchain.NativeToolchain.MINIMUM_MAJOR;
+    public static final int MAXIMUM_MAJOR =
+        deal.toolchain.NativeToolchain.MAXIMUM_MAJOR;
 
-    /** The accepted compiler spellings, most specific first. */
+    /** The accepted compiler spellings, most specific first (D4). */
     private static final List<String> CANDIDATES =
-        List.of("clang", "clang-16", "clang-15", "clang-14");
+        deal.toolchain.NativeToolchain.COMPILER_CANDIDATES;
 
     /** The repositories' published-runtime deployment root. */
     public static final String RUNTIME_PREFIX = NativeRuntime.RUNTIME_DIRECTORY;
@@ -159,8 +162,10 @@ public final class NativeCompiler {
     // =========================================================================
 
     /**
-     * The pinned D4 flag list for one build: everything down to the optimization
-     * level, with the published-root include path. The link-only
+     * The pinned D4 flag list for one build, taken verbatim from the production
+     * seam's one authority ({@link deal.toolchain.NativeToolchain#PINNED_FLAGS})
+     * so the suites and the seam can never drift: everything down to the
+     * optimization level, with the published-root include path. The link-only
      * {@code -Wl,--build-id=none} is present exactly for a linking request.
      */
     public static List<String> flags(Path publishedRoot, int optimizationLevel,
@@ -169,19 +174,13 @@ public final class NativeCompiler {
             throw new IllegalArgumentException(
                 "unsupported optimization level: " + optimizationLevel);
         }
-        List<String> flags = new ArrayList<>(List.of(
-            "--target=" + TARGET_TRIPLE,
-            "-std=c11",
-            "-Wall", "-Werror", "-Wextra", "-pedantic",
-            "-g",
-            "-ffp-contract=off",
-            "-fno-fast-math",
-            "-fdebug-compilation-dir=.",
-            "-I" + publishedRoot.toAbsolutePath().normalize(),
-            "-O" + optimizationLevel));
-        if (link) {
-            flags.add("-Wl,--build-id=none");
+        List<String> flags = new ArrayList<>(
+            deal.toolchain.NativeToolchain.PINNED_FLAGS);
+        if (!link) {
+            flags.remove("-Wl,--build-id=none");
         }
+        flags.add("-I" + publishedRoot.toAbsolutePath().normalize());
+        flags.add("-O" + optimizationLevel);
         return flags;
     }
 

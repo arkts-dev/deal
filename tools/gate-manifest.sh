@@ -113,6 +113,7 @@ luajit test_runtime_number.lua'
   'fg|=== Running LLVM Project Emission Tests (ISSUE-0903 D2/D6) ===|java -ea -cp build deal.test.LlvmProjectEmissionTest'
   'fg|=== Running LLVM Runtime ABI Mirror Tests (ISSUE-0903) ===|java -ea -cp build deal.test.LlvmRuntimeAbiMirrorTest'
   'fg|=== Running LLVM Stage Classifier Tests (ISSUE-0903) ===|java -ea -cp build deal.test.LlvmStageClassifierTest'
+  'fg|=== Running Native Toolchain Seam Tests (ISSUE-0904 D3/D4/D5) ===|java -ea -cp build deal.test.NativeToolchainTest'
 )
 
 # No record may carry a warning, skip or fallback line: a missing required tool
