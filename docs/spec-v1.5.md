@@ -71,14 +71,15 @@ SourceCharacter ::= /* any Unicode scalar value */
 
 Token ::= Keyword | Identifier | Literal | Operator | Punctuator
 
-Keyword ::= 'let' | 'class' | 'function' | 'async' | 'await' | 'return' | 'if' | 'else'
+Keyword ::= 'let' | 'class' | 'function' | 'await' | 'return' | 'if' | 'else'
           | 'while' | 'for' | 'break' | 'continue'
           | 'null' | 'true' | 'false' | 'typeof' | 'instanceof'
-          | 'import' | 'export' | 'from' | 'as' | 'delete'
-          | 'try' | 'catch' | 'throw' | 'of'
+          | 'import' | 'export' | 'delete'
+          | 'try' | 'catch' | 'throw'
 
 Identifier ::= [a-zA-Z_$] [a-zA-Z0-9_$]*
-/* Property-position Identifier also admits TypeScript keyword property names. */
+/* async/as/from/of are contextual identifiers; grammar determines keyword uses.
+   Property names also admit TypeScript keywords. */
 
 Literal ::= NullLiteral | UndefinedLiteral | BooleanLiteral | NumberLiteral | StringLiteral | TemplateLiteral
 
@@ -178,6 +179,7 @@ DeleteStatement ::= 'delete' DeleteTarget ';'
 
 DeleteTarget    ::= PostfixExpression '.' Identifier
                   | PostfixExpression '[' Expression ']'
+/* Array-element deletion is a compile-time error. */
 
 TryStatement    ::= 'try' Block 'catch' '(' Identifier ')' Block
 
@@ -913,8 +915,7 @@ Not allowed within the same block scope.
 
 ### Scope
 
-- Module-level: visible from declaration to end of module.
-- Block `{}`: scoped to block.
+Blocks delimit lexical scopes; declaration order governs visibility.
 
 ### Name resolution
 
@@ -930,12 +931,12 @@ Shadowing follows [Lexical elements](#lexical-elements) builtin-name restriction
 - Parameters may not shadow other parameters.
 - Module-level declarations may not shadow imports.
 - Imports may not shadow module-level declarations.
+
 Declaration order:
 
-- `class` and `function` declarations are hoisted within the module for name resolution.
-- `let` declarations are not hoisted and are visible only after their declaration.
-- Function bodies may reference functions/classes declared later in the same module.
-- Class fields may reference classes declared later in the same module.
+- Module-level functions/classes are hoisted for name resolution.
+- Nested functions are block-scoped, initialized upon declaration execution, and visible in their bodies and following statements/bodies. Earlier references resolve outward; unresolved names are compile-time name-resolution errors.
+- `let` declarations are visible only after declaration.
 
 ### Definite return analysis
 
@@ -1138,7 +1139,7 @@ try {
 }
 ```
 
-Catch binds the identical Error as unknown; narrow before field access or rethrow. Host failures normalize to Error. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
+Catch binds the identical Error as unknown; narrow before field access or rethrow. Host failures normalize to Error without replacing DEAL Errors; native code/message/cause are backend-defined. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
 
 If the `try` block has a definite `return`, the `catch` block must also have a definite `return` or `throw`. Both return expressions must satisfy the enclosing function's return type.
 
