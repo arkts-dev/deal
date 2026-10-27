@@ -2,7 +2,7 @@
 
 ## Install: Pi and OpenCode
 
-From a DEAL checkout:
+Copy the complete bundle:
 
 ```sh
 mkdir -p ~/.agents/skills
@@ -12,5 +12,5 @@ cp -R skills/write-deal ~/.agents/skills/
 Pi: `/reload`, then `/skill:write-deal`.
 OpenCode: start a new session; ask it to load `write-deal`.
 
-For project-local installation, use `.agents/skills/` instead. Recopy after updating the checkout.
+Project-local: `.agents/skills/`. Recopy updates. Guides/examples bundled; specification online; compiler/runtimes external.
 

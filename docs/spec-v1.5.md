@@ -1,6 +1,6 @@
 # DEAL — Language Specification v1.5
 
-DEAL (Directly Embeddable Agentic Language) is a statically typed language with TypeScript syntax and runtime-enforced types. The primary target is safe, embeddable AI scripting with explicit interoperability boundaries. This document defines the feature set, type system, and runtime execution model.
+DEAL (Directly Embeddable Agentic Language) uses a strict subset of TypeScript syntax with runtime-enforced static types and distinct semantics. It targets safe, embeddable AI scripting with explicit interoperability boundaries. This specification defines its features, types and execution.
 
 Features not described in this specification do not exist in the language.
 

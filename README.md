@@ -1,15 +1,15 @@
 # DEAL Compiler v1.5
 
-Compiler, semantic IR, runtimes and standard library targeting JavaScript,
-LuaJIT and JVM. The sole language authority is
-[`docs/spec-v1.5.md`](docs/spec-v1.5.md). Projects require
-`"languageVersion": "1.5"`; the standard-library version is also `"1.5"`.
+DEAL: a statically typed, embeddable language using a strict subset of
+TypeScript syntax with runtime-enforced types. Targets: JavaScript, LuaJIT, JVM.
+Sole authority: [`docs/spec-v1.5.md`](docs/spec-v1.5.md).
+Projects require `"languageVersion": "1.5"` and stdlib `"1.5"`.
 
-DEAL uses binary64 `number`, nominal classes with explicitly supplied
-required fields, safe `unknown`, `Record<string, unknown>`, checked `as`
-assertions and independent null/undefined/presence semantics. Async results
-use `Promise<R>` notation; promises are not first-class data. Source is a
-bounded TypeScript-syntax subset, not TypeScript's structural type system.
+Semantics differ from TypeScript: nominal classes, runtime-checked `as`
+assertions, invariant arrays and Unicode-scalar string positions. DEAL uses
+binary64 `number`, safe `unknown`, `Record<string, unknown>` and independent
+null/undefined/presence semantics. Supply required fields explicitly.
+`Promise<R>` denotes async results, not promises. Use DEAL APIs.
 
 Removed source version directives, source `table`/`has`, C-style loops,
 remainder, C FFI, bytes, integer/conversion intrinsics and class field

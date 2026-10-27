@@ -1,11 +1,11 @@
 ---
 name: write-deal
-description: Write idiomatic DEAL source, declarations, and projects. Use for .deal/.d.deal edits or translating algorithms into DEAL; do not assume JavaScript or TypeScript APIs.
+description: Write DEAL .deal/.d.deal source and projects using a strict TypeScript syntax subset with runtime-enforced types and distinct semantics, not JavaScript/TypeScript APIs.
 ---
 
 # Write DEAL
 
-Read project instructions and `deal.json`. Use the bundled [language guide](references/language.md) and examples. `docs/spec-v1.5.md` is the compiler's sole authoritative specification; consult it when a rule is unclear. The examples use languageVersion and stdlib 1.5. Resolve bundled links within this directory.
+Read project instructions and `deal.json`. Follow the bundled [language guide](references/language.md) and examples for languageVersion/stdlib 1.5. The guide links the authoritative specification online when clarification is needed. Resolve bundled links within this directory, independently of the compiler checkout.
 
 Read the relevant rules and example before writing:
 

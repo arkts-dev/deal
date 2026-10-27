@@ -1,24 +1,24 @@
 # DEAL language guide
 
-Practical guide; authority: `docs/spec-v1.5.md`.
+DEAL: a strict TypeScript syntax subset with distinct semantics. Authority: [v1.5 specification](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.5.md) (online).
 
 ## Syntax
 
-Imports precede module-level functions, classes and exports. Executable statements belong inside functions. Use let, braces and semicolons. Entry exports synchronous main(): null with explicit null return; no-result helpers use void.
+Imports precede module-level functions, classes and exports; executable statements stay inside functions. Require let, braces and semicolons. Entry exports synchronous main(): null returning null; no-result helpers use void.
 
-Comments use // or /* ... */. Choose ordinary identifiers; `$` bindings are compiler-owned. Property keys have explicit values. Assign with x = x + 1. Function expressions use function; arrows describe types.
+Comments: // or /* ... */. `$` bindings are compiler-owned. Property keys need explicit values. Assign with x = x + 1. Function expressions use function; arrows describe types.
 
 ## Types
 
-Data includes null, undefined, unknown, boolean, number, string, Record<string, unknown>, nominal classes, invariant arrays and function types. Nullish unions admit null/undefined independently. Void and Promise<R> are result notation only.
+Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>, nominal classes, invariant arrays and function types. Nullish unions admit null/undefined independently. Void is result-only.
 
-Unknown requires checked extraction or supported typeof/instanceof refinement. An assertion checks once without coercion, preserving identity; mismatch raises E8001.
+Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
 
 Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Indexes/bounds require finite whole numbers. Round deliberately through math.floor/ceil; format through typed helpers or host APIs. Conditions require boolean; concatenation/interpolation require strings. Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 
-Declare module-level nominal schemas. Fields use annotations and optional ?. Typed literals supply every required field, including nullable fields. Separate literals provide fresh mutable storage; supplied references preserve aliases. Same-shaped classes remain distinct. Use classes for schemas, Records for dynamic keys and functions for behavior.
+Classes are module-level nominal schemas, unlike TypeScript's structural compatibility: same-shaped classes remain distinct. Annotate fields; ? marks optional presence. Literals supply every required field, including nullable fields, allocating fresh storage; supplied references preserve aliases. Use Records for dynamic keys and functions for behavior.
 
 ## Functions
 
@@ -36,7 +36,7 @@ Use Record<string, unknown>. Every read infers unknown; explicitly check interme
 
 ## Arrays
 
-Arrays are zero-based with invariant persistent descriptors; emptiness/current contents cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Decoded JSON arrays carry unknown elements: check values individually or use generated typed decoding. String for-of yields Unicode scalars.
+Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Decoded JSON arrays carry unknown elements: check values individually or use generated typed decoding. String for-of yields Unicode scalars.
 
 ## JSON serialization (`@jsonable`)
 
@@ -77,7 +77,7 @@ export function absNumber(x: number): number;
 export function nowMillis(): number;
 ```
 
-String positions count Unicode scalars. Extend APIs through declared, implemented host modules.
+String positions count Unicode scalars, not JavaScript UTF-16 units. Use declared, implemented host APIs.
 
 ## Error handling
 
@@ -85,7 +85,7 @@ Throw Error values with explicit code/message fields. Catch binds unknown: extra
 
 ## Async/Await
 
-Implementations and callable types use Promise<R> results. External declarations omit async. Await each async call directly inside an async body; the embedding owns scheduling and operation lifetime. See [client](../examples/host/client.deal).
+Promise<R> denotes async results, not first-class promises. External declarations omit async. Await each async call directly inside async bodies; the embedding owns scheduling/lifetime. See [client](../examples/host/client.deal).
 
 ## Host ABI and interoperability
 
