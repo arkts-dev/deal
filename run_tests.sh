@@ -23,11 +23,12 @@ echo "=== DEAL test parallelism: jobs=$JOBS ==="
 source tools/gate-manifest.sh
 
 # Fail-closed required-tool preflight: the selection below executes the real
-# LuaJIT and Node runtime records and the production corpus under these
-# toolchains. A missing tool is the named TOOL_MISSING outcome and stops the
-# gate here, before any build output is touched and before any suite could
-# drop a supported case: never a warning or a skip.
-REQUIRED_TOOLS=(javac java luajit node gcc)
+# LuaJIT and Node runtime records, the production corpus and the published C11
+# runtime suites (compiled and executed through clang) under these toolchains. A
+# missing tool is the named TOOL_MISSING outcome and stops the gate here, before
+# any build output is touched and before any suite could drop a supported case:
+# never a warning or a skip.
+REQUIRED_TOOLS=(javac java luajit node gcc clang)
 tools/tool-preflight.sh "${REQUIRED_TOOLS[@]}"
 
 rm -rf build

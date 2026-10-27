@@ -107,6 +107,8 @@ luajit test_runtime_number.lua'
   'fg|=== Running Fail-Closed Guard Retargeting Tests (ISSUE-0702) ===|java -ea -cp build deal.test.FailClosedGuardRetargetingTest'
   'fg|=== Running Intrinsic Shadowing Production Tests (ISSUE-0878) ===|java -ea -cp build deal.test.IntrinsicShadowingProductionTest'
   'fg|=== Running Required-Tool Fail-Closed Preflight Tests (ISSUE-0874) ===|java -ea -cp build deal.test.ToolchainPreflightTest'
+  'fg|=== Running C11 Runtime Deployment Set Tests (ISSUE-0902 D6) ===|java -ea -cp build deal.test.NativeRuntimeDeploymentTest'
+  'fg|=== Running C11 Runtime ABI / Platform / Terminal Tests (ISSUE-0902) ===|java -ea -cp build deal.test.NativeRuntimeAbiTest'
 )
 
 # No record may carry a warning, skip or fallback line: a missing required tool
