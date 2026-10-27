@@ -70,9 +70,15 @@ host.getSourceFile = (name, languageVersion) => sources.has(name)
 host.fileExists = name => sources.has(name);
 host.readFile = name => sources.get(name);
 const program = ts.createProgram([...sources.keys()], options, host);
-// Deliberately use the compiler's syntactic diagnostics, including grammar checks.
-// parseDiagnostics alone misses e.g. legacy octal literals and throw-newline.
-const diagnostics = program.getSyntacticDiagnostics();
+// TypeScript 4.5 reports parser errors through syntactic diagnostics, but
+// reports additional grammar/context errors (e.g. TS1085 octal literals and
+// TS1142 throw-newline) through semantic diagnostics. Include its 1xxx
+// syntax/grammar family without requiring DEAL to satisfy TS type checking
+// (2xxx+ diagnostics such as unresolved names and structural assignability).
+const diagnostics = [
+  ...program.getSyntacticDiagnostics(),
+  ...program.getSemanticDiagnostics().filter(d => d.code >= 1000 && d.code < 2000)
+];
 if (diagnostics.length) {
   console.error(ts.formatDiagnosticsWithColorAndContext(diagnostics, {
     getCurrentDirectory: () => root, getCanonicalFileName: name => name, getNewLine: () => "\n"

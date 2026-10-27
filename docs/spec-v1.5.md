@@ -1191,7 +1191,10 @@ let f: (path: string) => Promise<User | null> = async function(path: string): Pr
 ### await
 
 ```ts
-let u: User | null = await fetchUser("/user/42");
+async function loadUser(): Promise<User | null> {
+  let u: User | null = await fetchUser("/user/42");
+  return u;
+}
 ```
 
 Require `await E` inside async bodies, where E is a call with signature `(...) => Promise<R>`. Reject async calls outside immediate await and await of sync calls. Callees may be statically or dynamically resolved.

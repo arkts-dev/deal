@@ -10,6 +10,7 @@
 # never removes a supported case from the selection.
 TEST_MAINS=(
   'node|=== Checking TypeScript Syntactic and Grammar Compatibility ===|node tools/check-typescript-syntax.cjs'
+  'node|=== Testing TypeScript Syntax Checker Failure Controls ===|node tools/check-typescript-syntax.test.cjs'
   'fg|=== Running v1.5 Frontend Contracts ===|java -ea -cp build deal.test.Language15FrontendTest'
   'fg|=== Running v1.5 Production Runtime Contracts ===|java -ea -cp build deal.test.Language15RuntimeTest'
   'bg|=== Launching Production Corpus Conformance (JS/LuaJIT/JVM) ===|java -ea -cp build deal.test.CorpusConformanceTest test/conformance/'
