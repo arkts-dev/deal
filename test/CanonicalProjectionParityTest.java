@@ -7034,7 +7034,7 @@ public class CanonicalProjectionParityTest {
                             .equals(compiled.checkedProject().entryModule()))
                         .findFirst().orElseThrow().ast().span()),
                 java.util.Set.of(), backend, false,
-                deal.module.CheckoutResources.forManifestDirectory(
+                deal.distribution.DistributionHome.forManifestDirectory(
                     compiled.mirror().toString()), stager);
             if (result.emitted()) {
                 stager.publish();

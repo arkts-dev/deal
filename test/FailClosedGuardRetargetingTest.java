@@ -2,7 +2,7 @@ package deal.test;
 
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -132,7 +132,7 @@ public class FailClosedGuardRetargetingTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-        CheckoutResources checkoutResources) {
+        DistributionHome distributionHome) {
     }
 
     private static CompilerInvocation harnessInvocation() {
@@ -200,7 +200,7 @@ public class FailClosedGuardRetargetingTest {
         return new Fixture(root, src, built.input(), built.index(),
             manifests.manifests(), orchestrator.hostDeclarationSurface(),
             identities,
-            CheckoutResources.forManifestDirectory(src.toString()));
+            DistributionHome.forManifestDirectory(src.toString()));
     }
 
     private static Fixture importedLiteralFixture() throws Exception {
@@ -227,7 +227,7 @@ public class FailClosedGuardRetargetingTest {
             index, manifests, fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 project.modules().get(0).ast().span()),
-            java.util.Set.of(), backend, false, fixture.checkoutResources(), stager);
+            java.util.Set.of(), backend, false, fixture.distributionHome(), stager);
     }
 
     /** The two production targets the non-FFI negative seeds cover. */

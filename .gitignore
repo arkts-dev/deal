@@ -1,5 +1,6 @@
 WORKLOG.md
 *.class
 build/
+dist/
 *.deal-publish.lock
 scratch-review/

@@ -1,0 +1,33 @@
+import * as c from "std/console";
+import * as str from "std/string";
+
+// @jsonable
+export class Message {
+  text: string;
+  note: string | null;
+  tag?: string | null;
+}
+
+export function main(): null {
+  let missing: Message | null = Message$fromJson("{}");
+  if (missing !== null) {
+    throw { code: "SMOKE_REQUIRED", message: "required fields were filled" };
+  }
+  let message: Message | null = Message$fromJson('{"text":"deal","note":null}');
+  let text: string = "";
+  if (message !== null) {
+    if (Object.hasOwn(message, "tag")) {
+      throw { code: "SMOKE_OPTIONAL", message: "omitted optional became present" };
+    }
+    text = message.text;
+  } else {
+    throw { code: "SMOKE_JSON", message: "complete structural record rejected" };
+  }
+  let supplied: Message = {text: text, note: null};
+  let wide: number = 2147483648 + 0.5;
+  if (wide !== 2147483648.5) {
+    throw { code: "SMOKE_NUMBER", message: "binary64 arithmetic changed" };
+  }
+  c.log(str.trim(` smoke ${supplied.text} `));
+  return null;
+}

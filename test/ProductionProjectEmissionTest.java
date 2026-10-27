@@ -23,7 +23,7 @@ import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.identity.CanonicalModuleIdentity;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
@@ -348,7 +348,7 @@ public class ProductionProjectEmissionTest {
         List<SemanticRequirementManifest> manifests,
         HostDeclarationSurface surface,
         Map<ModuleId, CanonicalModuleIdentity> declarationIdentities,
-        CheckoutResources checkoutResources) implements AutoCloseable {
+        DistributionHome distributionHome) implements AutoCloseable {
         public void close() { deleteRecursively(root); }
     }
 
@@ -434,7 +434,7 @@ public class ProductionProjectEmissionTest {
         }
         return new Fixture(root, built.input(), built.index(), manifests.manifests(),
             surface, identities,
-            CheckoutResources.forManifestDirectory(src.toString()));
+            DistributionHome.forManifestDirectory(src.toString()));
     }
 
     private static SymbolTable copyScope(SymbolTable scope,
@@ -475,7 +475,7 @@ public class ProductionProjectEmissionTest {
         return new Fixture(fixture.root(), new CheckedProjectInput(checked.invocation(),
             checked.entryModule(), modules, checked.releaseStateHash()), fixture.index(),
             fixture.manifests(), fixture.surface(),
-            fixture.declarationIdentities(), fixture.checkoutResources());
+            fixture.declarationIdentities(), fixture.distributionHome());
     }
 
     private static Fixture twoModuleFixture(String appSource) throws Exception {
@@ -977,7 +977,7 @@ public class ProductionProjectEmissionTest {
             fixture.surface(), fixture.declarationIdentities(),
             BuiltinErrorDeclaration.synthesized(
                 fixture.checkedProject().modules().get(0).ast().span()),
-            java.util.Set.of(), backend, sourceMapExplicit, fixture.checkoutResources(), stager);
+            java.util.Set.of(), backend, sourceMapExplicit, fixture.distributionHome(), stager);
     }
 
     private record Emission(ProductionProjectEmission.Result result, String stderr) {
@@ -2158,7 +2158,7 @@ public class ProductionProjectEmissionTest {
                 fixture.surface(), Map.of(),
                 BuiltinErrorDeclaration.synthesized(
                     fixture.checkedProject().modules().get(0).ast().span()),
-                java.util.Set.of(), Backend.JS, false, fixture.checkoutResources(), stager);
+                java.util.Set.of(), Backend.JS, false, fixture.distributionHome(), stager);
             check(!result.emitted(),
                 "the incomplete structural companion fails the JS arm closed");
             checkEq(1, result.diagnostics().size(),
@@ -2321,12 +2321,12 @@ public class ProductionProjectEmissionTest {
     /**
      * The project-local stdlib override of the JS arm: the deployment copy is
      * the project's own {@code <manifestDir>/std} implementation, exactly the
-     * one {@link CheckoutResources} lookup every backend consumes — the
+     * one {@link DistributionHome} lookup every backend consumes — the
      * JavaScript arm preserves project-local overrides.
      */
     private static void testJsStdlibOverride() throws Exception {
         System.out.println("-- the JS arm stages the project-local stdlib"
-            + " override through the checkout resource lookup --");
+            + " override through the one distribution precedence --");
         Fixture fixture = jsFixture();
         try {
             String override = """
@@ -2347,7 +2347,7 @@ public class ProductionProjectEmissionTest {
                     "the staged stdlib copy is the project-local override");
                 check(stager.stagedSet().artifact("std/console.js").isPresent(),
                     "the untouched stdlib implementations keep their"
-                        + " checkout copies");
+                        + " distribution copies");
             } finally {
                 stager.discard();
             }
@@ -2359,7 +2359,7 @@ public class ProductionProjectEmissionTest {
     /**
      * The missing-runtime negative of the JS arm (the preserved E6000): the
      * resolution is observed in an isolated process whose working directory
-     * carry no runtime, so the checkout
+     * and distribution surface carry no runtime, so the checkout development
      * fallback cannot satisfy the copy. The pinned text and its exact
      * missing-anchor note are unchanged, and nothing is published.
      */

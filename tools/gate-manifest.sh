@@ -9,8 +9,8 @@
 # record therefore carries no warning, skip or fallback line: a missing tool
 # never removes a supported case from the selection.
 TEST_MAINS=(
-  'node|=== Checking TypeScript Syntactic and Grammar Compatibility ===|node tools/check-typescript-syntax.cjs'
-  'node|=== Testing TypeScript Syntax Checker Failure Controls ===|node tools/check-typescript-syntax.test.cjs'
+  'node|=== Checking TypeScript Syntactic and Grammar Compatibility ===|node test/typescript/check-syntax.cjs'
+  'node|=== Testing TypeScript Syntax Checker Failure Controls ===|node test/typescript/check-syntax.test.cjs'
   'fg|=== Running v1.5 Frontend Contracts ===|java -ea -cp build deal.test.Language15FrontendTest'
   'fg|=== Running v1.5 Production Runtime Contracts ===|java -ea -cp build deal.test.Language15RuntimeTest'
   'bg|=== Launching Production Corpus Conformance (JS/LuaJIT/JVM) ===|java -ea -cp build deal.test.CorpusConformanceTest test/conformance/'
@@ -39,7 +39,6 @@ TEST_MAINS=(
   'fg|=== Running Dynamic Producer Rule / Materialization Arms Tests (ISSUE-0675) ===|java -ea -cp build deal.semantic.DynamicProducerRuleTest'
   'fg|=== Running Strict Manifest Parser Tests (ISSUE-0263 T2) ===|java -ea -cp build deal.project.StrictManifestParserTest'
   'fg|=== Running Output Config Resolver Tests (ISSUE-0264 T3) ===|java -ea -cp build deal.project.OutputConfigResolverTest'
-  'fg|=== Running Checkout Resource Tests ===|java -ea -cp build deal.test.CheckoutResourcesTest'
   'fg|=== Running Project Locator Tests (ISSUE-0265 T4) ===|java -ea -cp build deal.project.ProjectLocatorTest'
   'fg|=== Running Module Identity Resolver Classifier Tests (ISSUE-0266 T5) ===|java -ea -cp build deal.module.ModuleIdentityResolverTest'
   'fg|=== Running Nullable Type Tests ===|java -ea -cp build deal.test.TypesNullableTest'
@@ -63,6 +62,7 @@ luajit test_runtime_number.lua'
   'node|=== Running Jsonable Runtime JS Tests ===|node test_jsonable_js.js'
   'luajit|=== Running Standard Library Tests ===|luajit test_stdlib.lua'
   'node|=== Running Standard Library JS Tests ===|node test_stdlib_js.js'
+  'fg|=== Running Distribution Home Tier-Selection Tests (ISSUE-0457) ===|java -ea -cp build deal.test.DistributionHomeTest'
   'fg|=== Running Publication Stager Tests (ISSUE-0458) ===|java -ea -cp build deal.test.PublicationStagerTest'
   'fg|=== Running Stdlib STDLIB_CALL Lowering Tests (ISSUE-0494) ===|java -ea -cp build deal.test.StdlibCallLoweringTest'
   'fg|=== Running Shared Stdlib Semantics Tests (ISSUE-0495) ===|java -ea -cp build deal.test.SharedStdlibSemanticsTest'

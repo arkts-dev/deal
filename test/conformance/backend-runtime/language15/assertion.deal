@@ -1,3 +1,8 @@
+// @spec: Type system
+// @description: Checked assertion has its own executable construct mapping.
+// @expected: runtime-ok
+// @features: unknown, assertions
+
 // A checked assertion has its own construct row, not a fictitious UNARY row.
 // No unary, binary or logical operation can mask a missing assertion mapping.
 export function main(): null {

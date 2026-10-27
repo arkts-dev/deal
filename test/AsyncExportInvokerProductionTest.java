@@ -855,7 +855,7 @@ public class AsyncExportInvokerProductionTest {
             testInitializationAndMainOnceBothTargets();
             testParameterizedPublishedWrapper();
             testDealErrorEnvelopeProjection();
-            testSharedProtocolAndRuntime();
+            testSharedProtocolAndPackagedRuntime();
         } finally {
             javacPreparation = null;
         }
@@ -1870,7 +1870,7 @@ public class AsyncExportInvokerProductionTest {
         }
     }
 
-    private static void testSharedProtocolAndRuntime() {
+    private static void testSharedProtocolAndPackagedRuntime() {
         System.out.println("-- the shared envelope marker and the child runtime"
             + " classpath");
         checkEq(LuaJitAsyncExportInvoker.RESULT_PREFIX,

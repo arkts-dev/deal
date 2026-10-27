@@ -95,8 +95,12 @@ public final class Language15RuntimeTest {
         Path work = Files.createTempDirectory(root.resolve("build"), "language15-");
         try {
             Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
-            Files.copy(root.resolve("test/language15/" + fixture + ".deal"), source);
-            Files.copy(root.resolve("test/language15/nominal.deal"), source.resolveSibling("nominal.deal"));
+            Path fixtures = root.resolve("test/conformance/backend-runtime/language15");
+            Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(
+                Files.readString(fixtures.resolve(fixture + ".deal"))));
+            Files.writeString(source.resolveSibling("nominal.deal"),
+                ConformanceHarnessMetadata.stripClassificationHeaders(
+                    Files.readString(fixtures.resolve("nominal.deal"))));
             Files.writeString(work.resolve("deal.json"),
                 "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\",\"moduleRoots\":[\"src\"]}\n");
             String cp = Arrays.stream(System.getProperty("java.class.path").split(java.io.File.pathSeparator))

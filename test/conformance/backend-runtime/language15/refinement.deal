@@ -1,3 +1,8 @@
+// @spec: Type system
+// @description: Imported nominal assertions and branch refinement preserve identity.
+// @expected: runtime-ok
+// @features: unknown, assertions, nominal-identity
+
 import * as nominal from "./nominal";
 class Same { other: string; }
 export function main(): null {

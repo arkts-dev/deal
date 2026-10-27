@@ -5347,9 +5347,11 @@ public class ProductionDispatchTest {
     // =========================================================================
 
     /**
-     * Deployment completeness through the public CLI in an isolated child
-     * working directory containing source-tree runtime and stdlib files.
-     * A checkout missing a spec-listed stdlib implementation is incomplete: the
+     * The v1.4 deployment-completeness contract through the public CLI in a
+     * child JVM whose distribution surface is exactly the assembled classpath
+     * resource root (the process CWD is the project, so the checkout dev
+     * fallback cannot repair it): a distribution that provides the runtime but
+     * not a spec-listed stdlib implementation is missing required content — the
      * compile fails with the pinned E6000 and the absent output root stays
      * absent — while the complete surface publishes the artifact, its default
      * source-map sidecar, the runtime and all six stdlib copies on both
@@ -5357,7 +5359,7 @@ public class ProductionDispatchTest {
      */
     private static void testMissingDeploymentContentFails() throws Exception {
         System.out.println("-- deployment completeness: a spec-listed stdlib "
-            + "implementation the checkout does not provide "
+            + "implementation the resolved distribution surface does not provide "
             + "fails the compile with the pinned E6000 and publishes nothing on "
             + "both targets; the complete surface publishes the artifact, its "
             + "default sidecar, the runtime and all six stdlib copies --");
@@ -5367,6 +5369,8 @@ public class ProductionDispatchTest {
             "production-dispatch-deploy-partial-");
         Path complete = Files.createTempDirectory(
             "production-dispatch-deploy-complete-");
+        Path emptyHome = Files.createTempDirectory(
+            "production-dispatch-deploy-home-");
         try {
             write(project, "deal.json", DEAL_JSON_LUA);
             write(project, "src/main.deal", TRIVIAL_MAIN_SOURCE);
@@ -5390,23 +5394,25 @@ public class ProductionDispatchTest {
             for (String backend : List.of("luajit", "js")) {
                 String extension = backend.equals("luajit") ? "lua" : "js";
                 Path missingOut = project.resolve("out-" + extension + "-missing");
-                ProcessOutcome missing = runCliSubprocess(partial, "compile",
+                ProcessOutcome missing = runCliSubprocess(project, partial,
+                    emptyHome, "compile",
                     project.resolve("src/main.deal").toAbsolutePath().toString(),
                     "--backend", backend, "--output", missingOut.toString());
                 checkEq(1, missing.exitCode(), "the incomplete " + backend
-                    + " checkout fails the compile: " + missing.output());
+                    + " distribution fails the compile: " + missing.output());
                 check(missing.output().contains(
                         "E6000: Stdlib module not found: std/time." + extension),
                     backend + ": the pinned missing-stdlib E6000: " + missing.output());
                 check(!Files.exists(missingOut), backend
                     + ": missing content publishes nothing (the absent root stays absent)");
                 Path out = project.resolve("build/" + backend);
-                ProcessOutcome compiled = runCliSubprocess(complete, "compile",
+                ProcessOutcome compiled = runCliSubprocess(project, complete,
+                    emptyHome, "compile",
                     project.resolve("src/main.deal").toAbsolutePath().toString(),
                     "--backend", backend, "--output",
                     out.toAbsolutePath().toString());
                 check(compiled.exitCode() == 0,
-                    "the complete " + backend + " checkout compiles: exit="
+                    "the complete " + backend + " distribution compiles: exit="
                         + compiled.exitCode() + " output=" + compiled.output());
                 if (compiled.exitCode() != 0) {
                     continue;
@@ -5427,7 +5433,7 @@ public class ProductionDispatchTest {
                             Files.readAllBytes(complete.resolve(relative)),
                             Files.readAllBytes(out.resolve(relative))),
                         "the published " + relative + " bytes are the deployed "
-                            + "checkout bytes");
+                            + "distribution bytes");
                 }
                 if (backend.equals("luajit")) {
                     verifyPublishedSidecar(project, out, "main.deal.map.json",
@@ -5448,23 +5454,30 @@ public class ProductionDispatchTest {
             deleteRecursively(project);
             deleteRecursively(partial);
             deleteRecursively(complete);
+            deleteRecursively(emptyHome);
         }
     }
 
-    /** Run the public CLI against files in an isolated working directory. */
+    /**
+     * Runs the public CLI in a child JVM whose classpath is the compiler's
+     * own classpath plus the given distribution resource root, in the given
+     * working directory, with {@code DEAL_HOME} pinned to an empty directory:
+     * the child's resolvable distribution surface is exactly the resource
+     * root (no checkout fallback, no inherited home).
+     */
     private static ProcessOutcome runCliSubprocess(Path workingDir,
-            String... args) throws Exception {
+            Path resources, Path dealHome, String... args) throws Exception {
         List<String> command = new ArrayList<>(List.of("java", "-ea", "-cp",
-            absoluteClasspath()));
+            absoluteClasspath() + File.pathSeparator + resources));
         command.add("deal.Main");
         command.addAll(List.of(args));
         BoundedProcess.BoundedResult result = BoundedProcess.runCaptured(
-            command, workingDir, Map.of());
+            command, workingDir, Map.of("DEAL_HOME", dealHome.toString()));
         return new ProcessOutcome(result.exitCode(),
             result.stdout() + result.stderr());
     }
 
-    /** Copy one resource into an isolated source-tree fixture. */
+    /** Copies one checkout resource into an assembled distribution root. */
     private static void copyRepoFile(Path relative, Path target)
             throws IOException {
         Files.createDirectories(target.getParent());

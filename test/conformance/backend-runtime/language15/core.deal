@@ -1,3 +1,8 @@
+// @spec: Type system
+// @description: Nullish values, unknown extraction, JSON and async runtime integration.
+// @expected: runtime-ok
+// @features: unknown, nullish, assertions, async, json
+
 import * as json from "std/json";
 import * as strings from "std/string";
 import * as tables from "std/table";

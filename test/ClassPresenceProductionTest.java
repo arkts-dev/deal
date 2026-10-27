@@ -121,7 +121,7 @@ public final class ClassPresenceProductionTest {
                 .map(p -> home.resolve(p).normalize().toString()).toList());
         for (String backend : List.of("js", "luajit", "jvm")) {
             Path output = project.resolve("out-" + backend);
-            List<String> compile = List.of(javaCommand, "-cp",
+            List<String> compile = List.of(javaCommand, "-Ddeal.home=" + home, "-cp",
                 classpath, "deal.Main", "compile", source.toString(), "--backend", backend,
                 "--output", output.toString());
             success(compile, home);

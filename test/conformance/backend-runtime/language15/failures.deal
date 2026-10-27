@@ -1,3 +1,8 @@
+// @spec: Type system
+// @description: Runtime boundaries preserve failure ownership and nullish distinctions.
+// @expected: runtime-ok
+// @features: unknown, nullish, assertions, boundaries
+
 // Independent malformed-value boundaries: failures must remain catchable DEAL
 // errors, never native exceptions from a stale runtime token/descriptor table.
 function require(condition: boolean, message: string): void {

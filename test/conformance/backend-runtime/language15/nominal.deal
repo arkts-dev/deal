@@ -1,0 +1,6 @@
+// @spec: Type system
+// @description: Imported nominal class and constructor companion.
+// @expected: companion
+
+export class Same { value: number; }
+export function make(): Same { return {value: 41}; }

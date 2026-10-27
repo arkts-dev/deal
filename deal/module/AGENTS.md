@@ -1,6 +1,6 @@
 # Modules
 
-Own resolution, dependency order, checked-project orchestration and identity assembly. Validate the complete graph before lowering or publication; preserve deterministic phase order. Isolated constructors use the same active version constants as project discovery. Resolve stdlib project-locally then from the checkout, and runtime files from the checkout; no installation discovery.
+Own resolution, dependency order, checked-project orchestration and identity assembly. Validate the complete graph before lowering or publication; preserve deterministic phase order. Isolated constructors use the same active version constants as project discovery. Preserve DistributionHome precedence: project-local stdlib, packaged resources/home, then checkout fallback; runtime files exclude project overrides.
 
 Carry exact declaration/provider facts through imports, annotations, contextual literals, call results and inferred carriers. A same-spelled local or sibling declaration cannot capture another provider's layout. Canonical nominal identity names the defining file; reject unrepresentable identities and distinct-provider crossings rather than retagging values. Whole-project provider indexes resolve declarations reached indirectly through fields, parameters and results.
 

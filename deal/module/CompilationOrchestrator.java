@@ -20,7 +20,7 @@ import deal.diagnostics.DiagnosticOrder;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.DiagnosticStructuredOutput;
 import deal.descriptors.CanonicalRuntimeTypeDescriptor;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.identity.CanonicalClassIdentity;
 import deal.publication.PublicationStager;
 import deal.parser.*;
@@ -183,7 +183,7 @@ public final class CompilationOrchestrator {
      */
     private final Path diagnosticsJsonPath;
 
-    private final CheckoutResources checkoutResources;
+    private final DistributionHome distributionHome;
 
     /**
      * The transactional whole-project publication stager of the running
@@ -258,7 +258,7 @@ public final class CompilationOrchestrator {
         this.verbose = verbose;
         this.dumpIr = dumpIr;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
-        this.checkoutResources = CheckoutResources.forManifestDirectory(
+        this.distributionHome = DistributionHome.forManifestDirectory(
             context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
@@ -361,7 +361,7 @@ public final class CompilationOrchestrator {
         this.verbose = verbose;
         this.dumpIr = dumpIr;
         this.diagnosticsJsonPath = diagnosticsJsonPath;
-        this.checkoutResources = CheckoutResources.forManifestDirectory(
+        this.distributionHome = DistributionHome.forManifestDirectory(
             context.manifestDirectory());
         this.sourceResolver = new SourceModuleResolver(context);
         this.identityAssembly = new ModuleIdentityAssembly(context);
@@ -487,9 +487,9 @@ public final class CompilationOrchestrator {
         if (local.isPresent()) {
             return local.get().toString();
         }
-        Optional<Path> checkout = ProtectedPathOps.probeDirectory(
+        Optional<Path> distribution = ProtectedPathOps.probeDirectory(
             Path.of("").toAbsolutePath().resolve("std"));
-        return checkout.map(Path::toString).orElse(null);
+        return distribution.map(Path::toString).orElse(null);
     }
 
     /**
@@ -1923,7 +1923,7 @@ public final class CompilationOrchestrator {
             requirementManifests.manifests(), hostDeclarationSurface,
             declarationModuleIdentities(),
             builtinErrorDeclaration(checked.input()),
-            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, checkoutResources, stager);
+            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
             recordProducedProject(result.producedProject());

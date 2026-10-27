@@ -4,6 +4,7 @@ import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticFormatter;
 import deal.diagnostics.DiagnosticStructuredOutput;
+import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.project.CliOverrides;
 import deal.project.ProjectContext;
@@ -198,9 +199,12 @@ public final class Main {
         return 0;
     }
 
-    /** Report the exact stdlib directory selected during project discovery. */
+    /** Report the resolver's selected stdlib tier and path. */
     private static String describeStdlibSurface(ProjectContext context) {
-        return context.stdlibSurfacePath() == null ? "none" : context.stdlibSurfacePath();
+        return DistributionHome.forManifestDirectory(context.manifestDirectory())
+            .resolveStdlibSurface()
+            .map(surface -> surface.tier() + " " + surface.pathText())
+            .orElse("none");
     }
 
     /**

@@ -1215,7 +1215,7 @@ public class FailureArmAuthorityTest {
                 built.index(), manifests.manifests(), lua.hostDeclarationSurface(),
                 identities, BuiltinErrorDeclaration.synthesized(entrySpan(built.input())),
                 java.util.Set.of(), Backend.JVM, false,
-                deal.module.CheckoutResources.forManifestDirectory(src.toString()),
+                deal.distribution.DistributionHome.forManifestDirectory(src.toString()),
                 stager);
             if (jvm.emitted()) {
                 stager.publish();

@@ -119,7 +119,7 @@ public final class NumberProductionTest {
                 .map(p -> home.resolve(p).normalize().toString()).toList());
         for (String backend : List.of("js", "luajit", "jvm")) {
             Path output = project.resolve("out-" + backend);
-            run(List.of(javaCommand, "-cp", classpath, "deal.Main",
+            run(List.of(javaCommand, "-Ddeal.home=" + home, "-cp", classpath, "deal.Main",
                 "compile", source.toString(), "--backend", backend,
                 "--output", output.toString()), home);
             List<String> command;

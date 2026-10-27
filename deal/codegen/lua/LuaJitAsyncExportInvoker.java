@@ -27,7 +27,10 @@ import java.util.Objects;
  *       ancestor containing {@code deal/runtime.lua} (D5); a missing
  *       entry artifact or marker is a hard failure before any spawn;</li>
  *   <li>locates the committed driver resource
- *       {@code deal/lua_async_export_driver.lua} from the source checkout
+ *       {@code deal/lua_async_export_driver.lua} classpath-first with a
+ *       working-tree fallback — the same mechanism the orchestrator uses
+ *       for {@code deal/runtime.lua}
+ *       ({@code deal/module/CompilationOrchestrator.java:2031-2067}) —
  *       and materializes it into a per-invocation temp file (D1);</li>
  *   <li>spawns exactly one non-detached
  *       {@code ProcessBuilder("luajit", driverPath, entryArtifact,
@@ -72,7 +75,7 @@ import java.util.Objects;
  */
 public class LuaJitAsyncExportInvoker {
 
-    /** The committed source-tree driver. */
+    /** The committed driver distribution resource (D1). */
     public static final String DRIVER_RESOURCE =
         "deal/lua_async_export_driver.lua";
 
@@ -183,7 +186,8 @@ public class LuaJitAsyncExportInvoker {
                 null, null);
         }
 
-        // Source-tree driver resource. A missing driver is a hard failure before any spawn.
+        // D1: driver resource, classpath-first with the working-tree
+        // fallback. A missing driver is a hard failure before any spawn.
         final InputStream driverStream;
         try {
             driverStream = locateDriverResource();
@@ -195,7 +199,8 @@ public class LuaJitAsyncExportInvoker {
         if (driverStream == null) {
             throw new LuaJitAsyncExportInvocationException(
                 "async-export driver resource not found: " + DRIVER_RESOURCE
-                    + " (source-tree file absent)", null, null);
+                    + " (classpath resource and working-tree fallback both"
+                    + " absent)", null, null);
         }
 
         Path tempDir;
@@ -279,11 +284,21 @@ public class LuaJitAsyncExportInvoker {
     // =========================================================================
 
     /**
-     * Locates the committed driver in the source checkout.
-     * Overridable in tests to exercise the missing-driver failure.
+     * Locates the committed driver resource: classloader resource first,
+     * working-tree file fallback — the same mechanism the orchestrator
+     * uses for {@code deal/runtime.lua}
+     * ({@code deal/module/CompilationOrchestrator.java:2031-2067}).
+     *
+     * <p>Overridable in tests to hide both lookup sources and exercise
+     * the missing-driver hard-failure path.</p>
      *
      */
     protected InputStream locateDriverResource() throws IOException {
+        InputStream stream = getClass().getClassLoader()
+            .getResourceAsStream(DRIVER_RESOURCE);
+        if (stream != null) {
+            return stream;
+        }
         Path workingTree = Path.of(DRIVER_RESOURCE);
         if (Files.isRegularFile(workingTree)) {
             return Files.newInputStream(workingTree);

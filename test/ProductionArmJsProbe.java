@@ -3,7 +3,7 @@ package deal.test;
 import deal.checker.BuiltinErrorDeclaration;
 import deal.codegen.Backend;
 import deal.diagnostics.CompilerDiagnostic;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
 import deal.publication.PublicationStager;
@@ -21,7 +21,7 @@ import java.util.Set;
 /**
  * The isolated-environment entry of the JavaScript production arm (the
  * deployment-copy negatives of ISSUE-0803): one process whose working
- * directory and source-tree resources are supplied by the caller, so the
+ * directory and distribution surface are supplied by the caller, so the
  * resolved-runtime/stdlib behaviour of the one production arm can be observed
  * where the checkout development fallback does not apply.
  *
@@ -76,7 +76,7 @@ public final class ProductionArmJsProbe {
                     fixture.hostDeclarationSurface(), Map.of(), BuiltinErrorDeclaration.synthesized(
                         built.input().modules().get(0).ast().span()),
                     java.util.Set.of(), Backend.JS, false,
-                    CheckoutResources.forManifestDirectory(projectRoot.toString()),
+                    DistributionHome.forManifestDirectory(projectRoot.toString()),
                     stager);
             System.out.println("RESULT "
                 + (result.emitted() ? "emitted" : "failed"));

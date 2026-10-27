@@ -15,7 +15,7 @@ Removed source version directives, source `table`/`has`, C-style loops,
 remainder, C FFI, bytes, integer/conversion intrinsics and class field
 initializers are not compatibility features. There is no LLVM backend.
 
-Executable v1.5 examples are in [`test/language15/`](test/language15/),
+Executable v1.5 examples are in [`test/conformance/backend-runtime/language15/`](test/conformance/backend-runtime/language15/),
 with a language guide in [`docs/learn-deal.ts`](docs/learn-deal.ts) and
 an executable [capability demo](docs/deal-v1.5-capabilities.deal).
 
@@ -38,22 +38,28 @@ There is no alternate full-suite profile.
 JS production suites have no skip path: a run that omits a supported lane is
 a failure, never a pass.
 
-## Compile from the checkout
+## Distribution
 
-After building with `run_tests.sh`, run from the repository root:
+Build the packaged compiler with its matched v1.5 runtime and standard library:
 
 ```bash
-java -cp build deal.Main compile path/to/main.deal --backend js --output build/example
+./tools/build-release.sh
 ```
 
-The compiler reads runtimes and standard-library files from the source checkout;
-project-local `std/` overrides remain supported. No separate installation or
-packaging step is needed.
+Verify the packaged compiler outside the checkout on JS, LuaJIT and JVM:
+
+```bash
+./tools/verify-release.sh [dist]
+```
+
+Verification executes the committed smoke project and rejects old versions,
+missing or mismatched resources, broken deployment copies and failing executions.
+Required tools must be available; missing tools fail rather than skip.
 
 Run the independent TypeScript syntax/grammar check with:
 
 ```bash
-node tools/check-typescript-syntax.cjs
+node test/typescript/check-syntax.cjs
 ```
 
 This uses the TypeScript compiler API on unmodified source text, not TypeScript

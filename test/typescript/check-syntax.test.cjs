@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {spawnSync} = require("node:child_process");
-const checker = path.join(__dirname, "check-typescript-syntax.cjs");
+const checker = path.join(__dirname, "check-syntax.cjs");
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "deal-ts-syntax-"));
 try {
   const cases = [

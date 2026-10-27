@@ -21,7 +21,7 @@ import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticRange;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.identity.CanonicalModuleIdentity;
 import deal.publication.PublicationStager;
 import deal.semantic.CheckedModuleInput;
@@ -132,7 +132,7 @@ public final class ProductionProjectEmission {
             Set<String> callbackExports,
             Backend backend,
             boolean sourceMap,
-            CheckoutResources checkoutResources,
+            DistributionHome distributionHome,
             PublicationStager stager) throws IOException {
         Objects.requireNonNull(invocation, "invocation must not be null");
         Objects.requireNonNull(checkedProject, "checkedProject must not be null");
@@ -146,7 +146,7 @@ public final class ProductionProjectEmission {
         Objects.requireNonNull(builtinError, "builtinError must not be null");
         Objects.requireNonNull(callbackExports, "callbackExports must not be null");
         Objects.requireNonNull(backend, "backend must not be null");
-        Objects.requireNonNull(checkoutResources, "checkoutResources must not be null");
+        Objects.requireNonNull(distributionHome, "distributionHome must not be null");
         Objects.requireNonNull(stager, "stager must not be null");
         if (backend != Backend.LUAJIT && backend != Backend.JVM
                 && backend != Backend.JS) {
@@ -177,7 +177,7 @@ public final class ProductionProjectEmission {
         if (backend == Backend.JS) {
             return emitJsProject(project, lowering, checkedProject,
                 declarationSurface, declarationModuleIdentities, invocation,
-                checkoutResources, stager);
+                distributionHome, stager);
         }
 
         // (4) The one emission per target — with the one source-map
@@ -233,7 +233,7 @@ public final class ProductionProjectEmission {
         // nothing published. The JVM target stages no deployment copy.
         if (backend == Backend.LUAJIT) {
             Optional<CompilerDiagnostic> deployment =
-                stageDeploymentCopies(RUNTIME_LUA, "lua", checkoutResources,
+                stageDeploymentCopies(RUNTIME_LUA, "lua", distributionHome,
                     stager);
             if (deployment.isPresent()) {
                 return new Result(Outcome.FAILED, List.of(deployment.get()),
@@ -273,7 +273,7 @@ public final class ProductionProjectEmission {
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             CompilerInvocation invocation,
-            CheckoutResources checkoutResources,
+            DistributionHome distributionHome,
             PublicationStager stager) throws IOException {
         JsEmissionInput input;
         JsProjectEmission emission;
@@ -312,7 +312,7 @@ public final class ProductionProjectEmission {
         // spec-listed stdlib implementation are required deployment content,
         // so an unresolved copy is the pinned E6000 with nothing published.
         Optional<CompilerDiagnostic> deployment =
-            stageDeploymentCopies(RUNTIME_JS, "js", checkoutResources, stager);
+            stageDeploymentCopies(RUNTIME_JS, "js", distributionHome, stager);
         if (deployment.isPresent()) {
             return new Result(Outcome.FAILED, List.of(deployment.get()), null,
                 null);
@@ -392,25 +392,25 @@ public final class ProductionProjectEmission {
      * Stages the complete deployment copies of one deployed-runtime target in
      * the existing transaction: the runtime library and every spec-listed
      * stdlib implementation, resolved through the one
-     * {@link CheckoutResources} lookup (project-local stdlib overrides,
-     * otherwise source-checkout files). A
+     * {@link DistributionHome} precedence (project-local surface, then the
+     * language distribution, then the checkout development fallback). A
      * missing required copy yields the pinned E6000 and stages nothing
      * further; an unused optional resource gains no requirement.
      *
      */
     private static Optional<CompilerDiagnostic> stageDeploymentCopies(
             String runtimeFileName, String extension,
-            CheckoutResources checkoutResources, PublicationStager stager)
+            DistributionHome distributionHome, PublicationStager stager)
             throws IOException {
-        Optional<java.nio.file.Path> runtime =
-            stager.stageRuntimeCopy(runtimeFileName, checkoutResources);
+        Optional<DistributionHome.ResolvedSource> runtime =
+            stager.stageRuntimeCopy(runtimeFileName, distributionHome);
         if (runtime.isEmpty()) {
             return Optional.of(runtimeLibraryMissing(runtimeFileName));
         }
         for (String stdlibModule : StdlibModuleResolver.SPEC_STDLIB_MODULES) {
             String implementation = stdlibModule.substring("std/".length());
             if (stager.stageStdlibCopy(implementation, extension,
-                    checkoutResources).isEmpty()) {
+                    distributionHome).isEmpty()) {
                 return Optional.of(
                     stdlibLibraryMissing(implementation, extension));
             }

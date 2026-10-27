@@ -1,9 +1,9 @@
 # Validate
 
-Build first; run the compiler from the repository root:
+Use the project's verified compiler launcher, runtime and host setup:
 
 ```text
-java -cp build deal.Main compile <entry.deal> --backend <luajit|jvm|js> --output <fresh-directory>
+deal compile <entry.deal> --backend <luajit|jvm|js> --output <fresh-directory>
 ```
 
 Inspect fresh artifacts, execute every supported backend and check expected output/errors. Compilation alone is insufficient.
@@ -11,10 +11,10 @@ Inspect fresh artifacts, execute every supported backend and check expected outp
 | Backend | Execute |
 |---|---|
 | `luajit` | `luajit <entry>.lua` in the output directory |
-| `jvm` | `javac --release 25 -proc:none -cp <compiler-build> -d <classes> <entry>.java`, then `java -cp <classes>:<compiler-build> <Entry>` |
+| `jvm` | `javac --release 25 -proc:none -cp <compiler-runtime> -d <classes> <entry>.java`, then `java -cp <classes>:<compiler-runtime> <Entry>` |
 | `js` | `node <entry>.js` in the output directory |
 
-`<compiler-build>` is the absolute checkout build directory containing runtime classes.
+`<compiler-runtime>` is the absolute installation or checkout build directory containing runtime classes.
 
 Entry exports synchronous main(): null. Host examples need matching implementations and an isolated manifest outside the parent project. Invoke async exports through the embedding ABI. Do not weaken source to conceal unsupported cases.
 

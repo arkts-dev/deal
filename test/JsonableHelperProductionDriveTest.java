@@ -8,7 +8,7 @@ import deal.codegen.lua.LuaSemanticEmitter;
 import deal.diagnostics.CompilerDiagnostic;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.module.CompilationOrchestrator;
 import deal.module.ProductionProjectEmission;
 import deal.project.ProjectContext;
@@ -458,7 +458,7 @@ public class JsonableHelperProductionDriveTest {
                 BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
                 java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
-                CheckoutResources.forManifestDirectory(project.root().toString()), stager);
+                DistributionHome.forManifestDirectory(project.root().toString()), stager);
             if (result.emitted()) {
                 stager.publish();
             }
@@ -1777,7 +1777,7 @@ public class JsonableHelperProductionDriveTest {
                         Map.of(), BuiltinErrorDeclaration.synthesized(
                             built.input().modules().get(0).ast().span()),
                         java.util.Set.of(), target == Target.JVM ? Backend.JVM : Backend.LUAJIT, false,
-                        CheckoutResources.forManifestDirectory(
+                        DistributionHome.forManifestDirectory(
                             project.root().toString()), stager);
                     staged = new ArrayList<>(stager.stagedSet().relativePaths());
                 } finally {

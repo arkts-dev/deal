@@ -5,7 +5,7 @@ import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticNote;
 import deal.diagnostics.DiagnosticRange;
 import deal.diagnostics.RangeOrigin;
-import deal.module.CheckoutResources;
+import deal.distribution.DistributionHome;
 import deal.lexer.CompilerDirective;
 import deal.lexer.DirectiveName;
 import deal.lexer.LexResult;
@@ -487,16 +487,16 @@ public final class ProjectLocator {
     // Step 4(b): stdlib surface and overlap
     // =========================================================================
 
-    /** Project-local stdlib directory first, otherwise the checkout stdlib. */
+    /** Resolve project-local, distribution, then checkout stdlib surfaces. */
     private static String probeStdlibSurface(String manifestDirectoryText) {
-        Optional<Path> surface =
-            CheckoutResources.forManifestDirectory(manifestDirectoryText)
+        Optional<DistributionHome.ResolvedSurface> surface =
+            DistributionHome.forManifestDirectory(manifestDirectoryText)
                 .resolveStdlibSurface();
         if (surface.isEmpty()) {
             return null;
         }
         Optional<Path> resolved = ProtectedPathOps.probeDirectory(
-            surface.get());
+            Path.of(surface.get().pathText()));
         return resolved.map(Path::toString).orElse(null);
     }
 
