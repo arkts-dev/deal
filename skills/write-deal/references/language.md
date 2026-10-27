@@ -1,62 +1,52 @@
 # DEAL language guide
 
-Practical guide, not a specification. Authority: the compiler's `docs/spec-v1.5.md`.
+Practical guide; authority: `docs/spec-v1.5.md`.
 
 ## Syntax
 
-Place imports first, then functions, classes, and exports. Put executable work inside functions. An executable entry exports synchronous `main(): null`. Use `let`, braces, and semicolons. No-result helpers return `void` with bare return or fallthrough; the executable entry returns `null` explicitly.
+Imports precede module-level functions, classes and exports. Executable statements belong inside functions. Use let, braces and semicolons. Entry exports synchronous main(): null with explicit null return; no-result helpers use void.
 
-Comments use `//` or `/* ... */`. Choose ordinary identifiers for declarations; `$` names belong to compiler-generated helpers. Literal property keys are identifiers with explicit values.
-
-Assignments use `x = x + 1`. Write callbacks as function expressions; `=>` describes their types.
+Comments use // or /* ... */. Choose ordinary identifiers; `$` bindings are compiler-owned. Property keys have explicit values. Assign with x = x + 1. Function expressions use function; arrows describe types.
 
 ## Types
 
-Data types include `null`, `undefined`, `unknown`, `boolean`, `number`, `string`, `Record<string, unknown>`, and builtin nominal `Error`. Compose nominal classes, homogeneous `T[]`, independent `T | null` / `T | undefined` unions, and function types. `void` and `Promise<R>` are function-result notation only. Unknown data requires checking before concrete consumption; `value as T` checks once without coercion and raises E8001 on mismatch. `typeof` and matching `instanceof` branches support bounded refinement.
+Data includes null, undefined, unknown, boolean, number, string, Record<string, unknown>, nominal classes, invariant arrays and function types. Nullish unions admit null/undefined independently. Void and Promise<R> are result notation only.
 
-Types are invariant. Every numeric literal and operation uses IEEE 754 binary64, rounded nearest/ties-even. Arithmetic preserves signed zero, infinities, and NaN; division is nontrapping. Validate finite whole values for indexes and substring bounds. Round deliberately with `math.floor` or `math.ceil`. Use a typed helper or declared host API for text conversion.
+Unknown requires checked extraction or supported typeof/instanceof refinement. An assertion checks once without coercion, preserving identity; mismatch raises E8001.
 
-Equality uses `===`/`!==` with equal types, except comparison with null or undefined where admitted by the nullish/unknown rules. Conditions and logical operators require boolean. String concatenation and interpolation accept strings; format other values explicitly.
+Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Indexes/bounds require finite whole numbers. Round deliberately through math.floor/ceil; format through typed helpers or host APIs. Conditions require boolean; concatenation/interpolation require strings. Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 
-Classes describe nominal records and are module-level declarations only. Declare fields by name and type; optional fields use `?`. Construct through typed object literals that supply every required field, including nullable fields. Supply separate mutable literals when independent instances need fresh storage. Same-shaped classes remain distinct.
-
-Use nominal classes for fixed schemas, `Record<string, unknown>` for dynamic keys, and functions for behavior. Pass values explicitly to those functions.
+Declare module-level nominal schemas. Fields use annotations and optional ?. Typed literals supply every required field, including nullable fields. Separate literals provide fresh mutable storage; supplied references preserve aliases. Same-shaped classes remain distinct. Use classes for schemas, Records for dynamic keys and functions for behavior.
 
 ## Functions
 
-Annotate parameters and return types. Pass explicit arrays for variable-length inputs. Function expressions use `function(...)`. Closures capture bindings; assignments remain visible. Captured loop variables have fresh iteration bindings.
-
-Function types match async marker and exact types. An actual function with fewer parameters may adapt to a target with more when shared parameter and return types match; extra target arguments are ignored. Direct calls follow their declared signature.
+Annotate parameters/results; pass arrays for variable inputs. Closures capture bindings and observe assignments; loops create fresh iteration bindings. Function compatibility requires matching async marker and types. A shorter function may adapt to additional ignored target parameters when shared types/results match; direct calls retain declared arity.
 
 ## Field access
 
-Copy nullable fields into locals, then narrow through direct null comparison. Recheck after assignment or await; keep narrowing within its function and iteration. Closures see captured variables' declared types.
+Read nullish fields into locals before narrowing. Assignment/await invalidate as specified; refinements stay within their function/iteration. Closures see declared captured types.
 
-`Object.hasOwn(record, "field")` tests presence independently of value. Class keys must be literal declared-field names; Record keys may be arbitrary strings. Presence never refines the read type. Missing optional reads yield undefined. Delete `field?: T` to make it absent. `field?: T | null` distinguishes missing, present-undefined, present-null, and present-value when admitted by its annotation.
+Object.hasOwn tests presence, not value type. Class keys name literal declared fields; Record keys are strings. Optional absence reads undefined; present null remains null. Deletion removes presence rather than storing undefined.
 
 ## Tables
 
-Declare dynamic data as `Record<string, unknown>`. Reads infer unknown in every position; concrete consumption requires an assertion or refinement, not an implicit contextual conversion. Check intermediate Records explicitly and check callable signatures before invoking dynamic behavior.
-
-Dynamic indexes are strings. Writes may store heterogeneous supported data. Null and undefined assignment preserve presence; deletion removes the key.
+Use Record<string, unknown>. Every read infers unknown; explicitly check intermediate Records, concrete leaves and callable signatures. String-keyed writes accept supported heterogeneous data. Null/undefined assignments preserve presence; deletion removes keys. See [dynamic data](../examples/src/data.deal).
 
 ## Arrays
 
-Arrays are zero-based. Annotate empty literals. Append at length and iterate with `i < values.length` or inferred `for (let value of values)` bindings. Arrays retain invariant element descriptors; a compatible current payload or an empty array does not permit retagging. Generic decoded JSON arrays carry unknown elements; check each value or use a typed generated decoder. Reads check their result type; a read outside `0..length-1` raises an index-out-of-bounds error. Strings in `for-of` yield Unicode scalars. Transform collections with explicit loops.
+Arrays are zero-based with invariant persistent descriptors; emptiness/current contents cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Decoded JSON arrays carry unknown elements: check values individually or use generated typed decoding. String for-of yields Unicode scalars.
 
 ## JSON serialization (`@jsonable`)
 
-Attach `// @jsonable` immediately to an exported class. Call its generated module helpers: `C$fromJson(string): C | null`, `C$toJson(C): string`.
+Attach // @jsonable to an exported class. Generated C$fromJson(string): C | null and C$toJson(C): string implement its schema. Decoding requires nonoptional fields, rejects extra/duplicate keys and invalid nested values, and preserves optional presence. Use acyclic class dependencies.
 
-Parsing requires every nonoptional field, rejects extra keys and duplicate keys, preserves optional presence, and returns null on invalid input. JSON numbers parse as binary64, preserving negative zero; serialization emits either zero sign as `0`. Serialization omits missing fields and preserves explicit null. Choose JSON-compatible fields and acyclic class dependencies. Stringification omits undefined/functions in objects, substitutes null in arrays and for nonfinite numbers, and rejects cycles without calling user hooks. Shared acyclic children remain valid.
+JSON parses binary64, preserving negative zero; either zero sign serializes as 0. Generic stringify omits object undefined/functions, substitutes null in arrays/nonfinite positions and rejects cycles without hooks. Shared acyclic children are valid. Generated dynamic Record-content walkers instead reject unsupported leaves; declared numeric fields encode nonfinite as null.
 
 ## Modules
 
-Import with `import * as name from "..."`. Namespace exports are statically typed; qualify an imported class with the namespace (`models.User`). Export functions and classes; keep module state local to function-owned storage. Any import cycle is a compile-time error; initialization occurs at most once.
-
-The manifest supplies module roots, output, backend, languageVersion, and external declarations. Preserve existing settings and keep ancestor manifests unambiguous.
+Import namespaces and qualify exported classes; keep state inside function-owned storage. Imports initialize at most once; cycles reject. Preserve manifest roots, backend, output, languageVersion and external declarations. Keep ancestor manifests unambiguous.
 
 ## Standard library declarations
 
@@ -87,16 +77,16 @@ export function absNumber(x: number): number;
 export function nowMillis(): number;
 ```
 
-String positions count Unicode scalars. Extend the available surface through declared, implemented host modules.
+String positions count Unicode scalars. Extend APIs through declared, implemented host modules.
 
 ## Error handling
 
-Throw an Error-typed literal. `Error` is a builtin class with `code` and `message` string fields; `catch (e)` binds unknown; use a checked `e as Error` extraction or refine inside a matching `e instanceof Error` branch. Throw and rethrow still require Error. Translate expected failures where the application contract requires it; otherwise propagate.
+Throw Error values with explicit code/message fields. Catch binds unknown: extract Error or refine inside instanceof Error before reading members. Rethrow preserves identity. Translate expected failures only when the application contract requires it.
 
 ## Async/Await
 
-Async implementations declare `Promise<R>` results; async function types use `(args) => Promise<R>`. External declarations omit the `async` modifier and use Promise result notation. Await each async call inside an async body, as a direct call expression. Let the embedding own scheduling and operation lifetime.
+Implementations and callable types use Promise<R> results. External declarations omit async. Await each async call directly inside an async body; the embedding owns scheduling and operation lifetime. See [client](../examples/host/client.deal).
 
 ## Host ABI and interoperability
 
-A host import requires `.d.deal`, a manifest external entry, and an embedding implementation. External function declarations end with semicolons. Boundary wrappers validate arguments/results. Invoke async exports through the embedding's documented ABI.
+Host imports require declarations, manifest wiring and matching implementations. Declaration functions end with semicolons; boundary wrappers validate arguments/results. Invoke async exports through the embedding ABI, not a plain executable run.

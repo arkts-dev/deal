@@ -1,12 +1,12 @@
 # Validate
 
-Use the source checkout's compiled compiler, runtime and host setup. Run from the repository root after building. CLI shape:
+Build first; run the compiler from the repository root:
 
 ```text
 java -cp build deal.Main compile <entry.deal> --backend <luajit|jvm|js> --output <fresh-directory>
 ```
 
-Compile through production, inspect the fresh artifact, execute it, and check expected output/errors on every supported production backend.
+Inspect fresh artifacts, execute every supported backend and check expected output/errors. Compilation alone is insufficient.
 
 | Backend | Execute |
 |---|---|
@@ -14,17 +14,17 @@ Compile through production, inspect the fresh artifact, execute it, and check ex
 | `jvm` | `javac --release 25 -proc:none -cp <compiler-build> -d <classes> <entry>.java`, then `java -cp <classes>:<compiler-build> <Entry>` |
 | `js` | `node <entry>.js` in the output directory |
 
-`<compiler-build>` is the absolute path to the checkout's `build` directory; the JVM artifact links against its runtime classes.
+`<compiler-build>` is the absolute checkout build directory containing runtime classes.
 
-Identify unsupported cases explicitly instead of weakening source: host imports need an embedding implementation; async exports are invoked through the embedding's ABI, not by a plain run; an entry must export synchronous `main(): null`.
+Entry exports synchronous main(): null. Host examples need matching implementations and an isolated manifest outside the parent project. Invoke async exports through the embedding ABI. Do not weaken source to conceal unsupported cases.
 
-[Example entry](../examples/src/main.deal) throws on mismatch and otherwise completes silently. Host binding needs an embedding implementation; copy its manifest outside the parent project. Serialization has its own executable entry and requires every nonoptional field; validate it separately as well as the main example. Keep output outside active worker directories; follow the existing orchestrator.
+The [main example](../examples/src/main.deal) throws on mismatch. Execute [serialization](../examples/serialization/main.deal) separately; its schema requires every nonoptional field. Keep output outside worker directories and follow the existing orchestrator.
 
 | Failure | Check |
 |---|---|
 | Manifest/import | Roots, declarations, wiring |
 | Syntax/type | Normative grammar and signatures |
-| Runtime boundary | Actual value, presence, null, bounds, ownership |
+| Runtime boundary | Actual value, presence, nullish flags, bounds, ownership |
 | Valid source rejected internally | Minimal compiler/backend reproduction |
 
-Fix the first causal failure; rerun the same check with diagnostics and required behavior intact. Distinguish compiled, executed, blocked, and timed out.
+Fix the first cause and rerun without weakening assertions. Distinguish compiled, executed, blocked and timed out.

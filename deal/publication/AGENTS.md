@@ -1,3 +1,3 @@
 # Publication
 
-Publish whole-project artifacts transactionally: stage, validate, then atomically replace. Never expose mixed generations or partial output. Preserve per-root locking and crash recovery; temporary nonces never enter artifact bytes. Runtime copies read checkout files; stdlib copies prefer project-local overrides. No distribution-home or classpath discovery. Exercise failure and restoration paths. Keep this file always synchronized with code.
+Stage and validate whole-project artifacts before atomic replacement. Preserve locking, crash recovery and restoration tests; never expose mixed generations. Nonces cannot affect bytes. Copy checkout runtimes and project-local/checkout stdlib files within the same transaction. Synchronize policy with implementation.
