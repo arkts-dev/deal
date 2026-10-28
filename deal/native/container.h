@@ -131,7 +131,12 @@ int deal_container_table_has(const deal_table *table, deal_string *key);
 void deal_container_table_write(deal_table *table, deal_string *key,
                                 const deal_data *value);
 
-/* Removes the key when present; an absent key is not an error. */
+/*
+ * Removes the key when present; an absent key is not an error. The removal
+ * republishes the neighbours' links, so each of those managed-reference stores
+ * runs the insertion barrier first (M2): a deletion while the collector is
+ * marking never leaves a surviving member unmarked behind a rewired link.
+ */
 void deal_container_table_delete(deal_table *table, deal_string *key);
 
 #endif /* DEAL_NATIVE_CONTAINER_H */

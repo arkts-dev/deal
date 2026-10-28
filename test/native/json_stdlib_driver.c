@@ -901,6 +901,14 @@ static deal_class_layout inner_layout;
 static deal_json_class_plan outer_plan;
 static deal_json_class_plan inner_plan;
 
+/* The recursive plan: `class Node { child?: ?Node; list?: ?[Node] }`. Its graph
+ * names itself, so the *input's* nesting depth decides the decode walk depth
+ * and the walk must stay stack-safe (R6). */
+static const char *const node_atom = "@src/model.deal/Node";
+static deal_class_field node_fields[2];
+static deal_class_layout node_layout;
+static deal_json_class_plan node_plan;
+
 /* 1 when the instance carries exactly `atom`. */
 static int instance_is(const deal_data *instance, const char *atom) {
     if (instance->tag != DEAL_DATA_CLASS || instance->reference == NULL) {
@@ -996,6 +1004,9 @@ static const deal_json_class_plan *test_lookup(const char *class_atom,
     if (strcmp(class_atom, inner_atom) == 0) {
         return &inner_plan;
     }
+    if (strcmp(class_atom, node_atom) == 0) {
+        return &node_plan;
+    }
     return NULL;
 }
 
@@ -1052,6 +1063,22 @@ static void define_plans(void) {
     inner_plan.construct = test_construct;
     inner_plan.read_field = test_read_field;
     inner_plan.context = &inner_layout;
+
+    /* Node: child?: ?Node; list?: ?[Node]. */
+    node_fields[0].name = "child";
+    node_fields[0].descriptor = deal_descriptor_intern("?@src/model.deal/Node");
+    node_fields[0].optional = 1;
+    node_fields[1].name = "list";
+    node_fields[1].descriptor =
+        deal_descriptor_intern("?[@src/model.deal/Node]");
+    node_fields[1].optional = 1;
+    node_layout.class_atom = node_atom;
+    node_layout.fields = node_fields;
+    node_layout.field_count = 2u;
+    node_plan.layout = &node_layout;
+    node_plan.construct = test_construct;
+    node_plan.read_field = test_read_field;
+    node_plan.context = &node_layout;
 }
 
 /* One fromJson observation: the produced instance re-encoded, or `null`. */
@@ -1412,6 +1439,115 @@ static void observe_class_walks(void) {
 }
 
 /* =========================================================================
+ * The deep class walk (R6's stack-safe traversal)
+ * ========================================================================= */
+
+/*
+ * The nesting depth one decoded document carries along one recursive field: the
+ * walk of the produced instance is the driver's own and follows the same links
+ * the document declared. Counting it proves the decode reached the innermost
+ * level instead of stopping (or crashing) at a depth bound.
+ */
+static size_t count_class_depth(deal_data root, const char *field,
+                                int through_array) {
+    size_t depth = 0u;
+    deal_root_scope_push();
+    deal_string *key = deal_text_new(field, strlen(field));
+    if (key == NULL) {
+        deal_platform_fault("json: deep walk key allocation failed");
+    }
+    (void)deal_root_scope_hold(key);
+    deal_data current = root;
+    while (current.tag == DEAL_DATA_CLASS && current.reference != NULL) {
+        deal_table *fields = (deal_table *)current.reference;
+        if (!deal_container_table_has(fields, key)) {
+            break;
+        }
+        deal_data next = deal_container_table_read(fields, key);
+        if (next.tag == DEAL_DATA_NULL || next.tag == DEAL_DATA_UNDEFINED) {
+            break;
+        }
+        if (through_array != 0) {
+            if (next.tag != DEAL_DATA_ARRAY || next.reference == NULL) {
+                break;
+            }
+            deal_array *array = (deal_array *)next.reference;
+            if (deal_container_array_count(array) != 1u) {
+                break;
+            }
+            next = *(const deal_data *)
+                deal_container_array_element(array, 0u);
+        }
+        depth += 1u;
+        current = next;
+    }
+    deal_root_scope_pop();
+    return depth;
+}
+
+/*
+ * One deeply nested class document of `depth` levels against the recursive plan:
+ * every level names its child under `child` (or its one element under `list`) and
+ * the innermost level names nothing. The declared type graph is one class, so
+ * the depth is the input's and the decode walk must not consume one C frame per
+ * level.
+ */
+static void observe_class_depth(const char *label, int through_array,
+                                size_t depth) {
+    const char *prefix = through_array != 0 ? "{\"list\":[" : "{\"child\":";
+    const char *suffix = through_array != 0 ? "]}" : "}";
+    size_t prefix_length = strlen(prefix);
+    size_t suffix_length = strlen(suffix);
+    size_t length = depth * (prefix_length + suffix_length) + 2u;
+    unsigned char *json = deal_platform_allocate(length + 1u);
+    if (json == NULL) {
+        deal_platform_fault("json: class depth fixture allocation failed");
+    }
+    unsigned char *cursor = json;
+    for (size_t index = 0; index < depth; index += 1u) {
+        memcpy(cursor, prefix, prefix_length);
+        cursor += prefix_length;
+    }
+    memcpy(cursor, "{}", 2u);
+    cursor += 2u;
+    for (size_t index = 0; index < depth; index += 1u) {
+        memcpy(cursor, suffix, suffix_length);
+        cursor += suffix_length;
+    }
+    *cursor = 0;
+    deal_string *text = deal_text_new(json, length);
+    deal_platform_release(json);
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(text);
+    deal_outcome_data decoded = deal_json_from_class(text, &node_plan,
+        test_lookup, NULL, &call_origin);
+    printf("CLASSDEEP\t%s\t%u\t", label, (unsigned)depth);
+    if (decoded.error != NULL) {
+        printf("ERROR\t");
+        print_failure(decoded.error);
+        printf("\n");
+        deal_root_scope_pop();
+        return;
+    }
+    if (decoded.value.tag != DEAL_DATA_CLASS) {
+        printf("NO-INSTANCE\n");
+        deal_root_scope_pop();
+        return;
+    }
+    (void)deal_root_scope_hold_data(&decoded.value);
+    printf("%u\n", (unsigned)count_class_depth(decoded.value,
+        through_array != 0 ? "list" : "child", through_array));
+    deal_root_scope_pop();
+}
+
+/* The class-decode deep run: both recursive shapes at the requested depth. */
+static void run_class_deep(size_t depth) {
+    observe_class_depth("chain", 0, depth);
+    observe_class_depth("array", 1, depth);
+    deal_platform_flush_stdout();
+}
+
+/* =========================================================================
  * The acceptance run and the deterministic producer defects
  * ========================================================================= */
 
@@ -1577,6 +1713,16 @@ int main(void) {
         printf("unreachable\n");
         deal_platform_flush_stdout();
         return 0;
+    }
+    const char *class_deep = deal_platform_environment("DEAL_JSON_CLASS_DEEP");
+    if (class_deep != NULL && class_deep[0] != 0) {
+        size_t depth = 0u;
+        for (const char *digit = class_deep; *digit >= '0' && *digit <= '9';
+                digit += 1) {
+            depth = depth * 10u + (size_t)(*digit - '0');
+        }
+        run_class_deep(depth);
+        return failures == 0 ? 0 : 1;
     }
     const char *deep = deal_platform_environment("DEAL_JSON_DEEP");
     if (deep != NULL && deep[0] != 0) {

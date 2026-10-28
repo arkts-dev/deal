@@ -83,7 +83,6 @@ final class LlvmFunctionEmitter {
     private String entryLabel;
     private String segmentLabel;
     private int currentDebugScope;
-    private String activationOutcome = "%struct.deal_outcome";
     private FunctionId functionId;
 
     /** One open loop's transfer labels. */
@@ -111,8 +110,6 @@ final class LlvmFunctionEmitter {
     String emitFunction(FunctionId id) {
         this.functionId = id;
         LoweredFunction function = session.function(id);
-        this.activationOutcome = LlvmTypeMapper.outcomeType(
-            function.descriptor().returnType());
         String linkageName = "F" + id.id();
         String display = session.displayName(session.ownerOf(id));
         currentDebugScope = session.debug.subprogram(display,
@@ -253,13 +250,35 @@ final class LlvmFunctionEmitter {
 
     /**
      * The error-only return of a failure path: the C4 outcome built from the
-     * carried {@code deal_error*} with no value slot read (C4).
+     * carried {@code deal_error*} with no value slot read (C4). The aggregate
+     * is the enclosing activation's own outcome shape — a function whose
+     * declared result carries a value returns its typed outcome with the value
+     * slot untouched — so the failure path of a {@code number},
+     * {@code boolean}, nullish or {@code unknown} result is never spelled with
+     * the error-only shape. The shape is derived from the activation the path
+     * belongs to, never from emission order.
      */
     private void terminateFailure(String error) {
+        String outcome = enclosingOutcomeType();
         String aggregate = "%failure" + (labelCounter++) + "v";
-        emit(aggregate + " = insertvalue " + activationOutcome
+        emit(aggregate + " = insertvalue " + outcome
             + " zeroinitializer, i8* " + error + ", 0");
-        terminate("ret " + activationOutcome + " " + aggregate);
+        terminate("ret " + outcome + " " + aggregate);
+    }
+
+    /**
+     * The C4 outcome type of the activation being emitted: the lowered
+     * function's declared result for a generated function, and the error-only
+     * outcome of the module-initialization and entry-surface functions, which
+     * carry no value slot at all (C2).
+     */
+    private String enclosingOutcomeType() {
+        FunctionId active = functionId;
+        if (active == null) {
+            return "%struct.deal_outcome";
+        }
+        return LlvmTypeMapper.outcomeType(
+            session.function(active).descriptor().returnType());
     }
 
     private void emitEpilogue() {
@@ -282,7 +301,6 @@ final class LlvmFunctionEmitter {
      */
     String emitUnitInit(ModuleId module) {
         this.functionId = null;
-        this.activationOutcome = "%struct.deal_outcome";
         LoweredModuleUnit initUnit = session.unitOf(module);
         long index = session.moduleIndex(module);
         String record = "@" + LlvmData.moduleRecord(index);
@@ -1865,22 +1883,29 @@ final class LlvmFunctionEmitter {
         return value;
     }
 
-    /** The SSA form of one returned ABI payload (C3's boolean byte). */
+    /**
+     * The SSA form of one returned ABI payload (C3's boolean byte). The outcome
+     * value slot already holds the staged representation, so only the two
+     * managed pointer shapes whose SSA spelling is a distinct pointer type need
+     * the one cast: a {@code string} is {@code %struct.deal_string*} and an
+     * {@code Error} is {@code %struct.deal_error*}, both carried as {@code i8*}.
+     * A scalar-nullish aggregate ({@code { i32, double }} / {@code { i32, i1 }}),
+     * a reference nullish pointer, a {@code double}, a persistent datum and a
+     * code pointer are their own slot type and are never cast.
+     */
     private String narrowFromAbi(RuntimeDescriptor descriptor, String value,
                                  SemanticOp op) {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return emitTemporary(op, "trunc i8 " + value + " to "
                 + LlvmTypeMapper.BOOLEAN_SSA);
         }
-        if (descriptor instanceof RuntimeDescriptor.String
-                || descriptor instanceof RuntimeDescriptor.Class
-                || descriptor instanceof RuntimeDescriptor.Nullable) {
-            String representation = stagedRepresentation(descriptor);
-            if (representation.equals("i8*")) {
-                return value;
-            }
+        if (descriptor instanceof RuntimeDescriptor.String) {
             return emitTemporary(op, "bitcast i8* " + value + " to "
-                + representation);
+                + LlvmTypeMapper.STRING);
+        }
+        if (descriptor instanceof RuntimeDescriptor.Class) {
+            return emitTemporary(op, "bitcast i8* " + value + " to "
+                + LlvmTypeMapper.ERROR_POINTER);
         }
         return value;
     }

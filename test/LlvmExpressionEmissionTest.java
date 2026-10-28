@@ -77,6 +77,10 @@ import java.util.regex.Pattern;
  *       generation's own slot, exactly one entry store for a parameter and for
  *       a caught binding, and no store into a position that has no such
  *       fact;</li>
+ *   <li>the failure path of every activation returns the enclosing function's
+ *       own C4 outcome shape — {@code number}, {@code boolean}, the two scalar
+ *       nullish aggregates and the persistent datum included — so an accepted
+ *       nested scalar call is never spelled with the error-only aggregate;</li>
  *   <li>two compiles are byte-identical, and {@code llvm-as} plus the pinned
  *       {@code clang} accept the module at {@code -O0} and {@code -O2};</li>
  *   <li>the scalar, the nonfailing {@code try}/`catch` and the
@@ -502,6 +506,7 @@ public final class LlvmExpressionEmissionTest {
                 StandardCharsets.UTF_8);
             testLogicalTraversalParity(logical);
             testCallContinuation(logicalModule);
+            testTypedFailureReturns(scratch);
             testExecutedObservations(scratch);
             testTerminatingTails(scratch);
             testFunctionValueNeverBoxed(scratch);
@@ -832,6 +837,121 @@ public final class LlvmExpressionEmissionTest {
             "a scalar activation reserves no root slot");
         check(!functionOf(module, "numberEq").contains("deal_root_frame_write"),
             "no scalar value is rooted");
+    }
+
+    // =========================================================================
+    // 2b. The typed failure return of a value-carrying activation (C4)
+    // =========================================================================
+
+    /**
+     * One nested scalar call per closed result kind: every function declares
+     * its own local callee, so the call is the staged {@code CALL(DIRECT)} whose
+     * failure path leaves the activation.
+     */
+    private static final String TYPED_FAILURE_SOURCE = """
+        function double(n: number): number {
+          function inner(a: number): number {
+            return a + a;
+          }
+          let doubled: number = inner(n);
+          return doubled + 1.0;
+        }
+
+        function positive(n: number): boolean {
+          function inner(a: number): number {
+            return a + a;
+          }
+          let doubled: number = inner(n);
+          return doubled > 0.0;
+        }
+
+        function maybeNumber(n: number): number | null {
+          function inner(a: number): number {
+            return a + a;
+          }
+          let doubled: number = inner(n);
+          return doubled;
+        }
+
+        function maybeBoolean(n: number): boolean | undefined {
+          function inner(a: number): number {
+            return a + a;
+          }
+          let doubled: number = inner(n);
+          return doubled > 0.0;
+        }
+
+        function anyValue(n: number): unknown {
+          function inner(a: number): number {
+            return a + a;
+          }
+          let doubled: number = inner(n);
+          return doubled;
+        }
+
+        export function main(): null {
+          let sum: number = double(2.0);
+          let flag: boolean = positive(2.0);
+          let maybe: number | null = maybeNumber(2.0);
+          let maybeFlag: boolean | undefined = maybeBoolean(2.0);
+          let carried: unknown = anyValue(2.0);
+          return null;
+        }
+        """;
+
+    /**
+     * C4's failure return is the enclosing activation's outcome shape: a
+     * function whose declared result carries a value returns its typed outcome
+     * with the value slot untouched on failure. The check is structural over
+     * the published module — every {@code ret} of an activation names that
+     * activation's own {@code define} type and the failure aggregate is built
+     * from it — and the module is then accepted by {@code llvm-as} and the
+     * pinned {@code clang} at both levels, which is exactly what a failure path
+     * spelled with the error-only aggregate is not.
+     */
+    private static void testTypedFailureReturns(Path scratch) throws Exception {
+        System.out.println("-- a nested scalar call returns the enclosing"
+            + " function's outcome shape --");
+        Path published = compileProject(scratch, "typed-failures",
+            TYPED_FAILURE_SOURCE);
+        String module = Files.readString(published.resolve("main.ll"),
+            StandardCharsets.UTF_8);
+        Map<String, String> outcomes = new LinkedHashMap<>();
+        outcomes.put("double", "%struct.deal_outcome_number");
+        outcomes.put("positive", "%struct.deal_outcome_boolean");
+        outcomes.put("maybeNumber", "%struct.deal_outcome_nullish_number");
+        outcomes.put("maybeBoolean", "%struct.deal_outcome_nullish_boolean");
+        outcomes.put("anyValue", "%struct.deal_outcome_data");
+        for (Map.Entry<String, String> entry : outcomes.entrySet()) {
+            String body = functionOf(module, entry.getKey());
+            String outcome = entry.getValue();
+            check(body.startsWith("define internal " + outcome + " @"),
+                "the " + entry.getKey() + " activation declares the outcome "
+                    + outcome);
+            check(body.contains("%failure"),
+                "the " + entry.getKey() + " activation renders the nested"
+                    + " call's failure path");
+            check(body.contains("insertvalue " + outcome
+                    + " zeroinitializer, i8* "),
+                "the " + entry.getKey() + " failure aggregate is built from its"
+                    + " own outcome " + outcome);
+            checkEq(0, foreignReturnTypes(body, outcome),
+                "every return of the " + entry.getKey() + " activation carries "
+                    + "its own outcome shape " + outcome);
+        }
+        testValidityAtBothLevels(published);
+    }
+
+    /** The returns of one function body whose aggregate is not {@code outcome}. */
+    private static int foreignReturnTypes(String body, String outcome) {
+        Matcher matcher = Pattern.compile("(?m)^\\s+ret (\\S+)").matcher(body);
+        int foreign = 0;
+        while (matcher.find()) {
+            if (!matcher.group(1).equals(outcome)) {
+                foreign++;
+            }
+        }
+        return foreign;
     }
 
     private static void testValidityAtBothLevels(Path published)

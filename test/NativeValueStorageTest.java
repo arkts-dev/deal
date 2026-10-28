@@ -56,9 +56,13 @@ import java.util.stream.Stream;
  *       another or of a finished crossing, generation safety across a reused
  *       slot, supplemental rooting, crossing-scoped release and the crossing
  *       scope as a root source that roots exactly its managed referents;</li>
- *   <li>the deterministic invariant faults of those entries: one
- *       {@code DEAL_RUNTIME_FAULT: <reason>} line on stderr, no stdout and exit
- *       2, never a language-visible Error and never a partial publication.</li>
+ *   <li>the deterministic invariant faults of those entries — including the
+ *       shared overflow-checked size arithmetic ({@code R10}): an allocation
+ *       whose header-and-payload total cannot be aligned and a page round that
+ *       overflows the address space are that fault before any storage exists,
+ *       never a wrapped short region — one {@code DEAL_RUNTIME_FAULT: <reason>}
+ *       line on stderr, no stdout and exit 2, never a language-visible Error
+ *       and never a partial publication.</li>
  * </ol>
  */
 public final class NativeValueStorageTest {
@@ -177,6 +181,10 @@ public final class NativeValueStorageTest {
                 "object: not a managed object"),
             new Fault("memory_storage_driver", "-DDEAL_MEMORY_CASE=10",
                 "layout: identity defined twice"),
+            new Fault("memory_storage_driver", "-DDEAL_MEMORY_CASE=11",
+                "size arithmetic: addition overflow"),
+            new Fault("memory_storage_driver", "-DDEAL_MEMORY_CASE=12",
+                "size arithmetic: addition overflow"),
             new Fault("text_storage_driver", "-DDEAL_TEXT_CASE=1",
                 "text: bytes are not a Unicode scalar sequence"),
             new Fault("crossing_storage_driver", "-DDEAL_CROSSING_CASE=1",

@@ -4,8 +4,9 @@
  * The only group that may call the operating system
  * (`llvm-native-runtime-value-model` R1): monotonic and realtime clocks,
  * buffered stdout/stderr writes with explicit flush, environment lookup,
- * process exit, raw page allocation for the collector allocator, the one
- * resource/invariant fault helper of R10, and the completion queue: one
+ * process exit, raw page allocation for the collector allocator, the shared
+ * overflow-checked size arithmetic of the sizes that reach that allocator, the
+ * one resource/invariant fault helper of R10, and the completion queue: one
  * thread-safe, single-consumer queue with exact producer -> queue -> consumer
  * ownership transfer.
  *
@@ -21,10 +22,13 @@
  *     payload exactly once, including after a rejected delivery.
  *   - Publication is a release operation on the queue head and acquisition an
  *     acquire exchange, so every byte of a taken frame is visible. Posting
- *     signals the waiting thread through a wake descriptor; a full wake
- *     descriptor is not an error because the consumer re-reads the queue head
- *     after draining it. `deal_platform_wait_ns` blocks for at most the given
- *     interval and never busy-spins.
+ *     signals the waiting thread through a non-blocking wake descriptor, so a
+ *     burst of posts never blocks its poster and a full descriptor is not an
+ *     error: the queue head is the authority and the signal is only a hint.
+ *     The consumer therefore observes the queue head before it blocks, so a
+ *     wake byte drained by an earlier take can never make it sleep while a
+ *     frame is still queued. `deal_platform_wait_ns` blocks for at most the
+ *     given interval and never busy-spins.
  *   - A frame holds copied host-native bytes. It never holds a managed pointer
  *     and never holds a DEAL-origin failure token, so the queue can be used by
  *     threads that never touch the managed heap.
@@ -131,6 +135,21 @@ void deal_platform_release(void *memory);
 
 /* A copy of `text` in platform memory (NULL input yields NULL). */
 char *deal_platform_duplicate(const char *text);
+
+/* -- checked size arithmetic (R10) --------------------------------------- */
+
+/*
+ * The shared overflow-checked size arithmetic of the storage sizes that reach
+ * the platform allocator: a sum, a product and a round-up answer their result
+ * or the R10 invariant fault before any partial mutation. A completion payload
+ * growth, an allocation's header-and-payload total, its alignment and a page
+ * round are therefore never computed modulo the address space: a size that
+ * cannot exist is a deterministic fault instead of a short region, an invalid
+ * memset or a misaligned release.
+ */
+size_t deal_platform_checked_add(size_t left, size_t right);
+size_t deal_platform_checked_multiply(size_t left, size_t right);
+size_t deal_platform_checked_round(size_t bytes, size_t multiple);
 
 /* -- the one fault helper (R10) ----------------------------------------- */
 

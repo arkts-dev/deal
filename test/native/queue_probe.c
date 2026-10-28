@@ -13,6 +13,7 @@
 #include "deal/native/platform.h"
 
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <threads.h>
@@ -165,6 +166,62 @@ int main(void) {
         failures += 1;
     }
 
+    /* Two queued frames and one take: the take drains the wake bytes, so an
+     * implementation that trusts the descriptor alone blocks for the whole
+     * interval even though a frame is still queued. The queue head is the
+     * authority, so the wait returns at once and the second frame is taken. */
+    {
+        deal_completion_frame *first = deal_platform_frame_alloc();
+        deal_completion_frame *second = deal_platform_frame_alloc();
+        deal_platform_post(first);
+        deal_platform_post(second);
+        deal_completion_frame *taken_first = deal_platform_take();
+        if (taken_first == NULL) {
+            printf("FAIL: a posted frame was not taken\n");
+            failures += 1;
+        } else {
+            deal_platform_frame_free(taken_first);
+        }
+        uint64_t queued_start =
+            (uint64_t)deal_platform_monotonic_ns();
+        deal_platform_wait_ns(500000000);
+        uint64_t queued_elapsed =
+            (uint64_t)deal_platform_monotonic_ns() - queued_start;
+        deal_completion_frame *remaining = deal_platform_take();
+        if (remaining == NULL) {
+            printf("FAIL: the second queued frame was lost\n");
+            failures += 1;
+        } else {
+            deal_platform_frame_free(remaining);
+        }
+        if (queued_elapsed > 200000000ULL) {
+            printf("FAIL: the wait slept past a queued frame (%llu ns)\n",
+                   (unsigned long long)queued_elapsed);
+            failures += 1;
+        }
+    }
+
+    /* A burst larger than the wake descriptor's capacity: the write is a hint
+     * and never blocks its poster, and the queue head still carries every
+     * frame. */
+    {
+        enum { DEAL_BURST_FRAMES = 200000 };
+        for (int index = 0; index < DEAL_BURST_FRAMES; index += 1) {
+            deal_platform_post(deal_platform_frame_alloc());
+        }
+        int delivered_burst = 0;
+        deal_completion_frame *frame = NULL;
+        while ((frame = deal_platform_take()) != NULL) {
+            deal_platform_frame_free(frame);
+            delivered_burst += 1;
+        }
+        if (delivered_burst != DEAL_BURST_FRAMES) {
+            printf("FAIL: a burst of %d posts delivered %d frames\n",
+                   (int)DEAL_BURST_FRAMES, delivered_burst);
+            failures += 1;
+        }
+    }
+
     for (int index = 0; index < DEAL_PRODUCER_COUNT; index += 1) {
         bases[index] = (uint32_t)index + 1U;
         if (thrd_create(&producers[index], producer, &bases[index]) != thrd_success) {
@@ -268,6 +325,19 @@ int main(void) {
     }
     int outcome = 1;
     thrd_join(thread, &outcome);
+    printf("unreachable\n");
+    return 0;
+}
+
+#elif DEAL_QUEUE_CASE == 3
+
+int main(void) {
+    /* Appending a length that cannot be added to the reserved payload is the
+     * R10 invariant fault before any storage is reserved: never a wrapped
+     * short region the caller would fill. */
+    deal_completion_frame *frame = deal_platform_frame_alloc();
+    (void)deal_platform_frame_payload(frame, 16u);
+    (void)deal_platform_frame_append(frame, SIZE_MAX - 8u);
     printf("unreachable\n");
     return 0;
 }

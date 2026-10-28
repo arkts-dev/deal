@@ -57,6 +57,12 @@ import java.util.stream.Stream;
  *       collects at every safepoint and changes collection timing only, because
  *       the same driver produces byte-identical output in both modes at both
  *       levels;</li>
+ *   <li>the insertion barrier on a member deletion: while the collector is
+ *       marking, deleting the head and a range around the traced boundary of an
+ *       insertion-ordered record republishes the surviving neighbours' links,
+ *       and every surviving member, key and value stays reachable through them
+ *       with exact reclamation deltas — a rewiring store that skips the barrier
+ *       strands the surviving prefix and its keys;</li>
  *   <li>the M5 root sources: generated root frames, scoped runtime roots, a
  *       registered source (the shape the handle table and the open-operation
  *       table register) enumerated exactly once by the cycle-start walk and

@@ -51,7 +51,9 @@ import java.util.stream.Stream;
  *       fault paths and the zero-slot root frame of the emitted skeleton, plus
  *       its supplementary undefined-behavior-sanitizer build;</li>
  *   <li>the completion queue: concurrent producers, single-consumer exactly-once
- *       delivery, copied payloads, the bounded wait and the ownership
+ *       delivery, copied payloads, the bounded wait, a post burst larger than
+ *       the wake descriptor's capacity that never blocks its poster, a queued
+ *       frame that the wait never sleeps past, the ownership and payload-growth
  *       faults, plus the supplementary ThreadSanitizer-instrumented probe of
  *       the same workload and its release/acquire publication;</li>
  *   <li>symbol ownership in both build shapes and the duplicate/missing
@@ -746,6 +748,7 @@ public final class NativeRuntimeAbiTest {
             String[][] fatal = {
                 {"1", "completion take from a thread that is not the waiting thread"},
                 {"2", "completion frame released while queued"},
+                {"3", "size arithmetic: addition overflow"},
             };
             for (String[] entry : fatal) {
                 Path fatalProduct = scratch.resolve(

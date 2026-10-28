@@ -31,8 +31,10 @@
  * `deal_class_layout`) plus the two construction seams this group drives —
  * instance construction from already validated field data and field extraction
  * from an instance — and this group owns the declaration-order walk, the extra
- * key and required-presence rules, the recursion through nested class plans,
- * the path-local cycle check and the invocation-local scratch.
+ * key and required-presence rules, the descent through nested class plans on
+ * an explicit frame stack (the input's nesting depth is never a C frame, so a
+ * recursive `@jsonable` plan and a deeply nested document both decode), the
+ * path-local cycle check and the invocation-local scratch.
  *
  * `C$fromJson` returns language null on any parse, unknown-key, missing
  * required-field or field-validation failure (`JSON_FROM_NULL`: the swallowed
@@ -115,7 +117,8 @@ typedef const deal_json_class_plan *(*deal_json_plan_lookup)(
 
 /*
  * `C$fromJson`: parses `text` as one object root and decodes the plan's fields
- * in declaration order, recursing through nested class plans. A duplicate
+ * in declaration order, descending into nested class plans and array positions
+ * through that explicit frame stack. A duplicate
  * decoded key, an extra key, a missing required-present key, a field that fails
  * its `JSON_FROM_FIELD` descriptor check and a failed nested decode all answer
  * the language null datum: the `JSON_FROM_NULL` row's swallowed failure never

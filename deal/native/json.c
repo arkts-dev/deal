@@ -1982,53 +1982,183 @@ static deal_error *deal_json_cycle_error(deal_json_encoder *encoder) {
  * The class decode walk (`C$fromJson`, R6)
  * ========================================================================= */
 
-/* One decoded field value: its presence and its persistent datum. */
-typedef struct {
-    int failed;
-    uint8_t present;
-    deal_data value;
-} deal_json_field_value;
+/*
+ * One open position of the decode walk's explicit frame stack (R6). The C11
+ * stack-safe rule covers the class walk exactly as it covers the parser and the
+ * encoder: a `@jsonable` class graph may be recursive (`class Node { child?:
+ * Node }`), so the *input* nesting depth decides the walk depth, and a
+ * recursive C descent would bind that depth to the C stack. One frame holds one
+ * open class construction or one open array position plus the position in the
+ * finished output its value is published into; the caller's loop owns the
+ * descent order, so no depth is ever a C frame.
+ */
+typedef enum {
+    DEAL_JSON_DECODE_CLASS = 0,
+    DEAL_JSON_DECODE_ARRAY = 1
+} deal_json_decode_kind;
 
-static int deal_json_decode_value(deal_data raw, deal_descriptor *descriptor,
-                                  deal_json_plan_lookup lookup, void *context,
-                                  const deal_origin *origin, deal_data *out);
-static int deal_json_decode_class(deal_table *document,
-                                  const deal_json_class_plan *plan,
-                                  deal_json_plan_lookup lookup, void *context,
-                                  const deal_origin *origin, deal_data *out);
+/* One class frame's phases: its declared fields, then the unknown-key scan,
+ * then the one construction that publishes the instance. */
+#define DEAL_JSON_DECODE_FIELDS    0u
+#define DEAL_JSON_DECODE_UNKNOWN   1u
+#define DEAL_JSON_DECODE_CONSTRUCT 2u
+
+/* The answers of one walk step. */
+#define DEAL_JSON_DECODE_OK       0 /* the position's value is in its destination */
+#define DEAL_JSON_DECODE_FAIL     1 /* the position does not admit the value */
+#define DEAL_JSON_DECODE_DESCEND  2 /* one frame was opened */
+#define DEAL_JSON_DECODE_CHILD    3 /* one child position is ready */
+#define DEAL_JSON_DECODE_COMPLETE 4 /* the top frame published its value */
+
+typedef struct deal_json_decode_frame {
+    deal_json_decode_kind kind;
+    /* Where this frame's finished value is published (stable platform or
+     * caller storage, never inside the frame stack). */
+    deal_data *destination;
+    /* One open class construction. */
+    deal_table *document;
+    const deal_json_class_plan *plan;
+    const deal_class_layout *layout;
+    deal_data *values;
+    uint8_t *presence;
+    size_t field_index;
+    size_t field_count;
+    uint32_t phase;
+    /* One open array position (the declared element type and the source array's
+     * recorded element descriptor are both fixed when the frame opens). */
+    deal_array *source;
+    deal_array *decoded;
+    deal_descriptor *source_element;
+    deal_descriptor *element;
+    size_t index;
+    size_t count;
+    /* 1 while the position at `field_index` / `index` is being decoded. */
+    int child_open;
+} deal_json_decode_frame;
+
+/* Releases one frame's invocation-local scratch (M5: no publication). */
+static void deal_json_decode_release_frame(deal_json_decode_frame *frame) {
+    deal_platform_release(frame->values);
+    frame->values = NULL;
+    deal_platform_release(frame->presence);
+    frame->presence = NULL;
+}
+
+/* Opens one frame on the explicit stack, growing it by doubling (R10 on
+ * exhaustion). */
+static deal_json_decode_frame *deal_json_decode_open(
+        deal_json_decode_frame **frames, size_t *depth, size_t *capacity) {
+    if (*depth == *capacity) {
+        size_t grown = *capacity == 0u ? 16u : *capacity * 2u;
+        if (grown <= *capacity) {
+            deal_platform_fault("json: decode frame stack overflow");
+        }
+        size_t bytes = deal_platform_checked_multiply(grown, sizeof(**frames));
+        deal_json_decode_frame *table = deal_platform_allocate(bytes);
+        if (table == NULL) {
+            deal_platform_fault("json: decode frame stack allocation failed");
+        }
+        if (*frames != NULL) {
+            memcpy(table, *frames, *depth * sizeof(**frames));
+            deal_platform_release(*frames);
+        }
+        *frames = table;
+        *capacity = grown;
+    }
+    deal_json_decode_frame *frame = &(*frames)[*depth];
+    memset(frame, 0, sizeof(*frame));
+    *depth += 1u;
+    return frame;
+}
+
+/* Opens one class construction frame for one document and one emitted plan. */
+static void deal_json_decode_open_class(deal_json_decode_frame **frames,
+                                        size_t *depth, size_t *capacity,
+                                        deal_table *document,
+                                        const deal_json_class_plan *plan,
+                                        deal_data *destination) {
+    if (plan == NULL || plan->layout == NULL || plan->construct == NULL) {
+        deal_platform_fault("json: incomplete class plan");
+    }
+    deal_json_decode_frame *frame =
+        deal_json_decode_open(frames, depth, capacity);
+    frame->kind = DEAL_JSON_DECODE_CLASS;
+    frame->destination = destination;
+    frame->document = document;
+    frame->plan = plan;
+    frame->layout = plan->layout;
+    frame->field_count = plan->layout->field_count;
+    frame->phase = DEAL_JSON_DECODE_FIELDS;
+    if (frame->field_count != 0u) {
+        frame->values = deal_platform_allocate(deal_platform_checked_multiply(
+            frame->field_count, sizeof(*frame->values)));
+        frame->presence = deal_platform_allocate(frame->field_count);
+        if (frame->values == NULL || frame->presence == NULL) {
+            deal_platform_fault("json: decode scratch allocation failed");
+        }
+        memset(frame->values, 0, frame->field_count * sizeof(*frame->values));
+        memset(frame->presence, 0, frame->field_count);
+    }
+}
+
+/* Opens one array position: the declared element descriptor is the rebuilt
+ * array's recorded one and the source's recorded descriptor types its elements
+ * (spec v1.5 `T[]`: the fields receive `T` descriptors after validation). */
+static void deal_json_decode_open_array(deal_json_decode_frame **frames,
+                                        size_t *depth, size_t *capacity,
+                                        deal_array *source,
+                                        deal_descriptor *element,
+                                        deal_data *destination) {
+    uint32_t recorded = deal_container_array_element_descriptor(source);
+    deal_array *decoded = deal_container_array_new_typed(
+        DEAL_LAYOUT_ELEMENT_DATUM, deal_descriptor_reference(element), 0u);
+    deal_json_hold(decoded);
+    deal_json_decode_frame *frame =
+        deal_json_decode_open(frames, depth, capacity);
+    frame->kind = DEAL_JSON_DECODE_ARRAY;
+    frame->destination = destination;
+    frame->source = source;
+    frame->decoded = decoded;
+    frame->source_element =
+        recorded == 0u ? NULL : deal_descriptor_of_reference(recorded);
+    frame->element = element;
+    frame->count = deal_container_array_count(source);
+}
 
 /*
- * Decodes one decoded-JSON value against one declared descriptor. A JSON
- * object reaches a class-typed, record-typed or unknown-typed position, a JSON
- * array reaches an array-typed position (rebuilt with the declared element
- * descriptor, spec v1.5 `T[]`: "C$fromJson fields ... receive T descriptors
- * after validation"), and every scalar reaches the delivered descriptor check at
- * the `JSON_FROM_FIELD` boundary. Answers 1 when the position does not admit
- * the value.
+ * Resolves one position: a record, an unknown value or a scalar is written into
+ * `destination` and answers OK (a scalar only after the delivered
+ * `deal_check_value` at the `JSON_FROM_FIELD` boundary, whose swallowed failure
+ * is the `JSON_FROM_NULL` null), a class or an array opens one frame and
+ * answers DESCEND, and a position that does not admit the value answers FAIL.
+ * A nullish descriptor admits its own null/undefined value and otherwise
+ * settles the same position against its base descriptor: a `?T` position adds
+ * exactly the nullish members and no nesting level of its own.
  */
-static int deal_json_decode_value(deal_data raw, deal_descriptor *descriptor,
-                                  deal_json_plan_lookup lookup, void *context,
-                                  const deal_origin *origin, deal_data *out) {
+static int deal_json_settle(deal_data raw, deal_descriptor *descriptor,
+                            deal_json_plan_lookup lookup, void *context,
+                            const deal_origin *origin, deal_data *destination,
+                            deal_json_decode_frame **frames, size_t *depth,
+                            size_t *capacity) {
     if (descriptor == NULL) {
         deal_platform_fault("json: decode position without its descriptor");
     }
-    deal_descriptor_kind kind = deal_descriptor_type(descriptor);
-    if (kind == DEAL_DESCRIPTOR_NULLISH) {
+    while (deal_descriptor_type(descriptor) == DEAL_DESCRIPTOR_NULLISH) {
         if (raw.tag == DEAL_DATA_NULL && deal_descriptor_admits_null(descriptor)) {
-            *out = raw;
-            return 0;
+            *destination = raw;
+            return DEAL_JSON_DECODE_OK;
         }
         if (raw.tag == DEAL_DATA_UNDEFINED
                 && deal_descriptor_admits_undefined(descriptor)) {
-            *out = raw;
-            return 0;
+            *destination = raw;
+            return DEAL_JSON_DECODE_OK;
         }
-        return deal_json_decode_value(raw, deal_descriptor_inner(descriptor),
-                                      lookup, context, origin, out);
+        descriptor = deal_descriptor_inner(descriptor);
     }
+    deal_descriptor_kind kind = deal_descriptor_type(descriptor);
     if (kind == DEAL_DESCRIPTOR_CLASS) {
         if (raw.tag != DEAL_DATA_TABLE) {
-            return 1;
+            return DEAL_JSON_DECODE_FAIL;
         }
         const char *atom = deal_descriptor_class_atom(descriptor);
         const deal_json_class_plan *plan =
@@ -2036,48 +2166,31 @@ static int deal_json_decode_value(deal_data raw, deal_descriptor *descriptor,
         if (plan == NULL) {
             deal_platform_fault("json: no emitted plan for a declared class");
         }
-        return deal_json_decode_class((deal_table *)raw.reference, plan, lookup,
-                                      context, origin, out);
+        deal_json_decode_open_class(frames, depth, capacity,
+                                    (deal_table *)raw.reference, plan,
+                                    destination);
+        return DEAL_JSON_DECODE_DESCEND;
     }
     if (kind == DEAL_DESCRIPTOR_ARRAY) {
         if (raw.tag != DEAL_DATA_ARRAY) {
-            return 1;
+            return DEAL_JSON_DECODE_FAIL;
         }
-        deal_descriptor *element = deal_descriptor_element(descriptor);
-        deal_array *source = (deal_array *)raw.reference;
-        uint32_t recorded = deal_container_array_element_descriptor(source);
-        deal_descriptor *source_element =
-            recorded == 0u ? NULL : deal_descriptor_of_reference(recorded);
-        deal_array *decoded = deal_container_array_new_typed(
-            DEAL_LAYOUT_ELEMENT_DATUM, deal_descriptor_reference(element), 0u);
-        deal_json_hold(decoded);
-        size_t count = deal_container_array_count(source);
-        for (size_t index = 0; index < count; index += 1u) {
-            deal_check_input input;
-            deal_json_element_at(source, index, source_element, &input);
-            deal_data decoded_element;
-            memset(&decoded_element, 0, sizeof(decoded_element));
-            if (deal_json_decode_value(input.datum, element, lookup, context,
-                                       origin, &decoded_element)) {
-                return 1;
-            }
-            /* The element is rooted across the append's own allocation (M5). */
-            (void)deal_root_scope_hold_data(&decoded_element);
-            deal_container_array_append(decoded, &decoded_element);
-        }
-        *out = deal_data_of_reference(DEAL_DATA_ARRAY, decoded);
-        return 0;
+        deal_json_decode_open_array(frames, depth, capacity,
+                                    (deal_array *)raw.reference,
+                                    deal_descriptor_element(descriptor),
+                                    destination);
+        return DEAL_JSON_DECODE_DESCEND;
     }
     if (kind == DEAL_DESCRIPTOR_RECORD) {
         if (raw.tag != DEAL_DATA_TABLE) {
-            return 1;
+            return DEAL_JSON_DECODE_FAIL;
         }
-        *out = raw;
-        return 0;
+        *destination = raw;
+        return DEAL_JSON_DECODE_OK;
     }
     if (kind == DEAL_DESCRIPTOR_UNKNOWN) {
-        *out = raw;
-        return 0;
+        *destination = raw;
+        return DEAL_JSON_DECODE_OK;
     }
     /* Every scalar position runs the delivered check at the JSON_FROM_FIELD
      * boundary; the swallowed failure never escapes (JSON_FROM_NULL). */
@@ -2094,97 +2207,196 @@ static int deal_json_decode_value(deal_data raw, deal_descriptor *descriptor,
     check_context.parameter_index = 0;
     if (deal_check_value(descriptor, input, DEAL_BOUNDARY_TYPE_DESCRIPTOR,
                          &check_context).error != NULL) {
-        return 1;
+        return DEAL_JSON_DECODE_FAIL;
     }
-    *out = raw;
-    return 0;
+    *destination = raw;
+    return DEAL_JSON_DECODE_OK;
+}
+
+/* The destination the current child position of one frame decodes into. An
+ * array element lands in the caller's loop storage because the frame stack may
+ * grow while the child descends; a class field lands in the frame's own scratch
+ * array, which never moves. */
+static deal_data *deal_json_decode_child_destination(
+        deal_json_decode_frame *frame, deal_data *element) {
+    if (frame->kind == DEAL_JSON_DECODE_ARRAY) {
+        memset(element, 0, sizeof(*element));
+        return element;
+    }
+    return &frame->values[frame->field_index];
 }
 
 /*
- * Decodes one JSON object into one class instance through its emitted plan: the
- * declared fields in declaration order, every required-present key present, the
- * unknown keys rejected, and the instance built and tagged only after every
- * field validated. Answers 1 on any failure, publishing nothing.
+ * Advances the top frame: it answers CHILD when one child position is ready
+ * (written into the caller's position and descriptor), COMPLETE after it
+ * published its own value into its destination, and FAIL when a required field
+ * is absent, an unknown key is present or the construction failed.
+ */
+static int deal_json_decode_advance(deal_json_decode_frame *frame,
+                                    deal_data *child_value, deal_data *raw_out,
+                                    deal_descriptor **descriptor_out) {
+    if (frame->kind == DEAL_JSON_DECODE_ARRAY) {
+        if (frame->child_open) {
+            /* The element is an intermediate of the whole rebuilt array, so it
+             * is rooted across the append's own allocation (M5). */
+            (void)deal_root_scope_hold_data(child_value);
+            deal_container_array_append(frame->decoded, child_value);
+            memset(child_value, 0, sizeof(*child_value));
+            frame->child_open = 0;
+            frame->index += 1u;
+        }
+        if (frame->index >= frame->count) {
+            *frame->destination =
+                deal_data_of_reference(DEAL_DATA_ARRAY, frame->decoded);
+            return DEAL_JSON_DECODE_COMPLETE;
+        }
+        deal_check_input input;
+        deal_json_element_at(frame->source, frame->index,
+                             frame->source_element, &input);
+        *raw_out = input.datum;
+        *descriptor_out = frame->element;
+        frame->child_open = 1;
+        return DEAL_JSON_DECODE_CHILD;
+    }
+    if (frame->child_open) {
+        /* A decoded field is an intermediate of the whole construction, so it
+         * is rooted until the instance that stores it exists (M5). */
+        (void)deal_root_scope_hold_data(&frame->values[frame->field_index]);
+        frame->child_open = 0;
+        frame->field_index += 1u;
+    }
+    while (1) {
+        if (frame->phase == DEAL_JSON_DECODE_FIELDS) {
+            if (frame->field_index >= frame->field_count) {
+                frame->phase = DEAL_JSON_DECODE_UNKNOWN;
+                continue;
+            }
+            const deal_class_field *field =
+                &frame->layout->fields[frame->field_index];
+            if (field->name == NULL || field->descriptor == NULL) {
+                deal_platform_fault("json: incomplete class field");
+            }
+            deal_string *key = deal_text_new(field->name, strlen(field->name));
+            deal_json_hold(key);
+            if (!deal_container_table_has(frame->document, key)) {
+                if (!field->optional) {
+                    return DEAL_JSON_DECODE_FAIL;
+                }
+                frame->field_index += 1u;
+                continue;
+            }
+            frame->presence[frame->field_index] = 1u;
+            *raw_out = deal_container_table_read(frame->document, key);
+            *descriptor_out = field->descriptor;
+            frame->child_open = 1;
+            return DEAL_JSON_DECODE_CHILD;
+        }
+        if (frame->phase == DEAL_JSON_DECODE_UNKNOWN) {
+            /* An unknown key is rejected: every present key must name a
+             * declared field (spec v1.5 `@jsonable` fromJson). */
+            size_t present = deal_container_table_count(frame->document);
+            for (size_t index = 0; index < present; index += 1u) {
+                deal_string *key =
+                    deal_container_table_key_at(frame->document, index);
+                int declared = 0;
+                for (size_t field_index = 0;
+                        field_index < frame->field_count; field_index += 1u) {
+                    deal_string *name = deal_text_new(
+                        frame->layout->fields[field_index].name,
+                        strlen(frame->layout->fields[field_index].name));
+                    deal_json_hold(name);
+                    if (deal_text_compare(name, key) == 0) {
+                        declared = 1;
+                        break;
+                    }
+                }
+                if (!declared) {
+                    return DEAL_JSON_DECODE_FAIL;
+                }
+            }
+            frame->phase = DEAL_JSON_DECODE_CONSTRUCT;
+            continue;
+        }
+        /* One construction, only after every field and key validated, so a
+         * rejected document publishes no instance (R2, R4). */
+        deal_outcome_data constructed = frame->plan->construct(
+            frame->layout, frame->values, frame->presence, frame->plan->context);
+        if (constructed.error != NULL) {
+            return DEAL_JSON_DECODE_FAIL;
+        }
+        *frame->destination = constructed.value;
+        return DEAL_JSON_DECODE_COMPLETE;
+    }
+}
+
+/*
+ * Runs the whole decode walk of one parsed document against one class plan
+ * through the explicit frame stack (R6): the declared fields in declaration
+ * order, every required-present key present, every unknown key rejected, and
+ * the instance built and tagged only after every field validated. Answers 1 on
+ * any failure, publishing nothing.
  */
 static int deal_json_decode_class(deal_table *document,
                                   const deal_json_class_plan *plan,
                                   deal_json_plan_lookup lookup, void *context,
                                   const deal_origin *origin, deal_data *out) {
-    if (plan == NULL || plan->layout == NULL || plan->construct == NULL) {
-        deal_platform_fault("json: incomplete class plan");
-    }
-    const deal_class_layout *layout = plan->layout;
-    size_t field_count = layout->field_count;
-    deal_data *values = NULL;
-    uint8_t *presence = NULL;
-    if (field_count != 0u) {
-        values = deal_platform_allocate(field_count * sizeof(*values));
-        presence = deal_platform_allocate(field_count);
-        if (values == NULL || presence == NULL) {
-            deal_platform_fault("json: decode scratch allocation failed");
-        }
-        memset(values, 0, field_count * sizeof(*values));
-        memset(presence, 0, field_count);
-    }
+    deal_json_decode_frame *frames = NULL;
+    size_t depth = 0u;
+    size_t capacity = 0u;
+    deal_data child_value;
+    memset(&child_value, 0, sizeof(child_value));
+    deal_data raw = deal_data_of_reference(DEAL_DATA_TABLE, document);
+    deal_descriptor *descriptor = NULL;
+    deal_data *destination = out;
     int failed = 0;
-    for (size_t index = 0; index < field_count; index += 1u) {
-        const deal_class_field *field = &layout->fields[index];
-        if (field->name == NULL || field->descriptor == NULL) {
-            deal_platform_fault("json: incomplete class field");
-        }
-        deal_string *key = deal_text_new(field->name, strlen(field->name));
-        deal_json_hold(key);
-        if (!deal_container_table_has(document, key)) {
-            if (!field->optional) {
+    int advancing = 0;
+
+    deal_json_decode_open_class(&frames, &depth, &capacity, document, plan,
+                                out);
+    advancing = 1;
+    while (1) {
+        if (!advancing) {
+            int settled = deal_json_settle(raw, descriptor, lookup, context,
+                                           origin, destination, &frames, &depth,
+                                           &capacity);
+            if (settled == DEAL_JSON_DECODE_FAIL) {
                 failed = 1;
                 break;
             }
+            if (settled == DEAL_JSON_DECODE_OK && depth == 0u) {
+                break;
+            }
+            /* OK publishes one frame's child; DESCEND opened a new top frame. */
+            advancing = 1;
             continue;
         }
-        presence[index] = 1u;
-        deal_data raw = deal_container_table_read(document, key);
-        if (deal_json_decode_value(raw, field->descriptor, lookup, context,
-                                   origin, &values[index])) {
+        if (depth == 0u) {
+            break;
+        }
+        deal_json_decode_frame *frame = &frames[depth - 1u];
+        int stepped = deal_json_decode_advance(frame, &child_value, &raw,
+                                               &descriptor);
+        if (stepped == DEAL_JSON_DECODE_FAIL) {
             failed = 1;
             break;
         }
-        /* A decoded field value is an intermediate of the whole construction,
-         * so it is rooted until the instance that stores it exists (M5). */
-        (void)deal_root_scope_hold_data(&values[index]);
-    }
-    if (!failed) {
-        /* An unknown key is rejected: every present key must name a declared
-         * field (spec v1.5 `@jsonable` fromJson). */
-        size_t present = deal_container_table_count(document);
-        for (size_t index = 0; index < present && !failed; index += 1u) {
-            deal_string *key = deal_container_table_key_at(document, index);
-            int declared = 0;
-            for (size_t field_index = 0; field_index < field_count; field_index += 1u) {
-                const deal_class_field *field = &layout->fields[field_index];
-                deal_string *name = deal_text_new(field->name, strlen(field->name));
-                deal_json_hold(name);
-                if (deal_text_compare(name, key) == 0) {
-                    declared = 1;
-                    break;
-                }
-            }
-            if (!declared) {
-                failed = 1;
-            }
+        if (stepped == DEAL_JSON_DECODE_CHILD) {
+            destination = deal_json_decode_child_destination(frame,
+                                                             &child_value);
+            advancing = 0;
+            continue;
+        }
+        deal_json_decode_release_frame(frame);
+        depth -= 1u;
+        if (depth == 0u) {
+            break;
         }
     }
-    deal_outcome_data constructed;
-    memset(&constructed, 0, sizeof(constructed));
-    if (!failed) {
-        constructed = plan->construct(layout, values, presence, plan->context);
+    for (size_t index = 0; index < depth; index += 1u) {
+        deal_json_decode_release_frame(&frames[index]);
     }
-    deal_platform_release(values);
-    deal_platform_release(presence);
-    if (failed || constructed.error != NULL) {
-        return 1;
-    }
-    *out = constructed.value;
-    return 0;
+    deal_platform_release(frames);
+    return failed;
 }
 
 deal_outcome_data deal_json_from_class(deal_string *text,

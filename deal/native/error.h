@@ -248,7 +248,13 @@ uint32_t deal_call_frame_depth(void);
 deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin);
 
-/* The optional recorded fields; each stores a copy of the given text. */
+/*
+ * The optional recorded fields; each stores a copy of the given text. The copy
+ * is taken before the previous value is released, so text the record already
+ * owns — the accessor's own pointer, or a pointer interior to it — may be
+ * passed back unchanged. A NULL replacement clears the field, which stays
+ * absent rather than becoming an empty string.
+ */
 void deal_error_set_expected(deal_error *error, const char *expected);
 void deal_error_set_actual(deal_error *error, const char *actual);
 

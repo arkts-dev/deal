@@ -22,6 +22,7 @@
 #include "deal/native/platform.h"
 #include "deal/native/value.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -33,7 +34,8 @@
 #define TEST_LAYOUT_PAIR   1025u
 #define TEST_LAYOUT_SECOND 1026u
 
-#if DEAL_MEMORY_CASE == 0 || DEAL_MEMORY_CASE == 1
+#if DEAL_MEMORY_CASE == 0 || DEAL_MEMORY_CASE == 1 \
+    || DEAL_MEMORY_CASE == 11
 static const uint32_t test_pair_offsets[] = { 0u, 8u };
 
 static const deal_layout test_layouts[] = {
@@ -476,6 +478,25 @@ int main(void) {
 #elif DEAL_MEMORY_CASE == 9
 int main(void) {
     (void)deal_cell_read(deal_undefined_singleton);
+    printf("unreachable\n");
+    return 0;
+}
+#elif DEAL_MEMORY_CASE == 11
+int main(void) {
+    /* The header-and-payload total of this size can be added but not aligned:
+     * the checked alignment is the R10 invariant fault before the safepoint,
+     * the storage and the payload memset, never a wrapped short region. */
+    deal_layout_install(test_layouts,
+                        sizeof(test_layouts) / sizeof(test_layouts[0]));
+    (void)deal_alloc(TEST_LAYOUT_NUMBER, SIZE_MAX - 32u);
+    printf("unreachable\n");
+    return 0;
+}
+#elif DEAL_MEMORY_CASE == 12
+int main(void) {
+    /* A page round of this size overflows the address space: the R10 invariant
+     * fault, never a short region or an invalid release size. */
+    (void)deal_platform_page_alloc(SIZE_MAX);
     printf("unreachable\n");
     return 0;
 }

@@ -296,9 +296,10 @@ static deal_object_header *deal_heap_head;
 static deal_object_header *deal_heap_tail;
 static deal_object_header *deal_heap_free[DEAL_ALLOC_SIZE_CLASS_MAX + 1u];
 
-/* The size class of one rounded allocation (M1's sweep bucket). */
-static uint32_t deal_alloc_size_class(size_t total) {
-    size_t size_class = (total + DEAL_ALLOC_SIZE_CLASS_BYTES - 1u)
+/* The size class of one aligned allocation (M1's sweep bucket). */
+static uint32_t deal_alloc_size_class(size_t aligned) {
+    size_t size_class = deal_platform_checked_add(
+        aligned, DEAL_ALLOC_SIZE_CLASS_BYTES - 1u)
         / DEAL_ALLOC_SIZE_CLASS_BYTES;
     if (size_class == 0u) {
         size_class = 1u;
@@ -309,9 +310,15 @@ static uint32_t deal_alloc_size_class(size_t total) {
     return (uint32_t)size_class;
 }
 
-static unsigned char *deal_alloc_carve(size_t total) {
-    size_t aligned = (total + (DEAL_OBJECT_ALIGNMENT - 1u))
-        & ~(size_t)(DEAL_OBJECT_ALIGNMENT - 1u);
+/* One allocation's total size, aligned for its header (M1). The rounding runs
+ * through the shared checked entry, so a total that cannot be aligned is the
+ * R10 invariant fault instead of a wrapped region the payload store would
+ * overrun. */
+static size_t deal_alloc_aligned(size_t total) {
+    return deal_platform_checked_round(total, (size_t)DEAL_OBJECT_ALIGNMENT);
+}
+
+static unsigned char *deal_alloc_carve(size_t aligned) {
     if (deal_alloc_current == NULL
             || deal_alloc_current->capacity - deal_alloc_current->used < aligned) {
         size_t block_bytes = aligned > DEAL_ALLOC_BLOCK_BYTES
@@ -378,20 +385,19 @@ void *deal_alloc(uint32_t layout, size_t size) {
     if (size < record->size) {
         deal_platform_fault("alloc: size below the layout payload size");
     }
-    if (size > SIZE_MAX - sizeof(deal_object_header)) {
-        deal_platform_fault("alloc: size overflow");
-    }
+    /* The header-and-payload total and its alignment are computed before the
+     * safepoint: a size that cannot exist is the R10 invariant fault and leaves
+     * the heap exactly as it was. */
+    size_t aligned = deal_alloc_aligned(
+        deal_platform_checked_add(sizeof(deal_object_header), size));
+    uint32_t size_class = deal_alloc_size_class(aligned);
     /* The safepoint runs before this object exists, so a bounded marking or
      * sweeping slice (or the whole collection under DEAL_GC_STRESS) completes
      * against the objects that exist already (M3, M7). */
     deal_safepoint();
-    size_t total = sizeof(deal_object_header) + size;
-    uint32_t size_class = deal_alloc_size_class(
-        (total + (DEAL_OBJECT_ALIGNMENT - 1u))
-            & ~(size_t)(DEAL_OBJECT_ALIGNMENT - 1u));
     deal_object_header *header = deal_heap_take_free(size_class, size);
     if (header == NULL) {
-        header = (deal_object_header *)(void *)deal_alloc_carve(total);
+        header = (deal_object_header *)(void *)deal_alloc_carve(aligned);
     }
     header->layout = layout;
     header->size_class = size_class;

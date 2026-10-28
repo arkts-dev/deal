@@ -55,6 +55,11 @@ import java.util.Map;
  *       required presence, rejected unknown keys, preserved optional absence,
  *       the required-undefined asymmetry, non-finite to null and the walk and
  *       cycle arms;</li>
+ *   <li>the stack-safe traversal of both class walks: a recursive
+ *       {@code @jsonable} plan decodes a 100000-level document — nested through
+ *       the class field and nested through an array — to its innermost level
+ *       with the explicit frame stack, exactly as the parser and the encoder
+ *       carry no nesting cap;</li>
  *   <li>byte-identical observations at both levels and under
  *       {@code DEAL_GC_STRESS=1}, and the deterministic producer/invariant
  *       defects of the two groups (one stderr line, exit 2).</li>
@@ -232,6 +237,21 @@ public final class NativeJsonStdlibTest {
             "the encoder's scratch stays linear in nesting depth at -O" + level);
         checkEq("", deep.stderr(), "the deep round trip publishes no fault at -O"
             + level);
+
+        // The class decode walk is stack-safe for the same reason: a recursive
+        // `@jsonable` plan decoded from a 100000-level document reaches the
+        // innermost level through the explicit frame stack, for the chain shape
+        // and for the nested-array shape.
+        NativeCompiler.Result classDeep = NativeCompiler.execute(product, scratch,
+            Map.of("DEAL_JSON_CLASS_DEEP", "100000"));
+        checkEq(0, classDeep.exitCode(), "the deep class decode walk exits zero at"
+            + " -O" + level + ": " + classDeep.describe());
+        checkEq("CLASSDEEP\tchain\t100000\t100000\n"
+                + "CLASSDEEP\tarray\t100000\t100000\n", classDeep.stdout(),
+            "the class decode walk is stack-safe in nested classes and nested"
+                + " arrays at -O" + level);
+        checkEq("", classDeep.stderr(), "the deep class decode walk publishes no"
+            + " fault at -O" + level);
 
         if (level == 2) {
             Path reference = scratch.resolve("json-stdlib-o0");

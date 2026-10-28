@@ -320,6 +320,50 @@ int main(void) {
           "with no second release of an earlier record's storage");
     deal_root_frame_leave();
 
+    /* -- 6. re-setting a text field from the record's own text ----------- */
+    deal_root_frame_enter(1u);
+    deal_error *record = create_full_error();
+    deal_root_frame_write(0u, record);
+    const size_t owned = platform_live();
+    const char *text = NULL;
+    const char *read_back = NULL;
+
+    /* The accessor answers the record's own copy, so passing that pointer
+     * straight back must copy it before the previous value is released. */
+    check(deal_error_expected(record, &text) == 1,
+          "the record answers with its expected text");
+    deal_error_set_expected(record, text);
+    check(deal_error_expected(record, &read_back) == 1
+              && strcmp(read_back, "expected text") == 0,
+          "re-setting the expected field from its own pointer keeps the text");
+    /* An interior alias of the same copy is the same hazard: the suffix is
+     * copied out before the buffer it points into is released. */
+    text = NULL;
+    check(deal_error_actual(record, &text) == 1,
+          "the record answers with its actual text");
+    deal_error_set_actual(record, text + 1);
+    read_back = NULL;
+    check(deal_error_actual(record, &read_back) == 1
+              && strcmp(read_back, "ctual text") == 0,
+          "re-setting the actual field from an interior alias keeps the suffix");
+    check(platform_live() == owned,
+          "replacing a text field copies before it releases, so the record "
+          "still owns exactly one copy per field");
+    /* A cleared field stays absent: presence is the accessor's answer, never
+     * an empty string. */
+    deal_error_set_expected(record, NULL);
+    read_back = NULL;
+    check(deal_error_expected(record, &read_back) == 0,
+          "a cleared text field is absent, never empty text");
+    check(platform_live() + 1u == owned,
+          "clearing a text field releases exactly that field's copy");
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    check(platform_live() == baseline,
+          "reclaiming the record of the re-set case returns the platform "
+          "allocation count to its baseline");
+    deal_root_frame_leave();
+
     printf(failures == 0 ? "error reclaim ok\n" : "error reclaim failed\n");
     return failures == 0 ? 0 : 1;
 }

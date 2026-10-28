@@ -17,6 +17,7 @@
 #include <limits.h>
 #include <poll.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -154,6 +155,41 @@ int64_t deal_platform_realtime_ns(void) {
 }
 
 /* =========================================================================
+ * Checked size arithmetic (R10)
+ * ========================================================================= */
+
+/*
+ * The sizes that reach an allocation, an alignment or a page round are sums,
+ * products and round-ups of untrusted lengths (a completion payload, a managed
+ * payload and its header, a table capacity and its stride). Each one is
+ * computed here instead of modulo the address space, so an impossible size is
+ * the R10 invariant fault before any storage exists, never a short region that
+ * a later store or memset overruns.
+ */
+size_t deal_platform_checked_add(size_t left, size_t right) {
+    if (right > SIZE_MAX - left) {
+        deal_platform_fault("size arithmetic: addition overflow");
+    }
+    return left + right;
+}
+
+size_t deal_platform_checked_multiply(size_t left, size_t right) {
+    if (left != 0u && right > SIZE_MAX / left) {
+        deal_platform_fault("size arithmetic: multiplication overflow");
+    }
+    return left * right;
+}
+
+size_t deal_platform_checked_round(size_t bytes, size_t multiple) {
+    if (multiple == 0u) {
+        deal_platform_fault("size arithmetic: zero rounding multiple");
+    }
+    size_t bounded = deal_platform_checked_add(bytes, multiple - 1u);
+    size_t rounded = (bounded / multiple) * multiple;
+    return rounded == 0u ? multiple : rounded;
+}
+
+/* =========================================================================
  * Platform memory
  * ========================================================================= */
 
@@ -166,9 +202,7 @@ static size_t deal_platform_page_size(void) {
 }
 
 static size_t deal_platform_page_round(size_t bytes) {
-    size_t page = deal_platform_page_size();
-    size_t rounded = ((bytes + page - 1) / page) * page;
-    return rounded == 0 ? page : rounded;
+    return deal_platform_checked_round(bytes, deal_platform_page_size());
 }
 
 void *deal_platform_page_alloc(size_t bytes) {
@@ -242,7 +276,11 @@ static void deal_queue_create(void) {
     if (pipe(descriptors) != 0) {
         deal_platform_fault("completion wake descriptor creation failed");
     }
-    if (fcntl(descriptors[0], F_SETFL, O_NONBLOCK) != 0) {
+    /* Both ends are non-blocking: a burst of posts must never block its poster
+     * once the descriptor is full (the queue head carries the frames, the byte
+     * is only the wake hint), and the consumer's drain must never block. */
+    if (fcntl(descriptors[0], F_SETFL, O_NONBLOCK) != 0
+            || fcntl(descriptors[1], F_SETFL, O_NONBLOCK) != 0) {
         deal_platform_fault("completion wake descriptor configuration failed");
     }
     deal_queue_wake_read = descriptors[0];
@@ -251,6 +289,12 @@ static void deal_queue_create(void) {
 
 static void deal_queue_ensure(void) {
     call_once(&deal_queue_once, deal_queue_create);
+}
+
+/* 1 when the queue still holds a frame: the authority the wake bytes hint at. */
+static int deal_queue_pending(void) {
+    return atomic_load_explicit(&deal_queue_head, memory_order_acquire) != NULL
+        ? 1 : 0;
 }
 
 static void deal_queue_drain_wake(void) {
@@ -342,7 +386,10 @@ unsigned char *deal_platform_frame_append(deal_completion_frame *frame,
     if (frame->state != DEAL_FRAME_UNPUBLISHED) {
         deal_platform_fault("completion frame append after publication");
     }
-    size_t grown = frame->payload_size + additional;
+    /* A burst copy-in appends a record and its copied text: the total is the
+     * overflow-checked sum, so an impossible payload is the R10 fault before
+     * any storage is reserved. */
+    size_t grown = deal_platform_checked_add(frame->payload_size, additional);
     if (additional == 0) {
         return frame->payload == NULL ? NULL
             : frame->payload + frame->payload_size;
@@ -386,6 +433,8 @@ void deal_platform_post(deal_completion_frame *frame) {
             break;
         }
     }
+    /* The wake write is a hint, never a transfer: a full descriptor answers
+     * EAGAIN and the frame is already published for the next take. */
     unsigned char signal = 1;
     ssize_t ignored = write(deal_queue_wake_write, &signal, 1);
     (void)ignored;
@@ -423,6 +472,12 @@ void deal_platform_wait_ns(int64_t interval_ns) {
     descriptor.fd = deal_queue_wake_read;
     descriptor.events = POLLIN;
     descriptor.revents = 0;
+    /* A queued frame is the authority, and an earlier take may already have
+     * drained every wake byte. Sleeping here would sleep past a delivered
+     * frame, so the head is observed before the descriptor blocks. */
+    if (deal_queue_pending() != 0) {
+        return;
+    }
     int ready = poll(&descriptor, 1, (int)slice_ms);
     if (ready < 0) {
         deal_queue_drain_wake();

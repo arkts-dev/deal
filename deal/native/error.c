@@ -410,20 +410,32 @@ deal_error *deal_error_create(const char *code, const char *message,
     return deal_error_allocate(code, message, origin, 1);
 }
 
+/*
+ * Replaces one optional text field of a record (R5, R9). The copy is taken
+ * before the previous value is released: the caller may pass a pointer the
+ * record itself owns — the accessor-returned `expected`/`actual` text — or a
+ * pointer interior to it, so releasing first would read the freed text. A NULL
+ * replacement clears the field, which stays absent and never becomes an empty
+ * string.
+ */
+static void deal_error_replace_text(char **field, const char *text) {
+    char *copy = deal_platform_duplicate(text);
+    deal_platform_release(*field);
+    *field = copy;
+}
+
 void deal_error_set_expected(deal_error *error, const char *expected) {
     if (error == NULL) {
         deal_platform_fault("error record: null error for the expected field");
     }
-    deal_platform_release(error->expected);
-    error->expected = deal_platform_duplicate(expected);
+    deal_error_replace_text(&error->expected, expected);
 }
 
 void deal_error_set_actual(deal_error *error, const char *actual) {
     if (error == NULL) {
         deal_platform_fault("error record: null error for the actual field");
     }
-    deal_platform_release(error->actual);
-    error->actual = deal_platform_duplicate(actual);
+    deal_error_replace_text(&error->actual, actual);
 }
 
 void deal_error_set_cause(deal_error *error, deal_error *cause) {

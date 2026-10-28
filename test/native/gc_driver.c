@@ -591,7 +591,186 @@ static void check_barrier_shades_a_white_referent(void) {
 }
 
 /* =========================================================================
- * 3c. Collection without an explicit collection call (the growth policy)
+ * 3c. The record-deletion barrier: the rewired list links (M2)
+ * ========================================================================= */
+
+/*
+ * The member count this case inserts. The first bounded marking slice traces
+ * the tail part of the list, so the cycle is still marking when the deletions
+ * below run and the members they rewire are marked or traced already.
+ */
+#define TEST_DELETE_ENTRIES 100u
+
+/*
+ * The deleted members: the head, whose removal republishes the record's own
+ * `head` slot, and the range [TEST_DELETE_FIRST, TEST_DELETE_LAST], which
+ * contains the boundary between the traced tail of the list and the untraced
+ * prefix and whose removal republishes the neighbours' `next` and `previous`
+ * links. Deleting the head and the boundary range together severs every path
+ * from a marked member to the prefix, so a rewiring store that skips the
+ * insertion barrier strands the whole surviving prefix and its keys.
+ */
+#define TEST_DELETE_FIRST 10u
+#define TEST_DELETE_LAST  90u
+
+/* The removed members: the head plus the deleted range. */
+#define TEST_DELETE_COUNT (1u + (size_t)(TEST_DELETE_LAST - TEST_DELETE_FIRST + 1u))
+
+/* The members that survive every deletion. */
+#define TEST_DELETE_SURVIVORS (TEST_DELETE_ENTRIES - TEST_DELETE_COUNT)
+
+/* 1 when the record's member at `index` still carries `text` as its key. */
+static int table_key_is(deal_table *table, size_t index, const char *text) {
+    deal_string *key = deal_container_table_key_at(table, index);
+    if (key == NULL) {
+        return 0;
+    }
+    deal_root_scope_push();
+    deal_string *expected = deal_text_new(text, strlen(text));
+    (void)deal_root_scope_hold(expected);
+    int same = deal_text_compare(key, expected) == 0;
+    deal_root_scope_pop();
+    return same;
+}
+
+/* The managed referent stored under `text`, or NULL. */
+static void *table_referent(deal_table *table, const char *text) {
+    deal_root_scope_push();
+    deal_string *key = deal_text_new(text, strlen(text));
+    (void)deal_root_scope_hold(key);
+    deal_data datum = deal_container_table_read(table, key);
+    deal_root_scope_pop();
+    return datum.reference;
+}
+
+/*
+ * The record-deletion case that isolates the list rewiring of
+ * `deal_container_table_delete`. The record and one value node per member are
+ * built before the cycle starts and their key pointers are kept in the driver's
+ * own array; the explicit safepoint then runs one bounded marking slice, and
+ * the deletions below only rewire links — every key is already in hand, so
+ * nothing allocates and no safepoint advances the cycle out of its marking
+ * phase.
+ * Deleting a member republishes its neighbours' `next`, `previous`, `head` and
+ * `tail` links, and each of those is a managed-reference store into an already
+ * marked container: only the insertion barrier keeps a still-white neighbour
+ * that the rewiring alone names alive for the cycle's sweep.
+ */
+static void check_record_deletion_barrier(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record prepared;
+    deal_gc_statistics_record stored;
+    deal_gc_statistics_record after;
+    deal_string *keys[TEST_DELETE_ENTRIES];
+    size_t top_up = 0u;
+    int survivors_live = 0;
+
+    deal_root_frame_enter(3u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the record-deletion case starts from an empty heap");
+
+    deal_table *table = deal_container_table_new();
+    deal_root_frame_write(0u, table);
+    for (uint32_t index = 0; index < TEST_DELETE_ENTRIES; index += 1u) {
+        char label[8];
+        (void)snprintf(label, sizeof(label), "k%u", (unsigned)index);
+        deal_string *key = deal_text_new(label, strlen(label));
+        deal_root_frame_write(1u, key);
+        void *value = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+        node_set_mark(value, index);
+        deal_root_frame_write(2u, value);
+        deal_data datum = deal_data_of_reference(DEAL_DATA_CLASS, value);
+        deal_container_table_write(table, key, &datum);
+        keys[index] = key;
+        deal_root_frame_write(1u, NULL);
+        deal_root_frame_write(2u, NULL);
+    }
+    check(deal_container_table_count(table) == TEST_DELETE_ENTRIES,
+          "the record-deletion case inserts every member it deletes");
+    read_statistics(&prepared);
+
+    /* Fill the remaining trigger volume with one dropped object, so the explicit
+     * safepoint below — and not an allocation of the setup — starts the cycle. */
+    uint64_t accumulated = prepared.allocated_bytes - before.allocated_bytes;
+    check(accumulated < (uint64_t)TEST_BARRIER_TRIGGER,
+          "the record-deletion case keeps its setup below the collection "
+          "trigger");
+    top_up = accumulated < (uint64_t)TEST_BARRIER_TRIGGER
+        ? (size_t)((uint64_t)TEST_BARRIER_TRIGGER - accumulated)
+        : (size_t)TEST_BULK_BYTES;
+    check(top_up >= TEST_BULK_BYTES,
+          "the pressure object fills the remaining trigger volume");
+    (void)deal_alloc(TEST_LAYOUT_BULK, top_up);
+
+    /* One bounded marking slice: the record and the tail part of the list it
+     * holds are marked and traced, and the cycle stays in its marking phase. */
+    deal_safepoint();
+
+    /* The deletions: the head, then the range around the traced boundary. No
+     * step allocates, so the cycle stays exactly where that slice left it. */
+    deal_container_table_delete(table, keys[0]);
+    for (uint32_t index = TEST_DELETE_FIRST; index <= TEST_DELETE_LAST;
+            index += 1u) {
+        deal_container_table_delete(table, keys[index]);
+    }
+    check(deal_container_table_count(table) == TEST_DELETE_SURVIVORS,
+          "the record keeps exactly the members the case did not delete");
+    read_statistics(&stored);
+
+    deal_gc_collect_full();
+    read_statistics(&after);
+
+    /* The only objects the cycle may reclaim are the deleted members with their
+     * keys and values and the dropped pressure object. A survivor the rewiring
+     * failed to shade is one entry, one key and one value per member more, and
+     * the whole prefix that hangs off it. */
+    check(after.swept_objects == stored.swept_objects + 3u * TEST_DELETE_COUNT
+              + (stress_mode == 0 ? 1u : 0u),
+          "the cycle reclaims exactly the deleted members and the dropped "
+          "pressure object");
+    survivors_live = after.swept_objects == stored.swept_objects
+        + 3u * TEST_DELETE_COUNT + (stress_mode == 0 ? 1u : 0u);
+    check(after.object_count == 1u + 3u * TEST_DELETE_SURVIVORS,
+          "the record and every surviving member survive the deletion cycle");
+    check(deal_container_table_count(table) == TEST_DELETE_SURVIVORS,
+          "the surviving record keeps its member count");
+
+    /* The survivors keep their first-insertion order, their keys and their
+     * values: no rewired neighbour was reclaimed out of the list. */
+    check(table_key_is(table, 0u, "k1"),
+          "the surviving list starts at the member that followed the deleted "
+          "head");
+    check(table_key_is(table, 8u, "k9"),
+          "the surviving list holds the members below the deleted range");
+    check(table_key_is(table, 9u, "k91"),
+          "the surviving list closes the deleted range");
+    check(table_key_is(table, TEST_DELETE_SURVIVORS - 1u, "k99"),
+          "the surviving list still ends at its last member");
+    if (survivors_live != 0) {
+        check(node_mark(table_referent(table, "k1")) == 1u,
+              "the member below the deleted head keeps its value");
+        check(node_mark(table_referent(table, "k9")) == 9u,
+              "the member below the deleted range keeps its value");
+        check(node_mark(table_referent(table, "k99")) == 99u,
+              "the last member keeps its value");
+    }
+
+    deal_root_frame_write(0u, NULL);
+    deal_root_frame_write(1u, NULL);
+    deal_root_frame_write(2u, NULL);
+    deal_gc_collect_full();
+    read_statistics(&after);
+    check(after.object_count == 0u && after.live_bytes == 0u,
+          "the record-deletion case leaves no managed object behind");
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the record-deletion case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* =========================================================================
+ * 3d. Collection without an explicit collection call (the growth policy)
  * ========================================================================= */
 static void check_automatic_collection(void) {
     deal_gc_statistics_record before;
@@ -626,7 +805,7 @@ static void check_automatic_collection(void) {
 }
 
 /* =========================================================================
- * 3d. The allocation-time mark of an object allocated inside an in-flight
+ * 3e. The allocation-time mark of an object allocated inside an in-flight
  *     incremental cycle (M1)
  * ========================================================================= */
 
@@ -1289,6 +1468,7 @@ int main(void) {
     check_live_cycle_survives();
     check_barrier_and_incremental_cycle();
     check_barrier_shades_a_white_referent();
+    check_record_deletion_barrier();
     check_automatic_collection();
     check_allocation_mark_in_inflight_cycle();
     check_scalar_and_nullish_replacement();

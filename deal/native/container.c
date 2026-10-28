@@ -498,15 +498,27 @@ void deal_container_table_delete(deal_table *table, deal_string *key) {
     if (entry == NULL) {
         return;
     }
-    if (entry->previous == NULL) {
-        record->head = entry->next;
+    /* Deleting a member republishes its neighbours' links, and those are
+     * managed-reference stores into an already reachable container and its
+     * entries: each one runs the insertion barrier before it publishes, exactly
+     * like a value store (M2). Without it a member that only the rewired link
+     * names would stay unmarked while the collector is marking and be swept out
+     * of a list that still points at it. */
+    deal_table_entry *next = entry->next;
+    deal_table_entry *previous = entry->previous;
+    if (previous == NULL) {
+        deal_store_barrier(record, next);
+        record->head = next;
     } else {
-        entry->previous->next = entry->next;
+        deal_store_barrier(previous, next);
+        previous->next = next;
     }
-    if (entry->next == NULL) {
-        record->tail = entry->previous;
+    if (next == NULL) {
+        deal_store_barrier(record, previous);
+        record->tail = previous;
     } else {
-        entry->next->previous = entry->previous;
+        deal_store_barrier(next, previous);
+        next->previous = previous;
     }
     entry->next = NULL;
     entry->previous = NULL;
