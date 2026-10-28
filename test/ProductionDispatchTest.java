@@ -4760,31 +4760,12 @@ public class ProductionDispatchTest {
     }
 
     // =========================================================================
-    // The closed SQRT_NEGATIVE arm at math.sqrt(-1.0) (v1.4)
+    // Binary64 sqrt through three published consumers
     // =========================================================================
 
-    /**
-     * The closed {@code SQRT_NEGATIVE} arm at {@code math.sqrt(-1.0)} on
-     * the three production lanes: the fixture
-     * {@code backend-runtime/stdlib/math/sqrt-negative} is compiled through
-     * the release-owned production CLI for each backend and its published
-     * artifact is executed under the real toolchain (entry {@code main}
-     * once, then the fixture's own zero-arity export).
-     *
-     * <p>The fixture's Structured Expectation Sidecar is the pin: code,
-     * message, the failing call expression's own source coordinate and the
-     * canonical hex-float actual. The sidecar pins no {@code expected}
-     * member — the closed arm has none — so the drive additionally asserts
-     * that absence structurally (each probe prints a distinct
-     * {@code <absent>} marker for an absent field, never an empty text): a
-     * lane that re-introduces an expected token is a named failure on that
-     * lane. The JS realization of {@code std/math} and the LuaJIT
-     * realization of {@code std/math} publish the same tuple their compiled
-     * lanes do, so the three observations agree byte for byte.</p>
-     */
-    private static void testMathSqrtNegativeArmThreeLanes() throws Exception {
-        System.out.println("-- the closed SQRT_NEGATIVE arm at math.sqrt(-1.0)"
-            + " on LuaJIT, the JVM and the JS lane --");
+    /** Execute the fixture's NaN, infinity and signed-zero assertions on real artifacts. */
+    private static void testMathSqrtBinary64ThreeLanes() throws Exception {
+        System.out.println("-- binary64 sqrt on LuaJIT, the JVM and JS --");
         String locator = "backend-runtime/stdlib/math/sqrt-negative.deal";
         String export = "test_math_sqrt_negative";
         Path fixture = REPO_ROOT.resolve("test/conformance").resolve(locator);
@@ -4816,19 +4797,12 @@ public class ProductionDispatchTest {
                     .RuntimeExpectation.Executed executed)) {
                 continue;
             }
-            checkEq("runtime-error", executed.mode(), locator + " ["
+            checkEq("runtime-ok", executed.mode(), locator + " ["
                 + backend + "]: the pinned mode");
             deal.test.conformance.SidecarExpectations.ErrorExpectation pin =
                 executed.error();
-            check(pin != null, locator + " [" + backend
-                + "]: the runtime-error pin carries its error");
-            if (pin == null) {
-                continue;
-            }
-            check(pin.expected().isEmpty(), locator + " [" + backend
-                + "]: the closed arm pins no expected field");
-            check(pin.actual().isPresent(), locator + " [" + backend
-                + "]: the closed arm pins its actual spelling");
+            check(pin == null, locator + " [" + backend
+                + "]: IEEE sqrt carries no failure tuple");
             Path project = Files.createTempDirectory(
                 "sqrt-negative-arm-" + backend + "-");
             try {
@@ -4849,30 +4823,17 @@ public class ProductionDispatchTest {
                 if (compile.exitCode() != 0) {
                     continue;
                 }
-                String origin = project.resolve(entryRel).toAbsolutePath()
-                    .normalize().toString() + ":"
-                    + (pin.line() - strippedHeaders) + ":" + pin.column();
-                String expected = "sqrt|" + pin.code() + "|" + pin.message()
-                    + "|<absent>|" + pin.actual().orElse("") + "|" + origin
-                    + "\n";
+                String expected = "";
                 BoundedProcess.BoundedResult run = sqrtArmRun(project,
                     backend, project.resolve("out"), moduleKey, export);
-                checkEqualCapture(locator, backend, run, 1, expected);
+                checkEqualCapture(locator, backend, run, 0, expected);
             } finally {
                 deleteRecursively(project);
             }
         }
     }
 
-    /**
-     * One published sqrt-arm artifact under the real toolchain of its
-     * backend: entry {@code main} once, then the fixture's own zero-arity
-     * export, and the caught runtime error's tuple printed as
-     * {@code sqrt|code|message|expected|actual|origin}. An absent expected
-     * or actual prints the distinct {@code <absent>} marker, so the closed
-     * arm's missing member is asserted structurally rather than through an
-     * empty text.
-     */
+    /** Run main and the checking export; any unexpected error retains its diagnostic tuple. */
     private static BoundedProcess.BoundedResult sqrtArmRun(Path project,
             String backend, Path out, String moduleKey, String export)
             throws Exception {
@@ -4912,7 +4873,7 @@ public class ProductionDispatchTest {
                 if not ok then error(err, 0) end
                 local okX, errX = pcall(surface[arg[2]].f)
                 if okX then
-                  print('sqrt|admitted|' .. tostring(errX))
+                  assert(errX == 0, 'sqrt controls must complete')
                 else
                   if type(errX) ~= 'table' or not errX[__dealCarrierKeys.d] then
                     error(errX, 0)
@@ -4961,13 +4922,7 @@ public class ProductionDispatchTest {
         return moduleKey.replace('.', '/');
     }
 
-    /**
-     * The JVM leg's probe of the closed {@code SQRT_NEGATIVE} tuple: entry
-     * {@code main} once, then the fixture's zero-arity export, printing the
-     * caught {@code DealError}'s tuple in the same
-     * {@code sqrt|code|message|expected|actual|origin} shape the node and
-     * luajit probes print (an absent field prints {@code <absent>}).
-     */
+    /** JVM consumer: execute main and the checking export, surfacing unexpected errors. */
     public static final class SqrtArmTupleChild {
         public static void main(String[] args) throws Throwable {
             try {
@@ -7427,7 +7382,7 @@ public class ProductionDispatchTest {
         testV12SplitCaptureControls();
         testArrayReadV13ProductionDrive();
         testStdlibJsonCarrierBoundaryV13ProductionDrive();
-        testMathSqrtNegativeArmThreeLanes();
+        testMathSqrtBinary64ThreeLanes();
         testV12CornerCaseCorpusProductionDrive();
         testV13BoundaryCorpusProductionDrive();
         testRetainedDefaultCallWitnessBothTargets();

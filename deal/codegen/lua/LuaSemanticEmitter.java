@@ -1174,6 +1174,28 @@ public final class LuaSemanticEmitter {
                 }
             }
 
+            out.append("__factories.__boundaryPlans = {}\n");
+            for (ClassLayout layout : classLayouts.values()) {
+                out.append("__factories.__boundaryPlans[").append(luaString(layout.classId().text())).append("] = {\n");
+                for (ClassLayout.FieldLayout field : layout.fields()) {
+                    out.append("{name=").append(luaString(field.name())).append(", descriptor=")
+                        .append(luaString(descriptorText(field.descriptor()))).append(", canonical=")
+                        .append(luaString(field.descriptor().canonicalSpecText())).append(", required=")
+                        .append(field.required()).append("},\n");
+                }
+                out.append("}\n");
+            }
+            for (HostCarrierClass carrier : hostCarrierClasses()) {
+                if (classLayouts.containsKey(carrier.classId())) continue;
+                out.append("__factories.__boundaryPlans[").append(luaString(carrier.classId().text())).append("] = {\n");
+                for (Map.Entry<String, String> field : carrier.fields().entrySet()) {
+                    out.append("{name=").append(luaString(field.getKey())).append(", descriptor=")
+                        .append(luaString(descriptorText(RuntimeDescriptor.parseCanonicalText(field.getValue()))))
+                        .append(", canonical=").append(luaString(field.getValue())).append(", required=")
+                        .append(carrier.required().contains(field.getKey())).append("},\n");
+                }
+                out.append("}\n");
+            }
             for (ClassLayout layout : jsonPlanLayouts.values()) {
                 emitJsonPlan(layout);
             }
@@ -9737,8 +9759,7 @@ local function __readVar(t, k, v, wantsNumber)
   return v
 end
 -- The canonical hex-float spelling (Double.toHexString parity; the
--- single renderer of the number atoms and of the SQRT_NEGATIVE
--- actual): NaN, both infinities and negative zero carry their Java
+-- single renderer of number atoms): NaN, both infinities and negative zero carry their Java
 -- spellings (never LuaJIT's "inf"/"-inf"), a subnormal its
 -- fixed-exponent denormal spelling, every other finite nonzero value
 -- its shortest round-trippable hex form. Declared before __atom so the
@@ -10876,7 +10897,15 @@ local function __canonDesc(desc)
   end
   return desc
 end
-local function __bcheck(desc, staticKind, v, csig, completion)
+function __factories.__validFunction(v)
+  if type(v) ~= "table" then return false end
+  local payload = rawget(v, __dealCarrierKeys.fn) or rawget(v, "f")
+  local signature = rawget(v, "sig") or rawget(v, __dealCarrierKeys.csig) or rawget(v, __dealCarrierKeys.sig)
+  return type(payload) == "function" and __isDescriptorText(signature)
+    and (string.sub(signature, 1, 1) == "(" or string.sub(signature, 1, 6) == "async("
+      or string.sub(signature, 1, 9) == "function(")
+end
+local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
   if v == __MISSING or (__rtMissing ~= nil and v == __rtMissing) then v = __UNDEFINED end
   local actual = completion and __completionBoundaryKind(staticKind, v)
     or __typedBoundaryKind(staticKind, v)
@@ -10931,6 +10960,9 @@ local function __bcheck(desc, staticKind, v, csig, completion)
             and rawget(member, __dealCarrierKeys.d) == nil
             and rawget(member, __dealCarrierKeys.kind) == nil then return fail("unknown") end
         if rawget(member, __dealCarrierKeys.kind) == "async" then return fail("unknown") end
+        if rawget(member, __dealCarrierKeys.fn) ~= nil or rawget(member, __dealCarrierKeys.kind) == "function" then
+          if not __factories.__validFunction(member) then return fail("unknown") end
+        end
         if not rawget(member, __dealCarrierKeys.fn)
             and rawget(member, __dealCarrierKeys.kind) ~= "function"
             and not rawget(member, __dealCarrierKeys.jn) then
@@ -11003,8 +11035,31 @@ local function __bcheck(desc, staticKind, v, csig, completion)
   elseif string.sub(desc, 1, 1) == "@" then
     -- A nominal class descriptor (E5): the canonical @module/Class
     -- identity text — the instance must carry the identical tag.
-    if type(v) == "table" and v[__dealCarrierKeys.c] and v[__dealCarrierKeys.id] == desc then return v end
-    return failClass(desc, (type(v) == "table" and v[__dealCarrierKeys.c]) and v[__dealCarrierKeys.id] or nil)
+    local carried = type(v) == "table" and ((v[__dealCarrierKeys.c] and v[__dealCarrierKeys.id])
+      or (v[__dealCarrierKeys.kind] == "class" and v[__dealCarrierKeys.classname])) or nil
+    if carried == desc then
+      classSeen = classSeen or {}
+      local active = classSeen[v] or {}; classSeen[v] = active
+      if active[desc] then return v end
+      active[desc] = true
+      local plan = __factories.__boundaryPlans[desc]
+      if plan then
+        for _, field in ipairs(plan) do
+          local fields = rawget(v, __dealCarrierKeys.f) or v
+          local member = rawget(fields, field.name)
+          if member == nil or member == __MISSING or member == __rtMissing then
+            if field.required then return failKind("class instance", "class") end
+          else
+            __bcheck(field.descriptor, "ref", member, field.canonical, completion, classSeen)
+          end
+        end
+      else
+        error("class carrier has no checked boundary field plan: " .. desc, 0)
+      end
+      active[desc] = nil
+      return v
+    end
+    return failClass(desc, carried)
   elseif string.sub(desc, 1, 6) == "array(" then
     if type(v) == "table" and v[__dealCarrierKeys.a] then
       local inner = string.sub(desc, 7, -2)
@@ -11030,7 +11085,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
         if elem == __NULL then elem = nil
         elseif elem == nil then elem = __MISSING end
         local ok, checked = pcall(__bcheck, inner,
-          (elem == __MISSING) and "missing" or inner, elem, innerSig)
+          (elem == __MISSING) and "missing" or inner, elem, innerSig, completion, classSeen)
         if not ok then
           local actualKind = __elemRefKind(
             (elem == __MISSING) and "missing" or inner, elem)
@@ -11054,7 +11109,7 @@ local function __bcheck(desc, staticKind, v, csig, completion)
       if nullAllowed then innerSig = string.sub(innerSig, 2) end
       if undefinedAllowed then innerSig = string.sub(innerSig, 2) end
     end
-    return __bcheck(string.sub(desc, string.find(desc, "(", 1, true) + 1, -2), staticKind, v, innerSig, completion)
+    return __bcheck(string.sub(desc, string.find(desc, "(", 1, true) + 1, -2), staticKind, v, innerSig, completion, classSeen)
   elseif string.sub(desc, 1, 9) == "function(" then
     if type(v) == "function" then
       -- A raw Lua function is not the LuaJIT function value mapping
@@ -11064,9 +11119,11 @@ local function __bcheck(desc, staticKind, v, csig, completion)
       return fail("function")
     end
     if type(v) == "table" and v[__dealCarrierKeys.fn] ~= nil then
+      if not __factories.__validFunction(v) then return fail("function") end
       return __fnRow(desc, csig, v, v[__dealCarrierKeys.csig], v[__dealCarrierKeys.sig])
     end
     if type(v) == "table" and v[__dealCarrierKeys.kind] == "function" then
+      if not __factories.__validFunction(v) then return fail("function") end
       -- The host ABI wrapper — the loaded host surface entry a HOST
       -- EXPORT_READ publishes (ISSUE-0653; host-module-load-and-host-call-
       -- realization H5's read value). The entry's own sig metadata is its
@@ -12873,9 +12930,6 @@ local function __stdlib(kind, fn, opKey, digest, parent, origin, ...)
   elseif fn == "MATH_CEIL" then
     return math.ceil(__args[1])
   elseif fn == "MATH_SQRT" then
-    if __args[1] < 0 then
-      __sfail("SQRT_NEGATIVE", nil, nil, __numHex(__args[1]))
-    end
     return math.sqrt(__args[1])
   elseif fn == "MATH_ABS_NUMBER" then
     local v = __args[1]

@@ -1,11 +1,11 @@
 import * as math from "std/math";
 // @spec: Diagnostics
-// @description: A surviving sqrt failure preserves the exact expression origin through its enclosing control flow
-// @expected: runtime-error E8001
+// @description: An array bounds failure preserves the exact expression origin through its enclosing control flow
+// @expected: runtime-error E8002
 // @features: diagnostics, runtime-location, arithmetic
 
 export function main(): null {
   let zero: number = 0;
-  let value: number = math.sqrt(-1);
+  let value: number = [1][1];
   return null;
 }

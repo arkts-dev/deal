@@ -1050,6 +1050,7 @@ final class JvmHostAbiEmission {
             + "java.lang.Object v, JvmRuntime.DealError inner) {\n");
         out.append("    if (d.startsWith(\"?\") || d.startsWith(\"!\")) return __hostInnerMessage(d.substring(1), v, inner);\n");
         out.append("    if (inner == null) { throw new java.lang.IllegalStateException(\"the host inner-reason render has no inner failure (producer defect)\"); }\n");
+        out.append("    if (v instanceof java.lang.String s && JvmRuntime.hostStringReason(s) != null) return JvmRuntime.hostStringReason(s);\n");
         out.append("    return inner.msg;\n");
         out.append("  }\n\n");
         emitCheckValue(out);
@@ -1441,7 +1442,7 @@ final class JvmHostAbiEmission {
         out.append("    if (d.startsWith(\"(\") || d.startsWith(\"async(\")) {\n");
         out.append("      java.lang.String __carried = null;\n");
         out.append("      if (v instanceof $DealRt.FnValue __f) { __carried = __f.descriptor(); }\n");
-        out.append("      else if (v instanceof JvmRuntime.FunctionValue __fv) { __carried = __fv.spec != null ? __fv.spec : __fv.signature; }\n");
+        out.append("      else if (v instanceof JvmRuntime.FunctionValue __fv) { if (!JvmRuntime.validFunction(__fv)) throw __hostFail(JvmRuntime.kindReason(\"function\"), d, v, oFile, oLine, oCol); __carried = __fv.spec != null ? __fv.spec : __fv.signature; }\n");
         out.append("      if (__carried != null && __carried.equals(d)) return v;\n");
         out.append("      if (__carried != null) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH, java.util.Map.of(\"expected\", d, \"actual\", __carried), oFile + \":\" + oLine + \":\" + oCol, d, __carried); }\n");
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"function\"), d, v, oFile, oLine, oCol);\n");
@@ -1669,7 +1670,20 @@ final class JvmHostAbiEmission {
         out.append("  }\n");
     }
 
+    private static String internalDescriptor(String canonical) {
+        return deal.codegen.SemanticEmitterShared.descriptorText(
+            deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(canonical));
+    }
+
     private void emitRecordClassInstance(StringBuilder out, RecordInfo record) {
+        out.append("    @Override public java.util.List<JvmRuntime.ClassField> boundaryFields() { return java.util.List.of(");
+        for (int i = 0; i < record.fields().size(); i++) {
+            FieldInfo field = record.fields().get(i);
+            if (i > 0) out.append(", ");
+            out.append("new JvmRuntime.ClassField(").append(javaString(field.name())).append(", ")
+                .append(javaString(internalDescriptor(field.descriptorText()))).append(", ").append(!field.optional()).append(")");
+        }
+        out.append("); }\n");
         out.append("    @Override public java.lang.String classIdText() { return $identity; }\n");
         out.append("    @Override public java.util.List<String> fieldNames() { return java.util.List.of(");
         for (int i = 0; i < record.fields().size(); i++) {

@@ -894,6 +894,14 @@ public final class JvmSemanticEmitter {
                     out.append("    Object ").append(slotName).append(";\n");
                     out.append("    boolean ").append(fieldFlag(field.name())).append(";\n");
                 }
+                out.append("    @Override public java.util.List<JvmRuntime.ClassField> boundaryFields() { return java.util.List.of(");
+                for (int i = 0; i < layout.fields().size(); i++) {
+                    ClassLayout.FieldLayout field = layout.fields().get(i);
+                    if (i > 0) out.append(", ");
+                    out.append("new JvmRuntime.ClassField(").append(javaString(field.name())).append(", ")
+                        .append(javaString(descriptorText(field.descriptor()))).append(", ").append(field.required()).append(")");
+                }
+                out.append("); }\n");
                 out.append("    @Override public String classIdText() { return ID; }\n");
                 out.append("    @Override public java.util.List<String> fieldNames() { return java.util.List.of(");
                 for (int i = 0; i < layout.fields().size(); i++) {

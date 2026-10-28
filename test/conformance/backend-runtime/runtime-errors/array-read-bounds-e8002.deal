@@ -1,0 +1,13 @@
+import * as math from "std/math";
+// @spec: Runtime execution model — Array read bounds
+// @description: An array bounds failure preserves the exact expression origin through its enclosing control flow
+// @expected: runtime-error E8002
+// @features: arrays, runtime-errors
+
+export function test_array_read_bounds_error(): number {
+  return [1][1];
+}
+
+export function main(): null {
+  return null;
+}

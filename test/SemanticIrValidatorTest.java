@@ -495,7 +495,7 @@ public class SemanticIrValidatorTest {
             StdlibFunctionId.TIME_NOW_MILLIS, FailurePolicyId.NO_DEAL_FAILURE,
             StdlibFunctionId.JSON_PARSE, FailurePolicyId.JSON_PARSE_SYNTAX,
             StdlibFunctionId.JSON_STRINGIFY, FailurePolicyId.JSON_TO_ERROR,
-            StdlibFunctionId.MATH_SQRT, FailurePolicyId.SQRT_NEGATIVE,
+            StdlibFunctionId.MATH_SQRT, FailurePolicyId.NO_DEAL_FAILURE,
             StdlibFunctionId.STRING_SUBSTRING, FailurePolicyId.SUBSTRING_BOUNDS,
             StdlibFunctionId.MATH_FLOOR, FailurePolicyId.NO_DEAL_FAILURE);
         for (var entry : stdlib.entrySet()) {

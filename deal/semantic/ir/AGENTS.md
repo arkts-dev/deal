@@ -13,6 +13,7 @@ Carry the active semantic profile through constructors and guards. Recompute con
 ## Values and operations
 
 - Canonical binary64 atoms preserve signed zero, subnormals, infinities and NaN across typed/raw/text transport. Integer IDs cannot substitute for numeric scalars.
+- Nominal checks validate complete declared field plans with operation-local cycle guards, never lasting validation certificates. Callable admission requires a valid payload and canonical signature, including unread graph descendants.
 - Required fields read their declared descriptor; optional reads use RuntimeDescriptor.optionalRead and add undefined. Missing normalizes to undefined, never null. Host failure shapes distinguish language undefined from private absent-carrier nil.
 - CLASS_NEW requires every nonoptional field, including nullable and Error fields. Supplied fields own declaration-order boundaries; omissions own none. Reject retired initializer operations, payload keys and companion/default flags rather than ignoring them.
 - HOST function reads correlate with the alias cell initialized by their unique MODULE_IMPORT occurrence. STDLIB once-only surfaces record no occurrence; missing/mismatched links fail at the read origin.

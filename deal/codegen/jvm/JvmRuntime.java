@@ -184,6 +184,11 @@ public final class JvmRuntime {
             throw new IllegalStateException("Class carrier has no declaration-order fields");
         }
 
+        /** Checked declaration plan; absence is a trusted carrier defect. */
+        default List<ClassField> boundaryFields() {
+            throw new IllegalStateException("Class carrier has no boundary field plan");
+        }
+
         /** Presence of one field: a present field (present null included) is present. */
         boolean isPresent(String field);
 
@@ -201,6 +206,10 @@ public final class JvmRuntime {
          */
         void delete(String field);
     }
+
+    public record ClassField(String name, String descriptor, boolean required) {}
+    private static final ThreadLocal<IdentityHashMap<Object, java.util.Set<String>>> CLASS_CHECKS =
+        ThreadLocal.withInitial(IdentityHashMap::new);
 
     /**
      * HAS_FIELD presence over one checked receiver key (the
@@ -391,7 +400,7 @@ public final class JvmRuntime {
         }
 
         public FunctionValue(Fn fn, String signature, String spec, String fid) {
-            if (fid == null) {
+            if (fid == null || fn == null) {
                 this.fn = fn;
             } else {
                 // A DEAL body carrier owns its body's stack frame: the
@@ -1388,6 +1397,17 @@ public final class JvmRuntime {
      * conversions only after the whole completion passed. A non-crossing
      * check never admits the boxed carrier.
      */
+    public static boolean validFunction(FunctionValue function) {
+        if (function.fn == null || function.signature == null) return false;
+        try {
+            String canonical = function.spec != null ? function.spec
+                : function.signature.startsWith("function(") ? canonicalDesc(function.signature) : function.signature;
+            return deal.semantic.ir.RuntimeDescriptor.parseCanonicalText(canonical) instanceof deal.semantic.ir.RuntimeDescriptor.Func;
+        } catch (IllegalArgumentException | deal.semantic.ir.SemanticIrTextDecodeException exception) {
+            return false;
+        }
+    }
+
     public static Object validateData(Object root, boolean completion) {
         java.util.Set<Object> seen = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         java.util.ArrayList<Object> pending = new java.util.ArrayList<>();
@@ -1405,7 +1425,9 @@ public final class JvmRuntime {
             } else if (value instanceof Array array) pending.addAll(array.elements);
             else if (value instanceof ClassInstance instance) {
                 for (String key : instance.fieldNames()) if (instance.isPresent(key)) pending.add(instance.read(key));
-            } else if (!(value instanceof FunctionValue) && !(value instanceof ErrorValue)) {
+            } else if (value instanceof FunctionValue function) {
+                if (!validFunction(function)) throw kindFailure("function", "function", completion);
+            } else if (!(value instanceof ErrorValue)) {
                 throw kindFailure("unknown", "table", completion);
             }
         }
@@ -1491,6 +1513,20 @@ public final class JvmRuntime {
             // carry the identical tag.
             if (v instanceof ClassInstance instance
                     && desc.equals(instance.classIdText())) {
+                var active = CLASS_CHECKS.get();
+                var descriptors = active.computeIfAbsent(v, ignored -> new java.util.HashSet<>());
+                if (!descriptors.add(desc)) return v;
+                try {
+                    for (ClassField field : instance.boundaryFields()) {
+                        if (!instance.isPresent(field.name())) {
+                            if (field.required()) throw kindFailure(desc, actual, completion);
+                        } else bcheck(field.descriptor(), "ref", instance.read(field.name()), completion, null, hostCompletionCrossing);
+                    }
+                } finally {
+                    descriptors.remove(desc);
+                    if (descriptors.isEmpty()) active.remove(v);
+                    if (active.isEmpty()) CLASS_CHECKS.remove();
+                }
                 return v;
             }
             throw classFailure(desc, v, actual, completion);
@@ -1541,6 +1577,7 @@ public final class JvmRuntime {
         }
         if (desc.startsWith("function(")) {
             if (v instanceof FunctionValue function) {
+                if (!validFunction(function)) throw kindFailure("function", actual, completion);
                 String wanted = canon != null ? canon : desc;
                 String carried = function.spec != null ? function.spec
                     : (function.signature == null ? "" : function.signature);
@@ -2456,15 +2493,12 @@ case "NUMBER_ADD" -> {
      * table: the parameter boundaries already ran (the emitter emits the
      * {@code STDLIB_PARAMETER} children), so the algorithm receives the
      * boundary-admitted carriers — a string parameter is a valid scalar
-     * {@link String}, an int parameter is a {@link Long} or an in-range
-     * integral {@link Double}, a number parameter is a {@link Double} or
-     * a {@link Long}, and a table parameter is a {@link Table}. A
+     * {@link String}, a number parameter is a {@link Double} or a
+     * {@link Long}, and a table parameter is a {@link Table}. A
      * failure raises the op FAILURE event and the {@link DealError}
      * through the closed arm render ({@link #raiseArm} or the stdlib
      * failure's own arm) with the exact closed projections —
-     * {@code INT32_RESULT} E8004 {@code int out of safe range},
-     * {@code SQRT_NEGATIVE} E8001 {@code sqrt of negative number} (actual
-     * = the canonical hex float), {@code JSON_PARSE_SYNTAX} E8001
+     * {@code JSON_PARSE_SYNTAX} E8001
      * {@code JSON parse error at position {oneBasedByteOffset}:
      * {reason}}, and {@code JSON_TO_ERROR} E8001
      * {@code unsupported type for JSON encoding: {actual}} rendered through
@@ -2618,10 +2652,6 @@ case "NUMBER_ADD" -> {
                 }
                 case "MATH_SQRT" -> {
                     double value = numberOf(args[0]);
-                    if (value < 0) {
-                        throw new StdlibFailure(deal.semantic.ir.FailureArmId.SQRT_NEGATIVE,
-                            java.util.Map.of(), null, Double.toHexString(value));
-                    }
                     return Math.sqrt(value);
                 }
 

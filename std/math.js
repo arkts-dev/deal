@@ -45,19 +45,9 @@ $math.ceil = $rt.function("(number)->number", function(x, $file, $line, $column)
   return $rt.checkNumber($Math.ceil(x), $file, $line, $column);
 });
 
-// sqrt: the closed SQRT_NEGATIVE arm — E8001 "sqrt of negative number"
-// with no expected field and the negative operand's canonical hex-float
-// spelling as the actual ($rt.numberHex, the JS realization of the
-// shared CanonicalJson#numberHex), exactly the tuple the emitted LuaJIT
-// chunk, the JVM runtime and the shared oracle publish. NaN passes through
-// (NaN < 0 is false, Math.sqrt(NaN) is NaN, and checkNumber accepts NaN per
-// spec §Numeric overflow).
+// IEEE sqrt preserves NaN, positive infinity and signed zero.
 $math.sqrt = $rt.function("(number)->number", function(x, $file, $line, $column) {
   $rt.checkNumber(x, $file, $line, $column);
-  if (x < 0) {
-    $rt.fail("E8001", "sqrt of negative number", $file, $line, $column,
-      $undefined, $rt.numberHex(x));
-  }
   return $rt.checkNumber($Math.sqrt(x), $file, $line, $column);
 });
 

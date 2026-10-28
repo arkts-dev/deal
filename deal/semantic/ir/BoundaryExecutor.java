@@ -475,6 +475,11 @@ public final class BoundaryExecutor {
      * carried signature structurally.
      */
     private static CoreResult core(RuntimeDescriptor descriptor, BoundaryValueView view) {
+        return core(descriptor, view, new java.util.IdentityHashMap<>());
+    }
+
+    private static CoreResult core(RuntimeDescriptor descriptor, BoundaryValueView view,
+            java.util.IdentityHashMap<BoundaryValueView, java.util.Set<RuntimeDescriptor>> active) {
         if (view.kind() == ActualKind.MISSING) {
             view = BoundaryValueView.of(ActualKind.UNDEFINED);
         }
@@ -501,9 +506,9 @@ public final class BoundaryExecutor {
                         : kindFail(descriptor, view);
             case RuntimeDescriptor.Table ignored ->
                 view.kind() == ActualKind.TABLE ? coreData(descriptor, view) : kindFail(descriptor, view);
-            case RuntimeDescriptor.Class cls -> coreClass(cls, view);
-            case RuntimeDescriptor.Array array -> coreArray(array, view);
-            case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view);
+            case RuntimeDescriptor.Class cls -> coreClass(cls, view, active);
+            case RuntimeDescriptor.Array array -> coreArray(array, view, active);
+            case RuntimeDescriptor.Nullable nullable -> coreNullable(nullable, view, active);
             case RuntimeDescriptor.Func func -> coreFunc(func, view);
         };
     }
@@ -525,6 +530,7 @@ public final class BoundaryExecutor {
                 }
                 default -> { return kindFail(descriptor, view); }
             }
+            if (view.kind() == ActualKind.FUNCTION && !view.callableValid()) return kindFail(descriptor, view);
             List<BoundaryValueView> children = view.kind() == ActualKind.ARRAY
                 ? view.elements() : view.dataChildren();
             for (int i = children.size() - 1; i >= 0; i--) pending.push(children.get(i));
@@ -538,10 +544,26 @@ public final class BoundaryExecutor {
      * the typed-boundary kind arm.
      */
     private static CoreResult coreClass(RuntimeDescriptor.Class descriptor,
-                                        BoundaryValueView view) {
+                                        BoundaryValueView view,
+            java.util.IdentityHashMap<BoundaryValueView, java.util.Set<RuntimeDescriptor>> active) {
         if (view.kind() == ActualKind.CLASS) {
             String carried = view.classId();
             if (carried != null && descriptor.classId().text().equals(carried)) {
+                var descriptors = active.computeIfAbsent(view, ignored -> new java.util.HashSet<>());
+                if (!descriptors.add(descriptor)) return pass(view);
+                try {
+                    for (BoundaryValueView.ClassField field : view.classFields()) {
+                        if (!field.present()) {
+                            if (field.required()) return kindFail(descriptor, view);
+                        } else {
+                            CoreResult checked = core(field.descriptor(), field.value().get(), active);
+                            if (checked instanceof CoreFail) return checked;
+                        }
+                    }
+                } finally {
+                    descriptors.remove(descriptor);
+                    if (descriptors.isEmpty()) active.remove(view);
+                }
                 return pass(view);
             }
             return new CoreFail(FailureCase.CLASS_IDENTITY, descriptor, carried, 0, null);
@@ -551,7 +573,8 @@ public final class BoundaryExecutor {
 
     /** Array elements in increasing index order; first failure wins with its leaf cause. */
     private static CoreResult coreArray(RuntimeDescriptor.Array descriptor,
-                                        BoundaryValueView view) {
+                                        BoundaryValueView view,
+            java.util.IdentityHashMap<BoundaryValueView, java.util.Set<RuntimeDescriptor>> active) {
         if (view.kind() != ActualKind.ARRAY) {
             return kindFail(descriptor, view);
         }
@@ -560,7 +583,7 @@ public final class BoundaryExecutor {
         List<BoundaryValueView> elements = view.elements();
         for (int i = 0; i < elements.size(); i++) {
             BoundaryValueView element = elements.get(i);
-            CoreResult elementResult = core(descriptor.element(), element);
+            CoreResult elementResult = core(descriptor.element(), element, active);
             if (elementResult instanceof CoreFail elementFail) {
                 CoreFail leaf = elementFail.caseKind() == FailureCase.ELEMENT
                     ? elementFail.cause() : elementFail;
@@ -589,12 +612,13 @@ public final class BoundaryExecutor {
 
     /** Nullable: language null passes; the inner failure propagates unchanged. */
     private static CoreResult coreNullable(RuntimeDescriptor.Nullable descriptor,
-                                           BoundaryValueView view) {
+                                           BoundaryValueView view,
+            java.util.IdentityHashMap<BoundaryValueView, java.util.Set<RuntimeDescriptor>> active) {
         if ((view.kind() == ActualKind.NULL && descriptor.admitsNull())
                 || (view.kind() == ActualKind.UNDEFINED && descriptor.admitsUndefined())) {
             return pass(view);
         }
-        return core(descriptor.inner(), view);
+        return core(descriptor.inner(), view, active);
     }
 
     /**
@@ -608,6 +632,7 @@ public final class BoundaryExecutor {
     private static CoreResult coreFunc(RuntimeDescriptor.Func descriptor,
                                        BoundaryValueView view) {
         if (view.kind() == ActualKind.FUNCTION) {
+            if (!view.callableValid()) return kindFail(descriptor, view);
             RuntimeDescriptor.Func carried = view.functionSignature();
             return descriptor.equals(carried) ? pass(view)
                 : new CoreFail(FailureCase.SIG_MISMATCH, descriptor,

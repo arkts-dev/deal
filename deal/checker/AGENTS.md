@@ -11,6 +11,7 @@ Own resolution, typing, narrowing and checked facts. Diagnostics remain determin
 - Catch bindings are mutable local unknowns. Error access requires extraction/matching nominal branches. Preserve shadowing/captures; anchor binding diagnostics on identifiers.
 - Each while-body entry receives fresh true-guard refinement with ordinary invalidation; body refinements cannot cross back-edges. Unknown equality permits neither narrowing nor conversion.
 - Bindings reject eval/arguments and reserved words; async/as/from/of are contextual identifiers. Keyword properties remain legal. Reject duplicate surface nullish union members before unknown absorption.
+- Declaration/import names are immutable; function-valued variables remain mutable. Resolve function signatures in the exact enclosing scope, not through shadowing parameters.
 - Nested functions follow declaration order; modules hoist. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
 
 Test acceptance/rejection independently of emitters.

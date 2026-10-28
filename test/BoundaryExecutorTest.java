@@ -341,6 +341,34 @@ public class BoundaryExecutorTest {
     // 4. Class atom byte-equality
     // =========================================================================
 
+    static void testLiveClassAndCallablePlans() {
+        BoundaryValueView[] child = {BoundaryValueView.ofNumber(1)};
+        BoundaryValueView valid = BoundaryValueView.ofClass("@src/app/User").withClassFields(List.of(
+            new BoundaryValueView.ClassField("n", NUMBER, true, true, () -> child[0])));
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, valid), "declared field checked");
+        child[0] = BoundaryValueView.of(ActualKind.STRING);
+        check(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, valid) instanceof BoundaryOutcome.Fail,
+            "same class view rechecks live field after invalidation");
+        child[0] = BoundaryValueView.ofNumber(2);
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, valid), "failed guard does not poison next check");
+        BoundaryValueView missing = BoundaryValueView.ofClass("@src/app/User").withClassFields(List.of(
+            new BoundaryValueView.ClassField("n", NUMBER, true, false, () -> { throw new AssertionError("missing read"); })));
+        check(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, missing) instanceof BoundaryOutcome.Fail,
+            "required presence fails without reading missing value");
+        BoundaryValueView[] cyclic = new BoundaryValueView[1];
+        cyclic[0] = BoundaryValueView.ofClass("@src/app/User").withClassFields(List.of(
+            new BoundaryValueView.ClassField("self", USER, true, true, () -> cyclic[0])));
+        expectPass(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, USER, cyclic[0]), "cycle guard is operation-local");
+        RuntimeDescriptor.Func signature = (RuntimeDescriptor.Func) RuntimeDescriptor.parseCanonicalText("(number)->number");
+        BoundaryValueView malformed = BoundaryValueView.ofFunction(signature).withCallableValidity(false);
+        check(checkCell(FailurePolicyId.FUNCTION_SIGNATURE, signature, malformed) instanceof BoundaryOutcome.Fail,
+            "function tag/signature without callable payload rejects");
+        RuntimeDescriptor unknown = RuntimeDescriptor.parseCanonicalText("unknown");
+        check(checkCell(FailurePolicyId.TYPE_DESCRIPTOR, unknown,
+            BoundaryValueView.of(ActualKind.TABLE).withDataChildren(1, i -> malformed)) instanceof BoundaryOutcome.Fail,
+            "unread malformed callable descendant rejects");
+    }
+
     static void testClassAtom() {
         System.out.println("-- class atom byte-equality --");
 
@@ -1442,6 +1470,7 @@ public class BoundaryExecutorTest {
         testInvalidStringMessage();
         testIntPathNormativeOrder();
         testClassAtom();
+        testLiveClassAndCallablePlans();
         testArrayE8003();
         testArrayPresentNullAndDeletedSlot();
         testFunctionSignature();

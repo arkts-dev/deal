@@ -14,8 +14,42 @@ public record BoundaryValueView(
     boolean decodedArrayMark,
     UnicodeScalars.Defect unicodeDefect,
     RuntimeDescriptor arrayElementDescriptor,
-    List<BoundaryValueView> dataChildren
+    List<BoundaryValueView> dataChildren,
+    List<ClassField> classFields,
+    boolean callableValid
 ) {
+    /** One complete checked-layout field; presence is independent of the stored value. */
+    public record ClassField(String name, RuntimeDescriptor descriptor, boolean required,
+                             boolean present, java.util.function.Supplier<BoundaryValueView> value) {
+        public ClassField {
+            Objects.requireNonNull(name, "field name");
+            Objects.requireNonNull(descriptor, "field descriptor");
+            Objects.requireNonNull(value, "field value supplier");
+        }
+    }
+
+    public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
+                             RuntimeDescriptor.Func functionSignature,
+                             List<BoundaryValueView> elements, boolean decodedArrayMark,
+                             UnicodeScalars.Defect unicodeDefect, RuntimeDescriptor arrayElementDescriptor,
+                             List<BoundaryValueView> dataChildren) {
+        this(kind, classId, numberValue, functionSignature, elements, decodedArrayMark,
+            unicodeDefect, arrayElementDescriptor, dataChildren, List.of(), true);
+    }
+
+    /** Attach the complete declaration plan, not a selected subset of fields. */
+    public BoundaryValueView withClassFields(List<ClassField> fields) {
+        if (kind != ActualKind.CLASS) throw new IllegalArgumentException("Only classes carry field plans");
+        return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, fields, callableValid);
+    }
+
+    /** Signature-only views assume an admitted callable; native views must supply payload validity. */
+    public BoundaryValueView withCallableValidity(boolean valid) {
+        if (kind != ActualKind.FUNCTION) throw new IllegalArgumentException("Only functions carry callable validity");
+        return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, dataChildren, classFields, valid);
+    }
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
                              RuntimeDescriptor.Func functionSignature,
                              List<BoundaryValueView> elements, boolean decodedArrayMark,
@@ -27,7 +61,7 @@ public record BoundaryValueView(
     /** Lazy own data children for whole-graph ingress validation, including keys. */
     public BoundaryValueView withDataChildren(int count, IntFunction<BoundaryValueView> producer) {
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer));
+            decodedArrayMark, unicodeDefect, arrayElementDescriptor, new LazyElementViews(count, producer), classFields, callableValid);
     }
 
     public BoundaryValueView(ActualKind kind, String classId, Double numberValue,
@@ -40,7 +74,7 @@ public record BoundaryValueView(
     public BoundaryValueView withArrayElementDescriptor(RuntimeDescriptor descriptor) {
         if (kind != ActualKind.ARRAY) throw new IllegalArgumentException("Only arrays carry element descriptors");
         return new BoundaryValueView(kind, classId, numberValue, functionSignature, elements,
-            decodedArrayMark, unicodeDefect, descriptor, dataChildren);
+            decodedArrayMark, unicodeDefect, descriptor, dataChildren, classFields, callableValid);
     }
 
     /**
@@ -60,6 +94,7 @@ public record BoundaryValueView(
 
     public BoundaryValueView {
         Objects.requireNonNull(kind, "kind must not be null");
+        classFields = List.copyOf(classFields);
         Objects.requireNonNull(dataChildren, "dataChildren must not be null");
         if (!(dataChildren instanceof LazyElementViews)) dataChildren = List.copyOf(dataChildren);
         switch (kind) {
@@ -286,7 +321,7 @@ public record BoundaryValueView(
             new LazyElementViews(size, elementViews), true);
     }
 
-    /** A {@code CLASS} view carrying the canonical {@code @modulePath/ClassName} atom text. */
+    /** A checked empty-layout class with a canonical identity; nonempty layouts must attach all fields. */
     public static BoundaryValueView ofClass(String classId) {
         Objects.requireNonNull(classId, "classId must not be null");
         if (classId.isEmpty()) {

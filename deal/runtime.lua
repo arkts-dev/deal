@@ -431,6 +431,7 @@ function __rt.validate_data(root, file, line, column)
           and rawget(v, __K.fn) == nil and rawget(v, __K.f) == nil then reject(v) end
       local kind = __rt.typed_kind(v)
       if kind == "async-operation" then reject(v) end
+      if kind == "function" and not __rt.valid_function(v) then reject(v) end
       if kind ~= "function" and not rawget(v, __K.jn) then
         for key, member in next, v do
           if type(key) == "string" then
@@ -977,7 +978,7 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
         "expected function", file, line, column, "function", __rt.typed_kind(v)))
     end
     local signature = v.sig or v[__K.csig] or v[__K.sig]
-    if type(signature) ~= "string" then
+    if not __rt.valid_function(v) then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
         "expected function", file, line, column, "function", __rt.typed_kind(v)))
     end
@@ -1043,6 +1044,14 @@ end
 --- Create a function wrapper.
 -- The wrapper is a table { [__K.kind] = "function", sig = sig, f = f }.
 -- No __call metamethod is set; callers use wrapper.f(...).
+function __rt.valid_function(v)
+  if type(v) ~= "table" then return false end
+  local payload = rawget(v, __K.fn) or rawget(v, "f")
+  local signature = rawget(v, "sig") or rawget(v, __K.csig) or rawget(v, __K.sig)
+  local parsed = type(signature) == "string" and parse_descriptor(signature) or nil
+  return type(payload) == "function" and parsed ~= nil and parsed.kind == "function"
+end
+
 function __rt.function_(sig, f)
   return { [__K.kind] = "function", sig = sig, f = f }
 end

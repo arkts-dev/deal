@@ -1,12 +1,12 @@
 import * as math from "std/math";
 // @spec: Runtime execution model — Source locations for closure errors
-// @description: A surviving sqrt failure preserves the exact expression origin through its enclosing control flow
-// @expected: runtime-error E8001
+// @description: An array bounds failure preserves the exact expression origin through its enclosing control flow
+// @expected: runtime-error E8002
 // @features: source-location, closures, runtime-errors
 
 export function test_source_closure_error(): number {
   let f: () => number = function(): number {
-    return math.sqrt(-1);
+    return [1][1];
   };
   return f();
 }

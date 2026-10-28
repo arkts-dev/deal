@@ -320,7 +320,7 @@ public class StdlibCallLoweringTest {
             case STRING_SUBSTRING -> FailurePolicyId.SUBSTRING_BOUNDS;
             case JSON_PARSE -> FailurePolicyId.JSON_PARSE_SYNTAX;
             case JSON_STRINGIFY -> FailurePolicyId.JSON_TO_ERROR;
-            case MATH_SQRT -> FailurePolicyId.SQRT_NEGATIVE;
+            case MATH_SQRT -> FailurePolicyId.NO_DEAL_FAILURE;
             default -> FailurePolicyId.NO_DEAL_FAILURE;
         };
     }

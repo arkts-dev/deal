@@ -125,6 +125,12 @@ public final class Language15FrontendTest {
         check("function g():number{return 1;} function f():void {let x=g();function g():number{return 2;}let y=g();}", true);
         check("class C{x:number;} function f():void{let x:unknown=C;}", false);
         check("class C{x:number;} function f():void{let x=typeof C;}", false);
+        rejectsAt("function f():number{return 1;} function g():void{f=f;}", "f=f", "E3017");
+        rejectsAt("function g():void{function f():void{}f=f;}", "f=f", "E3017");
+        rejectsAt("import * as math from \"std/math\"; function g():void{math.floor=math.floor;}", "math.floor=", "E3017");
+        check("function f(f:number):number{return f;}", true);
+        check("function g():void{function f(f:number):number{return f;}let x=f(1);}", true);
+        check("function f():number{return 1;} function g():void{let h:()=>number=f;h=f;}", true);
         System.out.println("Language15FrontendTest: passed");
     }
 }

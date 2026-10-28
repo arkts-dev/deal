@@ -166,7 +166,9 @@ static double deal_std_sqrt(double value) {
         return value;
     }
     if (value < 0.0) {
-        return value - value;    /* the operation's own arm reports it */
+        union { uint64_t bits; double number; } nan_value;
+        nan_value.bits = UINT64_C(0x7FF8000000000000);
+        return nan_value.number;
     }
     if (value > 1.7976931348623157e308) {
         return value;            /* +Infinity */
@@ -495,17 +497,11 @@ static deal_data deal_std_table_keys(deal_table *table) {
     return deal_data_of_reference(DEAL_DATA_ARRAY, array);
 }
 
-/* `std/math.sqrt`: a negative non-NaN operand is the SQRT_NEGATIVE arm with the
- * operand's canonical hex-float text; the IEEE result is published otherwise. */
+/* `std/math.sqrt`: publish the IEEE result, including NaN for negatives. */
 static deal_data deal_std_sqrt_result(double value, const deal_origin *origin,
                                       deal_error **error) {
-    if (value < 0.0) {
-        char buffer[DEAL_ARM_NUMBER_TEXT_CAPACITY];
-        const char *actual = deal_arm_number_text(value, buffer, sizeof(buffer));
-        *error = deal_error_materialize(DEAL_ARM_ID_SQRT_NEGATIVE, NULL, 0u,
-            NULL, actual, origin, NULL);
-        return deal_data_of_number(0.0);
-    }
+    (void)origin;
+    (void)error;
     return deal_data_of_number(deal_std_sqrt(value));
 }
 

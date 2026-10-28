@@ -228,6 +228,18 @@ public final class Language15RuntimeTest {
                   if(!rejected) throw Error('unsupported unknown ingress');
                 }
                 const json=require('./std/json');
+                const untouched=[];
+                const invalid=new Map([['bad',{$kind:'function',$sig:'()->number',$f:null}],['array',untouched]]);
+                let invalidRejected=false;
+                try {rt.checkType('unknown',invalid)} catch(e) {invalidRejected=e.code==='E8001'}
+                if(!invalidRejected) throw Error('malformed unread callable');
+                // Failed graph validation must not publish an unknown[] descriptor.
+                const typed=rt.hostFunction('()->[number]',()=>untouched).$f();
+                if(typed!==untouched || rt.checkType('[number]',typed)!==typed) throw Error('failed ingress published descriptor');
+                const parsed=json.parse.$f('{"a":[1]}').get('a');
+                rt.hostAsyncFunction('async([unknown])->record',async a=>new Map([['child',a]])).$f(parsed)
+                  .then(result=>{if(result.get('child')!==parsed) throw Error('async recursive reverse identity')})
+                  .catch(error=>{console.error(error);process.exitCode=1;});
                 const instance=rt.classPlan('@m/Node',[
                   {name:'first',descriptor:'boolean',optional:false},
                   {name:'next',descriptor:'unknown',optional:true},

@@ -8,17 +8,16 @@
   "expected": {
     "mode": "runtime-error",
     "transcript": {
-      "stdout": "DEAL_ERROR_CODE: E8001\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8001\",\"message\":\"sqrt of negative number\",\"sourceFile\":\"backend-runtime/source-location/037-runtime-source-div-zero.deal\",\"line\":9,\"column\":23,\"actual\":\"-0x1.0p0\"}\n",
+      "stdout": "DEAL_ERROR_CODE: E8002\nDEAL_ERROR_SNAPSHOT: {\"code\":\"E8002\",\"message\":\"array index out of bounds\",\"sourceFile\":\"backend-runtime/source-location/037-runtime-source-div-zero.deal\",\"line\":9,\"column\":23}\n",
       "stderr": ""
     },
     "exitCode": 1,
     "error": {
-      "code": "E8001",
-      "message": "sqrt of negative number",
+      "code": "E8002",
+      "message": "array index out of bounds",
       "sourceFile": "backend-runtime/source-location/037-runtime-source-div-zero.deal",
       "line": 9,
-      "column": 23,
-      "actual": "-0x1.0p0"
+      "column": 23
     }
   }
 }

@@ -3497,6 +3497,12 @@ private void emitBindingLoad(SemanticOp op) {
                 }
             }
             List<ClassId> exported = exportedClassesOf(unit.moduleId());
+            for (Map.Entry<ClassId, ClassLayout> entry : unit.classLayouts().entrySet()) {
+                if (!exported.contains(entry.getKey())) {
+                    emit("$rt.registerClassPlan(" + jsString(entry.getKey().text()) + ", "
+                        + boundaryPlanText(entry.getValue()) + ");");
+                }
+            }
             for (ClassId classId : exported) {
                 ClassLayout layout = requireUnitLayout(unit.moduleId(), classId,
                     null);
@@ -3613,7 +3619,7 @@ private void emitBindingLoad(SemanticOp op) {
          * plan entries carry no private layout identifier and no target
          * grammar.
          */
-        private void emitClassPlan(ClassId classId, ClassLayout layout) {
+        private String boundaryPlanText(ClassLayout layout) {
             StringBuilder expression = new StringBuilder("[");
             for (int i = 0; i < layout.fields().size(); i++) {
                 ClassLayout.FieldLayout field = layout.fields().get(i);
@@ -3626,10 +3632,14 @@ private void emitBindingLoad(SemanticOp op) {
                     .append(", optional: ").append(!field.required());
                 expression.append(" }");
             }
-            expression.append("]");
+            return expression.append("]").toString();
+        }
+
+        private void emitClassPlan(ClassId classId, ClassLayout layout) {
             String name = "$p" + classId.name();
-            emit("const " + name + " = " + expression + ";");
+            emit("const " + name + " = " + boundaryPlanText(layout) + ";");
             classPlanExprs.put(classId, name);
+            emit("$rt.registerClassPlan(" + jsString(classId.text()) + ", " + name + ");");
         }
 
         /**
@@ -4111,6 +4121,7 @@ private void emitBindingLoad(SemanticOp op) {
             emit("$rt.registerClassFields(" + target + ", ["
                 + layout.fields().stream().map(field -> jsString(field.name()))
                     .collect(java.util.stream.Collectors.joining(", ")) + "]);");
+            emit("$rt.registerInstancePlan(" + target + ", " + boundaryPlanText(layout) + ");");
         }
 
         // ----- Field operations -----

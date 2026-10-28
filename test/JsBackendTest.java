@@ -2195,8 +2195,8 @@ public class JsBackendTest {
             check(alternateTags == 1,
                 "the second module class constructs once through its own "
                     + "factory: " + alternateTags);
-            check(countOf(sjs, "\"v\", ") == 2
-                    && countOf(sjs, "\"w\", ") == 1,
+            check(sjs.lines().filter(line -> line.contains("$rt.setProp(") && line.contains(", \"v\", ")).count() == 2
+                    && sjs.lines().filter(line -> line.contains("$rt.setProp(") && line.contains(", \"w\", ")).count() == 1,
                 "each distinct class layout keeps its own declaration-order "
                     + "field write");
         }
@@ -6165,10 +6165,10 @@ public class JsBackendTest {
 
         NodeResult bad = runDealNode("""
             import * as math from "std/math";
-            async function bomb(): Promise<number> { return math.sqrt(-1); }
+            async function bomb(): Promise<number> { let xs: number[] = []; return xs[0]; }
             export async function test(): Promise<number> { return await bomb(); }
             """, "async-err");
-        check(bad.exitCode() == 1 && bad.output().contains("DEAL_ERROR_CODE: E8001"),
+        check(bad.exitCode() == 1 && bad.output().contains("DEAL_ERROR_CODE: E8002"),
             "an awaited error propagates natively at the await site, exit 1: "
                 + bad.output());
     }
@@ -6262,7 +6262,7 @@ public class JsBackendTest {
         NodeResult rejected = runInvokerNode("""
             import * as math from "std/math";
             async function bomb(): Promise<number> {
-              return math.sqrt(-1);
+              let xs: number[] = []; return xs[0];
             }
             export function main(): null { return null; }
             export async function oracle(): Promise<null> {
@@ -6271,9 +6271,9 @@ public class JsBackendTest {
             }
             """, "invoker-reject", "oracle", "null");
         check(rejected.exitCode() == 0 && rejected.output().equals(
-                "INVOKE_ERROR: E8001 sqrt of negative number at jstest-invoker-reject.deal:3:10"),
+                "INVOKE_ERROR: E8002 array index out of bounds at jstest-invoker-reject.deal:3:33"),
             "a rejected oracle yields { $ok: false, $error } with the "
-                + "reified E8001 code and the exact source location: "
+                + "reified E8002 code and the exact source location: "
                 + rejected.output());
 
         // The defensive arms no checker-accepted DEAL source reaches: the

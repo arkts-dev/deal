@@ -458,7 +458,8 @@ public final class LoweringSupport {
             case LiteralExpr literalExpr -> {
                 scan.cover(ConstructKind.SCALAR_LITERAL);
             }
-            case IdentifierExpr ignored -> scan.cover(ConstructKind.IDENTIFIER);
+            case IdentifierExpr identifier -> scan.cover(identifier.name().equals("undefined")
+                ? ConstructKind.SCALAR_LITERAL : ConstructKind.IDENTIFIER);
             case AssertionExpr assertion -> {
                 scan.cover(ConstructKind.CHECKED_ASSERTION);
                 walkExpression(assertion.value(), module, scan, checkerScope);

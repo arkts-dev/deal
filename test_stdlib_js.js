@@ -254,21 +254,13 @@ test("math.floor rejects a non-number with E8001 and the forwarded span", functi
   assertSpan(err, "t7.deal", 13, 14);
 });
 
-test("math.sqrt of a negative number raises the closed SQRT_NEGATIVE tuple", function() {
-  // The closed arm: E8001 "sqrt of negative number", no expected member,
-  // and the negative operand's canonical hex-float spelling as the actual
-  // (the tuple the emitted LuaJIT chunk, the JVM runtime and the shared
-  // oracle publish for the same subject).
-  const err = assertErrorCode(function() { math.sqrt.$f(-1.0, "t8.deal", 15, 16); }, "E8001");
-  assertEqual(err.message, "sqrt of negative number", "math.sqrt message");
-  if (Object.prototype.hasOwnProperty.call(err, "expected")) {
-    throw new Error("the closed SQRT_NEGATIVE arm carries no expected field, got: "
-      + String(err.expected));
-  }
-  assertEqual(err.actual, "-0x1.0p0", "math.sqrt actual");
+test("math.sqrt negative inputs yield NaN; invalid arguments retain their source", function() {
+  for (const value of [-1, -0.5, -Infinity])
+    assert(Number.isNaN(math.sqrt.$f(value, "t8.deal", 15, 16)), "negative sqrt is NaN");
+  assert(Object.is(math.sqrt.$f(-0), -0), "sqrt preserves negative zero");
+  assertEqual(math.sqrt.$f(Infinity), Infinity, "sqrt preserves infinity");
+  const err = assertErrorCode(() => math.sqrt.$f("bad", "t8.deal", 15, 16), "E8001");
   assertSpan(err, "t8.deal", 15, 16);
-  const fraction = assertErrorCode(function() { math.sqrt.$f(-0.5, "t8.deal", 15, 16); }, "E8001");
-  assertEqual(fraction.actual, "-0x1.0p-1", "math.sqrt fraction actual");
 });
 
 test("valid calls return values that re-validate through the $rt checks", function() {

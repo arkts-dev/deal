@@ -32,15 +32,9 @@ mathlib.ceil = __rt.function_("(number)->number", function(x, file, line, column
 end)
 
 --- Returns the square root of a number.
---- Rejects negative inputs: the closed SQRT_NEGATIVE arm (E8001 "sqrt of
--- negative number") with no expected field and the negative operand's
--- canonical hex-float spelling as the actual — the tuple the emitted
--- LuaJIT chunk, the JVM runtime and the shared oracle publish.
+--- IEEE sqrt preserves NaN, positive infinity and signed zero.
 mathlib.sqrt = __rt.function_("(number)->number", function(x, file, line, column)
   __rt.check_number(x, file, line, column)
-  if x < 0 then
-    error(__rt._err("E8001", "sqrt of negative number", file, line, column, nil, __rt.number_hex(x)))
-  end
   return math.sqrt(x)
 end)
 

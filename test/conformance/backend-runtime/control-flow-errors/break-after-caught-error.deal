@@ -8,7 +8,7 @@ export function test_break_after_caught_error(): number {
   let total: number = 0;
   while (true) {
     try {
-      total = total + (math.sqrt(-1));
+      total = total + ([1][1]);
     } catch (e) {
       total = total + 5;
       break;

@@ -6353,14 +6353,14 @@ public final class SemanticLowerer {
          * The exact function signature of a checked function declaration
          * (closure-core mode): the {@code Symbol.FunctionSymbol} fact of
          * the declaration, resolved through the checker's per-scope
-         * symbol table (the scope chain walks to the enclosing scope and
-         * the hoisted module root — never retaining a
+         * symbol table (the exact enclosing declaration scope, excluding
+         * shadowing parameters — never retaining a
          * {@code NameResolver} instance, D4).
          */
         private RuntimeDescriptor.Func functionSignatureOf(FunctionDeclaration function) {
             SymbolTable scope = checks.scopeMap().get(function);
-            Symbol symbol = (scope == null ? checks.symbolTable() : scope)
-                .resolve(function.name());
+            Symbol symbol = (scope == null ? checks.symbolTable() : scope.parent())
+                .resolveLocal(function.name());
             if (symbol instanceof Symbol.FunctionSymbol functionSymbol) {
                 try {
                     return (RuntimeDescriptor.Func)

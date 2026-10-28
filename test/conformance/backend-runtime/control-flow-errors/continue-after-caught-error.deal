@@ -8,7 +8,7 @@ export function test_continue_after_caught_error(): number {
   let total: number = 0;
   { let v14Loop0: number = 0; while (v14Loop0 < 3) { let i: number = v14Loop0; {
     try {
-      if (i === 1) { total = total + (math.sqrt(-1)); }
+      if (i === 1) { total = total + ([1][1]); }
     } catch (e) {
       { v14Loop0 = i; v14Loop0 = v14Loop0 + 1; continue; }
     }

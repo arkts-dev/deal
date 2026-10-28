@@ -1001,19 +1001,11 @@ public class SharedStdlibSemanticsTest {
                     == Double.doubleToLongBits(-0.0),
             "sqrt(-0.0) is -0.0 (IEEE); -0.0 is not negative");
 
-        // SQRT_NEGATIVE: exact projection; the outcome carries the operand.
-        expectFailure(SharedStdlibSemantics.mathSqrt(origin(), -4.0),
-            FailurePolicyId.SQRT_NEGATIVE, DiagnosticCode.E8001, "sqrt of negative number",
-            null, CanonicalJson.numberHex(-4.0), Map.of(), origin(),
-            "sqrt(-4.0) fails SQRT_NEGATIVE carrying the negative operand");
-        expectFailure(SharedStdlibSemantics.mathSqrt(origin(), -0.5),
-            FailurePolicyId.SQRT_NEGATIVE, DiagnosticCode.E8001, "sqrt of negative number",
-            null, CanonicalJson.numberHex(-0.5), Map.of(), origin(),
-            "sqrt(-0.5) fails SQRT_NEGATIVE");
-        expectFailure(SharedStdlibSemantics.mathSqrt(origin(), Double.NEGATIVE_INFINITY),
-            FailurePolicyId.SQRT_NEGATIVE, DiagnosticCode.E8001, "sqrt of negative number",
-            null, CanonicalJson.numberHex(Double.NEGATIVE_INFINITY), Map.of(), origin(),
-            "sqrt(-Infinity) fails SQRT_NEGATIVE");
+        for (double value : new double[] {-4, -0.5, Double.NEGATIVE_INFINITY}) {
+            check(SharedStdlibSemantics.mathSqrt(origin(), value) instanceof Outcome.Success<Value> success
+                && success.value() instanceof Value.Number number && Double.isNaN(number.value()),
+                "negative sqrt yields NaN: " + value);
+        }
 
         expectSuccess(SharedStdlibSemantics.mathAbsNumber(origin(), -2147483648.0),
             new Value.Number(2147483648.0), "absNumber has no signed32 range gate");
@@ -1678,14 +1670,13 @@ public class SharedStdlibSemanticsTest {
             SharedStdlibSemantics.Defect.class, "valid scalar sequence",
             "an invalid-scalar table key fails closed");
 
-        // Spot check: SQRT_NEGATIVE through execute carries the operand.
+        // Dispatch preserves the same NaN result.
         SemanticOp sqrt = stdlibOpBy(unit, StdlibFunctionId.MATH_SQRT);
         Outcome<Value> negativeSqrt = SharedStdlibSemantics.execute(sqrt,
             List.of(new Value.Number(-4.0)), null);
-        expectFailure(negativeSqrt, FailurePolicyId.SQRT_NEGATIVE, DiagnosticCode.E8001,
-            "sqrt of negative number", null, CanonicalJson.numberHex(-4.0), Map.of(),
-            sqrt.origin(), "sqrt(-4.0) through execute carries the operand at the call "
-                + "origin");
+        check(negativeSqrt instanceof Outcome.Success<Value> success
+            && success.value() instanceof Value.Number number && Double.isNaN(number.value()),
+            "sqrt(-4.0) through execute yields NaN");
     }
 
     public static void main(String[] args) throws Exception {

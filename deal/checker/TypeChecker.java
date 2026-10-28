@@ -1010,21 +1010,12 @@ public final class TypeChecker {
         for (PendingScope ps : pendingScopes) {
             if (ps.scope == currentScope.parent()) { ps.remaining.remove(fd.name()); break; }
         }
-        // F2: Resolve from currentScope (not rootTable) so nested functions work.
-        // The function name is in the enclosing scope (parent of currentScope
-        // which is the function's own parameter scope). currentScope.resolve()
-        // walks the scope chain upward, so it will find the function name.
+        // Resolve the declaration in its exact enclosing scope, excluding
+        // the parameter scope: a legal parameter may shadow its function name.
         Type.Func funcType = null;
-        Symbol sym = currentScope.resolve(fd.name());
+        Symbol sym = currentScope.parent().resolveLocal(fd.name());
         if (sym instanceof Symbol.FunctionSymbol fs) {
             funcType = fs.funcType();
-        }
-        // Fallback to rootTable for top-level functions
-        if (funcType == null) {
-            sym = rootTable.resolve(fd.name());
-            if (sym instanceof Symbol.FunctionSymbol fs) {
-                funcType = fs.funcType();
-            }
         }
 
         Type savedReturnType = currentReturnType;
@@ -2762,13 +2753,25 @@ public final class TypeChecker {
         // Array-typed object. The append idiom xs[xs.length] = v has an
         // IndexExpr target (the MemberAccessExpr is its index), so it never
         // matches this shape and keeps emitting its append form.
-        boolean readOnlyArrayLength = false;
+        boolean readOnlyTarget = false;
+        if (assign.target() instanceof IdentifierExpr id
+                && !(resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol)) {
+            error(DiagnosticCode.E3017, "Assignment requires a variable binding", id.span());
+            readOnlyTarget = true;
+        }
+        ExpressionNode receiver = assign.target() instanceof MemberAccessExpr member ? member.object()
+            : assign.target() instanceof IndexExpr index ? index.array() : null;
+        if (receiver instanceof IdentifierExpr id
+                && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol) {
+            error(DiagnosticCode.E3017, "Imported exports are read-only", assign.target().span());
+            readOnlyTarget = true;
+        }
         if (assign.target() instanceof MemberAccessExpr mae
                 && mae.field().equals("length")
                 && typeOf(mae.object()) instanceof Type.Array) {
             error(DiagnosticCode.E3017, "Array length is read-only",
                 assign.target().span());
-            readOnlyArrayLength = true;
+            readOnlyTarget = true;
         }
 
         // F3: Use the target type as contextual expected type for the value
@@ -2830,7 +2833,7 @@ public final class TypeChecker {
 
         // Normal target/value checking ran above (typeMap stays populated);
         // the read-only rejection makes the whole assignment erroneous.
-        if (readOnlyArrayLength) {
+        if (readOnlyTarget) {
             return Type.Error.INSTANCE;
         }
 

@@ -14,7 +14,7 @@ Carry DEAL_V1_5_BINARY64/V1_5_ACTIVE through constructors, comparisons, admissio
 
 Each HOST import read records its source occurrence's alias cell; never reconstruct occurrence ownership from module/name. Declared-export validation uses shared ascending-name order without changing declaration-ordered provider facts.
 
-A function binding assigned anywhere in its declaring body's nested traversal has no static allocation identity. Reads materialize the current value; calls/await use Dynamic dispatch. Never-assigned declarations, recursion and fixed adapter sources retain recorded static callees. Classify runtime sources by their recorded execution class, not spelling or descriptor.
+A function binding assigned anywhere in its declaring body's nested traversal has no static allocation identity. Reads materialize the current value; calls/await use Dynamic dispatch. Function declarations/imported exports are immutable; only function-valued variables may be reassigned. Resolve declaration signatures in their exact owner scope, excluding shadowing parameters. Declarations, recursion and fixed adapter sources retain recorded static callees. Classify runtime sources by their recorded execution class, not spelling or descriptor.
 
 Adapter capture modes remain distinct. REEVALUATE_THUNK resolves its expression per invocation; VALUE captures an evaluated source, including awaited completion; SHARED_CELL retains its cell. Preserve their recorded sync/async call and completion cells.
 

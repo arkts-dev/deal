@@ -115,7 +115,7 @@ public class FailureArmAuthorityTest {
         testForgedCarrierTableKeys();
         testTypedBoundaryInvalidUnicode();
         testStdJsonArmDrive();
-        testInt32AndSqrtArmFamily();
+        testStdlibResultsAndFailureArms();
         testIntLadderWrongKindCell();
         testArrayBoundsArms();
         testDeclaredFieldShapeNegatives();
@@ -945,12 +945,12 @@ public class FailureArmAuthorityTest {
           }
 
           private static Object mismatched() {
-            return new deal.codegen.jvm.JvmRuntime.FunctionValue(null,
+            return new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> "ok",
                 "function(number;string)", "(number)->string", null);
           }
 
           private static Object matching() {
-            return new deal.codegen.jvm.JvmRuntime.FunctionValue(null,
+            return new deal.codegen.jvm.JvmRuntime.FunctionValue(args -> 1.0,
                 "function(number;number)", "(number)->number", null);
           }
         }
@@ -2185,26 +2185,17 @@ public class FailureArmAuthorityTest {
     }
 
     // =========================================================================
-    // 11. The int32/sqrt family: the JVM runtime renders the arms
+    // 11. JVM stdlib results and closed failure projection
     // =========================================================================
 
-    /**
-     * The int32/sqrt family's JVM render sites (P4 item 3): the arithmetic
-     * range and division arms, the negative-exponent arm, the
-     * {@code SQRT_NEGATIVE} arm, the {@code MATH_ABS_INT} range cell, and
-     * the JSON parse arm each publish the closed arm's own tuple — never a
-     * hard-coded copy of its text. {@code JvmRuntime} composes no failure
-     * text for a table arm; the arm render is the only source of each
-     * message and field.
-     */
-    static void testInt32AndSqrtArmFamily() {
-        System.out.println("-- the int32/sqrt family: the JVM runtime renders the arms --");
+    /** Sqrt publishes NaN; JSON parse failures retain their closed arm tuple. */
+    static void testStdlibResultsAndFailureArms() {
+        System.out.println("-- JVM stdlib results and closed failure arms --");
         String origin = "arm-battery.deal:1:1";
-        checkJvmArm(FailureArmId.SQRT_NEGATIVE, Map.of(), null,
-            Double.toHexString(-1.0d), origin, "the MATH_SQRT cell",
-            () -> deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "MATH_SQRT",
-                "op", "digest", "parent", origin,
-                new Object[] {Double.valueOf(-1.0d)}));
+        Object sqrt = deal.codegen.jvm.JvmRuntime.stdlib("STDLIB_CALL", "MATH_SQRT",
+            "op", "digest", "parent", origin, new Object[] {-1.0d});
+        check(sqrt instanceof Double result && Double.isNaN(result),
+            "the MATH_SQRT cell publishes NaN, never a domain failure");
         checkJvmArm(FailureArmId.JSON_PARSE_ERROR,
             Map.of("oneBasedByteOffset", "2", "reason", "unexpected end of input"),
             null, null, origin, "the JSON parse cell",

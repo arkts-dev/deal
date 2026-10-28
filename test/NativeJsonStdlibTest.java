@@ -694,7 +694,7 @@ public final class NativeJsonStdlibTest {
             SharedStdlibSemantics.jsonStringify(origin(), new Value.Number(1.5)),
             "stringify-number"), "stringify-number")));
 
-        // 14. std/math: the IEEE results and the negative-sqrt arm.
+        // 14. std/math: IEEE results, including NaN for negative sqrt.
         expected.add(numberExpectation("floor-positive",
             SharedStdlibSemantics.mathFloor(origin(), 1.5)));
         expected.add(numberExpectation("floor-negative",
@@ -739,8 +739,7 @@ public final class NativeJsonStdlibTest {
             SharedStdlibSemantics.mathSqrt(origin(), 4.9406564584124654e-324)));
         expected.add(numberExpectation("sqrt-rounding",
             SharedStdlibSemantics.mathSqrt(origin(), 2.0e-308)));
-        expected.add(stdFailure("sqrt-negative", failureOf(
-            SharedStdlibSemantics.mathSqrt(origin(), -1.0), "sqrt-negative")));
+        expected.add(numberExpectation("sqrt-negative", SharedStdlibSemantics.mathSqrt(origin(), -1.0)));
         expected.add(numberExpectation("abs-negative-zero",
             SharedStdlibSemantics.mathAbsNumber(origin(), -0.0)));
         expected.add(numberExpectation("abs-negative",

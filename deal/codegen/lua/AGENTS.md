@@ -10,7 +10,7 @@ Keep canonical descriptors separate from internal representations and JSON-plan/
 
 Null and undefined admission are independent. Normalize missing to undefined; absent optional fields never become null through nullability; array deletion rejects. Recognize sentinels before table dispatch and preserve them before numeric/array/function projection. Strip both nullish prefixes for representation selection. Typed failures use closed semantic kinds; raw host carrier nil remains a distinct protocol token.
 
-ASSERTION preserves identity and reports E8001 at the assertion origin; ordinary boundaries retain their parameter/signature/element failures. Recursively validate unknown ingress Unicode; reject raw functions, threads, userdata, cdata and async handles; retain tagged functions. Trace Error independently of declared unknown/ref types; undefined is not a heap allocation. Format numeric/index atoms through canonical binary64 hexadecimal rendering.
+ASSERTION preserves identity and reports E8001 at the assertion origin; ordinary boundaries retain their parameter/signature/element failures. Recursively validate unknown ingress Unicode; reject raw functions, threads, userdata, cdata and async handles; retain tagged functions only with callable payload and valid canonical signature. Nominal checks validate complete source/external field plans after mutation, with cycle guards local to the validation operation. Trace Error independently of declared unknown/ref types; undefined is not a heap allocation. Format numeric/index atoms through canonical binary64 hexadecimal rendering.
 
 ## Host projection
 

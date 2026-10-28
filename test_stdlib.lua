@@ -1517,7 +1517,7 @@ test("json.stringify projects emitted class/Error carriers and omits callable me
     { name = "emitted function carrier", actual = "function",
       value = { [__K.fn] = function() end, [__K.csig] = "()->null", [__K.fid] = nil }, expected = '{}' },
     { name = "emitted function instance", actual = "function",
-      value = { [__K.f] = {}, [__K.sig] = "()->null" }, expected = '{}' },
+      value = { [__K.fn] = function() end, [__K.f] = {}, [__K.sig] = "()->null" }, expected = '{}' },
   }
   for _, carrier in ipairs(carriers) do
     local text = json.stringify.f({ payload = carrier.value })
@@ -1690,22 +1690,16 @@ test("math.sqrt of zero returns zero", function()
   assert(mathlib.sqrt.f(0.0) == 0.0)
 end)
 
-test("math.sqrt of negative number errors with E8001", function()
-  -- The closed SQRT_NEGATIVE arm: no expected member, and the negative
-  -- operand's canonical hex-float spelling (Double.toHexString) as the
-  -- actual — the tuple the emitted LuaJIT chunk, the JVM runtime, the JS
-  -- realization and the shared oracle publish.
-  local err = assert_error_code(function() mathlib.sqrt.f(-1.0) end, "E8001")
-  assert(err.message == "sqrt of negative number",
-    "sqrt message: " .. tostring(err.message))
-  assert(err.expected == nil, "the closed SQRT_NEGATIVE arm carries no expected field")
-  assert(err.actual == "-0x1.0p0", "sqrt actual: " .. tostring(err.actual))
+test("math.sqrt negative inputs yield NaN", function()
+  for _, value in ipairs({-1, -0.5, -math.huge}) do
+    local result = mathlib.sqrt.f(value)
+    assert(result ~= result, "negative sqrt is NaN")
+  end
 end)
 
-test("math.sqrt of a negative fraction keeps the canonical hex-float actual", function()
-  local err = assert_error_code(function() mathlib.sqrt.f(-0.5) end, "E8001")
-  assert(err.actual == "-0x1.0p-1", "sqrt actual: " .. tostring(err.actual))
-  assert(err.expected == nil, "the closed SQRT_NEGATIVE arm carries no expected field")
+test("math.sqrt preserves signed zero and positive infinity", function()
+  assert(1 / mathlib.sqrt.f(-0.0) == -math.huge)
+  assert(mathlib.sqrt.f(math.huge) == math.huge)
 end)
 
 test("math.sqrt with non-number raises error", function()

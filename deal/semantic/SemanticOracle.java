@@ -3462,6 +3462,18 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 for (var field : instance.fields())
                     if (field instanceof Value.ClassFieldState.Present present) children.add(present.value());
                 view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
+                ClassLayout layout = instanceLayouts.get(instance);
+                if (layout == null) layout = classLayouts.get(instance.classId());
+                if (layout == null) throw new IllegalStateException("Class value lacks its checked layout");
+                List<BoundaryValueView.ClassField> fields = new ArrayList<>();
+                for (int i = 0; i < layout.fields().size(); i++) {
+                    ClassLayout.FieldLayout field = layout.fields().get(i);
+                    Value.ClassFieldState state = instance.fields().get(i);
+                    fields.add(new BoundaryValueView.ClassField(field.name(), field.descriptor(), field.required(),
+                        state instanceof Value.ClassFieldState.Present,
+                        () -> viewOfValue(((Value.ClassFieldState.Present) state).value(), memo)));
+                }
+                view = view.withClassFields(fields);
             }
             memo.put(value, view);
             return view;

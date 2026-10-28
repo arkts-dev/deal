@@ -1,12 +1,17 @@
 // @spec: Standard library declarations — std/math.d.deal
-// @description: math.sqrt rejects a negative operand through the closed SQRT_NEGATIVE arm: E8001 "sqrt of negative number", no expected field, actual the operand's canonical hex-float spelling (v1.4)
-// @expected: runtime-error E8001
-// @features: stdlib, math, runtime-errors, v1.4
+// @description: Negative sqrt yields NaN while signed zero and positive infinity are preserved
+// @expected: runtime-ok
+// @features: stdlib, math, number, v1.5
 
 import * as math from "std/math";
 
 export function test_math_sqrt_negative(): number {
-  return math.sqrt(-1.0);
+  let result = math.sqrt(-1.0);
+  if (result === result || math.sqrt(-1 / 0) === math.sqrt(-1 / 0)
+      || 1 / math.sqrt(-0) !== -1 / 0 || math.sqrt(1 / 0) !== 1 / 0) {
+    throw {code: "TEST_FAIL", message: "sqrt binary64 contract"};
+  }
+  return 0;
 }
 
 export function main(): null {

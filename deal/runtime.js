@@ -98,6 +98,7 @@ const $jsonNullTables = new WeakSet();
 const $classFieldOrder = new WeakMap();
 const $hostClassPlans = new Map();
 const $classChecks = new WeakMap();
+const $instanceClassPlans = new WeakMap();
 const $hostArrayViews = new WeakMap();
 const $hostArraySources = new WeakMap();
 
@@ -960,18 +961,34 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
             },
             set(target, key, member) {
               if (key === "length") {
-                for (const k of $value.keys()) if (Number(k) > member) $value.delete(k);
+                if (!Number.isInteger(member) || member < 0 || member > $rt.arrayLength($value)) return false;
+                for (const k of $value.keys()) if ($arrayFormIndex(k) !== null && Number(k) > member) $value.delete(k);
                 return true;
               }
               if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+                if (Number(key) > $rt.arrayLength($value)) return false;
                 const index = String(Number(key) + 1);
-                $value.set(index, $hostArraySources.get(member) || member);
+                $value.set(index, $rt.reverseHostGraph(member));
                 const marks = $jsonNumberMarks.get($value);
                 if (marks) marks.delete(index);
                 return true;
               }
               return Reflect.set(target, key, member);
             },
+            defineProperty(target, key, descriptor) {
+              if (key === "length" || (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))) {
+                if (!("value" in descriptor) || descriptor.get || descriptor.set
+                    || descriptor.writable === false
+                    || (key !== "length" && (descriptor.configurable === false || descriptor.enumerable === false))) return false;
+                return this.set(target, key, descriptor.value);
+              }
+              return Reflect.defineProperty(target, key, descriptor);
+            },
+            deleteProperty(target, key) {
+              if (key === "length" || (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))) return false;
+              return Reflect.deleteProperty(target, key);
+            },
+            preventExtensions() { return false; },
             has(target, key) {
               if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))
                 return $value.has(String(Number(key) + 1));
@@ -982,6 +999,7 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
                 .map(k => String(Number(k) - 1)).concat(Reflect.ownKeys(target));
             },
             getOwnPropertyDescriptor(target, key) {
+              if (key === "length") return {value: $rt.arrayLength($value), writable: true, enumerable: false, configurable: false};
               if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)
                   && $value.has(String(Number(key) + 1)))
                 return {value: $project($value.get(String(Number(key) + 1))), writable: true,
@@ -2729,7 +2747,7 @@ const $rt = {
   // object, class instance, wrapper, primitives — keeps its own $kindOf
   // actual label.
   validateData: function $validateData(value, file, line, column) {
-    const seen = new WeakSet(), pending = [value];
+    const seen = new WeakSet(), pending = [value], untaggedArrays = [];
     while (pending.length) {
       const v = pending.pop();
       if (v === null || v === $undefined || v === $MISSING) continue;
@@ -2741,14 +2759,24 @@ const $rt = {
       if (v instanceof $Map) {
         for (const [key, member] of v) { $rt.checkString(key, file, line, column); pending.push(member); }
       } else if ($Array.isArray(v)) {
-        for (let i = 0; i < v.length; i++) if (Object.prototype.hasOwnProperty.call(v, i)) pending.push(v[i]);
+        if (!$arrayDescriptors.has(v)) untaggedArrays.push(v);
+        for (let i = 0; i < v.length; i++) {
+          if (!Object.prototype.hasOwnProperty.call(v, i)) $rt.fail("E8001", "sparse array ingress", file, line, column, "array", "array");
+          pending.push(v[i]);
+        }
       } else if (v.$kind === "class") {
         const fields = $classFieldOrder.get(v) || Object.keys(v).filter(key => key !== "$kind" && key !== "$classname");
         for (const key of fields) if (Object.prototype.hasOwnProperty.call(v, key)) pending.push(v[key]);
-      } else if (v.$kind !== "function") {
+      } else if (v.$kind === "function") {
+        const signature = typeof v.$sig === "string" ? $parse(v.$sig) : null;
+        if (typeof v.$f !== "function" || !signature || signature.$t !== "function")
+          $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", "function");
+      } else {
         $rt.fail("E8001", "unsupported unknown ingress", file, line, column, "unknown", $kindOf(v));
       }
     }
+    // Publish persistent descriptors only after the whole ingress graph is valid.
+    for (const array of untaggedArrays) $arrayDescriptors.set(array, "unknown");
     return value;
   },
 
@@ -2872,6 +2900,7 @@ const $rt = {
       if (v === $undefined || v === null || v.$kind !== "function") {
         $rt.fail("E8001", "expected function", file, line, column, "function", $kindOf(v));
       }
+      $rt.validateData(v, file, line, column);
       if (v.$sig !== descriptor) {
         $rt.fail("E8010", "function signature mismatch: expected " + descriptor + ", got " + v.$sig, file, line, column, descriptor, v.$sig);
       }
@@ -2888,7 +2917,7 @@ const $rt = {
       if (v.$classname !== $parsed.$name) {
         $rt.fail("E8001", "expected instance of " + $parsed.$name + ", got " + v.$classname, file, line, column, $parsed.$name, v.$classname);
       }
-      const plan = $hostClassPlans.get($parsed.$name);
+      const plan = $instanceClassPlans.get(v) || $hostClassPlans.get($parsed.$name);
       if (plan) {
         let checking = $classChecks.get(v);
         if (!checking) { checking = new Set(); $classChecks.set(v, checking); }
@@ -2929,6 +2958,33 @@ const $rt = {
   // projection), carrying the reference's exact message form ("array
   // element N type mismatch", deal/runtime.lua:788 — no inner-message
   // text is embedded). Success returns the value unchanged.
+  reverseHostGraph: function(root) {
+    const seen = new WeakSet();
+    function reverse(value) {
+      if (value === null || typeof value !== "object") return value;
+      if ($hostArraySources.has(value)) return $hostArraySources.get(value);
+      if (seen.has(value)) return value;
+      seen.add(value);
+      if (value instanceof $Map) {
+        for (const [key, member] of value) {
+          const admitted = reverse(member);
+          if (admitted !== member) value.set(key, admitted);
+        }
+      } else if ($Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) if (Object.prototype.hasOwnProperty.call(value, i)) {
+          const member = reverse(value[i]);
+          if (member !== value[i]) value[i] = member;
+        }
+      } else if (value.$kind === "class") {
+        for (const key of $classFieldOrder.get(value) || Object.keys(value)) {
+          const member = reverse(value[key]);
+          if (member !== value[key]) value[key] = member;
+        }
+      }
+      return value;
+    }
+    return reverse(root);
+  },
   tagArray: function(v, elementDescriptor) { $arrayDescriptors.set(v, elementDescriptor); return v; },
 
   // Only declared host admission may install a fresh array's descriptor.
@@ -3139,6 +3195,8 @@ const $rt = {
   // Reject extras and required omissions, validate unpublished slots, then tag.
   // Supplied references retain identity; failures publish nothing and do not
   // roll back completed effects. Absent optionals store MISSING.
+  registerClassPlan: function(identity, fields) { $hostClassPlans.set(identity, fields); },
+  registerInstancePlan: function(value, fields) { $instanceClassPlans.set(value, fields); },
   registerClassFields: function(value, fields) { $classFieldOrder.set(value, fields); return value; },
 
   classPlan: function $classPlan(identity, plan, provided, file, line, column) {
@@ -3205,6 +3263,7 @@ const $rt = {
     $rt.setProp($slots, "$kind", "class");
     $rt.setProp($slots, "$classname", identity);
     $classFieldOrder.set($slots, plan.map(entry => entry.name));
+    $instanceClassPlans.set($slots, plan);
     return $slots;
   },
 
@@ -3445,7 +3504,7 @@ const $rt = {
             $argMemo));
         }
         const $rawResult = f(...$hostArgs);
-        const $r = $hostArraySources.get($rawResult) || $rawResult;
+        const $r = $rt.reverseHostGraph($rawResult);
         if ($isNullRet) {
           if ($r === $undefined) {
             $rt.fail("E8010", "return value 1 type mismatch: expected null, got nothing", $file, $line, $column, "null", "nothing");
@@ -3559,7 +3618,7 @@ const $rt = {
           const $got = $op === $undefined ? "nothing" : $carrierKind($op);
           $rt.fail("E8010", "host async function must return an async operation, got " + $got, $file, $line, $column, "async operation", $got);
         }
-        const $v = await $op;
+        const $v = $rt.reverseHostGraph(await $op);
         try {
           const checked = $rt.checkType($retDesc, $v, $completionFile,
             $completionLine, $completionColumn);

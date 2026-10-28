@@ -295,7 +295,7 @@ public final class SharedStdlibSemantics {
      * primitive never selects message text) paired with the operation
      * origin of the closed table's rule — the {@code STDLIB_CALL} call
      * origin for every stdlib row ({@code JSON_PARSE_SYNTAX},
-     * {@code JSON_TO_ERROR}, {@code SQRT_NEGATIVE} operation origin).
+     * {@code JSON_TO_ERROR} operation origin).
      */
     public record StdlibFailure(BoundaryFailure failure, SourceOrigin origin) {
 
@@ -1598,20 +1598,12 @@ public final class SharedStdlibSemantics {
     }
 
     /**
-     * {@code MATH_SQRT}: IEEE sqrt; a negative non-NaN input fails
-     * {@code SQRT_NEGATIVE} (E8001 {@code sqrt of negative number} at
-     * the operation origin); NaN returns NaN and {@code -0.0} returns
-     * {@code -0.0} (IEEE). The failure carries the negative operand in
-     * its {@code actual} field as the canonical IEEE-754 hex-float
-     * spelling ({@link CanonicalJson#numberHex}).
+     * {@code MATH_SQRT}: IEEE sqrt; negative inputs yield NaN, while
+     * NaN, positive infinity and signed zero are preserved.
      *
      */
     public static Outcome<Value> mathSqrt(SourceOrigin origin, double value) {
         Objects.requireNonNull(origin, "origin must not be null");
-        if (value < 0) {
-            return failOf(FailurePolicyId.SQRT_NEGATIVE, 0, null,
-                CanonicalJson.numberHex(value), new LinkedHashMap<>(), origin);
-        }
         return new Outcome.Success<>(new Value.Number(Math.sqrt(value)));
     }
 
