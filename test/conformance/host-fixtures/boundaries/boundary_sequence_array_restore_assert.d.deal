@@ -1,0 +1,1 @@
+export function keep(v:unknown):void;export function effect():void;export function echo(v:unknown):unknown;

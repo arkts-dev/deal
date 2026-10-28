@@ -103,7 +103,7 @@ public final class SidecarSchemaValidator {
     // =========================================================================
 
     private static final Set<String> ROOT_FIELDS =
-        Set.of("version", "backends", "expected", "mode", "diagnostic");
+        Set.of("version", "backends", "expected", "mode", "diagnostic", "backendReason", "completions", "hostFixture");
 
     private static final Set<String> RUNTIME_EXPECTATION_FIELDS =
         Set.of("mode", "transcript", "exitCode", "error");
@@ -184,6 +184,21 @@ public final class SidecarSchemaValidator {
         if (rootFields.containsKey("mode")) {
             return validateCompileSidecar(context, rootFields);
         }
+        if (rootFields.containsKey("hostFixture")) {
+            var host = rootFields.get("hostFixture");
+            if (!(host instanceof CanonicalJson.Str name) || !name.value().matches("[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9_-]+)*"))
+                return failure(context, "hostFixture", "requires a host-fixtures relative companion stem (no traversal or extension)");
+        }
+        var completions = validateCompletions(context, rootFields.get("completions"));
+        if (completions.isPresent()) return completions;
+        if (rootFields.containsKey("backendReason")) {
+            var reason = rootFields.get("backendReason");
+            if (!(reason instanceof CanonicalJson.Str text) || text.value().isBlank())
+                return failure(context, "backendReason", "requires a nonempty fixture-specific capability reason");
+        }
+        if (rootFields.get("backends") instanceof CanonicalJson.Arr lanes
+                && lanes.items().size() < BACKEND_NAMES.size() && !rootFields.containsKey("backendReason"))
+            return failure(context, "backendReason", "a backend subset requires an explicit capability reason");
         return validateRuntimeSidecar(context, rootFields);
     }
 
@@ -201,10 +216,13 @@ public final class SidecarSchemaValidator {
                 + " — a Compile Expectation Sidecar requires mode \"compile-error\"");
         }
         if (rootFields.containsKey("backends")) {
-            return failure(context, "backends",
-                "a compile sidecar must not carry a backends key "
-                    + "(the backends key exists only on runtime sidecars)");
+            if (!(rootFields.get("backends") instanceof CanonicalJson.Arr backends))
+                return failure(context, "backends", "compile obligations require an explicit backend list");
+            var invalid = checkUniformBackendList(context, backends);
+            if (invalid.isPresent()) return invalid;
         }
+        for (String key : List.of("completions", "hostFixture", "backendReason"))
+            if (rootFields.containsKey(key)) return failure(context, key, "not supported on compile sidecars");
         if (rootFields.containsKey("expected")) {
             return failure(context, "expected",
                 "unknown field in a compile sidecar root");
@@ -257,6 +275,25 @@ public final class SidecarSchemaValidator {
             return failure(context, "diagnostic.code",
                 "the compile sidecar pins code " + code.value()
                     + " but the fixture's @expected pins " + expectedCode);
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<ClassificationFailure> validateCompletions(ValidationContext context, CanonicalJson.Value value) {
+        if (value == null) return Optional.empty();
+        if (!(value instanceof CanonicalJson.Obj exports) || exports.entries().isEmpty())
+            return failure(context, "completions", "requires a nonempty export-to-completion object");
+        for (var entry : exports.entries()) {
+            if (!(entry.value() instanceof CanonicalJson.Obj pin))
+                return failure(context, "completions." + entry.key(), "requires descriptor and number fields");
+            var fields = fieldsOf(pin);
+            if (!fields.keySet().equals(Set.of("descriptor", "number"))
+                    || !(fields.get("descriptor") instanceof CanonicalJson.Str descriptor)
+                    || !descriptor.value().equals("number")
+                    || !(fields.get("number") instanceof CanonicalJson.Str number)
+                    || !number.value().matches("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+                    || !Double.isFinite(Double.parseDouble(number.value())))
+                return failure(context, "completions." + entry.key(), "requires a number descriptor and finite JSON-number string (including signed zero)");
         }
         return Optional.empty();
     }
@@ -343,7 +380,7 @@ public final class SidecarSchemaValidator {
             }
             names.add(name.value());
         }
-        if (names.size() != BACKEND_NAMES.size()) {
+        if (names.isEmpty()) {
             return failure(context, "backends",
                 "a runtime sidecar must name exactly the three backends "
                     + "luajit, jvm, js (got "

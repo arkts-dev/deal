@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {f=function()local r={f=rt.function_("()->number",nil)};r.self=r;return r end}

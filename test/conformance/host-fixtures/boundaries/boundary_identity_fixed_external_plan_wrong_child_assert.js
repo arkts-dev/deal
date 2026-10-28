@@ -1,0 +1,1 @@
+module.exports={Node:{$kind:"class",$classname:"@$external/host/probe/Node"},mutate:v=>{v.next={ $kind:"class",$classname:"@$external/host/probe/Node",x:"bad",next:null};}};

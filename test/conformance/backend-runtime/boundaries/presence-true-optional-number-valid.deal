@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: presence-True-optional-number-valid
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let n:host.C={x:1};host.mutate(n);try{let d=n as host.C;console.log("OK");}catch(e){console.log("REJECT");}return null;}

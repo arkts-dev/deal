@@ -1,0 +1,1 @@
+return {f=function()local r={};local c={v=1};r.self=r;return r end}

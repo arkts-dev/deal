@@ -1,0 +1,1 @@
+module.exports={invoke:f=>Promise.resolve().then(()=>f.$f())};

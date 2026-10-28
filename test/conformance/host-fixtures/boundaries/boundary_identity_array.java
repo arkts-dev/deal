@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f($DealRt.__RefArray v){return new $DealRt.__RefArray(new Object[]{v.data[0]});}}

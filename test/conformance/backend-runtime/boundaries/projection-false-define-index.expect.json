@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "backends": [
+    "js"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "LIVE\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "backendReason": "JavaScript native array property descriptors and defineProperty projection.",
+  "hostFixture": "boundaries/boundary_projection_false_define_index"
+}

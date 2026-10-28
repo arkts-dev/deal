@@ -1,0 +1,1 @@
+final class HostProbe{public static void invoke($DealRt.Fn0_R_$void f){f.invoke();}}

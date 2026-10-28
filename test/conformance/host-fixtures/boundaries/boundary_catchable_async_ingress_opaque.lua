@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {f=function()return rt.async_start(function()return setmetatable({},{}) end) end}

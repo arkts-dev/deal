@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "E8010\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "hostFixture": "boundaries/boundary_graph_cycle_opaque_record_string_unknown"
+}

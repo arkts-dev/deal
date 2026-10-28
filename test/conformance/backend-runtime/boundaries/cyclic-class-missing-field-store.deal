@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: cyclic-class-missing-field-store
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+class Node{x:number;next:Node|null;}class Box{n:Node;}function consume(n:Node):void{}function identity(n:Node):Node{return n;}
+export function main():null{let n:Node={x:1,next:null};n.next=n;host.mutate(n);try{let b:Box={n:n};b.n=n;console.log("OK");}catch(e){console.log("REJECT");}return null;}

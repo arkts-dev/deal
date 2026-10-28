@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: math-floor-4
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as m from "std/math";
+export function main():null{try{let x=m.floor(4);if(x===(4)){console.log("OK");}else{console.log("WRONG");}}catch(e){console.log("THREW");}return null;}

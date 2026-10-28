@@ -1,0 +1,1 @@
+final class HostProbe{public static Object invoke($DealRt.Fn0_R_$void f){return java.util.concurrent.CompletableFuture.supplyAsync(()->{f.invoke();return deal.codegen.jvm.JvmRuntime.UNDEFINED;});}}

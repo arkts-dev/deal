@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: undefined-True-null|undefined-log
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+export async function f():Promise<null|undefined>{console.log("unused");return undefined;}
+export function main():null{return null;}

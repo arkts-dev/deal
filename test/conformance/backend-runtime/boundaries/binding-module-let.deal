@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: binding-module-let
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+
+export function main():null{let f:()=>number=function():number{return 1;};f=function():number{return 2;};if(f()===2){console.log("OK");}else{console.log("STALE");}return null;}

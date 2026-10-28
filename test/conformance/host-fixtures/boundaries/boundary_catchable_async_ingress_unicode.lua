@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {f=function()return rt.async_start(function()return string.char(237,160,128) end) end}

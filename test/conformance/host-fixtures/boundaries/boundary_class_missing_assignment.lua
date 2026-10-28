@@ -1,0 +1,1 @@
+return {f=function(v)v.x=nil end}

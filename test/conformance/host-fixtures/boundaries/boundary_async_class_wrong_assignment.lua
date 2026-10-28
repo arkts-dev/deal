@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {mutate=function(v)return rt.async_start(function()v.x="bad";return rt.__UNDEFINED end)end}

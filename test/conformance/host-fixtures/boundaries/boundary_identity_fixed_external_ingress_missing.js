@@ -1,0 +1,1 @@
+module.exports={C:{$kind:"class",$classname:"@$external/host/probe/C"},f:()=>({$kind:"class",$classname:"@$external/host/probe/C"})};

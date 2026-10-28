@@ -1,0 +1,1 @@
+export class C{x:undefined;}export function mutate(v:unknown):void;

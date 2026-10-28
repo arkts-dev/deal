@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: callback-array-False
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let f:()=>number=function():number{return 7;};let r:unknown[]=[f];let u=host.echo(r);let t=u as unknown[];let g=t[0] as ()=>number;if(g===f&&g()===7){console.log("OK");}else{console.log("WRONG");}return null;}

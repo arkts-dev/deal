@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(){return make();}static Object make(){var t=new deal.codegen.jvm.JvmRuntime.Table();t.write("x","\ud800");return t;}}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "diagnostic": {
+    "code": "E3017",
+    "message": "Imported exports are read-only"
+  }
+}

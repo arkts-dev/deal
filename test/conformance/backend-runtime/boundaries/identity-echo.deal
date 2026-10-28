@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: identity-echo
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+import * as json from "std/json";
+export function main():null{let r=json.parse("{\"a\":[[1]]}");let xs=r.a as unknown[];let child=xs[0] as unknown[];let out=host.f(xs);let y=out[0] as unknown[];if(child===y){console.log("SAME");}else{console.log("COPY");}return null;}

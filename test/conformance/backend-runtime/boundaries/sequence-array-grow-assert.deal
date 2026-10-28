@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: sequence-array-grow-assert
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+function consume(a:number[]):void{}function identity(a:number[]):number[]{return a;}
+export function main():null{let a:number[]=[1];host.keep(a);let u=host.echo(a);host.effect();try{let b=u as number[];if(a.length===2&&a[1]===2){console.log("OK");}else{console.log("STALE");}}catch(e){console.log("REJECT");}return null;}

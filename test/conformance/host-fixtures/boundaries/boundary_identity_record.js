@@ -1,0 +1,1 @@
+module.exports={f:v=>new Map([["a",v[0]]])};

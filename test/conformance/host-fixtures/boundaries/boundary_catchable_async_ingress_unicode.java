@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(){return java.util.concurrent.CompletableFuture.completedFuture("\ud800");}}

@@ -1,0 +1,1 @@
+module.exports={f:()=>new Map([["a",[]]])};

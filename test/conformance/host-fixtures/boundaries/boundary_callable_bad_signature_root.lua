@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {f=function()return rt.function_("garbage",function()return 7 end) end}

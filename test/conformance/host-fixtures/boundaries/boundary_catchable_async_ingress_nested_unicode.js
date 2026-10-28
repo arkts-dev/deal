@@ -1,0 +1,1 @@
+module.exports={f:()=>{return Promise.resolve(new Map([["bad","\ud800"]]));}};

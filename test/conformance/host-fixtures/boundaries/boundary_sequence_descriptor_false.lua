@@ -1,0 +1,1 @@
+return {echo=function(v)return v end}

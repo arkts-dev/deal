@@ -1,0 +1,1 @@
+return {f=function(v)v.x=2 end}

@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: external-live-number-C-delete
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let n:host.C={x:1};host.mutate(n);if(Object.hasOwn(n,"x")){console.log("STALE");}else{console.log("ABSENT");}return null;}

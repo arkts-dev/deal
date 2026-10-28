@@ -1,0 +1,1 @@
+module.exports={mutate:v=>{delete v.x;}};

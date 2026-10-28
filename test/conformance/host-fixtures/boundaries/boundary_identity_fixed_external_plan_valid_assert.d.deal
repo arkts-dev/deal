@@ -1,0 +1,1 @@
+export class Node{x:unknown;next:Node|null;}export function mutate(v:Node):void;

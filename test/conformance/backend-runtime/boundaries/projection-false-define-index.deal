@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: projection-False-define-index
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+import * as json from "std/json";
+export function main():null{let a:unknown[]=[1,2];host.f(a);let n=a[0] as number;if(n===9){console.log("LIVE");}else{console.log("STALE");}return null;}

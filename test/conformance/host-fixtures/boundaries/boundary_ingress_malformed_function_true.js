@@ -1,0 +1,1 @@
+module.exports={f:()=>(new Map([["x",{$kind:"function",$sig:"()->number",$f:new Date()}]]))};

@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {echo=function(v)return rt.async_start(function()return v end) end}

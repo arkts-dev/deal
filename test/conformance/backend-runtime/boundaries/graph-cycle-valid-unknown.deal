@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: graph-cycle-valid-unknown
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{try{let u=host.f();let r=u as Record<string,unknown>;if(((r.self as Record<string,unknown>)===r)){console.log("OK");}else{console.log("IDENTITY");}}catch(e){if(e instanceof Error){console.log(e.code);}else{console.log("NOT_ERROR");}}return null;}

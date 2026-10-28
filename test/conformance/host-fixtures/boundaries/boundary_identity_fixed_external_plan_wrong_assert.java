@@ -1,0 +1,1 @@
+final class HostProbe{public static void mutate($DealRt.$Host$host$sprobe$Node n){n.x="bad";}}

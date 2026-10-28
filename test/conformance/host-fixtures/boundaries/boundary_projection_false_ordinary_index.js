@@ -1,0 +1,1 @@
+module.exports={f:v=>{v[0]=9;}};

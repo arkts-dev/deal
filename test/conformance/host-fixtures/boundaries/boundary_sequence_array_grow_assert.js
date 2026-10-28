@@ -1,0 +1,1 @@
+let saved;module.exports={keep:v=>{saved=v;},effect:()=>{saved.push(2);},echo:v=>v};

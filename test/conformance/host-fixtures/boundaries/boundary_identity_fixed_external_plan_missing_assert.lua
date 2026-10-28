@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");local K=rt.__keys;return {Node={[K.kind]="class",[K.classname]="@$external/host/probe/Node"},mutate=function(v)v.x=nil;end}

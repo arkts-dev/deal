@@ -13,6 +13,45 @@ final class CorpusExecution {
     record Probe(String name, boolean async) {}
     record Source(String corpusPath, int headers) {}
     static final String RECEIPT = "__corpus_calls.txt";
+    static final String COMPLETIONS = "__corpus_completions.txt";
+
+    /** Child entry keeps production public invokers under the corpus subprocess deadline. */
+    public static void main(String[] args) throws Exception {
+        var request = new deal.codegen.lua.AsyncExportInvocationRequest(Path.of(args[1]), args[2], args[3]);
+        String number;
+        if (args[0].equals("luajit")) {
+            var result = new deal.codegen.lua.LuaJitAsyncExportInvoker().invoke(request);
+            if (!(result instanceof deal.codegen.lua.LuaJitAsyncExportInvoker.Result.Value value))
+                throw new IllegalStateException("missing public completion: " + result);
+            number = value.valueJson();
+        } else {
+            var result = new deal.codegen.jvm.JvmAsyncExportInvoker().invoke(request);
+            if (!(result instanceof deal.codegen.jvm.JvmAsyncExportInvoker.Result.Value value))
+                throw new IllegalStateException("missing public completion: " + result);
+            number = value.valueJson();
+        }
+        Files.writeString(Path.of(args[4]), args[2] + "=" + number + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+    }
+
+    static void completionVerdict(Path out, List<Probe> probes, Map<String, SidecarExpectations.CompletionPin> pins) throws Exception {
+        for (String name : pins.keySet()) if (probes.stream().noneMatch(p -> p.name().equals(name) && p.async()))
+            throw new IllegalArgumentException("completion pin requires an eligible async export: " + name);
+        List<String> actual = Files.exists(out.resolve(COMPLETIONS)) ? Files.readAllLines(out.resolve(COMPLETIONS)) : List.of();
+        List<Probe> selected = probes.stream().filter(p -> pins.containsKey(p.name())).toList();
+        if (actual.size() != selected.size()) throw new IllegalStateException("missing/duplicate public completions: " + actual);
+        for (int i = 0; i < selected.size(); i++) {
+            String name = selected.get(i).name(), prefix = name + "=";
+            String line = actual.get(i);
+            if (!line.startsWith(prefix) || !numericCompletion(line.substring(prefix.length()), pins.get(name).number()))
+                throw new IllegalStateException("wrong public completion for " + name + ": " + line);
+        }
+    }
+
+    private static boolean numericCompletion(String actual, String expected) {
+        String syntax = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?";
+        return actual.matches(syntax) && expected.matches(syntax)
+            && Double.doubleToRawLongBits(Double.parseDouble(actual)) == Double.doubleToRawLongBits(Double.parseDouble(expected));
+    }
 
     static void controls() throws Exception {
         String source = "export function first(): number { return 1; } "
@@ -38,7 +77,29 @@ final class CorpusExecution {
             if (receiptVerdict(root, plan, true, false).isPresent()) throw new AssertionError("expected final throw refused");
             Files.write(root.resolve(RECEIPT), complete.subList(0, 3));
             if (receiptVerdict(root, plan, true, false).isEmpty()) throw new AssertionError("early throw hid a consumer");
-        } finally { Files.deleteIfExists(root.resolve(RECEIPT)); Files.delete(root); }
+            var pins = Map.of("check", new SidecarExpectations.CompletionPin("number", "-0"));
+            for (List<String> damaged : List.of(List.<String>of(), List.of("check=0"),
+                    List.of("check=-0", "check=-0"), List.of("other=-0"), List.of("check=garbage"))) {
+                Files.write(root.resolve(COMPLETIONS), damaged);
+                rejected = false;
+                try { completionVerdict(root, plan, pins); } catch (IllegalStateException expected) { rejected = true; }
+                if (!rejected) throw new AssertionError("missing/wrong public completion accepted: " + damaged);
+            }
+            Files.write(root.resolve(COMPLETIONS), List.of("check=-0.0"));
+            completionVerdict(root, plan, pins);
+            if (!numericCompletion("1.0", "1") || numericCompletion("0", "-0") || numericCompletion("NaN", "NaN"))
+                throw new AssertionError("binary64 completion comparison weakened");
+            String sidecar = "{\"version\":1,\"backends\":[\"js\"],\"expected\":{\"mode\":\"runtime-ok\",\"transcript\":{\"stdout\":\"\",\"stderr\":\"\"},\"exitCode\":0}}";
+            var context = new SidecarSchemaValidator.ValidationContext("control.deal", "runtime-ok", List.of(), Set.of());
+            if (SidecarSchemaValidator.validate(context, sidecar).isEmpty()) throw new AssertionError("unexplained backend loss accepted");
+            String explained = sidecar.replace("\"version\":1", "\"version\":1,\"backendReason\":\"Native JS property descriptor control\"");
+            if (SidecarSchemaValidator.validate(context, explained).isPresent()) throw new AssertionError("declared capability subset refused");
+            String pinned = explained.replace("\"version\":1", "\"version\":1,\"completions\":{\"check\":{\"descriptor\":\"number\",\"number\":\"-0\"}}");
+            if (SidecarSchemaValidator.validate(context, pinned).isPresent()) throw new AssertionError("valid completion pin refused");
+            for (String invalid : List.of(pinned.replace("\"-0\"", "\"NaN\""), pinned.replace("\"number\":\"-0\"", "\"number\":0"),
+                    pinned.replace("\"descriptor\":\"number\"", "\"descriptor\":\"unknown\"")))
+                if (SidecarSchemaValidator.validate(context, invalid).isEmpty()) throw new AssertionError("malformed completion pin accepted");
+        } finally { Files.deleteIfExists(root.resolve(RECEIPT)); Files.deleteIfExists(root.resolve(COMPLETIONS)); Files.delete(root); }
     }
 
     static List<Probe> probes(ProgramNode program, boolean failure) {
@@ -85,18 +146,26 @@ final class CorpusExecution {
 
     static BoundedProcess.BoundedResult run(Backend backend, Path out, String module,
             List<Probe> probes, Map<String, Source> sources, Map<String, String> tokens,
-            List<String> optionals, Set<String> hosts, Path hostRoot) throws Exception {
+            List<String> optionals, Set<String> hosts, Path hostRoot,
+            Map<String, SidecarExpectations.CompletionPin> completions) throws Exception {
         out = out.toAbsolutePath().normalize();
         Files.deleteIfExists(out.resolve(RECEIPT));
+        Files.deleteIfExists(out.resolve(COMPLETIONS));
+        List<Probe> publicProbes = probes.stream().filter(p -> completions.containsKey(p.name())).toList();
+        List<Probe> ordinary = probes.stream().filter(p -> !completions.containsKey(p.name())).toList();
+        var ordered = new ArrayList<>(ordinary); ordered.addAll(publicProbes);
+        if (!ordered.equals(probes)) throw new IllegalArgumentException("public completion probes must follow ordinary probes");
+        probes = ordinary;
+        BoundedProcess.BoundedResult result;
         if (backend == Backend.LUAJIT) {
             for (String host : hosts) {
                 Path target = out.resolve("host/" + host + ".lua");
                 Files.createDirectories(target.getParent()); Files.copy(hostRoot.resolve(host + ".lua"), target);
             }
             Files.writeString(out.resolve("CorpusRunner.lua"), lua(module, probes, sources, tokens, optionals));
-            return BoundedProcess.runCaptured(List.of("luajit", "CorpusRunner.lua"), out,
+            result = BoundedProcess.runCaptured(List.of("luajit", "CorpusRunner.lua"), out,
                 Map.of("DEAL_DEFER_MAIN", "1"));
-        }
+        } else {
         String className = JvmNames.classNameFor(module);
         List<String> command = new ArrayList<>(List.of("javac", "--release", "25", "-proc:none",
             "-cp", classpath(), "-d", out.resolve("classes").toString()));
@@ -114,9 +183,24 @@ final class CorpusExecution {
         command.add(file.toString());
         JvmCompilation.Result compiled = JvmCompilation.compile(command, out);
         if (compiled.exitCode() != 0) throw new IllegalStateException("generated JVM sources rejected: " + compiled.stderr());
-        return BoundedProcess.runCaptured(List.of("java", "-cp",
+        result = BoundedProcess.runCaptured(List.of("java", "-cp",
             out.resolve("classes") + java.io.File.pathSeparator + classpath(), runner), out,
             Map.of("DEAL_DEFER_MAIN", "1"));
+        }
+        if (result.exitCode() != 0 || result.stdoutTruncated() || result.stderrTruncated()) return result;
+        for (Probe probe : publicProbes) {
+            Files.writeString(out.resolve(RECEIPT), probe.name() + ":start\n", StandardOpenOption.APPEND);
+            Path artifact = backend == Backend.LUAJIT ? out.resolve(module.replace('.', '/') + ".lua")
+                : out.resolve("classes/" + JvmNames.classNameFor(module) + ".class");
+            var completion = BoundedProcess.runCaptured(List.of("java", "-cp", classpath(), CorpusExecution.class.getName(),
+                backend.name().toLowerCase(Locale.ROOT), artifact.toString(), probe.name(), completions.get(probe.name()).descriptor(),
+                out.resolve(COMPLETIONS).toString()), Path.of("").toAbsolutePath());
+            if (completion.exitCode() != 0 || completion.stdoutTruncated() || completion.stderrTruncated()
+                    || !completion.stdout().isEmpty() || !completion.stderr().isEmpty())
+                throw new IllegalStateException("public completion failed: " + completion);
+            Files.writeString(out.resolve(RECEIPT), probe.name() + ":done\n", StandardOpenOption.APPEND);
+        }
+        return result;
     }
 
     private static String classpath() {

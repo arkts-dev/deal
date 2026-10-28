@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: identity-fixed-external-plan-missing-assert
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+function consume(n:host.Node):void{}function identity(n:host.Node):host.Node{return n;}
+export function main():null{let n:host.Node={x:1,next:null};n.next=n;host.mutate(n);try{let d=n as host.Node;console.log("OK");}catch(e){console.log("REJECT");}return null;}

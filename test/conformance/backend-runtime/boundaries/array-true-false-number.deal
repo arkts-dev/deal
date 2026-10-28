@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: array-True-False-number
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let u=host.f();let v=u;try{let a=v as number[];console.log("OK");}catch(e){console.log("REJECT");}return null;}

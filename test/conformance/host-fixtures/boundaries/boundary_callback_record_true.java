@@ -1,0 +1,1 @@
+final class HostProbe{public static Object echo(Object v){return java.util.concurrent.CompletableFuture.completedFuture(v);}}

@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: presence-False-optional-number-delete
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+class C{x?:number;}
+export function main():null{let n:C={x:1};host.mutate(n);try{let d=n as C;console.log("OK");}catch(e){console.log("REJECT");}return null;}

@@ -1,0 +1,1 @@
+return {f=function()return string.char(237,160,128) end}

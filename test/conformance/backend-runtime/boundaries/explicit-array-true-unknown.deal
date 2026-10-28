@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: explicit-array-True-unknown
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let u=host.f();try{let a=u as unknown[];console.log("OK");}catch(e){console.log("REJECT");}return null;}

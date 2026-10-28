@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {echo=function(v)return v end}

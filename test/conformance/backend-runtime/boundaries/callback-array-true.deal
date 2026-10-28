@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: callback-array-True
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as host from "host/probe";
+
+export async function run():Promise<number>{let f:()=>number=function():number{return 7;};let r:unknown[]=[f];let u=await host.echo(r);let t=u as unknown[];let g=t[0] as ()=>number;if(g===f&&g()===7){return 1;}return 0;}
+export function main():null{return null;}

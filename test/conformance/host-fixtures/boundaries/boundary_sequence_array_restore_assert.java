@@ -1,0 +1,1 @@
+final class HostProbe{static deal.codegen.jvm.JvmRuntime.Array saved;public static void keep(Object v){saved=(deal.codegen.jvm.JvmRuntime.Array)v;}public static void effect(){saved.elements.set(0,"bad");saved.elements.set(0,3.0);}public static Object echo(Object v){return v;}}

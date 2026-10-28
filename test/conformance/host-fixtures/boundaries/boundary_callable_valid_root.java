@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(){return new deal.codegen.jvm.JvmRuntime.FunctionValue(a->7.0,"function(;number)","()->number",null);}}

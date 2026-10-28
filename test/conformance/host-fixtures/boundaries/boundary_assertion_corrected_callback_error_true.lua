@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {invoke=function(f)return rt.async_start(function()f();return rt.__UNDEFINED end) end}

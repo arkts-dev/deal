@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: binding-module-declaration
+// @expected: compile-error E3017
+// @features: boundary-validation
+import * as console from "std/console";
+function f():number{return 1;}
+export function main():null{f=function():number{return 2;};if(f()===2){console.log("OK");}else{console.log("STALE");}return null;}

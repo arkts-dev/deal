@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: cyclic-echo-False
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let r:Record<string,unknown>={};r.self=r;let u=host.echo(r);let t=u as Record<string,unknown>;if(t===r&&(t.self as Record<string,unknown>)===r){console.log("OK");}else{console.log("IDENTITY");}return null;}

@@ -146,19 +146,20 @@ public final class SidecarExpectations {
      * the three-backend set (uniform form: one shared expectation; the
      * divergent C6 form: one expectation per backend entry).
      */
+    public record CompletionPin(String descriptor, String number) {}
+
     public record StructuredExpectationSidecar(
-            Map<String, RuntimeExpectation> byBackend) {
+            Map<String, RuntimeExpectation> byBackend, Map<String, CompletionPin> completions, String hostFixture) {
+        public StructuredExpectationSidecar(Map<String, RuntimeExpectation> byBackend) {
+            this(byBackend, Map.of(), "");
+        }
 
         public StructuredExpectationSidecar {
             Objects.requireNonNull(byBackend, "byBackend must not be null");
-            for (String backend : SidecarSchemaValidator.BACKEND_NAMES) {
-                if (!byBackend.containsKey(backend)) {
-                    throw new IllegalArgumentException(
-                        "a runtime sidecar must carry the expectation of "
-                            + "backend " + backend);
-                }
-            }
+            if (byBackend.isEmpty() || !SidecarSchemaValidator.BACKEND_NAMES.containsAll(byBackend.keySet()))
+                throw new IllegalArgumentException("invalid declared backend set");
             byBackend = Map.copyOf(byBackend);
+            completions = Map.copyOf(completions);
         }
 
         /** The expectation of one backend lane. */
@@ -193,7 +194,17 @@ public final class SidecarExpectations {
                     "the sidecar's backends key is neither the uniform array "
                         + "nor the divergent per-backend object");
             }
-            return new StructuredExpectationSidecar(expectations);
+            Map<String, CompletionPin> completions = new LinkedHashMap<>();
+            for (var entry : root.entries()) if (entry.key().equals("completions")) {
+                for (var pin : ((CanonicalJson.Obj)entry.value()).entries()) {
+                    var value = (CanonicalJson.Obj)pin.value();
+                    completions.put(pin.key(), new CompletionPin(stringField(value, "descriptor", "descriptor"),
+                        stringField(value, "number", "number")));
+                }
+            }
+            String hostFixture = "";
+            for (var entry : root.entries()) if (entry.key().equals("hostFixture")) hostFixture = ((CanonicalJson.Str)entry.value()).value();
+            return new StructuredExpectationSidecar(expectations, completions, hostFixture);
         }
 
         private static RuntimeExpectation parseRuntimeExpectation(

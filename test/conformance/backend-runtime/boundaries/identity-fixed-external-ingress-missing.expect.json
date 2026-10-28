@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "REJECT\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "hostFixture": "boundaries/boundary_identity_fixed_external_ingress_missing"
+}

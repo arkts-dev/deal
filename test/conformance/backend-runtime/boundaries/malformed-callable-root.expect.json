@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "REJECT\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "backendReason": "Malformed native callable wrapper on JS/Lua; the JVM companion supplies an unrelated opaque Object.",
+  "hostFixture": "boundaries/boundary_malformed_callable_root"
+}

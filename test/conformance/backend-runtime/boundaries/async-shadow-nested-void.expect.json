@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "completions": {
+    "run": {
+      "descriptor": "number",
+      "number": "1"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: math-ceil--1
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as m from "std/math";
+export function main():null{try{let x=m.ceil(-1);if(x===(-1)){console.log("OK");}else{console.log("WRONG");}}catch(e){console.log("THREW");}return null;}

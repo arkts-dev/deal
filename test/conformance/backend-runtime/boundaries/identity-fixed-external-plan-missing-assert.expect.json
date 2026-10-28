@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "REJECT\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "backendReason": "Hostile external-class raw property mutation on JS/Lua; the JVM companion cannot perform the same presence mutation through its generated carrier ABI.",
+  "hostFixture": "boundaries/boundary_identity_fixed_external_plan_missing_assert"
+}

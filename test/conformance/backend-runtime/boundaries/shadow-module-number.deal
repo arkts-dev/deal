@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: shadow-module-number
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+function f(f:number):number{return f;}
+export function main():null{f(1);console.log("OK");return null;}

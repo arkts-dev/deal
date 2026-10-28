@@ -1,0 +1,1 @@
+module.exports={f:()=>{const r=new Map(),c=new Map([["v",1]]);r.set("a",c);r.set("b",c);r.set("bad",new Date());return r;}};

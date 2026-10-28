@@ -1,0 +1,6 @@
+// @spec: Runtime execution model
+// @description: undefined-False-null|undefined-local
+// @expected: runtime-ok
+// @features: boundary-validation
+export function f():null|undefined{let x=undefined;return x;}
+export function main():null{return null;}

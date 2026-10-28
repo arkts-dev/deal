@@ -1,0 +1,1 @@
+local saved;return {keep=function(v)saved=v end,effect=function()saved[2]=2; end,echo=function(v)return v end}

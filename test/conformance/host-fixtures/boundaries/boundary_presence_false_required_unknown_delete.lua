@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {mutate=function(v)v.x=nil; end}

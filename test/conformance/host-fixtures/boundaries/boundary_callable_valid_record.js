@@ -1,0 +1,1 @@
+module.exports={f:()=>{let r=new Map([["f",{$kind:"function",$sig:"()->number",$f:()=>7}]]);return r;}};

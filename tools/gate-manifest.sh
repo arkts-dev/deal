@@ -13,7 +13,6 @@ TEST_MAINS=(
   'node|=== Testing TypeScript Syntax Checker Failure Controls ===|node test/typescript/check-syntax.test.cjs'
   'fg|=== Running v1.5 Frontend Contracts ===|java -ea -cp build deal.test.Language15FrontendTest'
   'fg|=== Running v1.5 Production Runtime Contracts ===|java -ea -cp build deal.test.Language15RuntimeTest'
-  'fg|=== Running Boundary Invariant Production Contracts ===|java -ea -cp build deal.test.BoundaryInvariantProductionTest'
   'bg|=== Launching Production Corpus Conformance (JS/LuaJIT/JVM) ===|java -ea -cp build deal.test.CorpusConformanceTest test/conformance/'
   'fg|=== Running Diagnostic Range Tests ===|java -ea -cp build deal.test.DiagnosticRangeTest'
   'fg|=== Running Diagnostic Classification Tests ===|java -ea -cp build deal.test.DiagnosticClassificationTest'

@@ -1,0 +1,1 @@
+module.exports={f:v=>{Object.defineProperty(v,"0",{value:9,writable:true,enumerable:true,configurable:true});}};

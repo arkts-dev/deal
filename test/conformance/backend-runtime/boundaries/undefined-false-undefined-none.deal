@@ -1,0 +1,6 @@
+// @spec: Runtime execution model
+// @description: undefined-False-undefined-none
+// @expected: runtime-ok
+// @features: boundary-validation
+export function f():undefined{return undefined;}
+export function main():null{return null;}

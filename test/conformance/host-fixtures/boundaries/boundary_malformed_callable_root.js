@@ -1,0 +1,1 @@
+module.exports={f:()=>({$kind:"function",$sig:"()->number",$f:{}})};

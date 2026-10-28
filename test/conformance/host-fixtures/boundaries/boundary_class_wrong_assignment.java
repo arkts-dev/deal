@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(Object v){((deal.codegen.jvm.JvmRuntime.ClassInstance)v).write("x","bad");return deal.codegen.jvm.JvmRuntime.UNDEFINED;}}

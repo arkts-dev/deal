@@ -1,0 +1,6 @@
+// @spec: Runtime execution model
+// @description: undefined-True-unknown-local
+// @expected: runtime-ok
+// @features: boundary-validation
+export async function f():Promise<unknown>{let x=undefined;return x;}
+export function main():null{return null;}

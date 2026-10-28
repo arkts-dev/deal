@@ -1,0 +1,1 @@
+final class HostProbe{public static void mutate(Object v){var c=(deal.codegen.jvm.JvmRuntime.ClassInstance)v;c.write("x",2.0);}}

@@ -34,6 +34,8 @@ public class CorpusConformanceTest {
     private static String backend() { return TARGET.get().name().toLowerCase(java.util.Locale.ROOT); }
     private static final Set<String> completedLegs = ConcurrentHashMap.newKeySet();
     private static final Set<String> requiredLegs = new java.util.TreeSet<>();
+    private static final Set<String> requiredCompileLegs = new java.util.TreeSet<>();
+    private static final Set<String> completedCompileLegs = ConcurrentHashMap.newKeySet();
 
     private static final CompilerInvocation LANE_INVOCATION =
         CompilerProfileProvider.resolve(ReleaseState.V1_5_ACTIVE,
@@ -245,6 +247,10 @@ public class CorpusConformanceTest {
                 for (String backend : sidecar.byBackend().keySet()) requiredLegs.add(item.test().relativePath() + ":" + backend);
             }
 
+            for (Classified item : classified) if (item.kind() == Kind.FRONTEND) {
+                for (String lane : compileBackends(item.test())) requiredCompileLegs.add(item.test().relativePath() + ":" + lane);
+            }
+
             int frontend = (int) classified.stream()
                 .filter(c -> c.kind() == Kind.FRONTEND).count();
             int applicable = (int) classified.stream()
@@ -258,7 +264,7 @@ public class CorpusConformanceTest {
             System.out.println("Discovered " + tests.size()
                 + " backend-runtime conformance test(s): " + frontend
                 + " frontend-classified, " + applicable
-                + " runtime fixtures (three backend obligations each), " + companions
+                + " runtime fixtures (explicit backend obligations), " + companions
                 + " companions (classified support modules)");
             System.out.println();
 
@@ -328,9 +334,9 @@ public class CorpusConformanceTest {
         List<String> luaNames = new ArrayList<>();
         List<String> javaNames = new ArrayList<>();
         List<String> jsNames = new ArrayList<>();
-        try (var stream = Files.list(hostFixturesRoot)) {
-            for (Path p : (Iterable<Path>) stream.sorted()::iterator) {
-                String name = p.getFileName().toString();
+        try (var stream = Files.walk(hostFixturesRoot)) {
+            for (Path p : (Iterable<Path>) stream.filter(Files::isRegularFile).sorted()::iterator) {
+                String name = hostFixturesRoot.relativize(p).toString().replace('\\', '/');
                 if (name.endsWith(".d.deal")) {
                     declNames.add(name.substring(0,
                         name.length() - ".d.deal".length()));
@@ -594,7 +600,9 @@ public class CorpusConformanceTest {
                 case FRONTEND -> runFrontend(classified);
                 case APPLICABLE -> {
                     Outcome last = null;
+                    var declared = sidecarOf(classified.test().path()).byBackend().keySet();
                     for (Backend target : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM)) {
+                        if (!declared.contains(target.name().toLowerCase(Locale.ROOT))) continue;
                         TARGET.set(target);
                         try { last = runApplicable(classified); }
                         catch (Throwable e) {
@@ -672,6 +680,11 @@ public class CorpusConformanceTest {
         boolean found = diags.stream().anyMatch(
             d -> "error".equals(d.severity()) && code.equals(d.code()));
         if (found) {
+            try { verifyCompileObligations(test, code); }
+            catch (Exception failure) {
+                frontendFailed.incrementAndGet();
+                return new Outcome(test, classified, false, "compile obligations: " + failure);
+            }
             frontendPassed.incrementAndGet();
             log("  [" + test.relativePath() + "] OK (found " + code + ")");
             return new Outcome(test, classified, true, "found " + code);
@@ -685,6 +698,49 @@ public class CorpusConformanceTest {
             + ", got: " + gotCodes + ")");
         return new Outcome(test, classified, false,
             "expected " + code + ", got: " + gotCodes);
+    }
+
+    private static List<String> compileBackends(TestFile test) throws IOException {
+        Path sidecar = test.path().resolveSibling(corpusStem(test.path()) + ".expect.json");
+        if (!Files.exists(sidecar)) return List.of();
+        var root = (deal.semantic.ir.CanonicalJson.Obj)deal.semantic.ir.CanonicalJson.parse(Files.readString(sidecar));
+        for (var entry : root.entries()) if (entry.key().equals("backends"))
+            return ((deal.semantic.ir.CanonicalJson.Arr)entry.value()).items().stream()
+                .map(v -> ((deal.semantic.ir.CanonicalJson.Str)v).value()).toList();
+        return List.of();
+    }
+
+    private static void verifyCompileObligations(TestFile test, String code) throws Exception {
+        Path sidecar = test.path().resolveSibling(corpusStem(test.path()) + ".expect.json");
+        if (!Files.exists(sidecar)) return;
+        String json = Files.readString(sidecar);
+        var root = (deal.semantic.ir.CanonicalJson.Obj)deal.semantic.ir.CanonicalJson.parse(json);
+        var lanes = root.entries().stream().filter(e -> e.key().equals("backends")).findFirst();
+        if (lanes.isEmpty()) return;
+        var context = new deal.test.conformance.SidecarSchemaValidator.ValidationContext(test.relativePath(), test.expected(), List.of(), Set.of());
+        var invalid = deal.test.conformance.SidecarSchemaValidator.validate(context, json);
+        if (invalid.isPresent()) throw new HarnessFailure(invalid.get().message());
+        var pin = deal.test.conformance.SidecarExpectations.CompileDiagnosticPin.parse(json);
+        for (var lane : ((deal.semantic.ir.CanonicalJson.Arr)lanes.get().value()).items()) {
+            TARGET.set(Backend.valueOf(((deal.semantic.ir.CanonicalJson.Str)lane).value().toUpperCase(Locale.ROOT)));
+            Path scratch = Files.createTempDirectory("corpus-compile-");
+            try {
+                Path project = Files.createDirectories(scratch.resolve("conformance"));
+                Map<String, Path> written = new LinkedHashMap<>();
+                writeModuleFiles(project, test.path(), written);
+                var externals = writeProjectManifest(project, Set.of(), hostFixturesRoot);
+                var run = runOrchestrator(project, project.resolve(corpusRelOf(test.path()) + "/main.deal"), project.resolve("out"), externals);
+                if (run.success() || run.diagnostics().stream().anyMatch(d -> d.code().equals("E6005"))
+                        || run.diagnostics().stream().noneMatch(d -> d.code().equals(code)
+                            && pin.message().map(m -> m.equals(d.message())).orElse(true)))
+                    throw new HarnessFailure("wrong " + backend() + " compile rejection: " + run.diagnostics());
+                if (!completedCompileLegs.add(test.relativePath() + ":" + backend())) throw new HarnessFailure("duplicate compile obligation");
+                log("    " + backend() + ": exact " + code + " compile obligation passed");
+            } finally {
+                try (var paths = Files.walk(scratch)) { for (Path p : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(p); }
+                TARGET.remove();
+            }
+        }
     }
 
     /**
@@ -1036,8 +1092,19 @@ public class CorpusConformanceTest {
             // host-fixtures declaration (the JvmConformanceTest
             // externals-wiring pattern).
             Set<String> hostNames = hostImports(written.values());
+            var fixtureSidecar = sidecarOf(test.path());
+            String hostFixture = fixtureSidecar == null ? "" : fixtureSidecar.hostFixture();
+            Path hostRoot = hostFixturesRoot;
+            if (!hostFixture.isEmpty()) {
+                if (!hostNames.equals(Set.of("probe"))) throw new HarnessFailure("hostFixture requires exactly host/probe");
+                hostRoot = projectRoot.resolve("host-fixtures");
+                Files.createDirectories(hostRoot);
+                for (String suffix : List.of(".d.deal", ".js", ".lua", ".java"))
+                    Files.copy(hostFixturesRoot.resolve(hostFixture + suffix), hostRoot.resolve("probe" + suffix));
+            }
             Map<String, String> externals =
-                writeProjectManifest(projectRoot, hostNames);
+                writeProjectManifest(projectRoot, hostNames, hostRoot);
+            if (!hostFixture.isEmpty()) externals.remove("host.probe");
 
             OrchestratorRun run = runOrchestrator(projectRoot, entryFile,
                 outputRoot, externals);
@@ -1079,7 +1146,8 @@ public class CorpusConformanceTest {
             // <outputRoot>/<raw specifier>.js, the file the emitted
             // relative require resolves.
             for (String hostName : TARGET.get() == Backend.JS ? hostNames : Set.<String>of()) {
-                byte[] hostSource = HOST_JS.get(hostName);
+                byte[] hostSource = hostFixture.isEmpty() ? HOST_JS.get(hostName)
+                    : Files.readAllBytes(hostRoot.resolve(hostName + ".js"));
                 if (hostSource == null) {
                     throw new HarnessFailure("no HOST_JS implementation "
                         + "for host/" + hostName + " — a missing host "
@@ -1135,7 +1203,7 @@ public class CorpusConformanceTest {
                 Files.writeString(outputRoot.resolve("JsConformanceRunner.js"),
                     buildJsCorpusRunner(entryProgram, entryModulePath,
                         sourcePins(written, entryFile, corpusRelOf(test.path())),
-                        corpusTokens(projectRoot, written, entryFile, corpusRelOf(test.path())), pinnedOptionals, probes));
+                        corpusTokens(projectRoot, written, entryFile, corpusRelOf(test.path())), pinnedOptionals, probes, sidecar.completions()));
                 result = runNode(outputRoot);
             } else {
                 Map<String, CorpusExecution.Source> pins = new LinkedHashMap<>();
@@ -1144,10 +1212,11 @@ public class CorpusConformanceTest {
                 String module = (corpusRelOf(test.path()) + "/main").replace('/', '.');
                 var capture = CorpusExecution.run(TARGET.get(), outputRoot, module, probes, pins,
                     corpusTokens(projectRoot, written, entryFile, corpusRelOf(test.path())), pinnedOptionals,
-                    hostNames, hostFixturesRoot);
+                    hostNames, hostRoot, sidecar.completions());
                 result = new NodeResult(capture.exitCode(), capture.stdout(), capture.stderr(),
                     capture.stdoutTruncated(), capture.stderrTruncated());
             }
+            CorpusExecution.completionVerdict(outputRoot, probes, sidecar.completions());
             boolean loadFailure = expectedFailure && ((deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed)jsExpectation)
                 .error().code().equals("FFI_LIBRARY_LOAD") || expectedFailure &&
                 ((deal.test.conformance.SidecarExpectations.RuntimeExpectation.Executed)jsExpectation).error().code().equals("E8011");
@@ -1326,7 +1395,7 @@ public class CorpusConformanceTest {
      */
 
     private static Map<String, String> writeProjectManifest(
-            Path projectRoot, Set<String> hostNames)
+            Path projectRoot, Set<String> hostNames, Path hostRoot)
             throws IOException {
         StringBuilder dealJson = new StringBuilder();
         dealJson.append("{\n  \"languageVersion\": \"1.5\",\n  \"stdlib\": \"1.5\",\n");
@@ -1340,7 +1409,7 @@ public class CorpusConformanceTest {
             dealJson.append(",\n  \"externals\": {\n");
             boolean first = true;
             for (String hostName : hostNames) {
-                Path decl = hostFixturesRoot.resolve(hostName + ".d.deal");
+                Path decl = hostRoot.resolve(hostName + ".d.deal");
                 if (!Files.isRegularFile(decl)) {
                     throw new HarnessFailure("host declaration missing for"
                         + " host/" + hostName + " — the HOST_JS harness "
@@ -1560,14 +1629,34 @@ public class CorpusConformanceTest {
             return null;
         }
         try {
-            return deal.test.conformance.SidecarExpectations
-                .StructuredExpectationSidecar.parse(
-                    Files.readString(sidecar));
+            String json = Files.readString(sidecar);
+            var context = new deal.test.conformance.SidecarSchemaValidator.ValidationContext(
+                corpusRelOf(file), parseMetadata(file).expected(),
+                compilationSet(file), Set.of());
+            var failure = deal.test.conformance.SidecarSchemaValidator.validate(context, json);
+            if (failure.isPresent()) throw new HarnessFailure(failure.get().message());
+            return deal.test.conformance.SidecarExpectations.StructuredExpectationSidecar.parse(json);
         } catch (IOException | RuntimeException e) {
             throw new IllegalStateException(
                 "cannot parse the sidecar " + sidecar + ": "
                     + e.getMessage());
         }
+    }
+
+    private static List<deal.test.conformance.SidecarSchemaValidator.CompilationModule> compilationSet(Path entry) throws IOException {
+        var modules = new ArrayList<deal.test.conformance.SidecarSchemaValidator.CompilationModule>();
+        var seen = new HashSet<Path>();
+        var pending = new ArrayDeque<Path>(); pending.add(entry);
+        while (!pending.isEmpty()) {
+            Path file = pending.remove().toAbsolutePath().normalize();
+            if (!seen.add(file)) continue;
+            modules.add(new deal.test.conformance.SidecarSchemaValidator.CompilationModule(corpusRelOf(file), rawSource(file)));
+            for (String specifier : relativeImports(file)) {
+                Path companion = resolveCompanionPath(specifier, file.getParent());
+                if (companion != null) pending.add(companion);
+            }
+        }
+        return modules;
     }
 
     /** Resolve a relative import path to a .deal/.d.deal file on disk
@@ -1632,7 +1721,8 @@ public class CorpusConformanceTest {
      */
     private static String buildJsCorpusRunner(ProgramNode program,
             String entryModule, Map<String, SourcePin> sourcePins,
-            Map<String, String> corpusTokens, List<String> pinnedOptionals, List<CorpusExecution.Probe> probes) {
+            Map<String, String> corpusTokens, List<String> pinnedOptionals, List<CorpusExecution.Probe> probes,
+            Map<String, deal.test.conformance.SidecarExpectations.CompletionPin> completions) {
         boolean hasMain = true;
         List<String> zeroAry = probes.stream().map(CorpusExecution.Probe::name).filter(n -> !n.equals("main")).toList();
         StringBuilder sb = new StringBuilder();
@@ -1788,7 +1878,14 @@ function $snapshot($err) {
         sb.append("  for (const $k of $order) {\n");
         sb.append("    const $v = $entry[$k];\n");
         sb.append("    if (!$v || $v.$kind !== 'function') throw new Error('missing corpus probe '+$k);\n");
-        sb.append("    $mark($k+':start'); await $v.$f(); $mark($k+':done');\n");
+        sb.append("    $mark($k+':start'); const $result = await $v.$f();\n");
+        for (var pin : completions.entrySet()) {
+            sb.append("    if ($k === ").append(jsStringLiteral(pin.getKey())).append(") {\n")
+                .append("      if (typeof $result !== 'number' || !Number.isFinite($result)) throw Error('invalid public completion');\n")
+                .append("      $fs.appendFileSync('").append(CorpusExecution.COMPLETIONS)
+                .append("', $k+'='+(Object.is($result,-0)?'-0':JSON.stringify($result))+'\\n');\n    }\n");
+        }
+        sb.append("    $mark($k+':done');\n");
         sb.append("  }\n");
         sb.append("})().catch(($e) => {\n");
         sb.append("  const $err = $rt.reifyError($e);\n");
@@ -2267,12 +2364,13 @@ function $snapshot($err) {
         int at = applicableTotal.get();
         int ap = applicablePassed.get();
         int af = applicableFailed.get();
-        int denominator = onDiskRuntimeDenominator * 3;
+        int denominator = requiredLegs.size();
         double pct = denominator == 0 ? 0.0
             : ap * 100.0 / denominator;
         System.out.printf("Backend obligations (JS/LuaJIT/JVM, execution or exact rejection): denominator %d, passed %d, "
             + "failed %d, node subprocess runs %d — pass rate %.1f%%%n",
             denominator, ap, af, nodeExecuted.get(), pct);
+        System.out.printf("Production compile obligations: required %d, passed %d%n", requiredCompileLegs.size(), completedCompileLegs.size());
         System.out.println();
 
         int ct = companionTotal.get();
@@ -2378,7 +2476,11 @@ function $snapshot($err) {
                 + "runtime denominator " + denominator);
             ok = false;
         }
-        int classifiedTotal = ft + at / 3 + ct;
+        int classifiedTotal = ft + onDiskRuntimeDenominator + ct;
+        if (!completedCompileLegs.equals(requiredCompileLegs)) {
+            System.out.println("GATE FAILURE: production compile consumer conservation: required " + requiredCompileLegs + "; completed " + completedCompileLegs);
+            ok = false;
+        }
         if (!completedLegs.equals(requiredLegs)) {
             Set<String> missing = new java.util.TreeSet<>(requiredLegs); missing.removeAll(completedLegs);
             Set<String> unexpected = new java.util.TreeSet<>(completedLegs); unexpected.removeAll(requiredLegs);

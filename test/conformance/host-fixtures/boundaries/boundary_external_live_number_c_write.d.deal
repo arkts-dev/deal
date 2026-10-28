@@ -1,0 +1,1 @@
+export class C{x:number;}export function mutate(v:C):void;

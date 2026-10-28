@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(){var r=new deal.codegen.jvm.JvmRuntime.Table();r.write("f",new deal.codegen.jvm.JvmRuntime.FunctionValue(null,"function(;number)","()->number",null));return r;}}

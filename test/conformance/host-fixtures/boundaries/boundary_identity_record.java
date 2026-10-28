@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f($DealRt.__RefArray v){var t=new deal.codegen.jvm.JvmRuntime.Table();t.write("a",v.data[0]);return t;}}

@@ -1,0 +1,1 @@
+return {f=function(v)return {v[1]} end}

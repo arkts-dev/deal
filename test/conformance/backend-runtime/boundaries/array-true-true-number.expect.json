@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "jvm"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "REJECT\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "backendReason": "Untagged Lua tables do not establish array intent through unknown; this fixture tests JS/JVM native arrays.",
+  "hostFixture": "boundaries/boundary_array_true_true_number"
+}

@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: async-shadow-nested-void
+// @expected: runtime-ok
+// @features: boundary-validation
+
+export async function run():Promise<number>{async function f(f:number):Promise<void>{return;}await f(1);return 1;}
+export function main():null{return null;}

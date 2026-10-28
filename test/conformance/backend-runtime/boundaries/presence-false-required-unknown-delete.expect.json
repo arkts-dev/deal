@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "REJECT\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "hostFixture": "boundaries/boundary_presence_false_required_unknown_delete"
+}

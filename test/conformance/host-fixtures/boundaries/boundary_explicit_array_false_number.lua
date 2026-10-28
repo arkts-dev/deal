@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");local K=rt.__keys;return {f=function()return {[K.a]=true,[K.n]=1,[K.elementDescriptor]="unknown",1} end}

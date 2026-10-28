@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(){return java.util.concurrent.CompletableFuture.completedFuture(bad());}static Object bad(){var t=new deal.codegen.jvm.JvmRuntime.Table();t.write("bad","\ud800");return t;}}

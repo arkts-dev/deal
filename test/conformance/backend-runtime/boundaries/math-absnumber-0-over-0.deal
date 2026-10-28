@@ -1,0 +1,7 @@
+// @spec: Runtime execution model
+// @description: math-absNumber-0/0
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as m from "std/math";
+export function main():null{try{let x=m.absNumber(0/0);if(x!==x){console.log("NAN");}else{console.log("WRONG");}}catch(e){console.log("THREW");}return null;}

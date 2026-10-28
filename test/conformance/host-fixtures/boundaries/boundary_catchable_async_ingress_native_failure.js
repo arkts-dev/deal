@@ -1,0 +1,1 @@
+module.exports={f:()=>{return Promise.reject(new Error("native"));}};

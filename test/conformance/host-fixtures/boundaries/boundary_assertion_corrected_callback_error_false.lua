@@ -1,0 +1,1 @@
+local rt=require("deal.runtime");return {invoke=function(f)f() end}

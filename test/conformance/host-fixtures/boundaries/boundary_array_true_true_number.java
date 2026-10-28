@@ -1,0 +1,1 @@
+final class HostProbe{public static Object f(){var a=new deal.codegen.jvm.JvmRuntime.Array(0);a.elementDescriptor="unknown";var t=new deal.codegen.jvm.JvmRuntime.Table();t.write("a",a);return t;}}

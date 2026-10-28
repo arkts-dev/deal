@@ -1,0 +1,1 @@
+return {f=function()return {x=function()end} end}

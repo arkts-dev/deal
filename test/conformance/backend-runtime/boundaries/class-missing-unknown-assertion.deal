@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: class-missing-unknown-assertion
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+class C{x:number;}function consume(c:C):void{}function identity(c:C):C{return c;}
+export function main():null{let c:C={x:1};host.f(c);try{let u:unknown=c;let d=u as C;console.log("OK");}catch(e){console.log("REJECT");}return null;}

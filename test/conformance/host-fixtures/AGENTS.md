@@ -1,6 +1,6 @@
 # Host Fixtures
 
-Keep declarations and JS/Java/Lua implementations behaviorally identical. Fixtures are harness companions, not discovered cases. Pair valid/invalid export/signature/nullish/async boundaries; assert catchability, not portable native-error details. Use canonical dotted external identities consistently for generated carriers.
+Keep declarations and JS/Java/Lua implementations behaviorally identical on every declared consumer lane. Native-host-specific cases declare their capability limits in the case sidecar; unused companions do not establish coverage. Fixtures are harness companions, not discovered cases. A sidecar hostFixture may select a named companion set under the stable host/probe import; keep its source and external identities unchanged when materializing that alias. Pair valid/invalid export/signature/nullish/async boundaries; assert catchability, not portable native-error details. Use canonical dotted external identities consistently for generated carriers.
 
 Classes carry declared structural fields; functions use documented wrappers; async implementations return real operations. Declarations omit async and use Promise results. Use binary64 number/double and Record<string, unknown>; never infer an integer kind from host boxing or numeric spelling.
 

@@ -1,0 +1,1 @@
+return {f=function()local r={};local c={v=1};r.a=c;r.b=c;r.bad=string.char(237,160,128);return r end}

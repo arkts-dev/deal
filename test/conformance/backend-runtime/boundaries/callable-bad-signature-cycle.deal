@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: callable-bad-signature-cycle
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{try{let u=host.f();console.log("PUBLISHED");}catch(e){console.log("REJECT");}return null;}

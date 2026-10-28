@@ -1,0 +1,6 @@
+// @spec: Runtime execution model
+// @description: undefined-True-null|undefined-local
+// @expected: runtime-ok
+// @features: boundary-validation
+export async function f():Promise<null|undefined>{let x=undefined;return x;}
+export function main():null{return null;}

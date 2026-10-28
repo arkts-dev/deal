@@ -1,0 +1,1 @@
+return {f=function()local r={};local c={v=1};r.self=r;r.a=c;r.b=c;r.bad=setmetatable({},{});return r end}
