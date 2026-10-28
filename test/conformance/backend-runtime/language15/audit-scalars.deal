@@ -1,0 +1,26 @@
+// @spec: Runtime execution model — Equality
+// @description: Parsed scalar equality, nullish JSON and contextual identifiers retain value semantics.
+// @expected: runtime-ok
+// @features: unknown, equality, jsonable, undefined, contextual-identifiers
+import * as json from "std/json";
+function check(ok:boolean):void{if(!ok){throw {code:"FAIL",message:"scalar audit contract"};}}
+function equal(a:unknown,b:unknown):boolean{check((a===b)!==(a!==b));return a===b;}
+// @jsonable
+export class U { missing:undefined; optional?:undefined; values:(null|undefined)[]; }
+export function main():null{
+  let parsed=json.parse("{\"n\":null,\"z\":-0,\"f\":1.5,\"e\":1e2,\"b\":true,\"s\":\"same\",\"a\":[]}");
+  let other=json.parse("{\"n\":null,\"a\":[]}");
+  check(equal(parsed.n,null));check(equal(parsed.n,other.n));check(!equal(parsed.n,undefined));
+  check(equal(parsed.z,0));check(equal(parsed.z,-0));check(equal(parsed.f,1.5));check(equal(parsed.e,100));
+  check(equal(parsed.b,true));check(equal(parsed.s,"same"));check(!equal(parsed.f,"1.5"));
+  check(!equal(parsed.a,other.a));check(equal(parsed.a,parsed.a));
+  let value:U={missing:undefined,optional:undefined,values:[null,undefined]};
+  let encoded=U$toJson(value);
+  let decoded=json.parse(encoded as string);check(!Object.hasOwn(decoded,"missing"));check(!Object.hasOwn(decoded,"optional"));
+  let elements=decoded.values as unknown[];check(elements.length===2);check(equal(elements[0],null));check(equal(elements[1],null));
+  let async=1;let as=async;let from=as as number;let of=from;
+  for(let of of [of]){check(of===1);}
+  function recurse(n:number):number{if(n===0){return 0;}return recurse(n-1);}
+  check(recurse(2)===0);
+  return null;
+}

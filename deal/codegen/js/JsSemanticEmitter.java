@@ -1249,8 +1249,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + ") > 0)";
                 case STRING_GE -> "($rt.strCompare(" + left + ", " + right
                     + ") >= 0)";
-                case UNKNOWN_EQ -> "($rt.numOf(" + left + ") === $rt.numOf(" + right + "))";
-                case UNKNOWN_NE -> "($rt.numOf(" + left + ") !== $rt.numOf(" + right + "))";
+                case UNKNOWN_EQ -> "($rt.scalarOf(" + left + ") === $rt.scalarOf(" + right + "))";
+                case UNKNOWN_NE -> "($rt.scalarOf(" + left + ") !== $rt.scalarOf(" + right + "))";
                 case UNDEFINED_EQ, NULLABLE_UNDEFINED_EQ -> "(" + left + " === " + right + ")";
                 case UNDEFINED_NE, NULLABLE_UNDEFINED_NE -> "(" + left + " !== " + right + ")";
                 case NULL_EQ -> "(" + left + " === null)";
@@ -3694,7 +3694,8 @@ private void emitBindingLoad(SemanticOp op) {
             entry.append(", optional: ").append(!field.required())
                 .append(", nullable: ").append(nullable)
                 .append(", undefinedable: ").append(descriptor instanceof RuntimeDescriptor.Undefined
-                    || descriptor instanceof RuntimeDescriptor.Nullable n && n.admitsUndefined());
+                    || descriptor instanceof RuntimeDescriptor.Nullable n
+                        && (n.admitsUndefined() || n.inner() instanceof RuntimeDescriptor.Undefined));
             return entry.append(" }").toString();
         }
 
@@ -3761,7 +3762,8 @@ private void emitBindingLoad(SemanticOp op) {
             }
             return entry.append(", optional: false, nullable: ")
                 .append(nullable).append(", undefinedable: ").append(element instanceof RuntimeDescriptor.Undefined
-                    || element instanceof RuntimeDescriptor.Nullable n && n.admitsUndefined()).append(" }").toString();
+                    || element instanceof RuntimeDescriptor.Nullable n
+                        && (n.admitsUndefined() || n.inner() instanceof RuntimeDescriptor.Undefined)).append(" }").toString();
         }
 
         /** The closed JSON kind name of one canonical descriptor. */

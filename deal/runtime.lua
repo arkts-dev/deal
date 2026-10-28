@@ -46,6 +46,8 @@ if __CARRIER_KEYS == nil then
 end
 local __K = __CARRIER_KEYS
 __rt.__keys = __K
+__K.undefinedSentinel = __K.undefinedSentinel or __rt.__UNDEFINED
+__rt.__UNDEFINED = __K.undefinedSentinel
 __K.classOrder = __K.classOrder or {}
 __K.classOrders = __K.classOrders or {}
 
@@ -830,7 +832,15 @@ end
 -- span; never a raw Lua error; never mutates its inputs. Array elements
 -- are checked in 1-based contiguous order and the first failing index is
 -- wrapped in E8003.
-local function check_canonical_ast(ast, v, file, line, column)
+local function check_canonical_ast(ast, v, file, line, column, seen)
+  seen = seen or {}
+  if type(v) == "table" and v ~= __rt.__NULL and v ~= __rt.__UNDEFINED and v ~= __rt.__MISSING
+      and getmetatable(v) ~= nil and rawget(v, __K.kind) == nil and rawget(v, __K.c) == nil
+      and rawget(v, __K.d) == nil and rawget(v, __K.fn) == nil
+      and rawget(v, __K.a) == nil and rawget(v, __K.t) == nil then
+    error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = "unknown"}, "E8001",
+      "unsupported unknown ingress", file, line, column, "unknown", type(v)))
+  end
   local kind = ast.kind
   if kind == "primitive" then
     local name = ast.name
@@ -867,12 +877,12 @@ local function check_canonical_ast(ast, v, file, line, column)
     -- canonical atom has no identity to compare and selects the closed
     -- kind arm (the JVM host check's own disposition), never a composed
     -- "unknown" atom.
-    if type(v) ~= "table" or v[__K.kind] ~= "class" then
+    if type(v) ~= "table" or (v[__K.kind] ~= "class" and not v[__K.c] and not v[__K.d]) then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
         "E8001", "expected class instance", file, line, column, "class",
         __rt.typed_kind(v)))
     end
-    local actual_class = v[__K.classname]
+    local actual_class = v[__K.classname] or v[__K.id] or (v[__K.d] and "Error")
     if actual_class == nil then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "class instance" },
         "E8001", "expected class instance", file, line, column, "class",
@@ -882,6 +892,23 @@ local function check_canonical_ast(ast, v, file, line, column)
       error(__rt._armErr("CLASS_IDENTITY", { expected = ast.name, actual = actual_class },
         "E8001", "expected instance of " .. ast.name .. ", got "
           .. tostring(actual_class), file, line, column, ast.name, actual_class))
+    end
+    local plan = __rt.__hostClassPlans and __rt.__hostClassPlans[ast.name]
+    if plan ~= nil then
+      local descriptors = seen[v]
+      if descriptors and descriptors[ast.text] then return v end
+      descriptors = descriptors or {}; seen[v] = descriptors; descriptors[ast.text] = true
+      for _, field in ipairs(plan) do
+        local member = rawget(v[__K.f] or v, field.name)
+        if member == __rt.__MISSING then member = nil end
+        if member == nil and not field.optional then
+          error(__rt._armErr("TYPED_BOUNDARY_KIND", {kind = field.descriptor}, "E8001",
+            "missing required field", file, line, column, field.descriptor, "undefined"))
+        end
+        if member ~= nil then
+          check_canonical_ast(parse_descriptor(field.descriptor), member, file, line, column, seen)
+        end
+      end
     end
     return v
   elseif kind == "array" then
@@ -904,6 +931,8 @@ local function check_canonical_ast(ast, v, file, line, column)
     local length
     if v[__K.a] ~= nil then
       length = v[__K.n] or 0
+      while rawget(v, length + 1) ~= nil do length = length + 1 end
+      v[__K.n] = length
     elseif __rt.typed_kind(v) ~= "table" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "array" }, "E8001",
         "expected array", file, line, column, "array", __rt.typed_kind(v)))
@@ -924,7 +953,7 @@ local function check_canonical_ast(ast, v, file, line, column)
       length = max
     end
     for i = 1, length do
-      local ok = pcall(check_canonical_ast, ast.element, v[i], file, line, column)
+      local ok = pcall(check_canonical_ast, ast.element, v[i], file, line, column, seen)
       if not ok then
         error(__rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
           "array element " .. i .. " type mismatch", file, line, column,
@@ -935,7 +964,7 @@ local function check_canonical_ast(ast, v, file, line, column)
   elseif kind == "nullable" then
     if ast.admitsNull and (v == nil or v == __rt.__NULL) then return __rt.__NULL end
     if ast.admitsUndefined and (v == __rt.__UNDEFINED or v == __rt.__MISSING) then return __rt.__UNDEFINED end
-    return check_canonical_ast(ast.inner, v, file, line, column)
+    return check_canonical_ast(ast.inner, v, file, line, column, seen)
   elseif kind == "function" then
     -- Function row: a wrapper whose carried descriptor equals the atom's
     -- byte-exact text (the exact sync/async marker included). A wrapper
@@ -943,19 +972,20 @@ local function check_canonical_ast(ast, v, file, line, column)
     -- like the JVM host check's own function row, so a malformed carrier
     -- is never projected through the signature arm's two descriptor
     -- operands.
-    if type(v) ~= "table" or v[__K.kind] ~= "function" then
+    if type(v) ~= "table" or (v[__K.kind] ~= "function" and v[__K.fn] == nil) then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
         "expected function", file, line, column, "function", __rt.typed_kind(v)))
     end
-    if type(v.sig) ~= "string" then
+    local signature = v.sig or v[__K.csig] or v[__K.sig]
+    if type(signature) ~= "string" then
       error(__rt._armErr("TYPED_BOUNDARY_KIND", { kind = "function" }, "E8001",
         "expected function", file, line, column, "function", __rt.typed_kind(v)))
     end
-    if v.sig ~= ast.text then
+    if signature ~= ast.text then
       error(__rt._armErr("FUNCTION_SIGNATURE_MISMATCH",
-        { expected = ast.text, actual = v.sig }, "E8010",
+        { expected = ast.text, actual = signature }, "E8010",
         "function signature mismatch: expected " .. ast.text .. ", got "
-          .. tostring(v.sig), file, line, column, ast.text, v.sig))
+          .. tostring(signature), file, line, column, ast.text, signature))
     end
     return v
   end
@@ -1018,10 +1048,12 @@ function __rt.function_(sig, f)
 end
 
 --- Extract the raw Lua function from a wrapper for host interop.
+local function_origins = setmetatable({}, {__mode = "k"})
 function __rt.as_lua_function(fn)
   if type(fn) ~= "table" or fn[__K.kind] ~= "function" then
     error(__rt._err("E8001", "expected function wrapper", nil, nil, nil, "function", type(fn)))
   end
+  function_origins[fn.f] = fn
   return fn.f
 end
 
@@ -1205,6 +1237,11 @@ function __rt.from_lua_function(sig, raw_f)
     -- Call the raw function
     local results = { raw_f(unpack(user_args, 1, nargs)) }
     local nresults = #results
+    for i = 1, nresults do
+      if type(results[i]) == "function" and function_origins[results[i]] ~= nil then
+        results[i] = function_origins[results[i]]
+      end
+    end
 
     -- Return validation: three-way dispatch (see the doc comment above).
     -- Every mapped branch renders the closed arm of its cell (the async

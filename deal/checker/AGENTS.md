@@ -10,7 +10,7 @@ Own resolution, typing, narrowing and checked facts. Diagnostics remain determin
 - Void is result-only and cannot enter data storage. TypeChecker alone owns definite-return diagnostics: only void permits fallthrough, including nested recursive bodies. Null requires explicit return; no duplicate AST falloff gate.
 - Catch bindings are mutable local unknowns. Error access requires extraction/matching nominal branches. Preserve shadowing/captures; anchor binding diagnostics on identifiers.
 - Each while-body entry receives fresh true-guard refinement with ordinary invalidation; body refinements cannot cross back-edges. Unknown equality permits neither narrowing nor conversion.
-- Binding names reject strict-mode eval/arguments and reserved words, including function-type parameters; keyword property names remain legal. Reject duplicate surface nullish union members before unknown absorption.
-- Ordinary names resolve lexically; no numeric conversion seeds exist. Record keys are string data, not binding declarations; class members remain declared-field accesses.
+- Bindings reject eval/arguments and reserved words; async/as/from/of are contextual identifiers. Keyword properties remain legal. Reject duplicate surface nullish union members before unknown absorption.
+- Nested functions follow declaration order; modules hoist. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
 
 Test acceptance/rejection independently of emitters.

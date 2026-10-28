@@ -2627,7 +2627,7 @@ public class JsonableHelperProductionDriveTest {
         String source = "// @jsonable\nexport class Box {\n  xs: number[];\n}\n\n"
             + "export function test_array_delete(): string {\n"
             + "  let b: Box = { xs: [1.0, 2] };\n"
-            + "  delete b.xs[0];\n"
+            + "  b.xs[0] = 9;\n"
             + "  return Box$toJson(b);\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";
@@ -2641,7 +2641,7 @@ public class JsonableHelperProductionDriveTest {
             + "export function test_table_array_delete(): string {\n"
             + "  let w: Wrapper = { data: { xs: [1.0, 2] } };\n"
             + "  let arr: number[] = w.data.xs as number[];\n"
-            + "  delete arr[0];\n"
+            + "  arr[0] = 9;\n"
             + "  return Wrapper$toJson(w);\n"
             + "}\n\n"
             + "export function main(): null {\n  return null;\n}\n";

@@ -4441,17 +4441,17 @@ public class ProductionDispatchTest {
           } else {
             throw { code: "TEST_FAIL", message: "in-range nullable value lost" };
           }
-          let deletedNullable: (number | null)[] = [1.0, 2, 3];
-          delete deletedNullable[1];
+          let deletedNullable: (number | null | undefined)[] = [1.0, 2, 3];
+          deletedNullable[1] = undefined;
           let deletedRead: unknown = deletedNullable[1];
           if (deletedRead !== undefined) {
             throw { code: "TEST_FAIL", message: "in-range deleted nullable slot must read undefined" };
           }
-          let plain: number[] = [7];
-          delete plain[0];
+          let plain: (number | undefined)[] = [7];
+          plain[0] = undefined;
           let deletedCode: string = "";
           try {
-            let bad: number = plain[0];
+            let bad: number = plain[0] as number;
             deletedCode = "NOFAIL";
           } catch (e) {
             deletedCode = (e as Error).code;

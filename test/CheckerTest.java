@@ -3780,8 +3780,8 @@ public class CheckerTest {
         out = checkProgram(
             "class bytes { x: number; }\n" +
             "let y: number = bytes(3);");
-        assertError(out, "E3008",
-            "user class named bytes is not callable");
+        assertError(out, "E3001",
+            "user class named bytes is metadata, not callable data");
 
         // A module-level user FUNCTION named bytes is legal (no E2002)
         // and calls resolve to the user function.

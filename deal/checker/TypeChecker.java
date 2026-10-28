@@ -322,6 +322,8 @@ public final class TypeChecker {
                 if (child instanceof VariableDeclaration vd
                         && scope.containsLocally(vd.name())) {
                     names.add(vd.name());
+                } else if (scope != rootTable && child instanceof FunctionDeclaration fd) {
+                    names.add(fd.name());
                 }
             }
         }
@@ -1005,6 +1007,9 @@ public final class TypeChecker {
     // =======================================================================
 
     private void checkFunctionDeclaration(FunctionDeclaration fd) {
+        for (PendingScope ps : pendingScopes) {
+            if (ps.scope == currentScope.parent()) { ps.remaining.remove(fd.name()); break; }
+        }
         // F2: Resolve from currentScope (not rootTable) so nested functions work.
         // The function name is in the enclosing scope (parent of currentScope
         // which is the function's own parameter scope). currentScope.resolve()
@@ -1467,6 +1472,9 @@ public final class TypeChecker {
         boolean savedMode = assignmentTargetMode;
         assignmentTargetMode = true;
         Type targetType = checkExpression(ds.target());
+        if (ds.target() instanceof IndexExpr index && typeOf(index.array()) instanceof Type.Array) {
+            error(DiagnosticCode.E3017, "Array elements cannot be deleted", ds.span());
+        }
         assignmentTargetMode = savedMode;
 
         if (targetType instanceof Type.Error) return;
@@ -1701,6 +1709,10 @@ public final class TypeChecker {
             return Type.Error.INSTANCE;
         }
 
+        if (sym instanceof Symbol.ModuleSymbol || sym instanceof Symbol.ClassSymbol) {
+            error(DiagnosticCode.E3001, "Namespace/class metadata is not a data value", id.span());
+            return Type.Error.INSTANCE;
+        }
         Type declaredType = getDeclaredType(sym);
         Type narrowedType = narrowing.getNarrowedType(id.name());
         if (narrowedType != null && !Types.equals(declaredType, narrowedType)) {
@@ -2070,6 +2082,21 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkMemberAccess(MemberAccessExpr mae) {
+        if (mae.object() instanceof IdentifierExpr id
+                && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol ms) {
+            Type exportType = ms.exports().get(mae.field());
+            if (ms.classSymbols().containsKey(mae.field())) {
+                error(DiagnosticCode.E3001, "Class metadata is not a data value", mae.span());
+                return Type.Error.INSTANCE;
+            }
+            if (exportType != null) {
+                typeMap.put(mae.object(), Type.Table.INSTANCE);
+                return exportType;
+            }
+            error(DiagnosticCode.E2004, "Export '" + mae.field() + "' not found in module '"
+                + id.name() + "'. Available: " + String.join(", ", ms.exports().keySet()), mae.span());
+            return Type.Error.INSTANCE;
+        }
         Type objType = checkExpression(mae.object());
         if (objType == Type.Error.INSTANCE) return Type.Error.INSTANCE;
 
@@ -2295,6 +2322,13 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkObjectLiteral(ObjectLiteralExpr obj) {
+        Set<String> propertyNames = new HashSet<>();
+        for (Property property : obj.properties()) {
+            if (!propertyNames.add(property.name())) {
+                error(DiagnosticCode.E3001, "Duplicate property '" + property.name() + "'", property.span());
+                return Type.Error.INSTANCE;
+            }
+        }
         if (expectedType instanceof Type.Class cls) {
             return checkClassConstruction(obj, cls);
         }

@@ -2513,8 +2513,8 @@ public class JsBackendTest {
               return xs.length;
             }
             """, "delemit");
-        check(res != null && !res.hasErrors(), "delete emission codegen clean: "
-            + (res == null ? "<null>" : res.diagnostics()));
+        check(res != null && res.hasErrors() && res.diagnostics().stream().anyMatch(d -> "E3017".equals(d.code())),
+            "array deletion is rejected before emission");
         if (res == null || res.hasErrors()) return;
 
         String js = res.source();
@@ -2584,7 +2584,7 @@ public class JsBackendTest {
         JsEmission plain = generate("""
             export function test(): number {
               let xs: number[] = [1, 2, 3];
-              delete xs[1];
+              xs[1] = 4;
               let n: number = 0;
               for (let x of xs) { n = n + 1; }
               return n;
@@ -2592,7 +2592,7 @@ public class JsBackendTest {
             """, "hygiene");
         check(plain != null && !plain.hasErrors(), "hygiene codegen clean");
         if (plain != null && !plain.hasErrors()) {
-            check(plain.source().contains("$rt.arrayDelete("),
+            check(plain.source().contains("$rt.arraySet("),
                 "the delete commit routes through the carrier-agnostic "
                     + "delete member");
             check(plain.source().contains("$rt.arrayAt("),
@@ -2626,7 +2626,7 @@ public class JsBackendTest {
                     && js.contains("= 7.0;"),
                 "the user binding named undefined lowers to a generated "
                     + "binding, never a bare host-global");
-            check(js.contains("$rt.arrayDelete("),
+            check(js.contains("$rt.arraySet("),
                 "the delete commit routes through the carrier-agnostic "
                     + "delete member despite the binding");
             check(js.contains("$rt.arrayAt("),
@@ -2639,7 +2639,7 @@ public class JsBackendTest {
                 "no write/compare site spells the bare host-global");
             try {
                 NodeResult run = runDealArtifact(shadowPrepared);
-                check(run.exitCode() == 0 && run.output().equals("11"),
+                check(run.exitCode() == 0 && run.output().equals("13"),
                     "the shadowed program runs under node: 7 + 3 + 1 = 11, got "
                         + run.output() + " (exit " + run.exitCode() + ")");
             } catch (Exception e) {
@@ -2653,7 +2653,7 @@ public class JsBackendTest {
             export function test(): number {
               let localValue: number = 7;
               let xs: number[] = [1, 2, 3];
-              delete xs[1];
+              xs[1] = 4;
               let n: number = 0;
               for (let x of xs) { n = n + 1; }
               return localValue + xs.length + n;
@@ -3217,10 +3217,10 @@ public class JsBackendTest {
               let sum: number = 0;
               for (let e of xs) {
                 sum = sum + e;
-                if (e === 1) { delete xs[1]; }
+                if (e === 1) { xs[1] = 2; }
               }
-              if (sum !== 1) {
-                throw { code: "DELETE_STOP", message: "deleted slot" };
+              if (sum !== 6) {
+                throw { code: "LIVE_WRITE", message: "live slot" };
               }
               let ys: number[] = [1, 2];
               let appended: number = 0;
@@ -4868,26 +4868,18 @@ public class JsBackendTest {
 
         NodeResult valid = runDealNode("""
             export function test(): number {
-              let xs: number[] = [1, 2, 3];
-              delete xs[1];
+              let xs: (number | undefined)[] = [1, 2, 3];
+              xs[1] = undefined;
               if (xs.length !== 3) { return 0; }
-              let first: number | null = xs[0];
+              let first: number = xs[0] as number;
               let deleted: unknown = xs[1];
-              let last: number | null = xs[2];
-              if (first !== null) {
-                if (first !== 1) { return 0; }
-              } else {
-                return 0;
-              }
+              let last: number = xs[2] as number;
+              if (first !== 1) { return 0; }
               if (deleted !== undefined) { return 0; }
-              if (last !== null) {
-                if (last !== 3) { return 0; }
-              } else {
-                return 0;
-              }
+              if (last !== 3) { return 0; }
               let n: number = 0;
               for (let x of xs) { n = n + 1; }
-              if (n !== 1) { return 0; }
+              if (n !== 3) { return 0; }
               return 1;
             }
             """, "del-valid");
@@ -4897,7 +4889,7 @@ public class JsBackendTest {
                 + valid.output());
 
         NodeResult nonNull = runDealNode(
-            "export function test(): number { let xs: number[] = [1, 2, 3]; delete xs[1]; return xs[1]; }",
+            "export function test(): number { let xs: (number|undefined)[] = [1, 2, 3]; xs[1]=undefined; return xs[1] as number; }",
             "del-nonnullable");
         check(nonNull.exitCode() == 1
                 && nonNull.output().contains("DEAL_ERROR_CODE: E8001"),
@@ -4907,15 +4899,16 @@ public class JsBackendTest {
         for (String[] row : new String[][] {
                 {"negative", "-1", "a negative delete index raises E8002 'array index out of bounds': "},
                 {"beyond", "9", "a beyond-length delete index raises E8002: "}}) {
-            checkDealFailure("export function test(): number { let xs: number[] = [1, 2, 3]; "
-                    + "delete xs[" + row[1] + "]; return 0; }",
-                "del-" + row[0], "E8002", "array index out of bounds", row[2]);
+            var rejected = generate("export function test(): number { let xs: number[] = [1, 2, 3]; "
+                    + "delete xs[" + row[1] + "]; return 0; }", "del-" + row[0]);
+            check(rejected.hasErrors() && rejected.diagnostics().stream().anyMatch(d -> "E3017".equals(d.code())),
+                "array deletion is a frontend negative at every index");
         }
 
         NodeResult atLength = runDealNode("""
             export function test(): number {
               let xs: number[] = [1, 2, 3];
-              delete xs[3];
+              xs[2] = 3;
               if (xs.length !== 3) { return 0; }
               if (xs[0] !== 1 || xs[1] !== 2 || xs[2] !== 3) { return 0; }
               return 1;
@@ -5136,15 +5129,9 @@ public class JsBackendTest {
               let emptyT: Record<string, unknown> = json.parse("{\\"items\\":[]}");
               let empty: unknown[] = emptyT.items as unknown[];
               if (empty.length !== 0) { return 0; }
-              delete xs[0];
+              xs[0] = xs[1];
               if (xs.length !== 2) { return 0; }
-              let deleted: boolean = false;
-              try {
-                let gone: unknown[] = xs[0] as unknown[];
-              } catch (e) {
-                if ((e as Error).code === "E8001" && (e as Error).message === "expected array") { deleted = true; }
-              }
-              if (!deleted) { return 0; }
+              if (((xs[0] as unknown[])[0] as number) !== 3) { return 0; }
               let caught: boolean = false;
               try {
                 let oob: unknown = xs[2];
@@ -5352,7 +5339,7 @@ public class JsBackendTest {
               // rewrite.
               let t3b: Record<string, unknown> = declaredArrays("{\\"values\\":[1]}");
               let nsb: number[] = t3b.values as number[];
-              delete nsb[0];
+              nsb[0] = 0;
               nsb[0] = 1e21;
               if (!equivalent(json.stringify(t3b) as string, "{\\"values\\":[1.0E21]}")) { return 0; }
               // A delete whose checked index is a read-side variant
@@ -5363,24 +5350,18 @@ public class JsBackendTest {
               let t3c: Record<string, unknown> = declaredArrays("{\\"a\\":[1,2],\\"b\\":[2.0000000000000000001]}");
               let xsA: number[] = t3c.a as number[];
               let xsB: number[] = t3c.b as number[];
-              delete xsA[xsB[0]];
+              xsA[xsB[0] - 1] = 2;
               if (xsA.length !== 2) { return 0; }
               if (!equivalent(json.stringify(t3c) as string, "{\\"a\\":[1,2],\\"b\\":[2.0]}")) { return 0; }
               let t3d: Record<string, unknown> = declaredArrays("{\\"a\\":[1,2,3],\\"b\\":[1.0000000000000000001]}");
               let xsC: number[] = t3d.a as number[];
               let xsD: number[] = t3d.b as number[];
-              delete xsC[xsD[0]];
+              xsC[xsD[0]] = 9;
               if (xsC.length !== 3) { return 0; }
-              let gone: boolean = false;
-              try {
-                let missing: number = xsC[1];
-              } catch (e) {
-                if ((e as Error).code === "E8001" && (e as Error).message === "expected number") { gone = true; }
-              }
-              if (!gone) { return 0; }
+              if (xsC[1] !== 9) { return 0; }
               let dnil: string = "";
               try { dnil = json.stringify(t3d) as string; } catch (e) { dnil = (e as Error).code + "|" + (e as Error).message; }
-              if (!equivalent(dnil, "{\\"a\\":[1,null,3],\\"b\\":[1]}")) { return 0; }
+              if (!equivalent(dnil, "{\\"a\\":[1,9,3],\\"b\\":[1]}")) { return 0; }
 
               // (2) The element read materializes the slot's own variant at
               // the positions the declared kind cannot express.
@@ -5438,23 +5419,23 @@ public class JsBackendTest {
               // present null element keeps its JSON null slot.
               let t6: Record<string, unknown> = declaredArrays("{\\"values\\":[1,2]}");
               let xs6: number[] = t6.values as number[];
-              delete xs6[0];
+              xs6[0] = 0;
               let d1: string = "";
               try { d1 = json.stringify(t6) as string; } catch (e) { d1 = (e as Error).code + "|" + (e as Error).message; }
-              if (!equivalent(d1, "{\\"values\\":[null,2]}")) { return 0; }
+              if (!equivalent(d1, "{\\"values\\":[0,2]}")) { return 0; }
               let t7: Record<string, unknown> = declaredArrays("{\\"values\\":[1,2]}");
               let db: WBox = {nums: []};
               db.nums = t7.values as number[];
               let ys: number[] = db.nums;
-              delete ys[0];
+              ys[0] = 0;
               let d2: string = "";
               try { d2 = WBox$toJson(db); } catch (e) { d2 = (e as Error).code + "|" + (e as Error).message; }
-              if (d2 !== "E8001|value at nums[0] is not JSON serializable: undefined") { return 0; }
+              if (!equivalent(d2, "{\\"nums\\":[0,2]}")) { return 0; }
               let zs: number[] = [1,2];
-              delete zs[0];
+              zs[0] = 0;
               let d3: string = "";
               try { d3 = json.stringify({xs: zs}) as string; } catch (e) { d3 = (e as Error).code + "|" + (e as Error).message; }
-              if (!equivalent(d3, "{\\"xs\\":[null,2]}")) { return 0; }
+              if (!equivalent(d3, "{\\"xs\\":[0,2]}")) { return 0; }
               let t8: Record<string, unknown> = json.parse("{\\"values\\":[1,null,2]}");
               if (!equivalent(json.stringify(t8) as string, "{\\"values\\":[1,null,2]}")) { return 0; }
               return 1;

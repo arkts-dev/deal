@@ -96,6 +96,10 @@ const $MISSING = {};
 const $jsonArrayTables = new WeakSet();
 const $jsonNullTables = new WeakSet();
 const $classFieldOrder = new WeakMap();
+const $hostClassPlans = new Map();
+const $classChecks = new WeakMap();
+const $hostArrayViews = new WeakMap();
+const $hostArraySources = new WeakMap();
 
 // ===== Actual-kind mapping (js-backend-runtime-artifact D3) =====
 // $kindOf: the diagnostic "actual" string for every check — the JS mirror
@@ -946,19 +950,50 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
           // The declared array ABI's host-facing carrier: the decoded
           // array's 1..n slots become the native Array's 0..n-1
           // positions in element order.
-          const $array = [];
+          if ($hostArrayViews.has($value)) return $hostArrayViews.get($value);
+          const $array = new Proxy([], {
+            get(target, key, receiver) {
+              if (key === "length") return $rt.arrayLength($value);
+              if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))
+                return $project($value.get(String(Number(key) + 1)));
+              return Reflect.get(target, key, receiver);
+            },
+            set(target, key, member) {
+              if (key === "length") {
+                for (const k of $value.keys()) if (Number(k) > member) $value.delete(k);
+                return true;
+              }
+              if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)) {
+                const index = String(Number(key) + 1);
+                $value.set(index, $hostArraySources.get(member) || member);
+                const marks = $jsonNumberMarks.get($value);
+                if (marks) marks.delete(index);
+                return true;
+              }
+              return Reflect.set(target, key, member);
+            },
+            has(target, key) {
+              if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))
+                return $value.has(String(Number(key) + 1));
+              return Reflect.has(target, key);
+            },
+            ownKeys(target) {
+              return [...$value.keys()].filter(k => $arrayFormIndex(k) !== null)
+                .map(k => String(Number(k) - 1)).concat(Reflect.ownKeys(target));
+            },
+            getOwnPropertyDescriptor(target, key) {
+              if (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key)
+                  && $value.has(String(Number(key) + 1)))
+                return {value: $project($value.get(String(Number(key) + 1))), writable: true,
+                  enumerable: true, configurable: true};
+              return Reflect.getOwnPropertyDescriptor(target, key);
+            }
+          });
+          $hostArrayViews.set($value, $array);
+          $hostArraySources.set($array, $value);
           $seen.set($value, $array);
           $carryMarks($value, $array, true);
           if ($arrayDescriptors.has($value)) $arrayDescriptors.set($array, $arrayDescriptors.get($value));
-          let $max = 0;
-          for (const $key of $value.keys()) {
-            const $index = $arrayFormIndex($key);
-            if ($index !== null && $index > $max) {
-              $max = $index;
-            }
-          }
-          $stack.push({ kind: 4, source: $value, copy: $array, index: 1,
-            max: $max });
           return $array;
         }
         const $copy = new $Map();
@@ -2402,6 +2437,10 @@ const $rt = {
     return $numOf(v);
   },
 
+  scalarOf: function(v) {
+    return $rt.isNilEquivalent(v) ? null : $numOf($hostArraySources.get(v) || v);
+  },
+
   // isNilEquivalent: the nil-equivalent predicate of the null-admitting
   // boundaries and the nullable equality forms. DEAL null is the JS null
   // and the JSON-decoded null is the marked null table (the D2 decode
@@ -2848,6 +2887,20 @@ const $rt = {
       }
       if (v.$classname !== $parsed.$name) {
         $rt.fail("E8001", "expected instance of " + $parsed.$name + ", got " + v.$classname, file, line, column, $parsed.$name, v.$classname);
+      }
+      const plan = $hostClassPlans.get($parsed.$name);
+      if (plan) {
+        let checking = $classChecks.get(v);
+        if (!checking) { checking = new Set(); $classChecks.set(v, checking); }
+        if (checking.has(descriptor)) return v;
+        checking.add(descriptor);
+        try {
+          for (const field of plan) {
+            if (!Object.prototype.hasOwnProperty.call(v, field.name) || v[field.name] === $MISSING) {
+              if (!field.optional) $rt.fail("E8001", "missing required field: " + field.name, file, line, column);
+            } else $rt.checkType(field.descriptor, v[field.name], file, line, column);
+          }
+        } finally { checking.delete(descriptor); }
       }
       return v;
     }
@@ -3391,7 +3444,8 @@ const $rt = {
           $hostArgs.push($hostProjectArg($paramDescs[$i], $checkedArgs[$i],
             $argMemo));
         }
-        const $r = f(...$hostArgs);
+        const $rawResult = f(...$hostArgs);
+        const $r = $hostArraySources.get($rawResult) || $rawResult;
         if ($isNullRet) {
           if ($r === $undefined) {
             $rt.fail("E8010", "return value 1 type mismatch: expected null, got nothing", $file, $line, $column, "null", "nothing");
@@ -3406,7 +3460,7 @@ const $rt = {
           }
         }
         if ($r === $undefined && $retDesc === "void") return $undefined;
-        if ($r === $undefined && !($retDesc === "unknown" || $retDesc === "undefined" || $retDesc.startsWith("!undefined") || $retDesc.startsWith("!") || $retDesc.startsWith("?!"))) {
+        if ($r === $undefined && !($retDesc === "unknown" || $retDesc === "undefined" || $retDesc === "null|undefined" || $retDesc.startsWith("!undefined") || $retDesc.startsWith("!") || $retDesc.startsWith("?!"))) {
           $rt.fail("E8010", "return value 1 type mismatch: expected " + $retDesc + ", got nothing", $file, $line, $column, $retDesc, "nothing");
         }
         try {
@@ -3634,6 +3688,7 @@ const $rt = {
         }
         const $classPlan = $fields.map($field => ({name: $field.name,
           descriptor: $field.$d, optional: $field.optional}));
+        $hostClassPlans.set($desc, $classPlan);
         // Construct against declared structural fields, never raw host hooks.
         $surface[$name] = $v;
         $surface[$name + "$new"] = function(provided, $file, $line, $column) {

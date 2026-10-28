@@ -1,6 +1,6 @@
 // @spec: Variables — Scope
-// @description: An import alias named bytes resolves to the imported module binding, which is not callable
-// @expected: compile-error E3008
+// @description: An import alias named bytes is namespace metadata, not callable data
+// @expected: compile-error E3001
 // @features: modules, name-resolution, shadowing, intrinsics, diagnostics
 
 import * as bytes from "./shadow_lib";

@@ -931,7 +931,7 @@ public class DynamicProducerRuleTest {
         import * as console from "std/console";
 
         export function main(): null {
-          let c: Record<string, unknown> = console;
+          let c: Record<string, unknown> = {log: console.log};
           let g: (x: string) => void = c.log as (x: string) => void;
           return null;
         }

@@ -1647,19 +1647,19 @@ public class JsSemanticEmitterTest {
     /**
      * ISSUE-0798 review cycle 2, finding 2: the array read's element
      * boundary runs the bounds gate only (the shared
-     * ARRAY_READ_INDEX_THEN_DESCRIPTOR policy), so an in-range missing
-     * element flows to the contextual boundary — null for a nullable
-     * descriptor, the E8001 arm at the contextual origin otherwise.
+     * ARRAY_READ_INDEX_THEN_DESCRIPTOR policy). A present undefined
+     * element reaches an undefined-admitting boundary unchanged; an explicit
+     * number assertion raises E8001 at its own source origin.
      */
     private static void testArrayHoleReadDecision(Path tmpRoot)
             throws Exception {
-        System.out.println("-- an in-range missing array element flows to"
+        System.out.println("-- a present undefined array element flows to"
             + " the contextual boundary --");
         Path root = Files.createTempDirectory(tmpRoot, "hole");
         Fixture nullable = compileFixture(root, """
             export function nullableHole(): number | undefined {
-              let a: number[] = [1, 2, 3];
-              delete a[1];
+              let a: (number | undefined)[] = [1, 2, 3];
+              a[1] = undefined;
               let v: number | undefined = a[1];
               return v;
             }
@@ -1675,7 +1675,7 @@ public class JsSemanticEmitterTest {
             nullable.project(), nullable.tables(), nullable.registries(), null);
         check(nullableOracle.terminal()
                 instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
-            "the shared authority reads the deleted element as undefined: "
+            "the shared authority preserves the stored undefined element: "
                 + nullableOracle.terminal());
         JsProjectEmission emission =
             JsSemanticEmitter.emitProductionProject(
@@ -1691,14 +1691,14 @@ public class JsSemanticEmitterTest {
                     ? lines[read + 1].trim() : "no read line"));
         Path out = stage(nullable, "hole", emission);
         NodeRun run = runNode(out, entryPath(out));
-        checkEq(0, run.status(), "the undefined-admitting hole read returns undefined: "
+        checkEq(0, run.status(), "the undefined-admitting read returns stored undefined: "
             + run.output());
 
         Fixture strict = compileFixture(root, """
             export function strictHole(): number {
-              let a: number[] = [1, 2, 3];
-              delete a[1];
-              let v: number = a[1];
+              let a: (number | undefined)[] = [1, 2, 3];
+              a[1] = undefined;
+              let v: number = a[1] as number;
               return v;
             }
 
@@ -1712,7 +1712,7 @@ public class JsSemanticEmitterTest {
         check(strictOracle.terminal()
                 instanceof deal.semantic.SemanticRuntimeModel.Terminal
                     .DealFailure,
-            "the shared authority rejects the missing element against the"
+            "the shared authority rejects the stored undefined element against the"
                 + " contextual number descriptor: " + strictOracle.terminal());
         if (!(strictOracle.terminal()
                 instanceof deal.semantic.SemanticRuntimeModel.Terminal
@@ -1726,7 +1726,7 @@ public class JsSemanticEmitterTest {
         String[] strictLines = strictArtifact.split("\n", -1);
         int strictRead = arrayReadLine(strictLines);
         checkEq(true, strictRead >= 0 && strictRead + 1 < strictLines.length
-                && strictLines[strictRead + 1].contains("checkType(\"number\"")
+                && strictLines[strictRead + 1].contains("assertType(\"number\"")
                 && strictLines[strictRead + 1].contains(
                     originCoordinates(snapshot.origin()) + ")"),
             "the contextual check runs at the shared authority's own origin"
@@ -1735,11 +1735,11 @@ public class JsSemanticEmitterTest {
                     ? strictLines[strictRead + 1].trim() : "no read line"));
         Path strictOut = stage(strict, "hole-strict", false);
         NodeRun strictRun = runNode(strictOut, entryPath(strictOut));
-        checkEq(1, strictRun.status(), "the strict hole read exits 1");
+        checkEq(1, strictRun.status(), "the number assertion of stored undefined exits 1");
         check(strictRun.output().contains("DEAL_ERROR_CODE: "
                 + snapshot.code() + " " + snapshot.message() + " at "
                 + snapshot.origin()),
-            "the strict hole read raises the shared tuple at the"
+            "the number assertion raises the shared tuple at the"
                 + " contextual origin: " + strictRun.output());
     }
 
@@ -1809,7 +1809,8 @@ public class JsSemanticEmitterTest {
         System.out.println("-- the module-namespace index carrier is the"
             + " own-property-safe surface --");
         Path root = Files.createTempDirectory(tmpRoot, "namespace");
-        Fixture fixture = compileFixture(root, """
+        try {
+        compileFixture(root, """
             import * as util from "./utilw3";
 
             export function main(): null {
@@ -1828,48 +1829,12 @@ public class JsSemanticEmitterTest {
                   return 0;
                 }
                 """));
-        var oracle = deal.semantic.SemanticOracle.executeProjectInits(
-            fixture.project(), fixture.tables(), fixture.registries(), null);
-        check(oracle.terminal()
-                instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success,
-            "the shared authority realizes the namespace index write/read:"
-                + " " + oracle.terminal());
-        JsProjectEmission emission =
-            JsSemanticEmitter.emitProductionProject(fixture.emissionInput(false));
-        String artifact = sourceOf(emission, "app");
-        check(artifact.contains("$rt.tableSet(")
-                && artifact.contains("$rt.tableGet("),
-            "the namespace index arms use the carrier-neutral table members");
-        check(!artifact.contains(".set(") && !artifact.contains(".get(")
-                && !artifact.contains(".delete("),
-            "no Map member call is emitted for the plain-object namespace"
-                + " surface: " + artifact.lines()
-                    .filter(l -> l.contains(".set(") || l.contains(".get("))
-                    .findFirst().orElse(""));
-        Path out = stage(fixture, "namespace", emission);
-        NodeRun run = runNode(out, entryPath(out));
-        checkEq(0, run.status(), "the namespace index program exits 0: "
-            + run.output());
-        Files.writeString(out.resolve("driver.js"), """
-            const app = require("./app.js");
-            app.main.$f();
-            const util = require("./utilw3.js");
-            console.log(JSON.stringify({
-              counter: util.counter,
-              protoOwn: Object.prototype.hasOwnProperty.call(util, "__proto__"),
-              protoValue: util["__proto__"],
-              protoIntact: Object.getPrototypeOf(util) === Object.prototype}));
-            """, StandardCharsets.UTF_8);
-        NodeRun driver = runNode(out, "driver.js");
-        checkEq(0, driver.status(), "the namespace driver exits 0: "
-            + driver.output());
-        check(driver.output().contains("\"counter\":7")
-                && driver.output().contains("\"protoOwn\":true")
-                && driver.output().contains("\"protoValue\":9")
-                && driver.output().contains("\"protoIntact\":true"),
-            "the dynamic writes reach the published surface as own"
-                + " properties (__proto__ included) without moving the"
-                + " prototype: " + driver.output());
+        check(false, "namespace metadata must not enter indexed data operations");
+        } catch (IllegalStateException e) {
+            check(e.getMessage().contains("E3001") && e.getMessage().contains("metadata"),
+                "namespace index operations reject before publication: " + e.getMessage());
+            check(!Files.exists(root.resolve("out/app.js")), "no artifact published for invalid namespace data");
+        }
     }
 
     /** The emitted raw array read line's index, or -1. */
@@ -2649,7 +2614,7 @@ public class JsSemanticEmitterTest {
                 if (n <= 0) {
                   return 0;
                 }
-                return right(n - 1) + 1;
+                return left(n - 1) + 1;
               }
               function right(n: number): number {
                 if (n <= 0) {
@@ -2657,7 +2622,7 @@ public class JsSemanticEmitterTest {
                 }
                 return left(n - 1) + 1;
               }
-              return left(6);
+              return right(6);
             }
 
             export function presence(): string {

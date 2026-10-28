@@ -10,6 +10,10 @@ import java.util.*;
 /** Focused v1.5 frontend contracts, independent of backend execution. */
 public final class Language15FrontendTest {
     private static void check(String source, boolean accepted) {
+        var diagnostics = diagnostics(source);
+        if (diagnostics.isEmpty() != accepted) throw new AssertionError(source + "\n" + diagnostics);
+    }
+    private static List<deal.diagnostics.CompilerDiagnostic> diagnostics(String source) {
         var lex = new Lexer(source, "test.deal").tokenize();
         var parsed = new Parser(lex.tokens(), "test.deal", lex.directiveEvents()).parse();
         var diagnostics = new ArrayList<>(lex.diagnostics());
@@ -20,7 +24,14 @@ public final class Language15FrontendTest {
             diagnostics.addAll(resolver.diagnostics());
             if (diagnostics.isEmpty()) diagnostics.addAll(TypeChecker.check("test.deal", scope, resolver, parsed.program()).diagnostics());
         }
-        if (diagnostics.isEmpty() != accepted) throw new AssertionError(source + "\n" + diagnostics);
+        return diagnostics;
+    }
+    private static void rejectsAt(String source, String token, String code) {
+        var diagnostics = diagnostics(source);
+        int column = source.indexOf(token) + 1;
+        if (diagnostics.size() != 1 || !diagnostics.getFirst().toString().contains("ERROR " + code + ":")
+                || !diagnostics.getFirst().toString().contains(":1:" + column + "-"))
+            throw new AssertionError(source + "\n" + diagnostics);
     }
     public static void main(String[] args) {
         check("function f(): void { return; }", true);
@@ -91,6 +102,29 @@ public final class Language15FrontendTest {
         check("function f(arguments: number): void {}", false);
         check("class C { return: number; Object: number; undefined: number; switch: number; } function f(): void { let c: C = { return: 1, Object: 2, undefined: 3, switch: 4 }; let x: number = c.return; }", true);
         check("function f(): void { let r: Record<string, unknown> = { delete: 1, as: 2, typeof: 3 }; let x: unknown = r.delete; }", true);
+        for (String name : List.of("async", "as", "from", "of")) {
+            check("function f(): void { let " + name + " = 1; let x = " + name + "; }", true);
+            check("function " + name + "(" + name + ":number):number{return " + name + ";}", true);
+        }
+        check("function f():void {for(let of of [1]){let from=of;}}", true);
+        check("function f():void {let from:unknown=1;let as=from as number;as;let async=as;async;}", true);
+        rejectsAt("function f():void {late();function late():void{}}", "late()", "E2001");
+        rejectsAt("class C{x:number;} function f():void{let u:unknown=C;}", "C;", "E3001");
+        rejectsAt("function f():void{let a:unknown[]=[1];delete a[0];}", "delete", "E3017");
+        check("import * as from from \"std/math\"; function f():number{return from.floor(1.5);}", true);
+        check("import * as as from \"std/math\"; function f():void{let value:unknown=as;}", false);
+        check("function f():void {let r:Record<string,unknown>={};}", true);
+        check("function f():void {let r:Record<string,unknown>={};}\n// @jsonable\nexport class C{x:number;}", true);
+        check("function f():void {let r:Record<string,unknown> = {a:1,a:2};}", false);
+        check("class C{x:number;} function f():void {let c:C={x:1,x:2};}", false);
+        check("function f():void {let a:number[]=[1];delete a[0];}", false);
+        check("function f():void {let a:unknown[]=[1];delete a[0];}", false);
+        check("function f():void {g();function g():void{}}", false);
+        check("function f():void {let h:()=>void=function():void{g();};function g():void{}h();}", false);
+        check("function f():void {function g():void{g();}g();}", true);
+        check("function g():number{return 1;} function f():void {let x=g();function g():number{return 2;}let y=g();}", true);
+        check("class C{x:number;} function f():void{let x:unknown=C;}", false);
+        check("class C{x:number;} function f():void{let x=typeof C;}", false);
         System.out.println("Language15FrontendTest: passed");
     }
 }

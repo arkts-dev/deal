@@ -86,7 +86,7 @@ public final class Language15RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
-        for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values")) executeFixture(fixture);
+        for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language15RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
     }
 

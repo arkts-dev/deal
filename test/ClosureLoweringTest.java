@@ -1262,7 +1262,7 @@ public class ClosureLoweringTest {
             function b(): void { let aRef: () => void = a; }
             function outer(): void {
               let before = 1;
-              function n(): void { let mRef: () => void = m; }
+              function n(): void { let nRef: () => void = n; }
               function m(): void { let nRef: () => void = n; }
               let after = 2;
             }
@@ -1275,8 +1275,8 @@ public class ClosureLoweringTest {
         }
         LoweredModuleUnit unit = first.lowering().unit();
         List<SemanticOp> ops = unit.ops();
-        check(first.groups().size() == 3 && ofKind(ops, SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 3,
-            "two module SCCs and one nested SCC, each emitted exactly once");
+        check(first.groups().size() == 2 && ofKind(ops, SemanticOpKind.RECURSIVE_GROUP_INIT).size() == 2,
+            "two module SCCs; ordered nested declarations do not form a forward SCC");
         java.util.Set<ValueId> identities = new java.util.HashSet<>();
         for (SemanticLowerer.GroupFacts group : first.groups()) {
             SemanticOp groupOp = ops.stream().filter(o -> o.opId().equals(group.opId()))
@@ -1338,21 +1338,16 @@ public class ClosureLoweringTest {
         }
         check(indexOf(ops, moduleGroups.get(0).opId()) < indexOf(ops, moduleGroups.get(1).opId()),
             "module group op order is stable");
-        SemanticLowerer.GroupFacts nested = first.groups().stream()
-            .filter(g -> !g.block().equals(unit.moduleInit().initBlock())).findFirst().orElseThrow();
-        check(nested.members().stream().map(SemanticLowerer.GroupMemberFacts::name).toList()
-                .equals(List.of("n", "m")), "nested SCC declaration order");
+        check(first.groups().stream().allMatch(g -> g.block().equals(unit.moduleInit().initBlock())),
+            "ordered nested declarations retain individual closure creation");
         BindingId before = fact(first.bindingFacts(), "before").binding();
         BindingId after = fact(first.bindingFacts(), "after").binding();
         SemanticOp beforeInit = ops.stream().filter(o -> o.payload() instanceof KindPayload.BindingInitPayload p
             && p.binding().equals(before)).findFirst().orElseThrow();
         SemanticOp afterAlloc = ops.stream().filter(o -> o.payload() instanceof KindPayload.BindingAllocPayload p
             && p.binding().equals(after)).findFirst().orElseThrow();
-        check(indexOf(ops, beforeInit.opId()) < indexOf(ops, nested.opId())
-                && indexOf(ops, nested.opId()) < indexOf(ops, afterAlloc.opId()),
-            "nested group is emitted at first member declaration");
-        check(first.closures().stream().anyMatch(c -> c.bodyBlock().equals(nested.block())),
-            "nested group belongs to enclosing closure body");
+        check(indexOf(ops, beforeInit.opId()) < indexOf(ops, afterAlloc.opId()),
+            "nested declarations remain between the surrounding statements");
         SemanticLowerer.GroupCoreResult pair = lowerGroups("""
             function f(): void { let gRef: () => void = g; }
             function g(): void { let fRef: () => void = f; }
@@ -1380,7 +1375,7 @@ public class ClosureLoweringTest {
                         && namesBinding(o, binding.binding()) && o.result() == null),
                 "singleton " + singleton + " retains separate ALLOC/INIT");
         }
-        check(ofKind(ops, SemanticOpKind.CLOSURE_NEW).size() == 4,
+        check(ofKind(ops, SemanticOpKind.CLOSURE_NEW).size() == 6,
             "self recursion and ungrouped sibling stay closures, plus outer and nested h");
         BindingId later = fact(first.bindingFacts(), "laterFn").binding();
         SemanticLowerer.GroupMemberFacts f = moduleGroups.get(0).members().get(0);

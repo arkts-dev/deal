@@ -412,8 +412,8 @@ public class AsyncExportInvokerProductionTest {
      */
     private static final String DELETED_SLOT_SOURCE = """
         export async function run(): Promise<Record<string, unknown>> {
-          let xs: number[] = [7.0, 8];
-          delete xs[0];
+          let xs: (number | undefined)[] = [7.0, 8];
+          xs[0] = undefined;
           return { xs: xs };
         }
 

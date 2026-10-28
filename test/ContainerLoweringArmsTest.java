@@ -796,7 +796,7 @@ public class ContainerLoweringArmsTest {
 
         CheckedSlice slice = checkSlice("""
             function f(): null {
-              let t = {x: 1, y: "k", x: 2};
+              let t = {x: 1, y: "k", z: 2};
               return null;
             }
             """);
@@ -840,7 +840,7 @@ public class ContainerLoweringArmsTest {
         if (payload.entries().size() == 3) {
             check("x".equals(payload.entries().get(0).key())
                     && "y".equals(payload.entries().get(1).key())
-                    && "x".equals(payload.entries().get(2).key()),
+                    && "z".equals(payload.entries().get(2).key()),
                 "entry keys are the identifier property names in source order (x, y, x)");
             check(payload.entries().get(0).value().equals(ops.get(0).result())
                     && payload.entries().get(1).value().equals(ops.get(1).result())
@@ -2009,7 +2009,7 @@ public class ContainerLoweringArmsTest {
         CheckedSlice slice = checkSlice("""
             function f(a: number, b: number, c: number, v: number, i: number): null {
               let xs: number[] = [a, b, i, c, v];
-              let t = {x: 1, y: "k", x: 2};
+              let t = {x: 1, y: "k", z: 2};
               return null;
             }
             """);
@@ -2181,12 +2181,12 @@ public class ContainerLoweringArmsTest {
         tablePrior.put((ValueId) consts.get(2).result(), new Value.Number(2));
         SemanticTable<Value> table = ContainerOpsExecutor.executeTableNew(tableNews.get(0),
             tablePrior);
-        check(table.keys().equals(List.of("x", "y")),
-            "the duplicate literal keys keep the first position: keys() == [x, y]; got "
+        check(table.keys().equals(List.of("x", "y", "z")),
+            "the literal keys keep source order: keys() == [x, y, z]; got "
                 + table.keys());
         check(table.get("x") instanceof SemanticTable.Lookup.Present<Value> presentX
-                && presentX.value().equals(new Value.Number(2)),
-            "the later duplicate value wins: get(x) == Int(2)");
+                && presentX.value().equals(new Value.Number(1)),
+            "the first entry keeps its value: get(x) == Number(1)");
         check(table.get("y") instanceof SemanticTable.Lookup.Present<Value> presentY
                 && presentY.value().equals(
                     new Value.String(deal.semantic.ir.UnicodeScalars.validate("k"))),

@@ -50,6 +50,7 @@ public final class Parser {
     // -----------------------------------------------------------------------
 
     private final List<Token> tokens;
+    private final List<Integer> originalTokenIndices = new ArrayList<>();
     private final String file;
     private final List<CompilerDiagnostic> diagnostics = new ArrayList<>();
     /** The input list's EOF token, or null when the list has none. */
@@ -93,7 +94,8 @@ public final class Parser {
      */
     public Parser(List<Token> tokens, String file,
                   List<CompilerDirective> directiveEvents) {
-        this.tokens = List.copyOf(tokens);
+        this.tokens = new ArrayList<>(tokens);
+        for (int i = 0; i < tokens.size(); i++) originalTokenIndices.add(i);
         this.file = file;
         this.pos = 0;
         this.inputEofToken = findEofToken(this.tokens);
@@ -185,7 +187,7 @@ public final class Parser {
         List<CompilerDirective> anchored = new ArrayList<>();
         for (CompilerDirective e : directiveEvents) {
             if (e.declarationAnchorTokenIndex() != null
-                    && e.declarationAnchorTokenIndex() == tokenIndex
+                    && e.declarationAnchorTokenIndex().equals(originalTokenIndices.get(tokenIndex))
                     && !claimedEvents.contains(e)) {
                 anchored.add(e);
             }
@@ -275,7 +277,7 @@ public final class Parser {
             case CLASS     -> parseClassDeclaration();
             case FUNCTION  -> {
                 if (pos + 1 < tokens.size()
-                        && tokens.get(pos + 1).type() == TokenType.IDENTIFIER
+                        && isIdentifier(tokens.get(pos + 1).type())
                         && pos + 2 < tokens.size()
                         && tokens.get(pos + 2).type() == TokenType.LPAREN) {
                     yield parseFunctionDeclaration();
@@ -286,7 +288,7 @@ public final class Parser {
                 if (pos + 1 < tokens.size()
                         && tokens.get(pos + 1).type() == TokenType.FUNCTION
                         && pos + 2 < tokens.size()
-                        && tokens.get(pos + 2).type() == TokenType.IDENTIFIER
+                        && isIdentifier(tokens.get(pos + 2).type())
                         && pos + 3 < tokens.size()
                         && tokens.get(pos + 3).type() == TokenType.LPAREN) {
                     yield parseFunctionDeclaration();
@@ -951,7 +953,7 @@ public final class Parser {
 
         // Builtin type names (identifiers): boolean, int, number, string, table, Error
         // Also a single-qualifier type like ModuleAlias.ClassName
-        if (tt == TokenType.IDENTIFIER) {
+        if (isIdentifier(tt)) {
             Token first = advance();
             if (first.lexeme().equals("Record")) {
                 expect(TokenType.LT, DiagnosticCode.E1032, "Expected '<' after Record");
@@ -1301,7 +1303,7 @@ public final class Parser {
                 advance();
                 return parseTemplateLiteral();
             }
-            case IDENTIFIER -> {
+            case IDENTIFIER, AS, FROM, OF -> {
                 advance();
                 return new IdentifierExpr(spanOf(previous()), previous().lexeme());
             }
@@ -1318,7 +1320,12 @@ public final class Parser {
             case LBRACKET -> { return parseArrayLiteral(); }
             case LBRACE   -> { return parseObjectLiteral(); }
             case FUNCTION -> { return parseFunctionExpression(); }
-            case ASYNC    -> { return parseFunctionExpression(); }
+            case ASYNC    -> {
+                if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.FUNCTION)
+                    return parseFunctionExpression();
+                advance();
+                return new IdentifierExpr(spanOf(token), token.lexeme());
+            }
             default -> {
                 error(DiagnosticCode.E1037, "Expected expression", token);
                 if (!isStatementBoundary(token.type())) {
@@ -1886,8 +1893,21 @@ public final class Parser {
         return peek().type() == TokenType.EOF;
     }
 
+    private static boolean isIdentifier(TokenType type) {
+        return type == TokenType.IDENTIFIER || type == TokenType.ASYNC
+            || type == TokenType.AS || type == TokenType.FROM || type == TokenType.OF;
+    }
+
     private Token expect(TokenType type, DiagnosticCode code, String message) {
-        if (peek().type() == type) {
+        if (type == TokenType.GT && peek().type() == TokenType.GTE) {
+            Token t = peek();
+            tokens.set(pos, new Token(TokenType.GT, ">", t.line(), t.column(), 1,
+                t.startScalarOffset(), 1));
+            originalTokenIndices.add(pos + 1, originalTokenIndices.get(pos));
+            tokens.add(pos + 1, new Token(TokenType.EQ_SIGN, "=", t.line(), t.column() + 1, 1,
+                t.startScalarOffset() < 0 ? t.startScalarOffset() : t.startScalarOffset() + 1, 1));
+        }
+        if (peek().type() == type || type == TokenType.IDENTIFIER && isIdentifier(peek().type())) {
             return advance();
         }
         error(code, message, peek());
@@ -2113,7 +2133,7 @@ public final class Parser {
         return switch (type) {
             case NULL, TRUE, FALSE, NUMBER_LITERAL, STRING_LITERAL, TEMPLATE_LITERAL,
                  IDENTIFIER, BANG, MINUS, LPAREN, LBRACKET, LBRACE,
-                 FUNCTION, AWAIT, ASYNC, TYPEOF -> true;
+                 FUNCTION, AWAIT, ASYNC, AS, FROM, OF, TYPEOF -> true;
             default -> false;
         };
     }

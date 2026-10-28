@@ -1,0 +1,24 @@
+export class C { x: string; }
+export function badClass(kind: number): C;
+export function nullish(): null | undefined;
+export function echoArray(value: unknown[]): unknown[];
+export function replace(value: unknown[]): void;
+export function numbers(value: (number | undefined)[]): (number | undefined)[];
+export function booleans(value: (boolean | undefined)[]): (boolean | undefined)[];
+export function strings(value: (string | undefined)[]): (string | undefined)[];
+export function keep(value: (number | undefined)[]): void;
+export function seesUndefined(): boolean;
+export function fresh(): number[];
+export function grow(): void;
+export function conflict(): unknown[];
+export function callbacks(a: () => void, b: () => void): boolean;
+export function echoFunction(value: () => void): () => void;
+export function nativeFailure(): void;
+export function nativeCallable(): () => void;
+export function callbackFailure(value: () => void): void;
+export function asyncFailure(): Promise<void>;
+export function asyncCallback(value: () => void): Promise<void>;
+export function echoError(value: Error): void;
+export function keepUnknown(value: unknown[]): void;
+export function corrupt(kind: number): void;
+export function opaqueArray(): unknown[];

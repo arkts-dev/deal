@@ -886,9 +886,9 @@ public class ContainerBoundaryProductionTest {
     /**
      * The recursive array position (ISSUE-0767): a class field declared
      * {@code ((x: number) => number)[]} receives a typed array with a
-     * deleted element, so the field boundary's array recursion must project
-     * the canonical element text {@code (number)->number} and actual
-     * {@code undefined} in its E8003 row, never the internal descriptor dialect.
+     * fixture-invalidated function signature, so recursive element validation
+     * projects canonical expected {@code (number)->number} and carrier kind
+     * {@code function} in its E8003 row, never the internal descriptor dialect.
      */
     private static final String CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE = """
         function identity(x: number): number {
@@ -901,7 +901,7 @@ public class ContainerBoundaryProductionTest {
 
         export function main(): null {
           let inner: ((x: number) => number)[] = [identity];
-          delete inner[0];
+          signature.replaceSignature({value: identity}, "(number)->string");
           let b: Box = { fs: inner };
           return null;
         }
@@ -934,9 +934,9 @@ public class ContainerBoundaryProductionTest {
                     "function signature mismatch: expected (number)->number, got (number)->string",
                     "(number)->number", "(number)->string")),
             new FocusedFailure("class field function array element mismatch",
-                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 12, 16,
+                CLASS_FIELD_FUNCTION_ARRAY_ELEMENT_SOURCE, 13, 16,
                 new Tuple("E8003", "array element 1 type mismatch",
-                    "(number)->number", "undefined")));
+                    "(number)->number", "function")));
     }
 
     private record FocusedFailure(String label, String source, int line, int column,

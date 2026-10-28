@@ -13,9 +13,9 @@ Render validated semantic IR through `JsSemanticEmitter`, preserving CommonJS AB
 
 ## Control flow and storage
 
-For-of evaluates its iterable once. Array traversal observes live contiguous positions; deleted slots stop traversal and contiguous appends remain visible. Each iteration owns a mutable captured let cell. String traversal uses Unicode scalars.
+For-of evaluates its iterable once. Array traversal observes live contiguous positions and appends; source array deletion rejects. Each iteration owns a mutable captured let cell. String traversal uses Unicode scalars.
 
-Array operations use carrier-neutral runtime accessors, including decoded arrays. Persistent descriptors cannot be retagged by empty/current contents. Deleted slots read undefined regardless of element nullability. Refined receiver/key/length/iterable/presence operations consume admitted boundary results; slot-threaded conditions preserve their preallocated identity. Assignment stores may adapt without changing the original RHS result.
+Array operations use carrier-neutral runtime accessors, including decoded arrays. Persistent descriptors cannot be retagged by empty/current contents. Stored undefined retains identity independently of nullability. Refined receiver/key/length/iterable/presence operations consume admitted boundary results; slot-threaded conditions preserve their preallocated identity. Assignment stores may adapt without changing the original RHS result.
 
 Throw/catch preserves Error identity and causes; captured catch bindings receive fresh cells per execution. Generated function names retain source identity. Async start/await uses native Promises with the recorded completion cell and public async-export ABI.
 

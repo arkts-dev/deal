@@ -18,13 +18,10 @@ export function test_sync(): void {
   values[2] = 5;
   check(host.mutate(values) === values);
   check(returned[2] === 5);
-  delete values[1];
   let visited: number = 0;
   for (let value of returned) { visited = visited + 1; }
-  check(visited === 1);
-  let missing: boolean = false;
-  try { let value: number = returned[1]; } catch (e) { if (e instanceof Error) { missing = e.code === "E8001"; } }
-  check(missing);
+  check(visited === 3);
+  check(returned[1] === 7);
   returned[1] = 6;
   check(values[1] === 6);
   check(host.mutate(values) === values);

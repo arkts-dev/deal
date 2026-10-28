@@ -1984,7 +1984,7 @@ public final class JvmSemanticEmitter {
             {
                 out.append(indent(indent)).append(target)
                     .append(" = Double.valueOf(((").append("JvmRuntime.Array) ")
-                    .append(slot(payload.arrayValue())).append(").length);\n");
+                    .append(slot(payload.arrayValue())).append(").length());\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
         }
@@ -2503,7 +2503,7 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent)).append("  double[] __s = (double[]) ").append(slotName)
                 .append(";\n");
             out.append(indent(indent)).append("  if (__s[0] < ((")
-                .append("JvmRuntime.Array) ").append(container).append(").length && __s[0] < ((")
+                .append("JvmRuntime.Array) ").append(container).append(").length() && __s[0] < ((")
                 .append("JvmRuntime.Array) ").append(container)
                 .append(").elements.size()) ((").append("JvmRuntime.Array) ")
                 .append(container).append(").elements.set((int) __s[0], "
@@ -5061,7 +5061,7 @@ public final class JvmSemanticEmitter {
                         .append(iterable).append(";\n");
                     out.append(indent(indent)).append("  FE").append(op.opId().id())
                         .append(": for (int __i = 0; ; __i++) {\n");
-                    out.append(indent(indent)).append("    if (__i >= __it.length) break;\n");
+                    out.append(indent(indent)).append("    if (__i >= __it.length()) break;\n");
                     out.append(indent(indent)).append("    Object __elem = __i < __it.elements.size()"
                         + " ? __it.elements.get(__i) : JvmRuntime.MISSING;\n");
                     out.append(indent(indent)).append("    if (__elem == JvmRuntime.MISSING) break;\n");

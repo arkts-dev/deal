@@ -429,6 +429,16 @@ public final class LuaSemanticEmitter {
                 .append(classFields).append("\n");
             out.append("__factories.__hostClassKinds = ")
                 .append(classKinds).append("\n");
+            out.append("__rt.__hostClassPlans = __rt.__hostClassPlans or {}\n");
+            for (HostCarrierClass carrier : classes) {
+                out.append("__rt.__hostClassPlans[").append(luaString(carrier.classId().text())).append("] = {\n");
+                for (Map.Entry<String, String> field : carrier.fields().entrySet()) {
+                    out.append("{name=").append(luaString(field.getKey())).append(", descriptor=")
+                        .append(luaString(field.getValue())).append(", optional=")
+                        .append(carrier.required().contains(field.getKey()) ? "false" : "true").append("},\n");
+                }
+                out.append("}\n");
+            }
             out.append("__factories.__hostFnShapes = ")
                 .append(hostFnShapesLiteral()).append("\n");
         }
@@ -439,7 +449,7 @@ public final class LuaSemanticEmitter {
          * field-to-canonical-descriptor entries.
          */
         private record HostCarrierClass(
-            ClassId classId, String kind, Map<String, String> fields) {
+            ClassId classId, String kind, Map<String, String> fields, java.util.Set<String> required) {
         }
 
 
@@ -465,16 +475,17 @@ public final class LuaSemanticEmitter {
                             continue;
                         }
                         Map<String, String> fields = new LinkedHashMap<>();
-
+                        java.util.Set<String> required = new java.util.LinkedHashSet<>();
                             for (HostDeclarationSurface.DeclaredField field
                                     : declaredClass.fields()) {
                                 fields.put(field.declaration().name(),
                                     hostDescriptorText(field.type()));
+                                if (!field.declaration().optional()) required.add(field.declaration().name());
                             }
 
                         classes.add(new HostCarrierClass(classId,
                             classKindOf(classId, "host"),
-                            fields));
+                            fields, required));
                     }
                 }
                 if (declaredIndex != declaredIds.size()) {
@@ -494,13 +505,15 @@ public final class LuaSemanticEmitter {
                     continue;
                 }
                 Map<String, String> fields = new LinkedHashMap<>();
+                java.util.Set<String> required = new java.util.LinkedHashSet<>();
                 for (ClassLayout.FieldLayout field
                         : layout.getValue().fields()) {
                     fields.put(field.name(),
                         field.descriptor().canonicalSpecText());
+                    if (field.required()) required.add(field.name());
                 }
                 classes.add(new HostCarrierClass(classId,
-                    classKindOf(classId, "deal"), fields));
+                    classKindOf(classId, "deal"), fields, required));
             }
             return classes;
         }
@@ -1048,6 +1061,13 @@ public final class LuaSemanticEmitter {
                     + "tostring(file)..\":\"..tostring(line)..\":\""
                     + "..tostring(column), expected, actual)\n");
                 out.append("end\n");
+                // Trusted render failures are producer defects, not native host failures.
+                out.append("__dealCarrierKeys.defect = __dealCarrierKeys.defect or {}\n");
+                out.append("do\n  for _, name in ipairs({\"__hostArm\", \"__hostInnerArm\", \"__hostLoadArm\"}) do\n");
+                out.append("    local render = __rt[name]\n    __rt[name] = function(...)\n");
+                out.append("      local ok, value = pcall(render, ...)\n");
+                out.append("      if not ok then error({[__dealCarrierKeys.defect] = true, message = value}, 0) end\n");
+                out.append("      return value\n    end\n  end\nend\n");
                 // The host-carrier declaration metadata (ISSUE-0849): the
                 // three factory-store fields the host-carrier bridge reads
                 // — the canonical class field-descriptor maps, the class
@@ -1971,8 +1991,11 @@ public final class LuaSemanticEmitter {
             emitStart(op);
             String target = slot((ValueId) op.result());
             {
-                out.append(target).append(" = ")
-                    .append(slot(payload.arrayValue())).append("[__dealCarrierKeys.n]\n");
+                String array = slot(payload.arrayValue());
+                out.append(target).append(" = ").append(array).append("[__dealCarrierKeys.n]\n");
+                out.append("while rawget(").append(array).append(", ").append(target)
+                    .append(" + 1) ~= nil do ").append(target).append(" = ").append(target).append(" + 1 end\n");
+                out.append(array).append("[__dealCarrierKeys.n] = ").append(target).append("\n");
             }
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
@@ -4833,7 +4856,7 @@ private void emitStdlib(SemanticOp op) {
                     out.append("  local __aitT = ").append(iterable).append("\n");
                     out.append("  local __aiT = 0\n");
                     out.append("  while true do\n");
-                    out.append("    if __aiT >= __aitT[__dealCarrierKeys.n] then break end\n");
+                    out.append("    while rawget(__aitT, __aitT[__dealCarrierKeys.n] + 1) ~= nil do __aitT[__dealCarrierKeys.n] = __aitT[__dealCarrierKeys.n] + 1 end\n    if __aiT >= __aitT[__dealCarrierKeys.n] then break end\n");
                     // The element read is a typed position: the admitted
                     // int/number variant materializes exactly as at
                     // __arrayRead (the element's own slot mark and the
@@ -6190,7 +6213,7 @@ private void emitStdlib(SemanticOp op) {
                 out.append("        io.stderr:flush()\n");
             }
             out.append("      else\n");
-            out.append("        error(__errH, 0)\n");
+            out.append("        __tA.err = __hostError(__errH, ").append(luaString(originOf(op))).append(")\n");
             out.append("      end\n");
             out.append("    else\n");
             out.append("      __tA.value = __tA.handle.__result\n");
@@ -8120,6 +8143,12 @@ local function __hostClassCell(desc, index, v, origin, isReturn)
     local inner = __renderTemplate("CLASS_IDENTITY", {expected = desc, actual = carried})
     return __hostCellFailure(index, inner, desc, v, origin, isReturn)
   end
+  local checked, failure = pcall(__rt.check_type, desc, v)
+  if not checked then
+    local selection = type(failure) == "table" and failure.arm
+    local inner = selection and __renderTemplate(selection.id, selection.values) or "invalid class fields"
+    return __hostCellFailure(index, inner, desc, v, origin, isReturn)
+  end
   return v
 end
 -- The carrier-complete numeric projection of one host-crossing value
@@ -8575,16 +8604,21 @@ end
 -- the bridge's; the cells and the return descriptor read here are the
 -- emitted declaration metadata, and one memo covers the whole invocation.
 __factories.__hostFunctionOrigins = setmetatable({}, {__mode = "k"})
+__factories.__hostFunctionBridges = setmetatable({}, {__mode = "k"})
+__factories.__hostFunctionSources = setmetatable({}, {__mode = "k"})
 local function __hostFnArg(desc, inner, cells, origin, v)
   if type(v) ~= "table" then return v end
   if origin ~= nil then __factories.__hostFunctionOrigins[v] = origin end
   if v[__dealCarrierKeys.kind] == "function" then return v end
   if v[__dealCarrierKeys.fn] == nil then return v end
+  local bridges = __factories.__hostFunctionBridges[v]
+  if bridges == nil then bridges = {}; __factories.__hostFunctionBridges[v] = bridges end
+  if bridges[inner] ~= nil then return bridges[inner] end
   local carrier = v
   local shape = __factories.__hostFnShapes[inner]
   local ret = nil
   if shape ~= nil then ret = shape.ret end
-  return {[__dealCarrierKeys.kind] = "function", sig = inner,
+  local bridge = {[__dealCarrierKeys.kind] = "function", sig = inner,
           f = function(...)
             local n = select("#", ...)
             local memo = {}
@@ -8610,6 +8644,10 @@ local function __hostFnArg(desc, inner, cells, origin, v)
             return __factories.__hostCarrierOut(ret,
               __dealFnValue(carrier, unpack(args, 1, n)), memo)
           end}
+  bridges[inner] = bridge
+  carrier.f = bridge.f
+  __factories.__hostFunctionSources[bridge] = carrier
+  return bridge
 end
 -- The declared host-facing projection of one checked parameter: after the
 -- unchanged declared admission (__hostParamAdmit), a declared function
@@ -8657,9 +8695,10 @@ end
 -- it once at the boundary and rethrows the identical code, message,
 -- expected, actual, and origin.
 local function __hostError(e, origin)
-  if type(e) ~= "table" then return e end
+  if type(e) == "table" and e[__dealCarrierKeys.defect] then error(e, 0) end
+  if type(e) ~= "table" then return __failExpr("E8010", tostring(e), origin) end
   if e[__dealCarrierKeys.d] then return e end
-  if e.code == nil or e.message == nil then return e end
+  if e.code == nil or e.message == nil then return __failExpr("E8010", tostring(e), origin) end
   local o = origin
   if e.file ~= nil then
     o = tostring(e.file)..":"..tostring(e.line)..":"..tostring(e.column)
@@ -9117,6 +9156,8 @@ __factories.__hostCarrierOut = function(desc, v, memo)
 end
 
 __factories.__hostCarrierIn = function(desc, v, memo)
+  local source = __factories.__hostFunctionSources[v]
+  if source ~= nil then return source end
   if type(v) == "table" and getmetatable(v) ~= nil
       and rawget(v, __dealCarrierKeys.c) == nil and rawget(v, __dealCarrierKeys.d) == nil
       and rawget(v, __dealCarrierKeys.kind) == nil then return v end
@@ -9266,6 +9307,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
   if v[__dealCarrierKeys.a] ~= nil then
     local n = v[__dealCarrierKeys.n]
     if type(n) ~= "number" then n = #v end
+    while rawget(v, n + 1) ~= nil do n = n + 1 end
+    v[__dealCarrierKeys.n] = n
     local recreate = false
     if not scalarDesc(elementDesc) then
       for i = 1, n do
@@ -9429,7 +9472,8 @@ end
 -- ==== shared runtime prelude ====
 local __MISSING = setmetatable({}, {__tostring = function() return "missing" end})
 local __NULL = setmetatable({}, {__tostring = function() return "null" end})
-local __UNDEFINED = setmetatable({}, {__tostring = function() return "undefined" end})
+__dealCarrierKeys.undefinedSentinel = __dealCarrierKeys.undefinedSentinel or setmetatable({}, {__tostring = function() return "undefined" end})
+local __UNDEFINED = __dealCarrierKeys.undefinedSentinel
 -- The deployed runtime's own language-null sentinel (deal/runtime.lua's
 -- __rt.__NULL). The chunk's runtime binding assigns it when the chunk
 -- binds the deployed runtime (a host session) and aliases the
@@ -10869,6 +10913,38 @@ local function __bcheck(desc, staticKind, v, csig, completion)
     if type(v) == "function" or type(v) == "thread" or type(v) == "userdata" or type(v) == "cdata" then return fail("unknown") end
     if type(v) == "string" then return __bcheck("string", "string", v, csig, completion) end
     if __typedBoundaryKind(staticKind, v) == "async-operation" then return fail("unknown") end
+    if v == nil then return v end
+    local pending, seen = {v}, {}
+    while #pending > 0 do
+      local member = table.remove(pending)
+      local t = type(member)
+      if member == __NULL or member == __UNDEFINED or member == __MISSING then
+      elseif t == "string" then
+        if not __jsonValidUtf8(member) then
+          return error(__arm("TYPED_BOUNDARY_INVALID_UNICODE", nil, "-", "string", "invalid-unicode"), 0)
+        end
+      elseif t == "number" or t == "boolean" then
+      elseif t ~= "table" then return fail("unknown")
+      elseif not seen[member] then
+        seen[member] = true
+        if getmetatable(member) ~= nil and rawget(member, __dealCarrierKeys.c) == nil
+            and rawget(member, __dealCarrierKeys.d) == nil
+            and rawget(member, __dealCarrierKeys.kind) == nil then return fail("unknown") end
+        if rawget(member, __dealCarrierKeys.kind) == "async" then return fail("unknown") end
+        if not rawget(member, __dealCarrierKeys.fn)
+            and rawget(member, __dealCarrierKeys.kind) ~= "function"
+            and not rawget(member, __dealCarrierKeys.jn) then
+          for k, val in next, member do
+            if type(k) == "string" then
+              if not __jsonValidUtf8(k) then return fail("unknown") end
+              pending[#pending + 1] = val
+            elseif type(k) == "number" or k == __dealCarrierKeys.f then
+              pending[#pending + 1] = val
+            end
+          end
+        end
+      end
+    end
     return v
   elseif desc == "null" then
     -- The language-null admission (P2): the chunk's own nil
@@ -11061,8 +11137,8 @@ local function __cmp(selector, kindL, l, kindR, r, side)
   if selector == "NULL_NE" then return false end
   if selector == "NULLABLE_EQ" then return l == r end
   if selector == "NULLABLE_NE" then return l ~= r end
-  if selector == "UNKNOWN_EQ" then return l == r end
-  if selector == "UNKNOWN_NE" then return l ~= r end
+  if selector == "UNKNOWN_EQ" then return __num(l) == __num(r) end
+  if selector == "UNKNOWN_NE" then return __num(l) ~= __num(r) end
   if selector == "REFERENCE_EQ" then return l == r end
   if selector == "REFERENCE_NE" then return l ~= r end
   return false

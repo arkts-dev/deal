@@ -1,0 +1,54 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Eager class validation, recursive ingress, live arrays, callbacks and catchable native failures.
+// @expected: runtime-ok
+// @features: host-abi, unknown, undefined, arrays, functions, async
+import * as host from "host/audit15";
+import * as json from "std/json";
+function check(ok:boolean):void { if(!ok){throw {code:"FAIL",message:"host audit contract"};} }
+function callback():void {}
+function thrown():void { throw {code:"CALLBACK",message:"callback"}; }
+export function test_sync():void {
+  check(host.nullish()===undefined);
+  for(let kind of [0,1,2,3]) {
+    let caught=false;
+    try { let invalid=host.badClass(kind); } catch(e) {if(e instanceof Error){caught=e.code==="E8010";}}
+    check(caught);
+  }
+  let n:(number|undefined)[]=[undefined,1]; check(host.numbers(n)===n);
+  let b:(boolean|undefined)[]=[undefined,true]; check(host.booleans(b)===b);
+  let s:(string|undefined)[]=[undefined,"s"]; check(host.strings(s)===s);
+  host.keep(n); n[1]=undefined; n[0]=2; check(!host.seesUndefined()); n[0]=undefined;check(host.seesUndefined());
+  let grown=host.fresh();host.grow();check(grown[1]===2);check(grown.length===2);
+  host.fresh();grown=host.fresh();host.grow();
+  let visits=0;for(let value of grown){visits=visits+1;}check(visits===2);
+  let document=json.parse("{\"a\":[1]}");let array=document.a as unknown[];
+  check(host.echoArray(array)===array);host.replace(array);check((array[0] as number)===2);
+  let nested=json.parse("{\"a\":[[1]]}").a as unknown[];
+  let nestedEcho=host.echoArray(nested);check(nestedEcho===nested);
+  check((nestedEcho[0] as unknown[])===(nested[0] as unknown[]));
+  let cyclic:unknown[]=[];cyclic[0]=cyclic;check(host.echoArray(cyclic)===cyclic);
+  check((cyclic[0] as unknown[])===cyclic);
+  let mismatch=false;try{host.conflict();}catch(e){if(e instanceof Error){mismatch=e.code==="E8010";}}check(mismatch);
+  check(host.callbacks(callback,callback));check(host.callbacks(callback,callback));
+  check(host.echoFunction(callback)===callback);host.echoFunction(callback)();
+  let caught=false;try{host.nativeFailure();}catch(e){if(e instanceof Error){caught=true;}}check(caught);
+  caught=false;try{host.callbackFailure(thrown);}catch(e){if(e instanceof Error){caught=e.code==="CALLBACK" && e.message==="callback";}}check(caught);
+  let original:Error={code:"ORIGINAL",message:"original"};
+  let rethrow:()=>void=function():void{throw original;};
+  caught=false;try{host.callbackFailure(rethrow);}catch(e){if(e instanceof Error){caught=e===original && e.code==="ORIGINAL";}}check(caught);
+  caught=false;try{host.nativeCallable()();}catch(e){if(e instanceof Error){caught=true;}}check(caught);
+  caught=false;try{host.echoError(original);}catch(e){if(e instanceof Error){caught=e===original && e.code==="ORIGINAL";}}check(caught);
+  for(let kind of [0,1]){
+    let graph:unknown[]=[1];host.keepUnknown(graph);host.corrupt(kind);
+    caught=false;try{let invalid:unknown=graph;}catch(e){if(e instanceof Error){caught=e.code==="E8001";}}check(caught);
+  }
+  caught=false;try{host.opaqueArray();}catch(e){if(e instanceof Error){caught=e.code==="E8010";}}check(caught);
+}
+export async function test_async():Promise<void>{
+  let caught=false;try{await host.asyncFailure();}catch(e){if(e instanceof Error){caught=true;}}check(caught);
+  caught=false;try{await host.asyncCallback(thrown);}catch(e){if(e instanceof Error){caught=e.code==="CALLBACK";}}check(caught);
+  let original:Error={code:"ASYNC",message:"identity"};
+  let rethrow:()=>void=function():void{throw original;};
+  caught=false;try{await host.asyncCallback(rethrow);}catch(e){if(e instanceof Error){caught=e===original && e.message==="identity";}}check(caught);
+}
+export function main():null{return null;}

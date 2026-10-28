@@ -33,17 +33,13 @@ public final class NumberProductionTest {
             try { a[index] = 30; }
             catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
             ensure(failed);
-            failed = false;
-            try { delete a[index]; }
-            catch (e) { let error = e as Error; ensure(error.code === "E8002"); failed = true; }
-            ensure(failed);
             ensure(a.length === 2);
             ensure(a[0] === 10);
             ensure(a[1] === 20);
           }
           a[2] = 30;
           ensure(a.length === 3);
-          delete a[3];
+          a[2] = 30;
           ensure(a.length === 3);
           ensure(text.length("a😀b") === 3);
           ensure(text.substring("a😀b", 1, 2) === "😀");

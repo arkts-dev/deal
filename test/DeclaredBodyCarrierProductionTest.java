@@ -65,6 +65,21 @@ public class DeclaredBodyCarrierProductionTest {
     private static final String RETAINED_MARKER = "RETAINED:";
     private static final Set<String> RECURSION_CASES = Set.of(
         "direct-accum", "alias-accum", "direct-accum-fail", "alias-accum-fail", "seq-await");
+    // These former nested-group seeds reference a declaration before its position.
+    // Preserve each as an exact frontend negative, not an executable group.
+    private static final Map<String, String> ORDER_REJECTIONS = Map.ofEntries(
+        Map.entry("called-explicit", "5:16"), Map.entry("called-implicit", "4:18"),
+        Map.entry("called-value-reference", "5:16"), Map.entry("called-alias", "5:16"),
+        Map.entry("called-alias-captured", "6:12"), Map.entry("called-alias-later", "4:39"),
+        Map.entry("never-called-explicit-null", "3:28"), Map.entry("never-called-explicit-number", "3:30"),
+        Map.entry("never-called-implicit", "2:47"), Map.entry("captured-called", "6:12"),
+        Map.entry("nested-inside-function", "6:14"), Map.entry("escaped-two-groups", "20:12"),
+        Map.entry("escaped-two-groups-recursion", "21:5"), Map.entry("escaped-two-groups-alias-recursion", "22:42"),
+        Map.entry("param-origin-contextual", "4:39"), Map.entry("async-escaped-two-groups", "22:18"),
+        Map.entry("async-param-origin", "10:49"), Map.entry("async-escaped-two-groups-alias", "22:51"),
+        Map.entry("async-escaped-two-groups-alias-later", "20:63"), Map.entry("async-escaped-two-groups-param", "22:11"),
+        Map.entry("async-escaped-two-groups-alias-param", "22:51"), Map.entry("async-escaped-two-groups-captured", "24:11"),
+        Map.entry("async-escaped-two-groups-alias-captured", "24:51"));
     private static final String DEAL_JSON =
         "{\"languageVersion\":\"1.5\",\"moduleRoots\":[\"src\"],"
             + "\"output\":\"out\",\"backend\":\"luajit\"}\n";
@@ -1452,6 +1467,26 @@ public class DeclaredBodyCarrierProductionTest {
                 Files.writeString(sibling, extra.getValue(), StandardCharsets.UTF_8);
             }
             Files.writeString(project.resolve("deal.json"), DEAL_JSON, StandardCharsets.UTF_8);
+            if (ORDER_REJECTIONS.containsKey(testCase.name())) {
+                for (String lane : List.of("luajit", "jvm", "js")) {
+                    Path out = project.resolve("out-" + lane);
+                    var located = ProjectLocator.locate(entry.toString(), new CliOverrides(lane, out.toString()));
+                    var invocation = CompilerProfileProvider.resolve(ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                        ReleaseConfiguration.releaseCapabilityRegistry());
+                    var compiler = new CompilationOrchestrator(located.context(), entry,
+                        false, false, false, false, null, invocation);
+                    check(!compiler.compile(), testCase.name() + " [" + lane + "]: forward nested use rejects");
+                    var diagnostics = compiler.diagnostics();
+                    check(diagnostics.size() == 1 && "E2001".equals(diagnostics.getFirst().code())
+                            && diagnostics.getFirst().toString().contains("/main.deal:"
+                                + ORDER_REJECTIONS.get(testCase.name()) + "-"),
+                        testCase.name() + " [" + lane + "]: exact resolution failure: " + diagnostics);
+                    check(compiler.checkedProject() == null && compiler.semanticEmissionCount() == 0,
+                        testCase.name() + " [" + lane + "]: no checked project or emission");
+                    check(!Files.exists(out), testCase.name() + " [" + lane + "]: no published output");
+                }
+                return;
+            }
             CompilationOrchestrator lua = compileLane(testCase, project, entry, "luajit");
             CompilationOrchestrator jvm = compileLane(testCase, project, entry, "jvm");
             Lowered lowered = lower(testCase, lua);

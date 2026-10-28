@@ -263,6 +263,7 @@ final class JvmHostAbiEmission {
                 collectType(owner, func.returnType());
             }
             case Type.Class cls -> {
+                if (descriptorText(cls).equals("Error")) break;
                 // A class position needs its synthesized record; the
                 // declaring declaration module is resolved through the
                 // class's carried external specifier.
@@ -380,7 +381,7 @@ final class JvmHostAbiEmission {
 
             case Type.Number ignored -> "double";
             case Type.String ignored -> "java.lang.String";
-            case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls);
+            case Type.Class cls -> classCarrier(cls);
             case Type.Array array -> "$DealRt." + arrayCarrier(array.element());
             case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func);
             case Type.Table ignored -> "java.lang.Object";
@@ -396,7 +397,7 @@ final class JvmHostAbiEmission {
             case Type.Number ignored -> "java.lang.Double";
             case Type.Boolean ignored -> "java.lang.Boolean";
             case Type.String ignored -> "java.lang.String";
-            case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls);
+            case Type.Class cls -> classCarrier(cls);
             case Type.Array array -> "$DealRt." + arrayCarrier(array.element());
             case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func);
             default -> "java.lang.Object";
@@ -406,6 +407,7 @@ final class JvmHostAbiEmission {
     /** The declared element-shape array carrier name of one element type. */
     private String arrayCarrier(Type element) {
         if (element instanceof Type.Nullable nullable) {
+            if (nullable.admitsUndefined()) return "__RefArray";
             return orNullArrayCarrier(nullable.inner());
         }
         return switch (element) {
@@ -429,7 +431,13 @@ final class JvmHostAbiEmission {
         };
     }
 
+    private static String classCarrier(Type.Class cls) {
+        return descriptorText(cls).equals("Error") ? "java.lang.Object"
+            : "$DealRt." + recordSimpleNameOf(cls);
+    }
+
     private String classArrayWrapperName(Type.Class cls) {
+        if (descriptorText(cls).equals("Error")) return "__RefArray";
         String specifier = externalSpecifier(cls);
         String name = classArrayWrappers.get(classNameKey(specifier, cls.name()));
         if (name != null) {
@@ -459,7 +467,7 @@ final class JvmHostAbiEmission {
             case Type.Number ignored -> nullable ? "java.lang.Double.class" : "double.class";
             case Type.Boolean ignored -> nullable ? "java.lang.Boolean.class" : "boolean.class";
             case Type.String ignored -> "java.lang.String.class";
-            case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls) + ".class";
+            case Type.Class cls -> classCarrier(cls) + ".class";
             case Type.Array array -> "$DealRt." + arrayCarrier(array.element()) + ".class";
             case Type.Func func -> "$DealRt." + JvmNames.fnShapeId(func) + ".class";
             default -> "java.lang.Object.class";
@@ -1074,8 +1082,7 @@ final class JvmHostAbiEmission {
         out.append("      return m.invoke(null, args);\n");
         out.append("    } catch (java.lang.reflect.InvocationTargetException __e) {\n");
         out.append("      java.lang.Throwable __c = __e.getCause();\n");
-        out.append("      if (__c instanceof RuntimeException __rr) { throw __rr; }\n");
-        out.append("      if (__c instanceof Error __er) { throw __er; }\n");
+        out.append("      if (__c instanceof JvmRuntime.DealError __rr) { throw __rr; }\n");
         out.append("      throw JvmRuntime.fail(\"E8010\", \"host function raised: \" + __c, oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
         out.append("    } catch (java.lang.IllegalAccessException | java.lang.IllegalArgumentException __e) {\n");
         out.append("      throw JvmRuntime.fail(\"E8010\", \"host function invocation failed: \" + __e, oFile + \":\" + oLine + \":\" + oCol, null, null);\n");
@@ -1120,13 +1127,16 @@ final class JvmHostAbiEmission {
      * function value is never adapted.
      */
     private void emitFunctionCrossings(StringBuilder out) {
+        out.append("  static final java.util.IdentityHashMap<java.lang.Object, java.util.Map<java.lang.String, java.lang.Object>> __hostFunctions = new java.util.IdentityHashMap<>();\n");
         out.append("  static java.lang.Object __hostFnCarrier(java.lang.String d, java.lang.Object v) {\n");
         out.append("    if (v == null) return null;\n");
         out.append("    if (v instanceof JvmRuntime.FunctionValue __fv) {\n");
+        out.append("      java.util.Map<java.lang.String, java.lang.Object> __bridges = __hostFunctions.computeIfAbsent(v, k -> new java.util.HashMap<>());\n");
+        out.append("      if (__bridges.containsKey(d)) return __bridges.get(d);\n");
         for (Map.Entry<String, Type.Func> shape : shapes.entrySet()) {
             out.append("      if (d.equals(").append(javaString(descriptorText(shape.getValue())))
-                .append(")) return new $DealRt.__Bridge$").append(shape.getKey())
-                .append("(__fv);\n");
+                .append(")) { java.lang.Object __bridge = new $DealRt.__Bridge$").append(shape.getKey())
+                .append("(__fv); __bridges.put(d, __bridge); return __bridge; }\n");
         }
         out.append("    }\n");
         out.append("    return v;\n");
@@ -1197,8 +1207,7 @@ final class JvmHostAbiEmission {
         out.append("      try { __hc = ").append(invocation).append("; }\n");
         out.append("      catch (java.lang.reflect.InvocationTargetException __e) {\n");
         out.append("        java.lang.Throwable __c = __e.getCause();\n");
-        out.append("        if (__c instanceof RuntimeException __rr) { throw __rr; }\n");
-        out.append("        if (__c instanceof Error __er) { throw __er; }\n");
+        out.append("        if (__c instanceof JvmRuntime.DealError __rr) { throw __rr; }\n");
         out.append("        throw JvmRuntime.fail(\"E8010\", \"host function value "
             + "raised: \" + __c, \"-\", null, null);\n");
         out.append("      }\n");
@@ -1240,8 +1249,8 @@ final class JvmHostAbiEmission {
             String component = elementComponent(element);
             out.append("    if (d.equals(").append(javaString(desc)).append(")) {\n");
             out.append("      ").append(component).append("[] __d = new ")
-                .append(component).append("[").append("__a.length];\n");
-            out.append("      for (int __i = 0; __i < __a.length; __i++) { __d[__i] = ")
+                .append(component).append("[").append("__a.length()];\n");
+            out.append("      for (int __i = 0; __i < __a.length(); __i++) { __d[__i] = ")
                 .append(elementExtract(element,
                     "__i < __a.elements.size() ? __a.elements.get(__i) : null"))
                 .append("; }\n");
@@ -1278,11 +1287,12 @@ final class JvmHostAbiEmission {
     }
 
     private void emitArrayView(StringBuilder out, Type element, String array, String carrier) {
+        out.append("      ").append(array).append(".hostLength = () -> ").append(carrier).append(".data.length;\n");
         out.append("      ").append(array).append(".elements = new java.util.AbstractList<java.lang.Object>() {\n");
         out.append("        final java.util.Map<java.lang.Integer, java.lang.Object> absent = new java.util.HashMap<>();\n");
         out.append("        public int size() { return ").append(carrier).append(".data.length; }\n");
         out.append("        public java.lang.Object get(int i) { java.util.Objects.checkIndex(i, size()); if (absent.containsKey(i)) return absent.get(i); return ").append(elementStore(element, carrier + ".data[i]")).append("; }\n");
-        out.append("        public java.lang.Object set(int i, java.lang.Object value) { java.lang.Object old = get(i); if (value == JvmRuntime.MISSING || value == JvmRuntime.UNDEFINED) { absent.put(i, value); return old; } absent.remove(i); ")
+        out.append("        public java.lang.Object set(int i, java.lang.Object value) { java.lang.Object old = get(i); if (value == JvmRuntime.MISSING) { absent.put(i, value); return old; } absent.remove(i); ")
             .append(carrier).append(".data[i] = ").append(elementExtract(element, "value")).append("; return old; }\n");
         out.append("        public void add(int i, java.lang.Object value) { int n = size(); java.util.Objects.checkIndex(i, n + 1); ")
             .append(carrier).append(".data = java.util.Arrays.copyOf(").append(carrier).append(".data, n + 1); ")
@@ -1293,6 +1303,7 @@ final class JvmHostAbiEmission {
     /** The Java component type of one declared array element. */
     private String elementComponent(Type element) {
         if (element instanceof Type.Nullable nullable) {
+            if (nullable.admitsUndefined()) return "java.lang.Object";
             return boxedCarrier(nullable.inner());
         }
         return switch (element) {
@@ -1300,7 +1311,7 @@ final class JvmHostAbiEmission {
             case Type.Number ignored -> "double";
             case Type.Boolean ignored -> "boolean";
             case Type.String ignored -> "java.lang.String";
-            case Type.Class cls -> "$DealRt." + recordSimpleNameOf(cls);
+            case Type.Class cls -> classCarrier(cls);
             default -> "java.lang.Object";
         };
     }
@@ -1308,6 +1319,7 @@ final class JvmHostAbiEmission {
     /** The production slot → declared carrier component extraction. */
     private String elementExtract(Type element, String expression) {
         if (element instanceof Type.Nullable nullable) {
+            if (nullable.admitsUndefined()) return "(" + expression + ")";
             Type inner = nullable.inner();
             // The slot expression may itself be a conditional (the
             // missing-slot read) and its static type is the boxed value
@@ -1331,7 +1343,7 @@ final class JvmHostAbiEmission {
             case Type.Number ignored -> "((java.lang.Number) (" + expression + ")).doubleValue()";
             case Type.Boolean ignored -> "((java.lang.Boolean) (" + expression + ")).booleanValue()";
             case Type.String ignored -> "(java.lang.String) (" + expression + ")";
-            case Type.Class cls -> "($DealRt." + recordSimpleNameOf(cls) + ") ("
+            case Type.Class cls -> "(" + classCarrier(cls) + ") ("
                 + expression + ")";
             default -> "(" + expression + ")";
         };
@@ -1343,6 +1355,7 @@ final class JvmHostAbiEmission {
      * {@code number} a {@code Double}, a nullable element keeps null).
      */
     private String elementStore(Type element, String expression) {
+        if (element instanceof Type.Nullable nullable && nullable.admitsUndefined()) return expression;
         Type inner = element instanceof Type.Nullable nullable ? nullable.inner() : element;
         boolean nullable = element instanceof Type.Nullable;
         String boxed = switch (inner) {
@@ -1433,7 +1446,23 @@ final class JvmHostAbiEmission {
         out.append("      if (__carried != null) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH, java.util.Map.of(\"expected\", d, \"actual\", __carried), oFile + \":\" + oLine + \":\" + oCol, d, __carried); }\n");
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"function\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
-        out.append("    if (d.startsWith(\"@\") || d.equals(\"Error\")) { return __hostCheckIdentity(d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (d.startsWith(\"@\") || d.equals(\"Error\")) {\n");
+        out.append("      __hostCheckIdentity(d, v, oFile, oLine, oCol);\n");
+        out.append("      if (__memo.get(v) instanceof java.util.Set<?> __seen && __seen.contains(d)) return v;\n");
+        out.append("      java.util.Set<java.lang.String> __seen = new java.util.HashSet<>(); __seen.add(d); __memo.put(v, __seen);\n");
+        for (RecordInfo record : records.values()) {
+            out.append("      if (d.equals(").append(javaString(record.identityText())).append(")) {\n");
+            for (FieldInfo field : record.fields()) {
+                out.append("        { if (v instanceof JvmRuntime.ClassInstance __ci && __ci.isPresent(")
+                    .append(javaString(field.name())).append(")) __hostCheckPlan(")
+                    .append(javaString(field.descriptorText())).append(", __ci.read(")
+                    .append(javaString(field.name())).append("), oFile, oLine, oCol, __pending, __memo);\n");
+                if (!field.optional()) out.append("        else throw __hostFail(JvmRuntime.kindReason(\"class instance\"), d, v, oFile, oLine, oCol);\n");
+                out.append("        }\n");
+            }
+            out.append("      }\n");
+        }
+        out.append("      return v;\n    }\n");
         out.append("    throw __hostFail(JvmRuntime.kindReason(d), d, v, oFile, oLine, oCol);\n");
         out.append("  }\n\n");
         out.append("  static java.lang.Object __hostCheckArrayPlan(java.lang.String d,"
@@ -1474,6 +1503,7 @@ final class JvmHostAbiEmission {
             out.append("    }\n");
         }
         out.append("    if (__arr == null) { throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol); }\n");
+        out.append("    if (__arr.elementDescriptor != null && !JvmRuntime.canonicalDesc(__arr.elementDescriptor).equals(__inner)) throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol);\n");
         // The element check is also the element projection: a declared
         // string cell returns the decoded value for the raw UTF-8 byte
         // carrier, and a nested array cell returns the same array with

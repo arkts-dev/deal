@@ -228,6 +228,8 @@ public final class JvmRuntime {
     public static final class Array {
         public List<Object> elements = new ArrayList<>();
         public int length;
+        public java.util.function.IntSupplier hostLength;
+        public int length() { return hostLength == null ? length : hostLength.getAsInt(); }
         public String elementDescriptor;
         /**
          * The decoded-array mark (B3): set only by the stdlib JSON reader
@@ -1502,7 +1504,7 @@ public final class JvmRuntime {
                 if (innerCanonical == null) {
                     innerCanonical = canonicalDesc(inner);
                 }
-                for (int i = 0; i < array.length; i++) {
+                for (int i = 0; i < array.length(); i++) {
                     // A present null element stays the language-null carrier
                     // (the explicit null the JSON reader stores unchanged),
                     // distinct from the absent/deleted slot's MISSING marker:
@@ -2098,14 +2100,8 @@ public final class JvmRuntime {
                         + dealError.code);
                     throw dealError; // the identical error
                 }
-                if (cause instanceof RuntimeException runtime) {
-                    throw runtime;
-                }
-                if (cause instanceof Error error) {
-                    throw error;
-                }
-                throw new IllegalStateException("the async host operation " + tokenId
-                    + " failed with " + cause, cause);
+                throw fail("E8010", "host async operation raised: " + cause,
+                    awaitOrigin, null, null);
             }
         }
         if (task.hostLabel != null && !task.future.isDone()) {
@@ -3373,7 +3369,12 @@ case "NUMBER_ADD" -> {
      * {@code function(params;return)} dialect converts to the canonical
      * {@code (params)->return} form recursively.
      */
-    static String canonicalDesc(String desc) {
+    public static String canonicalDesc(String desc) {
+        if (desc.equals("nullable(undefined)")) return "null|undefined";
+        if (desc.startsWith("nullableundefinedable(") && desc.endsWith(")"))
+            return "?!" + canonicalDesc(desc.substring(22, desc.length() - 1));
+        if (desc.startsWith("undefinedable(") && desc.endsWith(")"))
+            return "!" + canonicalDesc(desc.substring(14, desc.length() - 1));
         if (desc.startsWith("array(") && desc.endsWith(")")) {
             return "[" + canonicalDesc(desc.substring(6, desc.length() - 1)) + "]";
         }

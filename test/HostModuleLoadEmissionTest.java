@@ -686,7 +686,7 @@ public class HostModuleLoadEmissionTest {
     /** The corpus host-fixture stems whose implementations name records. */
     private static final List<String> CARRIER_HOST_STEMS = List.of(
         "carrierasync", "carriertable", "carrierarity", "carrieruntyped",
-        "carrierclass", "language15");
+        "carrierclass", "language15", "audit15");
 
     /**
      * The corpus host-fixture declaration source with its classification
@@ -5172,8 +5172,8 @@ public class HostModuleLoadEmissionTest {
         }
 
         export function runWrongField(): string {
-          let b: host.Bundle = host.makeBadBundle();
           try {
+            let b: host.Bundle = host.makeBadBundle();
             let action: (s: string) => string = b.action;
             let v: string = action("x");
             return "wrongField=admitted";
@@ -5528,7 +5528,7 @@ public class HostModuleLoadEmissionTest {
         runEcho=echo=alias:yes,fn:yes,err:yes
         runBundle=bundle=box,action:kind=function typed=function sig=(string)->string f=function fnmark=function res=ab! bad=E8001|expected string|string|number|nil,extras.cfg:count=7 ratio=2.5 kind=class typed=@$external/host/untyped_probe/Cfg ctag=true,extras.pt:x=5 y=6 kind=class typed=@src/app.deal/Point ctag=true,extras.hfn:kind=function typed=function sig=(number)->number f=function fnmark=nil res=42,invoked=yes
         runFieldCall=field=yes
-        runWrongField=wrongField=E8010|function signature mismatch: expected (string)->string, got (number)->number
+        runWrongField=wrongField=E8010|return value 1 type mismatch: function signature mismatch: expected (string)->string, got (number)->number
         runWrongMember=wrongMember=E8010|function signature mismatch: expected (number)->number, got (string)->number
         runShare=plain=extra:9,shared:true,hostextra:9
         runCopy=classy=marker:3,hostmarker:3,copy:false,memo=yes
@@ -5834,9 +5834,11 @@ public class HostModuleLoadEmissionTest {
             if builtinOk then
               fail("builtinAliasRejected: the superseded alias was admitted")
             end
-            if not string.find(tostring(builtinErr), "@$builtin/Error", 1, true) then
+            local builtinReport = type(builtinErr) == "table" and
+              (builtinErr.message or builtinErr.m or "") or tostring(builtinErr)
+            if not string.find(builtinReport, "@$builtin/Error", 1, true) then
               fail("builtinAliasRejected: the refusal does not name the carried "
-                .. "alias: " .. tostring(builtinErr))
+                .. "alias: " .. builtinReport)
             end
             print("PROBE-OK")
             """.formatted(luaString(artifact.toAbsolutePath().toString()));

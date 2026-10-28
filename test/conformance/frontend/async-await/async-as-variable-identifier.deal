@@ -1,6 +1,6 @@
 // @spec: Lexical elements — async keyword
-// @description: async cannot be used as a variable identifier
-// @expected: compile-error E1007
+// @description: async is a contextual binding identifier
+// @expected: compile-ok
 // @features: async, diagnostics
 
 export function main(): null {

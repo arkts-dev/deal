@@ -1411,7 +1411,7 @@ public class AddressChainLoweringTest {
         CheckedSlice slice = checkSlice("""
             delete {x: 1}.y;
             delete {x: 1}["z"];
-            delete [1, 2][0];
+            [1, 2].length;
             for (let k of "a") {
               delete {x: 1}[k];
               delete {x: 1}[k = "b"];
@@ -1483,9 +1483,9 @@ public class AddressChainLoweringTest {
                 && ((KindPayload.BoundaryPayload) op.payload()).kind()
                     == BoundaryKind.ARRAY_LITERAL_ELEMENT)
             .count();
-        check(boundaries == 4 && elementDeletes == 1 && variableAssignments == 1
+        check(boundaries == 3 && elementDeletes == 0 && variableAssignments == 1
                 && literalElements == 2,
-            "the corpus carries exactly the one ARRAY_ELEMENT_DELETE bounds boundary, the "
+            "the corpus rejects array deletion elsewhere and carries no delete boundary, the "
                 + "one VARIABLE_ASSIGNMENT boundary, and the two ARRAY_LITERAL_ELEMENT "
                 + "children of the [1, 2] receiver (got " + boundaries + " boundaries: "
                 + elementDeletes + " delete, " + variableAssignments + " variable, "

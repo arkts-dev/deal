@@ -4,13 +4,13 @@ Render validated semantic IR through LuaSemanticEmitter; preserve ABI, evaluatio
 
 ## Carriers and boundaries
 
-Use process-wide private `__dealCarrierKeys` shared with the deployed runtime. User string keys cannot select or forge carrier identity, presence, length or order. Normalize documented host shapes only at ingress.
+Share private `__dealCarrierKeys` and undefined sentinel across deployed/emitted runtimes. User string keys cannot select or forge carrier identity, presence, length or order. Normalize host shapes only at ingress; producer defects remain fail-closed.
 
 Keep canonical descriptors separate from internal representations and JSON-plan/diagnostic tokens: canonical record translates explicitly to table where required, never through a descriptor alias. Persistent array descriptors use canonical text, including independent nullish flags and async callable identity; prefer the recorded canonical trailer over reconstruction.
 
-Null and undefined admission are independent. Normalize missing to undefined; absent optional fields and deleted array slots never become null because an element/field is nullable. Recognize sentinels before table dispatch and preserve them before numeric/array/function projection. Strip both nullish prefixes for representation selection. Typed failures use closed semantic kinds; raw host carrier nil remains a distinct protocol token.
+Null and undefined admission are independent. Normalize missing to undefined; absent optional fields never become null through nullability; array deletion rejects. Recognize sentinels before table dispatch and preserve them before numeric/array/function projection. Strip both nullish prefixes for representation selection. Typed failures use closed semantic kinds; raw host carrier nil remains a distinct protocol token.
 
-ASSERTION preserves identity and reports E8001 at the assertion origin; ordinary boundaries retain their parameter/signature/element failures. Unknown ingress validates Unicode and rejects raw functions, threads, userdata, cdata and async handles while retaining valid tagged functions. Trace Error independently of declared unknown/ref types; undefined is not a heap allocation. Format numeric/index atoms through canonical binary64 hexadecimal rendering.
+ASSERTION preserves identity and reports E8001 at the assertion origin; ordinary boundaries retain their parameter/signature/element failures. Recursively validate unknown ingress Unicode; reject raw functions, threads, userdata, cdata and async handles; retain tagged functions. Trace Error independently of declared unknown/ref types; undefined is not a heap allocation. Format numeric/index atoms through canonical binary64 hexadecimal rendering.
 
 ## Host projection
 

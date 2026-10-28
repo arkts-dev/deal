@@ -12,13 +12,13 @@ class Bucket { values: ((n: number) => number)[]; }
 export function main(): null {
   let callbacks: ((n: number) => number)[] = [function(n: number): number { return n; }];
   let bucket: Bucket = {values: callbacks};
-  delete callbacks[0];
+  let captured: unknown = callbacks;
   let caught: boolean = false;
-  try { let invalid = bucket.values; }
+  try { let invalid = captured as ((s: string) => string)[]; }
   catch (e) {
-    if (e instanceof Error) { caught = e.code === "E8003"; }
+    if (e instanceof Error) { caught = e.code === "E8001"; }
   }
-  require(caught, "deleted function array slot is a DEAL error");
+  require(caught, "function array descriptor mismatch is a DEAL error");
 
   let value: unknown = undefined;
   caught = false;

@@ -603,7 +603,7 @@ public final class IntrinsicShadowingProductionTest {
      * The two name-resolution negatives: a same-scope redeclaration of a
      * shadowing {@code int} binding is the ordinary E2002, and calling an
      * import alias named {@code bytes} is the imported module value's
-     * not-callable E3008 instead of the allocation intrinsic
+     * metadata-not-data E3001 instead of the allocation intrinsic
      * (docs/spec-v1.5.md §Name resolution — module/import bindings
      * precede the compiler intrinsics, and same-scope redeclaration stays
      * an error).
@@ -618,7 +618,7 @@ public final class IntrinsicShadowingProductionTest {
         assertCompileError(root.resolve("import-alias"),
             "modules/import-alias-intrinsic-name-e3008",
             "frontend/modules/import-alias-intrinsic-name-e3008.deal",
-            "E3008", Map.of("shadow_lib", "shadow_lib"));
+            "E3001", Map.of("shadow_lib", "shadow_lib"));
     }
 
     // =========================================================================

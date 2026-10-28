@@ -368,7 +368,7 @@ public class LoweringSupportTest {
                     import * as time from "std/time";
 
                     export function main(): null {
-                      let t = time;
+                      let t: Record<string, unknown> = {nowMillis: time.nowMillis};
                       let g: () => number = t.nowMillis as (() => number);
                       g();
                       return null;
@@ -380,7 +380,7 @@ public class LoweringSupportTest {
             check((manifestOf(result, "main") != null),
                 "let t = time; let g: () => number = t.nowMillis; g(); carries no "
                     + "time-conflict routing-marker claim — the table-typed escape is the K15 "
-                    + "namespace-value slice, never a reroute claim");
+                    + "explicit Record data, never a namespace escape or reroute claim");
         } finally {
             deleteRecursively(tmp);
         }
@@ -400,7 +400,7 @@ public class LoweringSupportTest {
                     }
 
                     export function main(): null {
-                      let g: () => number = pick(time);
+                      let g: () => number = pick({nowMillis: time.nowMillis});
                       g();
                       return null;
                     }
@@ -430,7 +430,7 @@ public class LoweringSupportTest {
                     import * as time from "std/time";
 
                     export function getTime(): Record<string, unknown> {
-                      return time;
+                      return {nowMillis: time.nowMillis};
                     }
                     """,
                 "main.deal", """
@@ -451,7 +451,7 @@ public class LoweringSupportTest {
                     + "nowMillis member access");
             check((manifestOf(result, "main") != null),
                 "the cross-module table escape carries no time-conflict routing-marker claim: "
-                    + "the access site's shape is the K15 namespace-value slice and no "
+                    + "the access site's shape is explicit Record data and no "
                     + "closure propagation exists");
         } finally {
             deleteRecursively(tmp);
@@ -468,7 +468,7 @@ public class LoweringSupportTest {
                     import * as time from "std/time";
 
                     export function getTime(): Record<string, unknown> {
-                      return time;
+                      return {nowMillis: time.nowMillis};
                     }
                     """,
                 "b.deal", """

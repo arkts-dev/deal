@@ -5592,6 +5592,7 @@ public class CanonicalProjectionParityTest {
         StringBuilder out = new StringBuilder();
         out.append("if type(err2) == \"table\" and err2[__dealCarrierKeys.d] then fail(\"a DEAL tuple "
             + "was published: \" .. tostring(err2.m)) end\n");
+        out.append("if type(err2) == \"table\" and err2[__dealCarrierKeys.defect] then err2 = err2.message end\n");
         out.append("if type(err2) ~= \"string\" then fail(\"the fail-closed report: \" "
             + ".. tostring(err2)) end\n");
         for (String fragment : fragments) {
@@ -8330,6 +8331,16 @@ public class CanonicalProjectionParityTest {
      * The matrix case's in-memory production chain: {@link #checkedSeed}
      * plus the full-program lowering with the closed validators.
      */
+    private static void rejectArrayDeletion(String source) {
+        var lex = new deal.lexer.Lexer(source, MATRIX_SOURCE_ID).tokenize();
+        var parsed = new deal.parser.Parser(lex.tokens(), MATRIX_SOURCE_ID).parse();
+        var resolver = new deal.checker.NameResolver(MATRIX_SOURCE_ID, new StubModuleResolver());
+        var symbols = resolver.resolve(parsed.program());
+        var checked = deal.checker.TypeChecker.check(MATRIX_SOURCE_ID, symbols, resolver, parsed.program());
+        check(checked.diagnostics().stream().anyMatch(d -> "E3017".equals(d.code())),
+            "array deletion is rejected before lowering: " + checked.diagnostics());
+    }
+
     private static Seed lowerSeed(String source, String what) {
         CompilerInvocation invocation = CompilerProfileProvider.resolve(
             deal.semantic.ir.ReleaseState.V1_5_ACTIVE,
@@ -8349,10 +8360,18 @@ public class CanonicalProjectionParityTest {
     }
 
     private static void testForEachDeletedSlot() throws Exception {
-        System.out.println("-- the FOR_EACH traversal over a deleted array-element slot: "
-            + "the selected deletion-stop on all three consumers (the live-position "
-            + "traversal never resumes past the absent slot) --");
-        Seed seed = lowerSeed(FOREACH_DELETED_SLOT_SOURCE, "the FOR_EACH seed");
+        System.out.println("-- array deletion rejects; FOR_EACH observes a later live write on all three consumers --");
+        rejectArrayDeletion(FOREACH_DELETED_SLOT_SOURCE);
+        Seed seed = lowerSeed("""
+            function main(): null {
+              let xs: number[] = [1, 2, 3];
+              for (let e of xs) {
+                if (e === 1) { xs[1] = 4; }
+                if (e === 4) { let z: number = xs[100]; z = z + 1; }
+              }
+              return null;
+            }
+            """, "the FOR_EACH live-write seed");
         if (seed == null) {
             return;
         }
@@ -8360,17 +8379,16 @@ public class CanonicalProjectionParityTest {
         try {
             SemanticDifferentialHarness.Verdict verdict =
                 SemanticDifferentialHarness.run(seed.unit(), seed.table(),
-                    SemanticDifferentialHarness.Expectation.success(
-                        "the FOR_EACH deleted-element stop", List.of(), "null"),
+                    SemanticDifferentialHarness.Expectation.failure(
+                        "the FOR_EACH live-write visit", List.of(), "E8002", "test.deal:5:36"),
                     workspace);
             checkEq(3, verdict.runs().size(), "the FOR_EACH drive produced the three "
                 + "consumers: " + verdict.failures());
             check(verdict.pass(), "the FOR_EACH three-consumer verdict passes: "
                 + verdict.failures() + "\n" + verdict.report());
             for (SemanticRuntimeModel.ConsumerRun run : verdict.runs()) {
-                check(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success,
-                    run.consumer() + ": the traversal stops at the deleted slot and "
-                        + "main returns null: " + run.terminal());
+                check(!(run.terminal() instanceof SemanticRuntimeModel.Terminal.Success),
+                    run.consumer() + ": the rewritten live element is visited: " + run.terminal());
             }
         } finally {
             deleteRecursively(workspace);
@@ -8594,9 +8612,7 @@ public class CanonicalProjectionParityTest {
             driveArrayElementFailure("the present-null element",
                 PRESENT_NULL_ELEMENT_SOURCE, workspace.resolve("present-null"),
                 "test.deal:4:54", "number", "null");
-            driveArrayElementFailure("the deleted-slot element",
-                DELETED_SLOT_ELEMENT_SOURCE, workspace.resolve("deleted-slot"),
-                "test.deal:5:11", "number", "undefined");
+            rejectArrayDeletion(DELETED_SLOT_ELEMENT_SOURCE);
             driveArrayAdmission("the array(null) admission",
                 NULL_ARRAY_ELEMENT_SOURCE, workspace.resolve("null-array"));
         } finally {
@@ -8764,27 +8780,16 @@ public class CanonicalProjectionParityTest {
             + "consumers --");
         Path workspace = Files.createTempDirectory("projection-array-literal");
         try {
-            driveArrayLiteralElementFailure("the deleted-slot element",
-                ARRAY_LITERAL_WALK_ELEMENT_SOURCE,
-                workspace.resolve("deleted-slot"), "test.deal:4:25", 1, "[number]",
-                "array");
-            driveArrayLiteralElementFailure("the nested literal element",
-                ARRAY_LITERAL_NESTED_ELEMENT_SOURCE,
-                workspace.resolve("nested-literal"), "test.deal:4:28", 1, "[number]",
-                "array");
-            driveArrayLiteralElementFailure("the second literal element",
-                ARRAY_LITERAL_SECOND_ELEMENT_SOURCE,
-                workspace.resolve("second-element"), "test.deal:4:33", 2, "[number]",
-                "array");
+            rejectArrayDeletion(ARRAY_LITERAL_WALK_ELEMENT_SOURCE);
+            rejectArrayDeletion(ARRAY_LITERAL_NESTED_ELEMENT_SOURCE);
+            rejectArrayDeletion(ARRAY_LITERAL_SECOND_ELEMENT_SOURCE);
             driveArrayLiteralElementAdmission("the admitted element",
                 ARRAY_LITERAL_ADMITTED_ELEMENT_SOURCE,
                 workspace.resolve("admitted"));
             driveArrayLiteralElementAdmission("the admitted absent nullable "
                 + "element", ARRAY_LITERAL_MISSING_ELEMENT_SOURCE,
                 workspace.resolve("admitted-missing"));
-            driveArrayLiteralElementProduction("the production element terminal",
-                ARRAY_LITERAL_WALK_ELEMENT_SOURCE,
-                workspace.resolve("production"));
+            rejectArrayDeletion(ARRAY_LITERAL_WALK_ELEMENT_SOURCE);
         } finally {
             deleteRecursively(workspace);
         }
@@ -9267,6 +9272,13 @@ public class CanonicalProjectionParityTest {
         boolean compiled = orchestrator.compile();
         CheckedProjectBuildResult built = orchestrator.checkedProject();
         RequirementManifestResult manifests = orchestrator.requirementManifests();
+        if (!appSource.equals(NAMESPACE_ARRAY_CONTROL_SOURCE)) {
+            check(!compiled && orchestrator.diagnostics().stream().anyMatch(d -> "E3001".equals(d.code())
+                    && d.message().contains("metadata")),
+                what + ": namespace data is rejected before lowering: " + orchestrator.diagnostics());
+            check(built == null, what + ": invalid metadata publishes no checked project");
+            return null;
+        }
         check(compiled && built != null && built.input() != null
                 && built.index() != null && !built.hasErrors() && manifests != null
                 && manifests.manifests() != null
