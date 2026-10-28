@@ -204,6 +204,7 @@ const char * deal_descriptor_kind_text(deal_descriptor *atom)
 const char * deal_descriptor_kind_token(deal_descriptor *atom)
 uint32_t deal_descriptor_reference(deal_descriptor *atom)
 deal_descriptor * deal_descriptor_of_reference(uint32_t reference)
+deal_string * deal_descriptor_type_name(const deal_data *value)
 deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input, uint32_t boundary_kind, const deal_check_context *context)
 const char * deal_check_token(const deal_check_input *input)
 deal_outcome_number deal_check_number(const deal_data *datum, const deal_check_context *context)
@@ -289,12 +290,29 @@ int deal_error_cause_code(deal_error *error, const char **out)
             return text.append(')').toString();
         }
 
-        /** The IR return type of this entry. */
+        /**
+         * Whether this entry's published return type is a record the system
+         * ABI returns through memory (the hidden {@code sret} parameter).
+         */
+        public boolean returnsRecord() {
+            return LlvmTypeMapper.recordTypeOf(returnType).isPresent()
+                && LlvmTypeMapper.crossesInMemory(returnType);
+        }
+
+        /**
+         * The IR return type of this entry: {@code void} when the published
+         * return type is a record the system ABI returns through memory,
+         * because that record comes back through the hidden {@code sret}
+         * parameter instead of a return value.
+         */
         public String llvmReturnType() {
+            if (returnsRecord()) {
+                return "void";
+            }
             return LlvmTypeMapper.llvmTypeOfCType(returnType);
         }
 
-        /** The IR parameter types, in declaration order. */
+        /** The IR parameter types without C ABI attributes, in order. */
         public List<String> llvmParameterTypes() {
             List<String> types = new ArrayList<>(parameters.size());
             for (Parameter parameter : parameters) {
@@ -304,13 +322,43 @@ int deal_error_cause_code(deal_error *error, const char **out)
         }
 
         /**
+         * The IR parameter spellings of the C ABI: the hidden
+         * {@code sret} destination when the return type is a record, then
+         * every published parameter — a record parameter as
+         * {@code %struct.X* byval(%struct.X)} and every other parameter as its
+         * mapped IR type. A caller must supply the destination pointer and one
+         * pointer per record argument.
+         */
+        public List<String> llvmParameterSpellings() {
+            List<String> spellings = new ArrayList<>(parameters.size() + 1);
+            if (returnsRecord()) {
+                String record = LlvmTypeMapper.recordTypeOf(returnType)
+                    .orElseThrow();
+                spellings.add(record + "* sret(" + record + ")");
+            }
+            for (Parameter parameter : parameters) {
+                java.util.Optional<String> record = LlvmTypeMapper
+                    .crossesInMemory(parameter.cType())
+                    ? LlvmTypeMapper.recordTypeOf(parameter.cType())
+                    : java.util.Optional.empty();
+                if (record.isPresent()) {
+                    spellings.add(record.get() + "* byval(" + record.get() + ")");
+                } else {
+                    spellings.add(LlvmTypeMapper.llvmTypeOfCType(
+                        parameter.cType()));
+                }
+            }
+            return List.copyOf(spellings);
+        }
+
+        /**
          * The textual LLVM declaration of this entry:
-         * {@code declare <ret> @<name>(<types>)}.
+         * {@code declare <ret> @<name>(<types>)} in the C ABI spelling.
          */
         public String llvmDeclaration() {
             StringBuilder text = new StringBuilder("declare ");
             text.append(llvmReturnType()).append(" @").append(name).append('(');
-            List<String> types = llvmParameterTypes();
+            List<String> types = llvmParameterSpellings();
             for (int i = 0; i < types.size(); i++) {
                 if (i > 0) {
                     text.append(", ");

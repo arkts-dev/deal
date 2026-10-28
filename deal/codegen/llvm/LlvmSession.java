@@ -55,6 +55,10 @@ final class LlvmSession extends EmitterSessionBase {
     private final Map<Long, SemanticOp> producerByValue = new LinkedHashMap<>();
     private final Map<Long, ModuleId> valueOwner = new LinkedHashMap<>();
     private List<ModuleId> orderedModules = List.of();
+    private final java.util.Set<String> runtimeEntries =
+        new java.util.LinkedHashSet<>();
+    private final java.util.Set<String> externalGlobals =
+        new java.util.LinkedHashSet<>();
 
     final LlvmData data = new LlvmData();
     final LlvmDebugInfo debug = new LlvmDebugInfo();
@@ -278,6 +282,14 @@ final class LlvmSession extends EmitterSessionBase {
         if (isImportAlias(unit, binding)) {
             return null;
         }
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.TryCatchPayload caught
+                    && caught.catchBinding().equals(binding)) {
+                // docs/spec-v1.5.md try/catch: the catch variable binds the
+                // identical Error as `unknown` (C4's handler join).
+                return RuntimeDescriptor.Unknown.INSTANCE;
+            }
+        }
         for (LoweredFunction function : unit.functions().values()) {
             List<BindingId> functionParameters = parametersOf(function.functionId());
             int index = functionParameters.indexOf(binding);
@@ -292,27 +304,85 @@ final class LlvmSession extends EmitterSessionBase {
                 return types.get(index);
             }
         }
-        for (SemanticOp op : unit.ops()) {
-            ValueId value = switch (op.payload()) {
-                case KindPayload.BindingInitPayload init
-                        when init.binding().equals(binding)
-                            && init.generation() == generation -> init.value();
-                case KindPayload.BindingStorePayload store
-                        when store.binding().equals(binding)
-                            && store.generation() == generation -> store.value();
-                default -> null;
-            };
-            if (value != null) {
+        RuntimeDescriptor declaredByBoundary = null;
+        RuntimeDescriptor produced = null;
+        List<SemanticOp> ops = unit.ops();
+        for (int index = 0; index < ops.size(); index++) {
+            ValueId value = writeValue(ops.get(index), binding, generation);
+            if (value == null) {
+                continue;
+            }
+            if (declaredByBoundary == null) {
+                declaredByBoundary = declaredBoundaryType(ops, index, value);
+            }
+            if (produced == null) {
                 SemanticOp producer = producerOf(value);
                 if (producer == null) {
                     throw new IllegalStateException("the value " + value
                         + " of the binding " + binding + " has no producer");
                 }
-                if (producer.resultType() instanceof RuntimeDescriptor descriptor) {
-                    return descriptor;
+                if (!(producer.resultType() instanceof RuntimeDescriptor descriptor)) {
+                    throw new IllegalStateException("the value " + value
+                        + " of the binding " + binding + " carries no descriptor");
                 }
-                throw new IllegalStateException("the value " + value
-                    + " of the binding " + binding + " carries no descriptor");
+                produced = descriptor;
+            }
+        }
+        // The declared position of the binding is the descriptor its own
+        // `VARIABLE_DECLARATION`/`VARIABLE_ASSIGNMENT` boundary records, so a
+        // widened declaration (`let x: unknown = 1`) keeps the declared type
+        // and never the type of the initializing expression.
+        return declaredByBoundary != null ? declaredByBoundary : produced;
+    }
+
+    /**
+     * The stored value of one write op of the binding generation, or
+     * {@code null} when the op writes another binding or generation.
+     */
+    private static ValueId writeValue(SemanticOp op, BindingId binding,
+                                      long generation) {
+        return switch (op.payload()) {
+            case KindPayload.BindingInitPayload init
+                    when init.binding().equals(binding)
+                        && init.generation() == generation -> init.value();
+            case KindPayload.BindingStorePayload store
+                    when store.binding().equals(binding)
+                        && store.generation() == generation -> store.value();
+            default -> null;
+        };
+    }
+
+    /**
+     * The declared descriptor guarding <em>one</em> write of the binding: the
+     * `VARIABLE_DECLARATION`/`VARIABLE_ASSIGNMENT` boundary the lowering emits
+     * between the write's value and its commit op, so the boundary is found by
+     * walking back from the write op. A preceding write of the same value ends
+     * the search: that value id already reached its own committed position, so
+     * a boundary found beyond it guards the earlier binding and must never be
+     * inherited here (the lowering reuses a function-valued identifier's value
+     * id for its `BINDING_LOAD`, and two bindings can therefore share one value
+     * id).
+     */
+    private static RuntimeDescriptor declaredBoundaryType(List<SemanticOp> ops,
+                                                         int writeIndex,
+                                                         ValueId value) {
+        for (int index = writeIndex - 1; index >= 0; index--) {
+            SemanticOp candidate = ops.get(index);
+            if (candidate.payload() instanceof KindPayload.BoundaryPayload boundary
+                    && (boundary.kind() == deal.semantic.ir.BoundaryKind
+                            .VARIABLE_DECLARATION
+                        || boundary.kind() == deal.semantic.ir.BoundaryKind
+                            .VARIABLE_ASSIGNMENT)
+                    && boundary.input().equals(value)) {
+                return boundary.descriptor();
+            }
+            ValueId earlier = switch (candidate.payload()) {
+                case KindPayload.BindingInitPayload init -> init.value();
+                case KindPayload.BindingStorePayload store -> store.value();
+                default -> null;
+            };
+            if (value.equals(earlier)) {
+                return null;
             }
         }
         return null;
@@ -415,6 +485,62 @@ final class LlvmSession extends EmitterSessionBase {
         }
         return index;
     }
+
+    /**
+     * Records one runtime entry the emitted facts reference; the module
+     * declares exactly the referenced set, in the published declaration order
+     * (C9).
+     */
+    void referenceRuntimeEntry(String name) {
+        runtimeEntries.add(Objects.requireNonNull(name, "name must not be null"));
+    }
+
+    /**
+     * Records one published external global the emitted facts reference (the
+     * two distinct nullish singletons of {@code value.h}).
+     */
+    void referenceExternalGlobal(String name) {
+        externalGlobals.add(Objects.requireNonNull(name, "name must not be null"));
+    }
+
+    /** The referenced external globals, in the order first referenced. */
+    List<String> externalGlobals() {
+        return List.copyOf(externalGlobals);
+    }
+
+    /**
+     * The runtime entries the emitted module declares: the activation and
+     * arm-table baseline plus every entry the emitted facts reference, in the
+     * published declaration order so the declaration set derives from the IR
+     * and never from an iteration order.
+     */
+    List<String> referencedRuntimeEntries() {
+        java.util.Set<String> all =
+            new java.util.LinkedHashSet<>(BASE_ENTRIES);
+        all.addAll(runtimeEntries);
+        List<String> ordered = new ArrayList<>();
+        for (LlvmRuntimeAbi.Declaration declaration
+                : LlvmRuntimeAbi.declarations()) {
+            if (all.contains(declaration.name())) {
+                ordered.add(declaration.name());
+            }
+        }
+        for (String name : all) {
+            if (!ordered.contains(name)) {
+                throw new IllegalStateException(
+                    "the referenced runtime entry " + name + " is not published");
+            }
+        }
+        return List.copyOf(ordered);
+    }
+
+    /** The entries every emitted activation references (C2, CallFrameContract). */
+    private static final List<String> BASE_ENTRIES = List.of(
+        "deal_arm_table_install",
+        "deal_call_frame_push",
+        "deal_call_frame_pop",
+        "deal_root_frame_enter",
+        "deal_root_frame_leave");
 
     /**
      * The export-set copy of this session, so a caller (the emission test)

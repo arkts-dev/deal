@@ -106,11 +106,6 @@ public final class LlvmData {
         return name;
     }
 
-    /** The {@code %struct.deal_origin*} operand of one origin record. */
-    public static String originOperand(String originName) {
-        return "%struct.deal_origin* @" + originName;
-    }
-
     /**
      * The module-level storage of one module-scope binding incarnation: an
      * internal global of the binding's own representation, zero-initialized,

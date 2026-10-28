@@ -178,9 +178,10 @@ public final class LlvmStageClassifierTest {
         }
         checkEq(Set.of("CONST", "UNARY", "BINARY", "BINDING_ALLOC",
                 "BINDING_INIT", "BINDING_LOAD", "BINDING_STORE", "ASSIGN",
-                "CALL", "CLOSURE_NEW", "BRANCH", "LOOP", "RETURN", "BREAK",
-                "CONTINUE", "DISCARD", "MODULE_INIT", "MODULE_IMPORT",
-                "EXPORT_READ", "EXPORT_PUBLISH", "ENTRY_INVOKE"),
+                "CALL", "CLOSURE_NEW", "BRANCH", "LOOP", "TRY_CATCH", "THROW",
+                "RETURN", "BREAK", "CONTINUE", "DISCARD", "MODULE_INIT",
+                "MODULE_IMPORT", "EXPORT_READ", "EXPORT_PUBLISH",
+                "ENTRY_INVOKE"),
             stagedKinds, "the staged operation kinds");
         checkEq(Set.of("BOUNDARY"), staticKinds,
             "the only statically-proven operation kind is the typed boundary");
@@ -189,9 +190,7 @@ public final class LlvmStageClassifierTest {
                 && rejectedKinds.contains("CLASS_NEW")
                 && rejectedKinds.contains("STDLIB_CALL")
                 && rejectedKinds.contains("ASYNC_START")
-                && rejectedKinds.contains("THROW")
                 && rejectedKinds.contains("FOR_EACH")
-                && rejectedKinds.contains("TRY_CATCH")
                 && rejectedKinds.contains("STRING_CONCAT"),
             "the runtime-service op families are rejected: " + rejectedKinds);
         Set<String> stagedBinary = new LinkedHashSet<>();
@@ -200,30 +199,17 @@ public final class LlvmStageClassifierTest {
                 stagedBinary.add(selector.name());
             }
         }
-        checkEq(Set.of("NUMBER_ADD", "NUMBER_SUB", "NUMBER_MUL",
-                "NUMBER_DIV_IEEE", "NUMBER_EQ", "NUMBER_NE", "NUMBER_LT",
-                "NUMBER_LE", "NUMBER_GT", "NUMBER_GE", "BOOLEAN_EQ",
-                "BOOLEAN_NE"), stagedBinary,
-            "the staged binary selectors are the native arithmetic and"
-                + " comparison selectors plus boolean equality");
-        checkEq(StageSupport.REJECTED,
-            LlvmStageClassifier.binarySelector(BinarySelector.STRING_EQ),
-            "STRING_EQ is rejected (the text group is outside the stage)");
-        checkEq(StageSupport.REJECTED,
-            LlvmStageClassifier.binarySelector(BinarySelector.REFERENCE_EQ),
-            "REFERENCE_EQ is rejected (managed identity)");
-        checkEq(StageSupport.STAGED,
-            LlvmStageClassifier.unarySelector(UnarySelector.NUMBER_NEG),
-            "NUMBER_NEG is rendered with fneg");
-        checkEq(StageSupport.STAGED,
-            LlvmStageClassifier.unarySelector(UnarySelector.BOOL_NOT),
-            "BOOL_NOT is rendered with xor");
-        checkEq(StageSupport.REJECTED,
-            LlvmStageClassifier.unarySelector(UnarySelector.TYPEOF),
-            "TYPEOF needs the shared type-vocabulary projection");
-        checkEq(StageSupport.REJECTED,
-            LlvmStageClassifier.unarySelector(UnarySelector.INSTANCEOF),
-            "INSTANCEOF needs the nominal class atoms");
+        Set<String> everyBinary = new LinkedHashSet<>();
+        for (BinarySelector selector : BinarySelector.values()) {
+            everyBinary.add(selector.name());
+        }
+        checkEq(everyBinary, stagedBinary,
+            "every merged binary selector is rendered by exactly one arm");
+        for (UnarySelector selector : UnarySelector.values()) {
+            checkEq(StageSupport.STAGED,
+                LlvmStageClassifier.unarySelector(selector),
+                "the unary selector " + selector + " is rendered by one arm");
+        }
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.importKind(ModuleImportKind.COMPILED),
             "a compiled import is staged");
@@ -237,9 +223,9 @@ public final class LlvmStageClassifierTest {
             checkEq(StageSupport.STAGED, LlvmStageClassifier.failureArm(arm),
                 "every failure arm is emitted as data: " + arm);
         }
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STAGED,
             LlvmStageClassifier.controlSelector(ControlSelector.TRY_CATCH),
-            "TRY_CATCH needs the failure-route stack");
+            "TRY_CATCH pushes its handler on the failure-route stack");
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.controlSelector(ControlSelector.WHILE),
             "WHILE is a staged loop shape");
@@ -249,6 +235,18 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.assignTarget(AssignTargetKind.VARIABLE),
             "a binding assignment is staged");
+        checkEq(StageSupport.STAGED,
+            LlvmStageClassifier.payload(KindPayload.AssignPayload.class),
+            "the assignment payload variant is staged");
+        checkEq(StageSupport.STAGED,
+            LlvmStageClassifier.payload(KindPayload.LoopPayload.class),
+            "the loop payload variant is staged");
+        checkEq(StageSupport.STAGED,
+            LlvmStageClassifier.payload(KindPayload.TryCatchPayload.class),
+            "the try/catch payload variant is staged");
+        checkEq(StageSupport.STAGED,
+            LlvmStageClassifier.payload(KindPayload.ThrowPayload.class),
+            "the throw payload variant is staged");
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.payload(KindPayload.ConstPayload.class),
             "the constant payload variant is staged");

@@ -20,7 +20,9 @@
 
 #include "deal/native/container.h"
 #include "deal/native/error.h"
+#include "deal/native/memory.h"
 #include "deal/native/platform.h"
+#include "deal/native/text.h"
 
 /* =========================================================================
  * The interned atoms
@@ -496,6 +498,68 @@ deal_descriptor *deal_descriptor_of_reference(uint32_t reference) {
         deal_platform_fault("descriptor: unknown atom reference");
     }
     return deal_descriptor_atoms[reference - 1u];
+}
+
+/* =========================================================================
+ * The `typeof` projection (spec `typeof`, page C6)
+ * ========================================================================= */
+
+/* The six names in the closed order: undefined, boolean, number, string,
+ * function, object. */
+#define DEAL_TYPEOF_UNDEFINED 0u
+#define DEAL_TYPEOF_BOOLEAN   1u
+#define DEAL_TYPEOF_NUMBER    2u
+#define DEAL_TYPEOF_STRING    3u
+#define DEAL_TYPEOF_FUNCTION  4u
+#define DEAL_TYPEOF_OBJECT    5u
+#define DEAL_TYPEOF_NAME_COUNT 6u
+
+static const char *const deal_typeof_names[DEAL_TYPEOF_NAME_COUNT] = {
+    "undefined", "boolean", "number", "string", "function", "object"
+};
+
+static deal_string *deal_typeof_strings[DEAL_TYPEOF_NAME_COUNT];
+
+/*
+ * One name, created on first use and rooted for the process lifetime: the
+ * six names are shared immutable values, so a second `typeof` allocates
+ * nothing and no collection reclaims a name a later projection returns.
+ */
+static deal_string *deal_typeof_name(uint32_t index) {
+    if (deal_typeof_strings[index] != NULL) {
+        return deal_typeof_strings[index];
+    }
+    const char *text = deal_typeof_names[index];
+    deal_string *created = deal_text_new(text, strlen(text));
+    deal_typeof_strings[index] = created;
+    deal_static_root_register((void **)&deal_typeof_strings[index]);
+    return created;
+}
+
+deal_string *deal_descriptor_type_name(const deal_data *value) {
+    if (value == NULL) {
+        deal_platform_fault("descriptor: null typeof datum");
+    }
+    switch ((deal_data_tag)value->tag) {
+    case DEAL_DATA_UNDEFINED:
+        return deal_typeof_name(DEAL_TYPEOF_UNDEFINED);
+    case DEAL_DATA_BOOLEAN:
+        return deal_typeof_name(DEAL_TYPEOF_BOOLEAN);
+    case DEAL_DATA_NUMBER:
+        return deal_typeof_name(DEAL_TYPEOF_NUMBER);
+    case DEAL_DATA_STRING:
+        return deal_typeof_name(DEAL_TYPEOF_STRING);
+    case DEAL_DATA_FUNCTION:
+        return deal_typeof_name(DEAL_TYPEOF_FUNCTION);
+    case DEAL_DATA_NULL:
+    case DEAL_DATA_ARRAY:
+    case DEAL_DATA_TABLE:
+    case DEAL_DATA_CLASS:
+    case DEAL_DATA_ERROR:
+        return deal_typeof_name(DEAL_TYPEOF_OBJECT);
+    }
+    deal_platform_fault("descriptor: typeof of a datum tag outside the closed set");
+    return NULL;
 }
 
 /* =========================================================================

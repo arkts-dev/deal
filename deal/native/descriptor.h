@@ -133,6 +133,18 @@ const char *deal_descriptor_kind_token(deal_descriptor *atom);
 uint32_t deal_descriptor_reference(deal_descriptor *atom);
 deal_descriptor *deal_descriptor_of_reference(uint32_t reference);
 
+/*
+ * The `typeof` projection of one persistent datum (spec `typeof`): exactly
+ * `undefined`, `boolean`, `number`, `string`, `function` or `object`, the last
+ * covering null, arrays, records, class instances and the builtin `Error`.
+ * The six names are immutable strings owned by this group for the process
+ * lifetime and registered as static roots (M5), so the projection allocates no
+ * per-call string and no collection can reclaim a name. The projection reads
+ * the datum's own tag, so it needs no carried class atom or signature and
+ * never derives a target class name.
+ */
+deal_string *deal_descriptor_type_name(const deal_data *value);
+
 /* The recorded context of one checked boundary: the op's own origin
  * (`DiagnosticOriginProjection`, never re-based) and, for a host parameter
  * cell, the one-based parameter index the arm's `{index}` names. */

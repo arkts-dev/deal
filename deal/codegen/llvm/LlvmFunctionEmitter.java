@@ -2,11 +2,13 @@ package deal.codegen.llvm;
 
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
+import deal.semantic.ir.BoundaryKind;
 import deal.semantic.ir.FunctionId;
 import deal.semantic.ir.KindPayload;
 import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleId;
+import deal.semantic.ir.NullableSide;
 import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
@@ -24,26 +26,38 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The basic-block, SSA-value and failure-route emitter of the native backend
- * ({@code llvm-native-codegen-cfg-ssa} Architecture, {@code LlvmFunctionEmitter};
- * C2, C4, C8, {@code OpRendering}).
+ * The basic-block, SSA-value, root-slot and failure-route emitter of the native
+ * backend ({@code llvm-native-codegen-cfg-ssa} Architecture,
+ * {@code LlvmFunctionEmitter}; C2, C4, C6, C8, {@code OpRendering},
+ * {@code DiagnosticOriginProjection}, {@code CallFrameContract}).
  *
  * <p>Structured IR maps directly to a CFG: a {@code BRANCH} op emits its
  * condition and its two child blocks around a join, a {@code LOOP} emits its
- * per-iteration init block, its condition check, its body and its back edge,
- * and {@code BREAK}/{@code CONTINUE} transfer to the recorded loop's own
- * labels. Results are SSA values; a managed temporary would need a root slot
- * (M4), and the staged subset renders none, so every emitted function enters
- * its root frame with the statically known slot count zero.</p>
+ * per-iteration init block, its condition check, its body, its recorded update
+ * block and its back edge, {@code BREAK}/{@code CONTINUE} transfer to the
+ * recorded loop's own labels, and {@code TRY_CATCH} pushes its handler on the
+ * emitter's failure-route stack so every recorded check or transfer failure in
+ * the protected block reaches that handler instead of leaving the activation.
+ * The handler binds the identical carried {@code deal_error*} as the boxed
+ * {@code unknown} datum of the catch binding, then the catch block runs and
+ * control continues after the statement.</p>
  *
- * <p>Every generated activation emits the ABI task's prologue and epilogue:
- * the call-frame push with its frame label, the root-frame enter with the
- * static slot count, and — on every exit path — the root-frame leave and the
- * call-frame pop, so the caller's frame and root depth are restored
- * ({@code CallFrameContract}). The failure carrier of C4 is the ABI outcome
- * struct: this stage emits no failure-materializing entry, so every emitted
- * path completes successfully and the classifier has already rejected every
- * operation that could detect a failure.</p>
+ * <p>Results are SSA values held in per-value slots. Every managed-typed slot
+ * that can be live across an allocating call owns a root-frame slot written at
+ * definition (M4): a managed pointer directly, a persistent {@code deal_data}
+ * through the tag-aware entry, and a reference-nullish operand only when it is
+ * not one of the two nullish singletons. Every generated activation emits the
+ * prologue and epilogue of {@code CallFrameContract} — the call-frame push with
+ * its frame label, the root-frame enter with the static slot count, and the
+ * root-frame leave plus call-frame pop on every exit path. A failure routed to
+ * a handler keeps the activation's frame (the materialized Error already
+ * snapshotted it); a failure that leaves the activation pops it first.</p>
+ *
+ * <p>Arithmetic, comparison and unary rendering reads exactly one arm table
+ * ({@link LlvmSelectorArms}): the binary64 forms of C6, the one
+ * {@code deal_text_compare} string authority, the closed {@code unknown}
+ * relation of {@code deal_data_same}, the distinct nullish singleton/tag tests
+ * and the nominal tag test — with no fast-math flag on any instruction.</p>
  */
 final class LlvmFunctionEmitter {
 
@@ -53,18 +67,32 @@ final class LlvmFunctionEmitter {
     private final List<String> allocas = new ArrayList<>();
     private final List<String> entryInit = new ArrayList<>();
     private final Map<Long, String> valueSlots = new LinkedHashMap<>();
+    private final Map<Long, String> valueSlotTypes = new LinkedHashMap<>();
     private final Map<String, String> bindingSlots = new LinkedHashMap<>();
+    private final Map<String, String> bindingSlotTypes = new LinkedHashMap<>();
     private final Map<Long, String> blockLabels = new LinkedHashMap<>();
+    private final Map<String, Integer> rootSlots = new LinkedHashMap<>();
     private final Deque<LoopTargets> loops = new ArrayDeque<>();
+    private final Deque<FailureHandler> handlers = new ArrayDeque<>();
     private int loadCounter;
     private int labelCounter;
+    private int rootSlotCount;
+    private int rootEnterIndex = -1;
     private boolean terminated;
     private boolean fallsThrough;
+    private String entryLabel;
+    private String segmentLabel;
     private int currentDebugScope;
+    private String activationOutcome = "%struct.deal_outcome";
     private FunctionId functionId;
 
     /** One open loop's transfer labels. */
-    private record LoopTargets(long loopId, String header, String exit) {
+    private record LoopTargets(long loopId, String header, String next,
+                               String exit) {
+    }
+
+    /** One open failure route: its handler label and pending-error slot. */
+    private record FailureHandler(String label, String pendingSlot) {
     }
 
     LlvmFunctionEmitter(LlvmSession session, LoweredModuleUnit unit) {
@@ -83,18 +111,20 @@ final class LlvmFunctionEmitter {
     String emitFunction(FunctionId id) {
         this.functionId = id;
         LoweredFunction function = session.function(id);
+        this.activationOutcome = LlvmTypeMapper.outcomeType(
+            function.descriptor().returnType());
         String linkageName = "F" + id.id();
         String display = session.displayName(session.ownerOf(id));
         currentDebugScope = session.debug.subprogram(display,
             function.sourceName(), linkageName,
             declarationLine(function));
-        List<String> prologue = new ArrayList<>();
-        prologue.add(LlvmIrPrinter.indent(1) + "call void @deal_call_frame_push("
+        session.referenceRuntimeEntry("deal_call_frame_push");
+        entryInit.add(LlvmIrPrinter.indent(1) + "call void @deal_call_frame_push("
             + frameLabelOperand(id) + ")");
-        prologue.add(LlvmIrPrinter.indent(1)
-            + "call void @deal_root_frame_enter(i32 0)");
-        entryInit.addAll(prologue);
+        enterRootFrame();
         emitParameters(id, function);
+        // Lentry already terminates in the branch assemble() writes.
+        terminated = true;
         emitBlock(function.body(), null);
         finishFunction(function);
         return assemble(id, function);
@@ -138,24 +168,29 @@ final class LlvmFunctionEmitter {
     private void emitParameters(FunctionId id, LoweredFunction function) {
         List<BindingId> parameters = session.parametersOf(id);
         List<RuntimeDescriptor> types = function.descriptor().paramTypes();
+        if (parameters.size() != types.size()) {
+            throw new IllegalStateException("the function " + id + " records "
+                + types.size() + " parameter types for " + parameters.size()
+                + " parameter bindings");
+        }
         for (int index = 0; index < parameters.size(); index++) {
             RuntimeDescriptor descriptor = types.get(index);
+            String representation = LlvmTypeMapper.representationOf(descriptor)
+                .orElseThrow(() -> new IllegalStateException(
+                    "a parameter of " + id + " carries no staged"
+                        + " representation: " + descriptor.canonicalSpecText()));
             String abi = LlvmTypeMapper.abiParameterType(descriptor);
-            String ssa = descriptor instanceof RuntimeDescriptor.Boolean
-                ? LlvmTypeMapper.BOOLEAN_SSA : abi;
-            String slot = bindingSlot(parameters.get(index), 0,
-                session.bindingRepresentation(unit, parameters.get(index), 0)
-                    .orElseThrow(() -> new IllegalStateException(
-                        "a parameter binding carries no representation")));
             String value = "%p" + index;
-            if (!abi.equals(ssa)) {
+            if (descriptor instanceof RuntimeDescriptor.Boolean) {
                 String narrowed = "%pn" + index;
                 entryInit.add(LlvmIrPrinter.indent(1) + narrowed
                     + " = icmp ne " + abi + " " + value + ", 0");
                 value = narrowed;
             }
-            entryInit.add(LlvmIrPrinter.indent(1) + "store " + ssa + " "
-                + value + ", " + ssa + "* " + slot);
+            String slot = bindingSlot(parameters.get(index), 0, representation);
+            entryInit.add(LlvmIrPrinter.indent(1) + "store " + representation
+                + " " + value + ", " + representation + "* " + slot);
+            rootEntrySlot(descriptor, slot, value);
         }
     }
 
@@ -181,6 +216,7 @@ final class LlvmFunctionEmitter {
         for (String alloca : allocas) {
             out.append(LlvmIrPrinter.indent(1)).append(alloca).append('\n');
         }
+        patchRootEnter();
         for (String line : entryInit) {
             out.append(line).append('\n');
         }
@@ -221,12 +257,14 @@ final class LlvmFunctionEmitter {
      */
     private void terminateFailure(String error) {
         String aggregate = "%failure" + (labelCounter++) + "v";
-        emit(aggregate + " = insertvalue %struct.deal_outcome zeroinitializer,"
-            + " i8* " + error + ", 0");
-        terminate("ret %struct.deal_outcome " + aggregate);
+        emit(aggregate + " = insertvalue " + activationOutcome
+            + " zeroinitializer, i8* " + error + ", 0");
+        terminate("ret " + activationOutcome + " " + aggregate);
     }
 
     private void emitEpilogue() {
+        session.referenceRuntimeEntry("deal_root_frame_leave");
+        session.referenceRuntimeEntry("deal_call_frame_pop");
         emit("call void @deal_root_frame_leave()");
         emit("call void @deal_call_frame_pop()");
     }
@@ -244,6 +282,7 @@ final class LlvmFunctionEmitter {
      */
     String emitUnitInit(ModuleId module) {
         this.functionId = null;
+        this.activationOutcome = "%struct.deal_outcome";
         LoweredModuleUnit initUnit = session.unitOf(module);
         long index = session.moduleIndex(module);
         String record = "@" + LlvmData.moduleRecord(index);
@@ -253,11 +292,11 @@ final class LlvmFunctionEmitter {
         String finish = "Ldone" + index;
         LlvmData.StringConstant label = session.data.frameLabel(
             module.path() + "#init@deal_module_init_" + index);
+        session.referenceRuntimeEntry("deal_call_frame_push");
         entryInit.add(LlvmIrPrinter.indent(1)
             + "call void @deal_call_frame_push("
             + session.data.operand(label) + ")");
-        entryInit.add(LlvmIrPrinter.indent(1)
-            + "call void @deal_root_frame_enter(i32 0)");
+        enterRootFrame();
         entryInit.add(LlvmIrPrinter.indent(1) + statePointer
             + " = getelementptr %struct.deal_module, %struct.deal_module* "
             + record + ", i32 0, i32 1");
@@ -283,6 +322,7 @@ final class LlvmFunctionEmitter {
         for (String alloca : allocas) {
             out.append(LlvmIrPrinter.indent(1)).append(alloca).append('\n');
         }
+        patchRootEnter();
         for (String line : entryInit) {
             out.append(line).append('\n');
         }
@@ -311,7 +351,54 @@ final class LlvmFunctionEmitter {
             emit("br label %" + label);
         }
         terminated = false;
+        if (text.isEmpty()) {
+            // The assembler branches from {@code Lentry} into the first
+            // emitted block, so that block always has a predecessor.
+            entryLabel = label;
+        }
+        segmentLabel = label;
         text.append(label).append(":\n");
+    }
+
+    /**
+     * True when some already-emitted terminator names {@code label}: the
+     * emitted CFG, not a private copy of the producer's block-exit summary,
+     * decides whether a join has a predecessor. A {@code BRANCH}/{@code
+     * TRY_CATCH} whose every recorded child path returns or throws leaves its
+     * join without a predecessor, so the tail after it is unreachable and the
+     * activation has no fall-through exit to render (C4, {@code OpRendering}).
+     */
+    private boolean hasPredecessor(String label) {
+        String needle = "label %" + label;
+        int index = text.indexOf(needle);
+        while (index >= 0) {
+            int after = index + needle.length();
+            if (after >= text.length() || !isLabelCharacter(text.charAt(after))) {
+                return true;
+            }
+            index = text.indexOf(needle, index + 1);
+        }
+        return false;
+    }
+
+    /**
+     * The literal boolean of one condition value: its recorded producer is a
+     * boolean constant. An empty result means the value is not statically
+     * decidable here, so the branch is emitted with its condition.
+     */
+    private Optional<Boolean> constantBoolean(ValueId value) {
+        SemanticOp producer = session.producerOf(value);
+        if (producer != null
+                && producer.payload() instanceof KindPayload.ConstPayload constant
+                && constant.value() instanceof ScalarValue.Boolean bool) {
+            return Optional.of(bool.value());
+        }
+        return Optional.empty();
+    }
+
+    private static boolean isLabelCharacter(char character) {
+        return Character.isLetterOrDigit(character) || character == '_'
+            || character == '.';
     }
 
     private void terminate(String terminator) {
@@ -341,6 +428,16 @@ final class LlvmFunctionEmitter {
             emitOp(op);
         }
         if (!terminated) {
+            if (next == null && !segmentLabel.equals(entryLabel)
+                    && !hasPredecessor(segmentLabel)) {
+                // Every recorded path of the tail returned, threw or
+                // transferred, so this block has no predecessor: the
+                // activation has no fall-through exit and the declared
+                // result needs no epilogue return (the C4 explicit
+                // propagation has already been rendered on each path).
+                terminate("unreachable");
+                return;
+            }
             if (next == null) {
                 fallsThrough = true;
             }
@@ -350,7 +447,7 @@ final class LlvmFunctionEmitter {
     }
 
     // =========================================================================
-    // Op rendering (the staged subset)
+    // Op rendering
     // =========================================================================
 
     private void emitOp(SemanticOp op) {
@@ -364,14 +461,25 @@ final class LlvmFunctionEmitter {
             case CONST -> emitConst(op);
             case UNARY -> emitUnary(op);
             case BINARY -> emitBinary(op);
-            case BINDING_ALLOC, ASSIGN, DISCARD, BOUNDARY, MODULE_INIT,
-                 EXPORT_PUBLISH, ENTRY_INVOKE -> {
-                // Structural or elided in this stage: the binding slot is
-                // declared on first use, a chain's children carry the effects,
-                // an elided boundary's static type already proves the declared
-                // descriptor, the module-init state machine wraps the init
-                // block, the export record is static data, and the entry
-                // delegation is DEAL_PROJECT_RUN_MAIN's own call.
+            case BINDING_ALLOC, ENTRY_INVOKE -> {
+                // Structural in this stage: the binding slot is declared on
+                // first use and the entry delegation is
+                // DEAL_PROJECT_RUN_MAIN's own call.
+            }
+            case ASSIGN -> {
+                // The committed value child already published the result
+                // with its own (original) static type and value; a failed
+                // store transferred before the commit, leaving the target
+                // unwritten and the expression without a result (C5).
+            }
+            case DISCARD -> {
+                // The discarded value's effects already completed; the
+                // intentional discard leaves no pending error state (C4).
+            }
+            case BOUNDARY -> emitBoundary(op);
+            case MODULE_INIT, EXPORT_PUBLISH -> {
+                // The module-init state machine wraps the init block and the
+                // export record is static data (C2).
             }
             case BINDING_INIT, BINDING_STORE -> emitBindingWrite(op);
             case BINDING_LOAD -> emitBindingLoad(op);
@@ -381,6 +489,8 @@ final class LlvmFunctionEmitter {
             case CALL -> emitCall(op);
             case BRANCH -> emitBranch(op);
             case LOOP -> emitLoop(op);
+            case TRY_CATCH -> emitTryCatch(op);
+            case THROW -> emitThrow(op);
             case RETURN -> emitReturn(op);
             case BREAK, CONTINUE -> emitBreakContinue(op,
                 op.kind() == SemanticOpKind.BREAK);
@@ -398,6 +508,15 @@ final class LlvmFunctionEmitter {
             Math.max(1, origin.span().startColumn()));
     }
 
+    /** The pointer value of one op's own {@code deal_origin} record. */
+    private String originValue(SemanticOp op) {
+        SourceOrigin origin = op.origin();
+        return "@" + session.data.origin(
+            session.displayNameOfSource(origin.sourceId()),
+            Math.max(1, origin.span().startLine()),
+            Math.max(1, origin.span().startColumn()));
+    }
+
     private String debugAttachment(SemanticOp op) {
         if (currentDebugScope < 0) {
             return "";
@@ -409,10 +528,16 @@ final class LlvmFunctionEmitter {
         return ", " + LlvmDebugInfo.attach(location);
     }
 
+    // =========================================================================
+    // Constants
+    // =========================================================================
+
     private void emitConst(SemanticOp op) {
         KindPayload.ConstPayload payload = (KindPayload.ConstPayload) op.payload();
         Optional<String> representation = resultRepresentation(op);
         if (representation.isEmpty()) {
+            // The null/undefined singletons carry no data slot; a consumer
+            // materializes the distinct singleton it declares (C4).
             return;
         }
         String type = representation.get();
@@ -426,52 +551,402 @@ final class LlvmFunctionEmitter {
         storeResult(op, type, literal);
     }
 
+    // =========================================================================
+    // Unary selectors (the closed C6 table)
+    // =========================================================================
+
     private void emitUnary(SemanticOp op) {
         KindPayload.UnaryPayload payload = (KindPayload.UnaryPayload) op.payload();
+        LlvmSelectorArms.UnaryArm arm =
+            LlvmSelectorArms.unary(payload.selector());
+        RuntimeDescriptor operandDescriptor = op.operandTypes().get(0);
         ValueId input = op.operands().get(0);
-        String operandRepresentation = representationOf(input);
-        String operand = loadValue(input, operandRepresentation, op);
-        String result = switch (payload.selector()) {
-            case BOOL_NOT -> {
-                yield emitTemporary(op, "xor i1 " + operand + ", true");
-            }
-            case NUMBER_NEG -> {
-                yield emitTemporary(op, "fneg double " + operand);
-            }
-            default -> throw new IllegalStateException(
-                "the unary selector " + payload.selector() + " is not staged");
+        String result = switch (arm.form()) {
+            case XOR_TRUE -> emitTemporary(op, "xor i1 "
+                + loadRepresentation(input, operandDescriptor, op) + ", true");
+            case FNEG -> emitTemporary(op, "fneg double "
+                + loadRepresentation(input, operandDescriptor, op));
+            case TYPE_NAME -> emitTypeName(op, input, operandDescriptor);
+            case CLASS_TAG -> emitInstanceOf(op, payload, input,
+                operandDescriptor);
         };
         storeResult(op, resultRepresentation(op).orElseThrow(), result);
     }
 
+    /**
+     * {@code typeof}: the six-name projection, one immutable string per name
+     * (C6). The operand's own representation is boxed into the persistent
+     * tagged datum the runtime classifies.
+     */
+    private String emitTypeName(SemanticOp op, ValueId input,
+                                RuntimeDescriptor operandDescriptor) {
+        session.referenceRuntimeEntry("deal_descriptor_type_name");
+        String datum = LlvmTypeMapper.representationOf(operandDescriptor).isPresent()
+            ? emitDatum(operandDescriptor,
+                loadRepresentation(input, operandDescriptor, op), op)
+            : emitDatum(operandDescriptor, "", op);
+        String slot = newAlloca("%struct.deal_data", "datum");
+        emit("store %struct.deal_data " + datum + ", %struct.deal_data* " + slot);
+        return emitTemporary(op, "call %struct.deal_string*"
+            + " @deal_descriptor_type_name(%struct.deal_data* " + slot + ")");
+    }
+
+    /**
+     * {@code instanceof C}: the nominal tag test (C6). The builtin
+     * {@code Error} class is the one class identity whose tag the persistent
+     * datum carries without an emitted class layout; every other class target
+     * belongs to the data/class stage and is rejected by the classifier. A
+     * data value of any other static type is never an instance, and a record
+     * is never retagged.
+     */
+    private String emitInstanceOf(SemanticOp op,
+                                  KindPayload.UnaryPayload payload,
+                                  ValueId input,
+                                  RuntimeDescriptor operandDescriptor) {
+        RuntimeDescriptor target = payload.target();
+        if (operandDescriptor instanceof RuntimeDescriptor.Class classType
+                && classType.classId().equals(target instanceof
+                    RuntimeDescriptor.Class targetClass
+                        ? targetClass.classId() : null)) {
+            return "true";
+        }
+        if (!(operandDescriptor instanceof RuntimeDescriptor.Unknown)) {
+            // A number, boolean, string, nullish or function value is never a
+            // nominal class instance.
+            return "false";
+        }
+        String datum = loadRepresentation(input, operandDescriptor, op);
+        String tag = emitTemporary(op, "extractvalue %struct.deal_data "
+            + datum + ", 0");
+        return emitTemporary(op, "icmp eq i32 " + tag + ", "
+            + LlvmTypeMapper.DATA_ERROR);
+    }
+
+    // =========================================================================
+    // Binary selectors (the closed C6 table)
+    // =========================================================================
+
     private void emitBinary(SemanticOp op) {
         KindPayload.BinaryPayload payload = (KindPayload.BinaryPayload) op.payload();
+        LlvmSelectorArms.BinaryArm arm =
+            LlvmSelectorArms.binary(payload.selector());
+        RuntimeDescriptor leftDescriptor = op.operandTypes().get(0);
+        RuntimeDescriptor rightDescriptor = op.operandTypes().get(1);
         ValueId left = op.operands().get(0);
         ValueId right = op.operands().get(1);
-        String leftType = representationOf(left);
-        String rightType = representationOf(right);
-        String leftOperand = loadValue(left, leftType, op);
-        String rightOperand = loadValue(right, rightType, op);
-        String instruction = switch (payload.selector()) {
-            case NUMBER_ADD -> "fadd double " + leftOperand + ", " + rightOperand;
-            case NUMBER_SUB -> "fsub double " + leftOperand + ", " + rightOperand;
-            case NUMBER_MUL -> "fmul double " + leftOperand + ", " + rightOperand;
-            case NUMBER_DIV_IEEE -> "fdiv double " + leftOperand + ", "
-                + rightOperand;
-            case NUMBER_EQ -> "fcmp oeq double " + leftOperand + ", " + rightOperand;
-            case NUMBER_NE -> "fcmp une double " + leftOperand + ", " + rightOperand;
-            case NUMBER_LT -> "fcmp olt double " + leftOperand + ", " + rightOperand;
-            case NUMBER_LE -> "fcmp ole double " + leftOperand + ", " + rightOperand;
-            case NUMBER_GT -> "fcmp ogt double " + leftOperand + ", " + rightOperand;
-            case NUMBER_GE -> "fcmp oge double " + leftOperand + ", " + rightOperand;
-            case BOOLEAN_EQ -> "icmp eq i1 " + leftOperand + ", " + rightOperand;
-            case BOOLEAN_NE -> "icmp ne i1 " + leftOperand + ", " + rightOperand;
-            default -> throw new IllegalStateException(
-                "the binary selector " + payload.selector() + " is not staged");
+        String result = switch (arm.form()) {
+            case ARITHMETIC -> {
+                String leftOperand = loadRepresentation(left, leftDescriptor, op);
+                String rightOperand = loadRepresentation(right, rightDescriptor, op);
+                yield emitTemporary(op, arm.mnemonic() + " double "
+                    + leftOperand + ", " + rightOperand);
+            }
+            case IEEE_PREDICATE -> {
+                String leftOperand = loadRepresentation(left, leftDescriptor, op);
+                String rightOperand = loadRepresentation(right, rightDescriptor, op);
+                yield emitTemporary(op, "fcmp " + arm.predicate() + " double "
+                    + leftOperand + ", " + rightOperand);
+            }
+            case BOOLEAN_BYTES -> {
+                String leftOperand = loadRepresentation(left, leftDescriptor, op);
+                String rightOperand = loadRepresentation(right, rightDescriptor, op);
+                yield emitTemporary(op, "icmp " + arm.predicate() + " i1 "
+                    + leftOperand + ", " + rightOperand);
+            }
+            case TEXT_COMPARE -> emitTextCompare(op, arm, left, right);
+            case SINGLETON_TAGS -> emitSingletonTags(op, arm, leftDescriptor,
+                rightDescriptor);
+            case DATA_SAME -> emitDataSame(op, arm, left, right);
+            case TAG_TEST -> emitTagTest(op, arm, payload, leftDescriptor,
+                rightDescriptor, left, right);
+            case IDENTITY -> {
+                String leftOperand = loadRepresentation(left, leftDescriptor, op);
+                String rightOperand = loadRepresentation(right, rightDescriptor, op);
+                yield emitTemporary(op, "icmp " + arm.predicate() + " i8* "
+                    + leftOperand + ", " + rightOperand);
+            }
         };
-        String result = emitTemporary(op, instruction);
         storeResult(op, resultRepresentation(op).orElseThrow(), result);
     }
+
+    /** {@code STRING_*}: the one {@code deal_text_compare} authority (R8). */
+    private String emitTextCompare(SemanticOp op, LlvmSelectorArms.BinaryArm arm,
+                                   ValueId left, ValueId right) {
+        session.referenceRuntimeEntry("deal_text_compare");
+        String leftOperand = loadRepresentation(left,
+            op.operandTypes().get(0), op);
+        String rightOperand = loadRepresentation(right,
+            op.operandTypes().get(1), op);
+        String comparison = emitTemporary(op, "call i32 @deal_text_compare("
+            + LlvmTypeMapper.STRING + " " + leftOperand + ", "
+            + LlvmTypeMapper.STRING + " " + rightOperand + ")");
+        return emitTemporary(op, "icmp " + LlvmSelectorArms.resultPredicate(arm)
+            + " i32 " + comparison + ", "
+            + LlvmSelectorArms.resultOperand(arm));
+    }
+
+    /**
+     * {@code NULL_EQ}/{@code NULL_NE} and {@code UNDEFINED_EQ}/{@code
+     * UNDEFINED_NE}: the exact singleton tags. Null equals only null and
+     * undefined only undefined, so the two singletons are compared by identity
+     * and never collapsed (C6).
+     */
+    private String emitSingletonTags(SemanticOp op,
+                                     LlvmSelectorArms.BinaryArm arm,
+                                     RuntimeDescriptor leftDescriptor,
+                                     RuntimeDescriptor rightDescriptor) {
+        boolean nullSingleton = leftDescriptor instanceof RuntimeDescriptor.Null
+            || rightDescriptor instanceof RuntimeDescriptor.Null;
+        String leftOperand = loadSingleton(nullSingleton, op);
+        String rightOperand = loadSingleton(nullSingleton, op);
+        return emitTemporary(op, "icmp " + arm.predicate() + " i8* "
+            + leftOperand + ", " + rightOperand);
+    }
+
+    /**
+     * {@code UNKNOWN_EQ}/{@code UNKNOWN_NE}: the closed data {@code ===}
+     * through {@code deal_data_same}, whose result is {@code 1} exactly when
+     * the relation holds. The arm's truth encoding therefore inverts the
+     * comparison predicate: {@code UNKNOWN_EQ} reads {@code icmp ne i32 %r, 0}
+     * and {@code UNKNOWN_NE} reads {@code icmp eq i32 %r, 0}, so null equals
+     * only null and undefined only undefined (C6).
+     */
+    private String emitDataSame(SemanticOp op, LlvmSelectorArms.BinaryArm arm,
+                               ValueId left, ValueId right) {
+        session.referenceRuntimeEntry("deal_data_same");
+        String leftSlot = valueSlot(left, LlvmTypeMapper.DATA);
+        String rightSlot = valueSlot(right, LlvmTypeMapper.DATA);
+        String comparison = emitTemporary(op, "call i32 @deal_data_same("
+            + LlvmTypeMapper.DATA + "* " + leftSlot + ", "
+            + LlvmTypeMapper.DATA + "* " + rightSlot + ")");
+        return emitTemporary(op, "icmp " + LlvmSelectorArms.resultPredicate(arm)
+            + " i32 " + comparison + ", "
+            + LlvmSelectorArms.resultOperand(arm));
+    }
+
+    /**
+     * The nullish tag tests of C6: {@code NULLABLE_NULL_*} (the named side is
+     * language null), {@code NULLABLE_UNDEFINED_*} (the named side is
+     * undefined) and {@code NULLABLE_EQ}/{@code NULLABLE_NE} (equal nullable
+     * types, whose nullish tags are compared first and whose non-nullish base
+     * values use their descriptor's own equality).
+     */
+    private String emitTagTest(SemanticOp op, LlvmSelectorArms.BinaryArm arm,
+                               KindPayload.BinaryPayload payload,
+                               RuntimeDescriptor leftDescriptor,
+                               RuntimeDescriptor rightDescriptor,
+                               ValueId left, ValueId right) {
+        NullableSide side = payload.side();
+        boolean nullArm = payload.selector()
+            == deal.semantic.ir.BinarySelector.NULLABLE_NULL_EQ
+            || payload.selector() == deal.semantic.ir.BinarySelector.NULLABLE_NULL_NE;
+        boolean undefinedArm = payload.selector()
+            == deal.semantic.ir.BinarySelector.NULLABLE_UNDEFINED_EQ
+            || payload.selector()
+                == deal.semantic.ir.BinarySelector.NULLABLE_UNDEFINED_NE;
+        if (nullArm || undefinedArm) {
+            boolean namedLeft = side != NullableSide.RIGHT;
+            RuntimeDescriptor named = namedLeft ? leftDescriptor : rightDescriptor;
+            ValueId value = namedLeft ? left : right;
+            String operand = loadNamedNullish(value, named, op);
+            if (named instanceof RuntimeDescriptor.Unknown) {
+                String tag = emitTemporary(op, "extractvalue "
+                    + LlvmTypeMapper.DATA + " " + operand + ", 0");
+                return emitTemporary(op, "icmp " + arm.predicate() + " i32 "
+                    + tag + ", " + (nullArm ? LlvmTypeMapper.DATA_NULL
+                        : LlvmTypeMapper.DATA_UNDEFINED));
+            }
+            if (named instanceof RuntimeDescriptor.Nullable nullable
+                    && LlvmTypeMapper.representationOf(nullable).orElseThrow()
+                        .equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
+                String expected = loadSingleton(nullArm, op);
+                return emitTemporary(op, "icmp " + arm.predicate() + " i8* "
+                    + operand + ", " + expected);
+            }
+            RuntimeDescriptor.Nullable nullable =
+                (RuntimeDescriptor.Nullable) named;
+            String tag = emitTemporary(op, "extractvalue "
+                + LlvmTypeMapper.representationOf(nullable).orElseThrow() + " " + operand
+                + ", 0");
+            return emitTemporary(op, "icmp " + arm.predicate() + " i32 "
+                + tag + ", " + (nullArm ? LlvmTypeMapper.NULLISH_NULL
+                    : LlvmTypeMapper.NULLISH_UNDEFINED));
+        }
+        return emitNullableEquality(op, arm, payload, leftDescriptor,
+            rightDescriptor, left, right);
+    }
+
+    /**
+     * {@code NULLABLE_EQ}/{@code NULLABLE_NE}: the nullish tags are compared
+     * first — null and undefined never satisfy the relation of each other —
+     * and two base values use their descriptor's equality.
+     */
+    private String emitNullableEquality(SemanticOp op,
+                                        LlvmSelectorArms.BinaryArm arm,
+                                        KindPayload.BinaryPayload payload,
+                                        RuntimeDescriptor leftDescriptor,
+                                        RuntimeDescriptor rightDescriptor,
+                                        ValueId left, ValueId right) {
+        RuntimeDescriptor inner = payload.innerDescriptor();
+        String leftRepresentation = stagedRepresentation(leftDescriptor);
+        String rightRepresentation = stagedRepresentation(rightDescriptor);
+        String leftOperand = loadRepresentation(left, leftDescriptor, op);
+        String rightOperand = loadRepresentation(right, rightDescriptor, op);
+        String slot = newAlloca("i1", "nullisheq");
+        if (leftRepresentation.equals(LlvmTypeMapper.REFERENCE_NULLISH)
+                && rightRepresentation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
+            return emitReferenceNullableEquality(op, arm, inner, leftOperand,
+                rightOperand, slot);
+        }
+        String leftTag = emitTemporary(op,
+            "extractvalue " + leftRepresentation + " " + leftOperand + ", 0");
+        String rightTag = emitTemporary(op,
+            "extractvalue " + rightRepresentation + " " + rightOperand + ", 0");
+        String leftNullish = emitTemporary(op, "icmp ne i32 " + leftTag + ", "
+            + LlvmTypeMapper.NULLISH_BASE);
+        String rightNullish = emitTemporary(op, "icmp ne i32 " + rightTag + ", "
+            + LlvmTypeMapper.NULLISH_BASE);
+        String anyNullish = emitTemporary(op, "or i1 " + leftNullish + ", "
+            + rightNullish);
+        String nullishLabel = newLabel("nullishtag");
+        String baseLabel = newLabel("nullishbase");
+        String joinLabel = newLabel("nullishjoin");
+        emit("br i1 " + anyNullish + ", label %" + nullishLabel
+            + ", label %" + baseLabel);
+        terminated = true;
+        startSegment(nullishLabel);
+        String tagsEqual = emitTemporary(op, "icmp " + arm.predicate()
+            + " i32 " + leftTag + ", " + rightTag);
+        emit("store i1 " + tagsEqual + ", i1* " + slot);
+        terminate("br label %" + joinLabel);
+        startSegment(baseLabel);
+        String leftBase = emitTemporary(op, "extractvalue " + leftRepresentation
+            + " " + leftOperand + ", 1");
+        String rightBase = emitTemporary(op, "extractvalue " + rightRepresentation
+            + " " + rightOperand + ", 1");
+        String baseEqual = emitBaseEquality(op, arm, inner, leftBase, rightBase);
+        emit("store i1 " + baseEqual + ", i1* " + slot);
+        terminate("br label %" + joinLabel);
+        startSegment(joinLabel);
+        return emitTemporary(op, "load i1, i1* " + slot);
+    }
+
+    /** One base-value equality of a scalar nullish inner descriptor. */
+    private String emitBaseEquality(SemanticOp op,
+                                    LlvmSelectorArms.BinaryArm arm,
+                                    RuntimeDescriptor inner,
+                                    String left, String right) {
+        return switch (inner) {
+            case RuntimeDescriptor.Number ignored -> emitTemporary(op,
+                "fcmp " + ("eq".equals(arm.predicate()) ? "oeq" : "une")
+                    + " double " + left + ", " + right);
+            case RuntimeDescriptor.Boolean ignored -> emitTemporary(op,
+                "icmp " + arm.predicate() + " i1 " + left + ", " + right);
+            case RuntimeDescriptor.String ignored -> {
+                session.referenceRuntimeEntry("deal_text_compare");
+                String comparison = emitTemporary(op,
+                    "call i32 @deal_text_compare(" + LlvmTypeMapper.STRING
+                        + " " + left + ", " + LlvmTypeMapper.STRING + " "
+                        + right + ")");
+                yield emitTemporary(op, "icmp " + arm.predicate() + " i32 "
+                    + comparison + ", 0");
+            }
+            case RuntimeDescriptor.Func ignored -> emitTemporary(op,
+                "icmp " + arm.predicate() + " i8* " + left + ", " + right);
+            default -> throw new IllegalStateException(
+                "the nullish base '" + inner.canonicalSpecText()
+                    + "' has no staged equality");
+        };
+    }
+
+    /**
+     * {@code NULLABLE_EQ}/{@code NULLABLE_NE} over reference bases: the two
+     * nullish singletons compare by identity and never with each other, and
+     * two base values use their descriptor's own equality (C6).
+     */
+    private String emitReferenceNullableEquality(
+            SemanticOp op, LlvmSelectorArms.BinaryArm arm,
+            RuntimeDescriptor inner, String left, String right, String slot) {
+        session.referenceRuntimeEntry("deal_value_is_null");
+        session.referenceRuntimeEntry("deal_value_is_undefined");
+        String nullLabel = newLabel("nullable.null");
+        String baseLabel = newLabel("nullable.base");
+        String joinLabel = newLabel("nullable.join");
+        String leftNull = emitTemporary(op,
+            "call i32 @deal_value_is_null(i8* " + left + ")");
+        String leftUndefined = emitTemporary(op,
+            "call i32 @deal_value_is_undefined(i8* " + left + ")");
+        String rightNull = emitTemporary(op,
+            "call i32 @deal_value_is_null(i8* " + right + ")");
+        String rightUndefined = emitTemporary(op,
+            "call i32 @deal_value_is_undefined(i8* " + right + ")");
+        String leftNullish = emitTemporary(op,
+            "or i32 " + leftNull + ", " + leftUndefined);
+        String rightNullish = emitTemporary(op,
+            "or i32 " + rightNull + ", " + rightUndefined);
+        String anyNullish = emitTemporary(op, "or i32 " + leftNullish + ", "
+            + rightNullish);
+        String nullish = emitTemporary(op, "icmp ne i32 " + anyNullish + ", 0");
+        emit("br i1 " + nullish + ", label %" + nullLabel + ", label %"
+            + baseLabel);
+        terminated = true;
+        startSegment(nullLabel);
+        String same = emitTemporary(op, "icmp " + arm.predicate() + " i8* "
+            + left + ", " + right);
+        emit("store i1 " + same + ", i1* " + slot);
+        terminate("br label %" + joinLabel);
+        startSegment(baseLabel);
+        String baseEqual = emitBaseEquality(op, arm, inner,
+            castBase(inner, left, op), castBase(inner, right, op));
+        emit("store i1 " + baseEqual + ", i1* " + slot);
+        terminate("br label %" + joinLabel);
+        startSegment(joinLabel);
+        return emitTemporary(op, "load i1, i1* " + slot);
+    }
+
+    /** The base-typed spelling of one reference-nullish payload. */
+    private String castBase(RuntimeDescriptor inner, String pointer,
+                            SemanticOp op) {
+        return switch (inner) {
+            case RuntimeDescriptor.String ignored -> emitTemporary(op,
+                "bitcast i8* " + pointer + " to " + LlvmTypeMapper.STRING);
+            case RuntimeDescriptor.Func ignored -> pointer;
+            default -> throw new IllegalStateException(
+                "the nullish base '" + inner.canonicalSpecText()
+                    + "' has no staged representation");
+        };
+    }
+
+    /** Loads one operand as the representation of its recorded static type. */
+    private String loadRepresentation(ValueId value, RuntimeDescriptor descriptor,
+                                      SemanticOp op) {
+        if (LlvmTypeMapper.isStaticSingleton(descriptor)) {
+            throw new IllegalStateException("the value " + value
+                + " carries no data representation: "
+                + descriptor.canonicalSpecText());
+        }
+        String representation = stagedRepresentation(descriptor);
+        return loadValue(value, representation, op);
+    }
+
+    /**
+     * Loads one nullish operand: the singleton pointer for a static singleton,
+     * the declared representation otherwise.
+     */
+    private String loadNamedNullish(ValueId value, RuntimeDescriptor descriptor,
+                                    SemanticOp op) {
+        if (descriptor instanceof RuntimeDescriptor.Null) {
+            return loadSingleton(true, op);
+        }
+        if (descriptor instanceof RuntimeDescriptor.Undefined) {
+            return loadSingleton(false, op);
+        }
+        return loadRepresentation(value, descriptor, op);
+    }
+
+    // =========================================================================
+    // Assignment storage and conversions
+    // =========================================================================
 
     private void emitBindingLoad(SemanticOp op) {
         KindPayload.BindingLoadPayload payload =
@@ -507,11 +982,716 @@ final class LlvmFunctionEmitter {
         if (representation.isEmpty()) {
             return;
         }
-        String operand = loadValue(value, representation.get(), op);
-        emit("store " + representation.get() + " " + operand + ", "
-            + representation.get() + "* "
-            + bindingSlot(binding, generation, representation.get()));
+        RuntimeDescriptor declared = session.bindingType(unit, binding, generation);
+        String stored = declared == null
+            ? loadValue(value, representation.get(), op)
+            : convert(value, descriptorOfValue(value), declared, op);
+        String slot = bindingSlot(binding, generation, representation.get());
+        emit("store " + representation.get() + " " + stored + ", "
+            + representation.get() + "* " + slot);
+        if (declared != null) {
+            rootBindingSlot(binding, generation, declared, slot, op);
+        }
     }
+
+    /**
+     * Converts one completed value from its recorded static descriptor to the
+     * declared descriptor of the position it enters (C3): the singleton and
+     * nullish forms are built from their own tags, a data value is boxed into
+     * the persistent tagged datum, and a value already in the declared
+     * representation is used unchanged. A conversion that would need a runtime
+     * check is the assertion/container boundary's, never an implicit coercion.
+     */
+    private String convert(ValueId value, RuntimeDescriptor from,
+                           RuntimeDescriptor to, SemanticOp op) {
+        if (from.equals(to) && !LlvmTypeMapper.isStaticSingleton(from)) {
+            return loadRepresentation(value, from, op);
+        }
+        if (to instanceof RuntimeDescriptor.Unknown) {
+            String operand = LlvmTypeMapper.isStaticSingleton(from)
+                ? "" : loadRepresentation(value, from, op);
+            return emitDatum(from, operand, op);
+        }
+        if (to instanceof RuntimeDescriptor.Nullable nullable) {
+            return emitNullish(from, nullable, value, op);
+        }
+        throw new IllegalStateException("the value " + value + " of type '"
+            + from.canonicalSpecText() + "' has no coercion into '"
+            + to.canonicalSpecText() + "'");
+    }
+
+    /**
+     * Builds one nullish value of {@code target} from a static singleton, its
+     * base type or the same nullish type (C3): a scalar base uses the tagged
+     * struct, a reference base the pointer or the admitted singleton.
+     */
+    private String emitNullish(RuntimeDescriptor from,
+                               RuntimeDescriptor.Nullable target,
+                               ValueId value, SemanticOp op) {
+        String representation = LlvmTypeMapper.representationOf(target).orElseThrow(() ->
+            new IllegalStateException("the nullish descriptor '"
+                + target.canonicalSpecText() + "' has no staged"
+                + " representation"));
+        boolean reference = representation.equals(LlvmTypeMapper.REFERENCE_NULLISH);
+        if (from instanceof RuntimeDescriptor.Null) {
+            requireAdmitted(target, true, false, from);
+            return reference ? loadSingleton(true, op)
+                : taggedNullish(representation, LlvmTypeMapper.NULLISH_NULL,
+                    null, op);
+        }
+        if (from instanceof RuntimeDescriptor.Undefined) {
+            requireAdmitted(target, false, true, from);
+            return reference ? loadSingleton(false, op)
+                : taggedNullish(representation, LlvmTypeMapper.NULLISH_UNDEFINED,
+                    null, op);
+        }
+        if (from instanceof RuntimeDescriptor.Nullable) {
+            return loadRepresentation(value, from, op);
+        }
+        if (!admittedBase(target, from)) {
+            throw new IllegalStateException("the value's type '"
+                + from.canonicalSpecText() + "' is not admitted by '"
+                + target.canonicalSpecText() + "'");
+        }
+        String operand = loadRepresentation(value, from, op);
+        if (reference) {
+            String fromRepresentation = stagedRepresentation(from);
+            return fromRepresentation.equals(LlvmTypeMapper.REFERENCE_NULLISH)
+                ? operand
+                : emitTemporary(op, "bitcast " + fromRepresentation + " "
+                    + operand + " to i8*");
+        }
+        return taggedNullish(representation, LlvmTypeMapper.NULLISH_BASE,
+            operand, op);
+    }
+
+    private static boolean admittedBase(RuntimeDescriptor.Nullable target,
+                                        RuntimeDescriptor actual) {
+        return LlvmTypeMapper.admits(target.inner(), actual);
+    }
+
+    private void requireAdmitted(RuntimeDescriptor.Nullable target, boolean nullish,
+                                 boolean undefined, RuntimeDescriptor from) {
+        boolean admitted = nullish ? target.admitsNull() : undefined
+            ? target.admitsUndefined() : false;
+        if (!admitted) {
+            throw new IllegalStateException("the nullish descriptor '"
+                + target.canonicalSpecText() + "' does not admit '"
+                + from.canonicalSpecText() + "'");
+        }
+    }
+
+    /** One {@code {tag, value}} scalar nullish value. */
+    private String taggedNullish(String representation, int tag,
+                                 String base, SemanticOp op) {
+        String zero = representation.equals(LlvmTypeMapper.NULLISH_NUMBER)
+            ? "double 0.0" : "i1 false";
+        String literal = "{ i32 " + tag + ", " + zero + " }";
+        if (base == null) {
+            return literal;
+        }
+        return emitTemporary(op, "insertvalue " + representation + " "
+            + literal + ", "
+            + (representation.equals(LlvmTypeMapper.NULLISH_NUMBER)
+                ? "double " : "i1 ") + base + ", 1");
+    }
+
+    /**
+     * Boxes one completed value into the persistent tagged datum of an
+     * {@code unknown} position (C3, R3). The emitted module constructs the
+     * structural {@code deal_data} record directly — the header publishes its
+     * layout and the emitted module owns these values — so no runtime
+     * constructor and no allocation is involved. A nullish operand takes the
+     * tag of its own stored value, so absence is never confused with a base
+     * value.
+     */
+    private String emitDatum(RuntimeDescriptor from, String operand,
+                             SemanticOp op) {
+        if (from instanceof RuntimeDescriptor.Unknown) {
+            return operand;
+        }
+        if (from instanceof RuntimeDescriptor.Null) {
+            return datumLiteral(LlvmTypeMapper.DATA_NULL, "double 0.0",
+                "i8* null");
+        }
+        if (from instanceof RuntimeDescriptor.Undefined) {
+            return datumLiteral(LlvmTypeMapper.DATA_UNDEFINED, "double 0.0",
+                "i8* null");
+        }
+        if (from instanceof RuntimeDescriptor.Number) {
+            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
+                + " " + datumLiteral(LlvmTypeMapper.DATA_NUMBER,
+                    "double 0.0", "i8* null")
+                + ", double " + operand + ", 2");
+        }
+        if (from instanceof RuntimeDescriptor.Boolean) {
+            String folded = booleanToNumber(operand, op);
+            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
+                + " " + datumLiteral(LlvmTypeMapper.DATA_BOOLEAN,
+                    "double 0.0", "i8* null")
+                + ", double " + folded + ", 2");
+        }
+        if (from instanceof RuntimeDescriptor.String) {
+            String bytes = emitTemporary(op, "bitcast " + LlvmTypeMapper.STRING
+                + " " + operand + " to i8*");
+            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
+                + " " + datumLiteral(LlvmTypeMapper.DATA_STRING,
+                    "double 0.0", "i8* null")
+                + ", i8* " + bytes + ", 3");
+        }
+        if (from instanceof RuntimeDescriptor.Func) {
+            // The function tag alone classifies the value (the `typeof`
+            // projection needs no payload): the managed `reference` member
+            // stays NULL, because a code pointer is not a `deal_fn*` and a
+            // managed tag over a `.text` address is a collector defect (C3,
+            // R2). A function value at a declared data position is rejected
+            // by the classifier's `unknown` relation instead of boxed here.
+            return datumLiteral(LlvmTypeMapper.DATA_FUNCTION, "double 0.0",
+                "i8* null");
+        }
+        if (from instanceof RuntimeDescriptor.Class classType
+                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+            String reduced = emitTemporary(op, "bitcast "
+                + LlvmTypeMapper.ERROR_POINTER + " " + operand + " to i8*");
+            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
+                + " " + datumLiteral(LlvmTypeMapper.DATA_ERROR,
+                    "double 0.0", "i8* null")
+                + ", i8* " + reduced + ", 3");
+        }
+        if (from instanceof RuntimeDescriptor.Nullable nullable) {
+            return emitNullishDatum(nullable, operand, op);
+        }
+        throw new IllegalStateException("the value of type '"
+            + from.canonicalSpecText() + "' has no persistent data form");
+    }
+
+    /**
+     * One structural {@code deal_data} literal of this stage, spelled without
+     * its type so the use site writes the type exactly once (a {@code store},
+     * an {@code insertvalue} aggregate or a call argument).
+     */
+    private static String datumLiteral(int tag, String number, String reference) {
+        return "{ i32 " + tag + ", i32 0, " + number + ", " + reference + " }";
+    }
+
+    /**
+     * The binary64 payload of one boolean datum: the published
+     * {@code deal_data_of_boolean} stores 0.0/1.0, and the closed data
+     * relation compares that payload by its zero-ness.
+     */
+    private String booleanToNumber(String operand, SemanticOp op) {
+        String widened = emitTemporary(op, "zext i1 " + operand + " to i32");
+        return emitTemporary(op, "uitofp i32 " + widened + " to double");
+    }
+
+    /** The tag-aware datum of one nullish operand. */
+    private String emitNullishDatum(RuntimeDescriptor.Nullable nullable,
+                                    String operand, SemanticOp op) {
+        String representation = stagedRepresentation(nullable);
+        String slot = newAlloca("%struct.deal_data", "nullishdatum");
+        String baseLabel = newLabel("datum.base");
+        String nullLabel = newLabel("datum.null");
+        String undefinedLabel = newLabel("datum.undefined");
+        String joinLabel = newLabel("datum.join");
+        if (representation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
+            String isNull = emitTemporary(op,
+                "call i32 @deal_value_is_null(i8* " + operand + ")");
+            String notNull = emitTemporary(op, "icmp eq i32 " + isNull + ", 0");
+            emit("br i1 " + notNull + ", label %" + baseLabel + ", label %"
+                + nullLabel);
+            terminated = true;
+            startSegment(nullLabel);
+            emitNullishDatumArm(slot, "null", joinLabel, op);
+            startSegment(baseLabel);
+            session.referenceRuntimeEntry("deal_value_is_undefined");
+            String isUndefined = emitTemporary(op,
+                "call i32 @deal_value_is_undefined(i8* " + operand + ")");
+            String notUndefined = emitTemporary(op,
+                "icmp eq i32 " + isUndefined + ", 0");
+            String baseDatumLabel = newLabel("datum.value");
+            String baseArm = nullable.inner() instanceof RuntimeDescriptor.Undefined
+                ? undefinedLabel : baseDatumLabel;
+            emit("br i1 " + notUndefined + ", label %" + baseArm
+                + ", label %" + undefinedLabel);
+            terminated = true;
+            startSegment(undefinedLabel);
+            emitNullishDatumArm(slot, "undefined", joinLabel, op);
+            startSegment(baseDatumLabel);
+            String baseDatum = emitDatum(nullable.inner(),
+                castBase(nullable.inner(), operand, op), op);
+            emit("store %struct.deal_data " + baseDatum
+                + ", %struct.deal_data* " + slot);
+            terminate("br label %" + joinLabel);
+            startSegment(joinLabel);
+            return emitTemporary(op, "load %struct.deal_data, "
+                + "%struct.deal_data* " + slot);
+        }
+        String tag = emitTemporary(op, "extractvalue " + representation + " "
+            + operand + ", 0");
+        emit("switch i32 " + tag + ", label %" + baseLabel + " [ i32 "
+            + LlvmTypeMapper.NULLISH_NULL + ", label %" + nullLabel + " i32 "
+            + LlvmTypeMapper.NULLISH_UNDEFINED + ", label %" + undefinedLabel
+            + " ]");
+        terminated = true;
+        startSegment(nullLabel);
+        emitNullishDatumArm(slot, "null", joinLabel, op);
+        startSegment(undefinedLabel);
+        emitNullishDatumArm(slot, "undefined", joinLabel, op);
+        startSegment(baseLabel);
+        String base = emitTemporary(op, "extractvalue " + representation + " "
+            + operand + ", 1");
+        String datum = emitDatum(nullable.inner(), base, op);
+        emit("store %struct.deal_data " + datum + ", %struct.deal_data* " + slot);
+        terminate("br label %" + joinLabel);
+        startSegment(joinLabel);
+        return emitTemporary(op, "load %struct.deal_data, %struct.deal_data* "
+            + slot);
+    }
+
+    /** Stores one nullish datum arm and jumps to the join. */
+    private void emitNullishDatumArm(String slot, String kind, String joinLabel,
+                                     SemanticOp op) {
+        int tag = kind.equals("null") ? LlvmTypeMapper.DATA_NULL
+            : LlvmTypeMapper.DATA_UNDEFINED;
+        emit("store %struct.deal_data "
+            + datumLiteral(tag, "double 0.0", "i8* null") + ", "
+            + "%struct.deal_data* " + slot);
+        terminate("br label %" + joinLabel);
+    }
+
+    // =========================================================================
+    // Assertions (the one rendered runtime check of this stage)
+    // =========================================================================
+
+    /**
+     * The typed-boundary check ({@code llvm-native-runtime-value-model} R4/R5).
+     * A boundary whose static operand type already proves the declared
+     * descriptor renders nothing; the {@code as T} assertion renders the
+     * descriptor-driven check and its declared E8001 arm, so a mismatch fails
+     * at the assertion's own origin with the arm's own tuple and no coercion,
+     * construction or identity change. The container/class/host boundaries of
+     * the later stages extend the same input construction.
+     */
+    private void emitBoundary(SemanticOp op) {
+        KindPayload.BoundaryPayload payload =
+            (KindPayload.BoundaryPayload) op.payload();
+        if (!(op.result() instanceof ValueId)) {
+            // A boundary without a result is a checked position whose value
+            // keeps its own static type: a statically proven one is elided
+            // and every other one is rejected by the classifier.
+            return;
+        }
+        ValueId result = (ValueId) op.result();
+        RuntimeDescriptor declared = payload.descriptor();
+        RuntimeDescriptor actual = descriptorOfValue(payload.input());
+        String representation = LlvmTypeMapper.representationOf(declared)
+            .orElseThrow(() -> new IllegalStateException(
+                "the checked type '" + declared.canonicalSpecText()
+                    + "' has no staged representation"));
+        if (LlvmTypeMapper.convertible(declared, actual)) {
+            // The operand's own static type already proves the declared
+            // descriptor, so the boundary is the identity of that value.
+            storeResult(op, representation,
+                convert(payload.input(), actual, declared, op));
+            return;
+        }
+        if (!(declared instanceof RuntimeDescriptor.Number
+                || declared instanceof RuntimeDescriptor.Boolean
+                || declared instanceof RuntimeDescriptor.String
+                || declared instanceof RuntimeDescriptor.Class)) {
+            throw new IllegalStateException("the assertion to '"
+                + declared.canonicalSpecText() + "' has no staged check");
+        }
+        String checked = checkValue(op, payload.input(), actual, declared);
+        storeResult(op, representation, checked);
+    }
+
+    /**
+     * The checked value of one assertion, through the one descriptor-driven
+     * {@code deal_check_value} entry (R4). The published prototype passes its
+     * forty-eight-byte {@code deal_check_input} by value, so the emitted call
+     * names the record's C ABI spelling ({@code byval}); the eight-byte
+     * {@code deal_outcome} it returns fits one eightbyte and crosses in
+     * registers. On success the checked value is the input's own datum, so
+     * identity is preserved and nothing is coerced, constructed or retagged.
+     */
+    private String checkValue(SemanticOp op, ValueId input,
+                              RuntimeDescriptor actual,
+                              RuntimeDescriptor declared) {
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_check_value");
+        String datum = checkInput(op, input, actual);
+        String atom = emitTemporary(op, "call"
+            + " %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(
+                declared.canonicalSpecText())) + ")");
+        String context = checkContext(op);
+        String outcome = emitTemporary(op, "call %struct.deal_outcome"
+            + " @deal_check_value(%struct.deal_descriptor* " + atom
+            + ", %struct.deal_check_input* byval(%struct.deal_check_input) "
+            + datum + ", i32 0, %struct.deal_check_context* " + context + ")");
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome "
+            + outcome + ", 0");
+        String failed = emitTemporary(op, "icmp ne i8* " + error + ", null");
+        String failureLabel = newLabel("checkfail");
+        String proceedLabel = newLabel("checkok");
+        emit("br i1 " + failed + ", label %" + failureLabel + ", label %"
+            + proceedLabel);
+        terminated = true;
+        startSegment(failureLabel);
+        routeFailure(error);
+        startSegment(proceedLabel);
+        return checkedValue(op, declared, datum);
+    }
+
+    /** The declared-typed value of one checked datum. */
+    private String checkedValue(SemanticOp op, RuntimeDescriptor declared,
+                                String inputSlot) {
+        String input = loadQuiet("%struct.deal_check_input", inputSlot);
+        String datum = emitTemporary(op, "extractvalue "
+            + "%struct.deal_check_input " + input + ", 2");
+        return switch (declared) {
+            case RuntimeDescriptor.Number _ -> emitTemporary(op,
+                "extractvalue " + LlvmTypeMapper.DATA + " " + datum + ", 2");
+            case RuntimeDescriptor.Boolean _ -> {
+                String number = emitTemporary(op, "extractvalue "
+                    + LlvmTypeMapper.DATA + " " + datum + ", 2");
+                yield emitTemporary(op, "fcmp une double " + number + ", 0.0");
+            }
+            case RuntimeDescriptor.String _ -> {
+                String reference = emitTemporary(op, "extractvalue "
+                    + LlvmTypeMapper.DATA + " " + datum + ", 3");
+                yield emitTemporary(op, "bitcast i8* " + reference + " to "
+                    + LlvmTypeMapper.STRING);
+            }
+            case RuntimeDescriptor.Class _ -> {
+                String reference = emitTemporary(op, "extractvalue "
+                    + LlvmTypeMapper.DATA + " " + datum + ", 3");
+                yield emitTemporary(op, "bitcast i8* " + reference + " to "
+                    + LlvmTypeMapper.ERROR_POINTER);
+            }
+            default -> throw new IllegalStateException("the checked type '"
+                + declared.canonicalSpecText() + "' has no staged value form");
+        };
+    }
+
+    /**
+     * Stores the datum of one checked operand into the scratch slot the
+     * {@code byval} check input copies from.
+     */
+    private String checkInput(SemanticOp op, ValueId input,
+                              RuntimeDescriptor actual) {
+        String datum;
+        if (LlvmTypeMapper.isStaticSingleton(actual)) {
+            datum = emitDatum(actual, "", op);
+        } else {
+            datum = emitDatum(actual, loadRepresentation(input, actual, op), op);
+        }
+        String slot = newAlloca("%struct.deal_check_input", "checked");
+        String record = emitTemporary(op, "insertvalue"
+            + " %struct.deal_check_input zeroinitializer, "
+            + LlvmTypeMapper.DATA + " " + datum + ", 2");
+        emit("store %struct.deal_check_input " + record
+            + ", %struct.deal_check_input* " + slot);
+        return slot;
+    }
+
+    /** One unnamed load of the current op group. */
+    private String loadQuiet(String type, String slot) {
+        String name = "%load" + (loadCounter++);
+        emit(name + " = load " + type + ", " + type + "* " + slot);
+        return name;
+    }
+
+    /** The {@code deal_check_context} of one checked boundary. */
+    private String checkContext(SemanticOp op) {
+        String slot = newAlloca("%struct.deal_check_context", "checkcontext");
+        emit("store %struct.deal_check_context { %struct.deal_origin* "
+            + originValue(op) + ", i32 0 },"
+            + " %struct.deal_check_context* " + slot);
+        return slot;
+    }
+
+    // =========================================================================
+    // Loads, stores, roots and singletons
+    // =========================================================================
+
+    private static String stagedRepresentation(RuntimeDescriptor descriptor) {
+        return LlvmTypeMapper.representationOf(descriptor).orElseThrow(() ->
+            new IllegalStateException("the descriptor '"
+                + descriptor.canonicalSpecText()
+                + "' has no staged representation"));
+    }
+
+    private static String resultRepresentationOf(RuntimeDescriptor descriptor) {
+        return stagedRepresentation(descriptor);
+    }
+
+    private Optional<String> resultRepresentation(SemanticOp op) {
+        if (!(op.result() instanceof ValueId)) {
+            return Optional.empty();
+        }
+        return session.valueRepresentation(unit, (ValueId) op.result());
+    }
+
+    /** The recorded static descriptor of one produced value. */
+    private RuntimeDescriptor descriptorOfValue(ValueId value) {
+        SemanticOp producer = session.producerOf(value);
+        if (producer == null) {
+            throw new IllegalStateException("the value " + value
+                + " has no producing op in the lowered project");
+        }
+        if (!(producer.resultType() instanceof RuntimeDescriptor descriptor)) {
+            throw new IllegalStateException("the value " + value
+                + " carries no descriptor");
+        }
+        return descriptor;
+    }
+
+    private String valueSlot(ValueId value, String type) {
+        String slot = valueSlots.computeIfAbsent(value.id(), id -> {
+            String name = session.slot(value);
+            allocas.add(name + " = alloca " + type);
+            return name;
+        });
+        String bound = valueSlotTypes.putIfAbsent(value.id(), type);
+        if (bound != null && !bound.equals(type)) {
+            throw new IllegalStateException("the value " + value
+                + " is used as both " + bound + " and " + type);
+        }
+        return slot;
+    }
+
+    private String bindingSlot(BindingId binding, long generation, String type) {
+        if (session.moduleScoped(unit, binding, generation)) {
+            return "@" + session.data.globalSlot(binding, generation, type);
+        }
+        String key = binding.id() + "_" + generation;
+        String slot = bindingSlots.computeIfAbsent(key, ignored -> {
+            String name = session.cell(binding, generation);
+            allocas.add(name + " = alloca " + type);
+            return name;
+        });
+        String bound = bindingSlotTypes.putIfAbsent(key, type);
+        if (bound != null && !bound.equals(type)) {
+            throw new IllegalStateException("the binding " + binding
+                + " is used as both " + bound + " and " + type);
+        }
+        return slot;
+    }
+
+    private void storeResult(SemanticOp op, String type, String value) {
+        if (!(op.result() instanceof ValueId result)) {
+            return;
+        }
+        String slot = valueSlot(result, type);
+        emit("store " + type + " " + value + ", " + type + "* " + slot);
+        rootSlotWrite(descriptorOfValue(result), slot, value, op);
+    }
+
+    /** Loads one produced value from its SSA slot. */
+    private String loadValue(ValueId value, String type, SemanticOp op) {
+        return load(op, type, valueSlot(value, type));
+    }
+
+    private String load(SemanticOp op, String type, String slot) {
+        String name = "%load" + (loadCounter++);
+        emit(name + " = load " + type + ", " + type + "* " + slot
+            + (op == null ? "" : debugAttachment(op)));
+        return name;
+    }
+
+    /** One unnamed temporary instruction of the current op group. */
+    private String emitTemporary(SemanticOp op, String instruction) {
+        String name = "%tmp" + (loadCounter++);
+        emit(name + " = " + instruction + (op == null ? "" : debugAttachment(op)));
+        return name;
+    }
+
+    /** Allocates one entry-block scratch slot. */
+    private String newAlloca(String type, String prefix) {
+        String name = "%" + prefix + (loadCounter++);
+        allocas.add(name + " = alloca " + type);
+        return name;
+    }
+
+    // =========================================================================
+    // Root frame discipline (M4)
+    // =========================================================================
+
+    /** Reserves the root-frame enter line so the slot count can be patched. */
+    private void enterRootFrame() {
+        session.referenceRuntimeEntry("deal_root_frame_enter");
+        rootEnterIndex = entryInit.size();
+        entryInit.add("");
+    }
+
+    /** Fills the reserved enter line with the activation's static slot count. */
+    private void patchRootEnter() {
+        if (rootEnterIndex >= 0) {
+            entryInit.set(rootEnterIndex, LlvmIrPrinter.indent(1)
+                + "call void @deal_root_frame_enter(i32 " + rootSlotCount + ")");
+        }
+    }
+
+    private int rootSlot(String slot) {
+        return rootSlots.computeIfAbsent(slot, ignored -> rootSlotCount++);
+    }
+
+    private void rootBindingSlot(BindingId binding, long generation,
+                                 RuntimeDescriptor descriptor, String slot,
+                                 SemanticOp op) {
+        rootSlotWrite(descriptor, slot, null, op);
+    }
+
+    /** Roots one managed slot (M4), keyed on the slot's declared descriptor. */
+    private void rootSlotWrite(RuntimeDescriptor descriptor, String slot,
+                               String operand, SemanticOp op) {
+        if (!LlvmTypeMapper.isManagedValue(descriptor)) {
+            return;
+        }
+        int index = rootSlot(slot);
+        session.referenceRuntimeEntry("deal_root_frame_write");
+        if (descriptor instanceof RuntimeDescriptor.Unknown) {
+            session.referenceRuntimeEntry("deal_root_frame_write_data");
+            emit("call void @deal_root_frame_write_data(i32 " + index
+                + ", " + LlvmTypeMapper.DATA + "* " + slot + ")"
+                + (op == null ? "" : debugAttachment(op)));
+            return;
+        }
+        String representation = stagedRepresentation(descriptor);
+        String pointer = operand == null ? load(op, representation, slot)
+            : operand;
+        if (descriptor instanceof RuntimeDescriptor.String
+                || descriptor instanceof RuntimeDescriptor.Class) {
+            pointer = emitTemporary(op, "bitcast " + representation + " "
+                + pointer + " to i8*");
+        } else {
+            pointer = emitRootableReference(pointer, op);
+        }
+        emit("call void @deal_root_frame_write(i32 " + index + ", i8* "
+            + pointer + ")" + (op == null ? "" : debugAttachment(op)));
+    }
+
+    /**
+     * The rootable referent of one reference-nullish operand: the pointer
+     * itself, or C NULL when it is the null or undefined singleton — a
+     * branchless selection, so no nullish singleton is ever traced as a heap
+     * address (M4/M5).
+     */
+    private String emitRootableReference(String pointer, SemanticOp op) {
+        session.referenceRuntimeEntry("deal_value_is_null");
+        session.referenceRuntimeEntry("deal_value_is_undefined");
+        String isNull = emitTemporary(op,
+            "call i32 @deal_value_is_null(i8* " + pointer + ")");
+        String isUndefined = emitTemporary(op,
+            "call i32 @deal_value_is_undefined(i8* " + pointer + ")");
+        String nullish = emitTemporary(op, "or i32 " + isNull + ", "
+            + isUndefined);
+        String managed = emitTemporary(op, "icmp eq i32 " + nullish + ", 0");
+        return emitTemporary(op, "select i1 " + managed + ", i8* " + pointer
+            + ", i8* null");
+    }
+
+    /**
+     * The same root write for one activation's entry block: a parameter's
+     * managed slot is written before any user op runs (M4).
+     */
+    private void rootEntrySlot(RuntimeDescriptor descriptor, String slot,
+                               String parameter) {
+        if (!LlvmTypeMapper.isManagedValue(descriptor)) {
+            return;
+        }
+        int index = rootSlot(slot);
+        session.referenceRuntimeEntry("deal_root_frame_write");
+        if (descriptor instanceof RuntimeDescriptor.Unknown) {
+            session.referenceRuntimeEntry("deal_root_frame_write_data");
+            entryInit.add(LlvmIrPrinter.indent(1)
+                + "call void @deal_root_frame_write_data(i32 " + index + ", "
+                + LlvmTypeMapper.DATA + "* " + slot + ")");
+            return;
+        }
+        String pointer = parameter;
+        if (descriptor instanceof RuntimeDescriptor.String
+                || descriptor instanceof RuntimeDescriptor.Class) {
+            pointer = "%rootcast" + (loadCounter++);
+            entryInit.add(LlvmIrPrinter.indent(1) + pointer + " = bitcast "
+                + stagedRepresentation(descriptor) + " " + parameter + " to i8*");
+        } else {
+            session.referenceRuntimeEntry("deal_value_is_null");
+            session.referenceRuntimeEntry("deal_value_is_undefined");
+            String isNull = "%rootnull" + (loadCounter++);
+            String isUndefined = "%rootundefined" + (loadCounter++);
+            String nullish = "%rootnullish" + (loadCounter++);
+            String managed = "%rootmanaged" + (loadCounter++);
+            String select = "%rootselect" + (loadCounter++);
+            entryInit.add(LlvmIrPrinter.indent(1) + isNull
+                + " = call i32 @deal_value_is_null(i8* " + parameter + ")");
+            entryInit.add(LlvmIrPrinter.indent(1) + isUndefined
+                + " = call i32 @deal_value_is_undefined(i8* " + parameter + ")");
+            entryInit.add(LlvmIrPrinter.indent(1) + nullish + " = or i32 "
+                + isNull + ", " + isUndefined);
+            entryInit.add(LlvmIrPrinter.indent(1) + managed + " = icmp eq i32 "
+                + nullish + ", 0");
+            entryInit.add(LlvmIrPrinter.indent(1) + select + " = select i1 "
+                + managed + ", i8* " + parameter + ", i8* null");
+            pointer = select;
+        }
+        entryInit.add(LlvmIrPrinter.indent(1)
+            + "call void @deal_root_frame_write(i32 " + index + ", i8* "
+            + pointer + ")");
+    }
+
+    /** The distinct null singleton pointer ({@code null} is never C NULL). */
+    private String loadSingleton(boolean nullish, SemanticOp op) {
+        String global = nullish ? "deal_null_singleton"
+            : "deal_undefined_singleton";
+        session.referenceExternalGlobal(global);
+        return emitTemporary(op, "load i8*, i8** @" + global);
+    }
+
+    // =========================================================================
+    // Failure routing (C4)
+    // =========================================================================
+
+    /**
+     * Transfers one carried Error to the nearest open failure route, or out of
+     * the activation. A handler keeps the current frame (its materialized
+     * Error already snapshotted it); leaving the activation restores the
+     * caller's frame and root depth first.
+     */
+    private void routeFailure(String error) {
+        FailureHandler handler = handlers.peek();
+        if (handler == null) {
+            emitEpilogue();
+            terminateFailure(error);
+            return;
+        }
+        emit("store i8* " + error + ", i8** " + handler.pendingSlot());
+        terminate("br label %" + handler.label());
+    }
+
+    /**
+     * Tests one rendered check's carried Error and routes the failure: the
+     * C4 explicit test/branch, with {@code null} meaning success and the
+     * value field never read on failure. The success path stays open as the
+     * current segment.
+     */
+    private void branchOnFailure(SemanticOp op, String error, String prefix) {
+        String failed = emitTemporary(op, "icmp ne i8* " + error + ", null");
+        String failureLabel = newLabel(prefix + "fail");
+        String proceedLabel = newLabel(prefix + "ok");
+        emit("br i1 " + failed + ", label %" + failureLabel + ", label %"
+            + proceedLabel);
+        terminated = true;
+        startSegment(failureLabel);
+        routeFailure(error);
+        startSegment(proceedLabel);
+    }
+
+    // =========================================================================
+    // Structured control flow
+    // =========================================================================
 
     private void emitModuleImport(SemanticOp op) {
         KindPayload.ModuleImportPayload payload =
@@ -528,16 +1708,7 @@ final class LlvmFunctionEmitter {
         // A failed initialization propagates the carried Error unchanged.
         emit("%importerr" + op.opId().id() + " = extractvalue " + outcome + " "
             + result + ", 0");
-        String fail = newLabel("importfail");
-        String proceed = newLabel("importok");
-        emit("br i1 " + (emitTemporary(null, "icmp ne i8* %importerr"
-            + op.opId().id() + ", null")) + ", label %" + fail + ", label %"
-            + proceed);
-        terminated = true;
-        startSegment(fail);
-        emitEpilogue();
-        terminateFailure("%importerr" + op.opId().id());
-        startSegment(proceed);
+        branchOnFailure(op, "%importerr" + op.opId().id(), "import");
         for (BindingId alias : payload.aliasCells()) {
             String representation = session.bindingRepresentation(unit, alias, 0)
                 .orElseThrow(() -> new IllegalStateException(
@@ -616,8 +1787,9 @@ final class LlvmFunctionEmitter {
                 + op.operands().size() + " operands for " + parameterTypes.size()
                 + " parameters");
         }
-        // The owned parameter and return boundaries are elided exactly because
-        // the static operand types already equal their declared descriptors.
+        // The owned parameter and return boundaries render as their static
+        // type proofs exactly because the lowered static type already proves
+        // the declared descriptor (the classifier's rule).
         for (OpId boundary : payload.parameterBoundaryOpIds()) {
             recordOrigin(unitOp(boundary));
         }
@@ -630,17 +1802,14 @@ final class LlvmFunctionEmitter {
                 arguments.append(", ");
             }
             RuntimeDescriptor declared = parameterTypes.get(index);
+            ValueId argument = op.operands().get(index);
+            RuntimeDescriptor actual = op.operandTypes().get(index);
+            String value = convert(argument, actual, declared, op);
             String abi = LlvmTypeMapper.abiParameterType(declared);
-            String value = loadValue(op.operands().get(index),
-                declared instanceof RuntimeDescriptor.Boolean
-                    ? LlvmTypeMapper.BOOLEAN_SSA : abi, op);
             if (declared instanceof RuntimeDescriptor.Boolean) {
-                String widened = emitTemporary(null,
-                    "zext i1 " + value + " to " + abi);
-                arguments.append(abi).append(' ').append(widened);
-            } else {
-                arguments.append(abi).append(' ').append(value);
+                value = emitTemporary(op, "zext i1 " + value + " to " + abi);
             }
+            arguments.append(abi).append(' ').append(value);
         }
         String outcome = LlvmTypeMapper.outcomeType(
             calleeFunction.descriptor().returnType());
@@ -649,16 +1818,7 @@ final class LlvmFunctionEmitter {
             + arguments + ")" + debugAttachment(op));
         emit("%callerr" + op.opId().id() + " = extractvalue " + outcome + " "
             + result + ", 0");
-        String fail = newLabel("callfail");
-        String proceed = newLabel("callok");
-        emit("br i1 " + emitTemporary(null, "icmp ne i8* %callerr"
-            + op.opId().id() + ", null") + ", label %" + fail + ", label %"
-            + proceed);
-        terminated = true;
-        startSegment(fail);
-        emitEpilogue();
-        terminateFailure("%callerr" + op.opId().id());
-        startSegment(proceed);
+        branchOnFailure(op, "%callerr" + op.opId().id(), "call");
         RuntimeDescriptor returned = calleeFunction.descriptor().returnType();
         if (LlvmTypeMapper.isStaticSingleton(returned)
                 || returned instanceof RuntimeDescriptor.Void) {
@@ -669,11 +1829,60 @@ final class LlvmFunctionEmitter {
         String type = resultRepresentation(op).orElseThrow(() ->
             new IllegalStateException("the call result "
                 + returned.canonicalSpecText() + " carries no representation"));
-        if (returned instanceof RuntimeDescriptor.Boolean) {
-            extracted = emitTemporary(op, "trunc i8 " + extracted
-                + " to " + LlvmTypeMapper.BOOLEAN_SSA);
+        storeResult(op, type, narrowFromAbi(returned, extracted, op));
+    }
+
+    /** The C4 outcome value-slot type of one declared result descriptor. */
+    private static String outcomeSlotType(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return LlvmTypeMapper.BOOLEAN_ABI;
         }
-        storeResult(op, type, extracted);
+        String representation = stagedRepresentation(descriptor);
+        if (representation.equals(LlvmTypeMapper.STRING)
+                || representation.equals(LlvmTypeMapper.ERROR_POINTER)) {
+            return "i8*";
+        }
+        return representation;
+    }
+
+    /**
+     * The ABI spelling of one value in a C4 outcome slot: the boolean 0/1
+     * byte, the one pointer slot of every managed representation, and the
+     * value itself for a scalar or a persistent datum.
+     */
+    private String abiValue(RuntimeDescriptor descriptor, String value,
+                            SemanticOp op) {
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return emitTemporary(op, "zext i1 " + value + " to "
+                + LlvmTypeMapper.BOOLEAN_ABI);
+        }
+        String representation = stagedRepresentation(descriptor);
+        if (representation.equals(LlvmTypeMapper.STRING)
+                || representation.equals(LlvmTypeMapper.ERROR_POINTER)) {
+            return emitTemporary(op, "bitcast " + representation + " " + value
+                + " to i8*");
+        }
+        return value;
+    }
+
+    /** The SSA form of one returned ABI payload (C3's boolean byte). */
+    private String narrowFromAbi(RuntimeDescriptor descriptor, String value,
+                                 SemanticOp op) {
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return emitTemporary(op, "trunc i8 " + value + " to "
+                + LlvmTypeMapper.BOOLEAN_SSA);
+        }
+        if (descriptor instanceof RuntimeDescriptor.String
+                || descriptor instanceof RuntimeDescriptor.Class
+                || descriptor instanceof RuntimeDescriptor.Nullable) {
+            String representation = stagedRepresentation(descriptor);
+            if (representation.equals("i8*")) {
+                return value;
+            }
+            return emitTemporary(op, "bitcast i8* " + value + " to "
+                + representation);
+        }
+        return value;
     }
 
     /** The lowered function one static call resolves to. */
@@ -715,21 +1924,45 @@ final class LlvmFunctionEmitter {
         throw new IllegalStateException("the op " + id + " is not recorded");
     }
 
+    /**
+     * {@code BRANCH} (C6, the shared {@code BranchPayload} traversal): the
+     * condition is evaluated once, then the recorded selected block runs.
+     * For the logical selectors the selected block holds the right operand and
+     * runs only when the left operand does not decide the result — AND: left
+     * false decides {@code false} and skips the block, so the block is entered
+     * on true; OR: left true decides {@code true} and skips the block, so the
+     * block is entered on false. The result slot keeps the left operand's own
+     * value on the skipped path, and the block overwrites it with the right
+     * operand's value on the evaluated path.
+     */
     private void emitBranch(SemanticOp op) {
         KindPayload.BranchPayload payload =
             (KindPayload.BranchPayload) op.payload();
         String condition = loadValue(payload.condition(),
             LlvmTypeMapper.BOOLEAN_SSA, op);
-        if (payload.selector() == deal.semantic.ir.ControlSelector.LOGICAL_AND
-                || payload.selector() == deal.semantic.ir.ControlSelector.LOGICAL_OR) {
+        boolean logical = payload.selector()
+            == deal.semantic.ir.ControlSelector.LOGICAL_AND
+            || payload.selector() == deal.semantic.ir.ControlSelector.LOGICAL_OR;
+        if (logical) {
             storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, condition);
         }
         String join = newLabel("join");
         String selected = blockLabel(payload.selectedBlock());
         String alternate = payload.alternateBlock() == null
             ? join : blockLabel(payload.alternateBlock());
-        terminate("br i1 " + condition + ", label %" + selected + ", label %"
-            + alternate);
+        boolean enterOnTrue = payload.selector()
+            != deal.semantic.ir.ControlSelector.LOGICAL_OR;
+        Optional<Boolean> decided = constantBoolean(payload.condition());
+        if (decided.isPresent()) {
+            // A literal condition decides the recorded traversal here, so the
+            // untaken child block gains no CFG predecessor.
+            terminate("br label %"
+                + (decided.get() == enterOnTrue ? selected : alternate));
+        } else {
+            terminate("br i1 " + condition + ", label %"
+                + (enterOnTrue ? selected : alternate) + ", label %"
+                + (enterOnTrue ? alternate : selected));
+        }
         emitBlock(payload.selectedBlock(), join);
         if (payload.alternateBlock() != null) {
             emitBlock(payload.alternateBlock(), join);
@@ -751,12 +1984,71 @@ final class LlvmFunctionEmitter {
         String condition = loadValue(payload.condition(),
             LlvmTypeMapper.BOOLEAN_SSA, op);
         String body = blockLabel(payload.bodyBlock());
-        terminate("br i1 " + condition + ", label %" + body + ", label %"
-            + exit);
-        loops.push(new LoopTargets(op.opId().id(), header, exit));
+        Optional<Boolean> decided = constantBoolean(payload.condition());
+        if (decided.isPresent()) {
+            // The recorded condition is a boolean literal, so the recorded
+            // traversal is decided here: the untaken edge is not published as
+            // a CFG predecessor.
+            terminate("br label %" + (decided.get() ? body : exit));
+        } else {
+            terminate("br i1 " + condition + ", label %" + body + ", label %"
+                + exit);
+        }
+        String update = payload.updateBlock() == null
+            ? null : blockLabel(payload.updateBlock());
+        String next = update == null ? header : update;
+        loops.push(new LoopTargets(op.opId().id(), header, next, exit));
         emitBlock(payload.bodyBlock(), header);
+        if (update != null) {
+            // The recorded update block runs on the fall-through path and on
+            // the CONTINUE transfer, so every iteration runs it exactly once.
+            emitBlock(payload.updateBlock(), check);
+        }
         loops.pop();
         startSegment(exit);
+    }
+
+    /**
+     * {@code TRY_CATCH} (C4): the protected block runs with this handler on
+     * the failure-route stack; the handler binds the identical carried
+     * {@code deal_error*} as the boxed {@code unknown} datum of the catch
+     * binding and then enters the catch block. A successful protected block
+     * skips the handler entirely.
+     */
+    private void emitTryCatch(SemanticOp op) {
+        KindPayload.TryCatchPayload payload =
+            (KindPayload.TryCatchPayload) op.payload();
+        String handlerLabel = newLabel("catch");
+        String join = newLabel("tryjoin");
+        String pending = newAlloca("i8*", "pending");
+        handlers.push(new FailureHandler(handlerLabel, pending));
+        emitBlock(payload.tryBlock(), join);
+        handlers.pop();
+        startSegment(handlerLabel);
+        String error = load(op, "i8*", pending);
+        BindingId binding = payload.catchBinding();
+        String representation = LlvmTypeMapper.DATA;
+        String slot = bindingSlot(binding, 0, representation);
+        String datum = emitTemporary(op, "insertvalue %struct.deal_data"
+            + " { i32 " + LlvmTypeMapper.DATA_ERROR + ", i32 0, double 0.0,"
+            + " i8* null }, i8* " + error + ", 3");
+        emit("store %struct.deal_data " + datum + ", %struct.deal_data* "
+            + slot);
+        rootBindingSlot(binding, 0, RuntimeDescriptor.Unknown.INSTANCE, slot, op);
+        emitBlock(payload.catchBlock(), join);
+        startSegment(join);
+    }
+
+    /** {@code THROW}: transfers the thrown instance unchanged (C4). */
+    private void emitThrow(SemanticOp op) {
+        KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
+        String instance = loadRepresentation(payload.errorValue(),
+            descriptorOfValue(payload.errorValue()), op);
+        String error = emitTemporary(op, "bitcast " + LlvmTypeMapper.ERROR_POINTER
+            + " " + instance + " to i8*");
+        routeFailure(error);
+        // THROW never completes: the transfer already terminated this block,
+        // so no fall-through exit and no unreachable tail is emitted.
     }
 
     private void emitBreakContinue(SemanticOp op, boolean isBreak) {
@@ -766,7 +2058,7 @@ final class LlvmFunctionEmitter {
         for (LoopTargets targets : loops) {
             if (targets.loopId() == loopId) {
                 terminate("br label %" + (isBreak
-                    ? targets.exit() : targets.header()));
+                    ? targets.exit() : targets.next()));
                 return;
             }
         }
@@ -788,89 +2080,15 @@ final class LlvmFunctionEmitter {
             terminate("ret " + outcome + " { i8* null }");
             return;
         }
-        String representation = resultRepresentationOf(result);
-        String value = loadValue(payload.value(), representation, op);
-        String abi = result instanceof RuntimeDescriptor.Boolean
-            ? LlvmTypeMapper.BOOLEAN_ABI : representation;
-        if (result instanceof RuntimeDescriptor.Boolean) {
-            value = emitTemporary(null, "zext i1 " + value + " to " + abi);
-        }
+        RuntimeDescriptor actual = descriptorOfValue(payload.value());
+        String value = abiValue(result, convert(payload.value(), actual, result, op),
+            op);
+        String abi = outcomeSlotType(result);
         emitEpilogue();
         String aggregate = "%return" + op.opId().id();
         emit(aggregate + " = insertvalue " + outcome
             + " zeroinitializer, " + abi + " " + value + ", 1");
         terminate("ret " + outcome + " " + aggregate);
-    }
-
-    // =========================================================================
-    // Values, slots and temporaries
-    // =========================================================================
-
-    private static String resultRepresentationOf(RuntimeDescriptor descriptor) {
-        return LlvmTypeMapper.representationOf(descriptor).orElseThrow(() ->
-            new IllegalStateException("the descriptor "
-                + descriptor.canonicalSpecText() + " has no native"
-                + " representation"));
-    }
-
-    private Optional<String> resultRepresentation(SemanticOp op) {
-        if (!(op.result() instanceof ValueId)) {
-            return Optional.empty();
-        }
-        return session.valueRepresentation(unit, (ValueId) op.result());
-    }
-
-    private String representationOf(ValueId value) {
-        return session.valueRepresentation(unit, value).orElseThrow(() ->
-            new IllegalStateException("the value " + value
-                + " carries no native representation"));
-    }
-
-    private String valueSlot(ValueId value, String type) {
-        return valueSlots.computeIfAbsent(value.id(), id -> {
-            String name = session.slot(value);
-            allocas.add(name + " = alloca " + type);
-            return name;
-        });
-    }
-
-    private String bindingSlot(BindingId binding, long generation, String type) {
-        if (session.moduleScoped(unit, binding, generation)) {
-            return "@" + session.data.globalSlot(binding, generation, type);
-        }
-        String key = binding.id() + "_" + generation;
-        return bindingSlots.computeIfAbsent(key, ignored -> {
-            String name = session.cell(binding, generation);
-            allocas.add(name + " = alloca " + type);
-            return name;
-        });
-    }
-
-    private void storeResult(SemanticOp op, String type, String value) {
-        if (!(op.result() instanceof ValueId result)) {
-            return;
-        }
-        emit("store " + type + " " + value + ", " + type + "* "
-            + valueSlot(result, type));
-    }
-
-    /** Loads one produced value from its SSA slot. */
-    private String loadValue(ValueId value, String type, SemanticOp op) {
-        return load(op, type, valueSlot(value, type));
-    }
-
-    private String load(SemanticOp op, String type, String slot) {
-        String name = "%load" + (loadCounter++);
-        emit(name + " = load " + type + ", " + type + "* " + slot
-            + (op == null ? "" : debugAttachment(op)));
-        return name;
-    }
-
-    /** One unnamed temporary instruction of the current op group. */
-    private String emitTemporary(SemanticOp op, String instruction) {
-        String name = "%tmp" + (loadCounter++);
-        emit(name + " = " + instruction + (op == null ? "" : debugAttachment(op)));
-        return name;
     }
 
     // =========================================================================
@@ -957,10 +2175,6 @@ final class LlvmFunctionEmitter {
         }
         out.append("}\n");
         return out.toString();
-    }
-
-    private String initializedOperand(long moduleIndex) {
-        return "%statevalue" + moduleIndex;
     }
 
     /**

@@ -218,6 +218,136 @@ public final class LlvmTypeMapper {
     }
 
     /**
+     * The IR name of one published C record type that has a real layout (not
+     * the opaque C3 representations), or empty. This is what the C ABI needs
+     * to know about a record: a record parameter crosses by pointer with
+     * {@code byval} and a record return crosses through a hidden
+     * {@code sret} parameter, exactly as a C compiler lowers the published
+     * prototype.
+     */
+    public static Optional<String> recordTypeOf(String cType) {
+        Objects.requireNonNull(cType, "cType must not be null");
+        String normalized = normalizeCType(cType);
+        String layout = RECORDS.get(normalized);
+        if (layout == null || layout.equals("opaque")) {
+            return Optional.empty();
+        }
+        return Optional.of("%struct." + normalized);
+    }
+
+    /**
+     * Whether one published C record type crosses a call boundary in memory:
+     * the system ABI passes and returns a record larger than two eightbytes
+     * through memory (a hidden {@code sret} pointer for a return, a
+     * {@code byval} pointer for a parameter). Every record this mirror
+     * publishes is either a run of eightbyte-sized fields or a small
+     * aggregate, so the plain size rule of the x86-64 ABI applies.
+     */
+    public static boolean crossesInMemory(String cType) {
+        Objects.requireNonNull(cType, "cType must not be null");
+        String normalized = normalizeCType(cType);
+        String layout = RECORDS.get(normalized);
+        if (layout == null || layout.equals("opaque")) {
+            return false;
+        }
+        return recordSize(normalized) > 16;
+    }
+
+    /** The x86-64 size of one published record, in bytes. */
+    private static int recordSize(String record) {
+        return sizeOfLayout(RECORDS.get(record));
+    }
+
+    /** The size of one IR layout body ({@code { ... }}), field by field. */
+    private static int sizeOfLayout(String layout) {
+        String body = layout.strip();
+        if (!body.startsWith("{") || !body.endsWith("}")) {
+            throw new IllegalStateException(
+                "not a record layout: " + layout);
+        }
+        int offset = 0;
+        int alignment = 1;
+        for (String field : splitFields(body.substring(1,
+                body.length() - 1))) {
+            int fieldAlignment = alignmentOf(field);
+            int fieldSize = sizeOfType(field);
+            alignment = Math.max(alignment, fieldAlignment);
+            offset = roundUp(offset, fieldAlignment) + fieldSize;
+        }
+        return roundUp(offset, alignment);
+    }
+
+    /** The fields of one layout body, split at depth zero. */
+    private static List<String> splitFields(String body) {
+        List<String> fields = new ArrayList<>();
+        int depth = 0;
+        StringBuilder current = new StringBuilder();
+        for (int index = 0; index < body.length(); index++) {
+            char character = body.charAt(index);
+            if (character == '{') {
+                depth++;
+            } else if (character == '}') {
+                depth--;
+            }
+            if (character == ',' && depth == 0) {
+                fields.add(current.toString().strip());
+                current.setLength(0);
+                continue;
+            }
+            current.append(character);
+        }
+        if (!current.toString().isBlank()) {
+            fields.add(current.toString().strip());
+        }
+        return fields;
+    }
+
+    /** The ABI alignment of one IR field type. */
+    private static int alignmentOf(String type) {
+        return switch (type) {
+            case "i1", "i8" -> 1;
+            case "i16" -> 2;
+            case "i32", "float" -> 4;
+            default -> 8;
+        };
+    }
+
+    /** The x86-64 size of one IR field type. */
+    private static int sizeOfType(String type) {
+        String text = type.strip();
+        if (text.startsWith("%struct.")) {
+            String record = text.substring("%struct.".length());
+            String layout = RECORDS.get(record);
+            if (layout == null || layout.equals("opaque")) {
+                throw new IllegalStateException(
+                    "no published layout for the record " + record);
+            }
+            return recordSize(record);
+        }
+        if (text.startsWith("{")) {
+            return sizeOfLayout(text);
+        }
+        return switch (text) {
+            case "i1", "i8" -> 1;
+            case "i16" -> 2;
+            case "i32", "float" -> 4;
+            case "i64", "double" -> 8;
+            default -> {
+                if (text.endsWith("*")) {
+                    yield 8;
+                }
+                throw new IllegalStateException(
+                    "no x86-64 size for the IR type " + type);
+            }
+        };
+    }
+
+    private static int roundUp(int value, int alignment) {
+        int remainder = value % alignment;
+        return remainder == 0 ? value : value + (alignment - remainder);
+    }
+
+    /**
      * The emitted record layout of one published C record type, or empty when
      * the mirror declares none: the parity suite compares it against the
      * published header's field order, so a record's members can never drift
@@ -290,20 +420,121 @@ public final class LlvmTypeMapper {
     /** The representation of a statically resolvable function identity. */
     public static final String CODE_POINTER = "i8*";
 
+    /** The managed {@code string} representation, {@code deal_string*} (C3). */
+    public static final String STRING = "%struct.deal_string*";
+
+    /**
+     * The persistent tagged datum of one {@code unknown} position (C3, R3):
+     * a structural record, never a crossing-scoped {@code deal_value}.
+     */
+    public static final String DATA = "%struct.deal_data";
+
+    /** The managed builtin {@code Error} instance ({@code deal_error*}). */
+    public static final String ERROR_POINTER = "%struct.deal_error*";
+
+    /**
+     * The scalar nullish representation (C3): the closed tag
+     * {@code deal_nullish_tag} followed by the declared base value, so the
+     * stored base never collides with a nullish tag.
+     */
+    public static final String NULLISH_NUMBER = "%struct.deal_nullish_number";
+    public static final String NULLISH_BOOLEAN = "%struct.deal_nullish_boolean";
+
+    /**
+     * The reference nullish representation (C3): the base pointer, or the
+     * distinct admitted null/undefined singleton — one pointer, no presence
+     * metadata.
+     */
+    public static final String REFERENCE_NULLISH = "i8*";
+
+    /** The published {@code deal_nullish_tag} discriminants ({@code deal_rt.h}). */
+    public static final int NULLISH_BASE = 0;
+    public static final int NULLISH_NULL = 1;
+    public static final int NULLISH_UNDEFINED = 2;
+
+    /** The published {@code deal_data_tag} discriminants used by this stage. */
+    public static final int DATA_UNDEFINED = 0;
+    public static final int DATA_NULL = 1;
+    public static final int DATA_BOOLEAN = 2;
+    public static final int DATA_NUMBER = 3;
+    public static final int DATA_STRING = 4;
+    public static final int DATA_ARRAY = 5;
+    public static final int DATA_TABLE = 6;
+    public static final int DATA_CLASS = 7;
+    public static final int DATA_FUNCTION = 8;
+    public static final int DATA_ERROR = 9;
+
     /**
      * The staged representation of one descriptor, or empty when the value
      * carries no representation at all (the {@code null}/{@code undefined}
-     * singletons) or its representation is managed (C3) and therefore outside
-     * the staged subset.
+     * singletons) or its representation is outside the staged set (the
+     * containers and non-builtin classes of the data/class stage).
      */
     public static Optional<String> representationOf(RuntimeDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
         return switch (descriptor) {
             case RuntimeDescriptor.Number ignored -> Optional.of(NUMBER);
             case RuntimeDescriptor.Boolean ignored -> Optional.of(BOOLEAN_SSA);
+            case RuntimeDescriptor.String ignored -> Optional.of(STRING);
+            case RuntimeDescriptor.Unknown ignored -> Optional.of(DATA);
             case RuntimeDescriptor.Func ignored -> Optional.of(CODE_POINTER);
+            case RuntimeDescriptor.Class classType
+                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) ->
+                Optional.of(ERROR_POINTER);
+            case RuntimeDescriptor.Nullable nullable ->
+                nullableRepresentation(nullable);
             default -> Optional.empty();
         };
+    }
+
+    /**
+     * The representation of one nullish descriptor (C3): a reference base is
+     * carried as the base pointer or the admitted singleton, a scalar base as
+     * the {@code {tag, value}} struct, and {@code null|undefined} as the two
+     * distinct singletons (one pointer, never presence metadata).
+     */
+    private static Optional<String> nullableRepresentation(
+            RuntimeDescriptor.Nullable nullable) {
+        RuntimeDescriptor inner = nullable.inner();
+        if (inner instanceof RuntimeDescriptor.Undefined) {
+            return Optional.of(REFERENCE_NULLISH);
+        }
+        if (inner instanceof RuntimeDescriptor.Number) {
+            return Optional.of(NULLISH_NUMBER);
+        }
+        if (inner instanceof RuntimeDescriptor.Boolean) {
+            return Optional.of(NULLISH_BOOLEAN);
+        }
+        if (inner instanceof RuntimeDescriptor.String
+                || inner instanceof RuntimeDescriptor.Func) {
+            return Optional.of(REFERENCE_NULLISH);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Whether one descriptor's representation holds a collector-managed
+     * reference and therefore owns a root-frame slot when it is live across an
+     * allocating call (M4): the {@code string} pointer, the builtin Error
+     * pointer, the persistent {@code unknown} datum and every reference
+     * nullish position (its base is a managed object or a nullish singleton).
+     * A code pointer, a scalar and a scalar-nullish struct never do.
+     */
+    public static boolean isManagedValue(RuntimeDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor must not be null");
+        if (descriptor instanceof RuntimeDescriptor.String
+                || descriptor instanceof RuntimeDescriptor.Unknown) {
+            return true;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Class classType
+                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+            return true;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
+            return representationOf(nullable)
+                .filter(REFERENCE_NULLISH::equals).isPresent();
+        }
+        return false;
     }
 
     /**
@@ -314,6 +545,92 @@ public final class LlvmTypeMapper {
     public static boolean isStaticSingleton(RuntimeDescriptor descriptor) {
         return descriptor instanceof RuntimeDescriptor.Null
             || descriptor instanceof RuntimeDescriptor.Undefined;
+    }
+
+    /**
+     * Whether one recorded actual descriptor has a persistent
+     * {@code deal_data} form (C3/R3): every supported DEAL datum except a
+     * function value. A {@code Function} value is the managed {@code deal_fn*}
+     * closure carrier of C3/C5, which this stage does not construct, so a
+     * function value is never boxed into an {@code unknown} position here —
+     * the staged boundary rejects that fact instead of publishing a datum
+     * whose managed tag would carry an address the collector misclassifies.
+     * A nullish union counts through its base (its own tags name the
+     * singleton arms); {@code void} has no data position at all.
+     */
+    public static boolean hasDatumForm(RuntimeDescriptor actual) {
+        Objects.requireNonNull(actual, "actual must not be null");
+        if (actual instanceof RuntimeDescriptor.Func) {
+            return false;
+        }
+        if (actual instanceof RuntimeDescriptor.Nullable nullable) {
+            return hasDatumForm(nullable.inner());
+        }
+        return !(actual instanceof RuntimeDescriptor.Void);
+    }
+
+    /**
+     * Whether one declared descriptor statically admits a value of the
+     * recorded actual descriptor: equality, a {@code nullish} member, or a
+     * supported data value at an {@code unknown} position. An admitted value
+     * needs no runtime check; the staged boundary renders the identity of the
+     * value (with the representation change of C3), never a guess.
+     */
+    public static boolean admits(RuntimeDescriptor declared,
+                                 RuntimeDescriptor actual) {
+        Objects.requireNonNull(declared, "declared must not be null");
+        Objects.requireNonNull(actual, "actual must not be null");
+        if (declared.equals(actual)) {
+            return true;
+        }
+        if (declared instanceof RuntimeDescriptor.Unknown) {
+            return hasDatumForm(actual)
+                && !(actual instanceof RuntimeDescriptor.Nullable);
+        }
+        if (declared instanceof RuntimeDescriptor.Nullable nullable) {
+            if (actual instanceof RuntimeDescriptor.Null) {
+                return nullable.admitsNull();
+            }
+            if (actual instanceof RuntimeDescriptor.Undefined) {
+                return nullable.admitsUndefined();
+            }
+            return admits(nullable.inner(), actual);
+        }
+        return false;
+    }
+
+    /**
+     * Whether one declared descriptor admits a value of the recorded actual
+     * descriptor without a runtime check: one of the {@link #admits} proofs,
+     * or a pure representation change of C3 — a supported data value (a
+     * nullish union included) boxed into a persistent datum at an
+     * {@code unknown} position, and a singleton or a base value placed into
+     * its nullish representation. No branch of this relation can fail, so a
+     * boundary it covers renders the value's identity and never a check.
+     */
+    public static boolean convertible(RuntimeDescriptor declared,
+                                      RuntimeDescriptor actual) {
+        Objects.requireNonNull(declared, "declared must not be null");
+        Objects.requireNonNull(actual, "actual must not be null");
+        if (admits(declared, actual)) {
+            return true;
+        }
+        if (declared instanceof RuntimeDescriptor.Unknown) {
+            return hasDatumForm(actual);
+        }
+        if (declared instanceof RuntimeDescriptor.Nullable nullable) {
+            if (actual instanceof RuntimeDescriptor.Null) {
+                return nullable.admitsNull();
+            }
+            if (actual instanceof RuntimeDescriptor.Undefined) {
+                return nullable.admitsUndefined();
+            }
+            if (actual instanceof RuntimeDescriptor.Nullable) {
+                return actual.equals(declared);
+            }
+            return admits(nullable.inner(), actual);
+        }
+        return false;
     }
 
     /**
@@ -355,6 +672,20 @@ public final class LlvmTypeMapper {
         return switch (returnDescriptor) {
             case RuntimeDescriptor.Number ignored -> "%struct.deal_outcome_number";
             case RuntimeDescriptor.Boolean ignored -> "%struct.deal_outcome_boolean";
+            case RuntimeDescriptor.String ignored -> "%struct.deal_outcome_string";
+            case RuntimeDescriptor.Unknown ignored -> "%struct.deal_outcome_data";
+            case RuntimeDescriptor.Func ignored -> "%struct.deal_outcome_reference";
+            case RuntimeDescriptor.Class classType
+                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) ->
+                "%struct.deal_outcome_reference";
+            case RuntimeDescriptor.Nullable nullable -> switch (
+                    representationOf(nullable).orElseThrow(() ->
+                        new IllegalArgumentException("no staged outcome shape for "
+                            + unsupported(returnDescriptor)))) {
+                case NULLISH_NUMBER -> "%struct.deal_outcome_nullish_number";
+                case NULLISH_BOOLEAN -> "%struct.deal_outcome_nullish_boolean";
+                default -> "%struct.deal_outcome_reference";
+            };
             default -> throw new IllegalArgumentException(
                 "no staged outcome shape for " + unsupported(returnDescriptor));
         };
@@ -362,15 +693,32 @@ public final class LlvmTypeMapper {
 
     /**
      * The ABI parameter type of one function parameter (C3): {@code boolean}
-     * crosses as the 0/1 byte, {@code number} as binary64.
+     * crosses as the 0/1 byte, {@code number} as binary64, and every managed
+     * or nullish position as its staged representation.
      */
     public static String abiParameterType(RuntimeDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
-        return switch (descriptor) {
-            case RuntimeDescriptor.Number ignored -> NUMBER;
-            case RuntimeDescriptor.Boolean ignored -> BOOLEAN_ABI;
-            default -> throw new IllegalArgumentException(
-                "no staged ABI parameter type for " + unsupported(descriptor));
-        };
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return BOOLEAN_ABI;
+        }
+        return representationOf(descriptor).orElseThrow(() ->
+            new IllegalArgumentException(
+                "no staged ABI parameter type for " + unsupported(descriptor)));
+    }
+
+    /**
+     * The module-owned record layouts this stage needs beside the published
+     * ones: the two scalar nullish representations and their outcome shapes.
+     * They exist only inside the emitted module (no runtime entry receives or
+     * returns one), so they are declared with the C2 project records.
+     */
+    public static List<String> stagedRecordDefinitions() {
+        return List.of(
+            "%struct.deal_nullish_number = type { i32, double }",
+            "%struct.deal_nullish_boolean = type { i32, i1 }",
+            "%struct.deal_outcome_nullish_number = type { i8*,"
+                + " %struct.deal_nullish_number }",
+            "%struct.deal_outcome_nullish_boolean = type { i8*,"
+                + " %struct.deal_nullish_boolean }");
     }
 }

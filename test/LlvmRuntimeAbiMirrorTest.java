@@ -74,6 +74,7 @@ public final class LlvmRuntimeAbiMirrorTest {
         testDeclarationParity();
         testRenderedDeclarationsAreValidIr();
         testRecordLayoutFieldOrder();
+        testCAbiRecordSpellings();
         testExportSurfaceAndRuntimeOwnership();
         testArmTableEquality();
         System.out.println();
@@ -464,6 +465,43 @@ public final class LlvmRuntimeAbiMirrorTest {
     // =========================================================================
     // 4. The C2 export surface and the runtime-owned entries
     // =========================================================================
+
+    /**
+     * The C ABI spelling of every published record crossing: a record larger
+     * than two eightbytes crosses through memory (a hidden {@code sret}
+     * pointer on a return, a {@code byval} pointer on a parameter), while a
+     * small outcome record crosses in registers. The rule is the one the
+     * emitted module's calls are built from.
+     */
+    private static void testCAbiRecordSpellings() {
+        System.out.println("-- published records cross the C ABI as compiled --");
+        check(LlvmTypeMapper.crossesInMemory("deal_data"),
+            "deal_data (three eightbytes) crosses in memory");
+        check(LlvmTypeMapper.crossesInMemory("deal_check_input"),
+            "deal_check_input crosses in memory");
+        check(!LlvmTypeMapper.crossesInMemory("deal_outcome"),
+            "the one-pointer deal_outcome crosses in registers");
+        check(!LlvmTypeMapper.crossesInMemory("deal_outcome_string"),
+            "the two-eightbyte deal_outcome_string crosses in registers");
+        check(!LlvmTypeMapper.crossesInMemory("deal_outcome_number"),
+            "the mixed INT/SSE deal_outcome_number crosses in registers");
+        check(!LlvmTypeMapper.crossesInMemory("deal_descriptor"),
+            "an opaque representation never crosses by value");
+        String checkValue = LlvmRuntimeAbi.llvmDeclarationOf("deal_check_value");
+        check(checkValue.startsWith("declare %struct.deal_outcome @deal_check_value("),
+            "deal_check_value returns the small outcome in registers: "
+                + checkValue);
+        check(checkValue.contains(
+                "%struct.deal_check_input* byval(%struct.deal_check_input)"),
+            "deal_check_value receives its published record through byval: "
+                + checkValue);
+        check(!checkValue.contains("sret("),
+            "deal_check_value takes no hidden sret destination");
+        String dataOfNull = LlvmRuntimeAbi.llvmDeclarationOf("deal_data_of_null");
+        checkEq("declare void @deal_data_of_null(%struct.deal_data*"
+                + " sret(%struct.deal_data))", dataOfNull,
+            "a record-returning entry returns through its sret destination");
+    }
 
     private static void testExportSurfaceAndRuntimeOwnership() throws IOException {
         System.out.println("-- the export surface and runtime ownership split --");

@@ -36,14 +36,6 @@ final class LlvmModule {
     static final String TARGET_DATALAYOUT =
         "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128";
 
-    /** The runtime entries the staged skeleton references, in emission order. */
-    private static final List<String> REFERENCED_ENTRIES = List.of(
-        "deal_arm_table_install",
-        "deal_call_frame_push",
-        "deal_call_frame_pop",
-        "deal_root_frame_enter",
-        "deal_root_frame_leave");
-
     private final LlvmSession session;
 
     LlvmModule(LlvmSession session) {
@@ -63,8 +55,11 @@ final class LlvmModule {
         lines.add("");
         lines.addAll(recordLayouts());
         lines.add("");
-        for (String entry : REFERENCED_ENTRIES) {
+        for (String entry : session.referencedRuntimeEntries()) {
             lines.add(LlvmRuntimeAbi.llvmDeclarationOf(entry));
+        }
+        for (String global : session.externalGlobals()) {
+            lines.add("@" + global + " = external global i8*");
         }
         lines.add("");
         lines.addAll(session.data.render());
@@ -88,6 +83,7 @@ final class LlvmModule {
             + " %struct.deal_export_entry* }");
         layouts.add("%struct.deal_export_entry = type { i8*, i8*, i32, i32,"
             + " i8* }");
+        layouts.addAll(LlvmTypeMapper.stagedRecordDefinitions());
         layouts.addAll(LlvmTypeMapper.recordDefinitions());
         return List.copyOf(layouts);
     }
