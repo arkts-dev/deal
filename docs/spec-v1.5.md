@@ -207,7 +207,7 @@ EqualityExpression ::= RelationalExpression (('===' | '!==') RelationalExpressio
 RelationalExpression ::= AdditiveExpression (('<' | '<=' | '>' | '>=') AdditiveExpression
                          | 'instanceof' ClassReference | 'as' Type)?
 
-ClassReference ::= Identifier ('.' Identifier)?
+ClassReference ::= Identifier ('.' Identifier)? | '(' ClassReference ')'
 
 AdditiveExpression ::= MultiplicativeExpression (('+' | '-') MultiplicativeExpression)*
 
@@ -276,21 +276,21 @@ Semantics:
 
 ### Assignment targets
 
-Only these are valid LHS targets for `=`:
+Only variables, declared class fields, Record keys and array elements are assignable; otherwise compile-time error.
 
 ```ts
-identifier // simple variable
-a.b // member access
-a[b] // index into array
-```
-
-No destructuring.
-
-Assignment to member/index of an array and record respectively:
-
-```ts
-xs[0] = 5; // array element write — runtime element-type check
-t.key = "value"; // record field write — no runtime type check
+class User { name: string; }
+export function main(): null {
+ let x = 1;
+ let xs: number[] = [0];
+ let t: Record<string, unknown> = {};
+ let u: User = { name: "Bob" };
+ x = 2;
+ xs[0] = 5;
+ t.key = "value";
+ u.name = "Ada";
+ return null;
+}
 ```
 
 ---
@@ -1417,6 +1417,8 @@ export function ceil(x: number): number;
 export function sqrt(x: number): number;
 export function absNumber(x: number): number;
 ```
+
+`sqrt` preserves NaN, +∞ and signed zero. Negative inputs yield NaN.
 
 #### `std/time.d.deal`
 
