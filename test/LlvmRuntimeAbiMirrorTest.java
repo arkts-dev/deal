@@ -3,6 +3,7 @@ package deal.test;
 import deal.codegen.llvm.LlvmRuntimeAbi;
 import deal.codegen.llvm.LlvmTypeMapper;
 import deal.semantic.ir.FailureArm;
+import deal.semantic.ir.FailureArmId;
 import deal.semantic.ir.FailureContractRegistry;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -330,6 +331,68 @@ public final class LlvmRuntimeAbiMirrorTest {
             "the host status enum starts at DEAL_OK = 0");
         check(rtHeader.contains("DEAL_KIND_NULL, DEAL_KIND_MISSING"),
             "the host kind enum starts at DEAL_KIND_NULL");
+        // The descriptor group's published value-surface records (R4, R2): the
+        // check input, its recorded context, the class layout and one supplied
+        // field, whose field order the emitted IR follows.
+        String descriptorHeader = Files.readString(
+            REPO.resolve("deal/native/descriptor.h"), StandardCharsets.UTF_8);
+        checkEq("uint32_t presentation; uint32_t unicode_defect; deal_data datum;"
+                + " const char *class_atom; const char *signature",
+            structFields(descriptorHeader, "deal_check_input"),
+            "deal_check_input's published field order");
+        checkEq("{ i32, i32, %struct.deal_data, i8*, i8* }",
+            LlvmTypeMapper.recordLayout("deal_check_input").orElse(""),
+            "the emitted check-input layout follows that field order");
+        checkEq(declaratorCount(structFields(descriptorHeader, "deal_check_input")),
+            LlvmTypeMapper.recordLayout("deal_check_input").orElse("").split(",").length,
+            "the emitted check input carries one IR member per C declarator");
+        checkEq("const deal_origin *origin; int32_t parameter_index",
+            structFields(descriptorHeader, "deal_check_context"),
+            "deal_check_context's published field order");
+        checkEq("{ %struct.deal_origin*, i32 }",
+            LlvmTypeMapper.recordLayout("deal_check_context").orElse(""),
+            "the emitted check-context layout follows that field order");
+        checkEq("const char *name; deal_descriptor *descriptor; int optional",
+            structFields(descriptorHeader, "deal_class_field"),
+            "deal_class_field's published field order");
+        checkEq("{ i8*, i8*, i32 }",
+            LlvmTypeMapper.recordLayout("deal_class_field").orElse(""),
+            "the emitted class-field layout follows that field order");
+        checkEq("const char *class_atom; const deal_class_field *fields;"
+                + " size_t field_count",
+            structFields(descriptorHeader, "deal_class_layout"),
+            "deal_class_layout's published field order");
+        checkEq("{ i8*, %struct.deal_class_field*, i64 }",
+            LlvmTypeMapper.recordLayout("deal_class_layout").orElse(""),
+            "the emitted class-layout layout follows that field order");
+        checkEq("const char *name; deal_check_input value; deal_origin origin",
+            structFields(descriptorHeader, "deal_class_supplied"),
+            "deal_class_supplied's published field order");
+        checkEq("{ i8*, %struct.deal_check_input, %struct.deal_origin }",
+            LlvmTypeMapper.recordLayout("deal_class_supplied").orElse(""),
+            "the emitted supplied-field layout follows that field order");
+        // The arm renderer's published records (R5).
+        checkEq("const char *name; const char *value",
+            structFields(errorHeader, "deal_arm_parameter"),
+            "deal_arm_parameter's published field order");
+        checkEq("{ i8*, i8* }",
+            LlvmTypeMapper.recordLayout("deal_arm_parameter").orElse(""),
+            "the emitted arm-parameter layout follows that field order");
+        checkEq("uint32_t kind; deal_error *error; const char *code;"
+                + " const char *message; const char *expected; const char *actual",
+            structFields(errorHeader, "deal_failure_admission"),
+            "deal_failure_admission's published field order");
+        checkEq("{ i32, i8*, i8*, i8*, i8*, i8* }",
+            LlvmTypeMapper.recordLayout("deal_failure_admission").orElse(""),
+            "the emitted failure-admission layout follows that field order");
+        // The published arm identities and the repertoire count the install
+        // entry validates the emitted table against.
+        for (FailureArmId id : FailureArmId.values()) {
+            check(errorHeader.contains("#define DEAL_ARM_ID_" + id.name() + " "),
+                "the header publishes the arm identity " + id);
+        }
+        checkEq("29", macroText(errorHeader, "DEAL_ARM_REPERTOIRE_COUNT"),
+            "the published repertoire count is the closed arm set");
     }
 
     /**

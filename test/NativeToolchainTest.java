@@ -282,11 +282,14 @@ public final class NativeToolchainTest {
         checkEq(0, run.exitCode(), "the product runs: " + run.describe());
         checkEq("", run.stdout(), "the product prints no terminal output");
 
+        /* The published tree carries the whole C11 runtime, so the query is the
+         * smoke project's own subprogram rather than every runtime DIE. */
         NativeCompiler.Result dwarf = NativeCompiler.run(
-            List.of("llvm-dwarfdump", product.toString()), scratch);
+            List.of("llvm-dwarfdump", "--name=main", "--name=ping",
+                product.toString()), scratch);
         checkEq(0, dwarf.exitCode(), "llvm-dwarfdump reads the product");
         check(dwarf.stdout().contains("main.deal"),
-            "the product carries the smoke source's DWARF");
+            "the product carries the smoke source's DWARF: " + dwarf.describe());
     }
 
     // =========================================================================

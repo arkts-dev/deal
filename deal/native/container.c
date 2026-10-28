@@ -68,7 +68,7 @@ int deal_container_position(double position, size_t length, int allow_append,
  */
 struct deal_array {
     uint32_t element_layout;
-    uint32_t reserved;
+    uint32_t element_descriptor;
     size_t length;
     size_t capacity;
     void *block;
@@ -137,7 +137,9 @@ static struct deal_array *deal_container_array_of(const deal_array *array) {
     return (struct deal_array *)(void *)array;
 }
 
-deal_array *deal_container_array_new(uint32_t element_layout, size_t length) {
+deal_array *deal_container_array_new_typed(uint32_t element_layout,
+                                           uint32_t element_descriptor,
+                                           size_t length) {
     size_t stride = deal_container_element_stride(element_layout);
     if (length > SIZE_MAX / stride) {
         deal_platform_fault("container: array size overflow");
@@ -148,7 +150,10 @@ deal_array *deal_container_array_new(uint32_t element_layout, size_t length) {
     struct deal_array *array =
         deal_alloc(DEAL_LAYOUT_ARRAY, sizeof(*array));
     array->element_layout = element_layout;
-    array->reserved = 0u;
+    /* The persistent element descriptor is recorded before any element exists,
+     * so an empty array and every alias keep the descriptor it was built with
+     * (R4). */
+    array->element_descriptor = element_descriptor;
     /* The element count stays 0 until its element block exists, so a collection
      * at the block's own allocation safepoint never walks a half-built array:
      * the precise element walk reads exactly `length` elements of `block`. */
@@ -174,6 +179,14 @@ deal_array *deal_container_array_new(uint32_t element_layout, size_t length) {
 
 size_t deal_container_array_count(const deal_array *array) {
     return deal_container_array_of(array)->length;
+}
+
+uint32_t deal_container_array_element_descriptor(const deal_array *array) {
+    return deal_container_array_of(array)->element_descriptor;
+}
+
+deal_array *deal_container_array_new(uint32_t element_layout, size_t length) {
+    return deal_container_array_new_typed(element_layout, 0u, length);
 }
 
 uint32_t deal_container_array_element_layout(const deal_array *array) {

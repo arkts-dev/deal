@@ -99,7 +99,10 @@ public final class LlvmTypeMapper {
         "deal_host_export_kind",
         "deal_data_tag",
         "deal_nullish_tag",
-        "deal_presence");
+        "deal_presence",
+        "deal_descriptor_kind",
+        "deal_presentation",
+        "deal_unicode_defect");
 
     /**
      * The published function-pointer typedefs; each is one code pointer,
@@ -136,7 +139,14 @@ public final class LlvmTypeMapper {
         map.put("deal_outcome_boolean", "{ i8*, i8 }");
         map.put("deal_outcome_string", "{ i8*, i8* }");
         map.put("deal_outcome_reference", "{ i8*, i8* }");
-        map.put("deal_check_input", "{ i32, { i32, i32 }, i8* }");
+        map.put("deal_check_input", "{ i32, i32, %struct.deal_data, i8*, i8* }");
+        map.put("deal_check_context", "{ %struct.deal_origin*, i32 }");
+        map.put("deal_class_field", "{ i8*, i8*, i32 }");
+        map.put("deal_class_layout", "{ i8*, %struct.deal_class_field*, i64 }");
+        map.put("deal_class_supplied",
+            "{ i8*, %struct.deal_check_input, %struct.deal_origin }");
+        map.put("deal_arm_parameter", "{ i8*, i8* }");
+        map.put("deal_failure_admission", "{ i32, i8*, i8*, i8*, i8*, i8* }");
         map.put("deal_host_span", "{ i8*, i64 }");
         map.put("deal_host_error_text", "{ i8*, i8*, i8*, i8* }");
         map.put("deal_host_failure", "{ i32, i8*, i8*, i8*, i8*, i64 }");
@@ -199,6 +209,17 @@ public final class LlvmTypeMapper {
         throw new IllegalArgumentException(
             "the runtime ABI mirror declares no IR type for C type '"
                 + cType + "'");
+    }
+
+    /**
+     * The emitted record layout of one published C record type, or empty when
+     * the mirror declares none: the parity suite compares it against the
+     * published header's field order, so a record's members can never drift
+     * silently between the header and the emitted IR.
+     */
+    public static java.util.Optional<String> recordLayout(String cType) {
+        Objects.requireNonNull(cType, "cType must not be null");
+        return java.util.Optional.ofNullable(RECORDS.get(cType));
     }
 
     /** Strips qualifiers and collapses whitespace of one C type spelling. */

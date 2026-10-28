@@ -8,7 +8,7 @@
  * project module the emitter will produce replaces only this fixture, never a
  * runtime symbol.
  *
- *   0  a structurally valid arm table; install from the start function
+ *   0  the complete closed arm table, installed from the start function
  *   1  unsupported table version
  *   2  count and records disagree
  *   3  a null record text pointer
@@ -16,6 +16,20 @@
  *   5  a duplicate arm id
  *   6  the start call returns a carried Error (module-init failure)
  *   7  the entry invoke returns a fully carrying Error
+ *   8  an unknown arm id in the table
+ *   9  a missing arm
+ *  10  a declared parameter-shape mismatch
+ *  11  a declared expected/actual field-shape mismatch
+ *
+ * The table of every installing case carries the complete closed arm
+ * repertoire — one record per DEAL-visible arm, in canonical arm order, with
+ * the arm's own code, its template, its declared parameter names, its render
+ * scope and its declared expected/actual fields — because the install entry
+ * validates the supplied table against the runtime's compiled repertoire and
+ * fails closed on an unknown arm, a missing arm and a parameter-shape,
+ * render-scope or declared-field mismatch. Cases 1-5 each carry one structural
+ * defect that the delivered structural rules reject first; cases 8-11 differ
+ * from the accepted table in exactly one record or in the record count.
  */
 #include "deal/native/entry.h"
 #include "deal/native/error.h"
@@ -29,23 +43,19 @@
  * The failure-arm table
  * ========================================================================= */
 
+#if DEAL_STUB_CASE >= 1 && DEAL_STUB_CASE <= 5
+
+/* The structural negatives: each one violates one delivered structural rule,
+ * which the install entry rejects before any repertoire rule runs. */
 #if DEAL_STUB_CASE != 2
-static const char *const arm_parameters_one[] = {"name"};
+/* The count/records negative carries no record at all. */
+static const char *const arm_parameter_name[] = {"kind"};
 #endif
 
-#if DEAL_STUB_CASE == 0
+#if DEAL_STUB_CASE == 1
 static const deal_arm_record arm_records[] = {
-    {0U, "E8001", "cannot store {name}", arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 0U},
-    {1U, "E8002", "array index {index}", arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_INNER_ONLY, 0U, 1U}
-};
-const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 2U,
-                                            arm_records};
-#elif DEAL_STUB_CASE == 1
-static const deal_arm_record arm_records[] = {
-    {0U, "E8001", "cannot store {name}", arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 0U}
+    {0U, "E8001", "expected {kind}", arm_parameter_name, 1U,
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}
 };
 const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION + 1U, 1U,
                                             arm_records};
@@ -53,33 +63,154 @@ const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION + 1U, 1U,
 const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 1U, NULL};
 #elif DEAL_STUB_CASE == 3
 static const deal_arm_record arm_records[] = {
-    {0U, "E8001", NULL, arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 0U}
+    {0U, "E8001", NULL, arm_parameter_name, 1U,
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}
 };
 const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 1U,
                                             arm_records};
 #elif DEAL_STUB_CASE == 4
 static const deal_arm_record arm_records[] = {
-    {0U, "E8001", "cannot store {name}", arm_parameters_one, 1U, 2U, 1U, 0U}
+    {0U, "E8001", "expected {kind}", arm_parameter_name, 1U, 2U, 1U, 1U}
 };
 const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 1U,
-                                            arm_records};
-#elif DEAL_STUB_CASE == 5
-static const deal_arm_record arm_records[] = {
-    {7U, "E8001", "cannot store {name}", arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 0U},
-    {7U, "E8002", "array index {index}", arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_INNER_ONLY, 0U, 1U}
-};
-const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 2U,
                                             arm_records};
 #else
 static const deal_arm_record arm_records[] = {
-    {0U, "E8001", "cannot store {name}", arm_parameters_one, 1U,
-     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 0U}
+    {0U, "E8001", "expected {kind}", arm_parameter_name, 1U,
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U},
+    {0U, "E8001", "expected {kind}", arm_parameter_name, 1U,
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}
 };
-const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 1U,
+const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION, 2U,
                                             arm_records};
+#endif
+
+#else
+
+/* The complete closed arm table, in canonical arm order. The first record is
+ * parameterized so the repertoire negatives differ from the accepted table in
+ * exactly one fact. */
+#if DEAL_STUB_CASE != 10
+/* The parameter-shape negative declares its first arm with a different
+ * parameter array, so this one is absent there. */
+static const char *const arm_parameters_0[] = {"kind"};
+#endif
+static const char *const arm_parameters_2[] = {"expected", "actual"};
+static const char *const arm_parameters_5[] = {"oneBasedIndex"};
+static const char *const arm_parameters_9[] = {"expected", "actual"};
+static const char *const arm_parameters_10[] = {"index", "inner"};
+static const char *const arm_parameters_11[] = {"expected"};
+static const char *const arm_parameters_12[] = {"inner"};
+static const char *const arm_parameters_13[] = {"expected"};
+static const char *const arm_parameters_14[] = {"actual"};
+static const char *const arm_parameters_15[] = {"module", "reason"};
+static const char *const arm_parameters_17[] = {"module"};
+static const char *const arm_parameters_18[] = {"name", "module"};
+static const char *const arm_parameters_19[] =
+    {"name", "module", "expected", "actual"};
+static const char *const arm_parameters_20[] =
+    {"name", "module", "expected", "actual"};
+static const char *const arm_parameters_21[] =
+    {"name", "module", "defaults|fields"};
+static const char *const arm_parameters_22[] = {"field", "classId"};
+static const char *const arm_parameters_23[] =
+    {"oneBasedByteOffset", "reason"};
+static const char *const arm_parameters_24[] = {"fieldPath", "actual"};
+static const char *const arm_parameters_25[] = {"actual"};
+
+#define DEAL_STUB_ARM_RECORDS(ARM0_ID, ARM0_PARAMETERS, ARM0_EXPECTED, \
+                              ARM0_ACTUAL) \
+    {ARM0_ID, "E8001", "expected {kind}", ARM0_PARAMETERS, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, ARM0_EXPECTED, ARM0_ACTUAL}, \
+    {1U, "E8001", "expected string, got invalid Unicode scalar encoding", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {2U, "E8001", "expected instance of {expected}, got {actual}", arm_parameters_2, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {3U, "E8001", "expected string, got invalid UTF-8 encoding", NULL, 0U, \
+     DEAL_ARM_SCOPE_INNER_ONLY, 0U, 0U}, \
+    {4U, "E8001", "expected string, got UTF-16 surrogate code point", NULL, 0U, \
+     DEAL_ARM_SCOPE_INNER_ONLY, 0U, 0U}, \
+    {5U, "E8003", "array element {oneBasedIndex} type mismatch", arm_parameters_5, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {6U, "E8002", "array index out of bounds", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {7U, "E8002", "array index out of bounds", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {8U, "E8002", "array index out of bounds", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {9U, "E8010", "function signature mismatch: expected {expected}, got {actual}", arm_parameters_9, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {10U, "E8010", "parameter {index} type mismatch: {inner}", arm_parameters_10, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {11U, "E8010", "return value 1 type mismatch: expected {expected}, got nothing", arm_parameters_11, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {12U, "E8010", "return value 1 type mismatch: {inner}", arm_parameters_12, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {13U, "E8001", "expected {expected}", arm_parameters_13, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {14U, "E8010", "host async function must return an async operation, got {actual}", arm_parameters_14, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {15U, "E8011", "failed to load host module '{module}': {reason}", arm_parameters_15, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {16U, "E8011", "host module did not return a module object", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {17U, "E8011", "host module '{module}' did not return a module object", arm_parameters_17, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {18U, "E8011", "missing host export '{name}' in module '{module}'", arm_parameters_18, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {19U, "E8011", "host export '{name}' in module '{module}' has signature mismatch: expected {expected}, got {actual}", arm_parameters_19, 4U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {20U, "E8011", "host class '{name}' in module '{module}' has identity mismatch: expected {expected}, got {actual}", arm_parameters_20, 4U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {21U, "E8011", "host class '{name}' in module '{module}' has invalid {defaults|fields} metadata", arm_parameters_21, 3U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {22U, "E8007", "extra field '{field}' in class '{classId}'", arm_parameters_22, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {23U, "E8001", "JSON parse error at position {oneBasedByteOffset}: {reason}", arm_parameters_23, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {24U, "E8001", "value at {fieldPath} is not JSON serializable: {actual}", arm_parameters_24, 2U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U}, \
+    {25U, "E8001", "unsupported type for JSON encoding: {actual}", arm_parameters_25, 1U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U}, \
+    {26U, "E8001", "cyclic value cannot be encoded as JSON", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {27U, "E8001", "substring bounds must be finite integers", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U}, \
+    {28U, "E8001", "sqrt of negative number", NULL, 0U, \
+     DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U},
+
+#if DEAL_STUB_CASE == 8
+static const deal_arm_record arm_records[] = {
+    DEAL_STUB_ARM_RECORDS(99U, arm_parameters_0, 1U, 1U)
+};
+const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
+    DEAL_ARM_REPERTOIRE_COUNT, arm_records};
+#elif DEAL_STUB_CASE == 9
+static const deal_arm_record arm_records[] = {
+    DEAL_STUB_ARM_RECORDS(0U, arm_parameters_0, 1U, 1U)
+};
+const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
+    DEAL_ARM_REPERTOIRE_COUNT - 1U, arm_records};
+#elif DEAL_STUB_CASE == 10
+static const deal_arm_record arm_records[] = {
+    DEAL_STUB_ARM_RECORDS(0U, arm_parameters_10, 1U, 1U)
+};
+const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
+    DEAL_ARM_REPERTOIRE_COUNT, arm_records};
+#elif DEAL_STUB_CASE == 11
+static const deal_arm_record arm_records[] = {
+    DEAL_STUB_ARM_RECORDS(0U, arm_parameters_0, 0U, 0U)
+};
+const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
+    DEAL_ARM_REPERTOIRE_COUNT, arm_records};
+#else
+static const deal_arm_record arm_records[] = {
+    DEAL_STUB_ARM_RECORDS(0U, arm_parameters_0, 1U, 1U)
+};
+const deal_arm_table deal_project_arm_table = {DEAL_ARM_TABLE_VERSION,
+    DEAL_ARM_REPERTOIRE_COUNT, arm_records};
+#endif
+
 #endif
 
 /* =========================================================================

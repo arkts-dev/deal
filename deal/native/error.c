@@ -54,10 +54,195 @@ static const char *deal_call_frame_label(uint32_t index) {
 
 static const deal_arm_table *deal_installed_arm_table;
 
+/*
+ * The compiled closed arm repertoire (R5): one entry per DEAL-visible arm in
+ * the canonical arm order, carrying the arm's identity, its declared named
+ * parameters, its render scope and its declared expected/actual fields. The
+ * table carries structure only — no code, no template and no message — so the
+ * installed table stays the one text authority and a record's text is never
+ * compared against a copy of itself here.
+ */
+typedef struct {
+    uint32_t id;
+    const char *const *parameters;
+    uint32_t parameter_count;
+    uint8_t render_scope;
+    uint8_t has_expected;
+    uint8_t has_actual;
+} deal_arm_repertoire_entry;
+
+static const char *const deal_arm_parameters_none[] = {NULL};
+static const char *const deal_arm_parameters_0[] = {"kind"};
+static const char *const deal_arm_parameters_2[] = {"expected", "actual"};
+static const char *const deal_arm_parameters_5[] = {"oneBasedIndex"};
+static const char *const deal_arm_parameters_10[] = {"index", "inner"};
+static const char *const deal_arm_parameters_11[] = {"expected"};
+static const char *const deal_arm_parameters_12[] = {"inner"};
+static const char *const deal_arm_parameters_13[] = {"expected"};
+static const char *const deal_arm_parameters_14[] = {"actual"};
+static const char *const deal_arm_parameters_15[] = {"module", "reason"};
+static const char *const deal_arm_parameters_17[] = {"module"};
+static const char *const deal_arm_parameters_18[] = {"name", "module"};
+static const char *const deal_arm_parameters_19[] =
+    {"name", "module", "expected", "actual"};
+static const char *const deal_arm_parameters_21[] =
+    {"name", "module", "defaults|fields"};
+static const char *const deal_arm_parameters_22[] = {"field", "classId"};
+static const char *const deal_arm_parameters_23[] =
+    {"oneBasedByteOffset", "reason"};
+static const char *const deal_arm_parameters_24[] = {"fieldPath", "actual"};
+static const char *const deal_arm_parameters_25[] = {"actual"};
+
+#define DEAL_ARM_ENTRY(id, parameters, count, scope, expected, actual) \
+    {DEAL_ARM_ID_##id, parameters, count, scope, expected, actual}
+
+static const deal_arm_repertoire_entry deal_arm_repertoire[] = {
+    DEAL_ARM_ENTRY(TYPED_BOUNDARY_KIND, deal_arm_parameters_0, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(TYPED_BOUNDARY_INVALID_UNICODE, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(CLASS_IDENTITY, deal_arm_parameters_2, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(HOST_STRING_INVALID_UTF8, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_INNER_ONLY, 0U, 0U),
+    DEAL_ARM_ENTRY(HOST_STRING_SURROGATE, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_INNER_ONLY, 0U, 0U),
+    DEAL_ARM_ENTRY(ARRAY_ELEMENT_KIND, deal_arm_parameters_5, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(ARRAY_READ_BOUNDS, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(ARRAY_WRITE_BOUNDS, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(ARRAY_DELETE_BOUNDS, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(FUNCTION_SIGNATURE_MISMATCH, deal_arm_parameters_2, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(HOST_PARAMETER_CELL, deal_arm_parameters_10, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(HOST_SYNC_RETURN_NOTHING, deal_arm_parameters_11, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(HOST_SYNC_RETURN_CELL, deal_arm_parameters_12, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(ASYNC_COMPLETION_KIND, deal_arm_parameters_13, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(ASYNC_SHAPE, deal_arm_parameters_14, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(HOST_LOAD_FAILED, deal_arm_parameters_15, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(HOST_LOAD_RAW_SHAPE, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(HOST_LOAD_NOT_A_MODULE, deal_arm_parameters_17, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(HOST_LOAD_MISSING_EXPORT, deal_arm_parameters_18, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(HOST_LOAD_SIGNATURE_MISMATCH, deal_arm_parameters_19, 4U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(HOST_LOAD_IDENTITY_MISMATCH, deal_arm_parameters_19, 4U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(HOST_LOAD_INVALID_METADATA, deal_arm_parameters_21, 3U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(CLASS_EXTRA_FIELD, deal_arm_parameters_22, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(JSON_PARSE_ERROR, deal_arm_parameters_23, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(JSON_TO_WALK, deal_arm_parameters_24, 2U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U),
+    DEAL_ARM_ENTRY(JSON_STRINGIFY_UNSUPPORTED, deal_arm_parameters_25, 1U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 1U, 1U),
+    DEAL_ARM_ENTRY(JSON_TO_WALK_CYCLE, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(SUBSTRING_BOUNDS, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 0U),
+    DEAL_ARM_ENTRY(SQRT_NEGATIVE, deal_arm_parameters_none, 0U,
+        DEAL_ARM_SCOPE_TOP_LEVEL, 0U, 1U)
+};
+
+/* The compiled repertoire entry of one arm, or NULL for an unknown arm id. */
+static const deal_arm_repertoire_entry *deal_arm_repertoire_of(uint32_t arm_id) {
+    if (arm_id >= DEAL_ARM_REPERTOIRE_COUNT) {
+        return NULL;
+    }
+    if (deal_arm_repertoire[arm_id].id != arm_id) {
+        return NULL;
+    }
+    return &deal_arm_repertoire[arm_id];
+}
+
+/* The installed record of one arm, or NULL when the arm is absent. */
+static const deal_arm_record *deal_arm_record_of(uint32_t arm_id) {
+    if (deal_installed_arm_table == NULL) {
+        return NULL;
+    }
+    for (uint32_t index = 0; index < deal_installed_arm_table->count;
+            index += 1u) {
+        if (deal_installed_arm_table->records[index].id == arm_id) {
+            return &deal_installed_arm_table->records[index];
+        }
+    }
+    return NULL;
+}
+
 const deal_arm_table *deal_arm_table_installed(void) {
     return deal_installed_arm_table;
 }
 
+/*
+ * The repertoire validation of one installed table (R5): every record names a
+ * closed arm, declares that arm's parameter shape, render scope and
+ * expected/actual fields, and every closed arm is present exactly once. An
+ * unknown arm, a missing arm and a shape mismatch are deterministic producer
+ * defects, reported before any user code runs.
+ */
+static void deal_arm_table_validate_repertoire(const deal_arm_table *table) {
+    uint8_t seen[DEAL_ARM_REPERTOIRE_COUNT];
+    for (uint32_t index = 0; index < DEAL_ARM_REPERTOIRE_COUNT; index += 1u) {
+        seen[index] = 0u;
+    }
+    for (uint32_t index = 0; index < table->count; index += 1u) {
+        const deal_arm_record *record = &table->records[index];
+        const deal_arm_repertoire_entry *entry =
+            deal_arm_repertoire_of(record->id);
+        if (entry == NULL) {
+            deal_platform_fault("arm table: unknown arm id");
+        }
+        if (seen[record->id] != 0u) {
+            deal_platform_fault("arm table: duplicate arm id");
+        }
+        seen[record->id] = 1u;
+        if (record->parameter_count != entry->parameter_count) {
+            deal_platform_fault("arm table: parameter shape mismatch");
+        }
+        if (record->parameter_count != 0u) {
+            if (record->parameter_names == NULL) {
+                deal_platform_fault("arm table: parameter shape mismatch");
+            }
+            for (uint32_t slot = 0; slot < record->parameter_count; slot += 1u) {
+                if (record->parameter_names[slot] == NULL) {
+                    deal_platform_fault("arm table: null parameter name");
+                }
+                if (strcmp(record->parameter_names[slot],
+                        entry->parameters[slot]) != 0) {
+                    deal_platform_fault("arm table: parameter shape mismatch");
+                }
+            }
+        }
+        if (record->render_scope != entry->render_scope) {
+            deal_platform_fault("arm table: render scope outside the closed set");
+        }
+        if (record->has_expected != entry->has_expected
+                || record->has_actual != entry->has_actual) {
+            deal_platform_fault("arm table: declared field shape mismatch");
+        }
+    }
+    for (uint32_t index = 0; index < DEAL_ARM_REPERTOIRE_COUNT; index += 1u) {
+        if (seen[index] == 0u) {
+            deal_platform_fault("arm table: missing arm");
+        }
+    }
+}
+
+/* The delivered structural rules of the install entry (version, count, null
+ * text, render scope, duplicate id), unchanged. */
 static void deal_arm_table_validate(const deal_arm_table *table) {
     if (table->version != DEAL_ARM_TABLE_VERSION) {
         deal_platform_fault("arm table: unsupported version");
@@ -99,6 +284,7 @@ int deal_arm_table_install(const deal_arm_table *table) {
         return 1;
     }
     deal_arm_table_validate(table);
+    deal_arm_table_validate_repertoire(table);
     deal_installed_arm_table = table;
     return 1;
 }
@@ -173,8 +359,11 @@ static void deal_error_release(void *object) {
     error->cause = NULL;
 }
 
-deal_error *deal_error_create(const char *code, const char *message,
-                              const deal_origin *origin) {
+/* One Error record allocation. `snapshot_frames` is 0 for the host-authored
+ * text channel, whose record carries no DEAL frames at all (R5/H2). */
+static deal_error *deal_error_allocate(const char *code, const char *message,
+                                       const deal_origin *origin,
+                                       int snapshot_frames) {
     if (code == NULL) {
         deal_platform_fault("error record: absent required code");
     }
@@ -201,6 +390,9 @@ deal_error *deal_error_create(const char *code, const char *message,
         error->column = origin->column;
         error->has_origin = 1;
     }
+    if (!snapshot_frames) {
+        return error;
+    }
     uint32_t count = deal_call_frame_depth();
     if (count > 0) {
         error->frames = deal_platform_allocate((size_t)count * sizeof(char *));
@@ -211,6 +403,11 @@ deal_error *deal_error_create(const char *code, const char *message,
         error->frame_count = count;
     }
     return error;
+}
+
+deal_error *deal_error_create(const char *code, const char *message,
+                              const deal_origin *origin) {
+    return deal_error_allocate(code, message, origin, 1);
 }
 
 void deal_error_set_expected(deal_error *error, const char *expected) {
@@ -495,4 +692,321 @@ char *deal_error_snapshot(const deal_error *error) {
 
 void deal_error_snapshot_release(char *text) {
     deal_platform_release(text);
+}
+
+/* =========================================================================
+ * The arm materialization (R5)
+ * ========================================================================= */
+
+/* One growing platform text buffer (the snapshot serializer's shape). */
+typedef struct {
+    char *bytes;
+    size_t length;
+    size_t capacity;
+} deal_arm_buffer;
+
+static void deal_arm_buffer_reserve(deal_arm_buffer *buffer, size_t additional) {
+    size_t required = buffer->length + additional;
+    if (required <= buffer->capacity) {
+        return;
+    }
+    size_t capacity = buffer->capacity == 0u ? 64u : buffer->capacity;
+    while (capacity < required) {
+        capacity *= 2u;
+    }
+    char *grown = deal_platform_allocate(capacity);
+    if (buffer->bytes != NULL) {
+        memcpy(grown, buffer->bytes, buffer->length);
+        deal_platform_release(buffer->bytes);
+    }
+    buffer->bytes = grown;
+    buffer->capacity = capacity;
+}
+
+static void deal_arm_buffer_append(deal_arm_buffer *buffer, const char *bytes,
+                                   size_t length) {
+    if (length == 0u) {
+        return;
+    }
+    deal_arm_buffer_reserve(buffer, length);
+    memcpy(buffer->bytes + buffer->length, bytes, length);
+    buffer->length += length;
+}
+
+/* The supplied value of one declared parameter, or NULL when it is absent. */
+static const char *deal_arm_parameter_value(const deal_arm_parameter *parameters,
+                                            size_t parameter_count,
+                                            const char *name, size_t length) {
+    for (size_t index = 0; index < parameter_count; index += 1u) {
+        if (parameters[index].name == NULL) {
+            deal_platform_fault("arm render: parameter without a name");
+        }
+        if (strlen(parameters[index].name) == length
+                && strncmp(parameters[index].name, name, length) == 0) {
+            return parameters[index].value;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Instantiates one arm's own template: every `{name}` placeholder is replaced
+ * by the supplied value of that declared parameter, and every byte outside a
+ * placeholder is emitted unchanged. A parameter the arm declares but the
+ * render does not supply, a supplied parameter the arm does not declare, a
+ * parameter without a value and an unclosed placeholder are malformed
+ * parameter data — a deterministic producer defect, never a fallback text.
+ */
+static char *deal_arm_instantiate(const deal_arm_record *record,
+                                  const deal_arm_parameter *parameters,
+                                  size_t parameter_count) {
+    for (size_t index = 0; index < parameter_count; index += 1u) {
+        if (parameters[index].name == NULL || parameters[index].value == NULL) {
+            deal_platform_fault("arm render: malformed parameter data");
+        }
+        int declared = 0;
+        for (uint32_t slot = 0; slot < record->parameter_count; slot += 1u) {
+            if (strcmp(record->parameter_names[slot], parameters[index].name) == 0) {
+                declared = 1;
+            }
+        }
+        if (!declared) {
+            deal_platform_fault("arm render: undeclared parameter");
+        }
+    }
+    for (uint32_t slot = 0; slot < record->parameter_count; slot += 1u) {
+        if (deal_arm_parameter_value(parameters, parameter_count,
+                record->parameter_names[slot],
+                strlen(record->parameter_names[slot])) == NULL) {
+            deal_platform_fault("arm render: missing declared parameter");
+        }
+    }
+    deal_arm_buffer buffer;
+    buffer.bytes = NULL;
+    buffer.length = 0u;
+    buffer.capacity = 0u;
+    const char *text = record->template_text;
+    size_t cursor = 0u;
+    while (text[cursor] != 0) {
+        if (text[cursor] != '{') {
+            deal_arm_buffer_append(&buffer, text + cursor, 1u);
+            cursor += 1u;
+            continue;
+        }
+        size_t close = cursor + 1u;
+        while (text[close] != 0 && text[close] != '}') {
+            close += 1u;
+        }
+        if (text[close] != '}') {
+            deal_platform_fault("arm render: unclosed placeholder");
+        }
+        const char *value = deal_arm_parameter_value(parameters, parameter_count,
+            text + cursor + 1u, close - cursor - 1u);
+        if (value == NULL) {
+            deal_platform_fault("arm render: placeholder outside the declaration");
+        }
+        deal_arm_buffer_append(&buffer, value, strlen(value));
+        cursor = close + 1u;
+    }
+    deal_arm_buffer_reserve(&buffer, 1u);
+    buffer.bytes[buffer.length] = 0;
+    return buffer.bytes;
+}
+
+char *deal_arm_message(uint32_t arm_id, const deal_arm_parameter *parameters,
+                       size_t parameter_count) {
+    const deal_arm_record *record = deal_arm_record_of(arm_id);
+    if (record == NULL) {
+        deal_platform_fault("arm render: unknown arm id");
+    }
+    if (parameter_count != 0u && parameters == NULL) {
+        deal_platform_fault("arm render: malformed parameter data");
+    }
+    return deal_arm_instantiate(record, parameters, parameter_count);
+}
+
+void deal_arm_text_release(char *text) {
+    deal_platform_release(text);
+}
+
+deal_error *deal_error_materialize(uint32_t arm_id,
+                                   const deal_arm_parameter *parameters,
+                                   size_t parameter_count, const char *expected,
+                                   const char *actual, const deal_origin *origin,
+                                   deal_error *cause) {
+    if (deal_installed_arm_table == NULL) {
+        deal_platform_fault("arm render: no installed arm table");
+    }
+    const deal_arm_record *record = deal_arm_record_of(arm_id);
+    if (record == NULL) {
+        deal_platform_fault("arm render: unknown arm id");
+    }
+    if (record->render_scope != DEAL_ARM_SCOPE_TOP_LEVEL) {
+        deal_platform_fault("arm render: inner-only arm rendered at a site");
+    }
+    if ((record->has_expected != 0u) != (expected != NULL)) {
+        deal_platform_fault("arm render: declared field shape mismatch");
+    }
+    if ((record->has_actual != 0u) != (actual != NULL)) {
+        deal_platform_fault("arm render: declared field shape mismatch");
+    }
+    if (parameter_count != 0u && parameters == NULL) {
+        deal_platform_fault("arm render: malformed parameter data");
+    }
+    char *message = deal_arm_instantiate(record, parameters, parameter_count);
+    /* The cause is a runtime intermediate across the record's own allocation,
+     * so one scoped root keeps it alive at that allocation safepoint (M5). */
+    if (cause != NULL) {
+        deal_root_scope_push();
+        uint32_t slot = deal_root_scope_hold(cause);
+        deal_error *error = deal_error_allocate(record->code, message, origin, 1);
+        deal_error_set_expected(error, expected);
+        deal_error_set_actual(error, actual);
+        deal_error_set_cause(error, cause);
+        deal_root_scope_release(slot);
+        deal_root_scope_pop();
+        deal_arm_text_release(message);
+        return error;
+    }
+    deal_error *error = deal_error_allocate(record->code, message, origin, 1);
+    deal_error_set_expected(error, expected);
+    deal_error_set_actual(error, actual);
+    deal_arm_text_release(message);
+    return error;
+}
+
+deal_error *deal_error_array_position(uint32_t arm_id, const deal_origin *origin) {
+    if (origin == NULL) {
+        deal_platform_fault("array position: missing origin");
+    }
+    if (arm_id != DEAL_ARM_ID_ARRAY_READ_BOUNDS
+            && arm_id != DEAL_ARM_ID_ARRAY_WRITE_BOUNDS
+            && arm_id != DEAL_ARM_ID_ARRAY_DELETE_BOUNDS) {
+        deal_platform_fault("array position: not a bounds arm");
+    }
+    return deal_error_materialize(arm_id, NULL, 0u, NULL, NULL, origin, NULL);
+}
+
+/* =========================================================================
+ * The canonical floating-point text of one arm actual (R5)
+ * ========================================================================= */
+
+const char *deal_arm_number_text(double value, char *buffer, size_t capacity) {
+    if (buffer == NULL || capacity < DEAL_ARM_NUMBER_TEXT_CAPACITY) {
+        deal_platform_fault("arm render: number buffer too small");
+    }
+    uint64_t bits = 0u;
+    memcpy(&bits, &value, sizeof(bits));
+    int negative = (bits >> 63) != 0u;
+    uint32_t exponent_bits = (uint32_t)((bits >> 52) & 0x7FFu);
+    uint64_t fraction = bits & UINT64_C(0xFFFFFFFFFFFFF);
+    size_t length = 0u;
+    if (negative) {
+        buffer[length] = '-';
+        length += 1u;
+    }
+    if (exponent_bits == 0x7FFu) {
+        const char *spelling = fraction == 0u ? "Infinity" : "NaN";
+        if (fraction != 0u) {
+            /* NaN carries no sign in the canonical spelling. */
+            length = 0u;
+        }
+        size_t spelling_length = strlen(spelling);
+        memcpy(buffer + length, spelling, spelling_length);
+        buffer[length + spelling_length] = 0;
+        return buffer;
+    }
+    if (exponent_bits == 0u && fraction == 0u) {
+        /* Both zeros spell the zero significand with a zero exponent. */
+        const char *spelling = "-0x0.0p0";
+        if (!negative) {
+            spelling = "0x0.0p0";
+        }
+        length = strlen(spelling);
+        memcpy(buffer, spelling, length + 1u);
+        return buffer;
+    }
+    static const char hex[] = "0123456789abcdef";
+    char digits[14];
+    uint64_t remaining = fraction;
+    for (int index = 12; index >= 0; index -= 1u) {
+        digits[index] = hex[(size_t)(remaining & 0xFu)];
+        remaining >>= 4;
+    }
+    size_t digit_count = 13u;
+    while (digit_count > 1u && digits[digit_count - 1u] == '0') {
+        digit_count -= 1u;
+    }
+    int exponent;
+    if (exponent_bits == 0u) {
+        /* A subnormal keeps the fixed-exponent spelling: `0x0.<digits>p-1022`. */
+        exponent = -1022;
+        memcpy(buffer + length, "0x0.", 4u);
+        length += 4u;
+    } else {
+        exponent = (int)exponent_bits - 1023;
+        memcpy(buffer + length, "0x1.", 4u);
+        length += 4u;
+    }
+    memcpy(buffer + length, digits, digit_count);
+    length += digit_count;
+    buffer[length] = 'p';
+    length += 1u;
+    if (exponent < 0) {
+        buffer[length] = '-';
+        length += 1u;
+        exponent = -exponent;
+    }
+    char digits_exp[8];
+    size_t exp_length = 0u;
+    do {
+        digits_exp[exp_length] = (char)('0' + (exponent % 10));
+        exp_length += 1u;
+        exponent /= 10;
+    } while (exponent > 0);
+    for (size_t index = 0; index < exp_length; index += 1u) {
+        buffer[length] = digits_exp[exp_length - 1u - index];
+        length += 1u;
+    }
+    buffer[length] = 0;
+    return buffer;
+}
+
+/* =========================================================================
+ * Failure admission (R5, `FailureAdmission`)
+ * ========================================================================= */
+
+deal_error *deal_error_host_text(const char *code, const char *message,
+                                 const char *expected, const char *actual) {
+    /* The host's own text: no arm, no origin, no frames and no cause (R5). */
+    deal_error *error = deal_error_allocate(code, message, NULL, 0);
+    deal_error_set_expected(error, expected);
+    deal_error_set_actual(error, actual);
+    return error;
+}
+
+deal_error *deal_failure_admit(const deal_failure_admission *admission) {
+    if (admission == NULL) {
+        deal_platform_fault("failure admission: null admission");
+    }
+    switch ((deal_failure_kind)admission->kind) {
+    case DEAL_FAILURE_HOST_TEXT:
+        if (admission->error != NULL) {
+            deal_platform_fault("failure admission: host text beside a relayed Error");
+        }
+        return deal_error_host_text(admission->code, admission->message,
+            admission->expected, admission->actual);
+    case DEAL_FAILURE_DEAL_ERROR:
+        if (admission->error == NULL) {
+            deal_platform_fault("failure admission: relayed channel without an Error");
+        }
+        if (admission->code != NULL || admission->message != NULL
+                || admission->expected != NULL || admission->actual != NULL) {
+            deal_platform_fault("failure admission: relayed Error beside host text");
+        }
+        /* The very object the DEAL-origin failure names: no replacement, no
+         * added field, no refreshed origin, no new frames and no new cause. */
+        return admission->error;
+    }
+    deal_platform_fault("failure admission: kind outside the closed set");
 }

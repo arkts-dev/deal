@@ -22,7 +22,14 @@
  * Element storage (C3, M1). An array records the emitted element layout of its
  * descriptor once, for its whole lifetime including an empty array and every
  * alias, and stores the elements in one managed block of `capacity * stride`
- * bytes. `deal_container_array_trace` walks exactly the managed references the
+ * bytes. Beside the memory layout an array records its persistent element
+ * descriptor as the `descriptor` group's opaque atom reference (R4): the
+ * descriptor never re-derives an array's element type from its present
+ * elements, so an empty array and an array whose elements happen to match a
+ * different element type keep the descriptor they were built with. The token
+ * is opaque here: this group stores and returns it and never interprets it.
+ *
+ * `deal_container_array_trace` walks exactly the managed references the
  * element layout declares, so the collector's precise map never guesses. A
  * reference element slot may legitimately hold the null or the undefined
  * singleton (a nullable element type), so both the element walk and the element
@@ -42,8 +49,20 @@
 int deal_container_position(double position, size_t length, int allow_append,
                             size_t *offset);
 
-/* A zero-based array of `length` zero-initialized slots of `element_layout`. */
+/* A zero-based array of `length` zero-initialized slots of `element_layout`
+ * that records no persistent element descriptor. */
 deal_array *deal_container_array_new(uint32_t element_layout, size_t length);
+
+/* A zero-based array of `length` zero-initialized slots of `element_layout`
+ * that records `element_descriptor` (a `deal_descriptor` atom reference, 0 for
+ * none) for its whole lifetime (R4). */
+deal_array *deal_container_array_new_typed(uint32_t element_layout,
+                                           uint32_t element_descriptor,
+                                           size_t length);
+
+/* The persistent element descriptor the array records, or 0 when it records
+ * none. */
+uint32_t deal_container_array_element_descriptor(const deal_array *array);
 
 /* The exact element count (a `number` position never reports it truncated). */
 size_t deal_container_array_count(const deal_array *array);

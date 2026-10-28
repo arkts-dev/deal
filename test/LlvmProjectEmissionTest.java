@@ -600,8 +600,13 @@ public final class LlvmProjectEmissionTest {
                 + " the product runs successfully: " + run.describe());
             checkEq("", run.stdout(),
                 "-O" + level + " a successful run prints no terminal output");
+            /* The published runtime tree carries the whole C11 runtime, so a
+             * full dump of the product's debug sections is unbounded; the query
+             * is the two DEAL subprograms, whose own DIEs carry their source
+             * file, their DEAL name and their generated linkage name. */
             NativeCompiler.Result dwarf = NativeCompiler.run(
-                List.of("llvm-dwarfdump", product.toString()), scratch);
+                List.of("llvm-dwarfdump", "--name=ping", "--name=main",
+                    product.toString()), scratch);
             checkEq(0, dwarf.exitCode(), "llvm-dwarfdump reads the product at -O"
                 + level);
             check(dwarf.stdout().contains("lib.deal")

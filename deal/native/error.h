@@ -10,11 +10,16 @@
  * detects from the emitted closed arm table. The emitted project module defines
  * `deal_project_arm_table` (the extern below) and the generated start function
  * installs it through `deal_arm_table_install` before any user code runs. The
- * runtime stores the accepted table for the later materialization entry and
- * fails closed on a structurally invalid table: one deterministic stderr line
- * and exit 2, without returning to the caller. This group authors no arm text,
- * no template, no parameter projection and no repertoire rule; the text arrives
- * as data.
+ * runtime stores the accepted table for the materialization entry and fails
+ * closed on an invalid table: one deterministic stderr line and exit 2,
+ * without returning to the caller. This group authors no arm text and no
+ * template; the text arrives as data. It does hold the compiled closed arm
+ * repertoire — the arm identities, each arm's declared parameter names, its
+ * render scope and its declared expected/actual fields — because the install
+ * validation must recognize an unknown arm, a missing arm and a parameter-shape
+ * or render-scope mismatch without manufacturing any text. The repertoire
+ * carries structure only, so the one message authority stays the emitted
+ * table.
  *
  * The `deal_error` record (R5, R9) carries the required-present `code` and
  * `message` fields, the origin (`deal_origin`, stored unchanged), the optional
@@ -26,8 +31,9 @@
  * platform-owned. An Error snapshots the shadow frame stack when it is
  * materialized; a rethrow reuses the instance and refreshes nothing. The
  * field-setting entries below write the record's own fields; the arm-driven
- * materialization entry that instantiates a template arrives with the
- * runtime-boundaries-errors child.
+ * materialization entry instantiates the installed arm's own template, and the
+ * host-text materialization and admission entries keep the two R5 failure
+ * classes disjoint.
  */
 #ifndef DEAL_NATIVE_ERROR_H
 #define DEAL_NATIVE_ERROR_H
@@ -38,6 +44,46 @@
 
 /* The supported arm-table version; any other version fails closed. */
 #define DEAL_ARM_TABLE_VERSION 1U
+
+/*
+ * The closed arm identity of the DEAL-visible failure-arm set, in the
+ * canonical arm order of the shared failure-projection authority. The ids are
+ * the arm record's `id` field: the emitted table carries exactly this set, and
+ * a record outside it, a duplicated id and a missing arm all fail the install
+ * validation closed.
+ */
+#define DEAL_ARM_ID_TYPED_BOUNDARY_KIND             0u
+#define DEAL_ARM_ID_TYPED_BOUNDARY_INVALID_UNICODE  1u
+#define DEAL_ARM_ID_CLASS_IDENTITY                  2u
+#define DEAL_ARM_ID_HOST_STRING_INVALID_UTF8        3u
+#define DEAL_ARM_ID_HOST_STRING_SURROGATE           4u
+#define DEAL_ARM_ID_ARRAY_ELEMENT_KIND              5u
+#define DEAL_ARM_ID_ARRAY_READ_BOUNDS               6u
+#define DEAL_ARM_ID_ARRAY_WRITE_BOUNDS              7u
+#define DEAL_ARM_ID_ARRAY_DELETE_BOUNDS             8u
+#define DEAL_ARM_ID_FUNCTION_SIGNATURE_MISMATCH     9u
+#define DEAL_ARM_ID_HOST_PARAMETER_CELL            10u
+#define DEAL_ARM_ID_HOST_SYNC_RETURN_NOTHING       11u
+#define DEAL_ARM_ID_HOST_SYNC_RETURN_CELL          12u
+#define DEAL_ARM_ID_ASYNC_COMPLETION_KIND          13u
+#define DEAL_ARM_ID_ASYNC_SHAPE                    14u
+#define DEAL_ARM_ID_HOST_LOAD_FAILED               15u
+#define DEAL_ARM_ID_HOST_LOAD_RAW_SHAPE            16u
+#define DEAL_ARM_ID_HOST_LOAD_NOT_A_MODULE         17u
+#define DEAL_ARM_ID_HOST_LOAD_MISSING_EXPORT       18u
+#define DEAL_ARM_ID_HOST_LOAD_SIGNATURE_MISMATCH   19u
+#define DEAL_ARM_ID_HOST_LOAD_IDENTITY_MISMATCH    20u
+#define DEAL_ARM_ID_HOST_LOAD_INVALID_METADATA     21u
+#define DEAL_ARM_ID_CLASS_EXTRA_FIELD              22u
+#define DEAL_ARM_ID_JSON_PARSE_ERROR               23u
+#define DEAL_ARM_ID_JSON_TO_WALK                   24u
+#define DEAL_ARM_ID_JSON_STRINGIFY_UNSUPPORTED     25u
+#define DEAL_ARM_ID_JSON_TO_WALK_CYCLE             26u
+#define DEAL_ARM_ID_SUBSTRING_BOUNDS               27u
+#define DEAL_ARM_ID_SQRT_NEGATIVE                  28u
+
+/* The number of arms the compiled closed repertoire declares. */
+#define DEAL_ARM_REPERTOIRE_COUNT 29U
 
 /* The two closed render scopes. */
 #define DEAL_ARM_SCOPE_TOP_LEVEL 0U
@@ -54,12 +100,111 @@ typedef struct {
 } deal_arm_record;
 typedef struct { uint32_t version; uint32_t count; const deal_arm_record *records; } deal_arm_table;
 extern const deal_arm_table deal_project_arm_table;      /* defined by the emitted project module */
-int deal_arm_table_install(const deal_arm_table *table); /* 1 = accepted and installed */
+
+/*
+ * Installs the emitted table once, before any user code: 1 = accepted and
+ * installed. The delivered structural rules (version, count, null text, render
+ * scope, duplicate id) and this group's repertoire validation both fail closed,
+ * so an unknown arm, a missing arm, a parameter-shape mismatch and a
+ * render-scope or declared-field mismatch each terminate with one deterministic
+ * stderr line and exit 2. Installing the accepted table again is idempotent;
+ * replacing it with a different table is the same fault.
+ */
+int deal_arm_table_install(const deal_arm_table *table);
 
 /* The accepted table, or NULL before the install entry accepted one. The table is
  * static emitted data whose members are text and integers, so it names no managed
  * object and contributes no collector root (M5 roots managed referents only). */
 const deal_arm_table *deal_arm_table_installed(void);
+
+/* -- materialization (R5) ------------------------------------------------ */
+
+/* One named parameter value of one arm render. */
+typedef struct {
+    const char *name;
+    const char *value;
+} deal_arm_parameter;
+
+/*
+ * Instantiates one installed arm's own template with the arm's declared named
+ * parameters and answers the message text in platform storage, released with
+ * `deal_arm_text_release` (R5). Every parameter the arm declares must be
+ * supplied exactly once and no parameter the arm does not declare may be
+ * supplied: a missing or extra parameter is malformed parameter data and a
+ * deterministic producer defect. This is also the inner-reason render, so an
+ * INNER_ONLY arm is admissible here and nowhere else.
+ */
+char *deal_arm_message(uint32_t arm_id, const deal_arm_parameter *parameters,
+                       size_t parameter_count);
+
+/* Releases text answered by deal_arm_message (NULL is a no-op). */
+void deal_arm_text_release(char *text);
+
+/*
+ * Materializes one complete failure from the installed arm table (R5): the
+ * arm's own code, its own template instantiated with its declared named
+ * parameters, its declared expected and actual fields at the supplied origin,
+ * the innermost-first frame snapshot taken now, and the given cause.
+ *
+ * A missing expected field where the arm declares one, an expected field where
+ * the arm declares none (and the same for actual), a parameter outside the
+ * arm's declaration, an unknown arm id and a render of an INNER_ONLY arm at a
+ * site are producer defects: one deterministic stderr line and exit 2, never a
+ * DEAL-visible Error and never a fallback text. `cause` roots itself across the
+ * allocation of the record (M5), so an E8003 leaf cause survives.
+ */
+deal_error *deal_error_materialize(uint32_t arm_id,
+                                   const deal_arm_parameter *parameters,
+                                   size_t parameter_count, const char *expected,
+                                   const char *actual, const deal_origin *origin,
+                                   deal_error *cause);
+
+/* The canonical floating-point text of one arm actual (`SQRT_NEGATIVE` spells
+ * its failing value): Java `Double.toHexString` parity, so `NaN`, both
+ * infinities, both zeros, a subnormal's fixed-exponent spelling and every
+ * other value's shortest exact `0x1.<digits>p<exp>` form. The text is written
+ * into the caller's buffer, which must be at least
+ * `DEAL_ARM_NUMBER_TEXT_CAPACITY` bytes. */
+#define DEAL_ARM_NUMBER_TEXT_CAPACITY 32U
+const char *deal_arm_number_text(double value, char *buffer, size_t capacity);
+
+/* The three E8002 array-position arms, materialized on request (R2/R5): the
+ * container group's rejected discrete position is rendered through this
+ * renderer, so no second message authority exists. An id outside the three
+ * bounds arms is a producer defect. */
+deal_error *deal_error_array_position(uint32_t arm_id, const deal_origin *origin);
+
+/* -- failure admission (R5, `FailureAdmission`) ------------------------- */
+
+/*
+ * Host-authored failure text (R5/H2): the host's own code, message and optional
+ * expected/actual become a builtin Error with the host's text, no arm, no
+ * origin, no frames and no cause. Nothing is invented and nothing is rendered
+ * from the arm table.
+ */
+deal_error *deal_error_host_text(const char *code, const char *message,
+                                 const char *expected, const char *actual);
+
+/* One resolved failure handed to the admission entry: the host's own text or
+ * the DEAL-origin Error the host relayed. */
+typedef struct {
+    uint32_t kind;          /* deal_failure_kind */
+    deal_error *error;      /* DEAL_FAILURE_DEAL_ERROR: the resolved Error */
+    const char *code;       /* DEAL_FAILURE_HOST_TEXT */
+    const char *message;
+    const char *expected;   /* NULL = absent */
+    const char *actual;     /* NULL = absent */
+} deal_failure_admission;
+
+/*
+ * Admits one resolved failure as the Error value that propagates: host text is
+ * materialized once, and an already-carried `deal_error *` is returned
+ * unchanged — no replacement, no added field, no refreshed origin, no new
+ * frames and no new cause, so a caught, rethrown or transported Error stays one
+ * object (R5). Token issuance, validation and consumption stay with the host
+ * crossing; this entry sees only the resolved failure.
+ */
+deal_error *deal_failure_admit(const deal_failure_admission *admission);
 
 /* -- the call-frame stack (`CallFrameContract`) -------------------------- */
 
