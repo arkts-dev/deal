@@ -152,7 +152,7 @@ uint32_t deal_root_frame_depth(void) {
  * ========================================================================= */
 
 /* One defined runtime representation's own layout. */
-#define DEAL_RUNTIME_LAYOUT_MAX 8U
+#define DEAL_RUNTIME_LAYOUT_MAX 16U
 
 static const deal_layout *deal_runtime_layouts[DEAL_RUNTIME_LAYOUT_MAX];
 static size_t deal_runtime_layout_count;

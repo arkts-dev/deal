@@ -1068,6 +1068,13 @@ deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
     return outcome;
 }
 
+/* -- the typed-boundary token (R4) -------------------------------------- */
+
+const char *deal_check_token(const deal_check_input *input) {
+    deal_classification value = deal_check_classify(input);
+    return deal_check_typed_token(&value);
+}
+
 /* -- the scalar boundary helpers ---------------------------------------- */
 
 deal_outcome_number deal_check_number(const deal_data *datum,

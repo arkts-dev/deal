@@ -89,6 +89,51 @@ static const deal_layout deal_array_block_layout = {
 };
 
 /*
+ * The runtime's canonical element layouts (C3). An array records one element
+ * layout for its whole lifetime, and the runtime-owned boxed element set is
+ * exactly these four: one persistent tagged datum slot (`unknown`, record and
+ * dynamic-apply elements), one managed reference slot (a `string`, array,
+ * record, class or function element), one binary64 slot (`number`) and one 0/1
+ * slot (`boolean`). A class-instance element layout is the emitted module's own
+ * metadata and lives at `DEAL_LAYOUT_EMITTED_BASE` and above, exactly like a
+ * class's own object layout.
+ *
+ * The element layout is storage metadata only; the element's *type* is the
+ * array's recorded persistent element descriptor (R4), which is why an
+ * `unknown`-descriptor array stores tagged datum slots and a `string`-descriptor
+ * array stores managed string references.
+ */
+static const uint32_t deal_element_reference_offsets[] = {0u};
+static const uint32_t deal_element_datum_offsets[] = {
+    (uint32_t)offsetof(deal_data, reference)
+};
+
+static const deal_layout deal_element_datum_layout = {
+    DEAL_LAYOUT_ELEMENT_DATUM, 0u, sizeof(deal_data),
+    deal_element_datum_offsets, 1u
+};
+static const deal_layout deal_element_reference_layout = {
+    DEAL_LAYOUT_ELEMENT_REFERENCE, 0u, sizeof(void *),
+    deal_element_reference_offsets, 1u
+};
+static const deal_layout deal_element_number_layout = {
+    DEAL_LAYOUT_ELEMENT_NUMBER, 0u, sizeof(double), NULL, 0u
+};
+static const deal_layout deal_element_boolean_layout = {
+    DEAL_LAYOUT_ELEMENT_BOOLEAN, 0u, sizeof(uint8_t), NULL, 0u
+};
+
+/* Registers the runtime-owned layouts at their representation's first use. */
+static void deal_container_define_layouts(void) {
+    deal_layout_define(&deal_array_layout);
+    deal_layout_define(&deal_array_block_layout);
+    deal_layout_define(&deal_element_datum_layout);
+    deal_layout_define(&deal_element_reference_layout);
+    deal_layout_define(&deal_element_number_layout);
+    deal_layout_define(&deal_element_boolean_layout);
+}
+
+/*
  * The collector's supplemental walk of the array layout (M1): an array's
  * payload holds managed element references outside its fixed map, so the group
  * registers its own element walk at the array representation's first use and the
@@ -140,12 +185,13 @@ static struct deal_array *deal_container_array_of(const deal_array *array) {
 deal_array *deal_container_array_new_typed(uint32_t element_layout,
                                            uint32_t element_descriptor,
                                            size_t length) {
+    /* The runtime-owned layouts exist before the first element stride is read,
+     * so the boxed element layouts are always known here. */
+    deal_container_define_layouts();
     size_t stride = deal_container_element_stride(element_layout);
     if (length > SIZE_MAX / stride) {
         deal_platform_fault("container: array size overflow");
     }
-    deal_layout_define(&deal_array_layout);
-    deal_layout_define(&deal_array_block_layout);
     deal_layout_trace_register(DEAL_LAYOUT_ARRAY, deal_container_array_walk);
     struct deal_array *array =
         deal_alloc(DEAL_LAYOUT_ARRAY, sizeof(*array));

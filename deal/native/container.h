@@ -34,6 +34,16 @@
  * reference element slot may legitimately hold the null or the undefined
  * singleton (a nullable element type), so both the element walk and the element
  * barrier are tag-aware and never treat a singleton as heap storage.
+ *
+ * The runtime-owned element layouts (C3) are `DEAL_LAYOUT_ELEMENT_DATUM` (one
+ * persistent tagged datum slot), `DEAL_LAYOUT_ELEMENT_REFERENCE` (one managed
+ * reference slot), `DEAL_LAYOUT_ELEMENT_NUMBER` (one binary64 slot) and
+ * `DEAL_LAYOUT_ELEMENT_BOOLEAN` (one 0/1 slot); a class-instance element layout
+ * is the emitted module's own metadata at `DEAL_LAYOUT_EMITTED_BASE` and above.
+ * The element's *type* is never derived from its storage layout: it is the
+ * array's recorded persistent element descriptor (R4), so an `unknown`
+ * descriptor stores tagged datum slots and a `string` descriptor stores managed
+ * string references.
  */
 #ifndef DEAL_NATIVE_CONTAINER_H
 #define DEAL_NATIVE_CONTAINER_H

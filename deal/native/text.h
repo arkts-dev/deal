@@ -53,6 +53,19 @@ size_t deal_text_byte_length(const deal_string *string);
 /* The exact Unicode scalar count. */
 size_t deal_text_scalar_length(const deal_string *string);
 
+/*
+ * The byte offset of one scalar position: the offset of scalar `scalar_index`
+ * in `0..scalar count`, so the final position answers the byte length. The
+ * range `[offset(i), offset(i + 1))` is exactly scalar `i`'s UTF-8 encoding,
+ * and the range `[offset(lo), offset(hi))` is the scalar slice `[lo, hi)`.
+ *
+ * Only this group decodes UTF-8, so no consumer derives a scalar boundary from
+ * raw bytes: the string operations of the `std` group index through this entry
+ * (R8) and never split a multi-byte encoding. An out-of-range position is an
+ * invariant fault.
+ */
+size_t deal_text_scalar_offset(const deal_string *string, size_t scalar_index);
+
 /* The cached content hash. */
 uint64_t deal_text_hash(const deal_string *string);
 

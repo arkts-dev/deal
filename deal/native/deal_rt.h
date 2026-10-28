@@ -211,6 +211,10 @@ typedef struct deal_object deal_object;          /* per-layout class instance */
 typedef struct deal_fn deal_fn;                  /* code entry, environment, signature atom */
 typedef struct deal_error deal_error;            /* the builtin nominal Error instance */
 typedef struct deal_async_op deal_async_op;      /* one live async operation record */
+/* The `descriptor` group's interned atom is opaque here too: a class plan and a
+ * check input name one through a pointer only (R4). The group's own header
+ * repeats this identical declaration, which C11 permits. */
+typedef struct deal_descriptor deal_descriptor;
 
 /* C2/C3/H6 opacity: the emitted project module owns both layouts. */
 typedef struct deal_module deal_module;
@@ -303,6 +307,7 @@ typedef struct {
  * ========================================================================= */
 typedef struct { deal_error *error; } deal_outcome;
 typedef struct { deal_error *error; deal_value value; } deal_outcome_value;
+typedef struct { deal_error *error; deal_data value; } deal_outcome_data;
 typedef struct { deal_error *error; double value; } deal_outcome_number;
 typedef struct { deal_error *error; uint8_t value; } deal_outcome_boolean;
 typedef struct { deal_error *error; deal_string *value; } deal_outcome_string;
@@ -314,6 +319,67 @@ typedef struct { deal_error *error; void *value; } deal_outcome_reference;
  * groups, so it is declared with the C3 value-surface records.
  */
 typedef void (*deal_reference_visit)(void *referent, void *context);
+
+/* -- the check input (R2, R3, R4) ---------------------------------------- */
+
+/* The closed presentations of one checked value (R3). `missing` is the
+ * internal absent marker (a raw read of an absent slot), `nothing` the
+ * no-value production of a result-only position, `async-operation` an
+ * operation handle, and `invalid-unicode` a string carrier that is not a
+ * Unicode scalar sequence: none of them is `unknown` data. */
+typedef enum {
+    DEAL_PRESENT_DATUM = 0,
+    DEAL_PRESENT_MISSING = 1,
+    DEAL_PRESENT_NOTHING = 2,
+    DEAL_PRESENT_ASYNC_OPERATION = 3,
+    DEAL_PRESENT_INVALID_UNICODE = 4
+} deal_presentation;
+
+/* The closed encoding defects of an `invalid-unicode` presentation: the two
+ * pinned host-string inner reasons distinguish a UTF-16 surrogate code point
+ * sequence from every other malformed encoding. */
+typedef enum {
+    DEAL_UNICODE_MALFORMED = 0,
+    DEAL_UNICODE_SURROGATE = 1
+} deal_unicode_defect;
+
+/* One checked value at one boundary: its closed presentation, the persistent
+ * tagged datum of a data presentation, and — for the two managed kinds whose
+ * identity the emitted module owns — the carried canonical class atom of a
+ * class datum and the carried canonical signature text of a function datum. */
+typedef struct {
+    uint32_t presentation;     /* deal_presentation */
+    uint32_t unicode_defect;   /* deal_unicode_defect for INVALID_UNICODE, else 0 */
+    deal_data datum;           /* the persistent tagged datum of a DATUM */
+    const char *class_atom;    /* a CLASS datum's carried canonical class atom */
+    const char *signature;     /* a FUNCTION datum's carried canonical signature */
+} deal_check_input;
+
+/* The closed check boundary kinds: the projection sets of the failure-arm
+ * table (R4/R5). A boundary whose descriptor is a function type belongs to
+ * FUNCTION_SIGNATURE, every other typed boundary to TYPE_DESCRIPTOR. */
+#define DEAL_BOUNDARY_TYPE_DESCRIPTOR     0u
+#define DEAL_BOUNDARY_FUNCTION_SIGNATURE  1u
+#define DEAL_BOUNDARY_HOST_PARAMETER      2u
+#define DEAL_BOUNDARY_HOST_SYNC_RETURN    3u
+#define DEAL_BOUNDARY_ASYNC_COMPLETION    4u
+
+/* One declared field of a class layout: its source name, its declared type
+ * (the type a store writes, so an optional field's descriptor carries exactly
+ * the admitted members) and its presence flag (`1` optional). */
+typedef struct {
+    const char *name;
+    deal_descriptor *descriptor;
+    int optional;
+} deal_class_field;
+
+/* The declared construction layout of one class: the canonical nominal class
+ * atom the instance is tagged with and the fields in declaration order. */
+typedef struct {
+    const char *class_atom;
+    const deal_class_field *fields;
+    size_t field_count;
+} deal_class_layout;
 
 /* =========================================================================
  * The service group entries, in dependency order

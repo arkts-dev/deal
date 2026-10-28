@@ -113,6 +113,10 @@ uint32_t deal_root_frame_depth(void);
 #define DEAL_LAYOUT_TABLE         5u   /* insertion-ordered record           */
 #define DEAL_LAYOUT_TABLE_ENTRY   6u   /* one record member                  */
 #define DEAL_LAYOUT_ERROR         7u   /* the builtin Error instance         */
+#define DEAL_LAYOUT_ELEMENT_DATUM      8u   /* one boxed persistent datum slot    */
+#define DEAL_LAYOUT_ELEMENT_REFERENCE  9u   /* one managed reference element slot */
+#define DEAL_LAYOUT_ELEMENT_NUMBER    10u   /* one binary64 element slot          */
+#define DEAL_LAYOUT_ELEMENT_BOOLEAN   11u   /* one 0/1 boolean element slot       */
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 
 /*

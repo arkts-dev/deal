@@ -179,6 +179,29 @@ size_t deal_text_scalar_length(const deal_string *string) {
     return deal_text_of(string)->scalar_count;
 }
 
+size_t deal_text_scalar_offset(const deal_string *string, size_t scalar_index) {
+    const deal_string *text = deal_text_of(string);
+    if (scalar_index > text->scalar_count) {
+        deal_platform_fault("text: scalar position outside the scalar count");
+    }
+    size_t scalar = 0u;
+    size_t index = 0u;
+    while (scalar < scalar_index) {
+        unsigned char lead = text->bytes[index];
+        if (lead < 0x80u) {
+            index += 1u;
+        } else if (lead < 0xE0u) {
+            index += 2u;
+        } else if (lead < 0xF0u) {
+            index += 3u;
+        } else {
+            index += 4u;
+        }
+        scalar += 1u;
+    }
+    return index;
+}
+
 uint64_t deal_text_hash(const deal_string *string) {
     return deal_text_of(string)->hash;
 }

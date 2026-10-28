@@ -331,19 +331,22 @@ public final class LlvmRuntimeAbiMirrorTest {
             "the host status enum starts at DEAL_OK = 0");
         check(rtHeader.contains("DEAL_KIND_NULL, DEAL_KIND_MISSING"),
             "the host kind enum starts at DEAL_KIND_NULL");
-        // The descriptor group's published value-surface records (R4, R2): the
-        // check input, its recorded context, the class layout and one supplied
-        // field, whose field order the emitted IR follows.
+        // The shared value-surface records (R4, R2): the check input, its
+        // recorded context, the class layout and one supplied field, whose field
+        // order the emitted IR follows. The check input, the class field and the
+        // class layout are published by deal_rt.h beside the other records every
+        // group shares; the check context and the supplied field stay with the
+        // descriptor group.
         String descriptorHeader = Files.readString(
             REPO.resolve("deal/native/descriptor.h"), StandardCharsets.UTF_8);
         checkEq("uint32_t presentation; uint32_t unicode_defect; deal_data datum;"
                 + " const char *class_atom; const char *signature",
-            structFields(descriptorHeader, "deal_check_input"),
+            structFields(rtHeader, "deal_check_input"),
             "deal_check_input's published field order");
         checkEq("{ i32, i32, %struct.deal_data, i8*, i8* }",
             LlvmTypeMapper.recordLayout("deal_check_input").orElse(""),
             "the emitted check-input layout follows that field order");
-        checkEq(declaratorCount(structFields(descriptorHeader, "deal_check_input")),
+        checkEq(declaratorCount(structFields(rtHeader, "deal_check_input")),
             LlvmTypeMapper.recordLayout("deal_check_input").orElse("").split(",").length,
             "the emitted check input carries one IR member per C declarator");
         checkEq("const deal_origin *origin; int32_t parameter_index",
@@ -353,14 +356,14 @@ public final class LlvmRuntimeAbiMirrorTest {
             LlvmTypeMapper.recordLayout("deal_check_context").orElse(""),
             "the emitted check-context layout follows that field order");
         checkEq("const char *name; deal_descriptor *descriptor; int optional",
-            structFields(descriptorHeader, "deal_class_field"),
+            structFields(rtHeader, "deal_class_field"),
             "deal_class_field's published field order");
         checkEq("{ i8*, i8*, i32 }",
             LlvmTypeMapper.recordLayout("deal_class_field").orElse(""),
             "the emitted class-field layout follows that field order");
         checkEq("const char *class_atom; const deal_class_field *fields;"
                 + " size_t field_count",
-            structFields(descriptorHeader, "deal_class_layout"),
+            structFields(rtHeader, "deal_class_layout"),
             "deal_class_layout's published field order");
         checkEq("{ i8*, %struct.deal_class_field*, i64 }",
             LlvmTypeMapper.recordLayout("deal_class_layout").orElse(""),
@@ -371,6 +374,23 @@ public final class LlvmRuntimeAbiMirrorTest {
         checkEq("{ i8*, %struct.deal_check_input, %struct.deal_origin }",
             LlvmTypeMapper.recordLayout("deal_class_supplied").orElse(""),
             "the emitted supplied-field layout follows that field order");
+        // The json group's published plan record and the tagged-data outcome
+        // the two group entries answer.
+        String jsonHeader = Files.readString(
+            REPO.resolve("deal/native/json.h"), StandardCharsets.UTF_8);
+        checkEq("const deal_class_layout *layout; deal_json_construct construct;"
+                + " deal_json_read_field read_field; void *context",
+            structFields(jsonHeader, "deal_json_class_plan"),
+            "deal_json_class_plan's published field order");
+        checkEq("{ %struct.deal_class_layout*, i8*, i8*, i8* }",
+            LlvmTypeMapper.recordLayout("deal_json_class_plan").orElse(""),
+            "the emitted class-plan layout follows that field order");
+        checkEq("deal_error *error; deal_data value",
+            structFields(rtHeader, "deal_outcome_data"),
+            "deal_outcome_data is error-first with the tagged datum second");
+        checkEq("{ i8*, %struct.deal_data }",
+            LlvmTypeMapper.recordLayout("deal_outcome_data").orElse(""),
+            "the emitted tagged-data outcome follows that field order");
         // The arm renderer's published records (R5).
         checkEq("const char *name; const char *value",
             structFields(errorHeader, "deal_arm_parameter"),
