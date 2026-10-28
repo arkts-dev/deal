@@ -60,6 +60,8 @@
  * terminate with one deterministic stderr line and exit 2 instead of returning
  * to the caller.
  */
+#define _POSIX_C_SOURCE 200809L
+
 #include "deal/native/container.h"
 #include "deal/native/entry.h"
 #include "deal/native/error.h"
@@ -71,6 +73,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <threads.h>
+#include <unistd.h>
 
 #ifndef DEAL_GC_CASE
 #define DEAL_GC_CASE 0
@@ -80,6 +83,8 @@
  * runtime-reserved ids). */
 #define TEST_LAYOUT_NODE 1024u   /* 16-byte payload, one managed slot */
 #define TEST_LAYOUT_BULK 1025u   /* 1024-byte payload, no managed slot */
+#define TEST_LAYOUT_WIDE 1026u   /* wide payload, no fixed map; resumable walk */
+#define TEST_LAYOUT_EMPTY 1027u  /* zero-byte payload, no managed slot */
 
 #define TEST_NODE_BYTES 16u
 #define TEST_BULK_BYTES 1024u
@@ -111,7 +116,9 @@ static const uint32_t test_node_offsets[] = {0u};
 
 static const deal_layout test_layouts[] = {
     {TEST_LAYOUT_NODE, 0u, TEST_NODE_BYTES, test_node_offsets, 1u},
-    {TEST_LAYOUT_BULK, 0u, TEST_BULK_BYTES, NULL, 0u}
+    {TEST_LAYOUT_BULK, 0u, TEST_BULK_BYTES, NULL, 0u},
+    {TEST_LAYOUT_WIDE, 0u, 0u, NULL, 0u},
+    {TEST_LAYOUT_EMPTY, 0u, 0u, NULL, 0u}
 };
 
 static int failures;
@@ -147,6 +154,46 @@ static void read_statistics(deal_gc_statistics_record *out) {
     deal_gc_statistics(out);
 }
 
+/*
+ * The process's resident set size in bytes, read from `/proc/self/statm`. The
+ * backend targets Linux x86-64 only (D4), and this is the only way to observe
+ * that a reclaimed arena returned its pages instead of only decrementing a
+ * counter. It answers 0 when the measurement is unavailable, and it is not used
+ * under AddressSanitizer, whose shadow mapping and free quarantine make the
+ * resident size of the process no evidence about the collector.
+ */
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define DEAL_GC_DRIVER_ASAN 1
+#  endif
+#endif
+#if !defined(DEAL_GC_DRIVER_ASAN) && defined(__SANITIZE_ADDRESS__)
+#  define DEAL_GC_DRIVER_ASAN 1
+#endif
+
+static size_t resident_bytes(void) {
+#if defined(DEAL_GC_DRIVER_ASAN)
+    return 0u;
+#else
+    FILE *file = fopen("/proc/self/statm", "r");
+    if (file == NULL) {
+        return 0u;
+    }
+    unsigned long long total = 0u;
+    unsigned long long resident = 0u;
+    int read = fscanf(file, "%llu %llu", &total, &resident);
+    (void)fclose(file);
+    if (read != 2) {
+        return 0u;
+    }
+    long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0) {
+        return 0u;
+    }
+    return (size_t)resident * (size_t)page;
+#endif
+}
+
 /* One bounded run of safepoints: it advances an in-flight cycle to its end
  * without changing any observable value. */
 static void drain_safepoints(void) {
@@ -168,11 +215,16 @@ static void check_statistics_and_live_collection(void) {
     check(before.object_count == 0u && before.live_bytes == 0u,
           "a normalized heap holds no live object");
 
+    /* Every managed value this driver keeps across another allocating call is
+     * rooted first (M4), exactly as generated code roots its temporaries: a
+     * collection at the next allocation's safepoint may otherwise reclaim it,
+     * which is what DEAL_GC_STRESS plus the sanitizer poison makes observable. */
     void *node = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+    deal_root_frame_write(0u, node);
     void *bulk = deal_alloc(TEST_LAYOUT_BULK, TEST_BULK_BYTES);
+    deal_root_frame_write(1u, bulk);
     node_set_mark(node, 11u);
     node_set_link(node, bulk);
-    deal_root_frame_write(0u, node);
     read_statistics(&before);
 
     deal_gc_collect_full();
@@ -403,11 +455,12 @@ static void check_barrier_and_incremental_cycle(void) {
 
 /*
  * The internal growth policy's minimum trigger (the collector starts a cycle at
- * a safepoint once the bytes allocated since the last completed cycle reach the
- * larger of this minimum and the payload that survived that cycle). The driver
- * fills the allocation volume up to it, so the explicit safepoint below — and
- * not an allocation of the driver's own setup — is the statement that starts the
- * cycle. The setup of this case stays far below it, which the case asserts.
+ * a safepoint once the allocation footprint consumed since the last completed
+ * cycle reaches the larger of this minimum and the footprint that survived that
+ * cycle). The driver keeps its setup far below it and crosses it with one single
+ * dropped allocation, whose own safepoint runs before that allocation is
+ * charged; the explicit safepoint below — never an allocation of the driver's
+ * own setup — is therefore the statement that starts the cycle.
  */
 #define TEST_BARRIER_TRIGGER (256u * 1024u)
 
@@ -464,6 +517,16 @@ static void check_barrier_shades_a_white_referent(void) {
     deal_table *table = deal_container_table_new();
     deal_root_frame_write(3u, table);
 
+    /* The record member that carries the third referent is created before the
+     * cycle starts, so the store below allocates nothing: no safepoint can
+     * intervene between the cycle's first marking slice and the three stores,
+     * and the collector is still marking (one slice of a 600-node chain) when
+     * they run. */
+    deal_string *key = deal_text_new("w", 1u);
+    deal_root_frame_write(7u, key);
+    deal_data placeholder = deal_data_of_number(0.0);
+    deal_container_table_write(table, key, &placeholder);
+
     /* The three referents exist before the cycle starts. A stress run collects
      * at every safepoint, so they stay rooted until after the stores there;
      * the non-stress run clears their slots below, before the cycle's root
@@ -479,17 +542,16 @@ static void check_barrier_shades_a_white_referent(void) {
     deal_root_frame_write(6u, table_referent);
     read_statistics(&prepared);
 
-    /* Fill the remaining trigger volume with one dropped object, so that the
-     * explicit safepoint below crosses the growth policy's trigger exactly. */
+    /* One dropped allocation whose payload alone crosses the growth policy's
+     * trigger: its own safepoint ran before it was charged, so the cycle below
+     * is started by the explicit safepoint and not by this allocation. */
     uint64_t accumulated = prepared.allocated_bytes - before.allocated_bytes;
     check(accumulated < (uint64_t)TEST_BARRIER_TRIGGER,
-          "the white-referent case keeps its setup below the collection "
-          "trigger");
-    top_up = accumulated < (uint64_t)TEST_BARRIER_TRIGGER
-        ? (size_t)((uint64_t)TEST_BARRIER_TRIGGER - accumulated)
-        : (size_t)TEST_BULK_BYTES;
-    check(top_up >= TEST_BULK_BYTES,
-          "the pressure object fills the remaining trigger volume");
+          "the white-referent case keeps its setup payload below the "
+          "collection trigger");
+    top_up = (size_t)TEST_BARRIER_TRIGGER;
+    check(accumulated < (uint64_t)top_up,
+          "the pressure object alone crosses the collection trigger");
     (void)deal_alloc(TEST_LAYOUT_BULK, top_up);
 
     if (stress_mode == 0) {
@@ -511,8 +573,6 @@ static void check_barrier_shades_a_white_referent(void) {
     element.link = array_referent;
     element.mark = 72u;
     deal_container_array_store(array, 0u, &element);
-    deal_string *key = deal_text_new("w", 1u);
-    deal_root_frame_write(7u, key);
     deal_data table_datum =
         deal_data_of_reference(DEAL_DATA_CLASS, table_referent);
     deal_container_table_write(table, key, &table_datum);
@@ -810,15 +870,17 @@ static void check_automatic_collection(void) {
  * ========================================================================= */
 
 /*
- * The internal growth policy's minimum trigger, mirrored exactly like the
- * barrier case mirrors it: a cycle starts at a safepoint once the bytes
- * allocated since the last completed cycle reach the larger of this minimum and
- * the payload that survived that cycle. The pressure below is filled to it with
- * dropped objects only, so the explicit safepoint — never an allocation of this
- * case's own setup — is the statement that starts the cycle.
+ * The internal growth policy's minimum trigger, mirrored like the barrier case
+ * mirrors it: a cycle starts at a safepoint once the allocation footprint
+ * consumed since the last completed cycle reaches the larger of this minimum and
+ * the footprint that survived that cycle. The dropped pressure below stays under
+ * it and one single dropped allocation crosses it, its own safepoint having run
+ * before that allocation was charged, so the explicit safepoint — never an
+ * allocation of this case's own setup — is the statement that starts the cycle.
  */
 #define TEST_WINDOW_TRIGGER (256u * 1024u)
-#define TEST_WINDOW_PRESSURE ((int)((size_t)TEST_WINDOW_TRIGGER / TEST_BULK_BYTES))
+#define TEST_WINDOW_PRESSURE \
+    ((int)(((size_t)TEST_WINDOW_TRIGGER / 2u) / TEST_BULK_BYTES))
 
 /*
  * The case that isolates the allocation-time mark (M1). The pressure objects are
@@ -844,22 +906,23 @@ static void check_allocation_mark_in_inflight_cycle(void) {
     check(before.object_count == 0u && before.live_bytes == 0u,
           "the allocation-mark case starts from an empty heap");
     check((uint64_t)TEST_WINDOW_PRESSURE * TEST_BULK_BYTES
-              == (uint64_t)TEST_WINDOW_TRIGGER,
-          "the dropped pressure volume is the collector's minimum trigger "
-          "exactly");
+              < (uint64_t)TEST_WINDOW_TRIGGER,
+          "the dropped pressure payload stays below the collector's minimum "
+          "trigger");
 
-    /* Dropped allocations reach the trigger exactly: the collector is still
-     * idle after the last of them, so no own allocation started the cycle. */
+    /* The dropped pressure stays below the trigger and one single dropped
+     * allocation crosses it: the collector is still idle after both, so no
+     * allocation of this case started the cycle. */
     for (int index = 0; index < TEST_WINDOW_PRESSURE; index += 1) {
         (void)deal_alloc(TEST_LAYOUT_BULK, TEST_BULK_BYTES);
     }
+    (void)deal_alloc(TEST_LAYOUT_BULK, (size_t)TEST_WINDOW_TRIGGER);
     read_statistics(&pressure);
     if (stress_mode == 0) {
         check(pressure.collections == before.collections,
-              "the dropped pressure volume stops exactly at the collection "
-              "trigger");
+              "the dropped pressure stops just below the collection trigger");
         check(pressure.object_count == before.object_count
-                  + (uint64_t)TEST_WINDOW_PRESSURE,
+                  + (uint64_t)TEST_WINDOW_PRESSURE + 1u,
               "no pressure object is reclaimed before the cycle starts");
     }
 
@@ -891,7 +954,7 @@ static void check_allocation_mark_in_inflight_cycle(void) {
     check(after.live_bytes == TEST_NODE_BYTES,
           "the surviving object keeps its payload accounting");
     check(after.swept_objects == before.swept_objects
-              + (uint64_t)TEST_WINDOW_PRESSURE,
+              + (uint64_t)TEST_WINDOW_PRESSURE + 1u,
           "the cycle reclaims exactly the dropped pressure objects");
     if (stress_mode == 0) {
         check(after.collections == before.collections + 1u,
@@ -1455,6 +1518,643 @@ static void check_queued_frames_under_collection(void) {
 }
 
 /* =========================================================================
+ * 9. Allocation-footprint pressure: zero-payload objects collect (M8, M7)
+ * ========================================================================= */
+
+/*
+ * The growth policy charges the allocation footprint — the header and the
+ * payload capacity of every object — not the payload alone. A program that
+ * allocates objects with no payload still consumes headers and arena storage,
+ * so it must reach the collection trigger exactly like one that allocates
+ * payload bytes. The pressure below allocates zero-payload objects only, and the
+ * statistics keep their payload accounting: `allocated_bytes` must not move
+ * while collections advance and every object is swept.
+ */
+#define TEST_EMPTY_PRESSURE 100000
+
+static void check_footprint_pressure(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record pressure;
+    deal_gc_statistics_record after;
+
+    deal_root_frame_enter(1u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the footprint-pressure case starts from an empty heap");
+
+    void *last_empty = NULL;
+    for (int index = 0; index < TEST_EMPTY_PRESSURE; index += 1) {
+        last_empty = deal_alloc(TEST_LAYOUT_EMPTY, 0u);
+    }
+    check(deal_object_size(last_empty) == 0u,
+          "a zero-payload allocation reports a zero payload size");
+    read_statistics(&pressure);
+
+    check(pressure.allocated_bytes == before.allocated_bytes,
+          "a zero-payload allocation charges no payload byte");
+    check(pressure.collections > before.collections,
+          "zero-payload allocations still charge the allocation footprint and "
+          "reach the collection trigger");
+    if (stress_mode == 0) {
+        check(pressure.object_count <= (uint64_t)TEST_EMPTY_PRESSURE,
+              "zero-payload pressure keeps at most its own objects live");
+    }
+
+    drain_safepoints();
+    deal_gc_collect_full();
+    read_statistics(&after);
+    check(after.object_count == before.object_count
+              && after.live_bytes == before.live_bytes,
+          "the zero-payload pressure leaves no live object");
+    check(after.swept_objects == before.swept_objects
+              + (uint64_t)TEST_EMPTY_PRESSURE,
+          "the sweep reclaims every zero-payload object");
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the footprint-pressure case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* =========================================================================
+ * 10. Bounded marking: resumable tracing by references, not objects (M3)
+ * ========================================================================= */
+
+/*
+ * A wide driver-owned layout: its payload holds `count` managed reference slots
+ * outside its fixed map, so its registered resumable walk stands in for the
+ * array's element walk. The counter makes the collector's per-safepoint work
+ * observable: one slice may visit at most the published reference budget.
+ */
+typedef struct {
+    size_t count;
+    void *slots[];
+} test_wide;
+
+#define TEST_WIDE_SLOTS 20000
+
+static size_t wide_slice_visits;
+static size_t wide_slice_total;
+static int wide_slice_overruns;
+
+static size_t test_wide_trace(const void *object, size_t position,
+                              size_t *budget, deal_reference_visit visit,
+                              void *context) {
+    const test_wide *wide = (const test_wide *)object;
+    while (position < wide->count && *budget > 0u) {
+        void *referent = wide->slots[position];
+        position += 1u;
+        *budget -= 1u;
+        wide_slice_visits += 1u;
+        wide_slice_total += 1u;
+        if (referent != NULL && referent != deal_null_singleton
+                && referent != deal_undefined_singleton) {
+            visit(referent, context);
+        }
+    }
+    return position >= wide->count ? DEAL_TRACE_DONE : position;
+}
+
+static void *wide_slot_at(const void *wide, size_t index) {
+    return ((const test_wide *)wide)->slots[index];
+}
+
+static uint64_t wide_slot_mark(const void *wide, size_t index) {
+    return node_mark(wide_slot_at(wide, index));
+}
+
+/*
+ * The pause bound of one cycle (M3). The wide object's walk spans far more
+ * references than one slice allows, so work must be spread across slices:
+ *
+ *   - no single safepoint may make more than DEAL_GC_MARK_BUDGET_REFERENCES
+ *     reference visits, measured through the registered walk itself;
+ *   - the walk must be resumed where the last slice stopped, so one complete
+ *     cycle visits each of the wide object's slots exactly once (a walk that
+ *     restarts from position 0 visits more, and one that reports completion
+ *     early visits fewer);
+ *   - the cycle therefore needs at least `slots / budget` safepoints, and every
+ *     one of the wide object's referents survives it with its payload.
+ */
+static void check_bounded_marking_slices(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record after;
+    size_t steps = 0u;
+    int completed = 0;
+
+    deal_root_frame_enter(2u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the bounded-marking case starts from an empty heap");
+
+    deal_layout_trace_register(TEST_LAYOUT_WIDE, test_wide_trace);
+    void *wide = deal_alloc(TEST_LAYOUT_WIDE,
+                            sizeof(test_wide)
+                                + (size_t)TEST_WIDE_SLOTS * sizeof(void *));
+    deal_root_frame_write(0u, wide);
+    ((test_wide *)wide)->count = TEST_WIDE_SLOTS;
+    for (size_t index = 0; index < (size_t)TEST_WIDE_SLOTS; index += 1u) {
+        void *child = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+        node_set_mark(child, (uint64_t)index + 1u);
+        node_set_link(child, NULL);
+        deal_root_frame_write(1u, child);
+        deal_store_barrier(wide, child);
+        ((test_wide *)wide)->slots[index] = child;
+        deal_root_frame_write(1u, NULL);
+    }
+    /* Normalize: every object of the wide graph is marked now, so the cycle
+     * observed below must trace the whole walk again from position 0. */
+    deal_gc_collect_full();
+    read_statistics(&before);
+
+    wide_slice_visits = 0u;
+    wide_slice_total = 0u;
+    wide_slice_overruns = 0;
+    while (completed == 0 && steps < (size_t)TEST_SAFEPOINT_DRAIN * 64u) {
+        (void)deal_alloc(TEST_LAYOUT_BULK, TEST_BULK_BYTES);
+        wide_slice_visits = 0u;
+        deal_safepoint();
+        read_statistics(&after);
+        if (stress_mode == 0
+                && wide_slice_visits > (size_t)DEAL_GC_MARK_BUDGET_REFERENCES) {
+            wide_slice_overruns += 1;
+        }
+        if (after.collections > before.collections) {
+            completed = 1;
+        }
+        steps += 1u;
+    }
+    check(completed != 0,
+          "the wide object's cycle completes under incremental safepoints");
+    if (stress_mode == 0) {
+        check(wide_slice_overruns == 0,
+              "no safepoint visits more than the published reference budget");
+        check(wide_slice_total == (size_t)TEST_WIDE_SLOTS,
+              "the resumable walk visits every slot exactly once, so each slice "
+              "resumes where the last one stopped");
+        check(steps >= (size_t)TEST_WIDE_SLOTS
+                          / (size_t)DEAL_GC_MARK_BUDGET_REFERENCES,
+              "the wide object is traced across at least one slice per budget");
+    }
+
+    deal_gc_collect_full();
+    read_statistics(&after);
+    for (size_t index = 0; index < (size_t)TEST_WIDE_SLOTS; index += 1u) {
+        if (wide_slot_at(wide, index) == NULL
+                || wide_slot_mark(wide, index) != (uint64_t)index + 1u) {
+            check(0, "every wide referent survives the sliced marking");
+            break;
+        }
+    }
+    check(after.object_count == (uint64_t)TEST_WIDE_SLOTS + 1u,
+          "the wide graph is exactly the wide object and its referents");
+
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    read_statistics(&after);
+    check(after.object_count == 0u && after.live_bytes == 0u,
+          "the wide graph is reclaimed once its root is dropped");
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the bounded-marking case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* =========================================================================
+ * 10b. The array walk itself is resumable (M1, M3)
+ * ========================================================================= */
+
+/*
+ * The container group's element walk is the runtime's one large reference walk:
+ * an array of reference-kind elements is traced through
+ * `deal_container_array_trace` at one reference slot per unit of the safepoint
+ * budget. The array below has many reference slots but only two referents, so
+ * the sweep's per-object work stays tiny and the marking work is what the
+ * completion time measures: a walk that scans the whole element storage inside
+ * one object finishes the cycle in a handful of safepoints, while a walk bounded
+ * by the reference budget needs at least one safepoint per budget of slots.
+ *
+ * The two halves of the array point to two different referents, and the walk
+ * reaches the second half only by resuming where the previous slice stopped: a
+ * walk that restarted from slot 0 would leave the second referent unmarked, and
+ * its reclaim is then observable in the payload check and the live-object count.
+ */
+#define TEST_ARRAY_SLOTS 8000
+
+static void check_container_array_trace_is_sliced(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record after;
+    size_t steps = 0u;
+    int completed = 0;
+
+    deal_root_frame_enter(3u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the array-slice case starts from an empty heap");
+
+    deal_array *references = deal_container_array_new(
+        DEAL_LAYOUT_ELEMENT_REFERENCE, TEST_ARRAY_SLOTS);
+    deal_root_frame_write(0u, references);
+    void *first_half = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+    deal_root_frame_write(1u, first_half);
+    node_set_mark(first_half, 21u);
+    node_set_link(first_half, NULL);
+    void *second_half = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+    deal_root_frame_write(2u, second_half);
+    node_set_mark(second_half, 22u);
+    node_set_link(second_half, NULL);
+    for (size_t index = 0; index < (size_t)TEST_ARRAY_SLOTS; index += 1u) {
+        void *element = index < (size_t)TEST_ARRAY_SLOTS / 2u
+            ? first_half : second_half;
+        deal_container_array_store(references, index, &element);
+    }
+    deal_root_frame_write(1u, NULL);
+    deal_root_frame_write(2u, NULL);
+    deal_gc_collect_full();
+    read_statistics(&before);
+
+    /* Cross the growth policy's trigger with one dropped allocation whose own
+     * safepoint ran before it was charged, so the explicit safepoint below
+     * starts the cycle and every counted step belongs to it. */
+    for (int index = 0; index < TEST_WINDOW_PRESSURE; index += 1) {
+        (void)deal_alloc(TEST_LAYOUT_BULK, TEST_BULK_BYTES);
+    }
+    (void)deal_alloc(TEST_LAYOUT_BULK, (size_t)TEST_WINDOW_TRIGGER);
+    deal_safepoint();
+    steps = 1u;
+    while (completed == 0 && steps < (size_t)TEST_SAFEPOINT_DRAIN * 16u) {
+        deal_safepoint();
+        read_statistics(&after);
+        if (after.collections > before.collections) {
+            completed = 1;
+        }
+        steps += 1u;
+    }
+    check(completed != 0,
+          "the reference array's cycle completes under incremental safepoints");
+    if (stress_mode == 0) {
+        check(steps >= (size_t)TEST_ARRAY_SLOTS
+                          / (size_t)DEAL_GC_MARK_BUDGET_REFERENCES,
+              "the element walk is spread over at least one safepoint per "
+              "reference budget instead of scanning the whole array in one");
+    }
+
+    size_t wrong = 0u;
+    for (size_t index = 0; index < (size_t)TEST_ARRAY_SLOTS; index += 1u) {
+        void *element =
+            *(void **)deal_container_array_element(references, index);
+        uint64_t expected = index < (size_t)TEST_ARRAY_SLOTS / 2u ? 21u : 22u;
+        if (element == NULL || node_mark(element) != expected) {
+            wrong += 1u;
+        }
+    }
+    check(wrong == 0u,
+          "every element of the sliced walk survives with its payload, the "
+          "second half reached only by resuming the walk");
+    read_statistics(&after);
+    check(after.object_count == 4u,
+          "the reference array keeps exactly the array, its block and its two "
+          "referents");
+
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    read_statistics(&after);
+    check(after.object_count == 0u && after.live_bytes == 0u,
+          "the reference array is reclaimed once its root is dropped");
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the array-slice case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* =========================================================================
+ * 11. Capacity-aware reuse and arena release (M1, M8)
+ * ========================================================================= */
+
+/* The non-monotone request sizes of the capacity case: all three fit the slot
+ * the first one carves, and the last one is larger than the second. */
+#define TEST_CAPACITY_FIRST 100000u
+#define TEST_CAPACITY_SECOND 92000u
+#define TEST_CAPACITY_THIRD 98000u
+
+/*
+ * A reused slot keeps the capacity it was carved with. The first allocation
+ * carves one arena of its own, which stays the current bump arena, so its slot
+ * stays in the free list across the collection that reclaims the object; the
+ * second request reuses it and the third — *larger* than the second but inside
+ * the slot's original capacity — must reuse it again. A slot that recorded the
+ * request size instead of its capacity cannot answer the third request and
+ * carves new storage.
+ */
+static void check_capacity_reuse(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record after;
+
+    deal_root_frame_enter(1u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the capacity case starts from an empty heap");
+
+    void *first = deal_alloc(TEST_LAYOUT_BULK, TEST_CAPACITY_FIRST);
+    deal_root_frame_write(0u, first);
+    check(deal_object_size(first) == TEST_CAPACITY_FIRST,
+          "the first request reports its own payload size");
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+
+    void *second = deal_alloc(TEST_LAYOUT_BULK, TEST_CAPACITY_SECOND);
+    deal_root_frame_write(0u, second);
+    check(second == first,
+          "a freed larger slot serves a smaller request");
+    check(deal_object_size(second) == TEST_CAPACITY_SECOND,
+          "the reused slot reports the smaller request's payload size");
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+
+    void *third = deal_alloc(TEST_LAYOUT_BULK, TEST_CAPACITY_THIRD);
+    deal_root_frame_write(0u, third);
+    check(third == first,
+          "the reused slot keeps its original capacity for a larger request");
+    check(deal_object_size(third) == TEST_CAPACITY_THIRD,
+          "the reused slot reports the larger request's payload size");
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    read_statistics(&after);
+    check(after.object_count == before.object_count
+              && after.live_bytes == before.live_bytes,
+          "the capacity case leaves no live object");
+    check(after.swept_objects == before.swept_objects + 3u,
+          "the sweep reclaims exactly the three capacity-case objects");
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the capacity case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* The churn shape of the reclamation case: sizes across the exact classes, the
+ * geometric classes and the large single-object arenas. */
+#define TEST_CHURN_ROUNDS 8
+#define TEST_CHURN_OBJECTS 160
+#define TEST_CHURN_BASE 2000u
+#define TEST_CHURN_STEP 1237u
+
+/* One resident-set slack: the arena of the current bump block plus the
+ * driver's own growth stay well inside it, while retained churn arenas would
+ * exceed it many times over. */
+#define TEST_CHURN_SLACK (4u * 1024u * 1024u)
+
+/*
+ * Reclamation beyond the logical counters (M1, M8): a round allocates and drops
+ * a churn set spanning every size class, then collects. The counters must be
+ * exact after every round — which they were before this change too — and the
+ * process must give the arena pages back, so the resident set after the churn
+ * stays within one small slack of the baseline instead of growing with every
+ * round. Without arena release the same loop retains every page it ever carved
+ * and the resident set grows by the whole churn volume.
+ */
+static void check_arena_release_under_churn(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record after;
+    size_t baseline = 0u;
+    size_t retained = 0u;
+
+    deal_root_frame_enter(1u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the churn case starts from an empty heap");
+    baseline = resident_bytes();
+
+    for (int round = 0; round < TEST_CHURN_ROUNDS; round += 1) {
+        for (int index = 0; index < TEST_CHURN_OBJECTS; index += 1) {
+            size_t size = (size_t)TEST_CHURN_BASE
+                + (size_t)index * (size_t)TEST_CHURN_STEP;
+            (void)deal_alloc(TEST_LAYOUT_BULK, size);
+        }
+        deal_gc_collect_full();
+        read_statistics(&after);
+        check(after.object_count == before.object_count
+                  && after.live_bytes == before.live_bytes,
+              "a churn round leaves no live object behind");
+    }
+    uint64_t churn_payload = (uint64_t)TEST_CHURN_ROUNDS
+        * ((uint64_t)TEST_CHURN_OBJECTS * (uint64_t)TEST_CHURN_BASE
+           + (uint64_t)TEST_CHURN_STEP
+               * ((uint64_t)TEST_CHURN_OBJECTS
+                   * (uint64_t)(TEST_CHURN_OBJECTS - 1) / 2u));
+    check(after.allocated_bytes == before.allocated_bytes + churn_payload,
+          "the payload accounting covers every churn object");
+
+    retained = resident_bytes();
+    if (baseline != 0u && retained != 0u) {
+        check(retained <= baseline + (size_t)TEST_CHURN_SLACK,
+              "churn returns the reclaimed arena pages instead of retaining "
+              "them");
+    }
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the churn case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* =========================================================================
+ * 12. Randomized incremental mutation and deletion (M1, M2, M3)
+ * ========================================================================= */
+
+#define TEST_RANDOM_SLOTS 96
+#define TEST_RANDOM_ROUNDS 600
+#define TEST_RANDOM_OBJECTS 512
+
+static uint64_t random_state = 0x9E3779B97F4A7C15ull;
+
+static uint64_t next_random(void) {
+    random_state ^= random_state << 13;
+    random_state ^= random_state >> 7;
+    random_state ^= random_state << 17;
+    return random_state;
+}
+
+/* The number of distinct objects reachable from the slot model by following the
+ * nodes' own link slots. Every entry is a live pointer by construction: the case
+ * only ever links to objects the slots reach. */
+static size_t reachable_node_count(const void *const *slots,
+                                   size_t slot_count, const void *seen[],
+                                   size_t seen_capacity) {
+    const void *stack[TEST_RANDOM_OBJECTS];
+    size_t stack_count = 0u;
+    size_t seen_count = 0u;
+    for (size_t index = 0; index < slot_count; index += 1u) {
+        if (slots[index] != NULL && stack_count < TEST_RANDOM_OBJECTS) {
+            stack[stack_count] = slots[index];
+            stack_count += 1u;
+        }
+    }
+    while (stack_count > 0u) {
+        stack_count -= 1u;
+        const void *node = stack[stack_count];
+        size_t known = 0u;
+        while (known < seen_count && seen[known] != node) {
+            known += 1u;
+        }
+        if (known < seen_count) {
+            continue;
+        }
+        if (seen_count == seen_capacity) {
+            break;
+        }
+        seen[seen_count] = node;
+        seen_count += 1u;
+        const void *link = node_link(node);
+        if (link != NULL && stack_count < TEST_RANDOM_OBJECTS) {
+            stack[stack_count] = link;
+            stack_count += 1u;
+        }
+    }
+    return seen_count;
+}
+
+/* The mark of a node is its own address, so a reclaimed and reused slot can
+ * never masquerade as the node the model reaches. */
+static uint64_t node_identity_mark(const void *node) {
+    return (uint64_t)(uintptr_t)node;
+}
+
+/*
+ * A randomized incremental-GC workload (M1, M2, M3): a rooted array of managed
+ * references plus per-node links is mutated, deleted from and grown while
+ * safepoints and complete collections interleave. After every complete
+ * collection the model's reachable set must equal the collector's live object
+ * count (the array and its element block are the only other live objects), and
+ * every reachable node must still carry its own payload. A collector that
+ * reclaims a reachable object fails the count; a slot reused while it still
+ * holds a reachable reference fails the payload; unbarriered stores lose
+ * referents and fail both. The whole case runs under AddressSanitizer in the
+ * suite's sanitizer leg, where a stale read into a reclaimed arena slot is a
+ * reported use-after-poison rather than a silent read.
+ */
+static void check_randomized_mutation(void) {
+    deal_gc_statistics_record before;
+    deal_gc_statistics_record after;
+    void *slots[TEST_RANDOM_SLOTS];
+    const void *seen[TEST_RANDOM_OBJECTS];
+    size_t created = 0u;
+    int failures_here = 0;
+
+    deal_root_frame_enter(3u);
+    deal_gc_collect_full();
+    read_statistics(&before);
+    check(before.object_count == 0u && before.live_bytes == 0u,
+          "the randomized case starts from an empty heap");
+
+    deal_array *references = deal_container_array_new(
+        DEAL_LAYOUT_ELEMENT_REFERENCE, TEST_RANDOM_SLOTS);
+    deal_root_frame_write(0u, references);
+    for (size_t index = 0; index < (size_t)TEST_RANDOM_SLOTS; index += 1u) {
+        void *node = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+        node_set_mark(node, node_identity_mark(node));
+        node_set_link(node, NULL);
+        deal_root_frame_write(1u, node);
+        deal_container_array_store(references, index, &node);
+        slots[index] = node;
+        created += 1u;
+        deal_root_frame_write(1u, NULL);
+    }
+
+    for (int round = 0; round < TEST_RANDOM_ROUNDS; round += 1u) {
+        uint64_t choice = next_random();
+        size_t first = (size_t)(choice % (uint64_t)TEST_RANDOM_SLOTS);
+        size_t second = (size_t)((choice >> 16) % (uint64_t)TEST_RANDOM_SLOTS);
+        switch (choice % 6u) {
+        case 0u: {
+            void *source = slots[first];
+            if (source != NULL) {
+                node_set_link(source, slots[second]);
+            }
+            break;
+        }
+        case 1u: {
+            void *source = slots[first];
+            if (source != NULL) {
+                node_set_link(source, NULL);
+            }
+            break;
+        }
+        case 2u: {
+            slots[first] = NULL;
+            void *cleared = NULL;
+            deal_container_array_store(references, first, &cleared);
+            break;
+        }
+        case 3u: {
+            if (created < (size_t)TEST_RANDOM_OBJECTS) {
+                void *fresh = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+                node_set_mark(fresh, node_identity_mark(fresh));
+                node_set_link(fresh, slots[second]);
+                deal_root_frame_write(1u, fresh);
+                deal_container_array_store(references, first, &fresh);
+                slots[first] = fresh;
+                created += 1u;
+                deal_root_frame_write(1u, NULL);
+            }
+            break;
+        }
+        case 4u: {
+            (void)deal_alloc(TEST_LAYOUT_BULK, TEST_BULK_BYTES);
+            break;
+        }
+        default: {
+            (void)deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
+            break;
+        }
+        }
+        if (round % 5 == 0) {
+            deal_safepoint();
+        }
+        if (round % 13 == 0) {
+            deal_gc_collect_full();
+            size_t reachable = reachable_node_count(
+                (const void *const *)slots, TEST_RANDOM_SLOTS, seen,
+                TEST_RANDOM_OBJECTS);
+            read_statistics(&after);
+            if (after.object_count != (uint64_t)reachable + 2u) {
+                failures_here += 1;
+            }
+            for (size_t index = 0; index < (size_t)TEST_RANDOM_SLOTS;
+                    index += 1u) {
+                if (slots[index] == NULL) {
+                    continue;
+                }
+                const void *node = slots[index];
+                if (node_mark(node) != node_identity_mark(node)) {
+                    failures_here += 1;
+                    break;
+                }
+            }
+            if (failures_here != 0) {
+                break;
+            }
+        }
+    }
+    check(failures_here == 0,
+          "the randomized workload keeps exactly its reachable objects alive "
+          "with their payloads");
+
+    for (size_t index = 0; index < (size_t)TEST_RANDOM_SLOTS; index += 1u) {
+        slots[index] = NULL;
+        void *cleared = NULL;
+        deal_container_array_store(references, index, &cleared);
+    }
+    deal_root_frame_write(0u, NULL);
+    deal_gc_collect_full();
+    read_statistics(&after);
+    check(after.object_count == 0u && after.live_bytes == 0u,
+          "every randomized object is reclaimed once the roots are dropped");
+    check(after.swept_objects > before.swept_objects,
+          "the randomized workload reclaims the objects it drops");
+    check(deal_root_frame_depth() == 1u && deal_root_scope_depth() == 0u,
+          "the randomized case restores the root depth");
+    deal_root_frame_leave();
+}
+
+/* =========================================================================
  * The driver entry
  * ========================================================================= */
 int main(void) {
@@ -1466,11 +2166,17 @@ int main(void) {
     check_statistics_and_live_collection();
     check_cycle_reclamation();
     check_live_cycle_survives();
+    check_capacity_reuse();
+    check_footprint_pressure();
     check_barrier_and_incremental_cycle();
     check_barrier_shades_a_white_referent();
     check_record_deletion_barrier();
     check_automatic_collection();
     check_allocation_mark_in_inflight_cycle();
+    check_bounded_marking_slices();
+    check_container_array_trace_is_sliced();
+    check_arena_release_under_churn();
+    check_randomized_mutation();
     check_scalar_and_nullish_replacement();
     check_error_rooting();
     check_cells_under_collection();
@@ -1495,18 +2201,24 @@ int main(void) {
     return 0;
 }
 #elif DEAL_GC_CASE == 3
-static void first_trace(const void *object, deal_reference_visit visit,
-                        void *context) {
+static size_t first_trace(const void *object, size_t position, size_t *budget,
+                          deal_reference_visit visit, void *context) {
     (void)object;
+    (void)position;
+    (void)budget;
     (void)visit;
     (void)context;
+    return DEAL_TRACE_DONE;
 }
 
-static void second_trace(const void *object, deal_reference_visit visit,
-                         void *context) {
+static size_t second_trace(const void *object, size_t position, size_t *budget,
+                           deal_reference_visit visit, void *context) {
     (void)object;
+    (void)position;
+    (void)budget;
     (void)visit;
     (void)context;
+    return DEAL_TRACE_DONE;
 }
 
 int main(void) {
@@ -1549,6 +2261,19 @@ static void second_release(void *object) {
 int main(void) {
     deal_layout_release_register(TEST_LAYOUT_NODE, first_release);
     deal_layout_release_register(TEST_LAYOUT_NODE, second_release);
+    printf("unreachable\n");
+    return 0;
+}
+#elif DEAL_GC_CASE == 7
+int main(void) {
+    static const deal_layout bulk_layout[] = {
+        {TEST_LAYOUT_BULK, 0u, TEST_BULK_BYTES, NULL, 0u}
+    };
+    deal_layout_install(bulk_layout,
+                        sizeof(bulk_layout) / sizeof(bulk_layout[0]));
+    /* A request above the largest size class is the R10 resource fault before
+     * any partial publication, never a truncated allocation. */
+    (void)deal_alloc(TEST_LAYOUT_BULK, SIZE_MAX - 100u);
     printf("unreachable\n");
     return 0;
 }

@@ -30,10 +30,13 @@
  * is opaque here: this group stores and returns it and never interprets it.
  *
  * `deal_container_array_trace` walks exactly the managed references the
- * element layout declares, so the collector's precise map never guesses. A
- * reference element slot may legitimately hold the null or the undefined
- * singleton (a nullable element type), so both the element walk and the element
- * barrier are tag-aware and never treat a singleton as heap storage.
+ * element layout declares, and it is resumable: one call visits at most the
+ * reference slots the caller's budget allows and returns the position to resume
+ * at, so the collector's precise map never guesses and one wide array never
+ * becomes one unbounded mark slice. A reference element slot may legitimately
+ * hold the null or the undefined singleton (a nullable element type), so both
+ * the element walk and the element barrier are tag-aware and never treat a
+ * singleton as heap storage.
  *
  * The runtime-owned element layouts (C3) are `DEAL_LAYOUT_ELEMENT_DATUM` (one
  * persistent tagged datum slot), `DEAL_LAYOUT_ELEMENT_REFERENCE` (one managed
@@ -97,12 +100,17 @@ void deal_container_array_store(deal_array *array, size_t index,
 void deal_container_array_append(deal_array *array, const void *element);
 
 /*
- * Visits every managed reference of every present element in index and offset
- * order, using the array's element layout (M1). A null slot and a nullish
- * singleton are never visited.
+ * Visits the managed references of the array's present elements from
+ * `position` onward, consuming one unit of `*budget` per reference slot
+ * inspected and stopping when the budget is spent (M1). The position is a linear
+ * reference-slot index, so a wide array is walked across several bounded slices
+ * and a resumed walk continues at exactly the slot it stopped at. Returns the
+ * position to resume at, or DEAL_TRACE_DONE when every slot was visited. A null
+ * slot, a scalar element layout and a nullish singleton are never visited.
  */
-void deal_container_array_trace(const deal_array *array,
-                                deal_reference_visit visit, void *context);
+size_t deal_container_array_trace(const deal_array *array, size_t position,
+                                 size_t *budget, deal_reference_visit visit,
+                                 void *context);
 
 /* An empty insertion-ordered record. */
 deal_table *deal_container_table_new(void);

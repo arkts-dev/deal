@@ -59,6 +59,29 @@ static void collect_reference(void *referent, void *context) {
     collected_count += 1u;
 }
 
+/*
+ * Walks the array's element references to completion through the resumable
+ * trace contract (`deal_container_array_trace`): each call spends at most
+ * `budget` reference slots and answers the position to resume at, so this helper
+ * is also the observable difference between a resumable walk and one that
+ * ignores its budget. The returned count is the number of slices the walk took.
+ */
+static size_t trace_array(const deal_array *array, size_t budget) {
+    size_t position = 0u;
+    size_t slices = 0u;
+    size_t bound = deal_container_array_count(array) * 8u + 8u;
+    while (slices < bound) {
+        size_t remaining = budget == 0u ? 1u : budget;
+        position = deal_container_array_trace(array, position, &remaining,
+                                              collect_reference, NULL);
+        if (position == DEAL_TRACE_DONE) {
+            return slices;
+        }
+        slices += 1u;
+    }
+    return slices;
+}
+
 static void check(int condition, const char *what) {
     if (!condition) {
         printf("FAIL: %s\n", what);
@@ -387,7 +410,10 @@ static void check_arrays(void) {
         deal_container_array_store(pairs, 0u, first);
         deal_container_array_store(pairs, 1u, second);
         collected_count = 0u;
-        deal_container_array_trace(pairs, collect_reference, NULL);
+        size_t pair_slices = trace_array(pairs, 1u);
+        check(pair_slices == 3u,
+              "the resumable element trace reports one resume position for every "
+              "slice that leaves a reference unwalked");
         check(collected_count == 3u,
               "the element trace visits exactly the present references");
         check(collected[0] == first[0] && collected[1] == first[1]
@@ -411,18 +437,18 @@ static void check_arrays(void) {
 
         deal_container_array_store(nullable, 0u, null_element);
         collected_count = 0u;
-        deal_container_array_trace(nullable, collect_reference, NULL);
+        (void)trace_array(nullable, 8u);
         check(collected_count == 0u,
               "a null singleton element reference is never visited");
         deal_container_array_store(nullable, 1u, undefined_element);
         collected_count = 0u;
-        deal_container_array_trace(nullable, collect_reference, NULL);
+        (void)trace_array(nullable, 8u);
         check(collected_count == 0u,
               "an undefined singleton element reference is never visited");
         deal_container_array_store(nullable, 1u, managed_element);
         deal_container_array_append(nullable, null_element);
         collected_count = 0u;
-        deal_container_array_trace(nullable, collect_reference, NULL);
+        (void)trace_array(nullable, 8u);
         check(collected_count == 1u && collected[0] == managed_element[0],
               "the managed element reference beside the singletons is visited");
         check(deal_container_array_count(nullable) == 3u,

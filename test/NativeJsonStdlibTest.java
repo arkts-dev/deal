@@ -61,8 +61,10 @@ import java.util.Map;
  *       with the explicit frame stack, exactly as the parser and the encoder
  *       carry no nesting cap;</li>
  *   <li>byte-identical observations at both levels and under
- *       {@code DEAL_GC_STRESS=1}, and the deterministic producer/invariant
- *       defects of the two groups (one stderr line, exit 2).</li>
+ *       {@code DEAL_GC_STRESS=1}, byte-identical observations again under an
+ *       installed comma-decimal ambient locale (the numeric decode and encode
+ *       entries never read it), and the deterministic producer/invariant defects
+ *       of the two groups (one stderr line, exit 2).</li>
  * </ol>
  */
 public final class NativeJsonStdlibTest {
@@ -218,6 +220,35 @@ public final class NativeJsonStdlibTest {
             "every driver self-check passes at -O" + level);
         verifyObservations(normal.stdout(), "at -O" + level);
 
+        // The numeric decode and encode entries must not read the ambient
+        // locale (R6): the same acceptance matrix runs under an installed
+        // comma-decimal locale and must publish the same observations. The
+        // driver refuses to run under a locale whose decimal point is '.',
+        // because such a locale cannot expose the ambient-locale defect.
+        String commaLocale = commaDecimalLocale();
+        check(commaLocale != null, "a comma-decimal locale is installed, so the "
+            + "ambient-locale numeric case can run at -O" + level);
+        if (commaLocale != null) {
+            Map<String, String> localeEnvironment = Map.of(
+                "LC_ALL", commaLocale, "DEAL_JSON_LOCALE", "1");
+            NativeCompiler.Result localized = NativeCompiler.execute(product,
+                scratch, localeEnvironment);
+            checkEq(0, localized.exitCode(), "the driver under the "
+                + commaLocale + " locale exits zero at -O" + level + ": "
+                + localized.describe());
+            check(localized.stdout().startsWith("locale ok\n"),
+                "the driver reports the installed ambient locale at -O" + level
+                    + ": " + localized.describe());
+            checkEq("failure line\n", localized.stderr(),
+                "the ambient-locale run keeps its console-error effect at -O"
+                    + level);
+            checkEq(withoutTime(normal.stdout()),
+                withoutTime(localized.stdout().substring(
+                    "locale ok\n".length())),
+                "the numeric decode and encode observations are independent of "
+                    + "the ambient locale at -O" + level);
+        }
+
         NativeCompiler.Result stressed = NativeCompiler.execute(product, scratch,
             Map.of("DEAL_GC_STRESS", "1"));
         checkEq(0, stressed.exitCode(), "the stressed driver exits zero at -O"
@@ -229,6 +260,31 @@ public final class NativeJsonStdlibTest {
         // The encoder's scratch is linear in nesting depth: a deeply nested
         // finite document round-trips inside a bounded address space, which a
         // per-frame concatenated walk position cannot fit.
+        // Physical memory safety: the whole JSON/stdlib matrix under
+        // AddressSanitizer and UndefinedBehaviorSanitizer must publish the same
+        // observations and no finding.
+        Path sanitizedProduct = scratch.resolve("json-stdlib-asan-o" + level);
+        NativeCompiler.Result sanitizedLink = NativeCompiler.link(published,
+            level, sources, concat(List.of("-DDEAL_JSON_CASE=0"),
+                NativeCompiler.SANITIZER_FLAGS), sanitizedProduct);
+        check(sanitizedLink.succeeded(), "the json/stdlib driver builds with "
+            + "ASan/UBSan at -O" + level + ": " + sanitizedLink.describe());
+        if (sanitizedLink.succeeded()) {
+            NativeCompiler.SanitizedRun sanitized =
+                NativeCompiler.runSanitized(sanitizedProduct, scratch,
+                    NativeCompiler.sanitizerEnvironment());
+            checkEq(0, sanitized.result().exitCode(), "the json/stdlib driver "
+                + "exits zero under ASan/UBSan at -O" + level + ": "
+                + sanitized.result().describe());
+            checkEq(withoutTime(normal.stdout()),
+                withoutTime(sanitized.result().stdout()),
+                "the JSON and stdlib observations are unchanged under ASan/UBSan "
+                    + "at -O" + level);
+            checkEq("failure line\n", sanitized.result().stderr(),
+                "the ambient console-error effect is the only stderr under "
+                    + "ASan/UBSan at -O" + level);
+        }
+
         NativeCompiler.Result deep = NativeCompiler.execute(product, scratch,
             Map.of("DEAL_JSON_DEEP", "60000"));
         checkEq(0, deep.exitCode(), "the deep linear-scratch round trip exits"
@@ -264,6 +320,13 @@ public final class NativeJsonStdlibTest {
     // =========================================================================
     // The expectation set (authored from the shared authorities and the spec)
     // =========================================================================
+
+    /** One flag list followed by another. */
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> combined = new ArrayList<>(first);
+        combined.addAll(second);
+        return combined;
+    }
 
     /** The emitted call origin every observation is rendered at. */
     private static SourceOrigin origin() {
@@ -840,6 +903,33 @@ public final class NativeJsonStdlibTest {
     }
 
     /** The same observation text with the time reading neutralized. */
+    /**
+     * The installed comma-decimal locale the ambient-locale numeric case runs
+     * under, or null when the host has none. The backend targets Linux x86-64
+     * only; a locale the process can select is named through `locale -a`, and the
+     * driver itself verifies that the selected locale really uses ',' so the case
+     * can never pass against the C locale by accident.
+     */
+    private static String commaDecimalLocale() {
+        NativeCompiler.Result listing = NativeCompiler.run(
+            List.of("locale", "-a"), null);
+        if (!listing.succeeded()) {
+            return null;
+        }
+        java.util.Set<String> installed = new java.util.LinkedHashSet<>();
+        for (String line : listing.stdout().split("\n")) {
+            installed.add(line.strip());
+        }
+        for (String candidate : List.of("ru_RU.utf8", "ru_RU.UTF-8",
+                "de_DE.utf8", "de_DE.UTF-8", "fr_FR.utf8", "fr_FR.UTF-8",
+                "es_ES.utf8", "es_ES.UTF-8")) {
+            if (installed.contains(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
     private static String withoutTime(String stdout) {
         StringBuilder text = new StringBuilder();
         for (String line : stdout.split("\n", -1)) {

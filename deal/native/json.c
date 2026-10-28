@@ -12,15 +12,36 @@
  * subnormal), and `snprintf` renders the shortest round-tripping decimal
  * spelling. Neither is an operating-system access — no file descriptor, clock,
  * environment entry, process state or allocator is reached — so the
- * `platform` group stays the only group that calls the operating system.
+ * `platform` group stays the only group that calls the operating system. The
+ * one further C library call pair (`newlocale`/`uselocale`) only selects the
+ * fixed `C` locale object of this translation unit for the calling thread and
+ * restores the caller's; it reads no environment entry (the locale name is a
+ * literal, not the ambient one), opens no file and allocates nothing the
+ * runtime owns.
+ *
+ * Both conversions are also locale-independent (R6). `strtod` and the decimal
+ * conversion of `snprintf` read the *current* locale's decimal point, and a host
+ * may have selected a comma-decimal locale before calling in: `strtod` would
+ * then stop at the '.' of `1.5` and `[1.5]` would decode silently as `1`, while
+ * an encoder would emit `1,5`. The group therefore runs both conversions with
+ * one private C locale selected for the calling thread (`uselocale`), restoring
+ * the caller's locale afterwards, and it verifies that the decoder consumed the
+ * whole grammar-validated token instead of trusting a partial conversion. A
+ * numeric observation therefore never depends on the ambient locale.
  *
  * Rooting (M5). Every managed object this group creates is held in one scoped
  * root set for the whole invocation, so no partially built graph can be
  * reclaimed at a later allocation's safepoint; the scope is popped on every
  * exit path and the answered value is the caller's to root.
  */
+/* The private numeric locale needs the POSIX 2008 thread-locale interface
+ * (`newlocale`, `uselocale`), which the pinned `-std=c11` flag list hides
+ * unless it is requested before the first system header. */
+#define _POSIX_C_SOURCE 200809L
+
 #include "deal/native/json.h"
 
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +53,57 @@
 #include "deal/native/platform.h"
 #include "deal/native/text.h"
 #include "deal/native/value.h"
+
+/* =========================================================================
+ * The private numeric locale (R6)
+ * ========================================================================= */
+
+/* The one C locale both numeric conversions run under. It is created on first
+ * use and never released: the runtime has one configuration for its whole
+ * process lifetime, and a fault exits rather than leaking a half-initialized
+ * conversion path. */
+static locale_t deal_json_numeric_locale(void) {
+    static locale_t cached;
+    static int created;
+    if (created == 0) {
+        cached = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+        if (cached == (locale_t)0) {
+            deal_platform_fault("json: numeric locale unavailable");
+        }
+        created = 1;
+    }
+    return cached;
+}
+
+/*
+ * Decodes one grammar-validated numeric token to binary64 under the private C
+ * locale. The conversion must consume the whole token: a token the scanner
+ * accepted but the conversion stopped inside (the comma-decimal symptom) is a
+ * producer defect, never a silently truncated number.
+ */
+static double deal_json_decode_number(const unsigned char *token,
+                                      size_t length) {
+    locale_t previous = uselocale(deal_json_numeric_locale());
+    char *end = NULL;
+    double value = strtod((const char *)token, &end);
+    (void)uselocale(previous);
+    if (end != (const char *)token + length) {
+        deal_platform_fault("json: numeric conversion stopped inside the token");
+    }
+    return value;
+}
+
+/* Renders one magnitude with `%.*e` under the private C locale. */
+static int deal_json_format_exponent(char *buffer, size_t size, int precision,
+                                     double magnitude) {
+    locale_t previous = uselocale(deal_json_numeric_locale());
+    int written = snprintf(buffer, size, "%.*e", precision, magnitude);
+    (void)uselocale(previous);
+    if (written <= 0 || (size_t)written >= size) {
+        deal_platform_fault("json: number text overflow");
+    }
+    return written;
+}
 
 /* =========================================================================
  * Invocation-local scratch (R6: no partial output, no shared state)
@@ -452,7 +524,7 @@ static int deal_json_parse_number(deal_json_cursor *cursor,
         }
     }
     deal_json_buffer_byte(&token, 0);
-    *out = strtod((const char *)token.bytes, NULL);
+    *out = deal_json_decode_number(token.bytes, token.length - 1u);
 done:
     deal_json_buffer_release(&token);
     return status;
@@ -1267,12 +1339,11 @@ static void deal_json_number_text(deal_json_buffer *out, double value) {
      * value: at most 17 digits always suffice for a binary64 value. */
     size_t precision = 1u;
     for (; precision <= 17u; precision += 1u) {
-        int written = snprintf(buffer, sizeof(buffer), "%.*e",
-                               (int)(precision - 1u), magnitude);
-        if (written <= 0 || (size_t)written >= sizeof(buffer)) {
-            deal_platform_fault("json: number text overflow");
-        }
-        if (strtod(buffer, NULL) == magnitude) {
+        int written = deal_json_format_exponent(buffer, sizeof(buffer),
+                                                (int)(precision - 1u),
+                                                magnitude);
+        if (deal_json_decode_number((const unsigned char *)buffer,
+                                    (size_t)written) == magnitude) {
             break;
         }
     }

@@ -375,6 +375,121 @@ public final class NativeCompiler {
     }
 
     // =========================================================================
+    // The supplementary sanitizer legs (physical memory safety)
+    // =========================================================================
+
+    /**
+     * The AddressSanitizer and UndefinedBehaviorSanitizer flag list of every
+     * supplementary physical-memory-safety leg. The published runtime and the
+     * driver are compiled into one instrumented product at the caller's
+     * optimization level, so an out-of-bounds access, a stale read into a
+     * reclaimed arena slot the collector poisoned, or an undefined operation is a
+     * reported finding instead of a silent success. {@code -fno-sanitize-recover}
+     * turns every report into a nonzero exit.
+     */
+    public static final List<String> SANITIZER_FLAGS = List.of(
+        "-fsanitize=address,undefined",
+        "-fno-sanitize-recover=all",
+        "-fno-omit-frame-pointer",
+        "-g");
+
+    /**
+     * The environment of one sanctioned sanitizer run. Leak detection is off
+     * because the runtime deliberately keeps process-lifetime tables (the
+     * layout registry, the root-source table, the numeric locale) that are
+     * reachable and never released; a finding aborts with the pinned status.
+     */
+    public static java.util.Map<String, String> sanitizerEnvironment() {
+        return java.util.Map.of(
+            "ASAN_OPTIONS", "detect_leaks=0:abort_on_error=1:exitcode=66",
+            "UBSAN_OPTIONS", "halt_on_error=1:exitcode=66:print_stacktrace=1");
+    }
+
+    /** One sanitized observation and whether the child had to be relaunched. */
+    public record SanitizedRun(Result result, boolean relaunched) { }
+
+    /**
+     * Runs one instrumented product, relaunching it with address-space
+     * randomization disabled for that child only when the sanitizer runtime
+     * could not map its shadow memory at all. A host whose randomization entropy
+     * puts the mapping out of reach kills the process before its workload: that
+     * startup failure is retried, while a genuine finding — a report on stderr or
+     * a workload that reached its own assertions — is returned as it is and never
+     * retried away.
+     */
+    public static SanitizedRun runSanitized(Path product, Path workingDirectory,
+                                            java.util.Map<String, String> environment) {
+        Result run = run(List.of(product.toAbsolutePath().toString()),
+            workingDirectory, environment);
+        if (!sanitizerStartupFailure(run)) {
+            return new SanitizedRun(run, false);
+        }
+        List<String> withoutRandomization = disableAslrCommand(product);
+        if (withoutRandomization == null) {
+            return new SanitizedRun(run, false);
+        }
+        boolean relaunched = false;
+        for (int attempt = 0; attempt < SANITIZER_RELAUNCH_ATTEMPTS; attempt += 1) {
+            run = run(withoutRandomization, workingDirectory, environment);
+            relaunched = true;
+            if (!sanitizerStartupFailure(run)) {
+                break;
+            }
+        }
+        return new SanitizedRun(run, relaunched);
+    }
+
+    /** The bounded relaunches of one instrumented product on this host. */
+    public static final int SANITIZER_RELAUNCH_ATTEMPTS = 3;
+
+    /**
+     * True when the process could not start the sanitizer runtime at all, as
+     * opposed to a sanitizer finding about the code under test. A genuine report
+     * names itself on stderr ({@code ERROR: AddressSanitizer} for a
+     * use-after-poison or an out-of-bounds access, {@code WARNING:
+     * ThreadSanitizer} for a data race, {@code runtime error:} for an undefined
+     * operation), and a workload that reached its own assertions writes stdout;
+     * neither is ever mistaken for a startup failure, so no finding is retried
+     * away. The runtimes' own fatal startup lines — a shadow mapping or a memory
+     * mapping out of reach of this host's address-space layout — are not findings.
+     */
+    public static boolean sanitizerStartupFailure(Result run) {
+        if (run.exitCode() == 0) {
+            return false;
+        }
+        String stderr = run.stderr();
+        if (stderr.contains("ERROR: AddressSanitizer")
+                || stderr.contains("WARNING: ThreadSanitizer")
+                || stderr.contains("runtime error:")) {
+            return false;
+        }
+        return run.stdout().isEmpty();
+    }
+
+    /**
+     * The instrumented product relaunched with {@code ADDR_NO_RANDOMIZE} for that
+     * child only (through {@code setarch -R}), or null when the host has no
+     * {@code setarch}.
+     */
+    public static List<String> disableAslrCommand(Path product) {
+        String path = System.getenv("PATH");
+        if (path != null) {
+            for (String directory : path.split(java.io.File.pathSeparator)) {
+                if (directory.isEmpty()) {
+                    continue;
+                }
+                Path candidate = Path.of(directory, "setarch");
+                if (Files.isRegularFile(candidate)
+                        && Files.isExecutable(candidate)) {
+                    return List.of(candidate.toString(), "-R",
+                        product.toAbsolutePath().toString());
+                }
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
     // Small shared utilities
     // =========================================================================
 

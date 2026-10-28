@@ -91,6 +91,29 @@ import java.util.stream.Stream;
  *   <li>the deterministic invariant faults of the collector's own entries: one
  *       {@code DEAL_RUNTIME_FAULT: <reason>} line on stderr, no stdout and
  *       exit 2, never a language-visible Error and never a partial sweep;</li>
+ *   <li>allocation-footprint pressure (M8): a hundred thousand zero-payload
+ *       allocations still reach the collection trigger and are all swept, while
+ *       the payload statistics stay at zero — the growth policy charges the
+ *       header and capacity of every allocation, not its payload alone;</li>
+ *   <li>resumable, reference-bounded marking (M3): no safepoint may make more
+ *       than the published reference budget of marking work, one complete cycle
+ *       visits every slot of a wide object exactly once, the cycle therefore
+ *       needs at least one safepoint per budget, and every referent survives;</li>
+ *   <li>capacity-aware reuse and arena release (M1, M8): a freed slot serves a
+ *       smaller request and then a larger one that still fits the slot's original
+ *       capacity, and a churn across every size class returns the arena pages so
+ *       the resident set does not grow with the churn volume;</li>
+ *   <li>randomized incremental mutation and deletion (M1, M2, M3): a seeded
+ *       workload mutates, links and clears a rooted reference graph across
+ *       safepoints and complete collections, and after every collection the
+ *       collector's live object count and every reachable payload match the
+ *       model;</li>
+ *   <li>physical memory safety: the same driver compiled with
+ *       AddressSanitizer/UndefinedBehaviorSanitizer at both levels and under
+ *       {@code DEAL_GC_STRESS=1} reports no finding, and the committed
+ *       {@code gc_poison_probe.c} pins that a reclaimed payload really is
+ *       poisoned (a stale read is a reported use-after-poison) instead of
+ *       silently readable inside the still-mapped arena;</li>
  *   <li>the supplementary ThreadSanitizer probe: instrumented posters run
  *       against the collector with no data-race report and the same exact
  *       delivery.</li>
@@ -129,6 +152,8 @@ public final class NativeCollectorTest {
             System.out.println("native compiler: " + NativeCompiler.compiler().path()
                 + " (major " + NativeCompiler.compiler().major() + ")");
             testCollectorAcceptance();
+            testSanitizerMemorySafety();
+            testPoisonProbe();
             testErrorReclamation();
             testCollectorInvariantFaults();
             testPosterRaceProbe();
@@ -183,7 +208,117 @@ public final class NativeCollectorTest {
     }
 
     // =========================================================================
-    // 2. The platform half of Error reclamation
+    // 2. Physical memory safety: the same driver under ASan/UBSan
+    // =========================================================================
+
+    /**
+     * The physical-memory-safety leg of the collector suite: the <em>same</em>
+     * committed driver and the <em>same</em> published runtime tree, compiled
+     * with AddressSanitizer and UndefinedBehaviorSanitizer instead of plain C11,
+     * at both levels and normally and under {@code DEAL_GC_STRESS=1}.
+     *
+     * <p>The expected observation is the same exact acceptance line as the plain
+     * leg, plus an empty stderr: a finding would be a report, so no assertion
+     * here is derived from the instrumented run. The instrumented build also
+     * poisons every reclaimed payload (M1), so the collector's own churn, the
+     * free-list reuse and the arena release run with a stale-access detector
+     * inside the still-mapped arena — the case ordinary AddressSanitizer cannot
+     * see and that {@link #testPoisonProbe()} pins as a negative control.</p>
+     */
+    private static void testSanitizerMemorySafety() throws IOException {
+        System.out.println("-- the published collector under ASan/UBSan at "
+            + "-O0/-O2, normally and under DEAL_GC_STRESS=1 --");
+        for (int level : LEVELS) {
+            Path product = scratch.resolve("gc-driver-asan-o" + level);
+            NativeCompiler.Result link = NativeCompiler.link(published, level,
+                sourcesOf("gc_driver"), NativeCompiler.SANITIZER_FLAGS, product);
+            check(link.succeeded(), "the collector driver builds with ASan/UBSan "
+                + "at -O" + level + ": " + link.describe());
+            checkEq("", link.stderr(), "the collector driver builds with "
+                + "ASan/UBSan without diagnostics at -O" + level);
+            if (!link.succeeded()) {
+                continue;
+            }
+            NativeCompiler.SanitizedRun normal = NativeCompiler.runSanitized(
+                product, scratch, NativeCompiler.sanitizerEnvironment());
+            String where = normal.relaunched()
+                ? " (relaunched with address-space randomization disabled for "
+                    + "the child only)" : "";
+            checkEq(0, normal.result().exitCode(), "the ASan/UBSan collector "
+                + "driver exits zero at -O" + level + where + ": "
+                + normal.result().describe());
+            checkEq(ACCEPTANCE_LINE, normal.result().stdout(),
+                "the ASan/UBSan collector driver reports its exact success line "
+                    + "at -O" + level);
+            checkEq("", normal.result().stderr(), "the ASan/UBSan collector "
+                + "driver reports no finding at -O" + level + ": "
+                + normal.result().describe());
+
+            java.util.Map<String, String> stressedEnvironment =
+                new java.util.LinkedHashMap<>(
+                    NativeCompiler.sanitizerEnvironment());
+            stressedEnvironment.put("DEAL_GC_STRESS", "1");
+            NativeCompiler.SanitizedRun stressed = NativeCompiler.runSanitized(
+                product, scratch, stressedEnvironment);
+            checkEq(0, stressed.result().exitCode(), "the stressed ASan/UBSan "
+                + "collector driver exits zero at -O" + level + ": "
+                + stressed.result().describe());
+            checkEq(normal.result().stdout(), stressed.result().stdout(),
+                "DEAL_GC_STRESS changes collection timing only under ASan/UBSan "
+                    + "at -O" + level);
+            checkEq("", stressed.result().stderr(), "the stressed ASan/UBSan "
+                + "collector driver reports no finding at -O" + level + ": "
+                + stressed.result().describe());
+        }
+    }
+
+    /**
+     * The negative control of the collector's sanitizer poison (M1): the
+     * committed {@code gc_poison_probe.c} allocates one object, drops it, has the
+     * statistics confirm that the sweep reclaimed it, and then reads the payload
+     * through the dropped pointer. In an AddressSanitizer build the collector
+     * poisoned that payload, so the read is the reported {@code use-after-poison}
+     * and the probe prints nothing; without the poison the same probe would print
+     * the stale bytes and exit zero, which is what makes this a control rather
+     * than a restatement of the acceptance line. The fixture refuses to compile
+     * without the sanitizer, so the case asserts both halves: the plain build
+     * fails and the instrumented build reports the finding.
+     */
+    private static void testPoisonProbe() throws IOException {
+        System.out.println("-- the reclaimed-payload poison negative control --");
+        Path plain = scratch.resolve("gc-poison-probe-plain");
+        NativeCompiler.Result plainLink = NativeCompiler.link(published, 2,
+            sourcesOf("gc_poison_probe"), List.of(), plain);
+        check(!plainLink.succeeded(), "the poison probe refuses to build without "
+            + "AddressSanitizer: " + plainLink.describe());
+        check(plainLink.stderr().contains("AddressSanitizer-only fixture"),
+            "the poison probe's refusal names the sanitizer requirement");
+
+        Path product = scratch.resolve("gc-poison-probe");
+        NativeCompiler.Result link = NativeCompiler.link(published, 2,
+            sourcesOf("gc_poison_probe"), NativeCompiler.SANITIZER_FLAGS,
+            product);
+        check(link.succeeded(), "the poison probe builds with ASan: "
+            + link.describe());
+        checkEq("", link.stderr(), "the poison probe builds without diagnostics");
+        if (!link.succeeded()) {
+            return;
+        }
+        NativeCompiler.SanitizedRun run = NativeCompiler.runSanitized(product,
+            scratch, NativeCompiler.sanitizerEnvironment());
+        check(run.result().exitCode() != 0, "the stale read of a reclaimed "
+            + "payload is a sanitizer finding, so the probe does not exit zero: "
+            + run.result().describe());
+        check(run.result().stderr().contains("use-after-poison"),
+            "the finding is the reported use-after-poison of the reclaimed "
+                + "payload: " + run.result().describe());
+        check(!run.result().stdout().contains("poison probe reached"),
+            "the probe never reaches a live read of the reclaimed payload: "
+                + run.result().describe());
+    }
+
+    // =========================================================================
+    // 3. The platform half of Error reclamation
     // =========================================================================
 
     /**
@@ -258,7 +393,7 @@ public final class NativeCollectorTest {
     private static final String ERROR_RECLAIM_LINE = "error reclaim ok\n";
 
     // =========================================================================
-    // 3. The deterministic invariant faults of the collector entries
+    // 4. The deterministic invariant faults of the collector entries
     // =========================================================================
     private static void testCollectorInvariantFaults() throws IOException {
         System.out.println("-- the deterministic collector invariant faults --");
@@ -270,7 +405,8 @@ public final class NativeCollectorTest {
             new Fault(3, "layout tracer: identity traced twice"),
             new Fault(4, "gc: nested full collection"),
             new Fault(5, "layout release: null release"),
-            new Fault(6, "layout release: identity released twice"));
+            new Fault(6, "layout release: identity released twice"),
+            new Fault(7, "alloc: size exceeds the largest size class"));
 
         for (Fault fault : faults) {
             for (int level : LEVELS) {
@@ -298,7 +434,7 @@ public final class NativeCollectorTest {
     }
 
     // =========================================================================
-    // 4. The supplementary instrumented poster/collector probe
+    // 5. The supplementary instrumented poster/collector probe
     // =========================================================================
 
     /**
@@ -328,27 +464,14 @@ public final class NativeCollectorTest {
         }
         Map<String, String> environment = Map.of(
             "TSAN_OPTIONS", "halt_on_error=1:exitcode=66");
-        NativeCompiler.Result run = NativeCompiler.run(
-            List.of(product.toAbsolutePath().toString()), scratch, environment);
-        boolean relaunched = false;
-        if (sanitizerStartupFailure(run)) {
-            List<String> withoutRandomization = disableAslrCommand(product);
-            if (withoutRandomization != null) {
-                for (int attempt = 0;
-                        attempt < SANITIZER_RELAUNCH_ATTEMPTS; attempt += 1) {
-                    run = NativeCompiler.run(withoutRandomization, scratch,
-                        environment);
-                    relaunched = true;
-                    if (!sanitizerStartupFailure(run)) {
-                        break;
-                    }
-                }
-                if (relaunched) {
-                    System.out.println("   (the sanitizer's shadow mapping "
-                        + "needs address-space randomization disabled on this "
-                        + "host; the same instrumented product was relaunched)");
-                }
-            }
+        NativeCompiler.SanitizedRun sanitized = NativeCompiler.runSanitized(
+            product, scratch, environment);
+        NativeCompiler.Result run = sanitized.result();
+        boolean relaunched = sanitized.relaunched();
+        if (relaunched) {
+            System.out.println("   (the sanitizer's shadow mapping needs "
+                + "address-space randomization disabled on this host; the same "
+                + "instrumented product was relaunched)");
         }
         String where = relaunched
             ? " (relaunched with address-space randomization disabled for the "
@@ -360,51 +483,6 @@ public final class NativeCollectorTest {
             + "once" + where);
         checkEq("", run.stderr(), "the instrumented poster/collector workload "
             + "produces no ThreadSanitizer report" + where);
-    }
-
-    /** The bounded relaunches of one instrumented product on this host. */
-    private static final int SANITIZER_RELAUNCH_ATTEMPTS = 3;
-
-    /**
-     * True when the process could not start the sanitizer runtime at all, as
-     * opposed to a sanitizer finding about the code under test. The shadow
-     * mapping is out of reach of this host's address-space layout, so the
-     * instrumented process dies before its workload, either with the named
-     * runtime message or with an early fault the runtime never reports. A
-     * genuine report ({@code WARNING: ThreadSanitizer}) and a probe that
-     * reached its own assertions (non-empty stdout) are never mistaken for
-     * this and never retried, so no finding is retried away.
-     */
-    private static boolean sanitizerStartupFailure(NativeCompiler.Result run) {
-        if (run.exitCode() == 0) {
-            return false;
-        }
-        if (run.stderr().contains("WARNING: ThreadSanitizer")) {
-            return false;
-        }
-        return run.stdout().isEmpty();
-    }
-
-    /**
-     * The instrumented product relaunched with {@code ADDR_NO_RANDOMIZE} for
-     * that child only (through {@code setarch -R}), or null when the host has
-     * no {@code setarch}.
-     */
-    private static List<String> disableAslrCommand(Path product) {
-        String path = System.getenv("PATH");
-        if (path != null) {
-            for (String directory : path.split(java.io.File.pathSeparator)) {
-                if (directory.isEmpty()) {
-                    continue;
-                }
-                Path candidate = Path.of(directory, "setarch");
-                if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
-                    return List.of(candidate.toString(), "-R",
-                        product.toAbsolutePath().toString());
-                }
-            }
-        }
-        return null;
     }
 
     // =========================================================================

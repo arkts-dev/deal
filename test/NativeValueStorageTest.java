@@ -4,6 +4,7 @@ import deal.toolchain.NativeRuntime;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -227,7 +228,12 @@ public final class NativeValueStorageTest {
 
     /**
      * Builds one committed driver against the published tree at both levels,
-     * runs it and asserts its exact successful observation.
+     * runs it and asserts its exact successful observation. The same driver and
+     * the same published tree are then built with AddressSanitizer and
+     * UndefinedBehaviorSanitizer and must produce the same exact observation with
+     * no finding: a runtime storage defect that stays inside a still-mapped
+     * allocation, or an undefined operation, is a report here and a silent
+     * success in the plain build.
      */
     private static void runPositive(String driver, String expectedStdout,
                                     String what, List<String> extraFlags)
@@ -250,7 +256,34 @@ public final class NativeValueStorageTest {
             checkEq(expectedStdout, run.stdout(), what + " reports its exact "
                 + "success line at -O" + level);
             checkEq("", run.stderr(), what + " keeps stderr empty at -O" + level);
+
+            Path sanitizedProduct = scratch.resolve(driver + "-asan-o" + level);
+            NativeCompiler.Result sanitizedLink = NativeCompiler.link(published,
+                level, sourcesOf(driver), concat(extraFlags,
+                    NativeCompiler.SANITIZER_FLAGS), sanitizedProduct);
+            check(sanitizedLink.succeeded(), what + " builds with ASan/UBSan at "
+                + "-O" + level + ": " + sanitizedLink.describe());
+            if (!sanitizedLink.succeeded()) {
+                continue;
+            }
+            NativeCompiler.SanitizedRun sanitized = NativeCompiler.runSanitized(
+                sanitizedProduct, scratch, NativeCompiler.sanitizerEnvironment());
+            checkEq(0, sanitized.result().exitCode(), what + " exits zero under "
+                + "ASan/UBSan at -O" + level + ": "
+                + sanitized.result().describe());
+            checkEq(expectedStdout, sanitized.result().stdout(), what
+                + " reports its exact success line under ASan/UBSan at -O" + level);
+            checkEq("", sanitized.result().stderr(), what + " reports no "
+                + "sanitizer finding at -O" + level + ": "
+                + sanitized.result().describe());
         }
+    }
+
+    /** One flag list followed by another. */
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> combined = new ArrayList<>(first);
+        combined.addAll(second);
+        return combined;
     }
 
     /**

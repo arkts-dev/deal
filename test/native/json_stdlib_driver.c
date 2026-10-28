@@ -25,8 +25,16 @@
  * deeply nested finite document instead. The cap makes the encoder's scratch
  * growth observable: a linear encoder re-encodes the fixture inside it while a
  * per-frame concatenated walk position (quadratic in depth) cannot allocate.
+ *
+ * `DEAL_JSON_LOCALE=1` selects the process's ambient locale (`setlocale` from
+ * `LC_ALL`) and then runs the whole acceptance matrix again: the numeric decode
+ * and encode entries must be independent of it, so the observations must be
+ * byte-identical to the C-locale run. The mode refuses to run under a locale
+ * that keeps the '.' decimal point, because that locale cannot observe the
+ * comma-decimal defect the mode exists to rule out.
  */
 #define _POSIX_C_SOURCE 200809L
+#include <locale.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/resource.h>
@@ -1695,6 +1703,31 @@ static void run_defect(int selection) {
     }
 }
 
+/*
+ * The ambient-locale mode (R6). The locale is selected before anything is
+ * decoded or encoded, and the acceptance matrix below must publish the same
+ * bytes as the C-locale run: the decimal point of the ambient locale never
+ * reaches `strtod` or the encoder's decimal conversion.
+ */
+static void run_locale_acceptance(void) {
+    const char *selected = setlocale(LC_ALL, "");
+    const struct lconv *facts = localeconv();
+    check(selected != NULL,
+          "the delegated ambient locale is installed for the process");
+    check(facts != NULL && facts->decimal_point != NULL
+              && facts->decimal_point[0] != 0
+              && strcmp(facts->decimal_point, ".") != 0,
+          "the ambient locale uses a comma decimal point, so it can expose an "
+          "ambient-locale numeric conversion");
+    printf("locale ok\n");
+    deal_platform_flush_stdout();
+    if (failures != 0) {
+        printf("FAILURES: %d\n", failures);
+        deal_platform_exit(1);
+    }
+    run_acceptance();
+}
+
 int main(void) {
     /* The observations interleave with the console effects the runtime writes
      * through its own buffered stream, so the driver's own stream is unbuffered
@@ -1732,6 +1765,13 @@ int main(void) {
             depth = depth * 10u + (size_t)(*digit - '0');
         }
         run_deep_scratch(depth);
+        return failures == 0 ? 0 : 1;
+    }
+    const char *locale = deal_platform_environment("DEAL_JSON_LOCALE");
+    if (locale != NULL && locale[0] != 0) {
+        run_locale_acceptance();
+        deal_platform_flush_stdout();
+        deal_platform_flush_stderr();
         return failures == 0 ? 0 : 1;
     }
     run_acceptance();

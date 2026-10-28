@@ -11,16 +11,29 @@
  *
  * Object model (M1). Every managed object is one allocation whose payload is
  * preceded by a runtime-private header carrying the layout identity, the mark
- * state and the size class. Addresses never move, compact or forward, so
- * identity, keys, handles and interior pointers stay valid. The precise
- * reference map comes from the layout: `deal_layout` names the payload size and
- * the byte offsets of the managed-reference slots, emitted once per layout.
- * `deal_object_trace` walks exactly those slots; a layout whose payload holds
- * managed references outside that map registers its own walk
+ * state, the payload capacity and the size class. Addresses never move, compact
+ * or forward, so identity, keys, handles and interior pointers stay valid. The
+ * precise reference map comes from the layout: `deal_layout` names the payload
+ * size and the byte offsets of the managed-reference slots, emitted once per
+ * layout. `deal_object_trace` walks exactly those slots; a layout whose payload
+ * holds managed references outside that map registers its own resumable walk
  * (`deal_layout_trace_register`), so `deal_array` element storage is walked
  * through the `container` group's element layout metadata and the collector
  * never derives another group's layout (page
  * `llvm-native-runtime-value-model` C3).
+ *
+ * Allocation (M1, M8). Objects are carved from page-allocated blocks and reused
+ * from one free list per size class. The size class is derived from the
+ * object's *capacity* — the aligned payload slot the object owns — and never
+ * from a request size: a payload at or below `DEAL_ALLOC_SMALL_MAX_BYTES` has
+ * an exact 16-byte class, a larger payload a geometric class of at most 12.5%
+ * slack, so one class holds objects of one capacity and taking a free object is
+ * a bounded head pop instead of a scan. A request takes the smallest class that
+ * fits it, so a freed larger slot serves a smaller request and keeps its own
+ * capacity; the collector never rewrites a slot's capacity with a request size.
+ * A block whose objects are all unreachable again is unmapped once a cycle's
+ * sweep ends, so churn returns page storage to the operating system instead of
+ * retaining every arena a program ever used.
  *
  * Rooting is precise and explicit (M4, M5). Each generated function owns one
  * root frame with a statically known slot count: the prologue enters the frame,
@@ -40,16 +53,25 @@
  *
  * Collection (M1, M3, M7). Exactly one collection configuration exists; there is
  * no staged or selectable non-collecting mode. A cycle has three phases:
- * incremental marking (a bounded slice of the gray work list runs from the
- * allocation and loop-back-edge safepoint), the atomic phase (entered when the
- * gray set is empty: every root source is rescanned, the gray set is drained to
- * empty, and the cycle then sweeps), and incremental sweeping (a bounded number
- * of objects is inspected from the sweep cursor per safepoint, unmarked ones
- * being freed into their size class). Objects allocated during a cycle are
- * marked and are therefore never reclaimed by that cycle, and the sweep visits
- * them so their mark state is clean again when the cycle ends. A full cycle can
- * never fail: exhaustion of the collector's own platform storage is the R10
- * resource fault before partial mutation.
+ * incremental marking, the atomic phase, and incremental sweeping. Marking work
+ * is bounded by *reference visits*, never by objects, and a trace spanning more
+ * references than one slice is resumable: the safepoint spends at most
+ * `DEAL_GC_MARK_BUDGET_REFERENCES` visits per call across the fixed reference
+ * maps and the registered layout walks, so one wide array or one long chain
+ * cannot turn a slice into an unbounded pause, and the next safepoint resumes
+ * the walk at the recorded position. The atomic phase is entered when the gray
+ * set is empty: every root source is rescanned and the newly shaded closure is
+ * then traced by further bounded slices — the rescan of the roots is the pause,
+ * and the sweep is entered only by a rescan that shaded nothing new, so no
+ * object reachable at sweep time is unmarked. Sweeping then inspects a bounded
+ * number of objects from the sweep cursor per safepoint, unmarked ones being
+ * freed into their size class. Objects allocated during a cycle are marked and
+ * are therefore never reclaimed by that cycle, and the sweep visits them so
+ * their mark state is clean again when the cycle ends. A full cycle can never
+ * fail: exhaustion of the collector's own platform storage is the R10 resource
+ * fault before partial mutation. `deal_gc_collect_full` is the one entry that
+ * runs a whole cycle to completion; the incremental safepoint keeps every slice
+ * bounded.
  *
  * Reclaiming an object first runs the layout's registered reclamation hook
  * (`deal_layout_release_register`) while its payload is still intact, so a
@@ -63,14 +85,29 @@
  * object, and the completion-queue posters touch platform storage only.
  *
  * The collection trigger is one internal growth policy, not a source-visible
- * heap limit or pause target (M8): a cycle starts at a safepoint once the bytes
- * allocated since the last completed cycle reach the larger of a fixed minimum
- * and the payload that survived that cycle, so a program that keeps allocating
- * collects without an explicit call and uncollected garbage can never raise the
- * bar that would reclaim it. `DEAL_GC_STRESS=1` (M7) performs one full
- * collection at every safepoint and changes timing only; a behavioral difference
- * under it is a defect. `deal_gc_collect_full` and `deal_gc_statistics` are the
- * only observation surface.
+ * heap limit or pause target (M8): a cycle starts at a safepoint once the
+ * allocation *footprint* consumed since the last completed cycle — the header
+ * and the capacity of every allocation, not its payload alone — reaches the
+ * larger of a fixed minimum and the footprint that survived that cycle. Charging
+ * the footprint is what makes pressure real: a program allocating many
+ * zero-payload objects still consumes headers and arena storage, and it must
+ * collect exactly as one allocating payload bytes does. A program that keeps
+ * allocating collects without an explicit call, and uncollected garbage can
+ * never raise the bar that would reclaim it. `DEAL_GC_STRESS=1` (M7) performs
+ * one full collection at every safepoint and changes timing only; a behavioral
+ * difference under it is a defect. `deal_gc_collect_full` and
+ * `deal_gc_statistics` are the only observation surface; the statistics keep
+ * their payload accounting (`live_bytes` and `allocated_bytes` are payload
+ * bytes), while the growth policy counts the footprint.
+ *
+ * Sanitizer builds. The collector is compiled by the same pinned C11 flags in
+ * every build. When the translation unit is compiled with AddressSanitizer, the
+ * sweep poisons a reclaimed payload region and the allocation entry unpoisons
+ * the region it hands out again, so a stale access into a reused arena slot is
+ * a reported use-after-free instead of a silent read of a still-mapped address
+ * (an ordinary AddressSanitizer build cannot see reuse inside one mapping).
+ * Every other build fills a reclaimed payload with one fixed byte pattern and
+ * poisons nothing; neither behaviour is observable through a live object.
  */
 #ifndef DEAL_NATIVE_MEMORY_H
 #define DEAL_NATIVE_MEMORY_H
@@ -120,6 +157,15 @@ uint32_t deal_root_frame_depth(void);
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 
 /*
+ * The largest payload that owns an exact 16-byte size class (M1). At or below
+ * this size a freed object of the same class has exactly the capacity the next
+ * request of that class needs, so a free-list take is a head pop; above it the
+ * collector uses geometric classes of at most 12.5% slack so the same head pop
+ * still answers a request that fits the class.
+ */
+#define DEAL_ALLOC_SMALL_MAX_BYTES 4096u
+
+/*
  * One emitted per-layout metadata record (M1): the layout identity, a reserved
  * flag word that must be 0, the exact payload size of a fixed object (`0` for a
  * variable-payload layout, whose allocation size is authoritative), and the
@@ -139,16 +185,27 @@ typedef struct {
  * managed references outside its fixed map (M1): an array's element storage is
  * walked by the owning `container` group's element metadata, so the collector
  * never guesses an element stride and never derives another group's layout.
+ *
+ * The walk is resumable and budgeted so marking work is bounded by references
+ * rather than by objects. It visits the managed references from `position`
+ * onward, consuming one unit of `*budget` for every reference slot it inspects
+ * and stopping when the budget is spent, and it returns the position to resume
+ * at, or `DEAL_TRACE_DONE` when every reference was visited. `position` 0 starts
+ * the walk, and a walk must return the same references for the same object and
+ * position, so a resumed walk continues exactly where the slice ended.
  */
-typedef void (*deal_layout_trace)(const void *object,
-                                  deal_reference_visit visit, void *context);
+#define DEAL_TRACE_DONE ((size_t)-1)
+
+typedef size_t (*deal_layout_trace)(const void *object, size_t position,
+                                    size_t *budget,
+                                    deal_reference_visit visit, void *context);
 
 /*
- * Registers the supplemental walk of one layout (M1). The owning group
- * registers it at that representation's first use, before any object of the
- * layout can be allocated. One layout has at most one walk: registering the
- * same function again is the same registration, and a different function for
- * the same layout identity is an invariant fault.
+ * Registers the resumable walk of one layout (M1). The owning group registers
+ * it at that representation's first use, before any object of the layout can be
+ * allocated. One layout has at most one walk: registering the same function
+ * again is the same registration, and a different function for the same layout
+ * identity is an invariant fault.
  */
 void deal_layout_trace_register(uint32_t layout, deal_layout_trace trace);
 
@@ -218,7 +275,9 @@ size_t deal_object_size(const void *object);
  * its layout declares. A nullish singleton, a scalar payload and a crossing
  * handle are never visited. An object of a variable-payload layout contributes
  * only its fixed map; an array's element storage is walked by
- * `deal_container_array_trace`.
+ * `deal_container_array_trace`. This is the whole-object walk a group or a
+ * consumer uses directly; the collector's own marking walks the same map
+ * through its bounded slice cursor.
  */
 void deal_object_trace(const void *object, deal_reference_visit visit,
                        void *context);
@@ -248,12 +307,24 @@ void deal_store_barrier_data(void *container, const deal_data *value);
 /* -- the safepoint (M3) -------------------------------------------------- */
 
 /*
- * The allocation and loop-back-edge safepoint (M3, M7): one bounded marking or
- * sweeping slice, the atomic-phase root rescan when the gray set empties, and
- * the `DEAL_GC_STRESS` full collection. Under stress it performs one complete
- * cycle to completion; otherwise it continues an in-flight cycle and starts one
- * when the collection trigger is reached. It changes collection timing only, so
- * no observable value, diagnostic or identity depends on it.
+ * The marking budget of one safepoint (M3): the maximum number of reference
+ * visits — fixed reference-map slots and resumable layout-walk positions — one
+ * slice performs. Marking work is therefore bounded by references, never by
+ * objects: one object with a wide reference range is traced across several
+ * slices instead of one unbounded trace, and a program holding a wide array or
+ * a long chain cannot lengthen a single pause beyond this bound. The atomic
+ * phase adds the root rescan, which visits exactly the registered root slots.
+ */
+#define DEAL_GC_MARK_BUDGET_REFERENCES 256u
+
+/*
+ * The allocation and loop-back-edge safepoint (M3, M7): one marking or sweeping
+ * slice bounded by `DEAL_GC_MARK_BUDGET_REFERENCES` reference visits (a resumed
+ * walk included), the atomic-phase root rescan to its fixpoint when the gray set
+ * empties, and the `DEAL_GC_STRESS` full collection. Under stress it performs
+ * one complete cycle to completion; otherwise it continues an in-flight cycle
+ * and starts one when the collection trigger is reached. It changes collection
+ * timing only, so no observable value, diagnostic or identity depends on it.
  */
 void deal_safepoint(void);
 
@@ -354,8 +425,11 @@ void deal_gc_collect_full(void);
  * payload sizes of the currently allocated managed objects, `object_count` their
  * number, `allocated_bytes` the cumulative payload bytes handed out by
  * `deal_alloc`, `collections` the number of cycles completed including their
- * sweep, and `swept_objects` the number of objects reclaimed so far. A null
- * out-parameter is an invariant fault.
+ * sweep, and `swept_objects` the number of objects reclaimed so far. The growth
+ * policy counts the allocation footprint (header and capacity of every object)
+ * rather than these payload bytes, so a program that allocates many zero-payload
+ * objects still reaches the collection trigger. A null out-parameter is an
+ * invariant fault.
  */
 typedef struct {
     uint64_t live_bytes;

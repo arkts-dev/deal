@@ -2,12 +2,13 @@
  * deal/native/memory.c — the `memory` service group implementation.
  *
  * The M1 object model (header, layout registry, allocation entry, precise
- * reference-map walk and the layout reclamation hooks), the M2 insertion
- * barrier, the M3 incremental cycle (mark state, bounded gray work list,
- * atomic-phase root rescan, sweep cursor), the M4 root frames, the M5 scoped
- * roots, registered root sources and static root table, the M6 captured-binding
- * cells, and the M7 collection and statistics entries with the
- * `DEAL_GC_STRESS` switch.
+ * reference-map walk and the layout reclamation hooks, the capacity-aware
+ * size-class free lists and the arena release), the M2 insertion barrier, the
+ * M3 incremental cycle (mark state, resumable bounded marking cursor,
+ * atomic-phase root rescan to its fixpoint, sweep cursor), the M4 root frames,
+ * the M5 scoped roots, registered root sources and static root table, the M6
+ * captured-binding cells, and the M7 collection and statistics entries with the
+ * `DEAL_GC_STRESS` switch and the sanitizer poison of reclaimed payloads.
  */
 #include "deal/native/memory.h"
 
@@ -17,29 +18,61 @@
 #include "deal/native/platform.h"
 #include "deal/native/value.h"
 
+/*
+ * Sanitizer builds (M1). AddressSanitizer cannot see a stale access into a
+ * still-mapped arena slot, so an instrumented build poisons every reclaimed
+ * payload and unpoisons the capacity the allocation entry hands out again: a
+ * read through a pointer the collector already reclaimed is then a reported
+ * use-after-poison instead of a silent read of arena storage. No other build
+ * poisons anything.
+ */
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define DEAL_MEMORY_ASAN 1
+#  endif
+#endif
+#if !defined(DEAL_MEMORY_ASAN) && defined(__SANITIZE_ADDRESS__)
+#  define DEAL_MEMORY_ASAN 1
+#endif
+
+#if defined(DEAL_MEMORY_ASAN)
+extern void __asan_poison_memory_region(const volatile void *address,
+                                        size_t size);
+extern void __asan_unpoison_memory_region(const volatile void *address,
+                                          size_t size);
+#endif
+
+/* The byte pattern a reclaimed payload carries in every build. */
+#define DEAL_MEMORY_POISON_BYTE 0xDDu
+
 /* =========================================================================
  * The managed object header (M1, runtime-private)
  * ========================================================================= */
 
 /*
  * Every managed object is one allocation whose payload is preceded by this
- * header: the layout identity, the size class the sweep's free lists use, the
- * mark state the collector owns, the exact payload size and the free-list /
- * live-list link. No published header declares it, so no consumer can inspect
- * or size an object header. The header keeps the payload 16-byte aligned.
+ * header: the layout identity, the free-list size class of the payload
+ * capacity, the mark state the collector owns, the requested payload size, the
+ * payload capacity the slot was allocated with, and the free-list / live-list
+ * link plus the block the slot was carved from. No published header declares
+ * it, so no consumer can inspect or size an object header. The capacity is kept
+ * beside the requested size so a slot that is reused for a smaller request
+ * keeps the storage it actually owns and can answer a later larger request; the
+ * block pointer lets the sweep return a whole empty arena to the operating
+ * system. The header keeps the payload 16-byte aligned.
  */
 typedef struct deal_object_header {
     uint32_t layout;
     uint32_t size_class;
     uint64_t mark;
     size_t size;
+    size_t capacity;
     struct deal_object_header *link;
+    struct deal_alloc_block *block;
 } deal_object_header;
 
 #define DEAL_OBJECT_ALIGNMENT 16u
 
-_Static_assert(sizeof(deal_object_header) == 32u,
-               "the managed object header is 32 bytes");
 _Static_assert(sizeof(deal_object_header) % DEAL_OBJECT_ALIGNMENT == 0u,
                "the managed payload stays 16-byte aligned");
 
@@ -51,7 +84,11 @@ _Static_assert(sizeof(deal_object_header) % DEAL_OBJECT_ALIGNMENT == 0u,
 static int deal_gc_marking(void);
 static int deal_gc_cycle_active(void);
 static void deal_gc_shade(void *referent);
-static void deal_gc_note_allocation(size_t size);
+static void deal_gc_note_allocation(size_t size, size_t footprint);
+
+/* The sanitizer poison pair of one reclaimed or reissued payload (M1). */
+static void deal_memory_poison(void *payload, size_t capacity);
+static void deal_memory_unpoison(void *payload, size_t capacity);
 
 /* =========================================================================
  * Root frames (M4)
@@ -270,15 +307,48 @@ const deal_layout *deal_layout_lookup(uint32_t layout) {
 /* The bump region size of one allocation block. */
 #define DEAL_ALLOC_BLOCK_BYTES (64u * 1024u)
 
-/* The sweep's free-list granularity; every payload is rounded up to it. */
-#define DEAL_ALLOC_SIZE_CLASS_BYTES 16u
-#define DEAL_ALLOC_SIZE_CLASS_MAX 1024u
+/* The free-list granularity of the exact classes below the geometric range. */
+#define DEAL_ALLOC_SIZE_CLASS_BYTES DEAL_OBJECT_ALIGNMENT
 
+/* The number of exact 16-byte classes up to DEAL_ALLOC_SMALL_MAX_BYTES. */
+#define DEAL_ALLOC_EXACT_CLASSES \
+    (DEAL_ALLOC_SMALL_MAX_BYTES / DEAL_ALLOC_SIZE_CLASS_BYTES)
+
+/*
+ * The geometric classes above the exact range: each class is one eighth larger
+ * than the class below it, so a payload above DEAL_ALLOC_SMALL_MAX_BYTES wastes
+ * at most an eighth of its slot and one class still holds objects of exactly
+ * one capacity (M1).
+ */
+#define DEAL_ALLOC_GROWTH_DIVISOR 8u
+
+/* The classes the allocator can address (the exact range plus the geometric
+ * ladder up to the largest addressable payload). */
+#define DEAL_ALLOC_MAX_CLASSES (DEAL_ALLOC_EXACT_CLASSES + 512u)
+
+/*
+ * How many classes above a request's own class one take may inspect. A freed
+ * slot of a larger class is therefore reusable by a smaller request without
+ * turning the take into a scan of every class, and the slot keeps its own
+ * capacity (M1).
+ */
+#define DEAL_ALLOC_TAKE_CLASSES 8u
+
+/*
+ * One page-allocated arena. Its bookkeeping lives at the front of its own
+ * mapping, so returning an empty arena releases exactly one page allocation and
+ * needs no system-allocator storage of its own (R1). `live` counts the objects
+ * carved here that are still allocated, so the sweep can tell when nothing in
+ * the arena is reachable again.
+ */
 typedef struct deal_alloc_block {
     struct deal_alloc_block *next;
     unsigned char *base;
     size_t capacity;
     size_t used;
+    size_t live;
+    size_t region_bytes;
+    int doomed;
 } deal_alloc_block;
 
 static deal_alloc_block *deal_alloc_blocks;
@@ -294,49 +364,108 @@ static deal_alloc_block *deal_alloc_current;
  */
 static deal_object_header *deal_heap_head;
 static deal_object_header *deal_heap_tail;
-static deal_object_header *deal_heap_free[DEAL_ALLOC_SIZE_CLASS_MAX + 1u];
+static deal_object_header *deal_heap_free[DEAL_ALLOC_MAX_CLASSES];
 
-/* The size class of one aligned allocation (M1's sweep bucket). */
-static uint32_t deal_alloc_size_class(size_t aligned) {
-    size_t size_class = deal_platform_checked_add(
-        aligned, DEAL_ALLOC_SIZE_CLASS_BYTES - 1u)
-        / DEAL_ALLOC_SIZE_CLASS_BYTES;
-    if (size_class == 0u) {
-        size_class = 1u;
-    }
-    if (size_class > DEAL_ALLOC_SIZE_CLASS_MAX) {
-        size_class = DEAL_ALLOC_SIZE_CLASS_MAX;
-    }
-    return (uint32_t)size_class;
+/* The payload capacity of every class; index 0 is unused. */
+static size_t deal_alloc_class_capacity[DEAL_ALLOC_MAX_CLASSES];
+static uint32_t deal_alloc_class_count;
+
+/* One rounded byte count, never below one alignment unit. The rounding runs
+ * through the shared checked entry, so a count that cannot be aligned is the
+ * R10 invariant fault instead of a wrapped region a later store overruns. */
+static size_t deal_alloc_aligned(size_t bytes) {
+    return deal_platform_checked_round(bytes, (size_t)DEAL_OBJECT_ALIGNMENT);
 }
 
-/* One allocation's total size, aligned for its header (M1). The rounding runs
- * through the shared checked entry, so a total that cannot be aligned is the
- * R10 invariant fault instead of a wrapped region the payload store would
- * overrun. */
-static size_t deal_alloc_aligned(size_t total) {
-    return deal_platform_checked_round(total, (size_t)DEAL_OBJECT_ALIGNMENT);
-}
-
-static unsigned char *deal_alloc_carve(size_t aligned) {
-    if (deal_alloc_current == NULL
-            || deal_alloc_current->capacity - deal_alloc_current->used < aligned) {
-        size_t block_bytes = aligned > DEAL_ALLOC_BLOCK_BYTES
-            ? aligned : DEAL_ALLOC_BLOCK_BYTES;
-        deal_alloc_block *block = deal_platform_allocate(sizeof(*block));
-        if (block == NULL) {
-            deal_platform_fault("allocation bookkeeping failed");
+/*
+ * Builds the class ladder once: one exact class per 16 bytes up to
+ * DEAL_ALLOC_SMALL_MAX_BYTES and then geometric classes of at most an eighth
+ * more than the one below, up to the largest addressable payload.
+ */
+static void deal_alloc_classes_init(void) {
+    if (deal_alloc_class_count != 0u) {
+        return;
+    }
+    for (uint32_t index = 1u; index <= DEAL_ALLOC_EXACT_CLASSES; index += 1u) {
+        deal_alloc_class_capacity[index] =
+            (size_t)index * DEAL_ALLOC_SIZE_CLASS_BYTES;
+    }
+    size_t capacity = (size_t)DEAL_ALLOC_SMALL_MAX_BYTES;
+    uint32_t index = DEAL_ALLOC_EXACT_CLASSES + 1u;
+    while (index < DEAL_ALLOC_MAX_CLASSES) {
+        size_t step = capacity / DEAL_ALLOC_GROWTH_DIVISOR;
+        if (step < DEAL_ALLOC_SIZE_CLASS_BYTES) {
+            step = DEAL_ALLOC_SIZE_CLASS_BYTES;
         }
-        block->base = deal_platform_page_alloc(block_bytes);
-        block->capacity = block_bytes;
-        block->used = 0;
-        block->next = deal_alloc_blocks;
-        deal_alloc_blocks = block;
-        deal_alloc_current = block;
+        step = deal_alloc_aligned(step);
+        if (capacity > SIZE_MAX - step) {
+            break;
+        }
+        capacity += step;
+        deal_alloc_class_capacity[index] = capacity;
+        index += 1u;
     }
-    unsigned char *storage = deal_alloc_current->base + deal_alloc_current->used;
-    deal_alloc_current->used += aligned;
-    return storage;
+    deal_alloc_class_count = index;
+}
+
+/* The smallest class whose payload capacity holds `total` bytes of one object
+ * (the header included). */
+static uint32_t deal_alloc_class_of(size_t total) {
+    if (total <= (size_t)DEAL_ALLOC_SMALL_MAX_BYTES) {
+        uint32_t index = (uint32_t)(total / DEAL_ALLOC_SIZE_CLASS_BYTES);
+        return index == 0u ? 1u : index;
+    }
+    uint32_t last = deal_alloc_class_count - 1u;
+    if (total > deal_alloc_class_capacity[last]) {
+        deal_platform_fault("alloc: size exceeds the largest size class");
+    }
+    uint32_t low = (uint32_t)DEAL_ALLOC_EXACT_CLASSES + 1u;
+    uint32_t high = last;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (deal_alloc_class_capacity[middle] < total) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
+/* One fresh arena whose bookkeeping sits at the front of its own mapping. */
+static deal_alloc_block *deal_alloc_block_new(size_t payload_bytes) {
+    size_t header_bytes = deal_alloc_aligned(sizeof(deal_alloc_block));
+    size_t region_bytes =
+        deal_platform_checked_add(header_bytes, payload_bytes);
+    unsigned char *region = deal_platform_page_alloc(region_bytes);
+    deal_alloc_block *block = (deal_alloc_block *)(void *)region;
+    block->base = region + header_bytes;
+    block->capacity = payload_bytes;
+    block->used = 0u;
+    block->live = 0u;
+    block->region_bytes = region_bytes;
+    block->doomed = 0;
+    block->next = deal_alloc_blocks;
+    deal_alloc_blocks = block;
+    deal_alloc_current = block;
+    return block;
+}
+
+/* Carves one object slot of `total` bytes from the current arena, taking a new
+ * arena when the current one has no room left. */
+static deal_object_header *deal_alloc_carve(size_t total) {
+    if (deal_alloc_current == NULL
+            || deal_alloc_current->capacity - deal_alloc_current->used < total) {
+        size_t block_bytes = total > DEAL_ALLOC_BLOCK_BYTES
+            ? total : DEAL_ALLOC_BLOCK_BYTES;
+        (void)deal_alloc_block_new(block_bytes);
+    }
+    deal_alloc_block *block = deal_alloc_current;
+    unsigned char *storage = block->base + block->used;
+    block->used += total;
+    deal_object_header *header = (deal_object_header *)(void *)storage;
+    header->block = block;
+    return header;
 }
 
 /* Appends one live object at the tail of the live list (M3). */
@@ -351,26 +480,29 @@ static void deal_heap_append(deal_object_header *header) {
 }
 
 /*
- * Takes one free object of `size_class` whose payload holds at least `size`
- * bytes, or NULL when the bucket holds no usable object. Sizes inside one
- * bucket differ by less than the size-class granularity, so the search is one
- * short walk of the bucket.
+ * Takes one free object whose payload capacity holds `total` bytes, or NULL
+ * when no class within the take window has one. Every object of one class has
+ * exactly that class's capacity, so the take is one head pop per class instead
+ * of a scan of the bucket, and taking from a larger class leaves that object's
+ * own capacity and class untouched (M1).
  */
-static deal_object_header *deal_heap_take_free(uint32_t size_class,
-                                               size_t size) {
-    deal_object_header **link = &deal_heap_free[size_class];
-    while (*link != NULL) {
-        deal_object_header *header = *link;
-        if (header->size >= size) {
-            *link = header->link;
-            return header;
+static deal_object_header *deal_heap_take_free(uint32_t size_class) {
+    uint32_t limit = size_class + DEAL_ALLOC_TAKE_CLASSES;
+    if (limit >= deal_alloc_class_count) {
+        limit = deal_alloc_class_count - 1u;
+    }
+    for (uint32_t index = size_class; index <= limit; index += 1u) {
+        deal_object_header *header = deal_heap_free[index];
+        if (header == NULL) {
+            continue;
         }
-        link = &header->link;
+        deal_heap_free[index] = header->link;
+        return header;
     }
     return NULL;
 }
 
-/* Frees one swept object into its size class with a clean mark (M1, M3). */
+/* Frees one swept object into its own class with a clean mark (M1, M3). */
 static void deal_heap_push_free(deal_object_header *header) {
     header->mark = 0u;
     header->link = deal_heap_free[header->size_class];
@@ -386,21 +518,35 @@ void *deal_alloc(uint32_t layout, size_t size) {
         deal_platform_fault("alloc: size below the layout payload size");
     }
     /* The header-and-payload total and its alignment are computed before the
-     * safepoint: a size that cannot exist is the R10 invariant fault and leaves
-     * the heap exactly as it was. */
-    size_t aligned = deal_alloc_aligned(
-        deal_platform_checked_add(sizeof(deal_object_header), size));
-    uint32_t size_class = deal_alloc_size_class(aligned);
+     * safepoint through the shared checked arithmetic: a size that cannot exist
+     * is the R10 invariant fault and leaves the heap exactly as it was. */
+    size_t aligned = deal_platform_checked_add(sizeof(deal_object_header),
+                                               deal_alloc_aligned(size));
+    deal_alloc_classes_init();
+    /* Every slot of one class has exactly that class's capacity, so a request
+     * that maps to the class always fits the slot a take answers with (M1). */
+    uint32_t size_class = deal_alloc_class_of(aligned);
+    size_t total = deal_alloc_class_capacity[size_class];
+    size_t capacity = total - sizeof(deal_object_header);
     /* The safepoint runs before this object exists, so a bounded marking or
      * sweeping slice (or the whole collection under DEAL_GC_STRESS) completes
      * against the objects that exist already (M3, M7). */
     deal_safepoint();
-    deal_object_header *header = deal_heap_take_free(size_class, size);
-    if (header == NULL) {
-        header = (deal_object_header *)(void *)deal_alloc_carve(aligned);
+    deal_object_header *header = deal_heap_take_free(size_class);
+    if (header != NULL) {
+        /* A reused slot keeps the capacity and the class it was carved with, so
+         * a smaller request never shrinks what the slot owns (M1). */
+        capacity = header->capacity;
+        size_class = header->size_class;
+    } else {
+        header = deal_alloc_carve(total);
+        header->capacity = capacity;
+        header->size_class = size_class;
     }
+    /* The slot is live in its arena again, whether it was carved now or reused
+     * from the free list; the sweep counts it down when it is reclaimed. */
+    header->block->live += 1u;
     header->layout = layout;
-    header->size_class = size_class;
     /* An object allocated during a cycle is marked and therefore excluded from
      * that cycle's sweep (M1); the sweep still visits it, so its mark state is
      * clean again when the cycle ends. */
@@ -408,12 +554,18 @@ void *deal_alloc(uint32_t layout, size_t size) {
     header->size = size;
     deal_heap_append(header);
     unsigned char *payload = (unsigned char *)(void *)header + sizeof(*header);
+    /* A slot reused from a free list still carries the reclaimed payload's
+     * poison and pattern; the whole capacity belongs to this object again. */
+    deal_memory_unpoison(payload, capacity);
     if (size != 0u) {
         /* A fresh allocation is zero-initialized (Allocate); reused size-class
          * storage is zeroed here too. */
         memset(payload, 0, size);
     }
-    deal_gc_note_allocation(size);
+    /* The footprint charged to the growth policy is the storage the object
+     * actually owns: its header plus the capacity of the slot it occupies, which
+     * a reused larger slot keeps (M8). */
+    deal_gc_note_allocation(size, sizeof(deal_object_header) + capacity);
     return payload;
 }
 
@@ -884,18 +1036,19 @@ static deal_layout_release deal_layout_release_of(uint32_t layout) {
  * The collector (M1, M3, M7)
  * ========================================================================= */
 
-/* One bounded marking or sweeping slice per safepoint (M3). */
-#define DEAL_GC_MARK_SLICE 64U
+/* One bounded sweeping slice per safepoint (M3). Marking is bounded by
+ * DEAL_GC_MARK_BUDGET_REFERENCES reference visits instead. */
 #define DEAL_GC_SWEEP_SLICE 64U
 
 /*
- * The minimum allocation volume that starts a cycle. The trigger is one
- * internal growth policy — a cycle starts once the bytes allocated since the
- * last completed cycle reach the larger of this minimum and the payload that
- * survived the last completed cycle — so no source-visible heap limit or pause
- * target exists (M8). The surviving payload is the post-sweep live byte count,
- * never the allocated-but-not-yet-swept count, so uncollected garbage can never
- * raise the bar that would reclaim it.
+ * The minimum allocation footprint that starts a cycle (M8's internal growth
+ * policy). A cycle starts once the footprint consumed since the last completed
+ * cycle — the header and the capacity of every allocation, not its payload —
+ * reaches the larger of this minimum and the footprint that survived the last
+ * completed cycle, so no source-visible heap limit or pause target exists.
+ * Charging the footprint is what makes pressure real: allocations with little or
+ * no payload still consume headers and arena storage and therefore still
+ * collect.
  */
 #define DEAL_GC_MIN_TRIGGER_BYTES (256U * 1024U)
 
@@ -912,6 +1065,22 @@ static void **deal_gc_gray;
 static size_t deal_gc_gray_count;
 static size_t deal_gc_gray_capacity;
 
+/*
+ * The resumable trace cursor (M3). Marking work is bounded by references, not
+ * by objects: while one object's fixed map or registered walk spans more
+ * references than the safepoint budget, the cursor keeps the object and the
+ * position it stopped at, and the next slice resumes exactly there. At most one
+ * object is in progress, so the cursor is three words and no unbounded walk can
+ * hide inside a slice.
+ */
+typedef struct {
+    void *object;
+    size_t fixed_index;
+    size_t walk_position;
+} deal_gc_trace_cursor;
+
+static deal_gc_trace_cursor deal_gc_cursor;
+
 /* The sweep cursor: the next object to inspect and the last one kept (M3). */
 static deal_object_header *deal_gc_sweep_previous;
 static deal_object_header *deal_gc_sweep_next;
@@ -922,15 +1091,16 @@ static int deal_gc_stress = -1;
 /* 1 while a collection runs, so a re-entrant safepoint cannot start a cycle. */
 static int deal_gc_in_collection;
 
-/* The product-level counters (M7). */
+/* The product-level counters (M7) and the footprint the policy counts. */
 static uint64_t deal_gc_live_bytes;
 static uint64_t deal_gc_object_count;
 static uint64_t deal_gc_allocated_bytes;
-static uint64_t deal_gc_allocated_since_cycle;
+static uint64_t deal_gc_allocated_footprint_since_cycle;
+static uint64_t deal_gc_live_footprint;
 static uint64_t deal_gc_collections;
 static uint64_t deal_gc_swept_objects;
 
-/* The allocation volume that starts the next cycle (M8's internal policy). */
+/* The allocation footprint that starts the next cycle (M8's internal policy). */
 static uint64_t deal_gc_trigger_bytes = (uint64_t)DEAL_GC_MIN_TRIGGER_BYTES;
 
 static int deal_gc_marking(void) {
@@ -947,11 +1117,13 @@ static int deal_gc_reference_is_managed(const void *referent) {
         && !deal_value_is_undefined(referent);
 }
 
-static void deal_gc_note_allocation(size_t size) {
+/* Charges one allocation (M7's payload counters, M8's footprint policy). */
+static void deal_gc_note_allocation(size_t size, size_t footprint) {
     deal_gc_live_bytes += (uint64_t)size;
     deal_gc_object_count += 1u;
     deal_gc_allocated_bytes += (uint64_t)size;
-    deal_gc_allocated_since_cycle += (uint64_t)size;
+    deal_gc_live_footprint += (uint64_t)footprint;
+    deal_gc_allocated_footprint_since_cycle += (uint64_t)footprint;
 }
 
 static int deal_gc_stress_enabled(void) {
@@ -964,7 +1136,8 @@ static int deal_gc_stress_enabled(void) {
 }
 
 static int deal_gc_trigger_reached(void) {
-    return deal_gc_allocated_since_cycle >= deal_gc_trigger_bytes ? 1 : 0;
+    return deal_gc_allocated_footprint_since_cycle >= deal_gc_trigger_bytes
+        ? 1 : 0;
 }
 
 /* Appends one marked object to the gray work list (M1) in platform memory. */
@@ -1011,13 +1184,87 @@ static void deal_gc_visit_reference(void *referent, void *context) {
     deal_gc_shade(referent);
 }
 
-/* Traces one marked object: its fixed map plus its registered layout walk. */
-static void deal_gc_trace_object(void *object) {
-    deal_object_trace(object, deal_gc_visit_reference, NULL);
-    deal_layout_trace trace = deal_layout_trace_of(deal_object_layout(object));
-    if (trace != NULL) {
-        trace(object, deal_gc_visit_reference, NULL);
+/* The layout of one managed object, or the invariant fault of an unknown one. */
+static const deal_layout *deal_gc_layout_of(const void *object,
+                                            const char *reason) {
+    const deal_layout *record =
+        deal_layout_lookup(deal_object_layout(object));
+    if (record == NULL) {
+        deal_platform_fault(reason);
     }
+    return record;
+}
+
+/* Visits one fixed reference-map slot of the object being traced; the caller
+ * charges the slice budget for it. */
+static void deal_gc_trace_fixed_slot(const void *object,
+                                     const deal_layout *record,
+                                     size_t index,
+                                     deal_reference_visit visit,
+                                     void *context) {
+    uint32_t offset = record->reference_offsets[index];
+    void *referent = NULL;
+    memcpy(&referent, (const unsigned char *)object + offset,
+           sizeof(referent));
+    deal_visit_reference(referent, visit, context);
+}
+
+/*
+ * One bounded marking step (M3): traces the fixed reference map and then the
+ * registered resumable walk of as many objects as `*budget` allows, pop a gray
+ * object at a time, and leaves the cursor exactly where the budget ran out. A
+ * wide object is therefore traced across several safepoints instead of one
+ * unbounded pass, and the object is complete — every reference visited — before
+ * the cursor moves on. `budget` counts reference visits, never objects.
+ */
+static void deal_gc_trace_step(size_t *budget, deal_reference_visit visit,
+                               void *context) {
+    while (*budget > 0u) {
+        if (deal_gc_cursor.object == NULL) {
+            if (deal_gc_gray_count == 0u) {
+                return;
+            }
+            deal_gc_gray_count -= 1u;
+            deal_gc_cursor.object = deal_gc_gray[deal_gc_gray_count];
+            deal_gc_cursor.fixed_index = 0u;
+            deal_gc_cursor.walk_position = 0u;
+        }
+        void *object = deal_gc_cursor.object;
+        const deal_layout *record =
+            deal_gc_layout_of(object, "object trace: unknown layout");
+        while (deal_gc_cursor.fixed_index < record->reference_count
+                   && *budget > 0u) {
+            deal_gc_trace_fixed_slot(object, record,
+                                     deal_gc_cursor.fixed_index, visit,
+                                     context);
+            deal_gc_cursor.fixed_index += 1u;
+            *budget -= 1u;
+        }
+        if (deal_gc_cursor.fixed_index < record->reference_count) {
+            return;
+        }
+        if (*budget == 0u) {
+            return;
+        }
+        deal_layout_trace trace = deal_layout_trace_of(deal_object_layout(object));
+        if (trace != NULL) {
+            size_t next = trace(object, deal_gc_cursor.walk_position, budget,
+                                visit, context);
+            deal_gc_cursor.walk_position = next;
+            if (next != DEAL_TRACE_DONE) {
+                return;
+            }
+        }
+        deal_gc_cursor.object = NULL;
+        deal_gc_cursor.fixed_index = 0u;
+        deal_gc_cursor.walk_position = 0u;
+    }
+}
+
+/* Drains the whole gray work list to empty; the completion path's own bound. */
+static void deal_gc_drain(void) {
+    size_t budget = SIZE_MAX;
+    deal_gc_trace_step(&budget, deal_gc_visit_reference, NULL);
 }
 
 /* Releases one reclaimed object's platform-owned members through its layout's
@@ -1030,20 +1277,48 @@ static void deal_gc_release_object(void *object) {
     }
 }
 
-/* Pops one gray object and traces it; 1 when one was traced. */
-static int deal_gc_trace_one(void) {
-    if (deal_gc_gray_count == 0u) {
-        return 0;
+/*
+ * Returns every arena whose objects are all unreachable again to the operating
+ * system (M1, M8). A block is released only when no live object is carved from
+ * it and it is not the current bump arena; the free objects it still holds are
+ * unlinked from the free lists first, so no later take can read released
+ * storage. Without this the collector reclaims objects logically and retains
+ * every page a program ever touched.
+ */
+static void deal_gc_release_empty_blocks(void) {
+    int doomed = 0;
+    for (deal_alloc_block *block = deal_alloc_blocks; block != NULL;
+            block = block->next) {
+        block->doomed = block->live == 0u && block != deal_alloc_current
+            ? 1 : 0;
+        if (block->doomed != 0) {
+            doomed = 1;
+        }
     }
-    deal_gc_gray_count -= 1u;
-    deal_gc_trace_object(deal_gc_gray[deal_gc_gray_count]);
-    return 1;
-}
-
-/* Drains the gray work list to empty (the atomic phase's own bound). */
-static void deal_gc_drain(void) {
-    while (deal_gc_trace_one() != 0) {
-        /* the queue populates itself as objects reveal children */
+    if (doomed == 0) {
+        return;
+    }
+    for (uint32_t index = 1u; index < deal_alloc_class_count; index += 1u) {
+        deal_object_header **link = &deal_heap_free[index];
+        while (*link != NULL) {
+            deal_object_header *header = *link;
+            if (header->block->doomed == 0) {
+                link = &header->link;
+                continue;
+            }
+            *link = header->link;
+        }
+    }
+    deal_alloc_block **block_link = &deal_alloc_blocks;
+    while (*block_link != NULL) {
+        deal_alloc_block *block = *block_link;
+        if (block->doomed == 0) {
+            block_link = &block->next;
+            continue;
+        }
+        *block_link = block->next;
+        deal_memory_unpoison(block->base, block->used);
+        deal_platform_page_free(block, block->region_bytes);
     }
 }
 
@@ -1051,28 +1326,25 @@ static void deal_gc_drain(void) {
 static void deal_gc_finish_cycle(void) {
     deal_gc_phase_value = DEAL_GC_IDLE;
     deal_gc_gray_count = 0u;
+    deal_gc_cursor.object = NULL;
+    deal_gc_cursor.fixed_index = 0u;
+    deal_gc_cursor.walk_position = 0u;
     deal_gc_sweep_previous = NULL;
     deal_gc_sweep_next = NULL;
-    deal_gc_allocated_since_cycle = 0u;
+    deal_gc_allocated_footprint_since_cycle = 0u;
     deal_gc_collections += 1u;
-    /* What survived this cycle is the payload the next cycle has to preserve. */
+    /* Arena release runs once per completed cycle, so churn returns page
+     * storage instead of retaining every arena a program ever used (M1). */
+    deal_gc_release_empty_blocks();
+    /* What survived this cycle is the footprint the next cycle has to
+     * preserve. */
     deal_gc_trigger_bytes =
-        deal_gc_live_bytes < (uint64_t)DEAL_GC_MIN_TRIGGER_BYTES
-            ? (uint64_t)DEAL_GC_MIN_TRIGGER_BYTES : deal_gc_live_bytes;
+        deal_gc_live_footprint < (uint64_t)DEAL_GC_MIN_TRIGGER_BYTES
+            ? (uint64_t)DEAL_GC_MIN_TRIGGER_BYTES : deal_gc_live_footprint;
 }
 
-/*
- * The atomic phase (M3): the gray set is empty, so every root source is
- * rescanned — the generated root frames, the scoped runtime roots, every
- * registered source (host crossing scopes, the handle table, the
- * open-operation table) and the static root table of export tables, class
- * plans and descriptor atoms — the gray set is drained to empty, and the cycle
- * enters its sweep. Exactly one mutator thread exists, so no other thread can
- * allocate, mutate, read or free a managed object during the phase.
- */
-static void deal_gc_atomic_phase(void) {
-    deal_root_sources_enumerate(deal_gc_visit_reference, NULL);
-    deal_gc_drain();
+/* Enters the sweep: the root rescan shaded nothing new (M3). */
+static void deal_gc_enter_sweep(void) {
     deal_gc_phase_value = DEAL_GC_SWEEPING;
     deal_gc_sweep_previous = NULL;
     deal_gc_sweep_next = deal_heap_head;
@@ -1081,13 +1353,39 @@ static void deal_gc_atomic_phase(void) {
     }
 }
 
-/* One bounded marking slice; an emptied gray set enters the atomic phase. */
+/*
+ * The atomic phase (M3): the gray set is empty, so every root source is
+ * rescanned — the generated root frames, the scoped runtime roots, every
+ * registered source (host crossing scopes, the handle table, the
+ * open-operation table) and the static root table of export tables, class
+ * plans and descriptor atoms. A rescan that shades nothing new is the fixpoint
+ * that lets the cycle sweep, so no root write is ever missed and the sweep is
+ * entered only while every object reachable then is marked; a rescan that shades
+ * objects returns to incremental marking, so the newly rooted closure is traced
+ * by further bounded slices instead of inside one unbounded pause. Exactly one
+ * mutator thread exists, so no other thread can allocate, mutate, read or free a
+ * managed object between the rescan and the sweep it decides.
+ */
+static int deal_gc_atomic_rescan(void) {
+    deal_root_sources_enumerate(deal_gc_visit_reference, NULL);
+    return deal_gc_gray_count != 0u ? 1 : 0;
+}
+
+/*
+ * One bounded marking step and, when the gray set empties, the atomic-phase root
+ * rescan to its fixpoint (M3).
+ */
 static void deal_gc_mark_slice(size_t budget) {
-    while (budget > 0u && deal_gc_trace_one() != 0) {
-        budget -= 1u;
+    size_t remaining = budget;
+    deal_gc_trace_step(&remaining, deal_gc_visit_reference, NULL);
+    if (deal_gc_phase_value != DEAL_GC_MARKING) {
+        return;
     }
-    if (deal_gc_phase_value == DEAL_GC_MARKING && deal_gc_gray_count == 0u) {
-        deal_gc_atomic_phase();
+    if (deal_gc_cursor.object != NULL || deal_gc_gray_count != 0u) {
+        return;
+    }
+    if (deal_gc_atomic_rescan() == 0) {
+        deal_gc_enter_sweep();
     }
 }
 
@@ -1111,12 +1409,21 @@ static void deal_gc_sweep_slice(size_t budget) {
                 deal_heap_tail = deal_gc_sweep_previous;
             }
             deal_gc_live_bytes -= (uint64_t)header->size;
+            deal_gc_live_footprint -=
+                (uint64_t)(sizeof(deal_object_header) + header->capacity);
             deal_gc_object_count -= 1u;
             deal_gc_swept_objects += 1u;
+            header->block->live -= 1u;
             /* The payload is still intact: its layout's reclamation hook
              * releases the platform storage the object owns (M1). */
-            deal_gc_release_object(
-                (unsigned char *)(void *)header + sizeof(*header));
+            unsigned char *payload =
+                (unsigned char *)(void *)header + sizeof(*header);
+            deal_gc_release_object(payload);
+            /* A reclaimed payload is poison in every build: the sanitizer build
+             * additionally reports a stale access, and the plain build never
+             * presents a released slot's old bytes as live data. */
+            deal_memory_poison(payload, header->capacity);
+            header->size = 0u;
             deal_heap_push_free(header);
         } else {
             /* Reachable: it survives and its mark state is clean for the next
@@ -1135,17 +1442,37 @@ static void deal_gc_sweep_slice(size_t budget) {
 static void deal_gc_start_cycle(void) {
     deal_gc_phase_value = DEAL_GC_MARKING;
     deal_gc_gray_count = 0u;
-    deal_gc_allocated_since_cycle = 0u;
+    deal_gc_cursor.object = NULL;
+    deal_gc_cursor.fixed_index = 0u;
+    deal_gc_cursor.walk_position = 0u;
+    deal_gc_allocated_footprint_since_cycle = 0u;
     deal_gc_sweep_previous = NULL;
     deal_gc_sweep_next = NULL;
     deal_root_sources_enumerate(deal_gc_visit_reference, NULL);
 }
 
+/* Marks to completion: drains every gray object and rescans the roots until a
+ * rescan shades nothing new (M3). */
+static void deal_gc_mark_complete(void) {
+    for (;;) {
+        if (deal_gc_phase_value != DEAL_GC_MARKING) {
+            return;
+        }
+        deal_gc_drain();
+        if (deal_gc_cursor.object != NULL || deal_gc_gray_count != 0u) {
+            continue;
+        }
+        if (deal_gc_atomic_rescan() == 0) {
+            deal_gc_enter_sweep();
+            return;
+        }
+    }
+}
+
 /* Completes the cycle in flight, whatever phase it reached (M3). */
 static void deal_gc_complete_cycle(void) {
     if (deal_gc_phase_value == DEAL_GC_MARKING) {
-        deal_gc_drain();
-        deal_gc_atomic_phase();
+        deal_gc_mark_complete();
     }
     if (deal_gc_phase_value == DEAL_GC_SWEEPING) {
         deal_gc_sweep_slice(SIZE_MAX);
@@ -1153,15 +1480,40 @@ static void deal_gc_complete_cycle(void) {
 }
 
 /* =========================================================================
+ * The sanitizer poison of a reclaimed payload (M1)
+ * ========================================================================= */
+
+static void deal_memory_poison(void *payload, size_t capacity) {
+    if (payload == NULL || capacity == 0u) {
+        return;
+    }
+    memset(payload, DEAL_MEMORY_POISON_BYTE, capacity);
+#if defined(DEAL_MEMORY_ASAN)
+    __asan_poison_memory_region(payload, capacity);
+#endif
+}
+
+static void deal_memory_unpoison(void *payload, size_t capacity) {
+    if (payload == NULL || capacity == 0u) {
+        return;
+    }
+#if defined(DEAL_MEMORY_ASAN)
+    __asan_unpoison_memory_region(payload, capacity);
+#endif
+}
+
+/* =========================================================================
  * The safepoint (M3)
  * ========================================================================= */
 
 /*
- * The allocation and loop-back-edge safepoint (M3, M7): one bounded marking or
- * sweeping slice, the atomic-phase root rescan when the gray set empties, and
- * the `DEAL_GC_STRESS` full collection. A re-entrant safepoint is impossible
- * (the collector allocates only platform storage), and one reached from inside
- * a collection is a no-op rather than a second cycle.
+ * The allocation and loop-back-edge safepoint (M3, M7): one marking slice of at
+ * most DEAL_GC_MARK_BUDGET_REFERENCES reference visits (a resumed walk
+ * included), the atomic-phase root rescan to its fixpoint when the gray set
+ * empties, or one bounded sweeping slice; plus the `DEAL_GC_STRESS` full
+ * collection. A re-entrant safepoint is impossible (the collector allocates only
+ * platform storage), and one reached from inside a collection is a no-op rather
+ * than a second cycle.
  */
 void deal_safepoint(void) {
     if (deal_gc_in_collection != 0) {
@@ -1177,10 +1529,10 @@ void deal_safepoint(void) {
             return;
         }
         deal_gc_start_cycle();
-        deal_gc_mark_slice(DEAL_GC_MARK_SLICE);
+        deal_gc_mark_slice(DEAL_GC_MARK_BUDGET_REFERENCES);
         return;
     case DEAL_GC_MARKING:
-        deal_gc_mark_slice(DEAL_GC_MARK_SLICE);
+        deal_gc_mark_slice(DEAL_GC_MARK_BUDGET_REFERENCES);
         return;
     default:
         deal_gc_sweep_slice(DEAL_GC_SWEEP_SLICE);
@@ -1197,8 +1549,7 @@ void deal_gc_collect_full(void) {
      * below observes every object that exists now. */
     deal_gc_complete_cycle();
     deal_gc_start_cycle();
-    deal_gc_drain();
-    deal_gc_atomic_phase();
+    deal_gc_mark_complete();
     deal_gc_complete_cycle();
     deal_gc_in_collection = 0;
 }

@@ -49,7 +49,8 @@ import java.util.stream.Stream;
  *       {@code DEAL_DEFER_MAIN};</li>
  *   <li>the call-frame and root-frame invariants, including their deterministic
  *       fault paths and the zero-slot root frame of the emitted skeleton, plus
- *       its supplementary undefined-behavior-sanitizer build;</li>
+ *       its supplementary ASan/UBSan build and the same instrumented accessor
+ *       consumer;</li>
  *   <li>the completion queue: concurrent producers, single-consumer exactly-once
  *       delivery, copied payloads, the bounded wait, a post burst larger than
  *       the wake descriptor's capacity that never blocks its poster, a queued
@@ -497,6 +498,39 @@ public final class NativeRuntimeAbiTest {
                 + "-O" + level);
         checkEq("", run.stderr(),
             "the accessor consumer keeps stderr empty at -O" + level);
+
+        // Physical memory safety: the same accessor/terminal consumer under
+        // AddressSanitizer and UndefinedBehaviorSanitizer.
+        Path sanitizedProduct = scratch.resolve("accessors-asan-o" + level);
+        NativeCompiler.Result sanitizedLink = NativeCompiler.link(published,
+            level, NativeCompiler.driverSources(published,
+                List.of(fixture("module_stub.c"), fixture("registry_empty.c")),
+                fixture("accessor_driver.c")),
+            concat(List.of("-DDEAL_STUB_CASE=0"),
+                NativeCompiler.SANITIZER_FLAGS), sanitizedProduct);
+        check(sanitizedLink.succeeded(), "the accessor consumer builds with "
+            + "ASan/UBSan at -O" + level + ": " + sanitizedLink.describe());
+        if (!sanitizedLink.succeeded()) {
+            return;
+        }
+        NativeCompiler.SanitizedRun sanitized = NativeCompiler.runSanitized(
+            sanitizedProduct, scratch, NativeCompiler.sanitizerEnvironment());
+        checkEq(0, sanitized.result().exitCode(), "the accessor consumer exits "
+            + "zero under ASan/UBSan at -O" + level + ": "
+            + sanitized.result().describe());
+        checkEq("accessors ok\n", sanitized.result().stdout(),
+            "every accessor reports presence, value, absence and frame order "
+                + "under ASan/UBSan at -O" + level);
+        checkEq("", sanitized.result().stderr(), "the accessor consumer reports "
+            + "no sanitizer finding at -O" + level + ": "
+            + sanitized.result().describe());
+    }
+
+    /** One flag list followed by another. */
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> combined = new ArrayList<>(first);
+        combined.addAll(second);
+        return combined;
     }
 
     private static void terminalSuccessIsSilent(int level) throws IOException {
@@ -643,26 +677,26 @@ public final class NativeRuntimeAbiTest {
                     List.of(fixture("module_stub.c"),
                         fixture("registry_empty.c")),
                     fixture("frames_driver.c")),
-                List.of("-DDEAL_STUB_CASE=0", "-DDEAL_FRAME_CASE=0",
-                    "-fsanitize=undefined", "-fno-sanitize-recover=undefined"),
+                concat(List.of("-DDEAL_STUB_CASE=0", "-DDEAL_FRAME_CASE=0"),
+                    NativeCompiler.SANITIZER_FLAGS),
                 sanitizedProduct);
             check(sanitizedLink.succeeded(),
-                "the frame consumer builds with the undefined-behavior "
-                    + "sanitizer at -O" + level + ": "
+                "the frame consumer builds with ASan/UBSan at -O" + level + ": "
                     + sanitizedLink.describe());
             if (sanitizedLink.succeeded()) {
-                NativeCompiler.Result run = NativeCompiler.execute(
-                    sanitizedProduct, scratch, Map.of());
-                checkEq(0, run.exitCode(),
+                NativeCompiler.SanitizedRun sanitized =
+                    NativeCompiler.runSanitized(sanitizedProduct, scratch,
+                        NativeCompiler.sanitizerEnvironment());
+                checkEq(0, sanitized.result().exitCode(),
                     "the sanitized frame nesting exits zero at -O" + level
-                        + ": " + run.describe());
-                checkEq("frames ok\n", run.stdout(),
+                        + ": " + sanitized.result().describe());
+                checkEq("frames ok\n", sanitized.result().stdout(),
                     "the sanitized frame nesting completes the zero-slot and "
                         + "nested shapes at -O" + level);
-                checkEq("", run.stderr(),
+                checkEq("", sanitized.result().stderr(),
                     "the zero-slot root-frame enter and leave perform no "
                         + "undefined behavior at -O" + level + ": "
-                        + run.describe());
+                        + sanitized.result().describe());
             }
             String[][] fatal = {
                 {"1", "root frame: leave with no active frame"},
@@ -826,19 +860,14 @@ public final class NativeRuntimeAbiTest {
         }
         Map<String, String> environment = Map.of(
             "TSAN_OPTIONS", "halt_on_error=1:exitcode=66");
-        NativeCompiler.Result run = NativeCompiler.run(
-            List.of(product.toAbsolutePath().toString()), scratch, environment);
-        boolean relaunched = false;
-        if (sanitizerStartupFailure(run)) {
-            List<String> withoutRandomization = disableAslrCommand(product);
-            if (withoutRandomization != null) {
-                run = NativeCompiler.run(withoutRandomization, scratch,
-                    environment);
-                relaunched = true;
-                System.out.println("   (the sanitizer's shadow mapping needs "
-                    + "address-space randomization disabled on this host; "
-                    + "the same instrumented product was relaunched)");
-            }
+        NativeCompiler.SanitizedRun sanitized = NativeCompiler.runSanitized(
+            product, scratch, environment);
+        NativeCompiler.Result run = sanitized.result();
+        boolean relaunched = sanitized.relaunched();
+        if (relaunched) {
+            System.out.println("   (the sanitizer's shadow mapping needs "
+                + "address-space randomization disabled on this host; "
+                + "the same instrumented product was relaunched)");
         }
         String where = relaunched
             ? " (relaunched with address-space randomization disabled for the "
@@ -849,47 +878,6 @@ public final class NativeRuntimeAbiTest {
             + "workload delivers every copied payload exactly once" + where);
         checkEq("", run.stderr(), "the instrumented concurrent queue workload "
             + "produces no ThreadSanitizer report" + where);
-    }
-
-    /**
-     * True when the process could not start the sanitizer runtime at all, as
-     * opposed to a sanitizer finding about the code under test: the shadow
-     * mapping is out of reach of this host's address-space layout, or the
-     * runtime dies before it installs its report machinery. A genuine data-race
-     * report is never mistaken for this, so it is never retried.
-     */
-    private static boolean sanitizerStartupFailure(NativeCompiler.Result run) {
-        if (run.exitCode() == 0) {
-            return false;
-        }
-        String stderr = run.stderr();
-        return stderr.contains("ThreadSanitizer: unexpected memory mapping")
-            || stderr.contains("ThreadSanitizer: CHECK failed")
-            || (stderr.contains("ThreadSanitizer:DEADLYSIGNAL")
-                && !stderr.contains("WARNING: ThreadSanitizer"));
-    }
-
-    /**
-     * The instrumented product relaunched with {@code ADDR_NO_RANDOMIZE} for
-     * that child only (through {@code setarch -R}), or null when the host has
-     * no {@code setarch}; the probe then keeps its original launcher and its
-     * unweakened assertions.
-     */
-    private static List<String> disableAslrCommand(Path product) {
-        String path = System.getenv("PATH");
-        if (path != null) {
-            for (String directory : path.split(java.io.File.pathSeparator)) {
-                if (directory.isEmpty()) {
-                    continue;
-                }
-                Path candidate = Path.of(directory, "setarch");
-                if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) {
-                    return List.of(candidate.toString(), "-R",
-                        product.toAbsolutePath().toString());
-                }
-            }
-        }
-        return null;
     }
 
     // =========================================================================

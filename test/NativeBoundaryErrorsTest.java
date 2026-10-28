@@ -284,7 +284,43 @@ public final class NativeBoundaryErrorsTest {
                     + " prints byte-identical observations at -O" + level);
             checkEq("", stressed.stderr(),
                 "DEAL_GC_STRESS produces no diagnostic at -O" + level);
+
+            // Physical memory safety: the same descriptor, boundary, class
+            // construction and arm-materialization matrix under AddressSanitizer
+            // and UndefinedBehaviorSanitizer must publish the same observations
+            // and no finding at all.
+            Path sanitizedProduct = scratch.resolve("boundary-driver-asan-o"
+                + level);
+            NativeCompiler.Result sanitizedLink = NativeCompiler.link(published,
+                level, sourcesOf("boundary_driver"),
+                concat(List.of("-DDEAL_BOUNDARY_CASE=0"),
+                    NativeCompiler.SANITIZER_FLAGS),
+                sanitizedProduct);
+            check(sanitizedLink.succeeded(), "the boundary driver builds with "
+                + "ASan/UBSan at -O" + level + ": "
+                + sanitizedLink.describe());
+            if (sanitizedLink.succeeded()) {
+                NativeCompiler.SanitizedRun sanitized =
+                    NativeCompiler.runSanitized(sanitizedProduct, scratch,
+                        NativeCompiler.sanitizerEnvironment());
+                checkEq(0, sanitized.result().exitCode(), "the boundary driver "
+                    + "exits zero under ASan/UBSan at -O" + level + ": "
+                    + sanitized.result().describe());
+                checkEq(normal.stdout(), sanitized.result().stdout(),
+                    "the boundary observations are unchanged under ASan/UBSan at "
+                        + "-O" + level);
+                checkEq("", sanitized.result().stderr(), "the boundary driver "
+                    + "reports no sanitizer finding at -O" + level + ": "
+                    + sanitized.result().describe());
+            }
         }
+    }
+
+    /** One flag list followed by another. */
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> combined = new ArrayList<>(first);
+        combined.addAll(second);
+        return combined;
     }
 
     /** Compares every printed observation against the shared authority. */

@@ -139,10 +139,12 @@ static void deal_container_define_layouts(void) {
  * registers its own element walk at the array representation's first use and the
  * collector never derives an element stride of its own.
  */
-static void deal_container_array_walk(const void *object,
-                                      deal_reference_visit visit,
-                                      void *context) {
-    deal_container_array_trace((const deal_array *)object, visit, context);
+static size_t deal_container_array_walk(const void *object, size_t position,
+                                        size_t *budget,
+                                        deal_reference_visit visit,
+                                        void *context) {
+    return deal_container_array_trace((const deal_array *)object, position,
+                                      budget, visit, context);
 }
 
 /* The buffer is zero-filled for a fresh capacity; a reused one is untouched. */
@@ -313,10 +315,14 @@ void deal_container_array_append(deal_array *array, const void *element) {
     container->length += 1u;
 }
 
-void deal_container_array_trace(const deal_array *array,
-                                deal_reference_visit visit, void *context) {
+size_t deal_container_array_trace(const deal_array *array, size_t position,
+                                 size_t *budget, deal_reference_visit visit,
+                                 void *context) {
     if (visit == NULL) {
         deal_platform_fault("container: null reference visitor");
+    }
+    if (budget == NULL) {
+        deal_platform_fault("container: null trace budget");
     }
     const struct deal_array *container = deal_container_array_of(array);
     const deal_layout *record = deal_layout_lookup(container->element_layout);
@@ -324,19 +330,36 @@ void deal_container_array_trace(const deal_array *array,
         deal_platform_fault("container: unknown array element layout");
     }
     size_t stride = record->size;
-    for (size_t index = 0; index < container->length; index += 1u) {
-        const unsigned char *element =
-            (const unsigned char *)container->block + index * stride;
-        for (size_t reference = 0; reference < record->reference_count;
-                reference += 1u) {
-            void *referent = NULL;
-            memcpy(&referent, element + record->reference_offsets[reference],
-                   sizeof(referent));
-            if (deal_container_reference_is_managed(referent)) {
-                visit(referent, context);
-            }
-        }
+    if (record->reference_count == 0u) {
+        /* A number or boolean element slot holds no managed reference, so the
+         * walk has nothing to visit at any position. */
+        return DEAL_TRACE_DONE;
     }
+    /* The position is a linear reference-slot index: element `position /
+     * element_reference_count`, reference slot `position % element_reference_
+     * count`. One index is one unit of the collector's reference budget, so a
+     * wide array is walked across several slices instead of inside one, and the
+     * same position always names the same slot (M1). */
+    size_t slots = container->length * record->reference_count;
+    if (position >= slots) {
+        return DEAL_TRACE_DONE;
+    }
+    size_t stride_references = record->reference_count;
+    while (position < slots && *budget > 0u) {
+        size_t element_index = position / stride_references;
+        size_t reference_index = position % stride_references;
+        const unsigned char *element =
+            (const unsigned char *)container->block + element_index * stride;
+        void *referent = NULL;
+        memcpy(&referent, element + record->reference_offsets[reference_index],
+               sizeof(referent));
+        if (deal_container_reference_is_managed(referent)) {
+            visit(referent, context);
+        }
+        position += 1u;
+        *budget -= 1u;
+    }
+    return position >= slots ? DEAL_TRACE_DONE : position;
 }
 
 /* =========================================================================
