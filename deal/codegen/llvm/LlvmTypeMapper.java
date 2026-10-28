@@ -110,7 +110,9 @@ public final class LlvmTypeMapper {
         "deal_host_async_function",
         "deal_host_service",
         "deal_reference_visit",
-        "deal_root_source_scan");
+        "deal_root_source_scan",
+        "deal_layout_trace",
+        "deal_layout_release");
 
     /**
      * The named record layouts this backend declares: the published runtime

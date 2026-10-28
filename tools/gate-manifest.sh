@@ -115,6 +115,7 @@ luajit test_runtime_number.lua'
   'fg|=== Running LLVM Stage Classifier Tests (ISSUE-0903) ===|java -ea -cp build deal.test.LlvmStageClassifierTest'
   'fg|=== Running Native Toolchain Seam Tests (ISSUE-0904 D3/D4/D5) ===|java -ea -cp build deal.test.NativeToolchainTest'
   'fg|=== Running C11 Value Storage / Roots / Cells / Text / Crossing Tests (ISSUE-0905) ===|java -ea -cp build deal.test.NativeValueStorageTest'
+  'fg|=== Running C11 Incremental Collector / Barriers / Stress Tests (ISSUE-0906) ===|java -ea -cp build deal.test.NativeCollectorTest'
 )
 
 # No record may carry a warning, skip or fallback line: a missing required tool

@@ -138,6 +138,41 @@ static const deal_layout deal_error_layout = {
     deal_error_reference_offsets, 1u
 };
 
+/*
+ * The record's platform-owned members (M1). The managed payload is the
+ * collector's, but the copied text fields, the frames array and its duplicated
+ * labels are platform storage that nothing else can reach once the record is
+ * gone, so this group registers one reclamation hook
+ * (`deal_layout_release_register`, memory.h) and the sweep runs it while the
+ * payload is still intact. Every released field is cleared first, so a second
+ * run of the hook (a reused payload that was never re-initialized, or a
+ * defensive repeat) releases nothing twice; the cause is a managed reference
+ * the collector reclaims on its own and is never released here.
+ */
+static void deal_error_release(void *object) {
+    deal_error *error = object;
+    deal_platform_release(error->code);
+    error->code = NULL;
+    deal_platform_release(error->message);
+    error->message = NULL;
+    deal_platform_release(error->source_file);
+    error->source_file = NULL;
+    deal_platform_release(error->expected);
+    error->expected = NULL;
+    deal_platform_release(error->actual);
+    error->actual = NULL;
+    if (error->frames != NULL) {
+        for (uint32_t index = 0; index < error->frame_count; index += 1U) {
+            deal_platform_release(error->frames[index]);
+            error->frames[index] = NULL;
+        }
+        deal_platform_release(error->frames);
+        error->frames = NULL;
+    }
+    error->frame_count = 0;
+    error->cause = NULL;
+}
+
 deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin) {
     if (code == NULL) {
@@ -147,6 +182,7 @@ deal_error *deal_error_create(const char *code, const char *message,
         deal_platform_fault("error record: absent required message");
     }
     deal_layout_define(&deal_error_layout);
+    deal_layout_release_register(DEAL_LAYOUT_ERROR, deal_error_release);
     deal_error *error = deal_alloc(DEAL_LAYOUT_ERROR, sizeof(*error));
     error->code = deal_platform_duplicate(code);
     error->message = deal_platform_duplicate(message);

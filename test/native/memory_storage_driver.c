@@ -12,8 +12,8 @@
  *
  * `-DDEAL_MEMORY_CASE=<n>` selects one deterministic invariant-fault case for
  * the negative run: each must terminate with one deterministic stderr line and
- * exit 2 instead of returning to the caller. The collector's own behavior is
- * the next leaf's.
+ * exit 2 instead of returning to the caller. The collector's own behavior, the
+ * barriers and the stress switch are the acceptance driver `gc_driver.c`'s.
  */
 #include "deal/native/deal_rt.h"
 #include "deal/native/entry.h"
@@ -381,8 +381,9 @@ static void check_safepoint_and_barrier(void) {
     void *cell = deal_cell_alloc_generation(object, 0u);
     deal_data scalar = deal_data_of_number(2.0);
     deal_data reference = deal_data_of_reference(DEAL_DATA_STRING, object);
-    /* Before the collector exists both entries are the recorded staged no-ops:
-     * they change no value and no root. */
+    /* The barrier shades only a managed referent while the collector is
+     * marking, and the safepoint runs at most one bounded slice: neither entry
+     * changes a stored value or an active root here. */
     deal_safepoint();
     deal_store_barrier(cell, object);
     deal_store_barrier_data(cell, &scalar);

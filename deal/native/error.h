@@ -56,8 +56,9 @@ typedef struct { uint32_t version; uint32_t count; const deal_arm_record *record
 extern const deal_arm_table deal_project_arm_table;      /* defined by the emitted project module */
 int deal_arm_table_install(const deal_arm_table *table); /* 1 = accepted and installed */
 
-/* The accepted table, or NULL before the install entry accepted one. The
- * collector registers it among its static roots. */
+/* The accepted table, or NULL before the install entry accepted one. The table is
+ * static emitted data whose members are text and integers, so it names no managed
+ * object and contributes no collector root (M5 roots managed referents only). */
 const deal_arm_table *deal_arm_table_installed(void);
 
 /* -- the call-frame stack (`CallFrameContract`) -------------------------- */
@@ -86,11 +87,18 @@ uint32_t deal_call_frame_depth(void);
  * Storage: the record is one managed object of the runtime's `DEAL_LAYOUT_ERROR`
  * layout, allocated through the managed heap entry (`deal_alloc`, memory.h), so
  * its header carries the layout identity, its precise reference map covers the
- * cause and addresses never change (M1). Reclaiming an unreachable Error is the
- * collector child's; this group allocates and shapes the record and never
- * scans the heap. The record's text fields stay platform memory, and a caller
- * that holds an Error across a further allocating call roots it in a root slot
- * or a scoped root (M5).
+ * cause and addresses never change (M1). The `memory` group's collector
+ * reclaims an unreachable Error once nothing roots or references it; this group
+ * allocates and shapes the record and never scans the heap. Beside the managed
+ * payload the record owns platform storage — the copied code, message and origin
+ * text, the optional expected and actual text, and the frames array with one
+ * duplicated label per active frame — so this group registers the layout's one
+ * reclamation hook (`deal_layout_release_register`, memory.h) at first use and
+ * the sweep releases that storage while the payload is still intact, clearing
+ * each field first so no release can happen twice. The record's cause is a
+ * managed reference the collector reclaims on its own. A caller that holds an
+ * Error across a further allocating call roots it in a root slot or a scoped
+ * root (M5).
  */
 deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin);

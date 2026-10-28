@@ -88,6 +88,18 @@ static const deal_layout deal_array_block_layout = {
     DEAL_LAYOUT_ARRAY_BLOCK, 0u, 0u, NULL, 0u
 };
 
+/*
+ * The collector's supplemental walk of the array layout (M1): an array's
+ * payload holds managed element references outside its fixed map, so the group
+ * registers its own element walk at the array representation's first use and the
+ * collector never derives an element stride of its own.
+ */
+static void deal_container_array_walk(const void *object,
+                                      deal_reference_visit visit,
+                                      void *context) {
+    deal_container_array_trace((const deal_array *)object, visit, context);
+}
+
 /* The buffer is zero-filled for a fresh capacity; a reused one is untouched. */
 #define DEAL_CONTAINER_ARRAY_MIN_CAPACITY 4u
 
@@ -132,12 +144,16 @@ deal_array *deal_container_array_new(uint32_t element_layout, size_t length) {
     }
     deal_layout_define(&deal_array_layout);
     deal_layout_define(&deal_array_block_layout);
+    deal_layout_trace_register(DEAL_LAYOUT_ARRAY, deal_container_array_walk);
     struct deal_array *array =
         deal_alloc(DEAL_LAYOUT_ARRAY, sizeof(*array));
     array->element_layout = element_layout;
     array->reserved = 0u;
-    array->length = length;
-    array->capacity = length;
+    /* The element count stays 0 until its element block exists, so a collection
+     * at the block's own allocation safepoint never walks a half-built array:
+     * the precise element walk reads exactly `length` elements of `block`. */
+    array->length = 0u;
+    array->capacity = 0u;
     array->block = NULL;
     if (length != 0u) {
         /* The array is this helper's own intermediate across the element-block
@@ -145,8 +161,11 @@ deal_array *deal_container_array_new(uint32_t element_layout, size_t length) {
          * safepoint (M5). Faults exit the process, so the scope cannot leak. */
         deal_root_scope_push();
         uint32_t slot = deal_root_scope_hold(array);
-        array->block = deal_alloc(DEAL_LAYOUT_ARRAY_BLOCK, length * stride);
-        deal_store_barrier(array, array->block);
+        void *block = deal_alloc(DEAL_LAYOUT_ARRAY_BLOCK, length * stride);
+        deal_store_barrier(array, block);
+        array->block = block;
+        array->length = length;
+        array->capacity = length;
         deal_root_scope_release(slot);
         deal_root_scope_pop();
     }
