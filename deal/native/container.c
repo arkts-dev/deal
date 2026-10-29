@@ -91,12 +91,19 @@ static const deal_layout deal_array_block_layout = {
 /*
  * The runtime's canonical element layouts (C3). An array records one element
  * layout for its whole lifetime, and the runtime-owned boxed element set is
- * exactly these four: one persistent tagged datum slot (`unknown`, record and
- * dynamic-apply elements), one managed reference slot (a `string`, array,
- * record, class or function element), one binary64 slot (`number`) and one 0/1
- * slot (`boolean`). A class-instance element layout is the emitted module's own
- * metadata and lives at `DEAL_LAYOUT_EMITTED_BASE` and above, exactly like a
- * class's own object layout.
+ * exactly these four kinds: one persistent tagged datum slot (an `unknown`
+ * element and every array the JSON parser builds), one managed reference slot
+ * (a `string`, array, record, class or function element), one binary64 slot
+ * (`number`) and one 0/1 slot (`boolean`). Beside them this group owns the two
+ * scalar-nullish element slots (`?number`, `!number`, `?!number`, `?boolean`,
+ * `!boolean`, `?!boolean`), whose `{ tag, base }` records are the module's own
+ * scalar-nullish representation: the values cross in the module's
+ * `%struct.deal_nullish_number` / `%struct.deal_nullish_boolean` records, so the
+ * storage that holds them is a runtime layout with the same shape and both sides
+ * agree on one element stride.
+ * A class-instance element layout is the emitted module's own metadata and lives
+ * at `DEAL_LAYOUT_EMITTED_BASE` and above, exactly like a class's own object
+ * layout.
  *
  * The element layout is storage metadata only; the element's *type* is the
  * array's recorded persistent element descriptor (R4), which is why an
@@ -104,6 +111,7 @@ static const deal_layout deal_array_block_layout = {
  * array stores managed string references.
  */
 static const uint32_t deal_element_reference_offsets[] = {0u};
+
 static const uint32_t deal_element_datum_offsets[] = {
     (uint32_t)offsetof(deal_data, reference)
 };
@@ -122,6 +130,16 @@ static const deal_layout deal_element_number_layout = {
 static const deal_layout deal_element_boolean_layout = {
     DEAL_LAYOUT_ELEMENT_BOOLEAN, 0u, sizeof(uint8_t), NULL, 0u
 };
+/* Neither scalar-nullish slot holds a managed reference: its base is a binary64
+ * or a 0/1 value, and `null`/`undefined` are the admitted tags, not pointers. */
+static const deal_layout deal_element_nullish_number_layout = {
+    DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER, 0u,
+    sizeof(deal_nullish_number_element), NULL, 0u
+};
+static const deal_layout deal_element_nullish_boolean_layout = {
+    DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN, 0u,
+    sizeof(deal_nullish_boolean_element), NULL, 0u
+};
 
 /* Registers the runtime-owned layouts at their representation's first use. */
 static void deal_container_define_layouts(void) {
@@ -131,6 +149,8 @@ static void deal_container_define_layouts(void) {
     deal_layout_define(&deal_element_reference_layout);
     deal_layout_define(&deal_element_number_layout);
     deal_layout_define(&deal_element_boolean_layout);
+    deal_layout_define(&deal_element_nullish_number_layout);
+    deal_layout_define(&deal_element_nullish_boolean_layout);
 }
 
 /*

@@ -102,15 +102,16 @@ public final class LlvmStageClassifier {
             case CONST, UNARY, BINARY, BINDING_ALLOC, BINDING_INIT, BINDING_LOAD,
                  BINDING_STORE, ASSIGN, CALL, CLOSURE_NEW, BRANCH, LOOP, RETURN,
                  BREAK, CONTINUE, DISCARD, TRY_CATCH, THROW, MODULE_INIT,
-                 MODULE_IMPORT, EXPORT_READ, EXPORT_PUBLISH, ENTRY_INVOKE -> STAGED;
-            case BOUNDARY -> STATIC_ONLY;
-            case STRING_CONCAT, ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, MEMBER_READ,
+                 MODULE_IMPORT, EXPORT_READ, EXPORT_PUBLISH, ENTRY_INVOKE,
+                 STRING_CONCAT, ARRAY_NEW, TABLE_NEW, ARRAY_LENGTH, MEMBER_READ,
                  MEMBER_WRITE, MEMBER_DELETE, INDEX_NORMALIZE, INDEX_READ,
-                 INDEX_WRITE, INDEX_DELETE, OPTIONAL_READ, HAS_FIELD,
-                 RECURSIVE_GROUP_INIT, FUNCTION_ADAPT, DELETE, EXTERNAL_ENTRY,
-                 CALLBACK_INVOKE, STDLIB_CALL, ASYNC_START, AWAIT, FOR_EACH,
-                 CLASS_NEW, CLASS_FACTORY, FIELD_READ,
-                 FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS, JSON_TO_CLASS -> REJECTED;
+                 INDEX_WRITE, INDEX_DELETE, HAS_FIELD, FOR_EACH, CLASS_NEW,
+                 FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS,
+                 JSON_TO_CLASS -> STAGED;
+            case BOUNDARY, DELETE -> STATIC_ONLY;
+            case OPTIONAL_READ, RECURSIVE_GROUP_INIT, FUNCTION_ADAPT,
+                 EXTERNAL_ENTRY, CALLBACK_INVOKE, STDLIB_CALL, ASYNC_START,
+                 AWAIT, CLASS_FACTORY -> REJECTED;
         };
     }
 
@@ -158,37 +159,37 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.ExportReadPayload.class, STATIC_ONLY);
         map.put(KindPayload.ExportPublishPayload.class, STATIC_ONLY);
         map.put(KindPayload.EntryInvokePayload.class, STAGED);
-        map.put(KindPayload.StringConcatPayload.class, REJECTED);
-        map.put(KindPayload.ArrayNewPayload.class, REJECTED);
-        map.put(KindPayload.TableNewPayload.class, REJECTED);
-        map.put(KindPayload.ArrayLengthPayload.class, REJECTED);
-        map.put(KindPayload.MemberReadPayload.class, REJECTED);
-        map.put(KindPayload.MemberWritePayload.class, REJECTED);
-        map.put(KindPayload.MemberDeletePayload.class, REJECTED);
-        map.put(KindPayload.IndexNormalizePayload.class, REJECTED);
-        map.put(KindPayload.IndexReadPayload.class, REJECTED);
-        map.put(KindPayload.IndexWritePayload.class, REJECTED);
-        map.put(KindPayload.IndexDeletePayload.class, REJECTED);
+        map.put(KindPayload.StringConcatPayload.class, STAGED);
+        map.put(KindPayload.ArrayNewPayload.class, STAGED);
+        map.put(KindPayload.TableNewPayload.class, STAGED);
+        map.put(KindPayload.ArrayLengthPayload.class, STAGED);
+        map.put(KindPayload.MemberReadPayload.class, STAGED);
+        map.put(KindPayload.MemberWritePayload.class, STAGED);
+        map.put(KindPayload.MemberDeletePayload.class, STAGED);
+        map.put(KindPayload.IndexNormalizePayload.class, STAGED);
+        map.put(KindPayload.IndexReadPayload.class, STATIC_ONLY);
+        map.put(KindPayload.IndexWritePayload.class, STATIC_ONLY);
+        map.put(KindPayload.IndexDeletePayload.class, STAGED);
         map.put(KindPayload.OptionalReadPayload.class, REJECTED);
-        map.put(KindPayload.HasFieldPayload.class, REJECTED);
+        map.put(KindPayload.HasFieldPayload.class, STAGED);
         map.put(KindPayload.RecursiveGroupInitPayload.class, REJECTED);
         map.put(KindPayload.FunctionAdaptPayload.class, REJECTED);
-        map.put(KindPayload.DeletePayload.class, REJECTED);
+        map.put(KindPayload.DeletePayload.class, STATIC_ONLY);
         map.put(KindPayload.ExternalEntryPayload.class, REJECTED);
         map.put(KindPayload.CallbackInvokePayload.class, REJECTED);
         map.put(KindPayload.StdlibCallPayload.class, REJECTED);
         map.put(KindPayload.AsyncStartPayload.class, REJECTED);
         map.put(KindPayload.AwaitPayload.class, REJECTED);
-        map.put(KindPayload.ForEachPayload.class, REJECTED);
+        map.put(KindPayload.ForEachPayload.class, STAGED);
         map.put(KindPayload.TryCatchPayload.class, STAGED);
         map.put(KindPayload.ThrowPayload.class, STAGED);
-        map.put(KindPayload.ClassNewPayload.class, REJECTED);
+        map.put(KindPayload.ClassNewPayload.class, STATIC_ONLY);
         map.put(KindPayload.ClassFactoryPayload.class, REJECTED);
-        map.put(KindPayload.FieldReadPayload.class, REJECTED);
-        map.put(KindPayload.FieldWritePayload.class, REJECTED);
-        map.put(KindPayload.FieldDeletePayload.class, REJECTED);
-        map.put(KindPayload.JsonFromClassPayload.class, REJECTED);
-        map.put(KindPayload.JsonToClassPayload.class, REJECTED);
+        map.put(KindPayload.FieldReadPayload.class, STAGED);
+        map.put(KindPayload.FieldWritePayload.class, STAGED);
+        map.put(KindPayload.FieldDeletePayload.class, STATIC_ONLY);
+        map.put(KindPayload.JsonFromClassPayload.class, STAGED);
+        map.put(KindPayload.JsonToClassPayload.class, STAGED);
         return Map.copyOf(map);
     }
 
@@ -234,12 +235,13 @@ public final class LlvmStageClassifier {
             case ASSERTION, VARIABLE_DECLARATION, VARIABLE_ASSIGNMENT,
                  FUNCTION_PARAMETER, FUNCTION_RETURN, MODULE_EXPORT,
                  EXTERNAL_PARAMETER, EXTERNAL_RETURN, IMPORTED_MEMBER_READ,
-                 NARROWED_READ, CONTEXTUAL_TABLE_READ, OPTIONAL_FIELD_READ -> STATIC_ONLY;
-            case CLASS_FIELD_ASSIGNMENT, ARRAY_ELEMENT_ASSIGNMENT,
-                 ARRAY_ELEMENT_READ, ARRAY_ELEMENT_DELETE, ARRAY_LITERAL_ELEMENT,
-                 ASYNC_COMPLETION, CLASS_LITERAL_FIELD, UNTYPED_CLASS_INPUT,
-                 HOST_TO_DEAL, DEAL_TO_HOST, STDLIB_PARAMETER, STDLIB_RETURN,
-                 JSON_FROM_FIELD, JSON_TO_FIELD -> REJECTED;
+                 NARROWED_READ, CONTEXTUAL_TABLE_READ, OPTIONAL_FIELD_READ,
+                 CLASS_FIELD_ASSIGNMENT, ARRAY_ELEMENT_ASSIGNMENT,
+                 ARRAY_ELEMENT_READ, ARRAY_ELEMENT_DELETE,
+                 ARRAY_LITERAL_ELEMENT, CLASS_LITERAL_FIELD,
+                 UNTYPED_CLASS_INPUT, JSON_FROM_FIELD, JSON_TO_FIELD -> STATIC_ONLY;
+            case ASYNC_COMPLETION, HOST_TO_DEAL, DEAL_TO_HOST,
+                 STDLIB_PARAMETER, STDLIB_RETURN -> REJECTED;
         };
     }
 
@@ -274,6 +276,19 @@ public final class LlvmStageClassifier {
         };
     }
 
+    /**
+     * The decision of one delete target kind: a record member (and an optional
+     * class field) is the presence-metadata delete of R2; an array element has
+     * no delete at all (spec v1.5 rejects it in the frontend).
+     */
+    public static StageSupport deleteTargetKind(DeleteTargetKind kind) {
+        Objects.requireNonNull(kind, "kind must not be null");
+        return switch (kind) {
+            case TABLE_SLOT, CLASS_FIELD -> STAGED;
+            case ARRAY_SLOT -> REJECTED;
+        };
+    }
+
     /** The decision of one control selector. */
     public static StageSupport controlSelector(ControlSelector selector) {
         Objects.requireNonNull(selector, "selector must not be null");
@@ -288,8 +303,11 @@ public final class LlvmStageClassifier {
     public static StageSupport callMode(CallMode mode) {
         Objects.requireNonNull(mode, "mode must not be null");
         return switch (mode) {
-            case DIRECT, EXTERNAL -> STATIC_ONLY;
-            case INDIRECT, HOST -> REJECTED;
+            // An INDIRECT call is staged only when its callee identity resolves
+            // to an uncaptured lowered body (the call's own decision), so the
+            // value is that function's own code pointer (C5).
+            case DIRECT, EXTERNAL, INDIRECT -> STATIC_ONLY;
+            case HOST -> REJECTED;
         };
     }
 
@@ -297,17 +315,13 @@ public final class LlvmStageClassifier {
     public static StageSupport assignTarget(AssignTargetKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case VARIABLE -> STAGED;
-            case TABLE_SLOT, ARRAY_SLOT, CLASS_FIELD -> REJECTED;
+            case VARIABLE, TABLE_SLOT, ARRAY_SLOT, CLASS_FIELD -> STAGED;
         };
     }
 
-    /** The decision of one delete target kind: no delete target is staged. */
+    /** The decision of one delete target kind (one authority: {@link #deleteTargetKind}). */
     public static StageSupport deleteTarget(DeleteTargetKind kind) {
-        Objects.requireNonNull(kind, "kind must not be null");
-        return switch (kind) {
-            case TABLE_SLOT, ARRAY_SLOT, CLASS_FIELD -> REJECTED;
-        };
+        return deleteTargetKind(kind);
     }
 
     // =========================================================================
@@ -389,9 +403,274 @@ public final class LlvmStageClassifier {
             case KindPayload.ModuleInitPayload ignored -> Optional.empty();
             case KindPayload.BreakPayload ignored -> Optional.empty();
             case KindPayload.ContinuePayload ignored -> Optional.empty();
+            case KindPayload.OptionalReadPayload ignored ->
+                Optional.of(reject(op, "the OPTIONAL_READ envelope of a"
+                    + " missing-capable raw record read: a record read is"
+                    + " `unknown` and needs an explicit assertion, so no valid"
+                    + " v1.5 program reaches this envelope"));
+            case KindPayload.StringConcatPayload concat ->
+                stringConcatReason(unit, op, concat);
+            case KindPayload.ArrayNewPayload array ->
+                arrayReason(unit, op, array);
+            case KindPayload.TableNewPayload ignored -> Optional.empty();
+            case KindPayload.ArrayLengthPayload length ->
+                requireStaticType(unit, op, length.arrayValue(),
+                    RuntimeDescriptor.Array.class, "an ARRAY_LENGTH receiver");
+            case KindPayload.MemberReadPayload read ->
+                requireStaticType(unit, op, read.table(),
+                    RuntimeDescriptor.Table.class, "a record read receiver");
+            case KindPayload.MemberWritePayload write ->
+                requireStaticType(unit, op, write.table(),
+                    RuntimeDescriptor.Table.class, "a record write receiver");
+            case KindPayload.MemberDeletePayload remove ->
+                requireStaticType(unit, op, remove.table(),
+                    RuntimeDescriptor.Table.class, "a record delete receiver");
+            case KindPayload.IndexNormalizePayload normalize ->
+                normalizeReason(unit, op, normalize);
+            case KindPayload.IndexReadPayload read -> indexReason(unit, op,
+                read.container(), read.slot(), "an INDEX_READ");
+            case KindPayload.IndexWritePayload write -> indexReason(unit, op,
+                write.container(), write.slot(), "an INDEX_WRITE");
+            case KindPayload.IndexDeletePayload remove -> indexReason(unit, op,
+                remove.container(), remove.slot(), "an INDEX_DELETE");
+            case KindPayload.HasFieldPayload field ->
+                hasFieldReason(unit, op, field);
+            case KindPayload.DeletePayload remove ->
+                deleteTargetKind(remove.targetKind()) == STAGED
+                    ? Optional.empty()
+                    : Optional.of(reject(op, "DELETE " + remove.targetKind()));
+            case KindPayload.ForEachPayload each ->
+                forEachReason(unit, op, each);
+            case KindPayload.ClassNewPayload created ->
+                classNewReason(unit, op, created);
+            case KindPayload.FieldReadPayload read -> Optional.empty();
+            case KindPayload.FieldWritePayload write -> Optional.empty();
+            case KindPayload.FieldDeletePayload remove -> Optional.empty();
+            case KindPayload.JsonFromClassPayload ignored -> Optional.empty();
+            case KindPayload.JsonToClassPayload ignored -> Optional.empty();
             default -> Optional.of(reject(op, op.payload()
                 .getClass().getSimpleName()));
         };
+    }
+
+    /** The recorded static type of one operand, or a rejection. */
+    private static Optional<String> requireStaticType(LoweredModuleUnit unit,
+                                                      SemanticOp op,
+                                                      ValueId value,
+                                                      Class<?> expected,
+                                                      String role) {
+        RuntimeDescriptor descriptor = loweredTypeOf(unit, value);
+        if (descriptor == null) {
+            return Optional.of(reject(op, role + " whose static type is unknown"));
+        }
+        if (!expected.isInstance(descriptor)) {
+            return Optional.of(reject(op, role + " of the static type '"
+                + descriptor.canonicalSpecText() + "'"));
+        }
+        return Optional.empty();
+    }
+
+    /** Every template fragment is a string (C3, R2 string templates). */
+    private static Optional<String> stringConcatReason(LoweredModuleUnit unit,
+                                                       SemanticOp op,
+                                                       KindPayload.StringConcatPayload concat) {
+        for (ValueId fragment : concat.fragments()) {
+            RuntimeDescriptor descriptor = loweredTypeOf(unit, fragment);
+            if (!(descriptor instanceof RuntimeDescriptor.String)) {
+                return Optional.of(reject(op, "a string-template fragment of"
+                    + " the static type '" + (descriptor == null ? "unknown"
+                        : descriptor.canonicalSpecText()) + "'"));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Whether one element descriptor has emitted element storage (C3). */
+    static boolean elementStorageSupported(RuntimeDescriptor element) {
+        // A `null`/`undefined` position stores the distinct runtime singleton
+        // (C3), so it has emitted element storage like every other data type.
+        if (element instanceof RuntimeDescriptor.Number
+                || element instanceof RuntimeDescriptor.Boolean
+                || element instanceof RuntimeDescriptor.Unknown
+                || element instanceof RuntimeDescriptor.Null
+                || element instanceof RuntimeDescriptor.Undefined) {
+            return true;
+        }
+        if (LlvmTypeMapper.isManagedPointer(element)) {
+            return true;
+        }
+        return element instanceof RuntimeDescriptor.Nullable nullable
+            && LlvmTypeMapper.representationOf(nullable).isPresent();
+    }
+
+    /** Every array-literal element is admitted by the declared element type. */
+    private static Optional<String> arrayReason(LoweredModuleUnit unit,
+                                                SemanticOp op,
+                                                KindPayload.ArrayNewPayload array) {
+        if (!elementStorageSupported(array.elementDescriptor())) {
+            return Optional.of(reject(op, "an array literal of the element type '"
+                + array.elementDescriptor().canonicalSpecText() + "'"));
+        }
+        if (array.values().size() != array.elementBoundaryOpIds().size()) {
+            return Optional.of(reject(op, "an array literal without one element"
+                + " boundary per element"));
+        }
+        for (ValueId value : array.values()) {
+            RuntimeDescriptor descriptor = loweredTypeOf(unit, value);
+            if (descriptor == null || !(descriptor.equals(array.elementDescriptor())
+                    || LlvmTypeMapper.convertible(array.elementDescriptor(),
+                        descriptor))) {
+                return Optional.of(reject(op, "an array element of the static"
+                    + " type '" + (descriptor == null ? "unknown"
+                        : descriptor.canonicalSpecText())
+                    + "' in the element position '"
+                    + array.elementDescriptor().canonicalSpecText() + "'"));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The normalize mode's position type (R2: a number index or a string key). */
+    private static Optional<String> normalizeReason(LoweredModuleUnit unit,
+                                                    SemanticOp op,
+                                                    KindPayload.IndexNormalizePayload normalize) {
+        RuntimeDescriptor raw = loweredTypeOf(unit, normalize.rawKey());
+        Class<?> expected = switch (normalize.mode()) {
+            case ARRAY_READ, ARRAY_WRITE -> RuntimeDescriptor.Number.class;
+            case TABLE_READ, TABLE_WRITE -> RuntimeDescriptor.String.class;
+        };
+        if (raw == null || !expected.isInstance(raw)) {
+            return Optional.of(reject(op, "an INDEX_NORMALIZE " + normalize.mode()
+                + " of the static type '" + (raw == null ? "unknown"
+                    : raw.canonicalSpecText()) + "'"));
+        }
+        return Optional.empty();
+    }
+
+    /** One container access over its recorded receiver and slot (R2). */
+    private static Optional<String> indexReason(LoweredModuleUnit unit,
+                                                SemanticOp op,
+                                                ValueId container,
+                                                ValueId slot,
+                                                String role) {
+        RuntimeDescriptor receiver = loweredTypeOf(unit, container);
+        RuntimeDescriptor position = loweredTypeOf(unit, slot);
+        if (receiver instanceof RuntimeDescriptor.Array) {
+            if (position instanceof RuntimeDescriptor.Number) {
+                return Optional.empty();
+            }
+            return Optional.of(reject(op, role + " of an array with the position"
+                + " type '" + (position == null ? "unknown"
+                    : position.canonicalSpecText()) + "'"));
+        }
+        if (receiver instanceof RuntimeDescriptor.Table) {
+            if (position instanceof RuntimeDescriptor.String) {
+                return Optional.empty();
+            }
+            return Optional.of(reject(op, role + " of a record with the key type '"
+                + (position == null ? "unknown" : position.canonicalSpecText())
+                + "'"));
+        }
+        return Optional.of(reject(op, role + " of the receiver type '"
+            + (receiver == null ? "unknown" : receiver.canonicalSpecText()) + "'"));
+    }
+
+    /** {@code Object.hasOwn} takes a record or a class instance (R2). */
+    private static Optional<String> hasFieldReason(LoweredModuleUnit unit,
+                                                   SemanticOp op,
+                                                   KindPayload.HasFieldPayload field) {
+        RuntimeDescriptor receiver = loweredTypeOf(unit, field.receiver());
+        if (receiver instanceof RuntimeDescriptor.Table) {
+            if (field.dynamicKey() == null) {
+                return Optional.empty();
+            }
+            RuntimeDescriptor key = loweredTypeOf(unit, field.dynamicKey());
+            return key instanceof RuntimeDescriptor.String
+                ? Optional.empty()
+                : Optional.of(reject(op, "an Object.hasOwn with the key type '"
+                    + (key == null ? "unknown" : key.canonicalSpecText()) + "'"));
+        }
+        if (receiver instanceof RuntimeDescriptor.Class) {
+            return field.dynamicKey() == null
+                ? Optional.empty()
+                : Optional.of(reject(op, "an Object.hasOwn of a class instance"
+                    + " with a dynamic key (a class takes a literal declared"
+                    + " field name)"));
+        }
+        return Optional.of(reject(op, "an Object.hasOwn receiver of the type '"
+            + (receiver == null ? "unknown" : receiver.canonicalSpecText()) + "'"));
+    }
+
+    /** One for-of traversal over its recorded iteration mode (R2). */
+    private static Optional<String> forEachReason(LoweredModuleUnit unit,
+                                                  SemanticOp op,
+                                                  KindPayload.ForEachPayload each) {
+        RuntimeDescriptor iterable = loweredTypeOf(unit, each.iterable());
+        if (each.mode() == deal.semantic.ir.IterationMode.STRING_SCALARS) {
+            return iterable instanceof RuntimeDescriptor.String
+                ? Optional.empty()
+                : Optional.of(reject(op, "a for-of over the scalar positions of"
+                    + " the type '" + (iterable == null ? "unknown"
+                        : iterable.canonicalSpecText()) + "'"));
+        }
+        if (!(iterable instanceof RuntimeDescriptor.Array arrayType)) {
+            return Optional.of(reject(op, "a for-of over the type '"
+                + (iterable == null ? "unknown" : iterable.canonicalSpecText())
+                + "'"));
+        }
+        return elementStorageSupported(arrayType.element())
+            ? Optional.empty()
+            : Optional.of(reject(op, "a for-of over the element type '"
+                + arrayType.element().canonicalSpecText() + "'"));
+    }
+
+    /** One class construction through its recorded provider (R2). */
+    private static Optional<String> classNewReason(LoweredModuleUnit unit,
+                                                   SemanticOp op,
+                                                   KindPayload.ClassNewPayload created) {
+        switch (created.constructionProvider()) {
+            case BUILTIN_ERROR -> {
+                for (String field : List.of("code", "message")) {
+                    boolean supplied = created.providedFields().stream()
+                        .anyMatch(provided -> provided.name().equals(field));
+                    if (!supplied) {
+                        return Optional.of(reject(op, "a builtin Error"
+                            + " construction without its '" + field + "' field"));
+                    }
+                }
+                return Optional.empty();
+            }
+            case LOCAL -> {
+                for (deal.semantic.ir.ClassLayout.FieldLayout field
+                        : created.layout().fields()) {
+                    boolean supplied = created.providedFields().stream()
+                        .anyMatch(provided -> provided.name().equals(field.name()));
+                    if (field.required() && !supplied) {
+                        return Optional.of(reject(op, "a class construction"
+                            + " without the required field '" + field.name() + "'"));
+                    }
+                    // Every declared slot of the emitted layout needs emitted
+                    // storage: a supplied value to validate and store, or (for
+                    // an omitted optional field) the declared typed slot the
+                    // plan record publishes. The rejection names this op's own
+                    // origin rather than a layout assembly site.
+                    if (!elementStorageSupported(field.descriptor())
+                            && !(field.descriptor() instanceof RuntimeDescriptor.Void)) {
+                        return Optional.of(reject(op, "a class construction with"
+                            + " the unsupported field type '"
+                            + field.descriptor().canonicalSpecText() + "'"));
+                    }
+                }
+                return Optional.empty();
+            }
+            default -> {
+                return Optional.of(reject(op, "the construction provider "
+                    + created.constructionProvider()
+                    + ": a shared-factory, retained-ABI or host-declared class"
+                    + " construction belongs to the module-export and host"
+                    + " stages"));
+            }
+        }
     }
 
     private static Optional<String> scalarReason(SemanticOp op,
@@ -401,8 +680,7 @@ public final class LlvmStageClassifier {
             case ScalarValue.Boolean ignored -> Optional.empty();
             case ScalarValue.Null ignored -> Optional.empty();
             case ScalarValue.Undefined ignored -> Optional.empty();
-            case ScalarValue.String ignored -> Optional.of(reject(op,
-                "a managed string constant"));
+            case ScalarValue.String ignored -> Optional.empty();
         };
     }
 
@@ -456,11 +734,12 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "CALL signature '"
                 + call.signature().canonicalSpecText() + "'"));
         }
-        if (call.callee() instanceof KindPayload.CallCallee.Indirect) {
-            return Optional.of(reject(op, "an indirect CALL"));
+        if (call.callee() instanceof KindPayload.CallCallee.Indirect indirect) {
+            return indirectCalleeReason(unit, op, indirect);
         }
         if (call.callee() instanceof KindPayload.CallCallee.Dynamic) {
-            return Optional.of(reject(op, "a dynamic CALL"));
+            return Optional.of(reject(op, "a dynamic CALL whose callee is"
+                + " resolved at execution through the managed function carrier"));
         }
         if (call.callee() instanceof KindPayload.CallCallee.Static callee) {
             return switch (callee.binding()) {
@@ -482,6 +761,49 @@ public final class LlvmStageClassifier {
             };
         }
         return Optional.of(reject(op, "the CALL callee shape"));
+    }
+
+    /**
+     * The decision of one statically registered indirect callee: the callee
+     * value's allocation identity resolves to a lowered body whose closure
+     * captures nothing, so the value is that function's own code pointer and a
+     * direct call is the recorded dispatch (C5). A captured body needs the
+     * managed {@code deal_fn*} environment of the closure stage.
+     */
+    private static Optional<String> indirectCalleeReason(LoweredModuleUnit unit,
+                                                         SemanticOp op,
+                                                         KindPayload.CallCallee.Indirect indirect) {
+        deal.semantic.ir.FunctionExecutionBinding binding =
+            bindingOfIdentity(unit, indirect.callee());
+        if (!(binding instanceof deal.semantic.ir.FunctionExecutionBinding
+                .LoweredBody body)) {
+            return Optional.of(reject(op, "an indirect CALL whose callee"
+                + " identity resolves no lowered body"));
+        }
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.payload() instanceof KindPayload.ClosureNewPayload closure
+                    && closure.function().equals(body.functionId())) {
+                // A capture of a module-scope immutable binding is that
+                // binding's one static slot (the staged closure rule), so the
+                // value is still the function's own code pointer; a
+                // per-activation or reassigned capture needs the managed
+                // environment of the closure stage.
+                Optional<String> captureReason =
+                    closureCaptureReason(unit, closure);
+                if (captureReason.isPresent()) {
+                    return Optional.of(reject(op, "an indirect CALL of "
+                        + captureReason.get()));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The registered binding of one identity anywhere in the emitting unit. */
+    private static deal.semantic.ir.FunctionExecutionBinding bindingOfIdentity(
+            LoweredModuleUnit unit, ValueId identity) {
+        return unit.functionBindings().get(
+            new deal.semantic.ir.FunctionAllocationIdentity(identity.id()));
     }
 
     private static Optional<String> closureReason(LoweredModuleUnit unit,
@@ -523,6 +845,18 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "BOUNDARY " + boundary.kind()));
         }
         RuntimeDescriptor declared = boundary.descriptor();
+        if (LlvmTypeMapper.isStaticSingleton(declared)) {
+            // A declared `null`/`undefined` position carries no value slot at
+            // all (C4 rebuilds the distinct singleton at the use site), so the
+            // boundary is the identity of that singleton and needs no check.
+            return Optional.empty();
+        }
+        if (declared instanceof RuntimeDescriptor.Void) {
+            // A result-only `void` position carries no data slot and no
+            // check: its completion projects to undefined through the result
+            // protocol (C4), never through a value descriptor.
+            return Optional.empty();
+        }
         RuntimeDescriptor actual = loweredTypeOf(unit, boundary.input());
         if (actual == null) {
             return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
@@ -551,16 +885,19 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "an assertion of "
                 + LlvmTypeMapper.unsupported(actual)));
         }
+        if (!LlvmDataValues.hasDatumForm(actual)) {
+            return Optional.of(reject(op, "an assertion of a value without a"
+                + " persistent data form: " + actual.canonicalSpecText()));
+        }
         return switch (declared) {
             case RuntimeDescriptor.Number _,
                  RuntimeDescriptor.Boolean _,
-                 RuntimeDescriptor.String _ -> Optional.empty();
-            case RuntimeDescriptor.Class classType
-                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) ->
-                Optional.empty();
+                 RuntimeDescriptor.String _,
+                 RuntimeDescriptor.Table _,
+                 RuntimeDescriptor.Class _,
+                 RuntimeDescriptor.Array _ -> Optional.empty();
             default -> Optional.of(reject(op, "the assertion to '"
-                + declared.canonicalSpecText() + "', whose checked form belongs"
-                + " to the data/class stage"));
+                + declared.canonicalSpecText() + "'"));
         };
     }
 
@@ -597,26 +934,21 @@ public final class LlvmStageClassifier {
                                                      KindPayload.UnaryPayload unary,
                                                      RuntimeDescriptor operand) {
         RuntimeDescriptor target = unary.target();
-        if (!(target instanceof RuntimeDescriptor.Class targetClass)) {
+        if (!(target instanceof RuntimeDescriptor.Class)) {
             return Optional.of(reject(op, "INSTANCEOF without a class target"));
         }
-        boolean builtinError = targetClass.classId()
-            .equals(deal.semantic.ir.ClassId.ERROR);
-        if (operand instanceof RuntimeDescriptor.Class classType) {
+        // A class-typed operand answers by nominal identity, and an `unknown`
+        // datum by the class atom its instance carries (R2: a datum is never
+        // retagged); any other data value is never an instance.
+        if (operand instanceof RuntimeDescriptor.Class
+                || operand instanceof RuntimeDescriptor.Unknown) {
             return Optional.empty();
         }
-        if (!builtinError) {
-            return Optional.of(reject(op, "INSTANCEOF of the class '"
-                + targetClass.canonicalSpecText() + "' over a value that is no"
-                + " class instance: the emitted class layouts of the"
-                + " data/class stage own that nominal tag"));
-        }
-        if (LlvmTypeMapper.isStaticSingleton(operand)
-                || LlvmTypeMapper.representationOf(operand).isPresent()) {
+        if (LlvmTypeMapper.isStaticSingleton(operand)) {
             return Optional.empty();
         }
-        return Optional.of(reject(op, "INSTANCEOF over "
-            + LlvmTypeMapper.unsupported(operand)));
+        return Optional.of(reject(op, "INSTANCEOF over '"
+            + operand.canonicalSpecText() + "'"));
     }
 
     /** The decision of one binary operation over its recorded operands (C6). */
@@ -694,15 +1026,20 @@ public final class LlvmStageClassifier {
                                                     KindPayload.BinaryPayload binary,
                                                     RuntimeDescriptor left,
                                                     RuntimeDescriptor right) {
-        if (left instanceof RuntimeDescriptor.Func
-                && right instanceof RuntimeDescriptor.Func
-                && left.equals(right)) {
+        if (isReferenceType(left) && left.equals(right)) {
             return Optional.empty();
         }
         return Optional.of(reject(op, "BINARY " + binary.selector()
             + " over the reference types '" + left.canonicalSpecText()
-            + "' and '" + right.canonicalSpecText() + "', whose managed"
-            + " identity belongs to the data/class stage"));
+            + "' and '" + right.canonicalSpecText() + "'"));
+    }
+
+    /** Whether one descriptor is a checked reference type (R2/C6 identity). */
+    private static boolean isReferenceType(RuntimeDescriptor descriptor) {
+        return descriptor instanceof RuntimeDescriptor.Array
+            || descriptor instanceof RuntimeDescriptor.Table
+            || descriptor instanceof RuntimeDescriptor.Class
+            || descriptor instanceof RuntimeDescriptor.Func;
     }
 
     private static Optional<String> nullableEqualityReason(
@@ -747,14 +1084,14 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "BINARY " + binary.selector()
                 + " without its inner descriptor"));
         }
-        return switch (inner) {
-            case RuntimeDescriptor.Number _,
-                 RuntimeDescriptor.Boolean _,
-                 RuntimeDescriptor.String _,
-                 RuntimeDescriptor.Func _ -> Optional.empty();
-            default -> Optional.of(reject(op, "BINARY " + binary.selector()
-                + " over the nullish base '" + inner.canonicalSpecText() + "'"));
-        };
+        if (inner instanceof RuntimeDescriptor.Number
+                || inner instanceof RuntimeDescriptor.Boolean
+                || inner instanceof RuntimeDescriptor.String
+                || isReferenceType(inner)) {
+            return Optional.empty();
+        }
+        return Optional.of(reject(op, "BINARY " + binary.selector()
+            + " over the nullish base '" + inner.canonicalSpecText() + "'"));
     }
 
     private static Optional<String> representationReason(SemanticOp op,
@@ -882,25 +1219,36 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "EXPORT_PUBLISH of a function outside"
                 + " the emitting unit"));
         }
-        RuntimeDescriptor.Func signature = function.descriptor();
-        if (!signature.paramTypes().isEmpty()) {
-            return Optional.of(reject(op, "EXPORT_PUBLISH of the non-zero-arity"
-                + " export '" + published.name() + "' ('"
-                + signature.canonicalSpecText() + "'); the entry surface's"
-                + " invocation is the zero-arity one"));
-        }
-        if (signature.isAsync()) {
-            return Optional.of(reject(op, "EXPORT_PUBLISH of the async export '"
-                + published.name() + "'"));
-        }
-        if (!(LlvmTypeMapper.isStaticSingleton(signature.returnType())
-                || signature.returnType() instanceof RuntimeDescriptor.Void)) {
-            return Optional.of(reject(op, "EXPORT_PUBLISH of the export '"
-                + published.name() + "' whose result '"
-                + signature.returnType().canonicalSpecText()
-                + "' has no zero-arity outcome shape"));
-        }
+        // The record is published for every export of a lowered function; only
+        // the zero-arity synchronous value shape is invokable through the
+        // entry.h zero-arity invocation, so every other export record carries
+        // no code pointer and is reached by a direct call inside the project.
         return Optional.empty();
+    }
+
+    /**
+     * Whether one published export is invokable through the zero-arity entry
+     * surface ({@code deal_export_invoke}, R9): a no-capture closure of a
+     * zero-arity, non-async lowered function whose result is a static
+     * singleton or {@code void}.
+     */
+    public static boolean invokableExport(LoweredModuleUnit unit,
+                                          KindPayload.ExportPublishPayload published) {
+        SemanticOp producer = producerOf(unit, published.value());
+        if (producer == null
+                || !(producer.payload() instanceof KindPayload.ClosureNewPayload closure)) {
+            return false;
+        }
+        LoweredFunction function = unit.functions().get(closure.function());
+        if (function == null) {
+            return false;
+        }
+        RuntimeDescriptor.Func signature = function.descriptor();
+        if (!signature.paramTypes().isEmpty() || signature.isAsync()) {
+            return false;
+        }
+        return LlvmTypeMapper.isStaticSingleton(signature.returnType())
+            || signature.returnType() instanceof RuntimeDescriptor.Void;
     }
 
     private static Optional<String> representationReason(SemanticOp op,

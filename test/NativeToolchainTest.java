@@ -151,9 +151,13 @@ public final class NativeToolchainTest {
     private static int failed;
 
     /**
-     * The {@code deal-native-*} entries of {@code java.io.tmpdir} before the
-     * suite's first build: every case's cleanup is asserted against it, so no
-     * build scratch survives any path.
+     * This JVM's own {@code deal-native-<pid>-*} scratch entries of
+     * {@code java.io.tmpdir} before the suite's first build: every case's
+     * cleanup is asserted against it, so no build scratch survives any path.
+     * The filter carries this process's id, so a concurrent test process in
+     * another checkout (whose build scratch shares {@code java.io.tmpdir})
+     * is never observed as this run's allocation and cannot make the
+     * before/after comparison racy.
      */
     private static Set<String> scratchBaseline = new LinkedHashSet<>();
 
@@ -1527,14 +1531,22 @@ public final class NativeToolchainTest {
         return masked;
     }
 
-    /** The {@code deal-native-*} names currently present in java.io.tmpdir. */
+    /**
+     * This JVM's owned {@code deal-native-<pid>-<nonce>} names currently
+     * present in {@code java.io.tmpdir}. Only this process's scratch is
+     * observed: a concurrent test process in another checkout shares the
+     * temporary directory, so a foreign live or leaked scratch is not this
+     * suite's allocation.
+     */
     private static Set<String> buildScratchEntries() throws IOException {
         Set<String> entries = new LinkedHashSet<>();
         Path temporary = Path.of(System.getProperty("java.io.tmpdir"))
             .toAbsolutePath().normalize();
+        String owned = NativeToolchain.SCRATCH_PREFIX
+            + ProcessHandle.current().pid() + "-";
         try (Stream<Path> listing = Files.list(temporary)) {
             listing.map(path -> path.getFileName().toString())
-                .filter(name -> name.startsWith("deal-native-"))
+                .filter(name -> name.startsWith(owned))
                 .sorted()
                 .forEach(entries::add);
         }

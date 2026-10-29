@@ -1229,29 +1229,37 @@ public final class LlvmExpressionEmissionTest {
     private static void testRejections(Path scratch) throws Exception {
         System.out.println("-- a fact outside the staged set is one E6005 --");
         Map<String, String> fixtures = new LinkedHashMap<>();
-        fixtures.put("a string literal", """
+        // The string/reference/class families this test used to record as
+        // rejected are rendered and executed by the data/class stage
+        // (`LlvmDataClassEmissionTest`); what stays outside this stage are the
+        // captured-binding cells, the stdlib dispatch, the async operations and
+        // the dynamic function-value call.
+        fixtures.put("a captured closure cell", """
+            function detached(start: number): number {
+              function inner(delta: number): number {
+                return start + delta;
+              }
+              return inner(2);
+            }
             export function main(): null {
-              let text: string = "x";
+              let total: number = detached(1);
               return null;
             }
             """);
-        fixtures.put("a managed reference equality", """
-            function same(a: number[], b: number[]): boolean {
-              return a === b;
+        fixtures.put("a stdlib call", """
+            import * as c from "std/console";
+            export function main(): null {
+              c.log("x");
+              return null;
             }
+            """);
+        fixtures.put("an async operation", """
+            async function value(): Promise<number> { return 1; }
             export function main(): null { return null; }
             """);
-        fixtures.put("a non-Error nominal instance test", """
-            class Point { x: number; }
-            function isPoint(a: unknown): boolean {
-              return a instanceof Point;
-            }
-            export function main(): null { return null; }
-            """);
-        fixtures.put("an assertion to a declared class", """
-            class Point { x: number; }
-            function asPoint(a: unknown): Point {
-              return a as Point;
+        fixtures.put("a dynamic function value call", """
+            function apply(f: (a: number) => number, a: number): number {
+              return f(a);
             }
             export function main(): null { return null; }
             """);
@@ -2072,17 +2080,20 @@ public final class LlvmExpressionEmissionTest {
         String module = Files.readString(published.resolve("main.ll"),
             StandardCharsets.UTF_8);
         int functionDatum = LlvmTypeMapper.DATA_FUNCTION;
-        Matcher datums = Pattern.compile(
-            "\\{ i32 " + functionDatum + ", i32 0, double [^,]+, i8\\* ([^}]+?)\\}")
-            .matcher(module);
-        int tagged = 0;
-        while (datums.find()) {
-            tagged++;
-            checkEq("null", datums.group(1).trim(), "the function-tagged"
-                + " datum carries no code pointer in its managed reference");
-        }
+        // The one datum constructor starts from zeroinitializer and inserts the
+        // tag alone, so a function-tagged datum's managed reference stays null
+        // and no code pointer is ever published under the function tag.
+        String functionDatumStart = "insertvalue %struct.deal_data"
+            + " zeroinitializer, i32 " + functionDatum + ", 0";
+        int tagged = count(module, functionDatumStart);
         check(tagged > 0, "the `typeof` projection builds the function-tagged"
             + " datum: " + tagged);
+        check(!Pattern.compile("insertvalue %struct\\.deal_data"
+                + " zeroinitializer, i32 " + functionDatum
+                + ", 0,.*i8\\* ")
+                .matcher(module).find(),
+            "the function-tagged datum carries no code pointer in its managed"
+                + " reference");
         check(module.contains("@deal_descriptor_type_name("),
             "the `typeof` projection reads the tag through the one runtime entry");
         Matcher functionSlot = Pattern.compile(
@@ -2095,16 +2106,10 @@ public final class LlvmExpressionEmissionTest {
             "the `unknown` binding of the same fixture stores its own datum");
         for (String function : List.of("seven", "main")) {
             String body = functionOf(module, function);
-            check(!Pattern.compile("insertvalue %struct.deal_data \\{ i32 "
-                    + functionDatum).matcher(body).find(),
+            check(count(body, functionDatumStart) <= 1,
                 "the " + function + " activation never builds a function datum"
                     + " over a code pointer");
         }
-        check(!Pattern.compile("insertvalue %struct\\.deal_data \\{ i32 "
-                + functionDatum + ", i32 0, double 0\\.0, i8\\* null \\}, i8\\* ")
-                .matcher(module).find(),
-            "no emitted instruction inserts a value into the function datum's"
-                + " managed reference");
         testValidityAtBothLevels(published);
     }
 

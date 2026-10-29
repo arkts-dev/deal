@@ -249,6 +249,32 @@ deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin);
 
 /*
+ * The builtin Error instance of one DEAL class-literal construction (C3/R2):
+ * `code` and `message` are the supplied class fields of the builtin Error
+ * layout, each a scalar-valid DEAL string copied into the record's own
+ * platform-owned text, and the origin is stored unchanged. The
+ * innermost-first frame snapshot is taken at this call. A null argument is an
+ * invariant fault (a construction without its required fields never reaches
+ * the runtime). The caller roots both strings across the allocation (M4).
+ */
+deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
+                                      const deal_origin *origin);
+
+/* The `code` and `message` class fields as DEAL strings, or NULL when the
+ * record carries no such text: a read of the builtin instance's own field. */
+deal_string *deal_error_code_value(deal_error *error);
+deal_string *deal_error_message_value(deal_error *error);
+
+/*
+ * The `code` and `message` class fields of a field write on the builtin
+ * instance (C3/R2): the given string replaces the record's text, so every
+ * alias observes the write and the instance, its origin, its frames and its
+ * cause stay the same object. A null argument is an invariant fault.
+ */
+void deal_error_set_code_value(deal_error *error, deal_string *code);
+void deal_error_set_message_value(deal_error *error, deal_string *message);
+
+/*
  * The optional recorded fields; each stores a copy of the given text. The copy
  * is taken before the previous value is released, so text the record already
  * owns — the accessor's own pointer, or a pointer interior to it — may be

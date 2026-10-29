@@ -479,12 +479,31 @@ final class LlvmFunctionEmitter {
             case CONST -> emitConst(op);
             case UNARY -> emitUnary(op);
             case BINARY -> emitBinary(op);
+            case STRING_CONCAT -> emitStringConcat(op);
+            case ARRAY_NEW -> emitArrayNew(op);
+            case TABLE_NEW -> emitTableNew(op);
+            case ARRAY_LENGTH -> emitArrayLength(op);
+            case MEMBER_READ -> emitMemberRead(op);
+            case MEMBER_WRITE -> emitMemberWrite(op);
+            case MEMBER_DELETE -> emitMemberDelete(op);
+            case INDEX_NORMALIZE -> emitIndexNormalize(op);
+            case INDEX_READ -> emitIndexRead(op);
+            case INDEX_WRITE -> emitIndexWrite(op);
+            case INDEX_DELETE -> emitIndexDelete(op);
+            case HAS_FIELD -> emitHasField(op);
+            case FOR_EACH -> emitForEach(op);
+            case CLASS_NEW -> emitClassNew(op);
+            case FIELD_READ -> emitFieldRead(op);
+            case FIELD_WRITE -> emitFieldWrite(op);
+            case FIELD_DELETE -> emitFieldDelete(op);
+            case JSON_FROM_CLASS -> emitJsonFromClass(op);
+            case JSON_TO_CLASS -> emitJsonToClass(op);
             case BINDING_ALLOC, ENTRY_INVOKE -> {
                 // Structural in this stage: the binding slot is declared on
                 // first use and the entry delegation is
                 // DEAL_PROJECT_RUN_MAIN's own call.
             }
-            case ASSIGN -> {
+            case ASSIGN, DELETE -> {
                 // The committed value child already published the result
                 // with its own (original) static type and value; a failed
                 // store transferred before the commit, leaving the target
@@ -559,6 +578,19 @@ final class LlvmFunctionEmitter {
             return;
         }
         String type = representation.get();
+        if (payload.value() instanceof ScalarValue.String text) {
+            // A string literal is immutable UTF-8 static data copied into one
+            // runtime string (C3/R2, `llvm-native-codegen-cfg-ssa` C9): the
+            // emitted constant carries the exact bytes and the entry copies
+            // them, so no emitted value aliases read-only module data.
+            session.referenceRuntimeEntry("deal_text_new");
+            LlvmData.StringConstant constant = session.data.intern(text.value());
+            String built = emitTemporary(op, "call " + LlvmTypeMapper.STRING
+                + " @deal_text_new(" + session.data.operand(constant)
+                + ", i64 " + session.data.byteCount(constant) + ")");
+            storeResult(op, type, built);
+            return;
+        }
         String literal = switch (payload.value()) {
             case ScalarValue.Number number ->
                 LlvmIrPrinter.doubleLiteral(number.value());
@@ -622,22 +654,48 @@ final class LlvmFunctionEmitter {
                                   ValueId input,
                                   RuntimeDescriptor operandDescriptor) {
         RuntimeDescriptor target = payload.target();
-        if (operandDescriptor instanceof RuntimeDescriptor.Class classType
-                && classType.classId().equals(target instanceof
-                    RuntimeDescriptor.Class targetClass
-                        ? targetClass.classId() : null)) {
-            return "true";
+        if (!(target instanceof RuntimeDescriptor.Class targetClass)) {
+            throw new IllegalStateException("INSTANCEOF without a class target");
+        }
+        if (operandDescriptor instanceof RuntimeDescriptor.Class classType) {
+            return classType.classId().equals(targetClass.classId())
+                ? "true" : "false";
         }
         if (!(operandDescriptor instanceof RuntimeDescriptor.Unknown)) {
-            // A number, boolean, string, nullish or function value is never a
-            // nominal class instance.
+            // A number, boolean, string, nullish, container or function value
+            // is never a nominal class instance (R2).
             return "false";
         }
         String datum = loadRepresentation(input, operandDescriptor, op);
         String tag = emitTemporary(op, "extractvalue %struct.deal_data "
             + datum + ", 0");
-        return emitTemporary(op, "icmp eq i32 " + tag + ", "
-            + LlvmTypeMapper.DATA_ERROR);
+        if (targetClass.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+            return emitTemporary(op, "icmp eq i32 " + tag + ", "
+                + LlvmTypeMapper.DATA_ERROR);
+        }
+        // A class datum carries no second classification: the instance's own
+        // class atom (emitted per layout) decides the nominal test, and a datum
+        // of another tag is never an instance (C6: no retagging).
+        String slot = newAlloca("i1", "instanceof");
+        emit("store i1 false, i1* " + slot);
+        String isClass = emitTemporary(op, "icmp eq i32 " + tag + ", "
+            + LlvmTypeMapper.DATA_CLASS);
+        String check = newLabel("instanceof.check");
+        String join = newLabel("instanceof.join");
+        emit("br i1 " + isClass + ", label %" + check + ", label %" + join);
+        terminated = true;
+        startSegment(check);
+        String reference = emitTemporary(op, "extractvalue "
+            + LlvmTypeMapper.DATA + " " + datum + ", 3");
+        String atom = emitTemporary(op, "load i8*, i8** "
+            + emitTemporary(op, "bitcast i8* " + reference + " to i8**"));
+        String same = emitTemporary(op, "call i1 @deal_text_equals(i8* " + atom
+            + ", " + session.data.operand(session.data.intern(
+                targetClass.classId().text())) + ")");
+        emit("store i1 " + same + ", i1* " + slot);
+        terminate("br label %" + join);
+        startSegment(join);
+        return load(op, "i1", slot);
     }
 
     // =========================================================================
@@ -678,13 +736,31 @@ final class LlvmFunctionEmitter {
             case TAG_TEST -> emitTagTest(op, arm, payload, leftDescriptor,
                 rightDescriptor, left, right);
             case IDENTITY -> {
-                String leftOperand = loadRepresentation(left, leftDescriptor, op);
-                String rightOperand = loadRepresentation(right, rightDescriptor, op);
+                // Managed identity is compared on the byte pointer every C3
+                // reference representation reduces to (C6: no structural
+                // equality and no wrapper-slot identity).
+                String leftOperand = referenceOperand(op, left, leftDescriptor);
+                String rightOperand = referenceOperand(op, right, rightDescriptor);
                 yield emitTemporary(op, "icmp " + arm.predicate() + " i8* "
                     + leftOperand + ", " + rightOperand);
             }
         };
         storeResult(op, resultRepresentation(op).orElseThrow(), result);
+    }
+
+    /** One reference operand as the byte pointer managed identity compares. */
+    private String referenceOperand(SemanticOp op, ValueId value,
+                                    RuntimeDescriptor descriptor) {
+        String representation = stagedRepresentation(descriptor);
+        String operand = loadRepresentation(value, descriptor, op);
+        if (representation.equals("i8*")) {
+            return operand;
+        }
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+            return emitTemporary(op, "bitcast " + representation + " "
+                + operand + " to i8*");
+        }
+        return operand;
     }
 
     /** {@code STRING_*}: the one {@code deal_text_compare} authority (R8). */
@@ -871,10 +947,29 @@ final class LlvmFunctionEmitter {
             }
             case RuntimeDescriptor.Func ignored -> emitTemporary(op,
                 "icmp " + arm.predicate() + " i8* " + left + ", " + right);
+            case RuntimeDescriptor.Array _,
+                 RuntimeDescriptor.Table _,
+                 RuntimeDescriptor.Class _ ->
+                // A reference base's nullish equality is managed identity: the
+                // base pointers are compared, never their contents (C6).
+                emitTemporary(op, "icmp " + arm.predicate() + " i8* "
+                    + referenceToBytes(op, inner, left) + ", "
+                    + referenceToBytes(op, inner, right));
             default -> throw new IllegalStateException(
                 "the nullish base '" + inner.canonicalSpecText()
                     + "' has no staged equality");
         };
+    }
+
+    /** One base reference operand as the byte pointer it compares as. */
+    private String referenceToBytes(SemanticOp op, RuntimeDescriptor inner,
+                                    String operand) {
+        String representation = stagedRepresentation(inner);
+        if (representation.equals("i8*")) {
+            return operand;
+        }
+        return emitTemporary(op, "bitcast " + representation + " " + operand
+            + " to i8*");
     }
 
     /**
@@ -925,14 +1020,15 @@ final class LlvmFunctionEmitter {
     /** The base-typed spelling of one reference-nullish payload. */
     private String castBase(RuntimeDescriptor inner, String pointer,
                             SemanticOp op) {
-        return switch (inner) {
-            case RuntimeDescriptor.String ignored -> emitTemporary(op,
-                "bitcast i8* " + pointer + " to " + LlvmTypeMapper.STRING);
-            case RuntimeDescriptor.Func ignored -> pointer;
-            default -> throw new IllegalStateException(
-                "the nullish base '" + inner.canonicalSpecText()
-                    + "' has no staged representation");
-        };
+        if (LlvmTypeMapper.isManagedPointer(inner)) {
+            return emitTemporary(op, "bitcast i8* " + pointer + " to "
+                + LlvmTypeMapper.representationOf(inner).orElseThrow());
+        }
+        if (inner instanceof RuntimeDescriptor.Func) {
+            return pointer;
+        }
+        throw new IllegalStateException("the nullish base '"
+            + inner.canonicalSpecText() + "' has no staged representation");
     }
 
     /** Loads one operand as the representation of its recorded static type. */
@@ -977,7 +1073,72 @@ final class LlvmFunctionEmitter {
         String slot = bindingSlot(payload.binding(), payload.generation(),
             representation.get());
         String loaded = load(op, representation.get(), slot);
-        storeResult(op, representation.get(), loaded);
+        RuntimeDescriptor declared = session.bindingType(unit,
+            payload.binding(), payload.generation());
+        RuntimeDescriptor loadedType = op.resultType()
+            instanceof RuntimeDescriptor descriptor ? descriptor : declared;
+        if (declared == null || loadedType == null
+                || declared.equals(loadedType)) {
+            storeResult(op, representation.get(), loaded);
+            return;
+        }
+        // A narrowed read: the binding declares a wider type — a nullish form
+        // or `unknown` — and this read observes the refinement the frontend
+        // proved (R4). The read keeps the value the binding holds and projects
+        // it onto the refined type's own representation; nothing is coerced,
+        // retagged or replaced.
+        storeResult(op, stagedRepresentation(loadedType),
+            projectNarrowedRead(op, declared, loadedType, loaded));
+    }
+
+    /**
+     * Projects one narrowed binding read onto the refined type's own
+     * representation (C3). The binding's declared form is either the persistent
+     * {@code unknown} datum or a nullish form; both carry the value in one
+     * place — the datum itself, or the scalar tagged struct's {@code value}/
+     * reference-nullish pointer — so the read goes through the one datum
+     * authority: the held value is boxed where needed and the refined
+     * representation is unboxed out of it. The refinement is optimistic across
+     * calls and an indirect mutation can leave a declared member in the slot
+     * (docs/spec-v1.5.md, narrowing invalidation), so the read first validates
+     * the value it actually holds against the refined descriptor at its own
+     * origin: a stale refinement fails with the declared E8001 arm there
+     * instead of yielding a base value the binding never held. Every other
+     * narrowed read is a producer fact this stage cannot render and fails
+     * closed (C9).
+     */
+    private String projectNarrowedRead(SemanticOp op, RuntimeDescriptor declared,
+                                       RuntimeDescriptor refined,
+                                       String loaded) {
+        boolean datum = declared instanceof RuntimeDescriptor.Unknown;
+        boolean nullishBase = declared instanceof RuntimeDescriptor.Nullable nullable
+            && LlvmTypeMapper.admits(nullable, refined);
+        if (!datum && !nullishBase) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the narrowed read " + op.opId()
+                    + ": the declared type '" + declared.canonicalSpecText()
+                    + "' does not refine to '" + refined.canonicalSpecText()
+                    + "' (C9)",
+                op.origin().span().range());
+        }
+        if (!LlvmTypeMapper.hasDatumForm(refined)) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the narrowed read " + op.opId()
+                    + ": the refined type '" + refined.canonicalSpecText()
+                    + "' has no persistent data form (C9)",
+                op.origin().span().range());
+        }
+        // The datum of the value the binding holds: an `unknown` binding stores
+        // it directly, and a nullish binding's own form keeps a declared member
+        // as its own singleton tag (R2).
+        String held = datum ? loaded
+            : LlvmDataValues.box(session, sink, declared, loaded);
+        String slot = newAlloca("%struct.deal_check_input", "checked");
+        emit("store %struct.deal_check_input "
+            + checkInputRecordOf(op, declared, held)
+            + ", %struct.deal_check_input* " + slot);
+        emitCheckCall(op, refined, slot);
+        return LlvmDataValues.unbox(session, sink, refined, held);
     }
 
     private void emitBindingWrite(SemanticOp op) {
@@ -1025,17 +1186,50 @@ final class LlvmFunctionEmitter {
         if (from.equals(to) && !LlvmTypeMapper.isStaticSingleton(from)) {
             return loadRepresentation(value, from, op);
         }
+        String operand = LlvmTypeMapper.isStaticSingleton(from)
+            ? null : loadRepresentation(value, from, op);
+        return coerce(from, to, operand, op);
+    }
+
+    /**
+     * Converts one already loaded operand from its recorded static descriptor
+     * to the descriptor of the position it enters (C3): a data position boxes
+     * its value into the persistent datum, a declared data value is projected
+     * into its checked representation, and a nullish position builds its own
+     * tagged or reference form. A conversion that would need a runtime check is
+     * the assertion/container boundary's, never an implicit coercion.
+     */
+    private String coerce(RuntimeDescriptor from, RuntimeDescriptor to,
+                          String operand, SemanticOp op) {
+        if (from.equals(to) && !LlvmTypeMapper.isStaticSingleton(from)) {
+            return operand;
+        }
+        // The declared position of a static singleton is that singleton: the
+        // value carries no payload, so its storage is the distinct runtime
+        // `null`/`undefined` pointer (C3).
+        if (to instanceof RuntimeDescriptor.Null) {
+            return loadSingleton(true, op);
+        }
+        if (to instanceof RuntimeDescriptor.Undefined) {
+            return loadSingleton(false, op);
+        }
         if (to instanceof RuntimeDescriptor.Unknown) {
-            String operand = LlvmTypeMapper.isStaticSingleton(from)
-                ? "" : loadRepresentation(value, from, op);
             return emitDatum(from, operand, op);
         }
-        if (to instanceof RuntimeDescriptor.Nullable nullable) {
-            return emitNullish(from, nullable, value, op);
+        if (from instanceof RuntimeDescriptor.Unknown) {
+            return LlvmDataValues.unbox(session, sink, to, operand);
         }
-        throw new IllegalStateException("the value " + value + " of type '"
-            + from.canonicalSpecText() + "' has no coercion into '"
-            + to.canonicalSpecText() + "'");
+        if (to instanceof RuntimeDescriptor.Nullable nullable) {
+            return emitNullishFrom(from, nullable, operand, op);
+        }
+        // An unrenderable projection is one origin-bearing coverage failure
+        // (C9): the production arm projects it as the single E6005 and
+        // publishes nothing, never an origin-less internal error.
+        throw new deal.codegen.SharedEmissionFailure(
+            "LlvmSemanticEmitter rejects the coercion of " + op.opId()
+                + ": the value of type '" + from.canonicalSpecText()
+                + "' has no coercion into '" + to.canonicalSpecText() + "' (C9)",
+            op.origin().span().range());
     }
 
     /**
@@ -1043,9 +1237,15 @@ final class LlvmFunctionEmitter {
      * base type or the same nullish type (C3): a scalar base uses the tagged
      * struct, a reference base the pointer or the admitted singleton.
      */
-    private String emitNullish(RuntimeDescriptor from,
-                               RuntimeDescriptor.Nullable target,
-                               ValueId value, SemanticOp op) {
+    /**
+     * Builds one nullish value of {@code target} from a static singleton, an
+     * already loaded base operand or the same nullish type (C3): a scalar base
+     * uses the tagged struct, a reference base the pointer or the admitted
+     * singleton.
+     */
+    private String emitNullishFrom(RuntimeDescriptor from,
+                                   RuntimeDescriptor.Nullable target,
+                                   String operand, SemanticOp op) {
         String representation = LlvmTypeMapper.representationOf(target).orElseThrow(() ->
             new IllegalStateException("the nullish descriptor '"
                 + target.canonicalSpecText() + "' has no staged"
@@ -1064,14 +1264,13 @@ final class LlvmFunctionEmitter {
                     null, op);
         }
         if (from instanceof RuntimeDescriptor.Nullable) {
-            return loadRepresentation(value, from, op);
+            return operand;
         }
         if (!admittedBase(target, from)) {
             throw new IllegalStateException("the value's type '"
                 + from.canonicalSpecText() + "' is not admitted by '"
                 + target.canonicalSpecText() + "'");
         }
-        String operand = loadRepresentation(value, from, op);
         if (reference) {
             String fromRepresentation = stagedRepresentation(from);
             return fromRepresentation.equals(LlvmTypeMapper.REFERENCE_NULLISH)
@@ -1090,8 +1289,8 @@ final class LlvmFunctionEmitter {
 
     private void requireAdmitted(RuntimeDescriptor.Nullable target, boolean nullish,
                                  boolean undefined, RuntimeDescriptor from) {
-        boolean admitted = nullish ? target.admitsNull() : undefined
-            ? target.admitsUndefined() : false;
+        boolean admitted = nullish ? LlvmTypeMapper.admitsNull(target) : undefined
+            ? LlvmTypeMapper.admitsUndefined(target) : false;
         if (!admitted) {
             throw new IllegalStateException("the nullish descriptor '"
                 + target.canonicalSpecText() + "' does not admit '"
@@ -1116,166 +1315,30 @@ final class LlvmFunctionEmitter {
 
     /**
      * Boxes one completed value into the persistent tagged datum of an
-     * {@code unknown} position (C3, R3). The emitted module constructs the
-     * structural {@code deal_data} record directly — the header publishes its
-     * layout and the emitted module owns these values — so no runtime
-     * constructor and no allocation is involved. A nullish operand takes the
-     * tag of its own stored value, so absence is never confused with a base
-     * value.
+     * {@code unknown} position (C3, R3). The one conversion authority is
+     * {@link LlvmDataValues}: the emitted module constructs the structural
+     * {@code deal_data} record directly — the header publishes its layout and
+     * the emitted module owns these values — so no runtime constructor and no
+     * allocation is involved, and the tag of a nullish operand is its own
+     * stored value, so absence is never confused with a base value.
      */
     private String emitDatum(RuntimeDescriptor from, String operand,
                              SemanticOp op) {
-        if (from instanceof RuntimeDescriptor.Unknown) {
-            return operand;
-        }
-        if (from instanceof RuntimeDescriptor.Null) {
-            return datumLiteral(LlvmTypeMapper.DATA_NULL, "double 0.0",
-                "i8* null");
-        }
-        if (from instanceof RuntimeDescriptor.Undefined) {
-            return datumLiteral(LlvmTypeMapper.DATA_UNDEFINED, "double 0.0",
-                "i8* null");
-        }
-        if (from instanceof RuntimeDescriptor.Number) {
-            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
-                + " " + datumLiteral(LlvmTypeMapper.DATA_NUMBER,
-                    "double 0.0", "i8* null")
-                + ", double " + operand + ", 2");
-        }
-        if (from instanceof RuntimeDescriptor.Boolean) {
-            String folded = booleanToNumber(operand, op);
-            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
-                + " " + datumLiteral(LlvmTypeMapper.DATA_BOOLEAN,
-                    "double 0.0", "i8* null")
-                + ", double " + folded + ", 2");
-        }
-        if (from instanceof RuntimeDescriptor.String) {
-            String bytes = emitTemporary(op, "bitcast " + LlvmTypeMapper.STRING
-                + " " + operand + " to i8*");
-            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
-                + " " + datumLiteral(LlvmTypeMapper.DATA_STRING,
-                    "double 0.0", "i8* null")
-                + ", i8* " + bytes + ", 3");
-        }
-        if (from instanceof RuntimeDescriptor.Func) {
-            // The function tag alone classifies the value (the `typeof`
-            // projection needs no payload): the managed `reference` member
-            // stays NULL, because a code pointer is not a `deal_fn*` and a
-            // managed tag over a `.text` address is a collector defect (C3,
-            // R2). A function value at a declared data position is rejected
-            // by the classifier's `unknown` relation instead of boxed here.
-            return datumLiteral(LlvmTypeMapper.DATA_FUNCTION, "double 0.0",
-                "i8* null");
-        }
-        if (from instanceof RuntimeDescriptor.Class classType
-                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
-            String reduced = emitTemporary(op, "bitcast "
-                + LlvmTypeMapper.ERROR_POINTER + " " + operand + " to i8*");
-            return emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
-                + " " + datumLiteral(LlvmTypeMapper.DATA_ERROR,
-                    "double 0.0", "i8* null")
-                + ", i8* " + reduced + ", 3");
-        }
-        if (from instanceof RuntimeDescriptor.Nullable nullable) {
-            return emitNullishDatum(nullable, operand, op);
-        }
-        throw new IllegalStateException("the value of type '"
-            + from.canonicalSpecText() + "' has no persistent data form");
+        return LlvmDataValues.box(session, sink, from, operand);
     }
 
-    /**
-     * One structural {@code deal_data} literal of this stage, spelled without
-     * its type so the use site writes the type exactly once (a {@code store},
-     * an {@code insertvalue} aggregate or a call argument).
-     */
-    private static String datumLiteral(int tag, String number, String reference) {
-        return "{ i32 " + tag + ", i32 0, " + number + ", " + reference + " }";
-    }
-
-    /**
-     * The binary64 payload of one boolean datum: the published
-     * {@code deal_data_of_boolean} stores 0.0/1.0, and the closed data
-     * relation compares that payload by its zero-ness.
-     */
-    private String booleanToNumber(String operand, SemanticOp op) {
-        String widened = emitTemporary(op, "zext i1 " + operand + " to i32");
-        return emitTemporary(op, "uitofp i32 " + widened + " to double");
-    }
-
-    /** The tag-aware datum of one nullish operand. */
-    private String emitNullishDatum(RuntimeDescriptor.Nullable nullable,
-                                    String operand, SemanticOp op) {
-        String representation = stagedRepresentation(nullable);
-        String slot = newAlloca("%struct.deal_data", "nullishdatum");
-        String baseLabel = newLabel("datum.base");
-        String nullLabel = newLabel("datum.null");
-        String undefinedLabel = newLabel("datum.undefined");
-        String joinLabel = newLabel("datum.join");
-        if (representation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
-            String isNull = emitTemporary(op,
-                "call i32 @deal_value_is_null(i8* " + operand + ")");
-            String notNull = emitTemporary(op, "icmp eq i32 " + isNull + ", 0");
-            emit("br i1 " + notNull + ", label %" + baseLabel + ", label %"
-                + nullLabel);
-            terminated = true;
-            startSegment(nullLabel);
-            emitNullishDatumArm(slot, "null", joinLabel, op);
-            startSegment(baseLabel);
-            session.referenceRuntimeEntry("deal_value_is_undefined");
-            String isUndefined = emitTemporary(op,
-                "call i32 @deal_value_is_undefined(i8* " + operand + ")");
-            String notUndefined = emitTemporary(op,
-                "icmp eq i32 " + isUndefined + ", 0");
-            String baseDatumLabel = newLabel("datum.value");
-            String baseArm = nullable.inner() instanceof RuntimeDescriptor.Undefined
-                ? undefinedLabel : baseDatumLabel;
-            emit("br i1 " + notUndefined + ", label %" + baseArm
-                + ", label %" + undefinedLabel);
-            terminated = true;
-            startSegment(undefinedLabel);
-            emitNullishDatumArm(slot, "undefined", joinLabel, op);
-            startSegment(baseDatumLabel);
-            String baseDatum = emitDatum(nullable.inner(),
-                castBase(nullable.inner(), operand, op), op);
-            emit("store %struct.deal_data " + baseDatum
-                + ", %struct.deal_data* " + slot);
-            terminate("br label %" + joinLabel);
-            startSegment(joinLabel);
-            return emitTemporary(op, "load %struct.deal_data, "
-                + "%struct.deal_data* " + slot);
+    /** The emitter's IR sink for the shared datum conversions. */
+    private final LlvmDataValues.Sink sink = new LlvmDataValues.Sink() {
+        @Override
+        public void line(String text) {
+            emit(text);
         }
-        String tag = emitTemporary(op, "extractvalue " + representation + " "
-            + operand + ", 0");
-        emit("switch i32 " + tag + ", label %" + baseLabel + " [ i32 "
-            + LlvmTypeMapper.NULLISH_NULL + ", label %" + nullLabel + " i32 "
-            + LlvmTypeMapper.NULLISH_UNDEFINED + ", label %" + undefinedLabel
-            + " ]");
-        terminated = true;
-        startSegment(nullLabel);
-        emitNullishDatumArm(slot, "null", joinLabel, op);
-        startSegment(undefinedLabel);
-        emitNullishDatumArm(slot, "undefined", joinLabel, op);
-        startSegment(baseLabel);
-        String base = emitTemporary(op, "extractvalue " + representation + " "
-            + operand + ", 1");
-        String datum = emitDatum(nullable.inner(), base, op);
-        emit("store %struct.deal_data " + datum + ", %struct.deal_data* " + slot);
-        terminate("br label %" + joinLabel);
-        startSegment(joinLabel);
-        return emitTemporary(op, "load %struct.deal_data, %struct.deal_data* "
-            + slot);
-    }
 
-    /** Stores one nullish datum arm and jumps to the join. */
-    private void emitNullishDatumArm(String slot, String kind, String joinLabel,
-                                     SemanticOp op) {
-        int tag = kind.equals("null") ? LlvmTypeMapper.DATA_NULL
-            : LlvmTypeMapper.DATA_UNDEFINED;
-        emit("store %struct.deal_data "
-            + datumLiteral(tag, "double 0.0", "i8* null") + ", "
-            + "%struct.deal_data* " + slot);
-        terminate("br label %" + joinLabel);
-    }
+        @Override
+        public String temp(String instruction) {
+            return emitTemporary(null, instruction);
+        }
+    };
 
     // =========================================================================
     // Assertions (the one rendered runtime check of this stage)
@@ -1302,23 +1365,13 @@ final class LlvmFunctionEmitter {
         ValueId result = (ValueId) op.result();
         RuntimeDescriptor declared = payload.descriptor();
         RuntimeDescriptor actual = descriptorOfValue(payload.input());
-        String representation = LlvmTypeMapper.representationOf(declared)
-            .orElseThrow(() -> new IllegalStateException(
-                "the checked type '" + declared.canonicalSpecText()
-                    + "' has no staged representation"));
+        String representation = stagedRepresentation(declared);
         if (LlvmTypeMapper.convertible(declared, actual)) {
             // The operand's own static type already proves the declared
             // descriptor, so the boundary is the identity of that value.
             storeResult(op, representation,
                 convert(payload.input(), actual, declared, op));
             return;
-        }
-        if (!(declared instanceof RuntimeDescriptor.Number
-                || declared instanceof RuntimeDescriptor.Boolean
-                || declared instanceof RuntimeDescriptor.String
-                || declared instanceof RuntimeDescriptor.Class)) {
-            throw new IllegalStateException("the assertion to '"
-                + declared.canonicalSpecText() + "' has no staged check");
         }
         String checked = checkValue(op, payload.input(), actual, declared);
         storeResult(op, representation, checked);
@@ -1336,9 +1389,22 @@ final class LlvmFunctionEmitter {
     private String checkValue(SemanticOp op, ValueId input,
                               RuntimeDescriptor actual,
                               RuntimeDescriptor declared) {
+        String datum = checkInput(op, input, actual);
+        emitCheckCall(op, declared, datum);
+        return checkedValue(op, declared, datum);
+    }
+
+    /**
+     * The one descriptor-driven check call of a compiled boundary (R4): the
+     * declared descriptor is interned, the checked input is passed by value in
+     * its record spelling, and the carried Error of a mismatch routes like every
+     * other failure (C4) after the declared arm is rendered at the boundary's
+     * own origin (R5). The caller owns the admitted-value projection.
+     */
+    private void emitCheckCall(SemanticOp op, RuntimeDescriptor declared,
+                               String inputSlot) {
         session.referenceRuntimeEntry("deal_descriptor_intern");
         session.referenceRuntimeEntry("deal_check_value");
-        String datum = checkInput(op, input, actual);
         String atom = emitTemporary(op, "call"
             + " %struct.deal_descriptor* @deal_descriptor_intern("
             + session.data.operand(session.data.intern(
@@ -1347,7 +1413,7 @@ final class LlvmFunctionEmitter {
         String outcome = emitTemporary(op, "call %struct.deal_outcome"
             + " @deal_check_value(%struct.deal_descriptor* " + atom
             + ", %struct.deal_check_input* byval(%struct.deal_check_input) "
-            + datum + ", i32 0, %struct.deal_check_context* " + context + ")");
+            + inputSlot + ", i32 0, %struct.deal_check_context* " + context + ")");
         String error = emitTemporary(op, "extractvalue %struct.deal_outcome "
             + outcome + ", 0");
         String failed = emitTemporary(op, "icmp ne i8* " + error + ", null");
@@ -1359,38 +1425,19 @@ final class LlvmFunctionEmitter {
         startSegment(failureLabel);
         routeFailure(error);
         startSegment(proceedLabel);
-        return checkedValue(op, declared, datum);
     }
 
-    /** The declared-typed value of one checked datum. */
+    /**
+     * The declared-typed value of one checked datum. The checked datum passes
+     * through unchanged (R4: no coercion, construction or retagging), so the
+     * projection is the declared representation's own unboxing of it.
+     */
     private String checkedValue(SemanticOp op, RuntimeDescriptor declared,
                                 String inputSlot) {
         String input = loadQuiet("%struct.deal_check_input", inputSlot);
         String datum = emitTemporary(op, "extractvalue "
             + "%struct.deal_check_input " + input + ", 2");
-        return switch (declared) {
-            case RuntimeDescriptor.Number _ -> emitTemporary(op,
-                "extractvalue " + LlvmTypeMapper.DATA + " " + datum + ", 2");
-            case RuntimeDescriptor.Boolean _ -> {
-                String number = emitTemporary(op, "extractvalue "
-                    + LlvmTypeMapper.DATA + " " + datum + ", 2");
-                yield emitTemporary(op, "fcmp une double " + number + ", 0.0");
-            }
-            case RuntimeDescriptor.String _ -> {
-                String reference = emitTemporary(op, "extractvalue "
-                    + LlvmTypeMapper.DATA + " " + datum + ", 3");
-                yield emitTemporary(op, "bitcast i8* " + reference + " to "
-                    + LlvmTypeMapper.STRING);
-            }
-            case RuntimeDescriptor.Class _ -> {
-                String reference = emitTemporary(op, "extractvalue "
-                    + LlvmTypeMapper.DATA + " " + datum + ", 3");
-                yield emitTemporary(op, "bitcast i8* " + reference + " to "
-                    + LlvmTypeMapper.ERROR_POINTER);
-            }
-            default -> throw new IllegalStateException("the checked type '"
-                + declared.canonicalSpecText() + "' has no staged value form");
-        };
+        return LlvmDataValues.unbox(session, sink, declared, datum);
     }
 
     /**
@@ -1399,18 +1446,10 @@ final class LlvmFunctionEmitter {
      */
     private String checkInput(SemanticOp op, ValueId input,
                               RuntimeDescriptor actual) {
-        String datum;
-        if (LlvmTypeMapper.isStaticSingleton(actual)) {
-            datum = emitDatum(actual, "", op);
-        } else {
-            datum = emitDatum(actual, loadRepresentation(input, actual, op), op);
-        }
         String slot = newAlloca("%struct.deal_check_input", "checked");
-        String record = emitTemporary(op, "insertvalue"
-            + " %struct.deal_check_input zeroinitializer, "
-            + LlvmTypeMapper.DATA + " " + datum + ", 2");
-        emit("store %struct.deal_check_input " + record
-            + ", %struct.deal_check_input* " + slot);
+        emit("store %struct.deal_check_input "
+            + checkInputRecord(op, input) + ", %struct.deal_check_input* "
+            + slot);
         return slot;
     }
 
@@ -1435,6 +1474,12 @@ final class LlvmFunctionEmitter {
     // =========================================================================
 
     private static String stagedRepresentation(RuntimeDescriptor descriptor) {
+        // A static singleton's storage is the C3 singleton pointer: a declared
+        // field, element or result slot of `null`/`undefined` always holds one
+        // of the two distinct immutable singletons, never a value payload.
+        if (LlvmTypeMapper.isStaticSingleton(descriptor)) {
+            return LlvmTypeMapper.REFERENCE_NULLISH;
+        }
         return LlvmTypeMapper.representationOf(descriptor).orElseThrow(() ->
             new IllegalStateException("the descriptor '"
                 + descriptor.canonicalSpecText()
@@ -1580,8 +1625,9 @@ final class LlvmFunctionEmitter {
         String representation = stagedRepresentation(descriptor);
         String pointer = operand == null ? load(op, representation, slot)
             : operand;
-        if (descriptor instanceof RuntimeDescriptor.String
-                || descriptor instanceof RuntimeDescriptor.Class) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+            // A managed representation pointer is never a nullish singleton:
+            // the nullish form of a reference position is its own `i8*`.
             pointer = emitTemporary(op, "bitcast " + representation + " "
                 + pointer + " to i8*");
         } else {
@@ -1630,8 +1676,7 @@ final class LlvmFunctionEmitter {
             return;
         }
         String pointer = parameter;
-        if (descriptor instanceof RuntimeDescriptor.String
-                || descriptor instanceof RuntimeDescriptor.Class) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
             pointer = "%rootcast" + (loadCounter++);
             entryInit.add(LlvmIrPrinter.indent(1) + pointer + " = bitcast "
                 + stagedRepresentation(descriptor) + " " + parameter + " to i8*");
@@ -1855,12 +1900,10 @@ final class LlvmFunctionEmitter {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return LlvmTypeMapper.BOOLEAN_ABI;
         }
-        String representation = stagedRepresentation(descriptor);
-        if (representation.equals(LlvmTypeMapper.STRING)
-                || representation.equals(LlvmTypeMapper.ERROR_POINTER)) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
             return "i8*";
         }
-        return representation;
+        return stagedRepresentation(descriptor);
     }
 
     /**
@@ -1875,8 +1918,10 @@ final class LlvmFunctionEmitter {
                 + LlvmTypeMapper.BOOLEAN_ABI);
         }
         String representation = stagedRepresentation(descriptor);
-        if (representation.equals(LlvmTypeMapper.STRING)
-                || representation.equals(LlvmTypeMapper.ERROR_POINTER)) {
+        if (representation.equals("i8*")) {
+            return value;
+        }
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
             return emitTemporary(op, "bitcast " + representation + " " + value
                 + " to i8*");
         }
@@ -1885,13 +1930,16 @@ final class LlvmFunctionEmitter {
 
     /**
      * The SSA form of one returned ABI payload (C3's boolean byte). The outcome
-     * value slot already holds the staged representation, so only the two
-     * managed pointer shapes whose SSA spelling is a distinct pointer type need
-     * the one cast: a {@code string} is {@code %struct.deal_string*} and an
-     * {@code Error} is {@code %struct.deal_error*}, both carried as {@code i8*}.
-     * A scalar-nullish aggregate ({@code { i32, double }} / {@code { i32, i1 }}),
-     * a reference nullish pointer, a {@code double}, a persistent datum and a
-     * code pointer are their own slot type and are never cast.
+     * value slot already holds the staged representation, so only the managed
+     * pointer shapes whose SSA spelling is a distinct pointer type need the one
+     * cast: a {@code string} is {@code %struct.deal_string*}, a class instance
+     * its own typed record pointer (the builtin {@code Error} the runtime's
+     * {@code deal_error*}), and both are carried as {@code i8*}. A
+     * managed-pointer representation that is already {@code i8*} is used
+     * unchanged, and no nullish result is cast: a scalar-nullish aggregate
+     * ({@code { i32, double }} / {@code { i32, i1 }}) and a reference nullish
+     * pointer are already the outcome slot's own type, exactly like a
+     * {@code double}, a persistent datum and a code pointer.
      */
     private String narrowFromAbi(RuntimeDescriptor descriptor, String value,
                                  SemanticOp op) {
@@ -1899,19 +1947,32 @@ final class LlvmFunctionEmitter {
             return emitTemporary(op, "trunc i8 " + value + " to "
                 + LlvmTypeMapper.BOOLEAN_SSA);
         }
-        if (descriptor instanceof RuntimeDescriptor.String) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+            String representation = stagedRepresentation(descriptor);
+            if (representation.equals("i8*")) {
+                return value;
+            }
             return emitTemporary(op, "bitcast i8* " + value + " to "
-                + LlvmTypeMapper.STRING);
+                + representation);
         }
-        if (descriptor instanceof RuntimeDescriptor.Class) {
-            return emitTemporary(op, "bitcast i8* " + value + " to "
-                + LlvmTypeMapper.ERROR_POINTER);
-        }
+        // A nullish outcome slot already holds its staged representation (the
+        // `i8*` of a reference nullish position or the tagged scalar struct),
+        // so no nullish result is ever cast.
         return value;
     }
 
-    /** The lowered function one static call resolves to. */
+    /** The lowered function one static or statically-registered call resolves to. */
     private FunctionId calleeOf(KindPayload.CallPayload payload) {
+        if (payload.callee() instanceof KindPayload.CallCallee.Indirect indirect) {
+            deal.semantic.ir.FunctionExecutionBinding binding =
+                session.bindingOfIdentity(indirect.callee());
+            if (binding instanceof deal.semantic.ir.FunctionExecutionBinding
+                    .LoweredBody body) {
+                return body.functionId();
+            }
+            throw new IllegalStateException("the indirect call " + payload
+                + " resolves no lowered body");
+        }
         if (!(payload.callee() instanceof KindPayload.CallCallee.Static callee)) {
             throw new IllegalStateException(
                 "the staged call carries no static callee");
@@ -2117,6 +2178,1126 @@ final class LlvmFunctionEmitter {
     }
 
     // =========================================================================
+    // Strings, containers, classes and the generated JSON walks (C3, R2, R6)
+    // =========================================================================
+
+    /** One interned literal key or field name as a runtime string (R2). */
+    private String literalString(String text, SemanticOp op) {
+        session.referenceRuntimeEntry("deal_text_new");
+        LlvmData.StringConstant constant = session.data.intern(text);
+        return emitTemporary(op, "call " + LlvmTypeMapper.STRING
+            + " @deal_text_new(" + session.data.operand(constant)
+            + ", i64 " + session.data.byteCount(constant) + ")");
+    }
+
+    /**
+     * Stores one managed operand in an activation scratch slot and roots it
+     * (M4), so a temporary that lives across the op's own allocating calls is a
+     * precise root and no allocation inside the op can reclaim it.
+     */
+    private String rootedOperand(RuntimeDescriptor descriptor, String type,
+                                 String value, SemanticOp op) {
+        String slot = newAlloca(type, "rooted");
+        emit("store " + type + " " + value + ", " + type + "* " + slot);
+        rootSlotWrite(descriptor, slot, null, op);
+        return load(op, type, slot);
+    }
+
+    /**
+     * {@code STRING_CONCAT} (C3 string templates): the recorded fragments are
+     * concatenated in source order through the one text group's concatenation
+     * entry, and the running result is rooted across each concatenation's own
+     * allocation.
+     */
+    private void emitStringConcat(SemanticOp op) {
+        KindPayload.StringConcatPayload payload =
+            (KindPayload.StringConcatPayload) op.payload();
+        session.referenceRuntimeEntry("deal_text_concat");
+        String accumulated = null;
+        for (ValueId fragment : payload.fragments()) {
+            String text = loadValue(fragment, LlvmTypeMapper.STRING, op);
+            if (accumulated == null) {
+                accumulated = text;
+                continue;
+            }
+            String left = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                LlvmTypeMapper.STRING, accumulated, op);
+            accumulated = emitTemporary(op, "call " + LlvmTypeMapper.STRING
+                + " @deal_text_concat(" + LlvmTypeMapper.STRING + " " + left
+                + ", " + LlvmTypeMapper.STRING + " " + text + ")");
+        }
+        if (accumulated == null) {
+            accumulated = literalString("", op);
+        }
+        storeResult(op, LlvmTypeMapper.STRING, accumulated);
+    }
+
+    // -- containers ----------------------------------------------------------
+
+    /** The persistent element-descriptor reference of one element type (R4). */
+    private String elementDescriptorReference(RuntimeDescriptor element,
+                                              SemanticOp op) {
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_descriptor_reference");
+        String atom = emitTemporary(op, "call %struct.deal_descriptor*"
+            + " @deal_descriptor_intern(" + session.data.operand(
+                session.data.intern(element.canonicalSpecText())) + ")");
+        return emitTemporary(op, "call i32 @deal_descriptor_reference"
+            + "(%struct.deal_descriptor* " + atom + ")");
+    }
+
+    /**
+     * The element-storage operand of one array write: the element in its own
+     * layout slot, boxed when the element type is {@code unknown} (C3).
+     */
+    private String elementOperand(RuntimeDescriptor element,
+                                  RuntimeDescriptor actual, ValueId value,
+                                  SemanticOp op) {
+        String type = LlvmTypeMapper.slotTypeOf(element);
+        String stored = convert(value, actual, element, op);
+        if (element instanceof RuntimeDescriptor.Boolean) {
+            stored = emitTemporary(op, "zext i1 " + stored + " to i8");
+        }
+        String slot = newAlloca(type, "element");
+        emit("store " + type + " " + stored + ", " + type + "* " + slot);
+        return emitTemporary(op, "bitcast " + type + "* " + slot + " to i8*");
+    }
+
+    /** {@code ARRAY_NEW}: one typed array built from its validated elements. */
+    private void emitArrayNew(SemanticOp op) {
+        KindPayload.ArrayNewPayload payload =
+            (KindPayload.ArrayNewPayload) op.payload();
+        RuntimeDescriptor element = payload.elementDescriptor();
+        if (payload.values().size() != payload.elementBoundaryOpIds().size()) {
+            throw new IllegalStateException("the array literal " + op.opId()
+                + " records " + payload.values().size() + " elements and "
+                + payload.elementBoundaryOpIds().size() + " element boundaries");
+        }
+        session.referenceRuntimeEntry("deal_container_array_new_typed");
+        String descriptor = elementDescriptorReference(element, op);
+        String array = emitTemporary(op, "call " + LlvmTypeMapper.ARRAY
+            + " @deal_container_array_new_typed(i32 "
+            + session.elementLayout(element) + ", i32 " + descriptor
+            + ", i64 0)");
+        storeResult(op, LlvmTypeMapper.ARRAY, array);
+        session.referenceRuntimeEntry("deal_container_array_append");
+        String rooted = loadValue((ValueId) op.result(), LlvmTypeMapper.ARRAY, op);
+        for (ValueId value : payload.values()) {
+            String operand = elementOperand(element, descriptorOfValue(value),
+                value, op);
+            emit("call void @deal_container_array_append("
+                + LlvmTypeMapper.ARRAY + " " + rooted + ", i8* " + operand + ")"
+                + debugAttachment(op));
+        }
+    }
+
+    /** {@code TABLE_NEW}: one insertion-ordered record in source order (R2). */
+    private void emitTableNew(SemanticOp op) {
+        KindPayload.TableNewPayload payload =
+            (KindPayload.TableNewPayload) op.payload();
+        session.referenceRuntimeEntry("deal_container_table_new");
+        String table = emitTemporary(op, "call " + LlvmTypeMapper.TABLE
+            + " @deal_container_table_new()");
+        storeResult(op, LlvmTypeMapper.TABLE, table);
+        session.referenceRuntimeEntry("deal_container_table_write");
+        String rooted = loadValue((ValueId) op.result(), LlvmTypeMapper.TABLE, op);
+        for (KindPayload.TableEntry entry : payload.entries()) {
+            String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                LlvmTypeMapper.STRING, literalString(entry.key(), op), op);
+            String valueSlot = boxedOperandSlot(entry.value(), op);
+            emit("call void @deal_container_table_write(" + LlvmTypeMapper.TABLE
+                + " " + rooted + ", " + LlvmTypeMapper.STRING + " " + key
+                + ", " + LlvmTypeMapper.DATA + "* " + valueSlot + ")"
+                + debugAttachment(op));
+        }
+    }
+
+    /** One boxed operand in the scratch slot a record write copies from. */
+    private String boxedOperandSlot(ValueId value, SemanticOp op) {
+        RuntimeDescriptor actual = descriptorOfValue(value);
+        String datum = LlvmTypeMapper.isStaticSingleton(actual)
+            ? emitDatum(actual, null, op)
+            : emitDatum(actual, loadRepresentation(value, actual, op), op);
+        String slot = newAlloca(LlvmTypeMapper.DATA, "writevalue");
+        emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+            + LlvmTypeMapper.DATA + "* " + slot);
+        return slot;
+    }
+
+    /** {@code ARRAY_LENGTH}: the exact element count as one binary64 (R2). */
+    private void emitArrayLength(SemanticOp op) {
+        KindPayload.ArrayLengthPayload payload =
+            (KindPayload.ArrayLengthPayload) op.payload();
+        session.referenceRuntimeEntry("deal_container_array_count");
+        String array = loadValue(payload.arrayValue(), LlvmTypeMapper.ARRAY, op);
+        String count = emitTemporary(op, "call i64"
+            + " @deal_container_array_count(" + LlvmTypeMapper.ARRAY + " "
+            + array + ")");
+        storeResult(op, LlvmTypeMapper.NUMBER,
+            emitTemporary(op, "sitofp i64 " + count + " to double"));
+    }
+
+    /** One runtime record returned through memory (the published sret ABI). */
+    private String callRecordReturn(SemanticOp op, String entry,
+                                    String recordType, List<String> arguments) {
+        session.referenceRuntimeEntry(entry);
+        if (!LlvmTypeMapper.recordCrossesInMemory(recordType)) {
+            // Two eightbytes cross in registers, exactly as the published C
+            // prototype lowers, so no hidden destination exists.
+            StringBuilder call = new StringBuilder("call " + recordType
+                + " @" + entry + "(");
+            for (int index = 0; index < arguments.size(); index++) {
+                call.append(index == 0 ? "" : ", ").append(arguments.get(index));
+            }
+            return emitTemporary(op, call.append(")").toString());
+        }
+        String slot = newAlloca(recordType, "returned");
+        StringBuilder call = new StringBuilder("call void @" + entry + "("
+            + recordType + "* sret(" + recordType + ") " + slot);
+        for (String argument : arguments) {
+            call.append(", ").append(argument);
+        }
+        emit(call.append(")").append(op == null ? "" : debugAttachment(op))
+            .toString());
+        return load(op, recordType, slot);
+    }
+
+    /** One record-member read: a present key or the undefined datum (R2). */
+    private void emitMemberRead(SemanticOp op) {
+        KindPayload.MemberReadPayload payload =
+            (KindPayload.MemberReadPayload) op.payload();
+        String table = loadValue(payload.table(), LlvmTypeMapper.TABLE, op);
+        String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+            LlvmTypeMapper.STRING, literalString(payload.key(), op), op);
+        String datum = callRecordReturn(op, "deal_container_table_read",
+            LlvmTypeMapper.DATA, List.of(
+                LlvmTypeMapper.TABLE + " " + table,
+                LlvmTypeMapper.STRING + " " + key));
+        storeResultOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum);
+    }
+
+    /** One record-member write: null and undefined stay present (R2). */
+    private void emitMemberWrite(SemanticOp op) {
+        KindPayload.MemberWritePayload payload =
+            (KindPayload.MemberWritePayload) op.payload();
+        String table = loadValue(payload.table(), LlvmTypeMapper.TABLE, op);
+        String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+            LlvmTypeMapper.STRING, literalString(payload.key(), op), op);
+        String value = boxedOperandSlot(payload.value(), op);
+        session.referenceRuntimeEntry("deal_container_table_write");
+        emit("call void @deal_container_table_write(" + LlvmTypeMapper.TABLE
+            + " " + table + ", " + LlvmTypeMapper.STRING + " " + key + ", "
+            + LlvmTypeMapper.DATA + "* " + value + ")" + debugAttachment(op));
+    }
+
+    /** One record-member delete: removes an own key (R2). */
+    private void emitMemberDelete(SemanticOp op) {
+        KindPayload.MemberDeletePayload payload =
+            (KindPayload.MemberDeletePayload) op.payload();
+        String table = loadValue(payload.table(), LlvmTypeMapper.TABLE, op);
+        String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+            LlvmTypeMapper.STRING, literalString(payload.key(), op), op);
+        session.referenceRuntimeEntry("deal_container_table_delete");
+        emit("call void @deal_container_table_delete(" + LlvmTypeMapper.TABLE
+            + " " + table + ", " + LlvmTypeMapper.STRING + " " + key + ")"
+            + debugAttachment(op));
+    }
+
+    /**
+     * {@code INDEX_NORMALIZE}: the recorded slot/key computation. It raises no
+     * DEAL failure (policy {@code NO_DEAL_FAILURE}): the discrete-position
+     * validation of R2 runs at the named read/write/delete boundary policy, so
+     * this op is the identity of the position it normalized.
+     */
+    private void emitIndexNormalize(SemanticOp op) {
+        KindPayload.IndexNormalizePayload payload =
+            (KindPayload.IndexNormalizePayload) op.payload();
+        RuntimeDescriptor rawType = descriptorOfValue(payload.rawKey());
+        storeResultOf(op, rawType,
+            loadRepresentation(payload.rawKey(), rawType, op));
+    }
+
+    /**
+     * The validated native offset of one array position (R2): finiteness,
+     * integrality and bounds are checked before any native offset conversion,
+     * negative zero addresses zero, an append admits exactly {@code length},
+     * and a rejected position is the named E8002 arm at the recorded boundary's
+     * own origin — never a converted offset.
+     */
+    private String emitArrayOffset(SemanticOp op, SemanticOp boundary,
+                                   String array, ValueId index,
+                                   boolean allowAppend,
+                                   deal.semantic.ir.FailureArmId arm) {
+        session.referenceRuntimeEntry("deal_container_array_count");
+        session.referenceRuntimeEntry("deal_container_position");
+        String count = emitTemporary(op, "call i64"
+            + " @deal_container_array_count(" + LlvmTypeMapper.ARRAY + " "
+            + array + ")");
+        String position = loadValue(index, LlvmTypeMapper.NUMBER, op);
+        String slot = newAlloca("i64", "offset");
+        String accepted = emitTemporary(op, "call i32"
+            + " @deal_container_position(double " + position + ", i64 " + count
+            + ", i32 " + (allowAppend ? 1 : 0) + ", i64* " + slot + ")");
+        String rejected = emitTemporary(op, "icmp eq i32 " + accepted + ", 0");
+        String failure = newLabel("position.fail");
+        String proceed = newLabel("position.ok");
+        emit("br i1 " + rejected + ", label %" + failure + ", label %" + proceed);
+        terminated = true;
+        startSegment(failure);
+        session.referenceRuntimeEntry("deal_error_array_position");
+        String origin = originValue(boundary == null ? op : boundary);
+        String error = emitTemporary(op, "call " + LlvmTypeMapper.ERROR_POINTER
+            + " @deal_error_array_position(i32 " + arm.ordinal() + ","
+            + " %struct.deal_origin* " + origin + ")");
+        routeFailure(emitTemporary(op, "bitcast "
+            + LlvmTypeMapper.ERROR_POINTER + " " + error + " to i8*"));
+        startSegment(proceed);
+        return load(op, "i64", slot);
+    }
+
+    /**
+     * The recorded boundary op of one kind over one value: the boundary cell
+     * the lowering places between an element's value and its commit, whose
+     * origin the rendered failure names.
+     */
+    private SemanticOp boundaryOf(deal.semantic.ir.BoundaryKind kind,
+                                  ValueId value) {
+        for (SemanticOp candidate : unit.ops()) {
+            if (candidate.payload() instanceof KindPayload.BoundaryPayload boundary
+                    && boundary.kind() == kind
+                    && boundary.input().equals(value)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** One index read of a typed array element or of a record member (R2). */
+    private void emitIndexRead(SemanticOp op) {
+        KindPayload.IndexReadPayload payload =
+            (KindPayload.IndexReadPayload) op.payload();
+        RuntimeDescriptor container = descriptorOfValue(payload.container());
+        SemanticOp boundary = unitOp(payload.elementBoundaryOpId());
+        if (container instanceof RuntimeDescriptor.Array arrayType) {
+            String array = loadValue(payload.container(), LlvmTypeMapper.ARRAY, op);
+            String offset = emitArrayOffset(op, boundary, array, payload.slot(),
+                false, deal.semantic.ir.FailureArmId.ARRAY_READ_BOUNDS);
+            session.referenceRuntimeEntry("deal_container_array_element");
+            String pointer = emitTemporary(op, "call i8*"
+                + " @deal_container_array_element(" + LlvmTypeMapper.ARRAY + " "
+                + array + ", i64 " + offset + ")");
+            RuntimeDescriptor element = arrayType.element();
+            String type = LlvmTypeMapper.slotTypeOf(element);
+            String slot = emitTemporary(op, "bitcast i8* " + pointer + " to "
+                + type + "*");
+            String loaded = emitTemporary(op, "load " + type + ", " + type
+                + "* " + slot);
+            String value = element instanceof RuntimeDescriptor.Boolean
+                ? emitTemporary(op, "trunc i8 " + loaded + " to "
+                    + LlvmTypeMapper.BOOLEAN_SSA)
+                : loaded;
+            storeResultOf(op, element, value);
+            return;
+        }
+        if (container instanceof RuntimeDescriptor.Table) {
+            String table = loadValue(payload.container(), LlvmTypeMapper.TABLE, op);
+            String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                LlvmTypeMapper.STRING, loadValue(payload.slot(),
+                    LlvmTypeMapper.STRING, op), op);
+            String datum = callRecordReturn(op, "deal_container_table_read",
+                LlvmTypeMapper.DATA, List.of(
+                    LlvmTypeMapper.TABLE + " " + table,
+                    LlvmTypeMapper.STRING + " " + key));
+            storeResultOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum);
+            return;
+        }
+        throw new IllegalStateException("the index read " + op.opId()
+            + " names the container type '" + container.canonicalSpecText() + "'");
+    }
+
+    /** One index write: bounds, then the element check, then the commit (R2). */
+    private void emitIndexWrite(SemanticOp op) {
+        KindPayload.IndexWritePayload payload =
+            (KindPayload.IndexWritePayload) op.payload();
+        RuntimeDescriptor container = descriptorOfValue(payload.container());
+        if (container instanceof RuntimeDescriptor.Array arrayType) {
+            SemanticOp boundary = boundaryOf(
+                deal.semantic.ir.BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT,
+                payload.value());
+            String array = loadValue(payload.container(), LlvmTypeMapper.ARRAY, op);
+            String offset = emitArrayOffset(op, boundary, array, payload.slot(),
+                true, deal.semantic.ir.FailureArmId.ARRAY_WRITE_BOUNDS);
+            String element = elementOperand(arrayType.element(),
+                descriptorOfValue(payload.value()), payload.value(), op);
+            session.referenceRuntimeEntry("deal_container_array_count");
+            session.referenceRuntimeEntry("deal_container_array_append");
+            session.referenceRuntimeEntry("deal_container_array_store");
+            String count = emitTemporary(op, "call i64"
+                + " @deal_container_array_count(" + LlvmTypeMapper.ARRAY + " "
+                + array + ")");
+            String appended = emitTemporary(op, "icmp eq i64 " + offset + ", "
+                + count);
+            String appendLabel = newLabel("array.append");
+            String storeLabel = newLabel("array.store");
+            String join = newLabel("array.written");
+            emit("br i1 " + appended + ", label %" + appendLabel + ", label %"
+                + storeLabel);
+            terminated = true;
+            startSegment(appendLabel);
+            emit("call void @deal_container_array_append("
+                + LlvmTypeMapper.ARRAY + " " + array + ", i8* " + element + ")"
+                + debugAttachment(op));
+            terminate("br label %" + join);
+            startSegment(storeLabel);
+            emit("call void @deal_container_array_store("
+                + LlvmTypeMapper.ARRAY + " " + array + ", i64 " + offset
+                + ", i8* " + element + ")" + debugAttachment(op));
+            terminate("br label %" + join);
+            startSegment(join);
+            return;
+        }
+        if (container instanceof RuntimeDescriptor.Table) {
+            String table = loadValue(payload.container(), LlvmTypeMapper.TABLE, op);
+            String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                LlvmTypeMapper.STRING, loadValue(payload.slot(),
+                    LlvmTypeMapper.STRING, op), op);
+            String value = boxedOperandSlot(payload.value(), op);
+            session.referenceRuntimeEntry("deal_container_table_write");
+            emit("call void @deal_container_table_write("
+                + LlvmTypeMapper.TABLE + " " + table + ", "
+                + LlvmTypeMapper.STRING + " " + key + ", " + LlvmTypeMapper.DATA
+                + "* " + value + ")" + debugAttachment(op));
+            return;
+        }
+        throw new IllegalStateException("the index write " + op.opId()
+            + " names the container type '" + container.canonicalSpecText() + "'");
+    }
+
+    /** One index delete of a record member (R2). */
+    private void emitIndexDelete(SemanticOp op) {
+        KindPayload.IndexDeletePayload payload =
+            (KindPayload.IndexDeletePayload) op.payload();
+        RuntimeDescriptor container = descriptorOfValue(payload.container());
+        if (!(container instanceof RuntimeDescriptor.Table)) {
+            throw new IllegalStateException("the index delete " + op.opId()
+                + " names the container type '"
+                + container.canonicalSpecText() + "'");
+        }
+        String table = loadValue(payload.container(), LlvmTypeMapper.TABLE, op);
+        String key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+            LlvmTypeMapper.STRING, loadValue(payload.slot(),
+                LlvmTypeMapper.STRING, op), op);
+        session.referenceRuntimeEntry("deal_container_table_delete");
+        emit("call void @deal_container_table_delete(" + LlvmTypeMapper.TABLE
+            + " " + table + ", " + LlvmTypeMapper.STRING + " " + key + ")"
+            + debugAttachment(op));
+    }
+
+    /**
+     * {@code HAS_FIELD}: own presence without narrowing (R2). A record answers
+     * its key store; a class instance answers its optional-field presence bit
+     * and a required field is always present. The receiver is read once.
+     */
+    private void emitHasField(SemanticOp op) {
+        KindPayload.HasFieldPayload payload =
+            (KindPayload.HasFieldPayload) op.payload();
+        RuntimeDescriptor receiver = descriptorOfValue(payload.receiver());
+        if (receiver instanceof RuntimeDescriptor.Table) {
+            String key;
+            if (payload.dynamicKey() != null) {
+                key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                    LlvmTypeMapper.STRING, loadValue(payload.dynamicKey(),
+                        LlvmTypeMapper.STRING, op), op);
+            } else {
+                key = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                    LlvmTypeMapper.STRING, literalString(payload.key(), op), op);
+            }
+            String table = loadValue(payload.receiver(), LlvmTypeMapper.TABLE, op);
+            session.referenceRuntimeEntry("deal_container_table_has");
+            String present = emitTemporary(op, "call i32"
+                + " @deal_container_table_has(" + LlvmTypeMapper.TABLE + " "
+                + table + ", " + LlvmTypeMapper.STRING + " " + key + ")");
+            storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, emitTemporary(op,
+                "icmp ne i32 " + present + ", 0"));
+            return;
+        }
+        if (receiver instanceof RuntimeDescriptor.Class classType
+                && !classType.classId().equals(deal.semantic.ir.ClassId.ERROR)
+                && payload.dynamicKey() == null) {
+            LlvmClassPlans.ClassDef def = session.classDefinition(
+                classType.classId());
+            int index = def.indexOf(payload.key());
+            if (index < 0) {
+                throw new IllegalStateException("the class "
+                    + classType.classId().text() + " declares no field '"
+                    + payload.key() + "'");
+            }
+            LlvmClassPlans.Field field = def.fields().get(index);
+            if (field.presenceIndex() < 0) {
+                storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, "true");
+                return;
+            }
+            String instance = loadValue(payload.receiver(),
+                LlvmTypeMapper.classRepresentation(classType.classId()), op);
+            String presence = emitTemporary(op, "load i8, i8* "
+                + fieldPointer(op, def.recordName(), instance, 0,
+                    1 + field.presenceIndex()));
+            storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, emitTemporary(op,
+                "icmp ne i8 " + presence + ", 0"));
+            return;
+        }
+        if (receiver instanceof RuntimeDescriptor.Class classType
+                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)
+                && payload.dynamicKey() == null) {
+            // The builtin Error shape is `{ code: string; message: string }`:
+            // both fields are required-present on every Error record.
+            storeResult(op, LlvmTypeMapper.BOOLEAN_SSA, "true");
+            return;
+        }
+        throw new IllegalStateException("the presence test " + op.opId()
+            + " names the receiver type '" + receiver.canonicalSpecText() + "'");
+    }
+
+    /**
+     * {@code FOR_EACH} (R2): the iterable is evaluated once and retained; an
+     * array traversal re-reads the live element count and the live element at
+     * every step, so an append is visited and an unvisited replacement is
+     * observed; a string traversal yields one single-scalar string per Unicode
+     * scalar value. Each iteration writes the fresh iteration binding.
+     */
+    private void emitForEach(SemanticOp op) {
+        KindPayload.ForEachPayload payload =
+            (KindPayload.ForEachPayload) op.payload();
+        RuntimeDescriptor iterable = descriptorOfValue(payload.iterable());
+        BindingId binding = payload.binding();
+        long generation = payload.generation();
+        RuntimeDescriptor element = session.bindingType(unit, binding, generation);
+        String representation = stagedRepresentation(element);
+        String header = newLabel("for");
+        String check = newLabel("forcheck");
+        String exit = newLabel("forexit");
+        String latch = newLabel("fornext");
+        if (payload.mode() == deal.semantic.ir.IterationMode.STRING_SCALARS) {
+            String text = rootedOperand(RuntimeDescriptor.String.INSTANCE,
+                LlvmTypeMapper.STRING, loadValue(payload.iterable(),
+                    LlvmTypeMapper.STRING, op), op);
+            session.referenceRuntimeEntry("deal_text_bytes");
+            session.referenceRuntimeEntry("deal_text_scalar_length");
+            String bytes = emitTemporary(op, "call i8* @deal_text_bytes("
+                + LlvmTypeMapper.STRING + " " + text + ")");
+            String count = emitTemporary(op, "call i64"
+                + " @deal_text_scalar_length(" + LlvmTypeMapper.STRING + " "
+                + text + ")");
+            String indexSlot = newAlloca("i64", "index");
+            emit("store i64 0, i64* " + indexSlot);
+            terminate("br label %" + header);
+            startSegment(header);
+            String index = load(op, "i64", indexSlot);
+            String inRange = emitTemporary(op, "icmp ult i64 " + index + ", "
+                + count);
+            emit("br i1 " + inRange + ", label %" + check + ", label %" + exit);
+            terminated = true;
+            startSegment(check);
+            session.referenceRuntimeEntry("deal_text_scalar_offset");
+            session.referenceRuntimeEntry("deal_text_new");
+            String from = emitTemporary(op, "call i64"
+                + " @deal_text_scalar_offset(" + LlvmTypeMapper.STRING + " "
+                + text + ", i64 " + index + ")");
+            String next = emitTemporary(op, "add i64 " + index + ", 1");
+            String to = emitTemporary(op, "call i64"
+                + " @deal_text_scalar_offset(" + LlvmTypeMapper.STRING + " "
+                + text + ", i64 " + next + ")");
+            String length = emitTemporary(op, "sub i64 " + to + ", " + from);
+            String start = emitTemporary(op, "getelementptr i8, i8* " + bytes
+                + ", i64 " + from);
+            String scalar = emitTemporary(op, "call " + LlvmTypeMapper.STRING
+                + " @deal_text_new(i8* " + start + ", i64 " + length + ")");
+            bindIteration(binding, generation, element, representation, scalar,
+                op);
+            loops.push(new LoopTargets(op.opId().id(), header, latch, exit));
+            emitBlock(payload.body(), latch);
+            loops.pop();
+            startSegment(latch);
+            String current = load(op, "i64", indexSlot);
+            emit("store i64 " + emitTemporary(op, "add i64 " + current + ", 1")
+                + ", i64* " + indexSlot);
+            terminate("br label %" + header);
+            startSegment(exit);
+            return;
+        }
+        if (!(iterable instanceof RuntimeDescriptor.Array arrayType)) {
+            throw new IllegalStateException("the for-of op " + op.opId()
+                + " iterates the type '" + iterable.canonicalSpecText() + "'");
+        }
+        String array = rootedOperand(iterable, LlvmTypeMapper.ARRAY,
+            loadValue(payload.iterable(), LlvmTypeMapper.ARRAY, op), op);
+        String indexSlot = newAlloca("i64", "index");
+        emit("store i64 0, i64* " + indexSlot);
+        terminate("br label %" + header);
+        startSegment(header);
+        String index = load(op, "i64", indexSlot);
+        session.referenceRuntimeEntry("deal_container_array_count");
+        String liveCount = emitTemporary(op, "call i64"
+            + " @deal_container_array_count(" + LlvmTypeMapper.ARRAY + " "
+            + array + ")");
+        String inRange = emitTemporary(op, "icmp ult i64 " + index + ", "
+            + liveCount);
+        emit("br i1 " + inRange + ", label %" + check + ", label %" + exit);
+        terminated = true;
+        startSegment(check);
+        session.referenceRuntimeEntry("deal_container_array_element");
+        String pointer = emitTemporary(op, "call i8*"
+            + " @deal_container_array_element(" + LlvmTypeMapper.ARRAY + " "
+            + array + ", i64 " + index + ")");
+        String type = LlvmTypeMapper.slotTypeOf(arrayType.element());
+        String slot = emitTemporary(op, "bitcast i8* " + pointer + " to "
+            + type + "*");
+        String loaded = emitTemporary(op, "load " + type + ", " + type + "* "
+            + slot);
+        String value = arrayType.element() instanceof RuntimeDescriptor.Boolean
+            ? emitTemporary(op, "trunc i8 " + loaded + " to "
+                + LlvmTypeMapper.BOOLEAN_SSA)
+            : loaded;
+        bindIteration(binding, generation, element, representation, value, op);
+        loops.push(new LoopTargets(op.opId().id(), header, latch, exit));
+        emitBlock(payload.body(), latch);
+        loops.pop();
+        startSegment(latch);
+        String current = load(op, "i64", indexSlot);
+        emit("store i64 " + emitTemporary(op, "add i64 " + current + ", 1")
+            + ", i64* " + indexSlot);
+        terminate("br label %" + header);
+        startSegment(exit);
+    }
+
+    /** Writes one iteration's fresh binding and roots it (M4, R2). */
+    private void bindIteration(BindingId binding, long generation,
+                               RuntimeDescriptor element, String representation,
+                               String value, SemanticOp op) {
+        String slot = bindingSlot(binding, generation, representation);
+        emit("store " + representation + " " + value + ", " + representation
+            + "* " + slot);
+        rootBindingSlot(binding, generation, element, slot, op);
+    }
+
+    // -- classes -------------------------------------------------------------
+
+    /** One class construction through its recorded provider (R2, R4). */
+    private void emitClassNew(SemanticOp op) {
+        KindPayload.ClassNewPayload payload =
+            (KindPayload.ClassNewPayload) op.payload();
+        switch (payload.constructionProvider()) {
+            case BUILTIN_ERROR -> emitBuiltinErrorNew(op, payload);
+            case LOCAL -> emitLocalClassNew(op, payload);
+            default -> throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the construction provider "
+                    + payload.constructionProvider() + " of "
+                    + payload.classId().text()
+                    + ": the emitted construction of a shared-factory, retained"
+                    + " ABI or host-declared class belongs to the module-export"
+                    + " and host stages",
+                op.origin().span().range());
+        }
+    }
+
+    /**
+     * The builtin {@code Error} construction ({@code ConstructionProvider
+     * .BUILTIN_ERROR}): the supplied {@code code} and {@code message} class
+     * fields become the runtime's own Error record, so the instance a program
+     * constructs is the same object the runtime carries (C3, R2, R5).
+     */
+    private void emitBuiltinErrorNew(SemanticOp op,
+                                     KindPayload.ClassNewPayload payload) {
+        ValueId code = providedField(payload, "code");
+        ValueId message = providedField(payload, "message");
+        if (code == null || message == null) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the builtin Error construction "
+                    + op.opId() + " without its code and message class fields",
+                op.origin().span().range());
+        }
+        session.referenceRuntimeEntry("deal_error_create_strings");
+        String instance = emitTemporary(op, "call " + LlvmTypeMapper.ERROR_POINTER
+            + " @deal_error_create_strings(" + LlvmTypeMapper.STRING + " "
+            + loadValue(code, LlvmTypeMapper.STRING, op) + ", "
+            + LlvmTypeMapper.STRING + " "
+            + loadValue(message, LlvmTypeMapper.STRING, op) + ","
+            + " %struct.deal_origin* " + originValue(op) + ")");
+        storeResult(op, LlvmTypeMapper.ERROR_POINTER, instance);
+    }
+
+    /** The supplied value of one named field of a class construction. */
+    private static ValueId providedField(KindPayload.ClassNewPayload payload,
+                                         String name) {
+        for (KindPayload.ProvidedField field : payload.providedFields()) {
+            if (field.name().equals(name)) {
+                return field.valueOpId();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * One locally declared class construction (R2): the supplied fields stay in
+     * literal (source) order, the runtime validates them at their own recorded
+     * boundaries — an extra field is the E8007 arm and a mismatched value its
+     * own descriptor arm — and the instance is allocated, tagged and published
+     * only after every check succeeded, so a failed construction keeps the
+     * earlier effects and publishes nothing.
+     */
+    private void emitLocalClassNew(SemanticOp op,
+                                   KindPayload.ClassNewPayload payload) {
+        LlvmClassPlans.ClassDef def =
+            session.classDefinition(payload.classId());
+        List<KindPayload.ProvidedField> provided = payload.providedFields();
+        String suppliedSlot = null;
+        if (!provided.isEmpty()) {
+            suppliedSlot = newAlloca("[" + provided.size()
+                + " x %struct.deal_class_supplied]", "supplied");
+            for (int index = 0; index < provided.size(); index++) {
+                KindPayload.ProvidedField field = provided.get(index);
+                String element = emitTemporary(op, "getelementptr ["
+                    + provided.size() + " x %struct.deal_class_supplied], ["
+                    + provided.size() + " x %struct.deal_class_supplied]* "
+                    + suppliedSlot + ", i64 0, i64 " + index);
+                String origin = originValue(fieldBoundaryOrigin(payload,
+                    field.name(), op));
+                String record = emitTemporary(op, "insertvalue"
+                    + " %struct.deal_class_supplied zeroinitializer, "
+                    + session.data.operand(
+                        session.data.intern(field.name())) + ", 0");
+                record = emitTemporary(op, "insertvalue"
+                    + " %struct.deal_class_supplied " + record + ","
+                    + " %struct.deal_check_input "
+                    + checkInputRecord(op, field.valueOpId()) + ", 1");
+                record = emitTemporary(op, "insertvalue"
+                    + " %struct.deal_class_supplied " + record + ","
+                    + " %struct.deal_origin "
+                    + loadQuiet("%struct.deal_origin", origin) + ", 2");
+                emit("store %struct.deal_class_supplied " + record + ","
+                    + " %struct.deal_class_supplied* " + element);
+            }
+        }
+        session.referenceRuntimeEntry("deal_class_construct");
+        String atomSlot = newAlloca("i8*", "classatom");
+        String outcome = emitTemporary(op, "call %struct.deal_outcome"
+            + " @deal_class_construct(%struct.deal_class_layout* @"
+            + def.constructionSymbol() + ", %struct.deal_class_supplied* "
+            + (suppliedSlot == null ? "null"
+                : arrayElementOf(op, suppliedSlot, provided.size())) + ", i64 "
+            + provided.size() + ", %struct.deal_origin* " + originValue(op)
+            + ", i8** " + atomSlot + ")");
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome "
+            + outcome + ", 0");
+        branchOnFailure(op, error, "construct");
+        String atom = load(op, "i8*", atomSlot);
+        session.referenceRuntimeEntry("deal_alloc");
+        String instance = emitTemporary(op, "call i8* @deal_alloc(i32 "
+            + def.layoutId() + ", i64 " + def.size() + ")");
+        String typed = emitTemporary(op, "bitcast i8* " + instance + " to "
+            + def.recordName() + "*");
+        emit("store i8* " + atom + ", i8** "
+            + fieldPointer(op, def.recordName(), typed, 0, 0));
+        for (int index = 0; index < def.fields().size(); index++) {
+            LlvmClassPlans.Field field = def.fields().get(index);
+            ValueId value = providedField(payload, field.layout().name());
+            if (value == null) {
+                if (field.layout().required()) {
+                    throw new deal.codegen.SharedEmissionFailure(
+                        "LlvmSemanticEmitter rejects the class construction "
+                            + op.opId() + " of " + payload.classId().text()
+                            + " without its required field '"
+                            + field.layout().name() + "'",
+                        op.origin().span().range());
+                }
+                continue;
+            }
+            String stored = convert(value, descriptorOfValue(value),
+                field.layout().descriptor(), op);
+            if (field.layout().descriptor()
+                    instanceof RuntimeDescriptor.Boolean) {
+                stored = emitTemporary(op, "zext i1 " + stored + " to i8");
+            }
+            String target = fieldPointer(op, def.recordName(), typed, 0,
+                field.structIndex());
+            emit("store " + field.slotType() + " " + stored + ", "
+                + field.slotType() + "* " + target);
+            emitFieldBarrier(op, def, field, typed, target, stored);
+            if (field.presenceIndex() >= 0) {
+                emit("store i8 1, i8* "
+                    + fieldPointer(op, def.recordName(), typed, 0,
+                        1 + field.presenceIndex()));
+            }
+        }
+        storeResult(op, LlvmTypeMapper.classRepresentation(payload.classId()),
+            typed);
+    }
+
+    /** The first-element pointer of one supplied-field array (an instruction). */
+    private String arrayElementOf(SemanticOp op, String slot, int count) {
+        return emitTemporary(op, "getelementptr [" + count
+            + " x %struct.deal_class_supplied], [" + count
+            + " x %struct.deal_class_supplied]* " + slot + ", i64 0, i64 0");
+    }
+
+    /** One instruction-form member pointer of an emitted class record (C3). */
+    private String fieldPointer(SemanticOp op, String record, String pointer,
+                                int... indices) {
+        StringBuilder instruction = new StringBuilder("getelementptr ")
+            .append(record).append(", ").append(record).append("* ")
+            .append(pointer);
+        for (int index : indices) {
+            instruction.append(", i32 ").append(index);
+        }
+        return emitTemporary(op, instruction.toString());
+    }
+
+    /** The recorded origin of one supplied field's own boundary check. */
+    private SemanticOp fieldBoundaryOrigin(KindPayload.ClassNewPayload payload,
+                                           String field, SemanticOp op) {
+        for (KindPayload.FieldBoundary boundary : payload.fieldBoundaries()) {
+            if (boundary.field().equals(field)) {
+                return unitOp(boundary.boundaryOpId());
+            }
+        }
+        return op;
+    }
+
+    /**
+     * The closed check presentation of one completed value (R3/R4): its
+     * persistent datum plus, for a class-typed value, the carried canonical
+     * class atom the runtime classification reads.
+     */
+    private String checkInputRecord(SemanticOp op, ValueId value) {
+        RuntimeDescriptor actual = descriptorOfValue(value);
+        String datum = LlvmTypeMapper.isStaticSingleton(actual)
+            ? emitDatum(actual, null, op)
+            : emitDatum(actual, loadRepresentation(value, actual, op), op);
+        return checkInputRecordOf(op, actual, datum);
+    }
+
+    /**
+     * The closed check presentation of one already built persistent datum
+     * (R3/R4): its datum plus, for a class-typed value, the carried canonical
+     * class atom the runtime classification reads.
+     */
+    private String checkInputRecordOf(SemanticOp op, RuntimeDescriptor actual,
+                                      String datum) {
+        String record = emitTemporary(op, "insertvalue %struct.deal_check_input"
+            + " zeroinitializer, %struct.deal_data " + datum + ", 2");
+        // A class datum carries its canonical atom beside the datum (R3/R4):
+        // a statically class-typed value answers its own atom and an untyped
+        // one its instance's own atom; no other datum carries one.
+        String atom = LlvmDataValues.classAtomOf(session, sink, actual, datum);
+        if (!atom.equals("i8* null")) {
+            record = emitTemporary(op, "insertvalue %struct.deal_check_input "
+                + record + ", " + atom + ", 3");
+        }
+        return record;
+    }
+
+    /**
+     * One class field read (R2): a required field yields its declared type, an
+     * optional field yields presence-projected undefined for absence without
+     * erasing the presence bit, and the builtin Error's {@code code}/{@code
+     * message} fields read the runtime record's own fields. A declared
+     * {@code unknown} field absorbs the nullish members (R4), so its read type
+     * is the persistent datum and its absence projects to the undefined datum.
+     */
+    private void emitFieldRead(SemanticOp op) {
+        KindPayload.FieldReadPayload payload =
+            (KindPayload.FieldReadPayload) op.payload();
+        RuntimeDescriptor readType = op.resultType()
+            instanceof RuntimeDescriptor descriptor ? descriptor : null;
+        if (readType == null) {
+            throw new IllegalStateException("the field read " + op.opId()
+                + " records no declared result type");
+        }
+        if (payload.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+            String instance = loadValue(payload.classValue(),
+                LlvmTypeMapper.ERROR_POINTER, op);
+            String accessor = switch (payload.field()) {
+                case "code" -> "deal_error_code_value";
+                case "message" -> "deal_error_message_value";
+                default -> throw new deal.codegen.SharedEmissionFailure(
+                    "LlvmSemanticEmitter rejects the read of the builtin Error"
+                        + " field '" + payload.field() + "' of " + op.opId(),
+                    op.origin().span().range());
+            };
+            session.referenceRuntimeEntry(accessor);
+            String text = emitTemporary(op, "call " + LlvmTypeMapper.STRING
+                + " @" + accessor + "(" + LlvmTypeMapper.ERROR_POINTER + " "
+                + instance + ")");
+            storeResultOf(op, RuntimeDescriptor.String.INSTANCE, text);
+            return;
+        }
+        LlvmClassPlans.ClassDef def = session.classDefinition(payload.classId());
+        int index = def.indexOf(payload.field());
+        if (index < 0) {
+            throw new IllegalStateException("the class "
+                + payload.classId().text() + " declares no field '"
+                + payload.field() + "'");
+        }
+        LlvmClassPlans.Field field = def.fields().get(index);
+        String instance = loadValue(payload.classValue(),
+            LlvmTypeMapper.classRepresentation(payload.classId()), op);
+        String slot = fieldPointer(op, def.recordName(), instance, 0,
+            field.structIndex());
+        if (field.presenceIndex() < 0) {
+            String loaded = emitTemporary(op, "load " + field.slotType() + ", "
+                + field.slotType() + "* " + slot);
+            String value = field.layout().descriptor()
+                instanceof RuntimeDescriptor.Boolean
+                ? emitTemporary(op, "trunc i8 " + loaded + " to "
+                    + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
+            storeResultOf(op, field.layout().descriptor(), value);
+            return;
+        }
+        // An optional field's read type is its declared type with absence
+        // added, except that `unknown` absorbs the nullish members (R4): the
+        // presence bit then projects absence to the persistent undefined datum
+        // of the same `unknown` slot, never to a nullish value form.
+        RuntimeDescriptor.Nullable nullable =
+            readType instanceof RuntimeDescriptor.Nullable nullish
+                ? nullish : null;
+        if (nullable == null
+                && !(readType instanceof RuntimeDescriptor.Unknown)) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the optional field read " + op.opId()
+                    + ": the recorded result type '"
+                    + readType.canonicalSpecText()
+                    + "' has no absence projection (C9)",
+                op.origin().span().range());
+        }
+        String representation = stagedRepresentation(readType);
+        String target = valueSlot((ValueId) op.result(), representation);
+        String presence = emitTemporary(op, "load i8, i8* "
+            + fieldPointer(op, def.recordName(), instance, 0,
+                1 + field.presenceIndex()));
+        String present = emitTemporary(op, "icmp ne i8 " + presence + ", 0");
+        String presentLabel = newLabel("field.present");
+        String absentLabel = newLabel("field.absent");
+        String join = newLabel("field.join");
+        emit("br i1 " + present + ", label %" + presentLabel + ", label %"
+            + absentLabel);
+        terminated = true;
+        startSegment(presentLabel);
+        String loaded = emitTemporary(op, "load " + field.slotType() + ", "
+            + field.slotType() + "* " + slot);
+        String value = field.layout().descriptor()
+            instanceof RuntimeDescriptor.Boolean
+            ? emitTemporary(op, "trunc i8 " + loaded + " to "
+                + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
+        String converted = coerce(field.layout().descriptor(), readType, value, op);
+        emit("store " + representation + " " + converted + ", "
+            + representation + "* " + target);
+        rootSlotWrite(readType, target, converted, op);
+        terminate("br label %" + join);
+        startSegment(absentLabel);
+        String missing = nullable != null
+            ? LlvmDataValues.absent(session, sink, nullable)
+            : emitDatum(RuntimeDescriptor.Undefined.INSTANCE, null, op);
+        emit("store " + representation + " " + missing + ", " + representation
+            + "* " + target);
+        rootSlotWrite(readType, target, missing, op);
+        terminate("br label %" + join);
+        startSegment(join);
+    }
+
+    /** One class field write: the declared type, then the presence bit (R2). */
+    private void emitFieldWrite(SemanticOp op) {
+        KindPayload.FieldWritePayload payload =
+            (KindPayload.FieldWritePayload) op.payload();
+        if (payload.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+            String accessor = switch (payload.field()) {
+                case "code" -> "deal_error_set_code_value";
+                case "message" -> "deal_error_set_message_value";
+                default -> throw new deal.codegen.SharedEmissionFailure(
+                    "LlvmSemanticEmitter rejects the write of the builtin Error"
+                        + " field '" + payload.field() + "' of " + op.opId(),
+                    op.origin().span().range());
+            };
+            session.referenceRuntimeEntry(accessor);
+            emit("call void @" + accessor + "(" + LlvmTypeMapper.ERROR_POINTER
+                + " " + loadValue(payload.classValue(),
+                    LlvmTypeMapper.ERROR_POINTER, op) + ", "
+                + LlvmTypeMapper.STRING + " "
+                + loadValue(payload.value(), LlvmTypeMapper.STRING, op) + ")"
+                + debugAttachment(op));
+            return;
+        }
+        LlvmClassPlans.ClassDef def = session.classDefinition(payload.classId());
+        int index = def.indexOf(payload.field());
+        if (index < 0) {
+            throw new IllegalStateException("the class "
+                + payload.classId().text() + " declares no field '"
+                + payload.field() + "'");
+        }
+        LlvmClassPlans.Field field = def.fields().get(index);
+        String instance = loadValue(payload.classValue(),
+            LlvmTypeMapper.classRepresentation(payload.classId()), op);
+        String stored = convert(payload.value(), descriptorOfValue(payload.value()),
+            field.layout().descriptor(), op);
+        if (field.layout().descriptor() instanceof RuntimeDescriptor.Boolean) {
+            stored = emitTemporary(op, "zext i1 " + stored + " to i8");
+        }
+        String slot = fieldPointer(op, def.recordName(), instance, 0,
+            field.structIndex());
+        emit("store " + field.slotType() + " " + stored + ", "
+            + field.slotType() + "* " + slot + debugAttachment(op));
+        emitFieldBarrier(op, def, field, instance, slot, stored);
+        if (field.presenceIndex() >= 0) {
+            emit("store i8 1, i8* "
+                + fieldPointer(op, def.recordName(), instance, 0,
+                    1 + field.presenceIndex()) + debugAttachment(op));
+        }
+    }
+
+    /**
+     * The M2 insertion barrier of one class-field store, run on the committed
+     * slot: a persistent datum slot shades the datum's managed payload through
+     * the tag-aware entry, and every other managed-reference slot shades the
+     * just-stored referent. A scalar, scalar-nullish or presence slot stores no
+     * managed reference and needs none.
+     */
+    private void emitFieldBarrier(SemanticOp op, LlvmClassPlans.ClassDef def,
+                                  LlvmClassPlans.Field field, String instance,
+                                  String slot, String stored) {
+        if (!LlvmClassPlans.holdsManagedReference(field)) {
+            return;
+        }
+        String container = emitTemporary(op, "bitcast " + def.recordName()
+            + "* " + instance + " to i8*");
+        if (LlvmClassPlans.isTaggedDatum(field)) {
+            session.referenceRuntimeEntry("deal_store_barrier_data");
+            emit("call void @deal_store_barrier_data(i8* " + container + ", "
+                + LlvmTypeMapper.DATA + "* " + slot + ")"
+                + debugAttachment(op));
+            return;
+        }
+        session.referenceRuntimeEntry("deal_store_barrier");
+        String referent = LlvmTypeMapper.REFERENCE_NULLISH.equals(
+            field.slotType())
+            ? stored
+            : emitTemporary(op, "bitcast " + field.slotType() + " " + stored
+                + " to i8*");
+        emit("call void @deal_store_barrier(i8* " + container + ", i8* "
+            + referent + ")" + debugAttachment(op));
+    }
+
+    /** One class field delete: the field's presence returns to absent (R2). */
+    private void emitFieldDelete(SemanticOp op) {
+        KindPayload.FieldDeletePayload payload =
+            (KindPayload.FieldDeletePayload) op.payload();
+        LlvmClassPlans.ClassDef def = session.classDefinition(payload.classId());
+        int index = def.indexOf(payload.field());
+        if (index < 0) {
+            throw new IllegalStateException("the class "
+                + payload.classId().text() + " declares no field '"
+                + payload.field() + "'");
+        }
+        LlvmClassPlans.Field field = def.fields().get(index);
+        if (field.presenceIndex() < 0) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the delete of the required field '"
+                    + payload.field() + "' of " + payload.classId().text()
+                    + ": only an optional field has presence metadata",
+                op.origin().span().range());
+        }
+        String instance = loadValue(payload.classValue(),
+            LlvmTypeMapper.classRepresentation(payload.classId()), op);
+        emit("store i8 0, i8* "
+            + fieldPointer(op, def.recordName(), instance, 0,
+                1 + field.presenceIndex()) + debugAttachment(op));
+    }
+
+    // -- the generated JSON walks --------------------------------------------
+
+    /**
+     * {@code JSON_FROM_CLASS} ({@code C$fromJson}, R6): the runtime parses and
+     * walks the emitted class plan in declaration order and answers the
+     * language null datum on every parse, extra-key, required-presence or field
+     * failure, so nothing partial is ever published.
+     */
+    private void emitJsonFromClass(SemanticOp op) {
+        KindPayload.JsonFromClassPayload payload =
+            (KindPayload.JsonFromClassPayload) op.payload();
+        LlvmClassPlans.ClassDef def =
+            session.classDefinition(payload.layout().classId());
+        String text = loadValue(payload.jsonString(), LlvmTypeMapper.STRING, op);
+        String outcome = callRecordReturn(op, "deal_json_from_class",
+            "%struct.deal_outcome_data", List.of(
+                LlvmTypeMapper.STRING + " " + text,
+                "%struct.deal_json_class_plan* @" + def.planSymbol(),
+                "i8* bitcast (" + LlvmClassPlans.PLAN_TYPE + "* (i8*, i8*)* @"
+                    + LlvmClassPlans.LOOKUP_NAME + " to i8*)",
+                "i8* null",
+                "%struct.deal_origin* " + originValue(op)));
+        String error = emitTemporary(op, "extractvalue"
+            + " %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "json");
+        String datum = emitTemporary(op, "extractvalue"
+            + " %struct.deal_outcome_data " + outcome + ", 1");
+        RuntimeDescriptor readType = op.resultType()
+            instanceof RuntimeDescriptor descriptor ? descriptor
+            : RuntimeDescriptor.Unknown.INSTANCE;
+        storeResult(op, stagedRepresentation(readType),
+            LlvmDataValues.unbox(session, sink, readType, datum));
+    }
+
+    /**
+     * {@code JSON_TO_CLASS} ({@code C$toJson}, R6): the runtime encodes the
+     * instance's declared fields in declaration order, omits absent optionals
+     * and undefined-valued present fields, encodes non-finite numbers as null
+     * and rejects a cycle, publishing either the complete text or the arm's own
+     * failure and never partial output.
+     */
+    private void emitJsonToClass(SemanticOp op) {
+        KindPayload.JsonToClassPayload payload =
+            (KindPayload.JsonToClassPayload) op.payload();
+        LlvmClassPlans.ClassDef def =
+            session.classDefinition(payload.layout().classId());
+        RuntimeDescriptor actual = descriptorOfValue(payload.classValue());
+        String instance = loadValue(payload.classValue(),
+            LlvmTypeMapper.classRepresentation(payload.layout().classId()), op);
+        String slot = newAlloca(LlvmTypeMapper.DATA, "jsonvalue");
+        emit("store " + LlvmTypeMapper.DATA + " "
+            + emitDatum(actual, instance, op) + ", " + LlvmTypeMapper.DATA
+            + "* " + slot);
+        String outcome = callRecordReturn(op, "deal_json_to_class",
+            "%struct.deal_outcome_string", List.of(
+                "%struct.deal_json_class_plan* @" + def.planSymbol(),
+                LlvmTypeMapper.DATA + "* " + slot,
+                "i8* bitcast (" + LlvmClassPlans.PLAN_TYPE + "* (i8*, i8*)* @"
+                    + LlvmClassPlans.LOOKUP_NAME + " to i8*)",
+                "i8* null",
+                "%struct.deal_origin* " + originValue(op)));
+        String error = emitTemporary(op, "extractvalue"
+            + " %struct.deal_outcome_string " + outcome + ", 0");
+        branchOnFailure(op, error, "json");
+        String text = emitTemporary(op, "extractvalue"
+            + " %struct.deal_outcome_string " + outcome + ", 1");
+        storeResult(op, LlvmTypeMapper.STRING, narrowFromAbi(
+            RuntimeDescriptor.String.INSTANCE, text, op));
+    }
+
+    /** Stores one op result from a recorded source descriptor (C3). */
+    private void storeResultOf(SemanticOp op, RuntimeDescriptor from,
+                               String value) {
+        // An op whose recorded result type is the internal-missing marker
+        // carries the read's own representation; the consuming envelope
+        // decides what it means.
+        RuntimeDescriptor to = op.resultType()
+            instanceof RuntimeDescriptor descriptor ? descriptor : from;
+        if (!(op.result() instanceof ValueId)) {
+            return;
+        }
+        String type = stagedRepresentation(to);
+        storeResult(op, type, to.equals(from)
+            ? value : coerce(from, to, value, op));
+    }
+
+    // =========================================================================
     // The entry-surface functions (C2)
     // =========================================================================
 
@@ -2280,6 +3461,11 @@ final class LlvmFunctionEmitter {
                 + " %struct.deal_export_entry* %entry, i32 0, i32 4\n");
         out.append(LlvmIrPrinter.indent(1))
             .append("%code = load i8*, i8** %codep\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hasCode = icmp ne i8* %code, null\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("br i1 %hasCode, label %invokecode, label %absent\n");
+        out.append("invokecode:\n");
         out.append(LlvmIrPrinter.indent(1))
             .append("%call = bitcast i8* %code to %struct.deal_outcome ()*\n");
         out.append(LlvmIrPrinter.indent(1))

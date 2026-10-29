@@ -34,7 +34,14 @@
  * key and required-presence rules, the descent through nested class plans on
  * an explicit frame stack (the input's nesting depth is never a C frame, so a
  * recursive `@jsonable` plan and a deeply nested document both decode), the
- * path-local cycle check and the invocation-local scratch.
+ * path-local cycle check and the invocation-local scratch. A declared `T[]`
+ * field is rebuilt with its declared element descriptor beside the
+ * runtime-owned element-storage layout of that element type (C3, R2), so a
+ * decoded array is a value of its declared type: the emitted element access
+ * reads the same storage whether the module or this walk built the array. A
+ * declared `null`/`undefined` element type is the reference storage holding the
+ * distinct runtime singleton, and the canonical `null|undefined` atom admits
+ * its undefined member through the atom's own base.
  *
  * `C$fromJson` returns language null on any parse, unknown-key, missing
  * required-field or field-validation failure (`JSON_FROM_NULL`: the swallowed

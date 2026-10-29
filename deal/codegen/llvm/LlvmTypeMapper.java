@@ -19,8 +19,10 @@ import java.util.Optional;
  * representation of one DEAL value: {@code number} is {@code double},
  * {@code boolean} is {@code i1} in SSA and {@code i8} across the C ABI,
  * {@code null} and {@code undefined} are the runtime singletons and therefore
- * occupy no representation at all (an empty answer, projected through
- * {@code deal_outcome} and reconstructed by the runtime per C4), and a
+ * carry no <em>value</em> representation at all (an empty answer, projected
+ * through {@code deal_outcome} and reconstructed by the runtime per C4; a
+ * declared field, element or binding slot of those types is the singleton
+ * pointer, which {@link #slotTypeOf(RuntimeDescriptor)} answers), and a
  * statically resolvable function identity is the static code pointer
  * {@code i8*}. Every other descriptor is the managed representation of C3 and
  * is not part of the staged subset: the answer is empty-failure
@@ -258,6 +260,51 @@ public final class LlvmTypeMapper {
         return sizeOfLayout(RECORDS.get(record));
     }
 
+    /**
+     * The x86-64 byte offset of one member of a published record layout, that
+     * is {@code offsetof(<record>, <member>)} for the field order this mirror
+     * pins from {@code deal/native/deal_rt.h}. It is the one arithmetic an
+     * emitted reference-map slot names a member with (M1/M4).
+     */
+    public static int recordFieldOffset(String cType, int member) {
+        Objects.requireNonNull(cType, "cType must not be null");
+        String normalized = normalizeCType(cType);
+        String layout = RECORDS.get(normalized);
+        if (layout == null || layout.equals("opaque")) {
+            throw new IllegalArgumentException(
+                "no published layout for the record " + normalized);
+        }
+        List<String> fields = splitFields(layout.strip().substring(1,
+            layout.strip().length() - 1));
+        if (member < 0 || member >= fields.size()) {
+            throw new IllegalArgumentException("the record " + normalized
+                + " declares " + fields.size() + " members; " + member
+                + " is outside them");
+        }
+        int offset = 0;
+        for (int index = 0; index < member; index++) {
+            String field = fields.get(index);
+            offset = roundUp(offset, alignmentOf(field)) + sizeOfType(field);
+        }
+        return roundUp(offset, alignmentOf(fields.get(member)));
+    }
+
+    /**
+     * The member index of {@code deal_data.reference} in the published record
+     * layout ({@code tag, reserved, number, reference}).
+     */
+    private static final int DATA_REFERENCE_MEMBER = 3;
+
+    /**
+     * {@code offsetof(deal_data, reference)}: the one member of a persistent
+     * tagged datum a precise reference-map slot and a tag-aware root name
+     * (C3, M1/M4). The datum's tag, reserved and number words never hold a
+     * heap address.
+     */
+    public static int dataReferenceOffset() {
+        return recordFieldOffset("deal_data", DATA_REFERENCE_MEMBER);
+    }
+
     /** The size of one IR layout body ({@code { ... }}), field by field. */
     private static int sizeOfLayout(String layout) {
         String body = layout.strip();
@@ -302,8 +349,28 @@ public final class LlvmTypeMapper {
         return fields;
     }
 
+    /**
+     * The module-owned scalar-nullish record layouts of C3: they exist only
+     * inside the emitted module, so the record-size rule reads them here.
+     */
+    private static final Map<String, String> STAGED_LAYOUTS = java.util.Map.of(
+        "deal_nullish_number", "{ i32, double }",
+        "deal_nullish_boolean", "{ i32, i1 }",
+        "deal_outcome_nullish_number",
+            "{ i8*, %struct.deal_nullish_number }",
+        "deal_outcome_nullish_boolean",
+            "{ i8*, %struct.deal_nullish_boolean }");
+
     /** The ABI alignment of one IR field type. */
     private static int alignmentOf(String type) {
+        if (type.strip().endsWith("*")) {
+            return 8;
+        }
+        String staged = type.startsWith("%struct.")
+            ? STAGED_LAYOUTS.get(type.substring("%struct.".length())) : null;
+        if (staged != null) {
+            return alignmentOfLayout(staged);
+        }
         return switch (type) {
             case "i1", "i8" -> 1;
             case "i16" -> 2;
@@ -312,15 +379,32 @@ public final class LlvmTypeMapper {
         };
     }
 
+    /** The alignment of one IR layout body ({@code { ... }}). */
+    private static int alignmentOfLayout(String layout) {
+        String body = layout.strip();
+        int alignment = 1;
+        for (String field : splitFields(body.substring(1, body.length() - 1))) {
+            alignment = Math.max(alignment, alignmentOf(field));
+        }
+        return alignment;
+    }
+
     /** The x86-64 size of one IR field type. */
     private static int sizeOfType(String type) {
         String text = type.strip();
+        if (text.endsWith("*")) {
+            return 8;
+        }
         if (text.startsWith("%struct.")) {
             String record = text.substring("%struct.".length());
-            String layout = RECORDS.get(record);
+            String layout = STAGED_LAYOUTS.containsKey(record)
+                ? STAGED_LAYOUTS.get(record) : RECORDS.get(record);
             if (layout == null || layout.equals("opaque")) {
                 throw new IllegalStateException(
                     "no published layout for the record " + record);
+            }
+            if (STAGED_LAYOUTS.containsKey(record)) {
+                return sizeOfLayout(layout);
             }
             return recordSize(record);
         }
@@ -423,6 +507,16 @@ public final class LlvmTypeMapper {
     /** The managed {@code string} representation, {@code deal_string*} (C3). */
     public static final String STRING = "%struct.deal_string*";
 
+    /** The managed {@code T[]} representation, {@code deal_array*} (C3). */
+    public static final String ARRAY = "%struct.deal_array*";
+
+    /**
+     * The managed {@code Record<string, unknown>} representation,
+     * {@code deal_table*} (C3: the internal C name is retained and the value is
+     * never a source {@code table} type).
+     */
+    public static final String TABLE = "%struct.deal_table*";
+
     /**
      * The persistent tagged datum of one {@code unknown} position (C3, R3):
      * a structural record, never a crossing-scoped {@code deal_value}.
@@ -446,6 +540,12 @@ public final class LlvmTypeMapper {
      * metadata.
      */
     public static final String REFERENCE_NULLISH = "i8*";
+
+    /**
+     * The published {@code deal_presentation} discriminant of one checked
+     * datum ({@code deal_rt.h}, R3/R4).
+     */
+    public static final int PRESENTATION_DATUM = 0;
 
     /** The published {@code deal_nullish_tag} discriminants ({@code deal_rt.h}). */
     public static final int NULLISH_BASE = 0;
@@ -478,13 +578,69 @@ public final class LlvmTypeMapper {
             case RuntimeDescriptor.String ignored -> Optional.of(STRING);
             case RuntimeDescriptor.Unknown ignored -> Optional.of(DATA);
             case RuntimeDescriptor.Func ignored -> Optional.of(CODE_POINTER);
-            case RuntimeDescriptor.Class classType
-                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) ->
-                Optional.of(ERROR_POINTER);
+            case RuntimeDescriptor.Table ignored -> Optional.of(TABLE);
+            case RuntimeDescriptor.Array ignored -> Optional.of(ARRAY);
+            case RuntimeDescriptor.Class classType ->
+                Optional.of(classType.classId().equals(
+                    deal.semantic.ir.ClassId.ERROR)
+                    ? ERROR_POINTER : classRepresentation(classType.classId()));
             case RuntimeDescriptor.Nullable nullable ->
                 nullableRepresentation(nullable);
             default -> Optional.empty();
         };
+    }
+
+    /**
+     * The emitted per-layout class instance record of one nominal class
+     * (C3): the runtime header, the optional-field presence bytes and the typed
+     * field slots, all owned by the emitted module. The name derives from the
+     * canonical class text alone, so two emissions of one project spell the
+     * same type and two distinct class texts never share one (C9).
+     */
+    public static String classRecordName(deal.semantic.ir.ClassId classId) {
+        Objects.requireNonNull(classId, "classId must not be null");
+        String text = classId.text();
+        StringBuilder sanitized = new StringBuilder();
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            boolean plain = (character >= 'a' && character <= 'z')
+                || (character >= 'A' && character <= 'Z')
+                || (character >= '0' && character <= '9');
+            sanitized.append(plain ? character : '_');
+        }
+        long hash = 0xcbf29ce484222325L;
+        for (byte unit : text.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            hash ^= (unit & 0xff);
+            hash *= 0x100000001b3L;
+        }
+        return "%struct.deal_class." + sanitized + "."
+            + String.format("%016x", hash);
+    }
+
+    /** The {@code deal_object*} representation of one nominal class (C3). */
+    public static String classRepresentation(deal.semantic.ir.ClassId classId) {
+        return classRecordName(classId) + "*";
+    }
+
+    /**
+     * The IR type of one typed field slot or array element slot of the given
+     * descriptor: the SSA representation, except that a {@code boolean} slot is
+     * the published 0/1 byte so a stored slot never relies on the one-bit
+     * in-memory layout and a declared {@code null}/{@code undefined} position
+     * is the C3 singleton pointer (its data position always holds one of the
+     * two distinct immutable singletons, never C {@code NULL}).
+     */
+    public static String slotTypeOf(RuntimeDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor must not be null");
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return BOOLEAN_ABI;
+        }
+        if (isStaticSingleton(descriptor)) {
+            return REFERENCE_NULLISH;
+        }
+        return representationOf(descriptor).orElseThrow(() ->
+            new IllegalArgumentException(
+                "no slot type for " + unsupported(descriptor)));
     }
 
     /**
@@ -505,7 +661,7 @@ public final class LlvmTypeMapper {
         if (inner instanceof RuntimeDescriptor.Boolean) {
             return Optional.of(NULLISH_BOOLEAN);
         }
-        if (inner instanceof RuntimeDescriptor.String
+        if (isManagedPointer(inner)
                 || inner instanceof RuntimeDescriptor.Func) {
             return Optional.of(REFERENCE_NULLISH);
         }
@@ -522,12 +678,8 @@ public final class LlvmTypeMapper {
      */
     public static boolean isManagedValue(RuntimeDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
-        if (descriptor instanceof RuntimeDescriptor.String
-                || descriptor instanceof RuntimeDescriptor.Unknown) {
-            return true;
-        }
-        if (descriptor instanceof RuntimeDescriptor.Class classType
-                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+        if (descriptor instanceof RuntimeDescriptor.Unknown
+                || isManagedPointer(descriptor)) {
             return true;
         }
         if (descriptor instanceof RuntimeDescriptor.Nullable nullable) {
@@ -535,6 +687,19 @@ public final class LlvmTypeMapper {
                 .filter(REFERENCE_NULLISH::equals).isPresent();
         }
         return false;
+    }
+
+    /**
+     * Whether one descriptor's representation is a managed object pointer
+     * (string, array, record, class instance, builtin Error instance): the
+     * values a precise root slot and a reference map root (C3, M4).
+     */
+    public static boolean isManagedPointer(RuntimeDescriptor descriptor) {
+        Objects.requireNonNull(descriptor, "descriptor must not be null");
+        return descriptor instanceof RuntimeDescriptor.String
+            || descriptor instanceof RuntimeDescriptor.Table
+            || descriptor instanceof RuntimeDescriptor.Array
+            || descriptor instanceof RuntimeDescriptor.Class;
     }
 
     /**
@@ -560,8 +725,13 @@ public final class LlvmTypeMapper {
      */
     public static boolean hasDatumForm(RuntimeDescriptor actual) {
         Objects.requireNonNull(actual, "actual must not be null");
-        if (actual instanceof RuntimeDescriptor.Func) {
+        if (actual instanceof RuntimeDescriptor.Func
+                || actual instanceof RuntimeDescriptor.Void) {
             return false;
+        }
+        if (actual instanceof RuntimeDescriptor.Class classType
+                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
+            return true;
         }
         if (actual instanceof RuntimeDescriptor.Nullable nullable) {
             return hasDatumForm(nullable.inner());
@@ -589,14 +759,38 @@ public final class LlvmTypeMapper {
         }
         if (declared instanceof RuntimeDescriptor.Nullable nullable) {
             if (actual instanceof RuntimeDescriptor.Null) {
-                return nullable.admitsNull();
+                return admitsNull(nullable);
             }
             if (actual instanceof RuntimeDescriptor.Undefined) {
-                return nullable.admitsUndefined();
+                return admitsUndefined(nullable);
             }
             return admits(nullable.inner(), actual);
         }
         return false;
+    }
+
+    /**
+     * Whether one nullish descriptor admits the language {@code null} member
+     * (C3): its own flag, or a base atom that is the null value itself. The
+     * canonical spelling carries a member through the base atom whenever the
+     * flag would be redundant, exactly as the shared type relation reads it.
+     */
+    public static boolean admitsNull(RuntimeDescriptor.Nullable nullable) {
+        Objects.requireNonNull(nullable, "nullable must not be null");
+        return nullable.admitsNull()
+            || nullable.inner() instanceof RuntimeDescriptor.Null;
+    }
+
+    /**
+     * Whether one nullish descriptor admits the language {@code undefined}
+     * member (C3): its own flag, or the canonical {@code null|undefined} whose
+     * base is the undefined atom. Both readings of that atom are the one value,
+     * so the absence projection and every admission proof must see the member.
+     */
+    public static boolean admitsUndefined(RuntimeDescriptor.Nullable nullable) {
+        Objects.requireNonNull(nullable, "nullable must not be null");
+        return nullable.admitsUndefined()
+            || nullable.inner() instanceof RuntimeDescriptor.Undefined;
     }
 
     /**
@@ -620,10 +814,10 @@ public final class LlvmTypeMapper {
         }
         if (declared instanceof RuntimeDescriptor.Nullable nullable) {
             if (actual instanceof RuntimeDescriptor.Null) {
-                return nullable.admitsNull();
+                return admitsNull(nullable);
             }
             if (actual instanceof RuntimeDescriptor.Undefined) {
-                return nullable.admitsUndefined();
+                return admitsUndefined(nullable);
             }
             if (actual instanceof RuntimeDescriptor.Nullable) {
                 return actual.equals(declared);
@@ -675,9 +869,9 @@ public final class LlvmTypeMapper {
             case RuntimeDescriptor.String ignored -> "%struct.deal_outcome_string";
             case RuntimeDescriptor.Unknown ignored -> "%struct.deal_outcome_data";
             case RuntimeDescriptor.Func ignored -> "%struct.deal_outcome_reference";
-            case RuntimeDescriptor.Class classType
-                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) ->
-                "%struct.deal_outcome_reference";
+            case RuntimeDescriptor.Table ignored -> "%struct.deal_outcome_reference";
+            case RuntimeDescriptor.Array ignored -> "%struct.deal_outcome_reference";
+            case RuntimeDescriptor.Class ignored -> "%struct.deal_outcome_reference";
             case RuntimeDescriptor.Nullable nullable -> switch (
                     representationOf(nullable).orElseThrow(() ->
                         new IllegalArgumentException("no staged outcome shape for "
@@ -704,6 +898,27 @@ public final class LlvmTypeMapper {
         return representationOf(descriptor).orElseThrow(() ->
             new IllegalArgumentException(
                 "no staged ABI parameter type for " + unsupported(descriptor)));
+    }
+
+    /**
+     * Whether one published record IR type crosses a call boundary in memory
+     * (the x86-64 ABI's hidden {@code sret}/{@code byval} pointer rule).
+     */
+    public static boolean recordCrossesInMemory(String irRecordType) {
+        Objects.requireNonNull(irRecordType, "irRecordType must not be null");
+        String name = irRecordType.startsWith("%struct.")
+            ? irRecordType.substring("%struct.".length()) : irRecordType;
+        return crossesInMemory(name);
+    }
+
+    /** The x86-64 size of one IR type name, for the emitted record offsets. */
+    public static int sizeOfIrType(String type) {
+        return sizeOfType(type);
+    }
+
+    /** The x86-64 ABI alignment of one IR type name. */
+    public static int alignmentOfIrType(String type) {
+        return alignmentOf(type);
     }
 
     /**

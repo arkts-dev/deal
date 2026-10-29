@@ -43,6 +43,16 @@ int deal_text_is_scalar_sequence(const void *bytes, size_t length);
  */
 deal_string *deal_text_new(const void *bytes, size_t length);
 
+/*
+ * Concatenates two strings in recorded fragment order (C3 string templates):
+ * the result is one immutable string holding `left`'s bytes followed by
+ * `right`'s, with its own cached byte length, scalar count and hash. Both
+ * operands are scalar-valid by construction, so their concatenation is too and
+ * no boundary check runs here. The caller roots both operands and the result
+ * across the allocation (M4).
+ */
+deal_string *deal_text_concat(deal_string *left, deal_string *right);
+
 /* The single scalar-value sequence comparison: -1, 0 or 1 (C6, R8). */
 int deal_text_compare(deal_string *a, deal_string *b);
 

@@ -1483,8 +1483,17 @@ static size_t count_class_depth(deal_data root, const char *field,
             if (deal_container_array_count(array) != 1u) {
                 break;
             }
-            next = *(const deal_data *)
-                deal_container_array_element(array, 0u);
+            /* A decoded `T[]` is stored in the element storage layout the
+             * emitted element access reads (C3, R2): a class element is one
+             * managed reference, an `unknown` element one persistent datum. */
+            if (deal_container_array_element_layout(array)
+                    == DEAL_LAYOUT_ELEMENT_REFERENCE) {
+                next = deal_data_of_reference(DEAL_DATA_CLASS,
+                    *(void *const *)deal_container_array_element(array, 0u));
+            } else {
+                next = *(const deal_data *)
+                    deal_container_array_element(array, 0u);
+            }
         }
         depth += 1u;
         current = next;

@@ -62,7 +62,7 @@ final class LlvmModule {
             lines.add("@" + global + " = external global i8*");
         }
         lines.add("");
-        lines.addAll(session.data.render());
+        lines.addAll(session.data.render(session.classPlans().dataDefinitions()));
         lines.add("");
         for (String function : functions.values()) {
             lines.add(function);
@@ -85,6 +85,7 @@ final class LlvmModule {
             + " i8* }");
         layouts.addAll(LlvmTypeMapper.stagedRecordDefinitions());
         layouts.addAll(LlvmTypeMapper.recordDefinitions());
+        layouts.addAll(session.classPlans().recordDefinitions());
         return List.copyOf(layouts);
     }
 
@@ -126,6 +127,9 @@ final class LlvmModule {
         functions.put("deal_async_export_invoke",
             entryEmitter.emitAsyncExportInvoke());
         functions.put("deal_text_equals", entryEmitter.emitTextEquals());
+        functions.put("deal_class_plans_init",
+            session.classPlans().initFunction());
+        functions.putAll(session.classPlans().functions());
         return functions;
     }
 
@@ -141,6 +145,10 @@ final class LlvmModule {
         out.append(LlvmIrPrinter.indent(1))
             .append("%installed = call i32 @deal_arm_table_install"
                 + "(%struct.deal_arm_table* @deal_project_arm_table)\n");
+        // The emitted per-layout class metadata and descriptor atoms exist
+        // before any allocation or construction (M1, R2/R4).
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_class_plans_init()\n");
         List<ModuleId> modules = session.modules();
         for (int index = 0; index < modules.size(); index++) {
             long moduleIndex = session.moduleIndex(modules.get(index));

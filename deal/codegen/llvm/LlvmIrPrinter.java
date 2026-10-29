@@ -44,7 +44,10 @@ public final class LlvmIrPrinter {
                     && unsigned != '"' && unsigned != '\\') {
                 text.append((char) unsigned);
             } else {
-                text.append(String.format("%02X", unsigned));
+                // LLVM's c-string escape is a backslash and two hex digits;
+                // without the backslash the digits would be literal text and
+                // the constant's type would disagree with its content.
+                text.append(String.format("\\%02X", unsigned));
             }
         }
         return text.toString();

@@ -8,9 +8,13 @@
 #include "deal/native/error.h"
 #include "deal/native/entry.h"
 #include "deal/native/platform.h"
+#include "deal/native/text.h"
 
 #include <stddef.h>
 #include <string.h>
+
+/* `deal_string` stays opaque in this group: the class fields of the builtin
+ * Error are read and written through the `text` group's entries. */
 
 /* =========================================================================
  * The call-frame stack (`CallFrameContract`)
@@ -408,6 +412,76 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
 deal_error *deal_error_create(const char *code, const char *message,
                               const deal_origin *origin) {
     return deal_error_allocate(code, message, origin, 1);
+}
+
+/* One DEAL string's bytes copied into platform storage, NUL-terminated: the
+ * Error record keeps its own text (the string's bytes are never terminated and
+ * never written). */
+static char *deal_error_text_of_string(deal_string *value) {
+    if (value == NULL) {
+        deal_platform_fault("error record: null string field");
+    }
+    size_t length = deal_text_byte_length(value);
+    char *text = deal_platform_allocate(length + 1u);
+    if (text == NULL) {
+        deal_platform_fault("error record: field text allocation failed");
+    }
+    if (length != 0u) {
+        memcpy(text, deal_text_bytes(value), length);
+    }
+    text[length] = 0;
+    return text;
+}
+
+deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
+                                      const deal_origin *origin) {
+    if (code == NULL || message == NULL) {
+        deal_platform_fault("error record: absent required class field");
+    }
+    char *code_text = deal_error_text_of_string(code);
+    char *message_text = deal_error_text_of_string(message);
+    deal_error *error = deal_error_allocate(code_text, message_text, origin, 1);
+    deal_platform_release(code_text);
+    deal_platform_release(message_text);
+    return error;
+}
+
+deal_string *deal_error_code_value(deal_error *error) {
+    if (error == NULL) {
+        deal_platform_fault("error record: null error for the code field");
+    }
+    if (error->code == NULL) {
+        return NULL;
+    }
+    return deal_text_new(error->code, strlen(error->code));
+}
+
+deal_string *deal_error_message_value(deal_error *error) {
+    if (error == NULL) {
+        deal_platform_fault("error record: null error for the message field");
+    }
+    if (error->message == NULL) {
+        return NULL;
+    }
+    return deal_text_new(error->message, strlen(error->message));
+}
+
+void deal_error_set_code_value(deal_error *error, deal_string *code) {
+    if (error == NULL) {
+        deal_platform_fault("error record: null error for the code field");
+    }
+    char *text = deal_error_text_of_string(code);
+    deal_platform_release(error->code);
+    error->code = text;
+}
+
+void deal_error_set_message_value(deal_error *error, deal_string *message) {
+    if (error == NULL) {
+        deal_platform_fault("error record: null error for the message field");
+    }
+    char *text = deal_error_text_of_string(message);
+    deal_platform_release(error->message);
+    error->message = text;
 }
 
 /*

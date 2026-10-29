@@ -40,9 +40,13 @@
  *
  * The runtime-owned element layouts (C3) are `DEAL_LAYOUT_ELEMENT_DATUM` (one
  * persistent tagged datum slot), `DEAL_LAYOUT_ELEMENT_REFERENCE` (one managed
- * reference slot), `DEAL_LAYOUT_ELEMENT_NUMBER` (one binary64 slot) and
- * `DEAL_LAYOUT_ELEMENT_BOOLEAN` (one 0/1 slot); a class-instance element layout
- * is the emitted module's own metadata at `DEAL_LAYOUT_EMITTED_BASE` and above.
+ * reference slot), `DEAL_LAYOUT_ELEMENT_NUMBER` (one binary64 slot),
+ * `DEAL_LAYOUT_ELEMENT_BOOLEAN` (one 0/1 slot) and the two scalar-nullish
+ * slots `DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER` / `..._NULLISH_BOOLEAN`, whose
+ * `{ tag, base }` records are the emitted module's own scalar-nullish
+ * representation (C3, page `llvm-native-memory-management`); a class-instance
+ * element layout is the emitted module's own metadata at
+ * `DEAL_LAYOUT_EMITTED_BASE` and above.
  * The element's *type* is never derived from its storage layout: it is the
  * array's recorded persistent element descriptor (R4), so an `unknown`
  * descriptor stores tagged datum slots and a `string` descriptor stores managed
@@ -52,6 +56,21 @@
 #define DEAL_NATIVE_CONTAINER_H
 
 #include "deal/native/deal_rt.h"
+
+/* One scalar-nullish array element slot (C3): the emitted module's own
+ * scalar-nullish representation `{ i32 tag, double value }` (`?number` and its
+ * `!`/`?!` spellings) or `{ i32 tag, i1 value }` (`?boolean` and its spellings).
+ * `tag` is the published `deal_nullish_tag`; the `null`/`undefined` tags carry
+ * no base value, exactly as the emitted representation reads it. */
+typedef struct {
+    int32_t tag;
+    double value;
+} deal_nullish_number_element;
+
+typedef struct {
+    int32_t tag;
+    uint8_t value;
+} deal_nullish_boolean_element;
 
 /*
  * Validates one source position against `length` native element slots (R2) and

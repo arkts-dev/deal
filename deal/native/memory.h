@@ -154,6 +154,13 @@ uint32_t deal_root_frame_depth(void);
 #define DEAL_LAYOUT_ELEMENT_REFERENCE  9u   /* one managed reference element slot */
 #define DEAL_LAYOUT_ELEMENT_NUMBER    10u   /* one binary64 element slot          */
 #define DEAL_LAYOUT_ELEMENT_BOOLEAN   11u   /* one 0/1 boolean element slot       */
+/* The two scalar-nullish element slots (C3): one `{ tag, base }` record each,
+ * the storages the emitted module's own element access reads. They live here
+ * because both sides write them: the emitted array construction and the runtime
+ * JSON decode walk, whose decoded array must carry the very storage the emitted
+ * element access reads (R2, R6). */
+#define DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER  12u /* one `{ tag, binary64 }` slot  */
+#define DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN 13u /* one `{ tag, 0/1 }` slot       */
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 
 /*

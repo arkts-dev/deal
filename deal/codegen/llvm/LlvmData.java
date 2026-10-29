@@ -25,9 +25,15 @@ import java.util.Objects;
  */
 public final class LlvmData {
 
-    /** One published export of one unit: name, descriptor and code entry. */
+    /**
+     * One published export of one unit: name, descriptor and code entry.
+     * {@code invokable} marks the zero-arity synchronous value shape the
+     * entry.h zero-arity invocation can call (R9); every other export carries
+     * no code pointer, so no wrong-arity function is ever reached through that
+     * surface.
+     */
     public record UnitExport(String name, String descriptor,
-                             long functionId) {
+                             long functionId, boolean invokable) {
         public UnitExport {
             Objects.requireNonNull(name, "name must not be null");
             Objects.requireNonNull(descriptor, "descriptor must not be null");
@@ -52,6 +58,7 @@ public final class LlvmData {
     private final Map<String, String> globalSlots = new LinkedHashMap<>();
     private List<UnitModule> units = List.of();
     private boolean armTableDeclared;
+    private boolean nullPointerDeclared;
 
     /** Interns one NUL-terminated C string and answers its global name. */
     public StringConstant intern(String text) {
@@ -65,6 +72,16 @@ public final class LlvmData {
             "deal.str." + strings.size(), payload.length + 1);
         strings.put(text, constant);
         return constant;
+    }
+
+    /**
+     * The exact byte count of one interned string: {@link StringConstant#length}
+     * counts the trailing NUL the static array carries, and a DEAL string value
+     * is exactly its bytes (never NUL-terminated).
+     */
+    public int byteCount(StringConstant constant) {
+        Objects.requireNonNull(constant, "constant must not be null");
+        return constant.length() - 1;
     }
 
     /**
@@ -127,6 +144,19 @@ public final class LlvmData {
         return name;
     }
 
+    /**
+     * One private global holding a null pointer: the branchless class-atom
+     * lookup reads through it instead of a datum whose reference is null, so
+     * no emitted load ever dereferences a null pointer.
+     */
+    public String nullPointerSlot() {
+        if (!nullPointerDeclared) {
+            nullPointerDeclared = true;
+            extraDefinitions.add("@deal.nullpointer = private constant i8* null");
+        }
+        return "deal.nullpointer";
+    }
+
     /** Declares the per-unit module records of the project, in project order. */
     public void defineUnits(List<UnitModule> unitModules) {
         if (!units.isEmpty()) {
@@ -156,7 +186,18 @@ public final class LlvmData {
      * that every string they intern is part of the emitted string pool.
      */
     public List<String> render() {
-        List<String> sections = new ArrayList<>();
+        return render(List.of());
+    }
+
+    /**
+     * Every static definition of this emission, in deterministic order, with
+     * the further sections an owning member contributes (the emitted class and
+     * JSON plan data, whose names and strings are interned here so they join
+     * the one string pool).
+     */
+    public List<String> render(List<String> extraSections) {
+        Objects.requireNonNull(extraSections, "extraSections must not be null");
+        List<String> sections = new ArrayList<>(extraSections);
         defineArmTable(sections);
         defineModuleRecords(sections);
         List<String> lines = new ArrayList<>();
@@ -281,9 +322,12 @@ public final class LlvmData {
     private String exportEntryLiteral(UnitExport export) {
         return "%struct.deal_export_entry { "
             + operand(intern(export.name())) + ", "
-            + operand(intern(export.descriptor())) + ", i32 0, i32 0, i8*"
-            + " bitcast (" + exportCodeType() + " @F"
-            + export.functionId() + " to i8*) }";
+            + operand(intern(export.descriptor())) + ", i32 0, i32 0, "
+            + (export.invokable()
+                ? "i8* bitcast (" + exportCodeType() + " @F"
+                    + export.functionId() + " to i8*)"
+                : "i8* null")
+            + " }";
     }
 
     /**

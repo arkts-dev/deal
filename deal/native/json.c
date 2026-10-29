@@ -1441,7 +1441,13 @@ static int deal_json_admits_undefined(deal_descriptor *descriptor) {
     case DEAL_DESCRIPTOR_VOID:
         return 1;
     case DEAL_DESCRIPTOR_NULLISH:
-        return deal_descriptor_admits_undefined(descriptor);
+        if (deal_descriptor_admits_undefined(descriptor)) {
+            return 1;
+        }
+        /* The canonical `null|undefined` atom spells its undefined member
+         * through the base; the check core admits it by the same recursion. */
+        return deal_descriptor_type(deal_descriptor_inner(descriptor))
+            == DEAL_DESCRIPTOR_UNDEFINED ? 1 : 0;
     default:
         return 0;
     }
@@ -1595,6 +1601,34 @@ static void deal_json_element_at(deal_array *array, size_t index,
     case DEAL_LAYOUT_ELEMENT_BOOLEAN:
         input->datum = deal_data_of_boolean(*(const uint8_t *)slot != 0u);
         break;
+    case DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER: {
+        const deal_nullish_number_element *value = slot;
+        if (value->tag == DEAL_NULLISH_NULL) {
+            input->datum = deal_data_of_null();
+        } else if (value->tag == DEAL_NULLISH_UNDEFINED) {
+            input->datum = deal_data_of_undefined();
+        } else if (value->tag == DEAL_NULLISH_BASE) {
+            input->datum = deal_data_of_number(value->value);
+        } else {
+            deal_platform_fault("json: scalar-nullish number element tag"
+                                " outside the closed set");
+        }
+        break;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN: {
+        const deal_nullish_boolean_element *value = slot;
+        if (value->tag == DEAL_NULLISH_NULL) {
+            input->datum = deal_data_of_null();
+        } else if (value->tag == DEAL_NULLISH_UNDEFINED) {
+            input->datum = deal_data_of_undefined();
+        } else if (value->tag == DEAL_NULLISH_BASE) {
+            input->datum = deal_data_of_boolean(value->value != 0u);
+        } else {
+            deal_platform_fault("json: scalar-nullish boolean element tag"
+                                " outside the closed set");
+        }
+        break;
+    }
     default:
         deal_platform_fault("json: array element layout outside the runtime boxed set");
     }
@@ -2101,6 +2135,9 @@ typedef struct deal_json_decode_frame {
     deal_array *decoded;
     deal_descriptor *source_element;
     deal_descriptor *element;
+    /* The storage layout the rebuilt array records, so every decoded element
+     * lands in the slot the emitted element access reads (C3, R2). */
+    uint32_t element_layout;
     size_t index;
     size_t count;
     /* 1 while the position at `field_index` / `index` is being decoded. */
@@ -2172,17 +2209,185 @@ static void deal_json_decode_open_class(deal_json_decode_frame **frames,
     }
 }
 
+/*
+ * The element storage layout of one declared array element descriptor (C3,
+ * R2). The storage is the layout the emitted element access reads, so the walk
+ * resolves it from the element's own kind: the four boxed runtime-owned slots,
+ * the two scalar-nullish records chosen by the base kind of a nullish element,
+ * and one managed reference slot for every reference element (a nullish
+ * reference element stores the base pointer or the admitted `null`/`undefined`
+ * singleton).
+ */
+static uint32_t deal_json_element_storage(deal_descriptor *element) {
+    if (element == NULL) {
+        deal_platform_fault("json: array position without its element descriptor");
+    }
+    if (deal_descriptor_type(element) == DEAL_DESCRIPTOR_NULLISH) {
+        deal_descriptor *base = deal_descriptor_inner(element);
+        switch (deal_descriptor_type(base)) {
+        case DEAL_DESCRIPTOR_NUMBER:
+            return DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER;
+        case DEAL_DESCRIPTOR_BOOLEAN:
+            return DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN;
+        case DEAL_DESCRIPTOR_STRING:
+        case DEAL_DESCRIPTOR_ARRAY:
+        case DEAL_DESCRIPTOR_RECORD:
+        case DEAL_DESCRIPTOR_CLASS:
+        case DEAL_DESCRIPTOR_FUNCTION:
+        case DEAL_DESCRIPTOR_UNDEFINED:
+        case DEAL_DESCRIPTOR_NULL:
+            /* The canonical `null|undefined` atom carries the undefined base,
+             * and its storage is the reference slot the emitted element
+             * access reads (the same slot an admitted singleton lives in). */
+            return DEAL_LAYOUT_ELEMENT_REFERENCE;
+        default:
+            break;
+        }
+        deal_platform_fault("json: nullish element descriptor outside the"
+                            " storage set");
+    }
+    switch (deal_descriptor_type(element)) {
+    case DEAL_DESCRIPTOR_UNKNOWN:
+        return DEAL_LAYOUT_ELEMENT_DATUM;
+    case DEAL_DESCRIPTOR_NUMBER:
+        return DEAL_LAYOUT_ELEMENT_NUMBER;
+    case DEAL_DESCRIPTOR_BOOLEAN:
+        return DEAL_LAYOUT_ELEMENT_BOOLEAN;
+    case DEAL_DESCRIPTOR_STRING:
+    case DEAL_DESCRIPTOR_ARRAY:
+    case DEAL_DESCRIPTOR_RECORD:
+    case DEAL_DESCRIPTOR_CLASS:
+    case DEAL_DESCRIPTOR_FUNCTION:
+    /* A declared `null`/`undefined` element position holds the distinct
+     * singleton pointer (C3), the reference storage the emitted element
+     * access reads. */
+    case DEAL_DESCRIPTOR_NULL:
+    case DEAL_DESCRIPTOR_UNDEFINED:
+        return DEAL_LAYOUT_ELEMENT_REFERENCE;
+    default:
+        break;
+    }
+    deal_platform_fault("json: element descriptor outside the storage set");
+    return DEAL_LAYOUT_ELEMENT_DATUM;
+}
+
+/*
+ * One decoded element in its own storage slot. The element already passed its
+ * descriptor check at the `JSON_FROM_FIELD` boundary, so a datum outside the
+ * layout's own kind is a producer defect, never a coerced write: the storage
+ * slot is exactly what the emitted element access reads (C3).
+ */
+static void deal_json_stage_element(uint32_t layout, const deal_data *value,
+                                    void *slot) {
+    switch (layout) {
+    case DEAL_LAYOUT_ELEMENT_DATUM:
+        memcpy(slot, value, sizeof(*value));
+        return;
+    case DEAL_LAYOUT_ELEMENT_REFERENCE: {
+        void *referent = NULL;
+        switch (value->tag) {
+        case DEAL_DATA_NULL:
+            referent = (void *)deal_null_singleton;
+            break;
+        case DEAL_DATA_UNDEFINED:
+            referent = (void *)deal_undefined_singleton;
+            break;
+        case DEAL_DATA_STRING:
+        case DEAL_DATA_ARRAY:
+        case DEAL_DATA_TABLE:
+        case DEAL_DATA_CLASS:
+        case DEAL_DATA_ERROR:
+        case DEAL_DATA_FUNCTION:
+            referent = value->reference;
+            break;
+        default:
+            deal_platform_fault("json: a datum outside the reference set at"
+                                " a reference element slot");
+        }
+        memcpy(slot, &referent, sizeof(referent));
+        return;
+    }
+    case DEAL_LAYOUT_ELEMENT_NUMBER:
+        if (value->tag != DEAL_DATA_NUMBER) {
+            deal_platform_fault("json: a non-number datum at a number element"
+                                " slot");
+        }
+        memcpy(slot, &value->number, sizeof(value->number));
+        return;
+    case DEAL_LAYOUT_ELEMENT_BOOLEAN: {
+        if (value->tag != DEAL_DATA_BOOLEAN) {
+            deal_platform_fault("json: a non-boolean datum at a boolean"
+                                " element slot");
+        }
+        uint8_t truth = value->number != 0.0 ? 1u : 0u;
+        memcpy(slot, &truth, sizeof(truth));
+        return;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER: {
+        deal_nullish_number_element staged;
+        staged.tag = DEAL_NULLISH_BASE;
+        staged.value = 0.0;
+        if (value->tag == DEAL_DATA_NULL) {
+            staged.tag = DEAL_NULLISH_NULL;
+        } else if (value->tag == DEAL_DATA_UNDEFINED) {
+            staged.tag = DEAL_NULLISH_UNDEFINED;
+        } else if (value->tag == DEAL_DATA_NUMBER) {
+            staged.value = value->number;
+        } else {
+            deal_platform_fault("json: a datum outside the scalar-nullish set"
+                                " at a nullish number element slot");
+        }
+        memcpy(slot, &staged, sizeof(staged));
+        return;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN: {
+        deal_nullish_boolean_element staged;
+        staged.tag = DEAL_NULLISH_BASE;
+        staged.value = 0u;
+        if (value->tag == DEAL_DATA_NULL) {
+            staged.tag = DEAL_NULLISH_NULL;
+        } else if (value->tag == DEAL_DATA_UNDEFINED) {
+            staged.tag = DEAL_NULLISH_UNDEFINED;
+        } else if (value->tag == DEAL_DATA_BOOLEAN) {
+            staged.value = value->number != 0.0 ? 1u : 0u;
+        } else {
+            deal_platform_fault("json: a datum outside the scalar-nullish set"
+                                " at a nullish boolean element slot");
+        }
+        memcpy(slot, &staged, sizeof(staged));
+        return;
+    }
+    default:
+        deal_platform_fault("json: array element layout outside the runtime"
+                            " boxed set");
+    }
+}
+
+/* One decoded element staged in its own element storage. */
+typedef union {
+    deal_data datum;
+    void *reference;
+    double number;
+    uint8_t boolean;
+    deal_nullish_number_element nullish_number;
+    deal_nullish_boolean_element nullish_boolean;
+} deal_json_element_slot;
+
 /* Opens one array position: the declared element descriptor is the rebuilt
  * array's recorded one and the source's recorded descriptor types its elements
- * (spec v1.5 `T[]`: the fields receive `T` descriptors after validation). */
+ * (spec v1.5 `T[]`: the fields receive `T` descriptors after validation). The
+ * rebuilt array also records the runtime-owned *storage* layout the emitted
+ * element access reads, so a decoded `T[]` is a value of its declared type
+ * (C3, R2). */
 static void deal_json_decode_open_array(deal_json_decode_frame **frames,
                                         size_t *depth, size_t *capacity,
                                         deal_array *source,
                                         deal_descriptor *element,
                                         deal_data *destination) {
     uint32_t recorded = deal_container_array_element_descriptor(source);
+    uint32_t layout = deal_json_element_storage(element);
     deal_array *decoded = deal_container_array_new_typed(
-        DEAL_LAYOUT_ELEMENT_DATUM, deal_descriptor_reference(element), 0u);
+        layout, deal_descriptor_reference(element), 0u);
     deal_json_hold(decoded);
     deal_json_decode_frame *frame =
         deal_json_decode_open(frames, depth, capacity);
@@ -2193,6 +2398,7 @@ static void deal_json_decode_open_array(deal_json_decode_frame **frames,
     frame->source_element =
         recorded == 0u ? NULL : deal_descriptor_of_reference(recorded);
     frame->element = element;
+    frame->element_layout = layout;
     frame->count = deal_container_array_count(source);
 }
 
@@ -2309,9 +2515,14 @@ static int deal_json_decode_advance(deal_json_decode_frame *frame,
     if (frame->kind == DEAL_JSON_DECODE_ARRAY) {
         if (frame->child_open) {
             /* The element is an intermediate of the whole rebuilt array, so it
-             * is rooted across the append's own allocation (M5). */
+             * is rooted across the append's own allocation (M5), and it is
+             * staged in the array's own element storage, so the decoded array
+             * is a value of its declared element type (C3). */
             (void)deal_root_scope_hold_data(child_value);
-            deal_container_array_append(frame->decoded, child_value);
+            deal_json_element_slot staged;
+            memset(&staged, 0, sizeof(staged));
+            deal_json_stage_element(frame->element_layout, child_value, &staged);
+            deal_container_array_append(frame->decoded, &staged);
             memset(child_value, 0, sizeof(*child_value));
             frame->child_open = 0;
             frame->index += 1u;

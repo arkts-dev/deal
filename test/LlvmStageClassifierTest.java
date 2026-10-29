@@ -176,23 +176,30 @@ public final class LlvmStageClassifierTest {
                 case REJECTED -> rejectedKinds.add(kind.name());
             }
         }
-        checkEq(Set.of("CONST", "UNARY", "BINARY", "BINDING_ALLOC",
-                "BINDING_INIT", "BINDING_LOAD", "BINDING_STORE", "ASSIGN",
-                "CALL", "CLOSURE_NEW", "BRANCH", "LOOP", "TRY_CATCH", "THROW",
-                "RETURN", "BREAK", "CONTINUE", "DISCARD", "MODULE_INIT",
-                "MODULE_IMPORT", "EXPORT_READ", "EXPORT_PUBLISH",
-                "ENTRY_INVOKE"),
+        checkEq(Set.of("CONST", "UNARY", "BINARY", "STRING_CONCAT",
+                "ARRAY_NEW", "TABLE_NEW", "ARRAY_LENGTH", "MEMBER_READ",
+                "MEMBER_WRITE", "MEMBER_DELETE", "INDEX_NORMALIZE",
+                "INDEX_READ", "INDEX_WRITE", "INDEX_DELETE", "HAS_FIELD",
+                "BINDING_ALLOC", "BINDING_INIT", "BINDING_LOAD",
+                "BINDING_STORE", "ASSIGN", "CALL", "CLOSURE_NEW", "BRANCH",
+                "LOOP", "FOR_EACH", "TRY_CATCH", "THROW", "RETURN", "BREAK",
+                "CONTINUE", "DISCARD", "CLASS_NEW", "FIELD_READ",
+                "FIELD_WRITE", "FIELD_DELETE", "JSON_FROM_CLASS",
+                "JSON_TO_CLASS", "MODULE_INIT", "MODULE_IMPORT",
+                "EXPORT_READ", "EXPORT_PUBLISH", "ENTRY_INVOKE"),
             stagedKinds, "the staged operation kinds");
-        checkEq(Set.of("BOUNDARY"), staticKinds,
-            "the only statically-proven operation kind is the typed boundary");
-        check(rejectedKinds.contains("ARRAY_NEW")
-                && rejectedKinds.contains("TABLE_NEW")
-                && rejectedKinds.contains("CLASS_NEW")
-                && rejectedKinds.contains("STDLIB_CALL")
+        checkEq(Set.of("BOUNDARY", "DELETE"), staticKinds,
+            "the statically-proven operation kinds are the typed boundary and"
+                + " the delete envelope");
+        check(rejectedKinds.contains("STDLIB_CALL")
                 && rejectedKinds.contains("ASYNC_START")
-                && rejectedKinds.contains("FOR_EACH")
-                && rejectedKinds.contains("STRING_CONCAT"),
-            "the runtime-service op families are rejected: " + rejectedKinds);
+                && rejectedKinds.contains("AWAIT")
+                && rejectedKinds.contains("CLASS_FACTORY")
+                && rejectedKinds.contains("FUNCTION_ADAPT")
+                && rejectedKinds.contains("CALLBACK_INVOKE")
+                && rejectedKinds.contains("EXTERNAL_ENTRY"),
+            "the runtime-service op families outside this stage are rejected: "
+                + rejectedKinds);
         Set<String> stagedBinary = new LinkedHashSet<>();
         for (BinarySelector selector : BinarySelector.values()) {
             if (LlvmStageClassifier.binarySelector(selector) == StageSupport.STAGED) {
@@ -229,9 +236,13 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.controlSelector(ControlSelector.WHILE),
             "WHILE is a staged loop shape");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STAGED,
             LlvmStageClassifier.deleteTarget(DeleteTargetKind.TABLE_SLOT),
-            "a table delete needs the container group");
+            "a record key delete reads the container group's own presence"
+                + " metadata");
+        checkEq(StageSupport.REJECTED,
+            LlvmStageClassifier.deleteTarget(DeleteTargetKind.ARRAY_SLOT),
+            "an array element has no delete (spec v1.5)");
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.assignTarget(AssignTargetKind.VARIABLE),
             "a binding assignment is staged");
@@ -282,9 +293,10 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.REJECTED,
             LlvmStageClassifier.callMode(CallMode.HOST),
             "a host call needs the crossing machinery");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.callMode(CallMode.INDIRECT),
-            "an indirect call needs the function-value carrier");
+            "an indirect call is staged only when its callee identity resolves"
+                + " to an uncaptured lowered body (the per-call decision)");
     }
 
     // =========================================================================
@@ -294,33 +306,6 @@ public final class LlvmStageClassifierTest {
     private static void testUnsupportedFactsCarryOrigins() throws Exception {
         System.out.println("-- a rejected fact is one origin-bearing E6005 --");
         Map<String, String> fixtures = new LinkedHashMap<>();
-        fixtures.put("an array literal", """
-            export function main(): null {
-              let values: number[] = [1, 2];
-              return null;
-            }
-            """);
-        fixtures.put("a record literal", """
-            export function main(): null {
-              let record: Record<string, unknown> = { a: 1 };
-              return null;
-            }
-            """);
-        fixtures.put("a class instance", """
-            class Point {
-              x: number;
-            }
-            export function main(): null {
-              let point: Point = { x: 1 };
-              return null;
-            }
-            """);
-        fixtures.put("a string concatenation", """
-            export function main(): null {
-              let text: string = "a" + "b";
-              return null;
-            }
-            """);
         fixtures.put("a stdlib call", """
             import * as c from "std/console";
             export function main(): null {
@@ -336,17 +321,15 @@ public final class LlvmStageClassifierTest {
               return null;
             }
             """);
-        fixtures.put("a thrown error", """
-            export function main(): null {
-              throw { code: "E_X", message: "boom" };
-            }
-            """);
-        fixtures.put("a for-of loop", """
-            export function main(): null {
-              let values: number[] = [1];
-              for (let value of values) {
-                let copy: number = value;
+        fixtures.put("a captured binding", """
+            function detached(start: number): number {
+              function inner(delta: number): number {
+                return start + delta;
               }
+              return inner(2);
+            }
+            export function main(): null {
+              let total: number = detached(1);
               return null;
             }
             """);

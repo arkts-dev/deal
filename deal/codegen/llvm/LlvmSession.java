@@ -4,6 +4,8 @@ import deal.codegen.EmitterSessionBase;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.ClassFactoryRegistry;
+import deal.semantic.ir.ClassId;
+import deal.semantic.ir.ClassLayout;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.FrameLabels;
 import deal.semantic.ir.FunctionId;
@@ -47,6 +49,24 @@ final class LlvmSession extends EmitterSessionBase {
     /** The one marker of a binding that holds an emitted module record. */
     static final String MODULE_RECORD_TYPE = "%struct.deal_module*";
 
+    /** The published first emitted layout identity (M1: 1024). */
+    static final int EMITTED_LAYOUT_BASE = 1024;
+
+    /**
+     * The published runtime-owned array element layouts of the `container`
+     * group (`deal/native/memory.h`, C3/R2): the four boxed slots and the two
+     * scalar-nullish records, whose `{ tag, base }` shape is the module's own
+     * scalar-nullish representation. Both the emitted element access and the
+     * runtime JSON decode walk read one of these, so no element storage is
+     * module-owned and a decoded array is a value of its declared type.
+     */
+    static final int ELEMENT_LAYOUT_DATUM = 8;
+    static final int ELEMENT_LAYOUT_REFERENCE = 9;
+    static final int ELEMENT_LAYOUT_NUMBER = 10;
+    static final int ELEMENT_LAYOUT_BOOLEAN = 11;
+    static final int ELEMENT_LAYOUT_NULLISH_NUMBER = 12;
+    static final int ELEMENT_LAYOUT_NULLISH_BOOLEAN = 13;
+
     private final ExecutableLoweredProject project;
     private final LlvmEmissionInput input;
     private final Map<Long, LoweredFunction> functionsById = new LinkedHashMap<>();
@@ -62,6 +82,9 @@ final class LlvmSession extends EmitterSessionBase {
 
     final LlvmData data = new LlvmData();
     final LlvmDebugInfo debug = new LlvmDebugInfo();
+    private final LlvmClassPlans classPlans = new LlvmClassPlans(this);
+    private final Map<String, LlvmClassPlans.ClassDef> classDefinitions =
+        new LinkedHashMap<>();
 
     LlvmSession(LlvmEmissionInput input) {
         super(input.project().modules().get(input.project().entryModule()),
@@ -110,11 +133,93 @@ final class LlvmSession extends EmitterSessionBase {
                     List.copyOf(functionParameters));
             }
         }
+        indexClasses();
         markSkippedEntryOps(project.modules().get(project.entryModule()));
         data.defineUnits(unitModules());
         for (ModuleId module : project.modules().keySet()) {
             debug.compileUnit(displayName(module));
         }
+    }
+
+    /**
+     * The declared classes of the project closure, in canonical class-text
+     * order (C9): every unit's recorded layouts, first occurrence wins, and the
+     * builtin {@code Error} class contributes no emitted instance layout (its
+     * representation is the runtime's own record).
+     */
+    private void indexClasses() {
+        List<ClassLayout> layouts = new ArrayList<>();
+        for (ModuleId module : orderedModules) {
+            LoweredModuleUnit unit = project.modules().get(module);
+            List<ClassId> ids = new ArrayList<>(unit.classLayouts().keySet());
+            ids.sort(java.util.Comparator.comparing(ClassId::text));
+            for (ClassId id : ids) {
+                layouts.add(unit.classLayouts().get(id));
+            }
+        }
+        for (LlvmClassPlans.ClassDef def : LlvmClassPlans.definitions(layouts)) {
+            classDefinitions.putIfAbsent(def.classId().text(), def);
+        }
+    }
+
+    /** The emitted class plans and static data of this project. */
+    LlvmClassPlans classPlans() {
+        return classPlans;
+    }
+
+    /** Every declared class of the project, in canonical class-text order. */
+    List<LlvmClassPlans.ClassDef> classes() {
+        return List.copyOf(classDefinitions.values());
+    }
+
+    /** One declared class's emitted layout facts. */
+    LlvmClassPlans.ClassDef classDefinition(ClassId classId) {
+        LlvmClassPlans.ClassDef def = classDefinitions.get(classId.text());
+        if (def == null) {
+            throw new IllegalStateException("the project declares no emitted"
+                + " instance layout for the class " + classId.text());
+        }
+        return def;
+    }
+
+    /**
+     * The array element-layout identity of one element descriptor (R2): one of
+     * the published runtime-owned element storage layouts. The runtime owns all
+     * of them, including the two scalar-nullish records, so an array the emitted
+     * module builds and an array the runtime JSON walk rebuilds carry the same
+     * storage and the emitted element access reads either one (C3).
+     */
+    int elementLayout(RuntimeDescriptor element) {
+        return switch (element) {
+            case RuntimeDescriptor.Number ignored -> ELEMENT_LAYOUT_NUMBER;
+            case RuntimeDescriptor.Boolean ignored -> ELEMENT_LAYOUT_BOOLEAN;
+            case RuntimeDescriptor.Unknown ignored -> ELEMENT_LAYOUT_DATUM;
+            // A `null`/`undefined` element position holds the distinct
+            // singleton pointer (C3), the same reference slot every other
+            // reference element stores.
+            case RuntimeDescriptor.Null ignored -> ELEMENT_LAYOUT_REFERENCE;
+            case RuntimeDescriptor.Undefined ignored -> ELEMENT_LAYOUT_REFERENCE;
+            case RuntimeDescriptor.Nullable nullable -> {
+                String representation = LlvmTypeMapper.representationOf(nullable)
+                    .orElseThrow(() -> new IllegalStateException("the array"
+                        + " element type '" + element.canonicalSpecText()
+                        + "' has no staged storage"));
+                if (representation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
+                    yield ELEMENT_LAYOUT_REFERENCE;
+                }
+                yield representation.equals(LlvmTypeMapper.NULLISH_NUMBER)
+                    ? ELEMENT_LAYOUT_NULLISH_NUMBER
+                    : ELEMENT_LAYOUT_NULLISH_BOOLEAN;
+            }
+            default -> {
+                if (LlvmTypeMapper.isManagedPointer(element)) {
+                    yield ELEMENT_LAYOUT_REFERENCE;
+                }
+                throw new IllegalStateException("the array element type '"
+                    + element.canonicalSpecText()
+                    + "' has no staged element storage");
+            }
+        };
     }
 
     // =========================================================================
@@ -187,6 +292,43 @@ final class LlvmSession extends EmitterSessionBase {
     /** The parameter bindings of one function, in declaration order. */
     List<BindingId> parametersOf(FunctionId functionId) {
         return parameters.getOrDefault(functionId.id(), List.of());
+    }
+
+    /**
+     * The registered execution binding of one allocation identity: the
+     * project's units share one identity space, so an {@code Indirect} callee
+     * of one unit may name an identity whose producing {@code CLOSURE_NEW}
+     * sits in another unit of the closure (the same resolution every production
+     * backend performs).
+     */
+    deal.semantic.ir.FunctionExecutionBinding bindingOfIdentity(ValueId identity) {
+        for (ModuleId module : orderedModules) {
+            LoweredModuleUnit unit = project.modules().get(module);
+            deal.semantic.ir.FunctionExecutionBinding found =
+                unit.functionBindings().get(
+                    new deal.semantic.ir.FunctionAllocationIdentity(identity.id()));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The creation op of one lowered function ({@code CLOSURE_NEW}), or
+     * {@code null}: its capture list is the one fact that decides whether the
+     * function's value is its own code pointer or a managed environment.
+     */
+    SemanticOp closureOf(FunctionId functionId) {
+        for (ModuleId module : orderedModules) {
+            for (SemanticOp op : project.modules().get(module).ops()) {
+                if (op.payload() instanceof KindPayload.ClosureNewPayload closure
+                        && closure.function().equals(functionId)) {
+                    return op;
+                }
+            }
+        }
+        return null;
     }
 
     /** The producing op of one value, or {@code null} when producer-less. */
@@ -288,6 +430,24 @@ final class LlvmSession extends EmitterSessionBase {
                 // docs/spec-v1.5.md try/catch: the catch variable binds the
                 // identical Error as `unknown` (C4's handler join).
                 return RuntimeDescriptor.Unknown.INSTANCE;
+            }
+            if (op.payload() instanceof KindPayload.ForEachPayload iteration
+                    && iteration.binding().equals(binding)
+                    && iteration.generation() == generation) {
+                // The iteration binding is written by the FOR_EACH op itself
+                // (one fresh binding per iteration), so its declared type is
+                // the traversal's own element type (R2, spec for-of).
+                if (iteration.mode()
+                        == deal.semantic.ir.IterationMode.STRING_SCALARS) {
+                    return RuntimeDescriptor.String.INSTANCE;
+                }
+                SemanticOp iterable = producerOf(iteration.iterable());
+                if (iterable == null || !(iterable.resultType()
+                        instanceof RuntimeDescriptor.Array arrayType)) {
+                    throw new IllegalStateException("the FOR_EACH op "
+                        + op.opId() + " iterates a value that is no array");
+                }
+                return arrayType.element();
             }
         }
         for (LoweredFunction function : unit.functions().values()) {
@@ -469,7 +629,8 @@ final class LlvmSession extends EmitterSessionBase {
                 }
                 exports.add(new LlvmData.UnitExport(published.name(),
                     published.descriptor().canonicalSpecText(),
-                    closure.function().id()));
+                    closure.function().id(),
+                    LlvmStageClassifier.invokableExport(unit, published)));
             }
             modules.add(new LlvmData.UnitModule(module.path(), exports));
         }

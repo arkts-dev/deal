@@ -93,10 +93,21 @@ public final class LlvmProjectEmissionTest {
         }
         """;
 
-    private static final String ARRAY_SOURCE = """
+    /**
+     * One project of a fact outside this stage's rendered set: a nested
+     * function that captures a per-activation binding needs the closure cell of
+     * C5/M6, so its {@code BINDING_ALLOC} carries no staged decision and the
+     * compile fails with one origin-bearing E6005.
+     */
+    private static final String UNSUPPORTED_SOURCE = """
+        function detached(start: number): number {
+          function inner(delta: number): number {
+            return start + delta;
+          }
+          return inner(2);
+        }
         export function main(): null {
-          let values: number[] = [1, 2];
-          let first: number = values[0];
+          let total: number = detached(1);
           return null;
         }
         """;
@@ -451,14 +462,14 @@ public final class LlvmProjectEmissionTest {
             "the recompiled module is the same deterministic module");
         // A failing compile into the same output root preserves the prior set.
         Path failing = scratch.resolve("scalar-failing");
-        writeProject(failing, Map.of("src/main.deal", ARRAY_SOURCE),
+        writeProject(failing, Map.of("src/main.deal", UNSUPPORTED_SOURCE),
             Map.of("backend", "llvm"));
         byte[] goodBytes = Files.readAllBytes(published.resolve("main.ll"));
         List<String> goodSet = filesUnder(published);
         CompileOutcome failedOutcome = compile(failing.resolve("src/main.deal"),
             published, false, false);
         check(!failedOutcome.success(),
-            "the managed-array project is rejected with E6005");
+            "the unsupported project is rejected with E6005");
         checkEq(goodSet, filesUnder(published),
             "a failed compile leaves the prior published set exactly");
         check(java.util.Arrays.equals(goodBytes,
@@ -499,17 +510,17 @@ public final class LlvmProjectEmissionTest {
             throws Exception {
         System.out.println("-- an unclassified fact is an origin-bearing E6005 --");
         Path root = scratch.resolve("unsupported");
-        writeProject(root, Map.of("src/main.deal", ARRAY_SOURCE),
+        writeProject(root, Map.of("src/main.deal", UNSUPPORTED_SOURCE),
             Map.of("backend", "llvm"));
         Path output = root.resolve("build/llvm");
         CompileOutcome outcome = compile(root.resolve("src/main.deal"), output,
             false, false);
-        check(!outcome.success(), "the managed-array project fails the compile");
+        check(!outcome.success(), "the unsupported project fails the compile");
         check(!Files.exists(output), "nothing is published");
         CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
         checkEq("E6005", diagnostic.code(), "the rejection is one E6005");
-        check(diagnostic.message().contains("ARRAY_NEW")
-                || diagnostic.message().contains("INDEX_READ"),
+        check(diagnostic.message().contains("BINDING_ALLOC")
+                || diagnostic.message().contains("CLOSURE_NEW"),
             "the rejection names the unsupported fact: " + diagnostic.message());
         check(diagnostic.range() != null
                 && diagnostic.range().file().contains("main.deal"),

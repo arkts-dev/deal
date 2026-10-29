@@ -236,6 +236,32 @@ static uint32_t deal_text_scalar_at(const unsigned char *bytes, size_t index,
         | (uint32_t)(bytes[index + 3u] & 0x3Fu);
 }
 
+deal_string *deal_text_concat(deal_string *left, deal_string *right) {
+    const deal_string *first = deal_text_of(left);
+    const deal_string *second = deal_text_of(right);
+    if (first->byte_length > SIZE_MAX - second->byte_length) {
+        deal_platform_fault("text: concatenation size overflow");
+    }
+    size_t length = first->byte_length + second->byte_length;
+    if (length > SIZE_MAX - sizeof(struct deal_string)) {
+        deal_platform_fault("text: concatenation size overflow");
+    }
+    deal_layout_define(&deal_string_layout);
+    deal_string *joined = deal_alloc(DEAL_LAYOUT_STRING,
+                                     sizeof(struct deal_string) + length);
+    joined->byte_length = length;
+    joined->scalar_count = first->scalar_count + second->scalar_count;
+    if (first->byte_length != 0u) {
+        memcpy(joined->bytes, first->bytes, first->byte_length);
+    }
+    if (second->byte_length != 0u) {
+        memcpy(joined->bytes + first->byte_length, second->bytes,
+               second->byte_length);
+    }
+    joined->hash = deal_text_hash_bytes(joined->bytes, length);
+    return joined;
+}
+
 int deal_text_compare(deal_string *a, deal_string *b) {
     const deal_string *left = deal_text_of(a);
     const deal_string *right = deal_text_of(b);
