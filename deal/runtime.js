@@ -979,6 +979,7 @@ function $hostProjectValue($v, $nativeArrays, $memo) {
               if (key === "length" || (typeof key === "string" && /^(0|[1-9][0-9]*)$/.test(key))) {
                 if (!("value" in descriptor) || descriptor.get || descriptor.set
                     || descriptor.writable === false
+                    || (key === "length" && (descriptor.configurable === true || descriptor.enumerable === true))
                     || (key !== "length" && (descriptor.configurable === false || descriptor.enumerable === false))) return false;
                 return this.set(target, key, descriptor.value);
               }

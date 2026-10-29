@@ -1,0 +1,6 @@
+// @spec: Runtime execution model
+// @description: Revalidate retained graph at async-unicode-return
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as host from "host/probe";
+class B{r:Record<string,unknown>;}export function main():null{return null;}export async function run():Promise<number>{let r:Record<string,unknown>={};r.self=r;let b:B={r:r};function get():Record<string,unknown>{return r;}await host.mutate(r);try{get();return 0;}catch(e){return 1;}}

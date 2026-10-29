@@ -1,0 +1,6 @@
+// @spec: Runtime execution model
+// @description: Revalidate retained graph at async-callable-field-store
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as host from "host/probe";
+class B{r:Record<string,unknown>;}export function main():null{return null;}export async function run():Promise<number>{let r:Record<string,unknown>={};r.self=r;let old:Record<string,unknown>={};let b:B={r:old};function get():Record<string,unknown>{return r;}await host.mutate(r);try{b.r=r;return 0;}catch(e){if(b.r!==old){return 2;}return 1;}}

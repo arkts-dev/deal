@@ -86,8 +86,71 @@ public final class Language15RuntimeTest {
                 if (!expected.code.equals("E8001")) throw new AssertionError(expected);
             }
         }
+        callableBodyAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language15RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    /** Exercise the evaluator adapter, not just a hand-built BoundaryValueView. */
+    private static void callableBodyAdmission() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "callable-admission-").toAbsolutePath();
+        try {
+            Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
+            Files.writeString(source, """
+                import * as host from "host/probe";
+                export function main():null{return null;}
+                export function run():number {
+                    try { let value=host.value(); return 0; } catch(e) { return 1; }
+                }
+                """);
+            Path declaration = source.resolveSibling("probe.d.deal");
+            Files.writeString(declaration, "export function value():unknown;");
+            Files.writeString(work.resolve("deal.json"),
+                "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\",\"moduleRoots\":[\"src\"]}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                false, false, false, false, deal.codegen.Backend.JS,
+                Map.of("host/probe", declaration.toString()), List.of(source.getParent()), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("callable admission compilation failed");
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+            for (boolean nested : List.of(false, true)) {
+                int[] calls = {0};
+                var responder = new deal.semantic.SemanticOracle.HostResponder() {
+                    public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
+                            deal.semantic.ir.RuntimeDescriptor.Func descriptor,
+                            List<deal.semantic.SemanticOracle.Value> arguments) {
+                        calls[0]++;
+                        var signature = (deal.semantic.ir.RuntimeDescriptor.Func)
+                            deal.semantic.ir.RuntimeDescriptor.parseCanonicalText("()->number");
+                        deal.semantic.SemanticOracle.Value value = new deal.semantic.SemanticOracle.Value.FuncValue(
+                            null, signature, Map.of());
+                        if (nested) {
+                            var entries = new LinkedHashMap<String, deal.semantic.SemanticOracle.Value>();
+                            var record = new deal.semantic.SemanticOracle.Value.TableValue(entries);
+                            entries.put("self", record);
+                            entries.put("unread", value);
+                            value = record;
+                        }
+                        return new SyncOutcome.Returned(value);
+                    }
+                };
+                var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
+                    responder, compiler.checkedProject().input().entryModule(), "run", List.of());
+                if (calls[0] != 1 || !(result.terminal() instanceof
+                        deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                        || !success.resultAtom().equals("num:0x1.0p0"))
+                    throw new AssertionError("bodyless callable admitted (nested=" + nested + "): " + result.comparisonReport());
+            }
+        } finally {
+            try (var paths = Files.walk(work)) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+            }
+        }
     }
 
     private static void executeFixture(String fixture) throws Exception {

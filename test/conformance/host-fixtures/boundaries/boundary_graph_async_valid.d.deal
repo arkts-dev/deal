@@ -1,0 +1,1 @@
+export function mutate(r:Record<string,unknown>):Promise<void>;

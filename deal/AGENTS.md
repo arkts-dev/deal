@@ -8,7 +8,7 @@ Own compiler phases, runtimes and CLI integration. Preserve deterministic diagno
 - Class construction uses supplied values in declaration order. Required-nullable fields require presence; omitted optionals remain absent. Never consult defaults hooks.
 - Null, undefined and missing presence remain distinct. Missing reads normalize to undefined, not null. Sync host no-result admits void only.
 - Throw/catch/rethrow preserve Error identity, mutable code/message, facts and causes. Catch native failures with backend-defined details; unknown Errors retain trace atoms.
-- Generated Records share generic JSON omission/substitution, numeric own-key order and nested-class rules; declared fields retain declaration order. Malformed Unicode/cycles reject. Validate whole Record/unknown ingress graphs before publication, preserving identities.
+- Generated Records share generic JSON omission/substitution, numeric own-key order and nested-class rules; declared fields retain declaration order. Malformed Unicode/cycles reject. Validate whole Record/unknown ingress graphs before publication, preserving identities. Live host views reject incompatible reflection before mutating storage.
 - Class JSON reads private declaration-order storage, respects presence and detects cycles by original identity. Error exposes code/message only. Preserve original identities and metadata across host crossings and both Lua runtime load orders.
 
 Keep implementation and affected policies synchronized; place regression details in executable tests, not policy inventories.

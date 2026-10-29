@@ -4,5 +4,5 @@
 // @features: boundary-validation
 import * as host from "host/probe";
 class N{x:number;}function consume(n:N):void{}function identity(n:N):N{return n;}
-export async function run():Promise<number>{let n:N={x:1};await host.mutate(n);try{let d=identity(n);return 0;}catch(e){return 1;}}
+export async function run():Promise<number>{let n:N={x:1};let reached=false;function get():N{reached=true;return n;}await host.mutate(n);try{let d=get();return 0;}catch(e){if(!reached){return 2;}return 1;}}
 export function main():null{return null;}

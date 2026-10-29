@@ -3513,7 +3513,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 case Value.ErrorValue error ->
 
                     BoundaryValueView.ofClass(ClassId.ERROR.text());
-                case Value.FuncValue func -> BoundaryValueView.ofFunction(func.signature());
+                case Value.FuncValue func -> BoundaryValueView.ofFunction(func.signature())
+                    .withCallableValidity(func.function() != null);
                 case Value.AdapterValue adapter ->
                     BoundaryValueView.ofFunction(adapter.signature());
 

@@ -5,4 +5,4 @@
 import * as console from "std/console";
 import * as host from "host/probe";
 function consume(a:number[]):void{}function identity(a:number[]):number[]{return a;}
-export function main():null{let a:number[]=[1];host.keep(a);let u=host.echo(a);host.effect();try{let b=identity(a);console.log("OK");}catch(e){console.log("REJECT");}return null;}
+export function main():null{let a:number[]=[1];function get():number[]{console.log("RETURN_BODY");return a;}host.keep(a);let u=host.echo(a);host.effect();try{let b=get();console.log("OK");}catch(e){console.log("REJECT");}return null;}

@@ -1,0 +1,15 @@
+// @spec: Runtime execution model
+// @description: Rejected reflective writes preserve live parsed-array storage
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+import * as json from "std/json";
+export function main():null {
+    let r=json.parse("{\"a\":[1,2]}");
+    let a=r.a as unknown[];
+    host.f(a);
+    if(a.length!==1 || (a[0] as number)!==9){throw {code:"TEST",message:"retry lost live storage"};}
+    console.log("LIVE");
+    return null;
+}

@@ -7,7 +7,7 @@
   "expected": {
     "mode": "runtime-ok",
     "transcript": {
-      "stdout": "REJECT\n",
+      "stdout": "RETURN_BODY\nREJECT\n",
       "stderr": ""
     },
     "exitCode": 0

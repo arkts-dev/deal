@@ -11023,7 +11023,7 @@ local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
     -- pass a table boundary; the two internal sentinels never do).
     if type(v) == "table" and v ~= __MISSING and v ~= __NULL
         and __typedBoundaryKind(staticKind, v) == "table" then
-      return v
+      return __bcheck("unknown", staticKind, v, nil, completion, classSeen)
     end
     return fail("table")
   elseif desc == "Error" then

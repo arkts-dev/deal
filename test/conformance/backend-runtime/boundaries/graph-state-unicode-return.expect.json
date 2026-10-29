@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "RETURN_BODY\nREJECT\nUNCHANGED\nPARAM_BODY\nRECOVERED\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "hostFixture": "boundaries/boundary_graph_unicode"
+}

@@ -3,7 +3,7 @@
 Maintain specification-indexed frontend/runtime cases with deterministic metadata/exact outcomes. CorpusConformanceTest owns discovery/preparation/invocation/verdicts; only artifact launch protocols differ. Bound subprocesses; reconcile declared backends/exports/completions. Missing tools/invocations fail. Compile rejection is not execution.
 
 - Select membership by declared intent, never compiler success. Keep companions explicit/focused; preserve denominators and independent consumers.
-- Pin exact nominal atoms, including same-named siblings. Distinguish ordinary/assertion projections; include valid controls per declaration.
+- Reach return checks through captured locals without parameter checks; construct store destinations before corruption and inspect state after rejection. Pin exact nominal atoms, including same-named siblings. Distinguish ordinary/assertion projections; include valid controls per declaration.
 - Record reads are unknown. Extract/refine before concrete use, but never let an assertion mask a later parameter/element negative. Admit valid carriers before closure invalidation or fixture-only alias mutation.
 - Function-valued variable reassignment cases observe current bindings through captures, aliases, loops, branches and imported/host paths. Never-assigned, recursive and fixed-adapter controls retain static targets.
 - Arity adapters cover declaration/assignment, arguments, results, supplied fields, writes, arrays, host/stdlib and async sources. Dynamic shorter signatures reject rather than silently adapt. Ignored arguments still evaluate once. Assignment stores may adapt, but yielded RHS identity/type/effects remain original, including nested assignments and retained callbacks.

@@ -5,4 +5,4 @@
 import * as console from "std/console";
 import * as host from "host/probe";
 function consume(n:host.Node):void{}function identity(n:host.Node):host.Node{return n;}
-export function main():null{let n:host.Node={x:1,next:null};n.next=n;host.mutate(n);try{let d=identity(n);console.log("OK");}catch(e){console.log("REJECT");}return null;}
+export function main():null{let n:host.Node={x:1,next:null};n.next=n;function get():host.Node{console.log("RETURN_BODY");return n;}host.mutate(n);try{let d=get();console.log("OK");}catch(e){console.log("REJECT");}return null;}

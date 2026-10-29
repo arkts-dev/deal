@@ -1,0 +1,1 @@
+final class HostProbe{static deal.codegen.jvm.JvmRuntime.Table r;public static void corrupt(Object v){r=(deal.codegen.jvm.JvmRuntime.Table)v;r.write("bad",3.0);}public static void repair(){r.remove("bad");}}

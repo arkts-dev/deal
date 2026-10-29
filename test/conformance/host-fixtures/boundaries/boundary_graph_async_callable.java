@@ -1,0 +1,1 @@
+final class HostProbe{public static Object mutate(Object v){return java.util.concurrent.CompletableFuture.supplyAsync(()->{var r=(deal.codegen.jvm.JvmRuntime.Table)v;r.write("bad",new deal.codegen.jvm.JvmRuntime.FunctionValue(null,"function()->number","()->number",null));return deal.codegen.jvm.JvmRuntime.UNDEFINED;});}}

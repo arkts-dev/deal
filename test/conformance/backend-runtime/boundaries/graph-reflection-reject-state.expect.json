@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "backends": [
+    "js"
+  ],
+  "backendReason": "Exercises native JavaScript Proxy reflection on the live parsed-array host view.",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "LIVE\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  },
+  "hostFixture": "boundaries/boundary_graph_reflection"
+}

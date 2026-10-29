@@ -1,6 +1,6 @@
 # Semantics
 
-Own backend-neutral checked-project lowering/shared runtime meaning. Encode evaluation order, boundaries, failures, calls, classes, modules and stdlib once; complete changes through validated IR, Oracle and every emitter. No AST fallback.
+Own backend-neutral checked-project lowering/shared runtime meaning. Encode evaluation order, boundaries, failures, calls, classes, modules and stdlib once; complete changes through validated IR, Oracle and every emitter. No AST fallback. Evaluator boundary views include executable-body validity, not signature alone.
 
 ## Providers and admission
 

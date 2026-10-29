@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: Revalidate retained graph at state-callable-array-store
+// @expected: runtime-ok
+// @features: boundary-validation
+import * as console from "std/console";
+import * as host from "host/probe";
+class B{r:Record<string,unknown>;}function consume(r:Record<string,unknown>):void{console.log("PARAM_BODY");}
+export function main():null{let r:Record<string,unknown>={};r.self=r;let old:Record<string,unknown>={};let d=old;let b:B={r:old};let xs:Record<string,unknown>[]=[old];function get():Record<string,unknown>{console.log("RETURN_BODY");return r;}host.corrupt(r);try{xs[0]=r;console.log("ACCEPT");}catch(e){console.log("REJECT");}host.repair();if(xs[0]===old){console.log("UNCHANGED");}else{console.log("STORED");}xs[0]=r;if(xs[0]!==r){throw {code:"TEST",message:"retry lost identity"};}consume(r);console.log("RECOVERED");return null;}
