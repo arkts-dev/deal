@@ -161,6 +161,11 @@ uint32_t deal_root_frame_depth(void);
  * element access reads (R2, R6). */
 #define DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER  12u /* one `{ tag, binary64 }` slot  */
 #define DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN 13u /* one `{ tag, 0/1 }` slot       */
+
+/* The function carrier of C3/C5 and its capture-cell array. */
+#define DEAL_LAYOUT_FUNCTION          14u   /* one function value (C5)            */
+#define DEAL_LAYOUT_FUNCTION_ENV      15u   /* one closure capture cell array     */
+
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 
 /*
@@ -351,6 +356,24 @@ uint32_t deal_cell_generation(const void *cell);
 
 /* Stores through the barrier into a captured-binding cell (C5, `CellStore`). */
 void deal_cell_store(void *cell, void *value);
+
+/*
+ * The datum form of a captured-binding cell (C5, M4): one generation-pinned
+ * cell whose value is the persistent tagged datum of the captured binding, so
+ * a captured scalar keeps its payload beside a tag-aware managed reference and
+ * no precise scan ever reads scalar bits as a heap address. The cell's pointer
+ * entries and its datum entry are independent: a value cell stores
+ * `deal_cell_store`/`deal_cell_read`, a datum cell stores
+ * `deal_cell_store_data`/`deal_cell_read_data`, and each form leaves the other
+ * empty.
+ */
+void *deal_cell_alloc_data(const deal_data *value, uint32_t generation);
+
+/* The cell's current datum (absent-initialized as `undefined`). */
+deal_data deal_cell_read_data(const void *cell);
+
+/* Stores one datum through the tag-aware insertion barrier (C5/M2). */
+void deal_cell_store_data(void *cell, const deal_data *value);
 
 /* -- scoped runtime roots (M5) ------------------------------------------- */
 

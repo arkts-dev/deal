@@ -25,18 +25,16 @@ import java.util.Objects;
  */
 public final class LlvmData {
 
-    /**
-     * One published export of one unit: name, descriptor and code entry.
-     * {@code invokable} marks the zero-arity synchronous value shape the
-     * entry.h zero-arity invocation can call (R9); every other export carries
-     * no code pointer, so no wrong-arity function is ever reached through that
-     * surface.
-     */
-    public record UnitExport(String name, String descriptor,
-                             long functionId, boolean invokable) {
+    /** One published export of one unit: name, descriptor, async marker. */
+    public record UnitExport(String name, String descriptor, long functionId,
+                             boolean isAsync) {
         public UnitExport {
             Objects.requireNonNull(name, "name must not be null");
             Objects.requireNonNull(descriptor, "descriptor must not be null");
+        }
+
+        public UnitExport(String name, String descriptor, long functionId) {
+            this(name, descriptor, functionId, false);
         }
     }
 
@@ -56,6 +54,7 @@ public final class LlvmData {
     private final Map<String, String> origins = new LinkedHashMap<>();
     private final List<String> extraDefinitions = new ArrayList<>();
     private final Map<String, String> globalSlots = new LinkedHashMap<>();
+    private final Map<String, String> globalSlotTypes = new LinkedHashMap<>();
     private List<UnitModule> units = List.of();
     private boolean armTableDeclared;
     private boolean nullPointerDeclared;
@@ -141,6 +140,7 @@ public final class LlvmData {
         extraDefinitions.add("@" + name + " = internal global " + type
             + " zeroinitializer");
         globalSlots.put(key, name);
+        globalSlotTypes.put(name, type);
         return name;
     }
 
@@ -168,6 +168,53 @@ public final class LlvmData {
     /** The global name of one unit's {@code deal_module} record. */
     public static String moduleRecord(long index) {
         return "deal.module." + index;
+    }
+
+    /**
+     * The module-level binding slots whose value is a managed reference: a
+     * captured-binding cell pointer or a managed value. Every one is registered
+     * as a static root before user code, so a module-scope binding survives
+     * every collection (M5). A scalar or persistent-datum slot is no managed
+     * reference and is not registered.
+     */
+    public List<GlobalSlot> managedGlobalSlots() {
+        List<GlobalSlot> slots = new ArrayList<>();
+        for (Map.Entry<String, String> entry : globalSlotTypes.entrySet()) {
+            if (isManagedPointerType(entry.getValue())) {
+                slots.add(new GlobalSlot(entry.getKey(), entry.getValue()));
+            }
+        }
+        return List.copyOf(slots);
+    }
+
+    /** One module-level binding slot and its IR representation. */
+    public record GlobalSlot(String name, String type) {
+    }
+
+    /** The IR spelling of one managed pointer representation. */
+    public static boolean isManagedPointerType(String type) {
+        return type.equals("i8*") || type.equals("%struct.deal_fn*")
+            || type.equals("%struct.deal_string*")
+            || type.equals("%struct.deal_error*")
+            || type.equals("%struct.deal_array*")
+            || type.equals("%struct.deal_table*")
+            || type.equals("%struct.deal_object*");
+    }
+
+    /**
+     * The per-unit carrier slot of one stdlib function value: created once in
+     * the unit's initialization and a static root, so two reads of the same
+     * stdlib function are the same value identity.
+     */
+    public String stdlibSlot(long unitIndex, deal.semantic.ir.StdlibFunctionId function) {
+        String name = "deal.std." + unitIndex + "." + function.ordinal();
+        if (globalSlotTypes.containsKey(name)) {
+            return name;
+        }
+        extraDefinitions.add("@" + name
+            + " = internal global %struct.deal_fn* null");
+        globalSlotTypes.put(name, "%struct.deal_fn*");
+        return name;
     }
 
     /** The global name of one unit's export-entry array. */
@@ -293,14 +340,14 @@ public final class LlvmData {
             String path = operand(intern(unit.modulePath()));
             if (unit.exports().isEmpty()) {
                 lines.add("@" + exportTable(index)
-                    + " = private constant [0 x %struct.deal_export_entry] []");
+                    + " = internal global [0 x %struct.deal_export_entry] []");
             } else {
                 List<String> entries = new ArrayList<>();
                 for (UnitExport export : unit.exports()) {
                     entries.add(exportEntryLiteral(export));
                 }
                 lines.add("@" + exportTable(index)
-                    + " = private constant [" + entries.size()
+                    + " = internal global [" + entries.size()
                     + " x %struct.deal_export_entry] ["
                     + String.join(", ", entries) + "]");
             }
@@ -315,28 +362,23 @@ public final class LlvmData {
                         + unit.exports().size()
                         + " x %struct.deal_export_entry]* @"
                         + exportTable(index) + ", i64 0, i64 0)")
-                + " }");
+                + ", i8* null }");
         }
     }
 
+    /**
+     * One export record: the published name, its canonical descriptor, the
+     * async marker, a reserved zero and the managed function-value slot the
+     * unit's initialization fills after the export boundary succeeded
+     * (C2/C3). The record is mutable so the value is published only after
+     * successful initialization, and the zero-arity entry surface invokes that
+     * carrier through its boxed apply thunk.
+     */
     private String exportEntryLiteral(UnitExport export) {
         return "%struct.deal_export_entry { "
             + operand(intern(export.name())) + ", "
-            + operand(intern(export.descriptor())) + ", i32 0, i32 0, "
-            + (export.invokable()
-                ? "i8* bitcast (" + exportCodeType() + " @F"
-                    + export.functionId() + " to i8*)"
-                : "i8* null")
-            + " }";
-    }
-
-    /**
-     * The one invokable export shape of this stage: a zero-arity, non-async
-     * export whose result is {@code null} or {@code void}, so
-     * {@code deal_export_invoke} (the entry surface's zero-arity invocation,
-     * R9) forwards the callee's own outcome.
-     */
-    private static String exportCodeType() {
-        return "%struct.deal_outcome ()*";
+            + operand(intern(export.descriptor())) + ", i32 "
+            + (export.isAsync() ? 1 : 0) + ", i32 0,"
+            + " %struct.deal_fn* null }";
     }
 }

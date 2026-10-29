@@ -120,7 +120,8 @@ public final class LlvmTypeMapper {
         "deal_layout_release",
         "deal_json_plan_lookup",
         "deal_json_construct",
-        "deal_json_read_field");
+        "deal_json_read_field",
+        "deal_fn_thunk");
 
     /**
      * The named record layouts this backend declares: the published runtime
@@ -501,8 +502,8 @@ public final class LlvmTypeMapper {
     /** The representation of the {@code number} descriptor. */
     public static final String NUMBER = "double";
 
-    /** The representation of a statically resolvable function identity. */
-    public static final String CODE_POINTER = "i8*";
+    /** The managed function value of C3/C5 ({@code deal_fn*}). */
+    public static final String FN_POINTER = "%struct.deal_fn*";
 
     /** The managed {@code string} representation, {@code deal_string*} (C3). */
     public static final String STRING = "%struct.deal_string*";
@@ -577,7 +578,7 @@ public final class LlvmTypeMapper {
             case RuntimeDescriptor.Boolean ignored -> Optional.of(BOOLEAN_SSA);
             case RuntimeDescriptor.String ignored -> Optional.of(STRING);
             case RuntimeDescriptor.Unknown ignored -> Optional.of(DATA);
-            case RuntimeDescriptor.Func ignored -> Optional.of(CODE_POINTER);
+            case RuntimeDescriptor.Func ignored -> Optional.of(FN_POINTER);
             case RuntimeDescriptor.Table ignored -> Optional.of(TABLE);
             case RuntimeDescriptor.Array ignored -> Optional.of(ARRAY);
             case RuntimeDescriptor.Class classType ->
@@ -679,6 +680,7 @@ public final class LlvmTypeMapper {
     public static boolean isManagedValue(RuntimeDescriptor descriptor) {
         Objects.requireNonNull(descriptor, "descriptor must not be null");
         if (descriptor instanceof RuntimeDescriptor.Unknown
+                || descriptor instanceof RuntimeDescriptor.Func
                 || isManagedPointer(descriptor)) {
             return true;
         }
@@ -714,25 +716,14 @@ public final class LlvmTypeMapper {
 
     /**
      * Whether one recorded actual descriptor has a persistent
-     * {@code deal_data} form (C3/R3): every supported DEAL datum except a
-     * function value. A {@code Function} value is the managed {@code deal_fn*}
-     * closure carrier of C3/C5, which this stage does not construct, so a
-     * function value is never boxed into an {@code unknown} position here —
-     * the staged boundary rejects that fact instead of publishing a datum
-     * whose managed tag would carry an address the collector misclassifies.
-     * A nullish union counts through its base (its own tags name the
-     * singleton arms); {@code void} has no data position at all.
+     * {@code deal_data} form (C3/R3): every supported DEAL datum. A function
+     * value is the managed {@code deal_fn*} closure carrier of C3/C5, so its
+     * datum carries the carrier as the managed {@code reference} of the
+     * function tag. A nullish union counts through its base (its own tags name
+     * the singleton arms); {@code void} has no data position at all.
      */
     public static boolean hasDatumForm(RuntimeDescriptor actual) {
         Objects.requireNonNull(actual, "actual must not be null");
-        if (actual instanceof RuntimeDescriptor.Func
-                || actual instanceof RuntimeDescriptor.Void) {
-            return false;
-        }
-        if (actual instanceof RuntimeDescriptor.Class classType
-                && classType.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
-            return true;
-        }
         if (actual instanceof RuntimeDescriptor.Nullable nullable) {
             return hasDatumForm(nullable.inner());
         }

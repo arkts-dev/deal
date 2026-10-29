@@ -179,4 +179,76 @@ deal_status deal_value_crossing_root(deal_value_crossing *crossing,
 deal_status deal_value_crossing_resolve(deal_value_crossing *crossing,
                                         deal_value value, void **out);
 
+/* =========================================================================
+ * The function value (C3, C5)
+ * ========================================================================= */
+
+/*
+ * The boxed apply thunk of one function value (C5, H4). The generated module
+ * supplies one per lowered function: it unboxes the recorded argument
+ * presentations at the function's own parameter boundaries, calls the native
+ * body with the environments of its captured cells, and boxes the result into
+ * the persistent datum. `function` is the function value itself, so the thunk
+ * reads its captured cells through `deal_fn_capture`.
+ */
+typedef deal_outcome_data (*deal_fn_thunk)(void *function,
+                                           const deal_check_input *arguments,
+                                           uint32_t argument_count,
+                                           const deal_origin *origin);
+
+/*
+ * One function value (C3): the code entry, the captured cells of its own
+ * bindings (C5 `CLOSURE_NEW` capture list, generation-pinned), the interned
+ * canonical signature atom that dynamic dispatch validates, the async marker
+ * of its declared signature, and the boxed apply thunk. The carrier is a
+ * managed object: a root slot, a record member or a container slot that holds
+ * it traces exactly one referent, and its capture cells are traced through the
+ * carrier.
+ *
+ * `cells` holds exactly `capture_count` captured-binding cell pointers (each
+ * one a managed `memory` group cell) in the lowered capture order, or NULL for
+ * a capture-free function value. The signature text is interned, so identical
+ * text answers the identical atom for the process lifetime. A null thunk, a
+ * null signature, a capture count with a null cell array and a resource
+ * exhaustion are producer/resource faults (R10), never recoverable Errors.
+ */
+deal_fn *deal_fn_create(deal_fn_thunk thunk, const void *const *cells,
+                        uint32_t capture_count, const char *signature,
+                        int is_async);
+
+/* The carrier's boxed apply thunk. */
+deal_fn_thunk deal_fn_thunk_of(const deal_fn *function);
+
+/*
+ * The cell pointer of one captured binding (C5): the exact cell the creating
+ * `CLOSURE_NEW` captured at `index`, so reads and writes through the closure
+ * observe the captured binding's current value. An index outside the capture
+ * list is an invariant fault.
+ */
+void *deal_fn_capture(const deal_fn *function, uint32_t index);
+
+/* The number of captured cells the carrier holds. */
+uint32_t deal_fn_capture_count(const deal_fn *function);
+
+/* The carrier's canonical signature text (the interned atom's own text). */
+const char *deal_fn_signature(const deal_fn *function);
+
+/* 1 when the carrier's declared signature carries the async marker. */
+int deal_fn_is_async(const deal_fn *function);
+
+/*
+ * Invokes one function value through its boxed apply thunk (C5): the checked
+ * argument presentations in declared order, the recorded call origin, and the
+ * result as persistent tagged data (the `undefined` datum of a result-only
+ * `void` completion). The caller validates the carrier's signature atom at the
+ * recorded call signature with the `FUNCTION_SIGNATURE` boundary check, so this
+ * entry never authors a signature arm of its own. A null carrier, a carrier
+ * without a thunk, a missing origin and an argument count the thunk's own
+ * signature rejects are producer defects.
+ */
+deal_outcome_data deal_fn_apply(deal_fn *function,
+                                const deal_check_input *arguments,
+                                uint32_t argument_count,
+                                const deal_origin *origin);
+
 #endif /* DEAL_NATIVE_VALUE_H */

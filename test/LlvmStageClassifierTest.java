@@ -89,6 +89,35 @@ public final class LlvmStageClassifierTest {
             }
             """);
 
+    /**
+     * A host declaration module (H1/H7): the import of a declared host module
+     * is the one host-import fact of this stage, and `host-sync` replaces
+     * exactly that classifier arm.
+     */
+    private static final String HOST_DECLARATION = """
+        export function fetch(): number;
+        export function fetchDelayed(): Promise<number>;
+        """;
+
+    /** The reserved host-import slot: rejected with the import's own origin. */
+    private static final String HOST_IMPORT_SOURCE = """
+        import * as probe from "host/probe";
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    /** A host call reaches the same closed host-import fact at the import. */
+    private static final String HOST_CALL_SOURCE = """
+        import * as probe from "host/probe";
+
+        export function main(): null {
+          let value: number = probe.fetch();
+          return null;
+        }
+        """;
+
     private static int passed;
     private static int failed;
 
@@ -181,21 +210,20 @@ public final class LlvmStageClassifierTest {
                 "MEMBER_WRITE", "MEMBER_DELETE", "INDEX_NORMALIZE",
                 "INDEX_READ", "INDEX_WRITE", "INDEX_DELETE", "HAS_FIELD",
                 "BINDING_ALLOC", "BINDING_INIT", "BINDING_LOAD",
-                "BINDING_STORE", "ASSIGN", "CALL", "CLOSURE_NEW", "BRANCH",
-                "LOOP", "FOR_EACH", "TRY_CATCH", "THROW", "RETURN", "BREAK",
-                "CONTINUE", "DISCARD", "CLASS_NEW", "FIELD_READ",
-                "FIELD_WRITE", "FIELD_DELETE", "JSON_FROM_CLASS",
-                "JSON_TO_CLASS", "MODULE_INIT", "MODULE_IMPORT",
-                "EXPORT_READ", "EXPORT_PUBLISH", "ENTRY_INVOKE"),
+                "BINDING_STORE", "ASSIGN", "CALL", "CLOSURE_NEW",
+                "RECURSIVE_GROUP_INIT", "BRANCH", "LOOP", "FOR_EACH",
+                "TRY_CATCH", "THROW", "RETURN", "BREAK", "CONTINUE",
+                "DISCARD", "CLASS_NEW", "FIELD_READ", "FIELD_WRITE",
+                "FIELD_DELETE", "JSON_FROM_CLASS", "JSON_TO_CLASS",
+                "MODULE_INIT", "MODULE_IMPORT", "EXPORT_READ",
+                "EXPORT_PUBLISH", "ENTRY_INVOKE", "STDLIB_CALL",
+                "ASYNC_START", "AWAIT"),
             stagedKinds, "the staged operation kinds");
-        checkEq(Set.of("BOUNDARY", "DELETE"), staticKinds,
-            "the statically-proven operation kinds are the typed boundary and"
-                + " the delete envelope");
-        check(rejectedKinds.contains("STDLIB_CALL")
-                && rejectedKinds.contains("ASYNC_START")
-                && rejectedKinds.contains("AWAIT")
+        checkEq(Set.of("BOUNDARY", "DELETE", "FUNCTION_ADAPT"), staticKinds,
+            "the statically-proven operation kinds are the typed boundary, the"
+                + " delete envelope and the adapter shape");
+        check(rejectedKinds.contains("OPTIONAL_READ")
                 && rejectedKinds.contains("CLASS_FACTORY")
-                && rejectedKinds.contains("FUNCTION_ADAPT")
                 && rejectedKinds.contains("CALLBACK_INVOKE")
                 && rejectedKinds.contains("EXTERNAL_ENTRY"),
             "the runtime-service op families outside this stage are rejected: "
@@ -223,9 +251,9 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.REJECTED,
             LlvmStageClassifier.importKind(ModuleImportKind.HOST),
             "a host import is rejected here and belongs to host-sync");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STAGED,
             LlvmStageClassifier.importKind(ModuleImportKind.STDLIB),
-            "a stdlib import needs the deployed stdlib surface");
+            "a stdlib import is dispatched through the std group");
         for (FailureArmId arm : FailureArmId.values()) {
             checkEq(StageSupport.STAGED, LlvmStageClassifier.failureArm(arm),
                 "every failure arm is emitted as data: " + arm);
@@ -281,12 +309,12 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.REJECTED,
             LlvmStageClassifier.boundaryKind(BoundaryKind.HOST_TO_DEAL),
             "a host crossing boundary is outside the stage");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.boundaryKind(BoundaryKind.ASYNC_COMPLETION),
-            "an async completion boundary is outside the stage");
-        checkEq(StageSupport.REJECTED,
+            "an async completion boundary is validated at the await origin");
+        checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.boundaryKind(BoundaryKind.STDLIB_PARAMETER),
-            "a stdlib boundary is outside the stage");
+            "a stdlib boundary is owned by the std group's crossing");
         checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.callMode(CallMode.DIRECT),
             "a direct call is statically resolved");
@@ -295,8 +323,7 @@ public final class LlvmStageClassifierTest {
             "a host call needs the crossing machinery");
         checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.callMode(CallMode.INDIRECT),
-            "an indirect call is staged only when its callee identity resolves"
-                + " to an uncaptured lowered body (the per-call decision)");
+            "an indirect call dispatches through the function value carrier");
     }
 
     // =========================================================================
@@ -306,39 +333,14 @@ public final class LlvmStageClassifierTest {
     private static void testUnsupportedFactsCarryOrigins() throws Exception {
         System.out.println("-- a rejected fact is one origin-bearing E6005 --");
         Map<String, String> fixtures = new LinkedHashMap<>();
-        fixtures.put("a stdlib call", """
-            import * as c from "std/console";
-            export function main(): null {
-              c.log("hello");
-              return null;
-            }
-            """);
-        fixtures.put("an async function", """
-            async function value(): Promise<number> {
-              return 1;
-            }
-            export function main(): null {
-              return null;
-            }
-            """);
-        fixtures.put("a captured binding", """
-            function detached(start: number): number {
-              function inner(delta: number): number {
-                return start + delta;
-              }
-              return inner(2);
-            }
-            export function main(): null {
-              let total: number = detached(1);
-              return null;
-            }
-            """);
+        fixtures.put("a host import", HOST_IMPORT_SOURCE);
+        fixtures.put("a host call", HOST_CALL_SOURCE);
         Path scratch = NativeCompiler.executableScratch("llvm-classifier");
         try {
             for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
                 Path root = scratch.resolve(fixture.getKey()
                     .replaceAll("[^a-z]+", "-"));
-                writeProject(root, fixture.getValue());
+                writeHostProject(root, fixture.getValue());
                 CompileOutcome outcome = compile(root);
                 check(!outcome.success(), "the " + fixture.getKey()
                     + " project fails closed: "
@@ -411,6 +413,21 @@ public final class LlvmStageClassifierTest {
         boolean success = orchestrator.compile();
         return new CompileOutcome(success, orchestrator.diagnostics(), "",
             "");
+    }
+
+    private static void writeHostProject(Path root, String source)
+            throws IOException {
+        Files.createDirectories(root.resolve("src"));
+        Files.writeString(root.resolve("deal.json"),
+            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+                + " \"backend\": \"llvm\", \"externals\":"
+                + " {\"host/probe\": {\"declaration\":"
+                + " \"src/probe.d.deal\"}}}",
+            StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/probe.d.deal"), HOST_DECLARATION,
+            StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/main.deal"), source,
+            StandardCharsets.UTF_8);
     }
 
     private static void writeProject(Path root, String source) throws IOException {

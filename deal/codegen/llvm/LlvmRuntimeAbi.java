@@ -46,6 +46,13 @@ public final class LlvmRuntimeAbi {
     // The published declaration set
     // =========================================================================
 
+    /** The published closed check boundary kinds ({@code deal_rt.h}). */
+    public static final int BOUNDARY_TYPE_DESCRIPTOR = 0;
+    public static final int BOUNDARY_FUNCTION_SIGNATURE = 1;
+    public static final int BOUNDARY_HOST_PARAMETER = 2;
+    public static final int BOUNDARY_HOST_SYNC_RETURN = 3;
+    public static final int BOUNDARY_ASYNC_COMPLETION = 4;
+
     private static final String DECLARATION_TEXT = """
 deal_status deal_null(deal_value *out)
 deal_status deal_undefined(deal_value *out)
@@ -87,6 +94,8 @@ deal_status deal_failure_discard(deal_error_token token)
 deal_status deal_error_from_handle(deal_handle handle, deal_host_failure *out)
 deal_status deal_async_complete_value(deal_async_token token, deal_value value)
 deal_status deal_async_complete_error(deal_async_token token, const deal_host_failure *failure)
+deal_outcome_reference deal_async_start(deal_fn *callee, const deal_check_input *arguments, uint32_t argument_count, const deal_origin *origin)
+deal_outcome_data deal_async_await(void *operation, const char *completion_descriptor, const deal_origin *origin)
 deal_status deal_async_post(deal_async_token token, const deal_host_completion *completion)
 deal_completion_frame * deal_platform_frame_alloc(void)
 void deal_platform_frame_free(deal_completion_frame *frame)
@@ -133,6 +142,13 @@ deal_status deal_value_crossing_issue(deal_value_crossing *crossing, void *refer
 deal_status deal_value_crossing_issue_opaque(deal_value_crossing *crossing, void *payload, deal_value *out)
 deal_status deal_value_crossing_root(deal_value_crossing *crossing, void *referent)
 deal_status deal_value_crossing_resolve(deal_value_crossing *crossing, deal_value value, void **out)
+deal_fn * deal_fn_create(deal_fn_thunk thunk, const void *const *cells, uint32_t capture_count, const char *signature, int is_async)
+deal_fn_thunk deal_fn_thunk_of(const deal_fn *function)
+void * deal_fn_capture(const deal_fn *function, uint32_t index)
+uint32_t deal_fn_capture_count(const deal_fn *function)
+const char * deal_fn_signature(const deal_fn *function)
+int deal_fn_is_async(const deal_fn *function)
+deal_outcome_data deal_fn_apply(deal_fn *function, const deal_check_input *arguments, uint32_t argument_count, const deal_origin *origin)
 void deal_root_frame_enter(uint32_t slot_count)
 void deal_root_frame_write(uint32_t slot, void *value)
 void deal_root_frame_write_data(uint32_t slot, const deal_data *value)
@@ -155,6 +171,9 @@ void * deal_cell_alloc(void *value)
 void * deal_cell_read(const void *cell)
 uint32_t deal_cell_generation(const void *cell)
 void deal_cell_store(void *cell, void *value)
+void * deal_cell_alloc_data(const deal_data *value, uint32_t generation)
+deal_data deal_cell_read_data(const void *cell)
+void deal_cell_store_data(void *cell, const deal_data *value)
 void deal_root_scope_push(void)
 uint32_t deal_root_scope_hold(void *referent)
 uint32_t deal_root_scope_hold_data(const deal_data *value)

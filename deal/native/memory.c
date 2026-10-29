@@ -649,24 +649,28 @@ void deal_store_barrier_data(void *container, const deal_data *value) {
  * ========================================================================= */
 
 /*
- * One captured binding generation: one value slot and the generation. The
- * closure captures the cell pointer, so every alias observes one identity and
- * one value; the value slot is a managed-reference slot in the layout's precise
- * map, so every store runs the barrier.
+ * One captured binding generation: one value slot, one datum slot and the
+ * generation. The closure captures the cell pointer, so every alias observes
+ * one identity and one value. The pointer slot and the datum's managed
+ * reference are both precise managed-reference slots in the layout's map, so
+ * every store runs the barrier and a datum cell's scalar payload is never
+ * scanned as a heap address (M4): exactly one of the two forms is populated.
  */
 typedef struct {
     uint32_t generation;
     uint32_t reserved;
+    deal_data datum;
     void *value;
 } deal_cell;
 
 static const uint32_t deal_cell_reference_offsets[] = {
+    (uint32_t)offsetof(deal_cell, datum) + (uint32_t)offsetof(deal_data, reference),
     (uint32_t)offsetof(deal_cell, value)
 };
 
 static const deal_layout deal_cell_layout = {
     DEAL_LAYOUT_CELL, 0u, sizeof(deal_cell),
-    deal_cell_reference_offsets, 1u
+    deal_cell_reference_offsets, 2u
 };
 
 void *deal_cell_alloc_generation(void *value, uint32_t generation) {
@@ -674,6 +678,7 @@ void *deal_cell_alloc_generation(void *value, uint32_t generation) {
     deal_cell *cell = deal_alloc(DEAL_LAYOUT_CELL, sizeof(*cell));
     cell->generation = generation;
     cell->reserved = 0u;
+    cell->datum = deal_data_of_undefined();
     cell->value = NULL;
     if (value != NULL) {
         deal_store_barrier(cell, value);
@@ -698,6 +703,34 @@ void *deal_cell_read(const void *cell) {
     return deal_cell_of(cell)->value;
 }
 
+void *deal_cell_alloc_data(const deal_data *value, uint32_t generation) {
+    if (value == NULL) {
+        deal_platform_fault("cell: null datum");
+    }
+    deal_layout_define(&deal_cell_layout);
+    deal_cell *cell = deal_alloc(DEAL_LAYOUT_CELL, sizeof(*cell));
+    cell->generation = generation;
+    cell->reserved = 0u;
+    cell->value = NULL;
+    cell->datum = *value;
+    deal_store_barrier_data(cell, value);
+    return cell;
+}
+
+deal_data deal_cell_read_data(const void *cell) {
+    return deal_cell_of(cell)->datum;
+}
+
+void deal_cell_store_data(void *cell, const deal_data *value) {
+    if (value == NULL) {
+        deal_platform_fault("cell: null datum");
+    }
+    deal_cell *payload = deal_cell_of(cell);
+    deal_store_barrier_data(payload, value);
+    payload->datum = *value;
+}
+
+
 uint32_t deal_cell_generation(const void *cell) {
     return deal_cell_of(cell)->generation;
 }
@@ -708,6 +741,7 @@ void deal_cell_store(void *cell, void *value) {
         deal_store_barrier(payload, value);
     }
     payload->value = value;
+    payload->datum = deal_data_of_undefined();
 }
 
 /* =========================================================================

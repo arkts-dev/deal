@@ -509,7 +509,7 @@ public final class LlvmExpressionEmissionTest {
             testTypedFailureReturns(scratch);
             testExecutedObservations(scratch);
             testTerminatingTails(scratch);
-            testFunctionValueNeverBoxed(scratch);
+            testFunctionValueCarrier(scratch);
             testRejections(scratch);
         } finally {
             deleteRecursively(scratch);
@@ -1047,12 +1047,22 @@ public final class LlvmExpressionEmissionTest {
         }
         Map<SlotKey, Integer> writes = new LinkedHashMap<>();
         Map<SlotKey, String> entryStores = new LinkedHashMap<>();
+        Set<Long> cellBindings = new LinkedHashSet<>();
         int writeOps = 0;
         for (LoweredModuleUnit unit : project.modules().values()) {
             Map<Long, Long> generations = new LinkedHashMap<>();
             for (SemanticOp op : unit.ops()) {
                 if (op.payload() instanceof KindPayload.BindingAllocPayload alloc) {
                     generations.put(alloc.binding().id(), alloc.generation());
+                    if (alloc.cellKind()
+                            == deal.semantic.ir.BindingCellKind.SHARED_CELL) {
+                        cellBindings.add(alloc.binding().id());
+                    }
+                }
+                if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group) {
+                    for (BindingId binding : group.bindings()) {
+                        cellBindings.add(binding.id());
+                    }
                 }
             }
             for (SemanticOp op : unit.ops()) {
@@ -1095,24 +1105,37 @@ public final class LlvmExpressionEmissionTest {
         Set<SlotKey> keys = new LinkedHashSet<>(writes.keySet());
         keys.addAll(entryStores.keySet());
         keys.addAll(stores.keySet());
-        int writeStores = 0;
+        int directWriteStores = 0;
+        int directWrites = 0;
+        int cellWrites = 0;
         for (SlotKey key : keys) {
             boolean positioned = writes.containsKey(key)
                 || entryStores.containsKey(key);
             check(positioned, "the slot " + key + " belongs to a write op or to"
                 + " a parameter/catch position, never to an unrecorded store");
+            int emitted = stores.getOrDefault(key, 0);
+            if (cellBindings.contains(key.binding())) {
+                // A captured or reassigned binding is one heap cell (C5): the
+                // slot holds the cell pointer and every write goes through the
+                // cell's own barrier store, never through a second slot store.
+                check(emitted >= 1, "the cell slot " + key + " carries its"
+                    + " allocation store");
+                cellWrites += writes.getOrDefault(key, 0);
+                continue;
+            }
             int expected = writes.getOrDefault(key, 0)
                 + (entryStores.containsKey(key) ? 1 : 0);
-            int emitted = stores.getOrDefault(key, 0);
             checkEq(expected, emitted, "the slot " + key + " carries exactly one"
                 + " store per write op"
                 + (entryStores.containsKey(key)
                     ? " plus its single " + entryStores.get(key) + " store"
                     : ""));
             if (writes.containsKey(key)) {
-                writeStores += emitted;
+                directWriteStores += emitted;
+                directWrites += writes.get(key);
             }
         }
+        int cellStores = count(module, "call void @deal_cell_store_data(");
         check(!writes.isEmpty(), "the fixture records binding writes: "
             + writeOps);
         check(!entryStores.isEmpty(), "the fixture records the parameter and"
@@ -1121,8 +1144,10 @@ public final class LlvmExpressionEmissionTest {
             check(!entryStores.containsKey(key), "no entry store is attributed to"
                 + " a write op: " + key);
         }
-        checkEq(writeOps, writeStores, "every write op is one store and no entry"
-            + " store pads a missing write (the ASSIGN op stores nothing)");
+        checkEq(directWrites, directWriteStores, "every direct-binding write op"
+            + " is one store and no entry store pads a missing write");
+        checkEq(cellWrites, cellStores, "every captured-binding write op is"
+            + " exactly one cell store through the barrier");
         check(module.contains("store %struct.deal_data %"),
             "the widened `unknown` binding stores the declared datum, not the"
                 + " initializing expression's number");
@@ -1228,45 +1253,18 @@ public final class LlvmExpressionEmissionTest {
 
     private static void testRejections(Path scratch) throws Exception {
         System.out.println("-- a fact outside the staged set is one E6005 --");
+        // The one fact this stage still rejects is the reserved host-import
+        // slot: every other family this test once recorded as rejected is
+        // rendered by the data/class, call/closure or stdlib stage.
         Map<String, String> fixtures = new LinkedHashMap<>();
-        // The string/reference/class families this test used to record as
-        // rejected are rendered and executed by the data/class stage
-        // (`LlvmDataClassEmissionTest`); what stays outside this stage are the
-        // captured-binding cells, the stdlib dispatch, the async operations and
-        // the dynamic function-value call.
-        fixtures.put("a captured closure cell", """
-            function detached(start: number): number {
-              function inner(delta: number): number {
-                return start + delta;
-              }
-              return inner(2);
-            }
-            export function main(): null {
-              let total: number = detached(1);
-              return null;
-            }
-            """);
-        fixtures.put("a stdlib call", """
-            import * as c from "std/console";
-            export function main(): null {
-              c.log("x");
-              return null;
-            }
-            """);
-        fixtures.put("an async operation", """
-            async function value(): Promise<number> { return 1; }
-            export function main(): null { return null; }
-            """);
-        fixtures.put("a dynamic function value call", """
-            function apply(f: (a: number) => number, a: number): number {
-              return f(a);
-            }
+        fixtures.put("a host import", """
+            import * as probe from "host/probe";
             export function main(): null { return null; }
             """);
         for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
             Path root = scratch.resolve("reject-"
                 + fixture.getKey().replaceAll("[^a-z]+", "-"));
-            writeProject(root, fixture.getValue());
+            writeHostProject(root, fixture.getValue());
             CompileOutcome outcome = compile(root);
             check(!outcome.success(), "the " + fixture.getKey()
                 + " project fails closed");
@@ -2036,37 +2034,33 @@ public final class LlvmExpressionEmissionTest {
      * and an unrendered admission is one origin-bearing E6005 with nothing
      * published (C9).
      */
-    private static void testFunctionValueNeverBoxed(Path scratch) throws Exception {
-        System.out.println("-- a code pointer never becomes a managed datum --");
-        Map<String, String> rejections = new LinkedHashMap<>();
-        rejections.put("return", FUNCTION_BOXED_RETURN_SOURCE);
-        rejections.put("declaration", FUNCTION_BOXED_DECLARATION_SOURCE);
-        rejections.put("nullish", FUNCTION_BOXED_NULLISH_SOURCE);
-        for (Map.Entry<String, String> fixture : rejections.entrySet()) {
+    private static void testFunctionValueCarrier(Path scratch) throws Exception {
+        System.out.println("-- a function value is one managed carrier datum --");
+        Map<String, String> fixtures = new LinkedHashMap<>();
+        fixtures.put("return", FUNCTION_BOXED_RETURN_SOURCE);
+        fixtures.put("declaration", FUNCTION_BOXED_DECLARATION_SOURCE);
+        fixtures.put("nullish", FUNCTION_BOXED_NULLISH_SOURCE);
+        for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
             Path root = scratch.resolve("function-box-" + fixture.getKey());
             writeProject(root, fixture.getValue());
             CompileOutcome outcome = compile(root);
-            check(!outcome.success(), "the " + fixture.getKey()
-                + " of a function value into `unknown` fails closed");
-            check(!outcome.diagnostics().isEmpty(), "the " + fixture.getKey()
-                + " rejection carries a diagnostic");
-            if (!outcome.diagnostics().isEmpty()) {
-                CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
-                checkEq("E6005", diagnostic.code(), "the " + fixture.getKey()
-                    + " rejection is one E6005");
-                check(diagnostic.range() != null
-                        && diagnostic.range().startLine() >= 1
-                        && diagnostic.range().startColumn() >= 1,
-                    "the " + fixture.getKey() + " rejection carries the"
-                        + " offending op's one-based origin, not a synthetic"
-                        + " 1:1");
-                check(String.valueOf(diagnostic.message()).contains("does not"
-                        + " prove the declared 'unknown'"),
-                    "the " + fixture.getKey() + " rejection names the unimplemented"
-                        + " admission: " + diagnostic.message());
+            check(outcome.success(), "the " + fixture.getKey()
+                + " of a function value into `unknown` publishes valid IR: "
+                + outcome.diagnostics());
+            if (!outcome.success()) {
+                continue;
             }
-            check(!Files.exists(root.resolve("build/llvm")),
-                "the " + fixture.getKey() + " rejection publishes nothing");
+            String module = Files.readString(root.resolve("build/llvm/main.ll"),
+                StandardCharsets.UTF_8);
+            check(module.contains("insertvalue %struct.deal_data"
+                    + " zeroinitializer, i32 " + LlvmTypeMapper.DATA_FUNCTION
+                    + ", 0"),
+                "the " + fixture.getKey() + " boxes the carrier with the"
+                    + " function tag");
+            check(module.contains("%struct.deal_fn*"),
+                "the " + fixture.getKey() + " keeps the managed function"
+                    + " value representation");
+            testValidityAtBothLevels(root.resolve("build/llvm"));
         }
         Path root = scratch.resolve("function-typeof");
         writeProject(root, FUNCTION_TYPEOF_SOURCE);
@@ -2080,35 +2074,34 @@ public final class LlvmExpressionEmissionTest {
         String module = Files.readString(published.resolve("main.ll"),
             StandardCharsets.UTF_8);
         int functionDatum = LlvmTypeMapper.DATA_FUNCTION;
-        // The one datum constructor starts from zeroinitializer and inserts the
-        // tag alone, so a function-tagged datum's managed reference stays null
-        // and no code pointer is ever published under the function tag.
+        // The one datum constructor starts from zeroinitializer, inserts the
+        // tag alone and then the managed reference, so a function-tagged
+        // datum carries the C5 `deal_fn*` carrier and never a `.text` code
+        // pointer.
         String functionDatumStart = "insertvalue %struct.deal_data"
             + " zeroinitializer, i32 " + functionDatum + ", 0";
         int tagged = count(module, functionDatumStart);
         check(tagged > 0, "the `typeof` projection builds the function-tagged"
             + " datum: " + tagged);
-        check(!Pattern.compile("insertvalue %struct\\.deal_data"
-                + " zeroinitializer, i32 " + functionDatum
-                + ", 0,.*i8\\* ")
+        check(Pattern.compile("bitcast %struct\\.deal_fn\\* [^,]+ to i8\\*")
                 .matcher(module).find(),
-            "the function-tagged datum carries no code pointer in its managed"
+            "the function-tagged datum inserts the managed carrier into its"
                 + " reference");
         check(module.contains("@deal_descriptor_type_name("),
             "the `typeof` projection reads the tag through the one runtime entry");
-        Matcher functionSlot = Pattern.compile(
-            "store i8\\* %load\\d+, i8\\*\\* @deal\\.slot\\.\\d+\\.0")
-            .matcher(module);
-        check(functionSlot.find(), "the module-scope function binding keeps its"
-            + " own code-pointer slot and does not inherit the `unknown`"
-            + " datum of the neighbouring binding");
+        check(module.contains("store %struct.deal_fn* "),
+            "the module-scope function binding keeps its own function-value slot");
         check(module.contains("store %struct.deal_data %"),
             "the `unknown` binding of the same fixture stores its own datum");
+        check(module.contains("call %struct.deal_fn* @deal_fn_create("),
+            "the module initializes the function value carrier once");
+        check(functionOf(module, "main").contains("insertvalue %struct.deal_data"),
+            "the entry activation materializes the persistent datum");
         for (String function : List.of("seven", "main")) {
             String body = functionOf(module, function);
             check(count(body, functionDatumStart) <= 1,
-                "the " + function + " activation never builds a function datum"
-                    + " over a code pointer");
+                "the " + function + " activation builds at most one"
+                    + " function-tagged datum");
         }
         testValidityAtBothLevels(published);
     }
@@ -2175,6 +2168,22 @@ public final class LlvmExpressionEmissionTest {
                 + "' failed to compile: " + outcome.diagnostics());
         }
         return root.resolve("build/llvm");
+    }
+
+    /** The one project of a rejected fact: a declared host module's import. */
+    private static void writeHostProject(Path root, String source)
+            throws IOException {
+        Files.createDirectories(root.resolve("src"));
+        Files.writeString(root.resolve("deal.json"),
+            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+                + " \"backend\": \"llvm\", \"externals\":"
+                + " {\"host/probe\": {\"declaration\":"
+                + " \"src/probe.d.deal\"}}}",
+            StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/probe.d.deal"),
+            "export function fetch(): number;\n", StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/main.deal"), source,
+            StandardCharsets.UTF_8);
     }
 
     private static void writeProject(Path root, String source) throws IOException {

@@ -269,6 +269,38 @@ final class LlvmSession extends EmitterSessionBase {
         return input.displayNameOf(sourceId);
     }
 
+    /** One stdlib function read of a unit and its carrier slot. */
+    record StdlibRead(deal.semantic.ir.StdlibFunctionId function,
+                      RuntimeDescriptor.Func signature, String slot) {
+    }
+
+    /**
+     * The distinct stdlib function values one unit reads, in first-read order:
+     * each {@code EXPORT_READ} of a stdlib declaration module resolves through
+     * the shared catalog, and the unit initializes one carrier per function so
+     * repeated reads share one identity.
+     */
+    List<StdlibRead> stdlibReads(LoweredModuleUnit unit) {
+        Map<deal.semantic.ir.StdlibFunctionId, StdlibRead> reads =
+            new LinkedHashMap<>();
+        for (SemanticOp op : unit.ops()) {
+            if (!(op.payload() instanceof KindPayload.ExportReadPayload read)
+                    || !(read.descriptor() instanceof RuntimeDescriptor.Func signature)) {
+                continue;
+            }
+            java.util.Optional<deal.semantic.StdlibFunctionCatalog.Entry> entry =
+                deal.semantic.StdlibFunctionCatalog.lookup(
+                    read.module().path(), read.name());
+            if (entry.isEmpty()) {
+                continue;
+            }
+            deal.semantic.ir.StdlibFunctionId function = entry.get().function();
+            reads.computeIfAbsent(function, ignored -> new StdlibRead(function,
+                signature, data.stdlibSlot(moduleIndex(unit.moduleId()), function)));
+        }
+        return List.copyOf(reads.values());
+    }
+
     /** The module that owns one function id. */
     ModuleId ownerOf(FunctionId functionId) {
         ModuleId owner = functionOwner.get(functionId.id());
@@ -381,6 +413,15 @@ final class LlvmSession extends EmitterSessionBase {
     }
 
     /**
+     * Whether one op is a payload-owned child: its owner arm emits it, so a
+     * block walk that reads a block's own producing value never takes a child's
+     * result for the block's value.
+     */
+    boolean isOwnedChild(deal.semantic.ir.OpId opId) {
+        return ownedChildren.contains(opId);
+    }
+
+    /**
      * Whether one binding's allocation lives in the unit's module-init block,
      * so its storage is module-level rather than per-activation.
      */
@@ -392,6 +433,51 @@ final class LlvmSession extends EmitterSessionBase {
                     && alloc.binding().equals(binding)
                     && alloc.generation() == generation) {
                 return alloc.scope().equals(initBlock);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether one binding generation is carried in a heap cell (C5): every
+     * {@code SHARED_CELL} incarnation, every member of one recursive group and
+     * every for-of iteration binding (which the shared lowering derives as a
+     * {@code SHARED_CELL} incarnation of its own iteration scope). The emitter
+     * reads and writes such a binding through the cell, roots the cell, and a
+     * {@code CLOSURE_NEW} captures exactly the cells its capture list names.
+     */
+    boolean cellBinding(LoweredModuleUnit unit, BindingId binding,
+                        long generation) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.BindingAllocPayload alloc
+                    && alloc.binding().equals(binding)
+                    && alloc.generation() == generation) {
+                return alloc.cellKind()
+                    == deal.semantic.ir.BindingCellKind.SHARED_CELL;
+            }
+            if (op.payload() instanceof KindPayload.ForEachPayload forEach
+                    && forEach.binding().equals(binding)
+                    && forEach.generation() == generation) {
+                return true;
+            }
+            if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group
+                    && group.bindings().contains(binding)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether one binding generation is allocated in some unit's module-init
+     * block: its storage is one module-level global slot shared by every unit
+     * of the project, so a direct call into another unit's function reads the
+     * same cell the callee's own activation does.
+     */
+    boolean moduleScopedAcrossProject(BindingId binding, long generation) {
+        for (LoweredModuleUnit candidate : project.modules().values()) {
+            if (moduleScoped(candidate, binding, generation)) {
+                return true;
             }
         }
         return false;
@@ -448,6 +534,23 @@ final class LlvmSession extends EmitterSessionBase {
                         + op.opId() + " iterates a value that is no array");
                 }
                 return arrayType.element();
+            }
+            if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group
+                    && group.bindings().contains(binding)) {
+                // A recursive-group member is written only by its group's own
+                // RECURSIVE_GROUP_INIT, which publishes the member closure of
+                // the recorded function at the same index, so the declared
+                // type of that incarnation is that function's descriptor (C5:
+                // the group's cells are initialized before any call).
+                if (group.bindings().size() != group.functions().size()) {
+                    throw new IllegalStateException("the recursive group "
+                        + op.opId() + " records " + group.bindings().size()
+                        + " bindings for " + group.functions().size()
+                        + " functions");
+                }
+                LoweredFunction member = function(
+                    group.functions().get(group.bindings().indexOf(binding)));
+                return member.descriptor();
             }
         }
         for (LoweredFunction function : unit.functions().values()) {
@@ -564,7 +667,8 @@ final class LlvmSession extends EmitterSessionBase {
             throw new IllegalStateException("the binding " + binding
                 + " names no declared type in the unit " + unit.moduleId());
         }
-        if (LlvmTypeMapper.isStaticSingleton(descriptor)) {
+        if (LlvmTypeMapper.isStaticSingleton(descriptor)
+                || descriptor instanceof RuntimeDescriptor.Void) {
             return java.util.Optional.empty();
         }
         java.util.Optional<String> representation =
@@ -577,7 +681,13 @@ final class LlvmSession extends EmitterSessionBase {
         return representation;
     }
 
-    /** The staged IR representation of one value, or empty for a singleton. */
+    /**
+     * The staged IR representation of one value, or empty when the value owns
+     * no representation at all: a {@code null}/{@code undefined} singleton
+     * (whose C4 protocol reconstructs the singleton) and a result-only
+     * {@code void} (C3 gives it no data slot, and a successful completion
+     * projects to undefined only where the result protocol requires it).
+     */
     java.util.Optional<String> valueRepresentation(LoweredModuleUnit unit,
                                                    ValueId value) {
         SemanticOp producer = producerOf(value);
@@ -589,7 +699,8 @@ final class LlvmSession extends EmitterSessionBase {
             throw new IllegalStateException("the value " + value
                 + " carries no descriptor");
         }
-        if (LlvmTypeMapper.isStaticSingleton(descriptor)) {
+        if (LlvmTypeMapper.isStaticSingleton(descriptor)
+                || descriptor instanceof RuntimeDescriptor.Void) {
             return java.util.Optional.empty();
         }
         java.util.Optional<String> representation =
@@ -614,7 +725,7 @@ final class LlvmSession extends EmitterSessionBase {
      */
     private List<LlvmData.UnitModule> unitModules() {
         List<LlvmData.UnitModule> modules = new ArrayList<>();
-        for (ModuleId module : project.modules().keySet()) {
+        for (ModuleId module : modules()) {
             LoweredModuleUnit unit = project.modules().get(module);
             List<LlvmData.UnitExport> exports = new ArrayList<>();
             for (SemanticOp op : unit.ops()) {
@@ -630,11 +741,60 @@ final class LlvmSession extends EmitterSessionBase {
                 exports.add(new LlvmData.UnitExport(published.name(),
                     published.descriptor().canonicalSpecText(),
                     closure.function().id(),
-                    LlvmStageClassifier.invokableExport(unit, published)));
+                    closure.signature().isAsync()));
             }
             modules.add(new LlvmData.UnitModule(module.path(), exports));
         }
         return modules;
+    }
+
+    /** The index of one unit's published export name in its export table. */
+    int exportIndex(ModuleId module, String name) {
+        int index = 0;
+        for (LlvmData.UnitModule unit : unitModules()) {
+            if (!unit.modulePath().equals(module.path())) {
+                continue;
+            }
+            for (LlvmData.UnitExport export : unit.exports()) {
+                if (export.name().equals(name)) {
+                    return index;
+                }
+                index++;
+            }
+        }
+        throw new IllegalStateException("the module " + module
+            + " publishes no export named '" + name + "'");
+    }
+
+    /**
+     * The export-table index of one function's published closure, or -1 when
+     * the unit publishes no export of that function.
+     */
+    int exportIndexOfFunction(ModuleId module, FunctionId functionId) {
+        int index = 0;
+        for (LlvmData.UnitModule unit : unitModules()) {
+            if (!unit.modulePath().equals(module.path())) {
+                continue;
+            }
+            for (LlvmData.UnitExport export : unit.exports()) {
+                if (export.functionId() == functionId.id()) {
+                    return index;
+                }
+                index++;
+            }
+        }
+        return -1;
+    }
+
+    /** The number of export records one unit publishes. */
+    int exportCount(ModuleId module) {
+        for (LlvmData.UnitModule unit : unitModules()) {
+            if (unit.modulePath().equals(module.path())) {
+                return unit.exports().size();
+            }
+        }
+        throw new IllegalStateException("the module " + module
+            + " is outside the project closure");
     }
 
     /** The index of one module in the project order. */

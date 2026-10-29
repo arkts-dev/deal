@@ -80,9 +80,9 @@ final class LlvmModule {
     private List<String> recordLayouts() {
         List<String> layouts = new ArrayList<>();
         layouts.add("%struct.deal_module = type { i8*, i32, i32,"
-            + " %struct.deal_export_entry* }");
+            + " %struct.deal_export_entry*, i8* }");
         layouts.add("%struct.deal_export_entry = type { i8*, i8*, i32, i32,"
-            + " i8* }");
+            + " %struct.deal_fn* }");
         layouts.addAll(LlvmTypeMapper.stagedRecordDefinitions());
         layouts.addAll(LlvmTypeMapper.recordDefinitions());
         layouts.addAll(session.classPlans().recordDefinitions());
@@ -110,9 +110,32 @@ final class LlvmModule {
                 function -> function.functionId().id()));
             for (LoweredFunction function : orderedFunctions) {
                 FunctionId id = function.functionId();
-                functions.put("F" + id.id(),
-                    new LlvmFunctionEmitter(session, session.unitOf(module))
-                        .emitFunction(id));
+                LlvmFunctionEmitter emitter =
+                    new LlvmFunctionEmitter(session, session.unitOf(module));
+                functions.put("F" + id.id(), emitter.emitFunction(id));
+                functions.put(LlvmFunctionEmitter.thunkName(id),
+                    emitter.emitThunk(id));
+            }
+        }
+        for (ModuleId module : session.modules()) {
+            for (deal.semantic.ir.SemanticOp op : session.unitOf(module).ops()) {
+                if (op.payload() instanceof deal.semantic.ir.KindPayload
+                        .FunctionAdaptPayload adapt) {
+                    // A `REEVALUATE_THUNK` source adds its own re-executor,
+                    // which the adapter's boxed apply thunk invokes on every
+                    // invocation (C5/B8).
+                    if (adapt.source() instanceof deal.semantic.ir
+                            .AdaptSourceRef.Thunk) {
+                        functions.put(LlvmFunctionEmitter.adapterSourceName(
+                                op.opId()), new LlvmFunctionEmitter(session,
+                                    session.unitOf(module))
+                                .emitAdapterSource(op));
+                    }
+                    functions.put(LlvmFunctionEmitter.adapterThunkName(
+                            op.opId()), new LlvmFunctionEmitter(session,
+                                session.unitOf(module))
+                            .emitAdapterThunk(op));
+                }
             }
         }
         LlvmFunctionEmitter entryEmitter = new LlvmFunctionEmitter(session,
@@ -130,6 +153,18 @@ final class LlvmModule {
         functions.put("deal_class_plans_init",
             session.classPlans().initFunction());
         functions.putAll(session.classPlans().functions());
+        java.util.Set<deal.semantic.ir.StdlibFunctionId> stdlib =
+            new java.util.LinkedHashSet<>();
+        for (ModuleId module : session.modules()) {
+            for (LlvmSession.StdlibRead read : session.stdlibReads(
+                    session.unitOf(module))) {
+                stdlib.add(read.function());
+            }
+        }
+        for (deal.semantic.ir.StdlibFunctionId function : stdlib) {
+            functions.put(LlvmFunctionEmitter.stdlibThunkName(function),
+                entryEmitter.emitStdlibThunk(function));
+        }
         return functions;
     }
 
@@ -145,6 +180,7 @@ final class LlvmModule {
         out.append(LlvmIrPrinter.indent(1))
             .append("%installed = call i32 @deal_arm_table_install"
                 + "(%struct.deal_arm_table* @deal_project_arm_table)\n");
+        rootStaticTables(out);
         // The emitted per-layout class metadata and descriptor atoms exist
         // before any allocation or construction (M1, R2/R4).
         out.append(LlvmIrPrinter.indent(1))
@@ -172,6 +208,49 @@ final class LlvmModule {
         out.append(LlvmIrPrinter.indent(1))
             .append("ret %struct.deal_outcome { i8* null }\n}\n");
         return out.toString();
+    }
+
+    /**
+     * Registers every module-level binding slot and every export record's
+     * published function value as a static root before user code (M5), so a
+     * module-scope closure and a published export survive every collection.
+     */
+    private void rootStaticTables(StringBuilder out) {
+        List<LlvmData.GlobalSlot> slots = session.data.managedGlobalSlots();
+        List<ModuleId> modules = session.modules();
+        session.referenceRuntimeEntry("deal_static_root_register");
+        int counter = 0;
+        for (LlvmData.GlobalSlot slot : slots) {
+            out.append(LlvmIrPrinter.indent(1)).append("%rootslot")
+                .append(counter).append(" = bitcast ").append(slot.type())
+                .append("* @").append(slot.name())
+                .append(" to i8**\n");
+            out.append(LlvmIrPrinter.indent(1))
+                .append("call void @deal_static_root_register(i8** %rootslot")
+                .append(counter).append(")\n");
+            counter++;
+        }
+        for (ModuleId module : modules) {
+            long index = session.moduleIndex(module);
+            int count = session.exportCount(module);
+            for (int entry = 0; entry < count; entry++) {
+                out.append(LlvmIrPrinter.indent(1)).append("%exportroot")
+                    .append(counter).append(" = getelementptr")
+                    .append(" [").append(count)
+                    .append(" x %struct.deal_export_entry], [")
+                    .append(count).append(" x %struct.deal_export_entry]* @")
+                    .append(LlvmData.exportTable(index))
+                    .append(", i64 0, i64 ").append(entry)
+                    .append(", i32 4\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%exportptr")
+                    .append(counter).append(" = bitcast %struct.deal_fn**"
+                        + " %exportroot").append(counter).append(" to i8**\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("call void @deal_static_root_register(i8** %exportptr")
+                    .append(counter).append(")\n");
+                counter++;
+            }
+        }
     }
 
 }

@@ -21,9 +21,9 @@ import java.util.Objects;
  * field access, array element access and the generated JSON walks reach the
  * runtime's boxed surface through them, so no two emission sites can disagree
  * about a tag, a payload member or the singleton a nullish arm yields. A
- * function value has no datum form (C3: it is the managed {@code deal_fn*} of
- * C5, never a code pointer under a managed tag), and {@code void} has no data
- * position at all.</p>
+ * function value's datum carries the managed {@code deal_fn*} carrier of C5 as
+ * its {@code reference} member (never a code pointer under a managed tag), and
+ * {@code void} has no data position at all.</p>
  */
 final class LlvmDataValues {
 
@@ -43,8 +43,8 @@ final class LlvmDataValues {
 
     /**
      * Whether one descriptor has a persistent datum form (C3/R3): every
-     * supported DEAL datum except a function value, which the managed
-     * {@code deal_fn*} carrier of C5 owns, and {@code void}.
+     * supported DEAL datum — the function value carried as the managed
+     * {@code deal_fn*} of C5 included — and never {@code void}.
      */
     static boolean hasDatumForm(RuntimeDescriptor descriptor) {
         return LlvmTypeMapper.hasDatumForm(descriptor);
@@ -148,12 +148,13 @@ final class LlvmDataValues {
                 operand);
         }
         if (from instanceof RuntimeDescriptor.Func) {
-            // The function tag alone classifies the value: the managed
-            // `reference` member stays NULL, because a code pointer is not the
-            // managed `deal_fn*` of C5 and a managed tag over a `.text` address
-            // is a collector defect (C3, R2).
-            return datum(ir, Integer.toString(LlvmTypeMapper.DATA_FUNCTION),
-                null, null);
+            // The function value is the managed `deal_fn*` carrier of C3/C5, so
+            // the function-tagged datum carries the carrier as its managed
+            // `reference` member: the collector traces it and a checked
+            // boundary classifies it as a function. The datum never carries a
+            // `.text` address.
+            return referenceDatum(ir, LlvmTypeMapper.DATA_FUNCTION,
+                LlvmTypeMapper.FN_POINTER, operand);
         }
         throw new IllegalStateException("the value of type '"
             + from.canonicalSpecText() + "' has no persistent data form");
@@ -324,6 +325,16 @@ final class LlvmDataValues {
         }
         if (to instanceof RuntimeDescriptor.Nullable nullable) {
             return unboxNullish(session, ir, nullable, datum);
+        }
+        if (to instanceof RuntimeDescriptor.Func) {
+            // A function value is the managed C3/C5 carrier the datum's own
+            // `reference` member holds (R3/R4): the declared representation is
+            // the emitted `deal_fn*` the carrier already is, so the projection
+            // is one bitcast and never a retag or a second identity.
+            String raw = ir.temp("extractvalue " + LlvmTypeMapper.DATA + " "
+                + datum + ", 3");
+            return ir.temp("bitcast i8* " + raw + " to "
+                + LlvmTypeMapper.FN_POINTER);
         }
         if (LlvmTypeMapper.isManagedPointer(to)) {
             String representation = LlvmTypeMapper.representationOf(to)

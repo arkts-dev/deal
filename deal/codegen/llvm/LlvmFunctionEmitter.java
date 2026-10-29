@@ -1,5 +1,8 @@
 package deal.codegen.llvm;
 
+import deal.semantic.ir.AdaptSourceRef;
+import deal.semantic.ir.AsyncTokenId;
+import deal.semantic.ir.BindingGeneration;
 import deal.semantic.ir.BindingId;
 import deal.semantic.ir.BlockId;
 import deal.semantic.ir.BoundaryKind;
@@ -49,7 +52,12 @@ import java.util.Optional;
  * not one of the two nullish singletons. Every generated activation emits the
  * prologue and epilogue of {@code CallFrameContract} — the call-frame push with
  * its frame label, the root-frame enter with the static slot count, and the
- * root-frame leave plus call-frame pop on every exit path. A failure routed to
+ * root-frame leave plus call-frame pop on every exit path. A synthesized
+ * dispatch shim contributes no activation frame of its own: the boxed apply
+ * thunk and the adapter thunk pop their own label before they dispatch the
+ * body they call, and the {@code REEVALUATE_THUNK} re-executor pushes no label
+ * at all and leaves only its root frame, so an Error reports exactly the DEAL
+ * activations that raised and dispatched it. A failure routed to
  * a handler keeps the activation's frame (the materialized Error already
  * snapshotted it); a failure that leaves the activation pops it first.</p>
  *
@@ -71,6 +79,7 @@ final class LlvmFunctionEmitter {
     private final Map<String, String> bindingSlots = new LinkedHashMap<>();
     private final Map<String, String> bindingSlotTypes = new LinkedHashMap<>();
     private final Map<Long, String> blockLabels = new LinkedHashMap<>();
+    private final Map<Long, String> tokenSlots = new LinkedHashMap<>();
     private final Map<String, Integer> rootSlots = new LinkedHashMap<>();
     private final Deque<LoopTargets> loops = new ArrayDeque<>();
     private final Deque<FailureHandler> handlers = new ArrayDeque<>();
@@ -82,8 +91,16 @@ final class LlvmFunctionEmitter {
     private boolean fallsThrough;
     private String entryLabel;
     private String segmentLabel;
+    private boolean entryBranched;
     private int currentDebugScope;
     private FunctionId functionId;
+    /**
+     * Whether the body being emitted pushes a call-frame label of its own. A
+     * synthesized dispatch shim (the {@code REEVALUATE_THUNK} re-executor)
+     * pushes none: it is not a DEAL activation (C8), so its exit paths leave
+     * the root frame without popping a frame nobody pushed.
+     */
+    private boolean shimActivation;
 
     /** One open loop's transfer labels. */
     private record LoopTargets(long loopId, String header, String next,
@@ -120,8 +137,24 @@ final class LlvmFunctionEmitter {
             + frameLabelOperand(id) + ")");
         enterRootFrame();
         emitParameters(id, function);
-        // Lentry already terminates in the branch assemble() writes.
-        terminated = true;
+        boolean setup = !function.captures().isEmpty()
+            || hasCellParameter(id, function);
+        if (setup) {
+            // The capture prologue and every parameter cell allocation run in
+            // one setup segment after the entry prologue, so an allocation the
+            // body reads already happened while the entry still branches to
+            // the first recorded block.
+            String label = "setup" + id.id();
+            entryInit.add(LlvmIrPrinter.indent(1) + "br label %" + label);
+            text.append(label).append(":\n");
+            entryBranched = true;
+            terminated = false;
+            emitCaptureSetup(id, function);
+        } else {
+            // Lentry already terminates in the branch assemble() writes.
+            entryBranched = false;
+            terminated = true;
+        }
         emitBlock(function.body(), null);
         finishFunction(function);
         return assemble(id, function);
@@ -184,6 +217,16 @@ final class LlvmFunctionEmitter {
                     + " = icmp ne " + abi + " " + value + ", 0");
                 value = narrowed;
             }
+            if (session.cellBinding(unit, parameters.get(index), 0)) {
+                // A captured or reassigned parameter is one heap cell whose
+                // datum the closure reads (C5): the native value is stashed
+                // here and the setup segment publishes the cell below.
+                String stash = "%parameter" + index + "value";
+                allocas.add(stash + " = alloca " + representation);
+                entryInit.add(LlvmIrPrinter.indent(1) + "store " + representation
+                    + " " + value + ", " + representation + "* " + stash);
+                continue;
+            }
             String slot = bindingSlot(parameters.get(index), 0, representation);
             entryInit.add(LlvmIrPrinter.indent(1) + "store " + representation
                 + " " + value + ", " + representation + "* " + slot);
@@ -198,12 +241,10 @@ final class LlvmFunctionEmitter {
         String outcome = LlvmTypeMapper.outcomeType(
             function.descriptor().returnType());
         out.append("define internal ").append(outcome).append(" @")
-            .append(name).append('(');
+            .append(name).append("(%struct.deal_fn* %env");
         for (int index = 0; index < function.descriptor().paramTypes().size();
                 index++) {
-            if (index > 0) {
-                out.append(", ");
-            }
+            out.append(", ");
             out.append(LlvmTypeMapper.abiParameterType(
                 function.descriptor().paramTypes().get(index)))
                 .append(" %p").append(index);
@@ -217,8 +258,10 @@ final class LlvmFunctionEmitter {
         for (String line : entryInit) {
             out.append(line).append('\n');
         }
-        out.append(LlvmIrPrinter.indent(1)).append("br label %")
-            .append(blockLabel(function.body())).append('\n');
+        if (!entryBranched) {
+            out.append(LlvmIrPrinter.indent(1)).append("br label %")
+                .append(blockLabel(function.body())).append('\n');
+        }
         out.append(text);
         out.append("}\n");
         return out.toString();
@@ -281,10 +324,20 @@ final class LlvmFunctionEmitter {
             session.function(active).descriptor().returnType());
     }
 
+    /**
+     * The exit of the body being emitted ({@code CallFrameContract}): the root
+     * frame is left and the call-frame label popped. A synthesized dispatch
+     * shim that pushes no label of its own — the {@code REEVALUATE_THUNK}
+     * re-executor — leaves only its root frame, so no exit path pops a frame
+     * nobody pushed.
+     */
     private void emitEpilogue() {
         session.referenceRuntimeEntry("deal_root_frame_leave");
-        session.referenceRuntimeEntry("deal_call_frame_pop");
         emit("call void @deal_root_frame_leave()");
+        if (shimActivation) {
+            return;
+        }
+        session.referenceRuntimeEntry("deal_call_frame_pop");
         emit("call void @deal_call_frame_pop()");
     }
 
@@ -318,18 +371,54 @@ final class LlvmFunctionEmitter {
         entryInit.add(LlvmIrPrinter.indent(1) + statePointer
             + " = getelementptr %struct.deal_module, %struct.deal_module* "
             + record + ", i32 0, i32 1");
+        String failurePointer = "%failure" + index;
+        entryInit.add(LlvmIrPrinter.indent(1) + failurePointer
+            + " = getelementptr %struct.deal_module, %struct.deal_module* "
+            + record + ", i32 0, i32 4");
+        String sticky = "Lsticky" + index;
         entryInit.add(LlvmIrPrinter.indent(1) + "%st" + index
             + " = load i32, i32* " + statePointer);
-        entryInit.add(LlvmIrPrinter.indent(1) + "%uninitialized" + index
-            + " = icmp eq i32 %st" + index + ", 0");
-        entryInit.add(LlvmIrPrinter.indent(1) + "br i1 %uninitialized" + index
-            + ", label %" + start + ", label %" + finish);
+        entryInit.add(LlvmIrPrinter.indent(1) + "%ready" + index
+            + " = icmp eq i32 %st" + index + ", 2");
+        entryInit.add(LlvmIrPrinter.indent(1) + "br i1 %ready" + index
+            + ", label %" + finish + ", label %maybe" + index);
+        entryInit.add("maybe" + index + ":");
+        entryInit.add(LlvmIrPrinter.indent(1) + "%failed" + index
+            + " = icmp eq i32 %st" + index + ", 3");
+        entryInit.add(LlvmIrPrinter.indent(1) + "br i1 %failed" + index
+            + ", label %" + sticky + ", label %" + start);
+        entryInit.add(sticky + ":");
+        entryInit.add(LlvmIrPrinter.indent(1) + "%sticky" + index
+            + " = load i8*, i8** " + failurePointer);
+        entryInit.add(LlvmIrPrinter.indent(1) + "%stickyresult" + index
+            + " = insertvalue %struct.deal_outcome zeroinitializer, i8*"
+            + " %sticky" + index + ", 0");
+        entryInit.add(LlvmIrPrinter.indent(1)
+            + "call void @deal_root_frame_leave()");
+        entryInit.add(LlvmIrPrinter.indent(1)
+            + "call void @deal_call_frame_pop()");
+        entryInit.add(LlvmIrPrinter.indent(1)
+            + "ret %struct.deal_outcome %stickyresult" + index);
         text.append(start).append(":\n");
         terminated = false;
         emit("store i32 1, i32* " + statePointer);
+        emitStdlibCarriers(initUnit);
+        String failureHandler = "Linitfail" + index;
+        String pending = newAlloca("i8*", "initfailure");
+        handlers.push(new FailureHandler(failureHandler, pending));
         emit("br label %" + blockLabel(initUnit.moduleInit().initBlock()));
         terminated = true;
         emitBlock(initUnit.moduleInit().initBlock(), finish);
+        handlers.pop();
+        startSegment(failureHandler);
+        String carried = load(null, "i8*", pending);
+        emit("store i8* " + carried + ", i8** " + failurePointer);
+        emit("store i32 3, i32* " + statePointer);
+        emitEpilogue();
+        String failureAggregate = "%initerrorresult" + index;
+        emit(failureAggregate + " = insertvalue %struct.deal_outcome"
+            + " zeroinitializer, i8* " + carried + ", 0");
+        terminate("ret %struct.deal_outcome " + failureAggregate);
         startSegment(finish);
         emit("store i32 2, i32* " + statePointer);
         emitEpilogue();
@@ -498,9 +587,9 @@ final class LlvmFunctionEmitter {
             case FIELD_DELETE -> emitFieldDelete(op);
             case JSON_FROM_CLASS -> emitJsonFromClass(op);
             case JSON_TO_CLASS -> emitJsonToClass(op);
-            case BINDING_ALLOC, ENTRY_INVOKE -> {
-                // Structural in this stage: the binding slot is declared on
-                // first use and the entry delegation is
+            case BINDING_ALLOC -> emitBindingAlloc(op);
+            case ENTRY_INVOKE -> {
+                // Structural: the entry delegation is
                 // DEAL_PROJECT_RUN_MAIN's own call.
             }
             case ASSIGN, DELETE -> {
@@ -514,10 +603,15 @@ final class LlvmFunctionEmitter {
                 // intentional discard leaves no pending error state (C4).
             }
             case BOUNDARY -> emitBoundary(op);
-            case MODULE_INIT, EXPORT_PUBLISH -> {
-                // The module-init state machine wraps the init block and the
-                // export record is static data (C2).
+            case MODULE_INIT -> {
+                // The module-init state machine wraps the init block (C2).
             }
+            case EXPORT_PUBLISH -> emitExportPublish(op);
+            case RECURSIVE_GROUP_INIT -> emitRecursiveGroupInit(op);
+            case FUNCTION_ADAPT -> emitFunctionAdapt(op);
+            case STDLIB_CALL -> emitStdlibCall(op);
+            case ASYNC_START -> emitAsyncStart(op);
+            case AWAIT -> emitAwait(op);
             case BINDING_INIT, BINDING_STORE -> emitBindingWrite(op);
             case BINDING_LOAD -> emitBindingLoad(op);
             case MODULE_IMPORT -> emitModuleImport(op);
@@ -739,8 +833,12 @@ final class LlvmFunctionEmitter {
                 // Managed identity is compared on the byte pointer every C3
                 // reference representation reduces to (C6: no structural
                 // equality and no wrapper-slot identity).
-                String leftOperand = referenceOperand(op, left, leftDescriptor);
-                String rightOperand = referenceOperand(op, right, rightDescriptor);
+                String leftOperand = identityPointer(
+                    loadRepresentation(left, leftDescriptor, op),
+                    leftDescriptor, op);
+                String rightOperand = identityPointer(
+                    loadRepresentation(right, rightDescriptor, op),
+                    rightDescriptor, op);
                 yield emitTemporary(op, "icmp " + arm.predicate() + " i8* "
                     + leftOperand + ", " + rightOperand);
             }
@@ -748,22 +846,25 @@ final class LlvmFunctionEmitter {
         storeResult(op, resultRepresentation(op).orElseThrow(), result);
     }
 
-    /** One reference operand as the byte pointer managed identity compares. */
-    private String referenceOperand(SemanticOp op, ValueId value,
-                                    RuntimeDescriptor descriptor) {
-        String representation = stagedRepresentation(descriptor);
-        String operand = loadRepresentation(value, descriptor, op);
-        if (representation.equals("i8*")) {
-            return operand;
+    /** {@code STRING_*}: the one {@code deal_text_compare} authority (R8). */
+    /** One operand as the byte pointer the managed identity compares (C6). */
+    private String identityPointer(String operand, RuntimeDescriptor descriptor,
+                                   SemanticOp op) {
+        if (descriptor instanceof RuntimeDescriptor.Func) {
+            return emitTemporary(op, "bitcast " + LlvmTypeMapper.FN_POINTER + " "
+                + operand + " to i8*");
         }
         if (LlvmTypeMapper.isManagedPointer(descriptor)) {
-            return emitTemporary(op, "bitcast " + representation + " "
-                + operand + " to i8*");
+            // Every managed representation reduces to the one byte pointer
+            // managed identity compares: a string, an array, a record or a
+            // class instance (C6: no structural equality and no wrapper-slot
+            // identity).
+            return emitTemporary(op, "bitcast "
+                + stagedRepresentation(descriptor) + " " + operand + " to i8*");
         }
         return operand;
     }
 
-    /** {@code STRING_*}: the one {@code deal_text_compare} authority (R8). */
     private String emitTextCompare(SemanticOp op, LlvmSelectorArms.BinaryArm arm,
                                    ValueId left, ValueId right) {
         session.referenceRuntimeEntry("deal_text_compare");
@@ -946,7 +1047,9 @@ final class LlvmFunctionEmitter {
                     + comparison + ", 0");
             }
             case RuntimeDescriptor.Func ignored -> emitTemporary(op,
-                "icmp " + arm.predicate() + " i8* " + left + ", " + right);
+                "icmp " + arm.predicate() + " i8* "
+                    + identityPointer(left, inner, op) + ", "
+                    + identityPointer(right, inner, op));
             case RuntimeDescriptor.Array _,
                  RuntimeDescriptor.Table _,
                  RuntimeDescriptor.Class _ ->
@@ -1025,7 +1128,8 @@ final class LlvmFunctionEmitter {
                 + LlvmTypeMapper.representationOf(inner).orElseThrow());
         }
         if (inner instanceof RuntimeDescriptor.Func) {
-            return pointer;
+            return emitTemporary(op, "bitcast i8* " + pointer + " to "
+                + LlvmTypeMapper.FN_POINTER);
         }
         throw new IllegalStateException("the nullish base '"
             + inner.canonicalSpecText() + "' has no staged representation");
@@ -1068,6 +1172,33 @@ final class LlvmFunctionEmitter {
         Optional<String> representation = session.bindingRepresentation(unit,
             payload.binding(), payload.generation());
         if (representation.isEmpty()) {
+            return;
+        }
+        if (session.cellBinding(unit, payload.binding(), payload.generation())) {
+            RuntimeDescriptor declared = session.bindingType(unit,
+                payload.binding(), payload.generation());
+            if (declared == null) {
+                throw new IllegalStateException("the captured binding "
+                    + payload.binding() + " carries no declared type");
+            }
+            session.referenceRuntimeEntry("deal_cell_read_data");
+            String cell = load(op, "i8*", bindingSlot(payload.binding(),
+                payload.generation(), "i8*"));
+            String datum = callRecord(op, LlvmTypeMapper.DATA,
+                "deal_cell_read_data", "i8* " + cell);
+            RuntimeDescriptor cellReadType = op.resultType()
+                instanceof RuntimeDescriptor descriptor ? descriptor : declared;
+            if (declared.equals(cellReadType)) {
+                storeResult(op, representation.get(),
+                    datumToRepresentation(declared, datum, op));
+                return;
+            }
+            // A narrowed read of a cell sees the refinement the frontend
+            // proved (R4): the cell already holds the persistent datum, so the
+            // refinement validates it and projects the refined representation
+            // out of it, exactly as the direct binding's read does.
+            storeResult(op, stagedRepresentation(cellReadType),
+                narrowedFromDatum(op, declared, cellReadType, datum));
             return;
         }
         String slot = bindingSlot(payload.binding(), payload.generation(),
@@ -1133,6 +1264,24 @@ final class LlvmFunctionEmitter {
         // as its own singleton tag (R2).
         String held = datum ? loaded
             : LlvmDataValues.box(session, sink, declared, loaded);
+        return narrowedFromDatum(op, declared, refined, held);
+    }
+
+    /**
+     * Validates one held persistent datum against the refined descriptor at the
+     * read's own origin and projects the refined representation out of it
+     * (C3, R4). A stale refinement fails with the declared E8001 arm there
+     * instead of yielding a base value the binding never held.
+     */
+    private String narrowedFromDatum(SemanticOp op, RuntimeDescriptor declared,
+                                     RuntimeDescriptor refined, String held) {
+        if (!LlvmTypeMapper.hasDatumForm(refined)) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the narrowed read " + op.opId()
+                    + ": the refined type '" + refined.canonicalSpecText()
+                    + "' has no persistent data form (C9)",
+                op.origin().span().range());
+        }
         String slot = newAlloca("%struct.deal_check_input", "checked");
         emit("store %struct.deal_check_input "
             + checkInputRecordOf(op, declared, held)
@@ -1165,6 +1314,21 @@ final class LlvmFunctionEmitter {
         String stored = declared == null
             ? loadValue(value, representation.get(), op)
             : convert(value, descriptorOfValue(value), declared, op);
+        if (session.cellBinding(unit, binding, generation)) {
+            RuntimeDescriptor datumType = declared == null
+                ? descriptorOfValue(value) : declared;
+            String slot = bindingSlot(binding, generation, representation.get());
+            String cell = load(op, "i8*", slot);
+            String datum = emitDatum(datumType, stored, op);
+            String datumSlot = newAlloca(LlvmTypeMapper.DATA, "cellstore");
+            emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+                + LlvmTypeMapper.DATA + "* " + datumSlot);
+            session.referenceRuntimeEntry("deal_cell_store_data");
+            emit("call void @deal_cell_store_data(i8* " + cell + ", "
+                + LlvmTypeMapper.DATA + "* " + datumSlot + ")"
+                + debugAttachment(op));
+            return;
+        }
         String slot = bindingSlot(binding, generation, representation.get());
         emit("store " + representation.get() + " " + stored + ", "
             + representation.get() + "* " + slot);
@@ -1413,7 +1577,8 @@ final class LlvmFunctionEmitter {
         String outcome = emitTemporary(op, "call %struct.deal_outcome"
             + " @deal_check_value(%struct.deal_descriptor* " + atom
             + ", %struct.deal_check_input* byval(%struct.deal_check_input) "
-            + inputSlot + ", i32 0, %struct.deal_check_context* " + context + ")");
+            + inputSlot + ", i32 " + checkBoundaryKind(declared)
+            + ", %struct.deal_check_context* " + context + ")");
         String error = emitTemporary(op, "extractvalue %struct.deal_outcome "
             + outcome + ", 0");
         String failed = emitTemporary(op, "icmp ne i8* " + error + ", null");
@@ -1425,6 +1590,19 @@ final class LlvmFunctionEmitter {
         startSegment(failureLabel);
         routeFailure(error);
         startSegment(proceedLabel);
+    }
+
+    /**
+     * The closed boundary kind of one checked descriptor (R4): a function
+     * descriptor belongs to the {@code FUNCTION_SIGNATURE} boundary and every
+     * other descriptor to {@code TYPE_DESCRIPTOR}, because the runtime rejects
+     * the other pairing. A nullish position is its own descriptor kind, so its
+     * check reaches a function base through {@code TYPE_DESCRIPTOR}.
+     */
+    private static int checkBoundaryKind(RuntimeDescriptor declared) {
+        return declared instanceof RuntimeDescriptor.Func
+            ? LlvmRuntimeAbi.BOUNDARY_FUNCTION_SIGNATURE
+            : LlvmRuntimeAbi.BOUNDARY_TYPE_DESCRIPTOR;
     }
 
     /**
@@ -1451,6 +1629,69 @@ final class LlvmFunctionEmitter {
             + checkInputRecord(op, input) + ", %struct.deal_check_input* "
             + slot);
         return slot;
+    }
+
+    /**
+     * The carried canonical signature text of one checked datum, or
+     * {@code null} when the presented position can carry no function-tagged
+     * datum: a function-typed position carries the interned text of the
+     * carrier the datum references, and an {@code unknown} or function-based
+     * nullish position — whose datum could be any supported data — selects it
+     * on the datum's own tag, so a {@code null}/{@code undefined} singleton or
+     * any other datum is never dereferenced as a carrier. The runtime
+     * classifies every function-tagged datum with this text
+     * ({@code deal_check_classify} faults without it) and a function position
+     * compares it against the declared signature.
+     */
+    private String carriedSignature(SemanticOp op, RuntimeDescriptor actual,
+                                    String datum) {
+        if (actual instanceof RuntimeDescriptor.Func) {
+            return carrierSignature(op, datum);
+        }
+        if (!carriesFunctionDatum(actual)) {
+            return null;
+        }
+        String slot = newAlloca("i8*", "signature");
+        emit("store i8* null, i8** " + slot);
+        String tag = emitTemporary(op, "extractvalue " + LlvmTypeMapper.DATA
+            + " " + datum + ", 0");
+        String isFunction = emitTemporary(op, "icmp eq i32 " + tag + ", "
+            + LlvmTypeMapper.DATA_FUNCTION);
+        String functionLabel = newLabel("signature.function");
+        String joinLabel = newLabel("signature.join");
+        emit("br i1 " + isFunction + ", label %" + functionLabel + ", label %"
+            + joinLabel);
+        terminated = true;
+        startSegment(functionLabel);
+        emit("store i8* " + carrierSignature(op, datum) + ", i8** " + slot);
+        terminate("br label %" + joinLabel);
+        startSegment(joinLabel);
+        return loadQuiet("i8*", slot);
+    }
+
+    /**
+     * Whether one presented descriptor's datum can carry the function tag: a
+     * function value, an {@code unknown} datum of any supported kind, or a
+     * nullish position whose base is one of those.
+     */
+    private static boolean carriesFunctionDatum(RuntimeDescriptor actual) {
+        if (actual instanceof RuntimeDescriptor.Func
+                || actual instanceof RuntimeDescriptor.Unknown) {
+            return true;
+        }
+        return actual instanceof RuntimeDescriptor.Nullable nullable
+            && carriesFunctionDatum(nullable.inner());
+    }
+
+    /** The interned signature text of the carrier one function datum references. */
+    private String carrierSignature(SemanticOp op, String datum) {
+        session.referenceRuntimeEntry("deal_fn_signature");
+        String reference = emitTemporary(op, "extractvalue " + LlvmTypeMapper.DATA
+            + " " + datum + ", 3");
+        String carrier = emitTemporary(op, "bitcast i8* " + reference + " to "
+            + LlvmTypeMapper.FN_POINTER);
+        return emitTemporary(op, "call i8* @deal_fn_signature("
+            + LlvmTypeMapper.FN_POINTER + " " + carrier + ")");
     }
 
     /** One unnamed load of the current op group. */
@@ -1526,19 +1767,23 @@ final class LlvmFunctionEmitter {
     }
 
     private String bindingSlot(BindingId binding, long generation, String type) {
-        if (session.moduleScoped(unit, binding, generation)) {
-            return "@" + session.data.globalSlot(binding, generation, type);
+        // A captured or reassigned binding incaration is one heap cell (C5):
+        // its slot holds the cell pointer, never the value itself.
+        String slotType = session.cellBinding(unit, binding, generation)
+            ? "i8*" : type;
+        if (session.moduleScopedAcrossProject(binding, generation)) {
+            return "@" + session.data.globalSlot(binding, generation, slotType);
         }
         String key = binding.id() + "_" + generation;
         String slot = bindingSlots.computeIfAbsent(key, ignored -> {
             String name = session.cell(binding, generation);
-            allocas.add(name + " = alloca " + type);
+            allocas.add(name + " = alloca " + slotType);
             return name;
         });
-        String bound = bindingSlotTypes.putIfAbsent(key, type);
-        if (bound != null && !bound.equals(type)) {
+        String bound = bindingSlotTypes.putIfAbsent(key, slotType);
+        if (bound != null && !bound.equals(slotType)) {
             throw new IllegalStateException("the binding " + binding
-                + " is used as both " + bound + " and " + type);
+                + " is used as both " + bound + " and " + slotType);
         }
         return slot;
     }
@@ -1576,6 +1821,22 @@ final class LlvmFunctionEmitter {
         String name = "%" + prefix + (loadCounter++);
         allocas.add(name + " = alloca " + type);
         return name;
+    }
+
+    /**
+     * Calls one published entry whose record return crosses the C ABI through
+     * the hidden {@code sret} pointer (a record larger than two eightbytes),
+     * and answers the loaded record value.
+     */
+    private String callRecord(SemanticOp op, String recordType, String callee,
+                              String arguments) {
+        String slot = newAlloca(recordType, "callresult");
+        emit("call void @" + callee + "(" + recordType + "* sret("
+            + recordType + ") " + slot
+            + (arguments.isEmpty() ? "" : ", " + arguments) + ")"
+            + (op == null ? "" : debugAttachment(op)));
+        return emitTemporary(op, "load " + recordType + ", " + recordType
+            + "* " + slot);
     }
 
     // =========================================================================
@@ -1625,7 +1886,8 @@ final class LlvmFunctionEmitter {
         String representation = stagedRepresentation(descriptor);
         String pointer = operand == null ? load(op, representation, slot)
             : operand;
-        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)
+                || descriptor instanceof RuntimeDescriptor.Func) {
             // A managed representation pointer is never a nullish singleton:
             // the nullish form of a reference position is its own `i8*`.
             pointer = emitTemporary(op, "bitcast " + representation + " "
@@ -1676,7 +1938,8 @@ final class LlvmFunctionEmitter {
             return;
         }
         String pointer = parameter;
-        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)
+                || descriptor instanceof RuntimeDescriptor.Func) {
             pointer = "%rootcast" + (loadCounter++);
             entryInit.add(LlvmIrPrinter.indent(1) + pointer + " = bitcast "
                 + stagedRepresentation(descriptor) + " " + parameter + " to i8*");
@@ -1759,6 +2022,12 @@ final class LlvmFunctionEmitter {
     private void emitModuleImport(SemanticOp op) {
         KindPayload.ModuleImportPayload payload =
             (KindPayload.ModuleImportPayload) op.payload();
+        if (payload.kind() == deal.semantic.ir.ModuleImportKind.STDLIB) {
+            // A stdlib declaration module is the compile-time type authority;
+            // its operations reach the `std` group through STDLIB_CALL, so
+            // there is no module record and no import cell to publish (R7).
+            return;
+        }
         ModuleId imported = payload.resolvedModule();
         if (!session.modules().contains(imported)) {
             throw new IllegalStateException("the import " + payload.rawSpecifier()
@@ -1782,65 +2051,353 @@ final class LlvmFunctionEmitter {
         }
     }
 
+    /**
+     * {@code BINDING_ALLOC} of a captured or reassigned binding: one heap cell
+     * per binding generation (C5). The slot holds the cell pointer and the cell
+     * is rooted, so every alias observes one identity and one value.
+     */
+    private void emitBindingAlloc(SemanticOp op) {
+        KindPayload.BindingAllocPayload payload =
+            (KindPayload.BindingAllocPayload) op.payload();
+        if (!session.cellBinding(unit, payload.binding(), payload.generation())) {
+            // A direct binding's storage is its own native slot, declared on
+            // first use.
+            return;
+        }
+        if (setupPublishedCell(payload.binding(), payload.generation())) {
+            // A parameter's generation 0 cell is published by the activation's
+            // setup segment from the incoming argument (C5): its own
+            // BINDING_ALLOC must not allocate a second cell holding
+            // `undefined`, or the closure and every alias would observe it.
+            return;
+        }
+        session.referenceRuntimeEntry("deal_cell_alloc_data");
+        session.referenceRuntimeEntry("deal_data_of_undefined");
+        String undefined = callRecord(op, LlvmTypeMapper.DATA,
+            "deal_data_of_undefined", "");
+        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
+        emit("store " + LlvmTypeMapper.DATA + " " + undefined + ", "
+            + LlvmTypeMapper.DATA + "* " + datumSlot);
+        String cell = emitTemporary(op, "call i8* @deal_cell_alloc_data("
+            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 "
+            + payload.generation() + ")");
+        String slot = bindingSlot(payload.binding(), payload.generation(), "i8*");
+        emit("store i8* " + cell + ", i8** " + slot);
+        rootCellAt(slot, op);
+    }
+
+    /**
+     * Whether this activation's setup segment already published the cell of one
+     * binding generation: every parameter is stashed by the prologue and its
+     * generation 0 cell is allocated there before the body runs (C5), so the
+     * body's own {@code BINDING_ALLOC} for that incarnation owns no allocation.
+     */
+    private boolean setupPublishedCell(BindingId binding, long generation) {
+        return generation == 0 && functionId != null
+            && session.parametersOf(functionId).contains(binding);
+    }
+
+    /** Writes one cell-pointer slot into its own root-frame slot (M4). */
+    private void rootCellAt(String slot, SemanticOp op) {
+        int index = rootSlot(slot);
+        session.referenceRuntimeEntry("deal_root_frame_write");
+        String cell = load(op, "i8*", slot);
+        emit("call void @deal_root_frame_write(i32 " + index + ", i8* "
+            + cell + ")" + (op == null ? "" : debugAttachment(op)));
+    }
+
+    /** Whether one function carries a parameter in a heap cell (C5). */
+    private boolean hasCellParameter(FunctionId id, LoweredFunction function) {
+        for (BindingId parameter : session.parametersOf(id)) {
+            if (session.cellBinding(unit, parameter, 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The setup segment of one activation: the parameter cells and the cells
+     * of the function's own generation-pinned capture list (C5). The captures
+     * are read from the carrier exactly as the creating {@code CLOSURE_NEW}
+     * recorded them, so a captured mutable binding and its closure share one
+     * cell identity and a per-iteration generation gets a fresh cell.
+     */
+    private void emitCaptureSetup(FunctionId id, LoweredFunction function) {
+        List<BindingId> parameters = session.parametersOf(id);
+        List<RuntimeDescriptor> types = function.descriptor().paramTypes();
+        for (int index = 0; index < parameters.size(); index++) {
+            if (!session.cellBinding(unit, parameters.get(index), 0)) {
+                continue;
+            }
+            RuntimeDescriptor descriptor = types.get(index);
+            String representation = stagedRepresentation(descriptor);
+            String stash = "%parameter" + index + "value";
+            String value = load(null, representation, stash);
+            rootSlotWrite(descriptor, stash, value, null);
+            publishCell(parameters.get(index), 0, descriptor, value, null);
+        }
+        for (int index = 0; index < function.captures().size(); index++) {
+            BindingGeneration capture = function.captures().get(index);
+            session.referenceRuntimeEntry("deal_fn_capture");
+            String cell = emitTemporary(null, "call i8* @deal_fn_capture("
+                + LlvmTypeMapper.FN_POINTER + " %env, i32 " + index + ")");
+            String slot = bindingSlot(capture.binding(), capture.generation(),
+                "i8*");
+            emit("store i8* " + cell + ", i8** " + slot);
+            rootCellAt(slot, null);
+        }
+    }
+
+    /** Allocates one datum cell for a binding generation and stores its pointer. */
+    private void publishCell(BindingId binding, long generation,
+                             RuntimeDescriptor descriptor, String value,
+                             SemanticOp op) {
+        session.referenceRuntimeEntry("deal_cell_alloc_data");
+        String datum = emitDatum(descriptor, value, op);
+        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
+        emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+            + LlvmTypeMapper.DATA + "* " + datumSlot);
+        String cell = emitTemporary(op, "call i8* @deal_cell_alloc_data("
+            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 " + generation
+            + ")");
+        String slot = bindingSlot(binding, generation, "i8*");
+        emit("store i8* " + cell + ", i8** " + slot);
+        rootCellAt(slot, op);
+    }
+
+    /**
+     * {@code CLOSURE_NEW}: one function value (C3/C5) carrying the exact
+     * generation-pinned cells of the lowered capture list, the interned
+     * canonical signature atom and the emitted boxed apply thunk.
+     */
     private void emitClosureNew(SemanticOp op) {
         KindPayload.ClosureNewPayload payload =
             (KindPayload.ClosureNewPayload) op.payload();
-        FunctionId target = payload.function();
-        String literal = "bitcast (" + functionCodeType(target) + " @F"
-            + target.id() + " to i8*)";
-        storeResult(op, LlvmTypeMapper.CODE_POINTER, literal);
+        String carrier = emitClosure(payload.function(), payload.captures(),
+            payload.signature(), op);
+        storeResult(op, LlvmTypeMapper.FN_POINTER, carrier);
     }
 
-    private String functionCodeType(FunctionId target) {
+    /** Builds one function value for a lowered function and capture list. */
+    private String emitClosure(FunctionId target,
+                               List<BindingGeneration> captures,
+                               RuntimeDescriptor.Func signature,
+                               SemanticOp op) {
         LoweredFunction function = session.function(target);
-        StringBuilder type = new StringBuilder(
-            LlvmTypeMapper.outcomeType(function.descriptor().returnType()));
-        type.append(" (");
-        for (int index = 0; index < function.descriptor().paramTypes().size();
-                index++) {
-            if (index > 0) {
-                type.append(", ");
-            }
-            type.append(LlvmTypeMapper.abiParameterType(
-                function.descriptor().paramTypes().get(index)));
+        if (function.captures().size() != captures.size()) {
+            throw new IllegalStateException("the closure of " + target
+                + " records " + captures.size() + " captures for the function's "
+                + function.captures().size());
         }
-        return type.append(")*").toString();
+        throwIfUnsupportedThunk(function, op, "the closure");
+        session.referenceRuntimeEntry("deal_fn_create");
+        String cells = "i8** null";
+        if (!captures.isEmpty()) {
+            String arrayType = "[" + captures.size() + " x i8*]";
+            String array = newAlloca(arrayType, "cells");
+            for (int index = 0; index < captures.size(); index++) {
+                BindingGeneration capture = captures.get(index);
+                String cell = load(op, "i8*", bindingSlot(capture.binding(),
+                    capture.generation(), "i8*"));
+                String element = emitTemporary(op, "getelementptr " + arrayType
+                    + ", " + arrayType + "* " + array + ", i64 0, i64 "
+                    + index);
+                emit("store i8* " + cell + ", i8** " + element);
+                if (index == 0) {
+                    cells = "i8** " + element;
+                }
+            }
+        }
+        String thunk = "bitcast (" + thunkType() + " @" + thunkName(target)
+            + " to i8*)";
+        String signatureText = session.data.operand(
+            session.data.intern(signature.canonicalSpecText()));
+        return emitTemporary(op, "call " + LlvmTypeMapper.FN_POINTER
+            + " @deal_fn_create(i8* " + thunk + ", " + cells + ", i32 "
+            + captures.size() + ", " + signatureText + ", i32 "
+            + (signature.isAsync() ? 1 : 0) + ")");
+    }
+
+    /** The IR type of one boxed apply thunk. */
+    private static String thunkType() {
+        return "%struct.deal_outcome_data (i8*, %struct.deal_check_input*,"
+            + " i32, %struct.deal_origin*)*";
+    }
+
+    /** The emitted name of one function's boxed apply thunk. */
+    static String thunkName(FunctionId target) {
+        return "T" + target.id();
+    }
+
+    /**
+     * Rejects a function signature whose boxing this stage does not construct:
+     * the staged scalar, {@code unknown}, {@code string}, function and builtin
+     * {@code Error} positions, the two nullish singletons and result-only
+     * {@code void}. A nullish scalar or reference position, an array, a record
+     * or a non-builtin class belongs to the data/class stage.
+     */
+    private void throwIfUnsupportedThunk(LoweredFunction function, SemanticOp op,
+                                         String what) {
+        List<RuntimeDescriptor> positions = new ArrayList<>(
+            function.descriptor().paramTypes());
+        positions.add(function.descriptor().returnType());
+        for (RuntimeDescriptor descriptor : positions) {
+            if (thunkBoxable(descriptor)) {
+                continue;
+            }
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects " + what + " of the function "
+                    + function.functionId() + ": the position '"
+                    + descriptor.canonicalSpecText()
+                    + "' has no staged boxed apply form",
+                op == null ? null : op.origin().span().range());
+        }
+    }
+
+    /** Whether one descriptor has the staged boxed apply form. */
+    private static boolean thunkBoxable(RuntimeDescriptor descriptor) {
+        return descriptor instanceof RuntimeDescriptor.Void
+            || descriptor instanceof RuntimeDescriptor.Null
+            || LlvmTypeMapper.representationOf(descriptor).isPresent()
+            || (descriptor instanceof RuntimeDescriptor.Nullable nullable
+                && nullableBoxable(nullable));
+    }
+
+    /** Whether one nullish position has the staged boxed apply form. */
+    private static boolean nullableBoxable(RuntimeDescriptor.Nullable nullable) {
+        return LlvmTypeMapper.representationOf(nullable).isPresent();
     }
 
     private void emitExportRead(SemanticOp op) {
         KindPayload.ExportReadPayload payload =
             (KindPayload.ExportReadPayload) op.payload();
-        FunctionId target = exportedFunction(payload.module(), payload.name());
-        String literal = "bitcast (" + functionCodeType(target) + " @F"
-            + target.id() + " to i8*)";
-        storeResult(op, LlvmTypeMapper.CODE_POINTER, literal);
+        ModuleId module = payload.module();
+        Optional<deal.semantic.StdlibFunctionCatalog.Entry> stdlib =
+            deal.semantic.StdlibFunctionCatalog.lookup(module.path(),
+                payload.name());
+        if (stdlib.isPresent()) {
+            String slot = "@" + session.data.stdlibSlot(
+                session.moduleIndex(unit.moduleId()), stdlib.get().function());
+            String value = emitTemporary(op, "load " + LlvmTypeMapper.FN_POINTER
+                + ", " + LlvmTypeMapper.FN_POINTER + "* " + slot);
+            storeResult(op, LlvmTypeMapper.FN_POINTER, value);
+            return;
+        }
+        String path = session.data.operand(
+            session.data.intern(module.path()));
+        String name = session.data.operand(session.data.intern(payload.name()));
+        String record = emitTemporary(op, "call %struct.deal_module*"
+            + " @deal_project_exports(" + path + ")");
+        String entry = emitTemporary(op, "call %struct.deal_export_entry*"
+            + " @deal_export_lookup(%struct.deal_module* " + record
+            + ", " + name + ")");
+        String missing = emitTemporary(op, "icmp eq %struct.deal_export_entry* "
+            + entry + ", null");
+        String absent = newLabel("exportabsent");
+        String present = newLabel("exportpresent");
+        emit("br i1 " + missing + ", label %" + absent + ", label %" + present);
+        terminated = true;
+        startSegment(absent);
+        session.referenceRuntimeEntry("deal_platform_fault");
+        emit("call void @deal_platform_fault("
+            + session.data.operand(session.data.intern(
+                "the imported export is not published")) + ")");
+        terminate("unreachable");
+        startSegment(present);
+        String valuePointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_export_entry, %struct.deal_export_entry* " + entry
+            + ", i32 0, i32 4");
+        String value = emitTemporary(op, "load " + LlvmTypeMapper.FN_POINTER
+            + ", " + LlvmTypeMapper.FN_POINTER + "* " + valuePointer);
+        storeResult(op, LlvmTypeMapper.FN_POINTER, value);
     }
 
     /**
-     * The lowered function one export name resolves to: the target unit's
-     * recorded {@code EXPORT_PUBLISH} of that name, whose value is the
-     * published closure (the classifier accepted it).
+     * {@code EXPORT_PUBLISH}: stores the published function value into this
+     * unit's export record. The record becomes visible only after the unit's
+     * initialization succeeds, and every import reads it through the emitted
+     * export table (C2/C3).
      */
-    private FunctionId exportedFunction(ModuleId module, String name) {
-        LoweredModuleUnit target = session.unitOf(module);
-        for (SemanticOp op : target.ops()) {
-            if (!(op.payload() instanceof KindPayload.ExportPublishPayload published)
-                    || !published.name().equals(name)) {
-                continue;
-            }
-            SemanticOp producer = session.producerOf(published.value());
-            if (producer != null
-                    && producer.payload() instanceof KindPayload
-                        .ClosureNewPayload closure) {
-                return closure.function();
-            }
+    private void emitExportPublish(SemanticOp op) {
+        KindPayload.ExportPublishPayload payload =
+            (KindPayload.ExportPublishPayload) op.payload();
+        int index = session.exportIndex(payload.module(), payload.name());
+        String value = loadRepresentation(payload.value(),
+            descriptorOfValue(payload.value()), op);
+        String table = "@" + LlvmData.exportTable(session.moduleIndex(payload.module()));
+        String entry = emitTemporary(op, "getelementptr ["
+            + session.exportCount(payload.module()) + " x %struct.deal_export_entry], ["
+            + session.exportCount(payload.module()) + " x %struct.deal_export_entry]* "
+            + table + ", i64 0, i64 " + index);
+        String field = emitTemporary(op, "getelementptr %struct.deal_export_entry,"
+            + " %struct.deal_export_entry* " + entry + ", i32 0, i32 4");
+        emit("store " + LlvmTypeMapper.FN_POINTER + " " + value + ", "
+            + LlvmTypeMapper.FN_POINTER + "* " + field);
+    }
+
+    /**
+     * {@code RECURSIVE_GROUP_INIT}: allocates every member's cell first (so no
+     * member is observable before the group exists), then publishes each
+     * member's closure into its cell (C5). The two phases are the recorded
+     * "identities allocated first, then published atomically" contract.
+     */
+    private void emitRecursiveGroupInit(SemanticOp op) {
+        KindPayload.RecursiveGroupInitPayload payload =
+            (KindPayload.RecursiveGroupInitPayload) op.payload();
+        if (payload.bindings().size() != payload.functions().size()) {
+            throw new IllegalStateException("the recursive group " + op.opId()
+                + " records " + payload.bindings().size() + " bindings for "
+                + payload.functions().size() + " functions");
         }
-        throw new IllegalStateException("the module " + module
-            + " publishes no closure export named '" + name + "'");
+        for (BindingId binding : payload.bindings()) {
+            emitBindingAllocCell(binding, op);
+        }
+        for (int index = 0; index < payload.functions().size(); index++) {
+            FunctionId member = payload.functions().get(index);
+            LoweredFunction function = session.function(member);
+            BindingId binding = payload.bindings().get(index);
+            String carrier = emitClosure(member, function.captures(),
+                function.descriptor(), op);
+            String slot = bindingSlot(binding, 0, "i8*");
+            String cell = load(op, "i8*", slot);
+            String datum = emitDatum(function.descriptor(), carrier, op);
+            String datumSlot = newAlloca(LlvmTypeMapper.DATA, "groupdatum");
+            emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+                + LlvmTypeMapper.DATA + "* " + datumSlot);
+            session.referenceRuntimeEntry("deal_cell_store_data");
+            emit("call void @deal_cell_store_data(i8* " + cell + ", "
+                + LlvmTypeMapper.DATA + "* " + datumSlot + ")"
+                + debugAttachment(op));
+        }
+    }
+
+    /** Allocates one group member's cell without any recorded allocation op. */
+    private void emitBindingAllocCell(BindingId binding, SemanticOp op) {
+        session.referenceRuntimeEntry("deal_cell_alloc_data");
+        session.referenceRuntimeEntry("deal_data_of_undefined");
+        String undefined = callRecord(op, LlvmTypeMapper.DATA,
+            "deal_data_of_undefined", "");
+        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
+        emit("store " + LlvmTypeMapper.DATA + " " + undefined + ", "
+            + LlvmTypeMapper.DATA + "* " + datumSlot);
+        String cell = emitTemporary(op, "call i8* @deal_cell_alloc_data("
+            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 0)");
+        String slot = bindingSlot(binding, 0, "i8*");
+        emit("store i8* " + cell + ", i8** " + slot);
+        rootCellAt(slot, op);
     }
 
     private void emitCall(SemanticOp op) {
         KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
+        if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
+            emitDynamicCall(op, payload, dynamic.callee());
+            return;
+        }
+        if (payload.callee() instanceof KindPayload.CallCallee.Indirect indirect) {
+            emitDynamicCall(op, payload, indirect.callee());
+            return;
+        }
         FunctionId callee = calleeOf(payload);
         LoweredFunction calleeFunction = session.function(callee);
         List<RuntimeDescriptor> parameterTypes =
@@ -1858,6 +2415,22 @@ final class LlvmFunctionEmitter {
         }
         if (payload.returnBoundaryOpId() != null) {
             recordOrigin(unitOp(payload.returnBoundaryOpId()));
+        }
+        String environment = "%struct.deal_fn* null";
+        if (!calleeFunction.captures().isEmpty()) {
+            for (BindingGeneration capture : calleeFunction.captures()) {
+                if (!session.moduleScopedAcrossProject(capture.binding(),
+                        capture.generation())) {
+                    throw new deal.codegen.SharedEmissionFailure(
+                        "LlvmSemanticEmitter rejects the direct call of "
+                            + callee + " of " + op.opId() + ": its capture of "
+                            + capture.binding() + " is no module-scope cell",
+                        op.origin().span().range());
+                }
+            }
+            environment = LlvmTypeMapper.FN_POINTER + " "
+                + emitClosure(callee, calleeFunction.captures(),
+                    calleeFunction.descriptor(), op);
         }
         StringBuilder arguments = new StringBuilder();
         for (int index = 0; index < parameterTypes.size(); index++) {
@@ -1877,8 +2450,10 @@ final class LlvmFunctionEmitter {
         String outcome = LlvmTypeMapper.outcomeType(
             calleeFunction.descriptor().returnType());
         String result = "%call" + op.opId().id();
-        emit(result + " = call " + outcome + " @F" + callee.id() + "("
-            + arguments + ")" + debugAttachment(op));
+        emit(result + " = call " + outcome + " @F" + callee.id()
+            + "(" + environment
+            + (arguments.length() == 0 ? "" : ", " + arguments) + ")"
+            + debugAttachment(op));
         emit("%callerr" + op.opId().id() + " = extractvalue " + outcome + " "
             + result + ", 0");
         branchOnFailure(op, "%callerr" + op.opId().id(), "call");
@@ -1895,12 +2470,1618 @@ final class LlvmFunctionEmitter {
         storeResult(op, type, narrowFromAbi(returned, extracted, op));
     }
 
+    /**
+     * The dynamically dispatched call of C5: the closure's signature atom is
+     * validated against the recorded call signature (the one E8010 arm at the
+     * call origin), each argument is boxed into its recorded presentation, and
+     * the carrier's boxed apply thunk is invoked with the call origin. A
+     * carried Error routes exactly like a direct call's and the completion
+     * datum is unboxed at the declared result descriptor.
+     */
+    private void emitDynamicCall(SemanticOp op, KindPayload.CallPayload payload,
+                                 ValueId calleeValue) {
+        RuntimeDescriptor.Func signature = payload.signature();
+        for (OpId boundary : payload.parameterBoundaryOpIds()) {
+            recordOrigin(unitOp(boundary));
+        }
+        if (payload.dynamicReturnBoundary() != null) {
+            // The recorded return-boundary cells carry the completion's own
+            // origins; each non-null cell is one source-mapped location.
+            KindPayload.DynamicReturnBoundary cells =
+                payload.dynamicReturnBoundary();
+            for (OpId boundary : new OpId[] {cells.dealBodyBoundaryOpId(),
+                    cells.hostBoundaryOpId(), cells.externalBoundaryOpId()}) {
+                if (boundary != null) {
+                    recordOrigin(unitOp(boundary));
+                }
+            }
+        } else if (payload.returnBoundaryOpId() != null) {
+            recordOrigin(unitOp(payload.returnBoundaryOpId()));
+        }
+        RuntimeDescriptor calleeType = descriptorOfValue(calleeValue);
+        if (!(calleeType instanceof RuntimeDescriptor.Func)) {
+            throw new IllegalStateException("the dynamic callee " + calleeValue
+                + " is not a function value: "
+                + calleeType.canonicalSpecText());
+        }
+        requireBoxedSignature(signature, op, "the dynamically dispatched call");
+        String carrier = loadRepresentation(calleeValue, calleeType, op);
+        emitSignatureCheck(op, signature, carrier);
+        String arguments = checkInputArray(op, op.operands(),
+            op.operandTypes());
+        session.referenceRuntimeEntry("deal_fn_apply");
+        String applied = callRecord(op, "%struct.deal_outcome_data",
+            "deal_fn_apply", LlvmTypeMapper.FN_POINTER + " " + carrier + ", "
+                + "%struct.deal_check_input* " + arguments + ", i32 "
+                + op.operands().size() + ", %struct.deal_origin* "
+                + originValue(op));
+        String appliedError = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_data " + applied + ", 0");
+        branchOnFailure(op, appliedError, "apply");
+        RuntimeDescriptor returned = signature.returnType();
+        Optional<String> representation = resultRepresentation(op);
+        if (representation.isEmpty()) {
+            return;
+        }
+        String datumValue = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_data " + applied + ", 1");
+        storeResult(op, representation.get(),
+            datumToRepresentation(returned, datumValue, op));
+    }
+
+    /**
+     * The one E8010 arm of a dynamically checked callee (C5): the carrier's
+     * own signature atom is validated against the recorded call signature at
+     * the {@code FUNCTION_SIGNATURE} boundary, so a wrong-signature function
+     * value is rejected at the call. Both the synchronously dispatched call
+     * and the blocking async start render exactly this check.
+     */
+    private void emitSignatureCheck(SemanticOp op,
+                                    RuntimeDescriptor.Func signature,
+                                    String carrier) {
+        session.referenceRuntimeEntry("deal_fn_signature");
+        session.referenceRuntimeEntry("deal_descriptor_intern");
+        session.referenceRuntimeEntry("deal_check_value");
+        String signaturePointer = emitTemporary(op,
+            "call i8* @deal_fn_signature(" + LlvmTypeMapper.FN_POINTER + " "
+                + carrier + ")");
+        String reduced = emitTemporary(op, "bitcast "
+            + LlvmTypeMapper.FN_POINTER + " " + carrier + " to i8*");
+        String datum = emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA
+            + " zeroinitializer, i32 " + LlvmTypeMapper.DATA_FUNCTION + ", 0");
+        datum = emitTemporary(op, "insertvalue " + LlvmTypeMapper.DATA + " "
+            + datum + ", i8* " + reduced + ", 3");
+        String record = emitTemporary(op, "insertvalue"
+            + " %struct.deal_check_input zeroinitializer, "
+            + LlvmTypeMapper.DATA + " " + datum + ", 2");
+        record = emitTemporary(op, "insertvalue %struct.deal_check_input "
+            + record + ", i8* " + signaturePointer + ", 4");
+        String input = newAlloca("%struct.deal_check_input", "signatureinput");
+        emit("store %struct.deal_check_input " + record
+            + ", %struct.deal_check_input* " + input);
+        String atom = emitTemporary(op, "call"
+            + " %struct.deal_descriptor* @deal_descriptor_intern("
+            + session.data.operand(session.data.intern(
+                signature.canonicalSpecText())) + ")");
+        String context = checkContext(op);
+        String checked = emitTemporary(op, "call %struct.deal_outcome"
+            + " @deal_check_value(%struct.deal_descriptor* " + atom
+            + ", %struct.deal_check_input* byval(%struct.deal_check_input) "
+            + input + ", i32 " + LlvmRuntimeAbi.BOUNDARY_FUNCTION_SIGNATURE
+            + ", %struct.deal_check_context* " + context + ")");
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome "
+            + checked + ", 0");
+        branchOnFailure(op, error, "signature");
+    }
+
+    /** Rejects one boxed signature whose positions this stage cannot box. */
+    private void requireBoxedSignature(RuntimeDescriptor.Func signature,
+                                       SemanticOp op, String what) {
+        List<RuntimeDescriptor> positions = new ArrayList<>(
+            signature.paramTypes());
+        positions.add(signature.returnType());
+        for (RuntimeDescriptor descriptor : positions) {
+            if (thunkBoxable(descriptor)) {
+                continue;
+            }
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects " + what + " of the signature '"
+                    + signature.canonicalSpecText() + "': the position '"
+                    + descriptor.canonicalSpecText()
+                    + "' has no staged boxed apply form",
+                op.origin().span().range());
+        }
+    }
+
+    /**
+     * Boxes the ordered call arguments into the recorded presentation array
+     * (C5): each operand is evaluated once, converted to the persistent datum
+     * of its own static descriptor and stored into the array the thunk reads.
+     */
+    private String checkInputArray(SemanticOp op, List<ValueId> operands,
+                                   List<RuntimeDescriptor> types) {
+        if (operands.isEmpty()) {
+            return "null";
+        }
+        String arrayType = "[" + operands.size() + " x %struct.deal_check_input]";
+        String array = newAlloca(arrayType, "arguments");
+        String first = null;
+        for (int index = 0; index < operands.size(); index++) {
+            RuntimeDescriptor actual = types.get(index);
+            String datum = LlvmTypeMapper.isStaticSingleton(actual)
+                ? emitDatum(actual, "", op)
+                : emitDatum(actual, loadRepresentation(operands.get(index),
+                    actual, op), op);
+            String element = emitTemporary(op, "getelementptr " + arrayType
+                + ", " + arrayType + "* " + array + ", i64 0, i64 " + index);
+            emit("store %struct.deal_check_input "
+                + checkInputRecordOf(op, actual, datum) + ", "
+                + "%struct.deal_check_input* " + element);
+            if (index == 0) {
+                first = element;
+            }
+        }
+        return first;
+    }
+
+    /**
+     * The staged representation of one persistent datum (C3): the inverse of
+     * {@link #emitDatum}, used by the captured-binding cell read, a container
+     * or class capture, the dynamic call completion, the stdlib result and the
+     * await completion. A scalar keeps its payload, a managed tag its referent
+     * (preserving the value's identity and, for an array, its persistent
+     * element descriptor), and the two nullish tags their singletons; no
+     * coercion, construction or retagging happens. A descriptor outside the
+     * staged datum set is a producer defect and fails closed with the
+     * offending op's own origin (C9).
+     */
+    private String datumToRepresentation(RuntimeDescriptor descriptor,
+                                         String datum, SemanticOp op) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+            String representation = stagedRepresentation(descriptor);
+            String reference = emitTemporary(op, "extractvalue "
+                + LlvmTypeMapper.DATA + " " + datum + ", 3");
+            return representation.equals("i8*")
+                ? reference
+                : emitTemporary(op, "bitcast i8* " + reference + " to "
+                    + representation);
+        }
+        return switch (descriptor) {
+            case RuntimeDescriptor.Number _ -> emitTemporary(op,
+                "extractvalue " + LlvmTypeMapper.DATA + " " + datum + ", 2");
+            case RuntimeDescriptor.Boolean _ -> {
+                String number = emitTemporary(op, "extractvalue "
+                    + LlvmTypeMapper.DATA + " " + datum + ", 2");
+                yield emitTemporary(op, "fcmp une double " + number + ", 0.0");
+            }
+            case RuntimeDescriptor.Func _ -> {
+                String reference = emitTemporary(op, "extractvalue "
+                    + LlvmTypeMapper.DATA + " " + datum + ", 3");
+                yield emitTemporary(op, "bitcast i8* " + reference + " to "
+                    + LlvmTypeMapper.FN_POINTER);
+            }
+            case RuntimeDescriptor.Unknown _ -> datum;
+            case RuntimeDescriptor.Nullable nullable -> nullableFromDatum(
+                nullable, datum, op);
+            default -> throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter has no staged datum projection for the"
+                    + " descriptor '" + descriptor.canonicalSpecText() + "'",
+                op == null ? null : op.origin().span().range());
+        };
+    }
+
+    /** The nullish representation of one persistent datum. */
+    private String nullableFromDatum(RuntimeDescriptor.Nullable nullable,
+                                     String datum, SemanticOp op) {
+        String representation = stagedRepresentation(nullable);
+        String tag = emitTemporary(op, "extractvalue " + LlvmTypeMapper.DATA
+            + " " + datum + ", 0");
+        String isNull = emitTemporary(op, "icmp eq i32 " + tag + ", "
+            + LlvmTypeMapper.DATA_NULL);
+        String isUndefined = emitTemporary(op, "icmp eq i32 " + tag + ", "
+            + LlvmTypeMapper.DATA_UNDEFINED);
+        if (representation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
+            String reference = emitTemporary(op, "extractvalue "
+                + LlvmTypeMapper.DATA + " " + datum + ", 3");
+            String nullPointer = loadSingleton(true, op);
+            String undefinedPointer = loadSingleton(false, op);
+            String withNull = emitTemporary(op, "select i1 " + isNull
+                + ", i8* " + nullPointer + ", i8* " + reference);
+            return emitTemporary(op, "select i1 " + isUndefined + ", i8* "
+                + undefinedPointer + ", i8* " + withNull);
+        }
+        boolean number = representation.equals(LlvmTypeMapper.NULLISH_NUMBER);
+        String payload = emitTemporary(op, "extractvalue " + LlvmTypeMapper.DATA
+            + " " + datum + ", 2");
+        String base = number
+            ? payload
+            : emitTemporary(op, "fcmp une double " + payload + ", 0.0");
+        int baseValue = nullable.inner() instanceof RuntimeDescriptor.Boolean
+            ? LlvmTypeMapper.DATA_BOOLEAN : LlvmTypeMapper.DATA_NUMBER;
+        String isBase = emitTemporary(op, "icmp eq i32 " + tag + ", "
+            + baseValue);
+        String baseTag = "i32 " + LlvmTypeMapper.NULLISH_BASE;
+        String nullTag = "i32 " + LlvmTypeMapper.NULLISH_NULL;
+        String undefinedTag = "i32 " + LlvmTypeMapper.NULLISH_UNDEFINED;
+        String undefinedSelected = emitTemporary(op, "select i1 " + isUndefined
+            + ", " + undefinedTag + ", " + baseTag);
+        String discriminant = emitTemporary(op, "select i1 " + isNull + ", "
+            + nullTag + ", i32 " + undefinedSelected);
+        String zero = number ? "double 0.0" : "i1 false";
+        String value = number ? "double " : "i1 ";
+        String baseSelected = emitTemporary(op, "select i1 " + isBase + ", "
+            + value + base + ", " + zero);
+        String withTag = emitTemporary(op, "insertvalue " + representation
+            + " { i32 0, " + zero + " }, i32 " + discriminant + ", 0");
+        return emitTemporary(op, "insertvalue " + representation + " "
+            + withTag + ", " + value + baseSelected + ", 1");
+    }
+
+    /** {@code FUNCTION_ADAPT}: the adapter closure of one recorded source. */
+    private void emitFunctionAdapt(SemanticOp op) {
+        KindPayload.FunctionAdaptPayload payload =
+            (KindPayload.FunctionAdaptPayload) op.payload();
+        requireAdapterShape(op, payload);
+        // The adapter closure captures exactly the cells its boxed apply thunk
+        // reads (C5): entry 0 is the source cell and a `REEVALUATE_THUNK`
+        // source adds one entry per activation-local captured binding of its
+        // thunk block, in recorded order. A module-scope capture is not an
+        // entry: the re-executor reads that binding's own static cell slot.
+        List<BindingGeneration> thunkCaptures = thunkLocalCaptures(op);
+        String cell;
+        switch (payload.source()) {
+            case AdaptSourceRef.SharedCell shared ->
+                cell = load(op, "i8*", bindingSlot(shared.binding(),
+                    shared.generation(), "i8*"));
+            case AdaptSourceRef.Value value -> {
+                String source = loadRepresentation(value.value(),
+                    descriptorOfValue(value.value()), op);
+                session.referenceRuntimeEntry("deal_cell_alloc_data");
+                String datum = emitDatum(
+                    descriptorOfValue(value.value()), source, op);
+                String datumSlot = newAlloca(LlvmTypeMapper.DATA, "adapterdatum");
+                emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+                    + LlvmTypeMapper.DATA + "* " + datumSlot);
+                cell = emitTemporary(op, "call i8* @deal_cell_alloc_data("
+                    + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 0)");
+                rootTemporaryCell(cell, op);
+            }
+            case AdaptSourceRef.Thunk _ -> {
+                // Creation evaluates no thunk (B8): the cell starts as the
+                // `undefined` datum and the re-executor publishes the
+                // produced function value into it on every invocation.
+                cell = emitUndefinedCell(op);
+                rootTemporaryCell(cell, op);
+            }
+            default -> throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of " + op.opId()
+                    + ": the recorded adapter source " + payload.source()
+                    + " has no staged boxed form",
+                op.origin().span().range());
+        }
+        int captureCount = 1 + thunkCaptures.size();
+        String arrayType = "[" + captureCount + " x i8*]";
+        String array = newAlloca(arrayType, "adaptercells");
+        String first = null;
+        for (int index = 0; index < captureCount; index++) {
+            String captured = index == 0
+                ? cell
+                : load(op, "i8*", bindingSlot(
+                    thunkCaptures.get(index - 1).binding(),
+                    thunkCaptures.get(index - 1).generation(), "i8*"));
+            String element = emitTemporary(op, "getelementptr " + arrayType
+                + ", " + arrayType + "* " + array + ", i64 0, i64 " + index);
+            emit("store i8* " + captured + ", i8** " + element);
+            if (index == 0) {
+                first = element;
+            }
+        }
+        session.referenceRuntimeEntry("deal_fn_create");
+        String thunk = "bitcast (" + thunkType() + " @"
+            + adapterThunkName(op.opId()) + " to i8*)";
+        String signatureText = session.data.operand(session.data.intern(
+            payload.targetSignature().canonicalSpecText()));
+        String carrier = emitTemporary(op, "call " + LlvmTypeMapper.FN_POINTER
+            + " @deal_fn_create(i8* " + thunk + ", i8** " + first
+            + ", i32 " + captureCount + ", " + signatureText + ", i32 "
+            + (payload.targetSignature().isAsync() ? 1 : 0) + ")");
+        storeResult(op, LlvmTypeMapper.FN_POINTER, carrier);
+    }
+
+    /**
+     * A fresh heap cell holding the {@code undefined} datum (C5): the adapter's
+     * source cell before any {@code REEVALUATE_THUNK} re-execution has
+     * published a value into it, and the group members'
+     * {@code RECURSIVE_GROUP_INIT} initial cell share this shape.
+     */
+    private String emitUndefinedCell(SemanticOp op) {
+        session.referenceRuntimeEntry("deal_cell_alloc_data");
+        session.referenceRuntimeEntry("deal_data_of_undefined");
+        String undefined = callRecord(op, LlvmTypeMapper.DATA,
+            "deal_data_of_undefined", "");
+        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
+        emit("store " + LlvmTypeMapper.DATA + " " + undefined + ", "
+            + LlvmTypeMapper.DATA + "* " + datumSlot);
+        return emitTemporary(op, "call i8* @deal_cell_alloc_data("
+            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 0)");
+    }
+
+    /**
+     * The activation-local captures of one {@code REEVALUATE_THUNK} adapter
+     * source, in recorded order: the generation-pinned bindings whose cells the
+     * adapter closure carries and hands to the re-executor. A module-scope
+     * capture owns a static cell slot both bodies read directly, so it needs no
+     * environment entry.
+     */
+    private List<BindingGeneration> thunkLocalCaptures(SemanticOp op) {
+        if (!(((KindPayload.FunctionAdaptPayload) op.payload()).source()
+                instanceof AdaptSourceRef.Thunk thunk)) {
+            return List.of();
+        }
+        List<BindingGeneration> local = new ArrayList<>();
+        for (BindingGeneration capture : thunk.capturedBindings()) {
+            if (!session.moduleScopedAcrossProject(capture.binding(),
+                    capture.generation())) {
+                local.add(capture);
+            }
+        }
+        return local;
+    }
+
+    /** The emitted name of one adapter's boxed apply thunk. */
+    static String adapterThunkName(OpId opId) {
+        return "A" + opId.id();
+    }
+
+    /** The emitted name of one adapter's {@code REEVALUATE_THUNK} re-executor. */
+    static String adapterSourceName(OpId opId) {
+        return "R" + opId.id();
+    }
+
+    /**
+     * Roots one scratch cell pointer that is live across the next allocating
+     * call (M4): the adapter's value-source cell must survive
+     * {@code deal_fn_create}'s safepoint, so its own root-frame slot holds it
+     * for the rest of the activation.
+     */
+    private void rootTemporaryCell(String cell, SemanticOp op) {
+        String slot = newAlloca("i8*", "scratchcell");
+        emit("store i8* " + cell + ", i8** " + slot);
+        rootCellAt(slot, op);
+    }
+
+    /**
+     * The recorded source-to-target rule of the staged adapter: the target's
+     * parameter prefix is exactly the source's parameter list, the result
+     * descriptor is shared, and both signatures have the staged boxed form, so
+     * arity extension stores the same value with the target's own identity.
+     */
+    private void requireAdapterShape(SemanticOp op,
+                                     KindPayload.FunctionAdaptPayload payload) {
+        RuntimeDescriptor.Func source = payload.sourceSignature();
+        RuntimeDescriptor.Func target = payload.targetSignature();
+        boolean shape = source.paramTypes().size()
+            == target.paramTypes().size()
+            || (source.paramTypes().size() < target.paramTypes().size()
+                && target.paramTypes().subList(0, source.paramTypes().size())
+                    .equals(source.paramTypes()));
+        if (!shape || !source.returnType().equals(target.returnType())
+                || !boxedSignature(source) || !boxedSignature(target)) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of " + op.opId()
+                    + ": the recorded rule '" + source.canonicalSpecText()
+                    + "' -> '" + target.canonicalSpecText()
+                    + "' has no staged boxed adapter form",
+                op.origin().span().range());
+        }
+    }
+
+    private static boolean boxedSignature(RuntimeDescriptor.Func signature) {
+        for (RuntimeDescriptor parameter : signature.paramTypes()) {
+            if (!thunkBoxable(parameter)) {
+                return false;
+            }
+        }
+        return thunkBoxable(signature.returnType());
+    }
+
+    /**
+     * The boxed apply thunk of one adapter (C5): reads the retained (or
+     * generation-pinned) source value — for a {@code REEVALUATE_THUNK} source
+     * it first re-executes the recorded thunk block, so every invocation
+     * repeats the source expression's effects and a closure it produces is a
+     * fresh identity — validates the source signature atom against the
+     * recorded source signature, invokes the source with the target's leading
+     * parameters and answers its completion unchanged.
+     *
+     * <p>The adapter is a synthesized dispatch shim, not a DEAL activation
+     * (C8): its own frame label covers nothing but the arity test and is
+     * popped before any user code runs — the re-executed thunk block included
+     * — so an Error raised through an adapted call reports exactly the frames
+     * of the activations that raised and dispatched it, and a re-execution
+     * failure reports the frames of the source expression's own callees.</p>
+     */
+    String emitAdapterThunk(SemanticOp adaptOp) {
+        KindPayload.FunctionAdaptPayload payload =
+            (KindPayload.FunctionAdaptPayload) adaptOp.payload();
+        OpId opId = adaptOp.opId();
+        RuntimeDescriptor.Func source = payload.sourceSignature();
+        RuntimeDescriptor.Func target = payload.targetSignature();
+        for (String entry : List.of("deal_call_frame_push",
+                "deal_call_frame_pop", "deal_root_frame_enter",
+                "deal_root_frame_leave", "deal_root_frame_write",
+                "deal_fn_capture", "deal_cell_read_data",
+                "deal_fn_apply", "deal_fn_signature", "deal_check_value",
+                "deal_descriptor_intern", "deal_platform_fault")) {
+            session.referenceRuntimeEntry(entry);
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("define internal %struct.deal_outcome_data @")
+            .append(adapterThunkName(opId))
+            .append("(i8* %functionvalue, %struct.deal_check_input* %arguments,"
+                + " i32 %count, %struct.deal_origin* %origin) {\n");
+        out.append("Lthunk:\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_call_frame_push(")
+            .append(session.data.operand(session.data.intern(
+                "adapter@A" + opId.id())))
+            .append(")\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_root_frame_enter(i32 1)\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%arity = icmp eq i32"
+            + " %count, ").append(target.paramTypes().size()).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("br i1 %arity, label %bind,"
+            + " label %badcount\n");
+        out.append("badcount:\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_platform_fault(")
+            .append(session.data.operand(session.data.intern(
+                "function value: argument count"))).append(")\n");
+        out.append(LlvmIrPrinter.indent(1)).append("unreachable\n");
+        out.append("bind:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_call_frame_pop()\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%carrier = bitcast i8*"
+            + " %functionvalue to %struct.deal_fn*\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%cell = call i8*"
+            + " @deal_fn_capture(%struct.deal_fn* %carrier, i32 0)\n");
+        if (payload.source() instanceof AdaptSourceRef.Thunk) {
+            // The re-executor runs the recorded thunk block and publishes its
+            // produced function value into the adapter's own source cell
+            // (B8/E7). Its carried Error leaves the adapter unchanged.
+            List<BindingGeneration> captures = thunkLocalCaptures(adaptOp);
+            StringBuilder arguments = new StringBuilder("i8* %cell");
+            for (int index = 0; index < captures.size(); index++) {
+                out.append(LlvmIrPrinter.indent(1)).append("%captured")
+                    .append(index).append(" = call i8*"
+                        + " @deal_fn_capture(%struct.deal_fn* %carrier, i32 ")
+                    .append(index + 1).append(")\n");
+                arguments.append(", i8* %captured").append(index);
+            }
+            out.append(LlvmIrPrinter.indent(1)).append("%reevaluated = call"
+                + " %struct.deal_outcome @").append(adapterSourceName(opId))
+                .append('(').append(arguments).append(")\n");
+            out.append(LlvmIrPrinter.indent(1))
+                .append("%reevaluatederror = extractvalue %struct.deal_outcome"
+                    + " %reevaluated, 0\n");
+            out.append(LlvmIrPrinter.indent(1))
+                .append("%reevaluatedfailed = icmp ne i8* %reevaluatederror,"
+                    + " null\n");
+            out.append(LlvmIrPrinter.indent(1)).append("br i1"
+                + " %reevaluatedfailed, label %sourcefail, label %sourceread\n");
+            out.append("sourcefail:\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%sourcefailure ="
+                + " insertvalue %struct.deal_outcome_data zeroinitializer,"
+                + " i8* %reevaluatederror, 0\n");
+            out.append(LlvmIrPrinter.indent(1))
+                .append("call void @deal_root_frame_leave()\n");
+            out.append(LlvmIrPrinter.indent(1)).append("ret"
+                + " %struct.deal_outcome_data %sourcefailure\n");
+            out.append("sourceread:\n");
+        }
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%sourcedatumslot = alloca %struct.deal_data\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_cell_read_data(%struct.deal_data*"
+            + " sret(%struct.deal_data) %sourcedatumslot, i8* %cell)\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%sourcedatum = load %struct.deal_data,"
+                + " %struct.deal_data* %sourcedatumslot\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%sourcereference = extractvalue %struct.deal_data"
+                + " %sourcedatum, 3\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%source = bitcast i8*"
+            + " %sourcereference to %struct.deal_fn*\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_root_frame_write(i32 0, i8* %sourcereference)\n");
+        // The source signature atom is validated at the adapter invocation.
+        out.append(LlvmIrPrinter.indent(1)).append("%signature = call i8*"
+            + " @deal_fn_signature(%struct.deal_fn* %source)\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%signatureinput = alloca %struct.deal_check_input\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%functiondatum = insertvalue %struct.deal_data"
+                + " { i32 ").append(LlvmTypeMapper.DATA_FUNCTION)
+            .append(", i32 0, double 0.0, i8* null }, i8* %sourcereference, 3\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%signaturerecord = insertvalue %struct.deal_check_input"
+                + " zeroinitializer, %struct.deal_data %functiondatum, 2\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%signaturefields = insertvalue %struct.deal_check_input"
+                + " %signaturerecord, i8* %signature, 4\n");
+        out.append(LlvmIrPrinter.indent(1)).append("store"
+            + " %struct.deal_check_input %signaturefields,"
+            + " %struct.deal_check_input* %signatureinput\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%context = alloca %struct.deal_check_context\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%contextorigin = insertvalue %struct.deal_check_context"
+                + " zeroinitializer, %struct.deal_origin* %origin, 0\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%contextindex = insertvalue %struct.deal_check_context"
+                + " %contextorigin, i32 0, 1\n");
+        out.append(LlvmIrPrinter.indent(1)).append("store"
+            + " %struct.deal_check_context %contextindex,"
+            + " %struct.deal_check_context* %context\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%expected = call %struct.deal_descriptor*"
+                + " @deal_descriptor_intern(")
+            .append(session.data.operand(session.data.intern(
+                source.canonicalSpecText()))).append(")\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%checked = call %struct.deal_outcome @deal_check_value("
+                + "%struct.deal_descriptor* %expected,"
+                + " %struct.deal_check_input* byval(%struct.deal_check_input)"
+                + " %signatureinput, i32 ")
+            .append(LlvmRuntimeAbi.BOUNDARY_FUNCTION_SIGNATURE)
+            .append(", %struct.deal_check_context* %context)\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%signatureerror = extractvalue %struct.deal_outcome"
+                + " %checked, 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%signaturefailed = icmp ne"
+            + " i8* %signatureerror, null\n");
+        out.append(LlvmIrPrinter.indent(1)).append("br i1 %signaturefailed,"
+            + " label %signaturefail, label %invoke\n");
+        out.append("signaturefail:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%signaturefailure = insertvalue %struct.deal_outcome_data"
+                + " zeroinitializer, i8* %signatureerror, 0\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_root_frame_leave()\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome_data %signaturefailure\n");
+        out.append("invoke:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%appliedslot = alloca %struct.deal_outcome_data\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_fn_apply(%struct.deal_outcome_data*"
+            + " sret(%struct.deal_outcome_data) %appliedslot,"
+            + " %struct.deal_fn* %source, %struct.deal_check_input* %arguments,"
+            + " i32 ").append(source.paramTypes().size())
+            .append(", %struct.deal_origin* %origin)\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%applied = load %struct.deal_outcome_data,"
+                + " %struct.deal_outcome_data* %appliedslot\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_root_frame_leave()\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome_data %applied\n}\n");
+        return out.toString();
+    }
+
+    /**
+     * The re-executor of one {@code REEVALUATE_THUNK} adapter source (C5/B8):
+     * the recorded thunk block runs on every adapter invocation — creation
+     * evaluates nothing — and the function value it produces is published into
+     * the adapter's own source cell so the adapter's boxed apply thunk can
+     * validate its signature atom and apply it. The thunk's generation-pinned
+     * captures arrive as the adapter closure's environment cells (its
+     * activation-local ones) and as their own static slots (a module-scope
+     * one), exactly the cells the creation site resolved.
+     *
+     * <p>The re-executor is a synthesized dispatch shim like the adapter thunk
+     * (C8): it pushes no call-frame label of its own, so an Error raised by the
+     * re-executed source expression reports exactly the frames of the DEAL
+     * activations it entered and never a synthesized `adapter@` label.</p>
+     */
+    String emitAdapterSource(SemanticOp adaptOp) {
+        KindPayload.FunctionAdaptPayload payload =
+            (KindPayload.FunctionAdaptPayload) adaptOp.payload();
+        if (!(payload.source() instanceof AdaptSourceRef.Thunk thunk)) {
+            throw new IllegalStateException("the op " + adaptOp.opId()
+                + " carries no REEVALUATE_THUNK adapter source");
+        }
+        List<BindingGeneration> captures = thunkLocalCaptures(adaptOp);
+        String name = adapterSourceName(adaptOp.opId());
+        this.functionId = null;
+        this.shimActivation = true;
+        currentDebugScope = -1;
+        enterRootFrame();
+        List<String> cellSlots = new ArrayList<>();
+        for (int index = 0; index < captures.size(); index++) {
+            BindingGeneration capture = captures.get(index);
+            String slot = bindingSlot(capture.binding(), capture.generation(),
+                "i8*");
+            entryInit.add(LlvmIrPrinter.indent(1) + "store i8* %captured"
+                + index + ", i8** " + slot);
+            cellSlots.add(slot);
+        }
+        String setup = "Lthunkcells" + adaptOp.opId().id();
+        entryInit.add(LlvmIrPrinter.indent(1) + "br label %" + setup);
+        text.append(setup).append(":\n");
+        terminated = false;
+        for (String slot : cellSlots) {
+            rootCellAt(slot, null);
+        }
+        String finish = "Lthunkvalue" + adaptOp.opId().id();
+        emitBlock(thunk.blockId(), finish);
+        startSegment(finish);
+        ValueId produced = thunkProducedValue(adaptOp, thunk);
+        RuntimeDescriptor descriptor = descriptorOfValue(produced);
+        if (!(descriptor instanceof RuntimeDescriptor.Func)) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of "
+                    + adaptOp.opId() + ": its REEVALUATE_THUNK block "
+                    + thunk.blockId() + " produces '"
+                    + descriptor.canonicalSpecText()
+                    + "', which is no function value",
+                adaptOp.origin().span().range());
+        }
+        String value = loadValue(produced, stagedRepresentation(descriptor),
+            adaptOp);
+        session.referenceRuntimeEntry("deal_cell_store_data");
+        String datum = emitDatum(descriptor, value, adaptOp);
+        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "thunkresult");
+        emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+            + LlvmTypeMapper.DATA + "* " + datumSlot);
+        emit("call void @deal_cell_store_data(i8* %cell, "
+            + LlvmTypeMapper.DATA + "* " + datumSlot + ")");
+        emitEpilogue();
+        terminate("ret %struct.deal_outcome { i8* null }");
+        StringBuilder out = new StringBuilder();
+        out.append("define internal %struct.deal_outcome @").append(name)
+            .append("(i8* %cell");
+        for (int index = 0; index < captures.size(); index++) {
+            out.append(", i8* %captured").append(index);
+        }
+        out.append(") {\nLentry:\n");
+        for (String alloca : allocas) {
+            out.append(LlvmIrPrinter.indent(1)).append(alloca).append('\n');
+        }
+        patchRootEnter();
+        for (String line : entryInit) {
+            out.append(line).append('\n');
+        }
+        out.append(text);
+        out.append("}\n");
+        return out.toString();
+    }
+
+    /**
+     * The final producing value of one {@code REEVALUATE_THUNK} thunk block:
+     * the last member that publishes an SSA result, skipping the entry
+     * delegation and the payload-owned children whose owner arm emits them —
+     * that value is the expression the thunk re-executes.
+     */
+    private ValueId thunkProducedValue(SemanticOp adaptOp,
+                                       AdaptSourceRef.Thunk thunk) {
+        ValueId produced = null;
+        for (SemanticOp member : session.memberOps(thunk.blockId())) {
+            if (session.isSkipped(member.opId())
+                    || session.isOwnedChild(member.opId())) {
+                continue;
+            }
+            if (member.result() instanceof ValueId value) {
+                produced = value;
+            }
+        }
+        if (produced == null) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of "
+                    + adaptOp.opId() + ": its REEVALUATE_THUNK block "
+                    + thunk.blockId() + " publishes no value",
+                adaptOp.origin().span().range());
+        }
+        return produced;
+    }
+
+    /**
+     * {@code STDLIB_CALL} (R7/R8): the closed operation id, the already
+     * evaluated argument presentations and the call origin reach the one
+     * runtime dispatch entry, which owns the {@code STDLIB_PARAMETER} and
+     * {@code STDLIB_RETURN} crossings. The emitted module inlines no stdlib
+     * semantics; the result is unboxed at the recorded result descriptor.
+     * Each operand is boxed from its own static descriptor: the recorded
+     * operand types are the declared stdlib parameter descriptors, and
+     * {@code deal_std_call} itself validates every presentation against
+     * those, so boxing at them would read a value's slot at the wrong
+     * representation.
+     */
+    private void emitStdlibCall(SemanticOp op) {
+        KindPayload.StdlibCallPayload payload =
+            (KindPayload.StdlibCallPayload) op.payload();
+        session.referenceRuntimeEntry("deal_std_call");
+        List<RuntimeDescriptor> actual = new ArrayList<>(op.operands().size());
+        for (ValueId operand : op.operands()) {
+            actual.add(descriptorOfValue(operand));
+        }
+        String arguments = checkInputArray(op, op.operands(), actual);
+        String outcome = callRecord(op, "%struct.deal_outcome_data",
+            "deal_std_call", "i32 " + payload.function().ordinal() + ", "
+                + "%struct.deal_check_input* " + arguments + ", i32 "
+                + op.operands().size() + ", %struct.deal_origin* "
+                + originValue(op));
+        String error = emitTemporary(op, "extractvalue %struct.deal_outcome_data "
+            + outcome + ", 0");
+        branchOnFailure(op, error, "stdlib");
+        Optional<String> representation = resultRepresentation(op);
+        if (representation.isEmpty()) {
+            return;
+        }
+        if (!(op.resultType() instanceof RuntimeDescriptor returned)) {
+            throw new IllegalStateException("the STDLIB_CALL " + op.opId()
+                + " carries no result descriptor");
+        }
+        String datum = emitTemporary(op, "extractvalue %struct.deal_outcome_data "
+            + outcome + ", 1");
+        storeResult(op, representation.get(),
+            datumToRepresentation(returned, datum, op));
+    }
+
+    /**
+     * {@code ASYNC_START} (C7): the runtime-allocated operation record and
+     * token, the blocking invocation of the callee to completion and the
+     * recorded parameter boundaries. The operation handle is kept in the
+     * token's own SSA slot; {@code AWAIT} consumes it exactly once.
+     */
+    private void emitAsyncStart(SemanticOp op) {
+        KindPayload.AsyncStartPayload payload =
+            (KindPayload.AsyncStartPayload) op.payload();
+        if (!(op.result() instanceof AsyncTokenId token)) {
+            throw new IllegalStateException("the ASYNC_START " + op.opId()
+                + " carries no canonical token");
+        }
+        for (OpId boundary : payload.parameterBoundaryOpIds()) {
+            recordOrigin(unitOp(boundary));
+        }
+        if (payload.returnBoundaryOpId() != null) {
+            recordOrigin(unitOp(payload.returnBoundaryOpId()));
+        }
+        String carrier;
+        if (payload.callee() instanceof KindPayload.CallCallee.Static callee) {
+            FunctionId function = switch (callee.binding()) {
+                case deal.semantic.ir.FunctionExecutionBinding.LoweredBody body ->
+                    body.functionId();
+                case deal.semantic.ir.FunctionExecutionBinding.ExternalFunction ignored ->
+                    externalAsyncCallee(payload, op);
+                default -> throw new deal.codegen.SharedEmissionFailure(
+                    "LlvmSemanticEmitter rejects the ASYNC_START callee "
+                        + callee.binding() + " of " + op.opId(),
+                    op.origin().span().range());
+            };
+            LoweredFunction lowered = session.function(function);
+            for (BindingGeneration capture : lowered.captures()) {
+                if (!session.moduleScopedAcrossProject(capture.binding(),
+                        capture.generation())) {
+                    throw new deal.codegen.SharedEmissionFailure(
+                        "LlvmSemanticEmitter rejects the ASYNC_START of the"
+                            + " function " + function + " of " + op.opId()
+                            + ": its capture of " + capture.binding()
+                            + " is no module-scope cell",
+                        op.origin().span().range());
+                }
+            }
+            carrier = emitClosure(function, lowered.captures(),
+                lowered.descriptor(), op);
+        } else if (payload.callee()
+                instanceof KindPayload.CallCallee.Dynamic dynamic) {
+            carrier = emitAsyncCalleeCheck(op, dynamic.callee());
+        } else if (payload.callee()
+                instanceof KindPayload.CallCallee.Indirect indirect) {
+            carrier = emitAsyncCalleeCheck(op, indirect.callee());
+        } else {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the ASYNC_START callee of "
+                    + op.opId(), op.origin().span().range());
+        }
+        String arguments = checkInputArray(op, op.operands(),
+            op.operandTypes());
+        session.referenceRuntimeEntry("deal_async_start");
+        String started = emitTemporary(op, "call"
+            + " %struct.deal_outcome_reference @deal_async_start("
+            + LlvmTypeMapper.FN_POINTER + " " + carrier + ", "
+            + "%struct.deal_check_input* " + arguments + ", i32 "
+            + op.operands().size() + ", %struct.deal_origin* "
+            + originValue(op) + ")");
+        String error = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_reference " + started + ", 0");
+        branchOnFailure(op, error, "asyncstart");
+        String operation = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_reference " + started + ", 1");
+        emit("store i8* " + operation + ", i8** " + tokenSlot(token, "i8*"));
+    }
+
+    /**
+     * The boxed async callee of a {@code Dynamic} or {@code Indirect}
+     * {@code ASYNC_START}: the carrier is loaded and its signature atom is
+     * validated against the recorded call signature exactly like the
+     * synchronously dispatched call's, so a wrong-signature function value
+     * reaches the one E8010 arm at the async call before the operation record
+     * is created (C5, C7).
+     */
+    private String emitAsyncCalleeCheck(SemanticOp op, ValueId calleeValue) {
+        RuntimeDescriptor calleeType = descriptorOfValue(calleeValue);
+        if (!(calleeType instanceof RuntimeDescriptor.Func signature)) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the ASYNC_START callee "
+                    + calleeValue + " of " + op.opId()
+                    + ": it is no function value",
+                op.origin().span().range());
+        }
+        requireBoxedSignature(signature, op, "the awaited call");
+        String carrier = loadRepresentation(calleeValue, signature, op);
+        emitSignatureCheck(op, signature, carrier);
+        return carrier;
+    }
+
+    /**
+     * The lowered body of one cross-module {@code ASYNC_START} callee: the
+     * payload's own {@link deal.semantic.ir.ExternalAsyncLink} names the callee
+     * module and the export name whose published closure the exported function
+     * is, so the call resolves to that unit's lowered function exactly as the
+     * direct cross-module call resolves its external entry (C7).
+     */
+    private FunctionId externalAsyncCallee(KindPayload.AsyncStartPayload payload,
+                                           SemanticOp op) {
+        deal.semantic.ir.ExternalAsyncLink link = payload.externalAsyncLink();
+        if (link == null) {
+            throw new deal.codegen.SharedEmissionFailure(
+                "LlvmSemanticEmitter rejects the cross-module ASYNC_START of "
+                    + op.opId() + ": it records no external async link",
+                op.origin().span().range());
+        }
+        LoweredModuleUnit calleeUnit = session.unitOf(link.calleeModuleId());
+        for (SemanticOp candidate : calleeUnit.ops()) {
+            if (!(candidate.payload()
+                    instanceof KindPayload.ExportPublishPayload published)
+                    || !published.name().equals(link.exportName())) {
+                continue;
+            }
+            SemanticOp producer = LlvmStageClassifier.producerOf(calleeUnit,
+                published.value());
+            if (producer != null
+                    && producer.payload()
+                        instanceof KindPayload.ClosureNewPayload closure) {
+                return closure.function();
+            }
+        }
+        throw new deal.codegen.SharedEmissionFailure(
+            "LlvmSemanticEmitter rejects the cross-module ASYNC_START of "
+                + op.opId() + ": the module " + link.calleeModuleId()
+                + " publishes no lowered function named '"
+                + link.exportName() + "'",
+            op.origin().span().range());
+    }
+
+    /** {@code AWAIT} (C7): observe, pump, validate at the await origin. */
+    private void emitAwait(SemanticOp op) {
+        KindPayload.AwaitPayload payload = (KindPayload.AwaitPayload) op.payload();
+        SemanticOp boundary = unitOp(payload.completionBoundaryOpId());
+        recordOrigin(boundary);
+        String operation = load(op, "i8*",
+            tokenSlot(canonical(payload.token()), "i8*"));
+        session.referenceRuntimeEntry("deal_async_await");
+        String completed = callRecord(op, "%struct.deal_outcome_data",
+            "deal_async_await", "i8* " + operation
+                + ", " + session.data.operand(session.data.intern(
+                    payload.completionDescriptor().canonicalSpecText()))
+                + ", %struct.deal_origin* " + originValue(boundary));
+        String error = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_data " + completed + ", 0");
+        branchOnFailure(op, error, "await");
+        Optional<String> representation = resultRepresentation(op);
+        if (representation.isEmpty()) {
+            return;
+        }
+        String datum = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_data " + completed + ", 1");
+        storeResult(op, representation.get(),
+            datumToRepresentation(payload.completionDescriptor(), datum, op));
+    }
+
+    /** The canonical token behind one (possibly aliasing) token identity. */
+    private static AsyncTokenId canonical(AsyncTokenId token) {
+        AsyncTokenId current = token;
+        while (current instanceof AsyncTokenId.Alias alias) {
+            current = alias.referent();
+        }
+        return current;
+    }
+
+    /** The SSA slot holding one asynchronous operation handle. */
+    private String tokenSlot(AsyncTokenId token, String type) {
+        return tokenSlots.computeIfAbsent(token.tokenId(), id -> {
+            String name = "%token" + id;
+            allocas.add(name + " = alloca " + type);
+            return name;
+        });
+    }
+
+    /** Emits one carrier per stdlib function value a unit reads. */
+    private void emitStdlibCarriers(LoweredModuleUnit initUnit) {
+        for (LlvmSession.StdlibRead read : session.stdlibReads(initUnit)) {
+            session.referenceRuntimeEntry("deal_fn_create");
+            String thunk = "bitcast (" + thunkType() + " @"
+                + stdlibThunkName(read.function()) + " to i8*)";
+            String signatureText = session.data.operand(session.data.intern(
+                read.signature().canonicalSpecText()));
+            String carrier = emitTemporary(null, "call "
+                + LlvmTypeMapper.FN_POINTER + " @deal_fn_create(i8* "
+                + thunk + ", i8** null, i32 0, " + signatureText + ", i32 0)");
+            emit("store " + LlvmTypeMapper.FN_POINTER + " " + carrier + ", "
+                + LlvmTypeMapper.FN_POINTER + "* @" + read.slot());
+        }
+    }
+
+    /** The emitted name of one stdlib function value's apply thunk. */
+    static String stdlibThunkName(deal.semantic.ir.StdlibFunctionId function) {
+        return "S" + function.ordinal();
+    }
+
+    /**
+     * The apply thunk of one stdlib function value (R7): the checked argument
+     * presentations and the call origin reach the one runtime dispatch entry,
+     * which owns the parameter and return crossings, and its persistent datum
+     * result is the thunk's own completion.
+     */
+    String emitStdlibThunk(deal.semantic.ir.StdlibFunctionId function) {
+        session.referenceRuntimeEntry("deal_std_call");
+        StringBuilder out = new StringBuilder();
+        out.append("define internal %struct.deal_outcome_data @")
+            .append(stdlibThunkName(function))
+            .append("(i8* %functionvalue, %struct.deal_check_input* %arguments,"
+                + " i32 %count, %struct.deal_origin* %origin) {\n");
+        out.append("Lthunk:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%slot = alloca %struct.deal_outcome_data\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_std_call(%struct.deal_outcome_data*"
+                + " sret(%struct.deal_outcome_data) %slot, i32 ")
+            .append(function.ordinal())
+            .append(", %struct.deal_check_input* %arguments, i32 %count,"
+                + " %struct.deal_origin* %origin)\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%result = load %struct.deal_outcome_data,"
+                + " %struct.deal_outcome_data* %slot\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome_data %result\n}\n");
+        return out.toString();
+    }
+
+    /**
+     * The boxed apply thunk of one lowered function (C5): unboxes the
+     * recorded argument presentations at the function's own parameter
+     * boundaries, calls the native body with the carrier's captured cells, and
+     * boxes the completion into the persistent datum. A carried Error is
+     * returned as the outcome's error member, never as data.
+     */
+    String emitThunk(FunctionId id) {
+        for (String entry : THUNK_ENTRIES) {
+            session.referenceRuntimeEntry(entry);
+        }
+        LoweredFunction function = session.function(id);
+        List<RuntimeDescriptor> parameters = function.descriptor().paramTypes();
+        RuntimeDescriptor result = function.descriptor().returnType();
+        int slot = 1;
+        Map<Integer, Integer> rootSlotsByParam = new LinkedHashMap<>();
+        for (int index = 0; index < parameters.size(); index++) {
+            if (LlvmTypeMapper.isManagedValue(parameters.get(index))) {
+                rootSlotsByParam.put(index, slot++);
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        int thunkScope = session.debug.subprogram(
+            session.displayName(session.ownerOf(id)), function.sourceName(),
+            thunkName(id), Math.max(1, declarationLine(function)));
+        out.append("define internal %struct.deal_outcome_data @")
+            .append(thunkName(id))
+            .append("(i8* %functionvalue, %struct.deal_check_input* %arguments,"
+                + " i32 %count, %struct.deal_origin* %origin) !dbg !")
+            .append(thunkScope).append(" {\n");
+        out.append("Lthunk:\n");
+        String thunkDebug = ", " + LlvmDebugInfo.attach(
+            session.debug.location(Math.max(1, declarationLine(function)), 1,
+                thunkScope));
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_call_frame_push(").append(frameLabelOperand(id))
+            .append(")").append(thunkDebug).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_root_frame_enter(i32 ").append(slot).append(")")
+            .append(thunkDebug).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_root_frame_write(i32 0, i8* %functionvalue)\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%carrier = bitcast i8*"
+            + " %functionvalue to %struct.deal_fn*\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%arity = icmp eq i32"
+            + " %count, ").append(parameters.size()).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("br i1 %arity, label %bind,"
+            + " label %badcount\n");
+        out.append("badcount:\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_platform_fault(").append(session.data.operand(
+                session.data.intern("function value: argument count")))
+            .append(")\n");
+        out.append(LlvmIrPrinter.indent(1)).append("unreachable\n");
+        out.append("bind:\n");
+        for (int index = 0; index < parameters.size(); index++) {
+            thunkParameter(out, index, parameters.get(index), rootSlotsByParam);
+        }
+        StringBuilder arguments = new StringBuilder();
+        for (int index = 0; index < parameters.size(); index++) {
+            RuntimeDescriptor descriptor = parameters.get(index);
+            String value = "%parameter" + index;
+            if (descriptor instanceof RuntimeDescriptor.Boolean) {
+                String widened = "%argument" + index;
+                out.append(LlvmIrPrinter.indent(1)).append(widened)
+                    .append(" = zext i1 ").append(value).append(" to i8\n");
+                value = widened;
+            }
+            if (index > 0) {
+                arguments.append(", ");
+            }
+            arguments.append(LlvmTypeMapper.abiParameterType(descriptor))
+                .append(' ').append(value);
+        }
+        // The thunk is the carrier's dispatch shim, not a DEAL activation: its
+        // own frame label covers the argument checks and is popped before the
+        // body runs, so the body's own label is the single frame the callee
+        // contributes to an Error snapshot (C8/R5).
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_call_frame_pop()\n");
+        String outcome = LlvmTypeMapper.outcomeType(result);
+        out.append(LlvmIrPrinter.indent(1)).append("%body = call ").append(outcome)
+            .append(" @F").append(id.id()).append("(%struct.deal_fn* %carrier")
+            .append(arguments.length() == 0 ? "" : ", " + arguments)
+            .append(")").append(thunkDebug).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("%bodyerror = extractvalue ")
+            .append(outcome).append(" %body, 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%bodyfailed = icmp ne i8*"
+            + " %bodyerror, null\n");
+        out.append(LlvmIrPrinter.indent(1)).append("br i1 %bodyfailed, label"
+            + " %bodyfail, label %bodyok\n");
+        out.append("bodyfail:\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%failed = insertvalue"
+            + " %struct.deal_outcome_data zeroinitializer, i8* %bodyerror, 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_root_frame_leave()\n");
+        out.append(LlvmIrPrinter.indent(1)).append("ret %struct.deal_outcome_data"
+            + " %failed\n");
+        out.append("bodyok:\n");
+        String boxed = thunkBox(out, result, outcome, "%body");
+        out.append(LlvmIrPrinter.indent(1)).append("%completed = insertvalue"
+            + " %struct.deal_outcome_data zeroinitializer, %struct.deal_data ")
+            .append(boxed).append(", 1\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_root_frame_leave()\n");
+        out.append(LlvmIrPrinter.indent(1)).append("ret %struct.deal_outcome_data"
+            + " %completed\n");
+        out.append("}\n");
+        return out.toString();
+    }
+
+    /** The runtime entries every boxed apply thunk references. */
+    private static final List<String> THUNK_ENTRIES = List.of(
+        "deal_call_frame_push",
+        "deal_call_frame_pop",
+        "deal_root_frame_enter",
+        "deal_root_frame_leave",
+        "deal_root_frame_write",
+        "deal_root_frame_write_data",
+        "deal_check_number",
+        "deal_check_boolean",
+        "deal_check_string",
+        "deal_check_value",
+        "deal_descriptor_intern",
+        "deal_data_of_number",
+        "deal_data_of_boolean",
+        "deal_data_of_null",
+        "deal_data_of_undefined",
+        "deal_data_of_reference",
+        "deal_platform_fault",
+        "deal_fn_capture");
+
+    /** Unboxes one recorded argument presentation in the thunk. */
+    private void thunkParameter(StringBuilder out, int index,
+                                RuntimeDescriptor descriptor,
+                                Map<Integer, Integer> rootSlotsByParam) {
+        out.append(LlvmIrPrinter.indent(1)).append("%input").append(index)
+            .append(" = getelementptr %struct.deal_check_input,"
+                + " %struct.deal_check_input* %arguments, i64 ").append(index)
+            .append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("%datum").append(index)
+            .append(" = getelementptr %struct.deal_check_input,"
+                + " %struct.deal_check_input* %input").append(index)
+            .append(", i32 0, i32 2\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%ctx").append(index)
+            .append(" = alloca %struct.deal_check_context\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%context").append(index)
+            .append(" = insertvalue %struct.deal_check_context"
+                + " zeroinitializer, %struct.deal_origin* %origin, 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%indexed").append(index)
+            .append(" = insertvalue %struct.deal_check_context %context")
+            .append(index).append(", i32 ").append(index + 1).append(", 1\n");
+        out.append(LlvmIrPrinter.indent(1)).append("store"
+            + " %struct.deal_check_context %indexed").append(index).append(","
+            + " %struct.deal_check_context* %ctx").append(index).append('\n');
+        String errorName = "%error" + index;
+        switch (descriptor) {
+            case RuntimeDescriptor.Number _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%checked")
+                    .append(index).append(" = call %struct.deal_outcome_number"
+                        + " @deal_check_number(%struct.deal_data* %datum")
+                    .append(index).append(", %struct.deal_check_context* %ctx")
+                    .append(index).append(")\n");
+                out.append(LlvmIrPrinter.indent(1)).append(errorName)
+                    .append(" = extractvalue %struct.deal_outcome_number"
+                        + " %checked").append(index).append(", 0\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = extractvalue"
+                        + " %struct.deal_outcome_number %checked")
+                    .append(index).append(", 1\n");
+            }
+            case RuntimeDescriptor.Boolean _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%checked")
+                    .append(index).append(" = call %struct.deal_outcome_boolean"
+                        + " @deal_check_boolean(%struct.deal_data* %datum")
+                    .append(index).append(", %struct.deal_check_context* %ctx")
+                    .append(index).append(")\n");
+                out.append(LlvmIrPrinter.indent(1)).append(errorName)
+                    .append(" = extractvalue %struct.deal_outcome_boolean"
+                        + " %checked").append(index).append(", 0\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%checkedvalue")
+                    .append(index).append(" = extractvalue"
+                        + " %struct.deal_outcome_boolean %checked")
+                    .append(index).append(", 1\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = icmp ne i8 %checkedvalue")
+                    .append(index).append(", 0\n");
+            }
+            case RuntimeDescriptor.String _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%checked")
+                    .append(index).append(" = call %struct.deal_outcome_string"
+                        + " @deal_check_string(%struct.deal_data* %datum")
+                    .append(index).append(", %struct.deal_check_context* %ctx")
+                    .append(index).append(")\n");
+                out.append(LlvmIrPrinter.indent(1)).append(errorName)
+                    .append(" = extractvalue %struct.deal_outcome_string"
+                        + " %checked").append(index).append(", 0\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%checkedvalue")
+                    .append(index).append(" = extractvalue"
+                        + " %struct.deal_outcome_string %checked")
+                    .append(index).append(", 1\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = bitcast i8* %checkedvalue")
+                    .append(index).append(" to %struct.deal_string*\n");
+            }
+            case RuntimeDescriptor.Unknown _ -> {
+                thunkSignatureCheck(out, index, descriptor);
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = load %struct.deal_data,"
+                        + " %struct.deal_data* %datum").append(index).append('\n');
+            }
+            case RuntimeDescriptor.Func _ -> {
+                thunkSignatureCheck(out, index, descriptor);
+                out.append(LlvmIrPrinter.indent(1)).append("%reference")
+                    .append(index).append(" = getelementptr %struct.deal_data,"
+                        + " %struct.deal_data* %datum").append(index)
+                    .append(", i32 0, i32 3\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%referent")
+                    .append(index).append(" = load i8*, i8** %reference")
+                    .append(index).append('\n');
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = bitcast i8* %referent")
+                    .append(index).append(" to %struct.deal_fn*\n");
+            }
+            case RuntimeDescriptor.Class classType
+                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) -> {
+                thunkSignatureCheck(out, index, descriptor);
+                out.append(LlvmIrPrinter.indent(1)).append("%reference")
+                    .append(index).append(" = getelementptr %struct.deal_data,"
+                        + " %struct.deal_data* %datum").append(index)
+                    .append(", i32 0, i32 3\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%referent")
+                    .append(index).append(" = load i8*, i8** %reference")
+                    .append(index).append('\n');
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = bitcast i8* %referent")
+                    .append(index).append(" to %struct.deal_error*\n");
+            }
+            case RuntimeDescriptor.Array _, RuntimeDescriptor.Table _,
+                 RuntimeDescriptor.Class _ -> {
+                thunkSignatureCheck(out, index, descriptor);
+                out.append(LlvmIrPrinter.indent(1)).append("%reference")
+                    .append(index).append(" = getelementptr %struct.deal_data,"
+                        + " %struct.deal_data* %datum").append(index)
+                    .append(", i32 0, i32 3\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%referent")
+                    .append(index).append(" = load i8*, i8** %reference")
+                    .append(index).append('\n');
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = bitcast i8* %referent")
+                    .append(index).append(" to ")
+                    .append(stagedRepresentation(descriptor)).append('\n');
+            }
+            case RuntimeDescriptor.Nullable nullable ->
+                thunkUnboxNullish(out, index, nullable, errorName);
+            default -> throw new IllegalStateException("the boxed apply thunk"
+                + " has no unboxing for '" + descriptor.canonicalSpecText()
+                + "'");
+        }
+        out.append(LlvmIrPrinter.indent(1)).append("%failed").append(index)
+            .append(" = icmp ne i8* ").append(errorName).append(", null\n");
+        out.append(LlvmIrPrinter.indent(1)).append("br i1 %failed")
+            .append(index).append(", label %paramfail").append(index)
+            .append(", label %paramok").append(index).append('\n');
+        out.append("paramfail").append(index).append(":\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%parameterfailed")
+            .append(index).append(" = insertvalue %struct.deal_outcome_data"
+                + " zeroinitializer, i8* ").append(errorName).append(", 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_root_frame_leave()\n");
+        out.append(LlvmIrPrinter.indent(1)).append("call void"
+            + " @deal_call_frame_pop()\n");
+        out.append(LlvmIrPrinter.indent(1)).append("ret"
+            + " %struct.deal_outcome_data %parameterfailed").append(index)
+            .append('\n');
+        out.append("paramok").append(index).append(":\n");
+        Integer rootIndex = rootSlotsByParam.get(index);
+        if (rootIndex != null) {
+            if (descriptor instanceof RuntimeDescriptor.Nullable
+                    || descriptor instanceof RuntimeDescriptor.Unknown) {
+                // The tag-aware entry roots exactly the datum's managed
+                // payload, so a nullish or unknown position never presents
+                // scalar bits or a singleton as a heap address (M4).
+                out.append(LlvmIrPrinter.indent(1)).append("call void"
+                    + " @deal_root_frame_write_data(i32 ").append(rootIndex)
+                    .append(", %struct.deal_data* %datum").append(index)
+                    .append(")\n");
+            } else {
+                String pointer = "%parameter" + index;
+                if (LlvmTypeMapper.isManagedPointer(descriptor)
+                        || descriptor instanceof RuntimeDescriptor.Func) {
+                    pointer = "%rooted" + index;
+                    out.append(LlvmIrPrinter.indent(1)).append(pointer)
+                        .append(" = bitcast ")
+                        .append(stagedRepresentation(descriptor)).append(' ')
+                        .append("%parameter").append(index).append(" to i8*\n");
+                }
+                out.append(LlvmIrPrinter.indent(1)).append("call void"
+                    + " @deal_root_frame_write(i32 ").append(rootIndex)
+                    .append(", i8* ").append(pointer).append(")\n");
+            }
+        }
+    }
+
+    /** Unboxes one nullish argument presentation in the thunk. */
+    private void thunkUnboxNullish(StringBuilder out, int index,
+                                   RuntimeDescriptor.Nullable nullable,
+                                   String errorName) {
+        thunkSignatureCheck(out, index, nullable);
+        String representation = stagedRepresentation(nullable);
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishdatum").append(index)
+            .append(" = load %struct.deal_data, %struct.deal_data* %datum")
+            .append(index).append('\n');
+        String tag = "%nullishtag" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(tag)
+            .append(" = extractvalue %struct.deal_data %nullishdatum")
+            .append(index).append(", 0\n");
+        String isNull = "%nullishnull" + index;
+        String isUndefined = "%nullishundefined" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(isNull)
+            .append(" = icmp eq i32 ").append(tag).append(", ")
+            .append(LlvmTypeMapper.DATA_NULL).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append(isUndefined)
+            .append(" = icmp eq i32 ").append(tag).append(", ")
+            .append(LlvmTypeMapper.DATA_UNDEFINED).append('\n');
+        if (representation.equals(LlvmTypeMapper.REFERENCE_NULLISH)) {
+            String reference = "%nullishreference" + index;
+            out.append(LlvmIrPrinter.indent(1)).append(reference)
+                .append(" = extractvalue %struct.deal_data %nullishdatum")
+                .append(index).append(", 3\n");
+            String nullPointer = "%nullishnullptr" + index;
+            String undefinedPointer = "%nullishundefinedptr" + index;
+            session.referenceExternalGlobal("deal_null_singleton");
+            session.referenceExternalGlobal("deal_undefined_singleton");
+            out.append(LlvmIrPrinter.indent(1)).append(nullPointer)
+                .append(" = load i8*, i8** @deal_null_singleton\n");
+            out.append(LlvmIrPrinter.indent(1)).append(undefinedPointer)
+                .append(" = load i8*, i8** @deal_undefined_singleton\n");
+            String withNull = "%nullishwithnull" + index;
+            out.append(LlvmIrPrinter.indent(1)).append(withNull)
+                .append(" = select i1 ").append(isNull).append(", i8* ")
+                .append(nullPointer).append(", i8* ").append(reference).append('\n');
+            out.append(LlvmIrPrinter.indent(1)).append("%parameter").append(index)
+                .append(" = select i1 ").append(isUndefined).append(", i8* ")
+                .append(undefinedPointer).append(", i8* ").append(withNull)
+                .append('\n');
+            return;
+        }
+        boolean number = representation.equals(LlvmTypeMapper.NULLISH_NUMBER);
+        String payload = "%nullishpayload" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(payload)
+            .append(" = extractvalue %struct.deal_data %nullishdatum")
+            .append(index).append(", 2\n");
+        int baseTag = nullable.inner() instanceof RuntimeDescriptor.Boolean
+            ? LlvmTypeMapper.DATA_BOOLEAN : LlvmTypeMapper.DATA_NUMBER;
+        String isBase = "%nullishbase" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(isBase)
+            .append(" = icmp eq i32 ").append(tag).append(", ").append(baseTag)
+            .append('\n');
+        String zero = number ? "double 0.0" : "i1 false";
+        String value = number ? "double " : "i1 ";
+        String base = payload;
+        if (!number) {
+            base = "%nullishbool" + index;
+            out.append(LlvmIrPrinter.indent(1)).append(base)
+                .append(" = fcmp une double ").append(payload)
+                .append(", 0.0\n");
+        }
+        String baseSelected = "%nullishbasevalue" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(baseSelected)
+            .append(" = select i1 ").append(isBase).append(", ").append(value)
+            .append(base).append(", ").append(zero).append('\n');
+        String undefinedSelected = "%nullishundefinedtag" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(undefinedSelected)
+            .append(" = select i1 ").append(isUndefined).append(", i32 ")
+            .append(LlvmTypeMapper.NULLISH_UNDEFINED).append(", i32 ")
+            .append(LlvmTypeMapper.NULLISH_BASE).append('\n');
+        String discriminant = "%nullishdiscriminant" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(discriminant)
+            .append(" = select i1 ").append(isNull).append(", i32 ")
+            .append(LlvmTypeMapper.NULLISH_NULL).append(", i32 ")
+            .append(undefinedSelected).append('\n');
+        String withTag = "%nullishwithtag" + index;
+        out.append(LlvmIrPrinter.indent(1)).append(withTag)
+            .append(" = insertvalue ").append(representation).append(" { i32 0, ")
+            .append(zero).append(" }, i32 ").append(discriminant).append(", 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%parameter").append(index)
+            .append(" = insertvalue ").append(representation).append(' ')
+            .append(withTag).append(", ").append(value).append(baseSelected)
+            .append(", 1\n");
+    }
+
+    /** The signature check of one function-typed argument presentation. */
+    private void thunkSignatureCheck(StringBuilder out, int index,
+                                     RuntimeDescriptor descriptor) {
+        String text = descriptor.canonicalSpecText();
+        out.append(LlvmIrPrinter.indent(1)).append("%atom").append(index)
+            .append(" = call %struct.deal_descriptor* @deal_descriptor_intern(")
+            .append(session.data.operand(session.data.intern(text)))
+            .append(")\n");
+        String boundary = Integer.toString(checkBoundaryKind(descriptor));
+        out.append(LlvmIrPrinter.indent(1)).append("%checked").append(index)
+            .append(" = call %struct.deal_outcome @deal_check_value("
+                + "%struct.deal_descriptor* %atom").append(index)
+            .append(", %struct.deal_check_input* byval(%struct.deal_check_input)"
+                + " %input").append(index).append(", i32 ").append(boundary)
+            .append(", %struct.deal_check_context* %ctx").append(index)
+            .append(")\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%error").append(index)
+            .append(" = extractvalue %struct.deal_outcome %checked")
+            .append(index).append(", 0\n");
+    }
+
+    /** Boxes one completed native value into the persistent datum. */
+    private String thunkBox(StringBuilder out, RuntimeDescriptor result,
+                            String outcome, String aggregate) {
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%boxslot = alloca %struct.deal_data\n");
+        String entry;
+        String arguments;
+        switch (result) {
+            case RuntimeDescriptor.Number _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%number = extractvalue ")
+                    .append(outcome).append(' ').append(aggregate).append(", 1\n");
+                entry = "deal_data_of_number";
+                arguments = "double %number";
+            }
+            case RuntimeDescriptor.Boolean _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%truthfield = extractvalue ")
+                    .append(outcome).append(' ').append(aggregate).append(", 1\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%truthbyte")
+                    .append(" = zext i8 %truthfield to i32\n");
+                entry = "deal_data_of_boolean";
+                arguments = "i32 %truthbyte";
+            }
+            case RuntimeDescriptor.String _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%text = extractvalue ")
+                    .append(outcome).append(' ').append(aggregate).append(", 1\n");
+                entry = "deal_data_of_reference";
+                arguments = "i32 " + LlvmTypeMapper.DATA_STRING + ", i8* %text";
+            }
+            case RuntimeDescriptor.Unknown _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%boxed")
+                    .append(" = extractvalue ").append(outcome).append(' ')
+                    .append(aggregate).append(", 1\n");
+                return "%boxed";
+            }
+            case RuntimeDescriptor.Func _ -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%reference = extractvalue ")
+                    .append(outcome).append(' ').append(aggregate).append(", 1\n");
+                entry = "deal_data_of_reference";
+                arguments = "i32 " + LlvmTypeMapper.DATA_FUNCTION
+                    + ", i8* %reference";
+            }
+            case RuntimeDescriptor.Class classType
+                when classType.classId().equals(deal.semantic.ir.ClassId.ERROR) -> {
+                out.append(LlvmIrPrinter.indent(1)).append("%reference = extractvalue ")
+                    .append(outcome).append(' ').append(aggregate).append(", 1\n");
+                entry = "deal_data_of_reference";
+                arguments = "i32 " + LlvmTypeMapper.DATA_ERROR
+                    + ", i8* %reference";
+            }
+            case RuntimeDescriptor.Array _, RuntimeDescriptor.Table _,
+                 RuntimeDescriptor.Class _ -> {
+                // A container or class completion is the managed pointer its
+                // datum tag names (C3); the outcome already carries it as the
+                // one `i8*` slot of a managed reference.
+                int tag = result instanceof RuntimeDescriptor.Array
+                    ? LlvmTypeMapper.DATA_ARRAY
+                    : result instanceof RuntimeDescriptor.Table
+                        ? LlvmTypeMapper.DATA_TABLE
+                        : LlvmTypeMapper.DATA_CLASS;
+                out.append(LlvmIrPrinter.indent(1)).append("%reference = extractvalue ")
+                    .append(outcome).append(' ').append(aggregate).append(", 1\n");
+                entry = "deal_data_of_reference";
+                arguments = "i32 " + tag + ", i8* %reference";
+            }
+            case RuntimeDescriptor.Void _, RuntimeDescriptor.Undefined _ -> {
+                entry = "deal_data_of_undefined";
+                arguments = "";
+            }
+            case RuntimeDescriptor.Null _ -> {
+                entry = "deal_data_of_null";
+                arguments = "";
+            }
+            case RuntimeDescriptor.Nullable nullable -> {
+                return thunkBoxNullish(out, nullable, outcome, aggregate);
+            }
+            default -> throw new IllegalStateException("the boxed apply thunk"
+                + " has no boxing for '" + result.canonicalSpecText() + "'");
+        }
+        out.append(LlvmIrPrinter.indent(1)).append("call void @").append(entry)
+            .append("(%struct.deal_data* sret(%struct.deal_data) %boxslot")
+            .append(arguments.isEmpty() ? "" : ", " + arguments).append(")\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%boxed = load %struct.deal_data, %struct.deal_data* %boxslot\n");
+        return "%boxed";
+    }
+
+    /** The datum tag of one non-nullish descriptor (C3/R3). */
+    private static int datumTagOf(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof RuntimeDescriptor.String) {
+            return LlvmTypeMapper.DATA_STRING;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Array) {
+            return LlvmTypeMapper.DATA_ARRAY;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Table) {
+            return LlvmTypeMapper.DATA_TABLE;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Func) {
+            return LlvmTypeMapper.DATA_FUNCTION;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Class classType) {
+            return classType.classId().equals(deal.semantic.ir.ClassId.ERROR)
+                ? LlvmTypeMapper.DATA_ERROR : LlvmTypeMapper.DATA_CLASS;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Number) {
+            return LlvmTypeMapper.DATA_NUMBER;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Boolean) {
+            return LlvmTypeMapper.DATA_BOOLEAN;
+        }
+        if (descriptor instanceof RuntimeDescriptor.Null) {
+            return LlvmTypeMapper.DATA_NULL;
+        }
+        return LlvmTypeMapper.DATA_UNDEFINED;
+    }
+
+    /** Boxes one nullish completion into the persistent datum. */
+    private String thunkBoxNullish(StringBuilder out,
+                                   RuntimeDescriptor.Nullable nullable,
+                                   String outcome, String aggregate) {
+        String representation = stagedRepresentation(nullable);
+        boolean reference = representation.equals(
+            LlvmTypeMapper.REFERENCE_NULLISH);
+        boolean number = representation.equals(LlvmTypeMapper.NULLISH_NUMBER);
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishresult = extractvalue ")
+            .append(outcome).append(' ').append(aggregate).append(", 1\n");
+        if (reference) {
+            // The reference-nullish arm tests the two distinct singletons by
+            // identity, so this boxed body declares its own entries (C9).
+            session.referenceRuntimeEntry("deal_value_is_null");
+            session.referenceRuntimeEntry("deal_value_is_undefined");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishnull")
+                .append(" = call i32 @deal_value_is_null(i8* %nullishresult)\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishundefined")
+                .append(" = call i32 @deal_value_is_undefined(i8* %nullishresult)\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishnullflag")
+                .append(" = icmp ne i32 %nullishnull, 0\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishundefinedflag")
+                .append(" = icmp ne i32 %nullishundefined, 0\n");
+            String baseTag = Integer.toString(datumTagOf(nullable.inner()));
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishundefinedtag")
+                .append(" = select i1 %nullishundefinedflag, i32 ")
+                .append(LlvmTypeMapper.DATA_UNDEFINED).append(", i32 ")
+                .append(baseTag).append('\n');
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishdatatag")
+                .append(" = select i1 %nullishnullflag, i32 ")
+                .append(LlvmTypeMapper.DATA_NULL)
+                .append(", i32 %nullishundefinedtag\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishreference")
+                .append(" = select i1 %nullishnullflag, i8* null, i8* %nullishresult\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishwithtag")
+                .append(" = insertvalue %struct.deal_data { i32 0, i32 0, double 0.0, i8* null }, i32 %nullishdatatag, 0\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%boxed")
+                .append(" = insertvalue %struct.deal_data %nullishwithtag, i8*"
+                    + " %nullishreference, 3\n");
+            return "%boxed";
+        }
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishtag")
+            .append(" = extractvalue ").append(representation)
+            .append(" %nullishresult, 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishnullflag")
+            .append(" = icmp eq i32 %nullishtag, ")
+            .append(LlvmTypeMapper.NULLISH_NULL).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishundefinedflag")
+            .append(" = icmp eq i32 %nullishtag, ")
+            .append(LlvmTypeMapper.NULLISH_UNDEFINED).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishbase")
+            .append(" = extractvalue ").append(representation)
+            .append(" %nullishresult, 1\n");
+        String baseNumber = "%nullishbasenumber";
+        out.append(LlvmIrPrinter.indent(1)).append(baseNumber)
+            .append(" = ").append(number
+                ? "select i1 %nullishnullflag, double 0.0, double %nullishbase"
+                : "select i1 %nullishnullflag, i1 false, i1 %nullishbase")
+            .append('\n');
+        String payload;
+        if (number) {
+            payload = baseNumber;
+        } else {
+            payload = "%nullishbasenumber";
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishpayload")
+                .append(" = zext i1 %nullishbasenumber to i32\n");
+            out.append(LlvmIrPrinter.indent(1)).append("%nullishpayloaddouble")
+                .append(" = uitofp i32 %nullishpayload to double\n");
+            payload = "%nullishpayloaddouble";
+        }
+        int baseTag = nullable.inner() instanceof RuntimeDescriptor.Boolean
+            ? LlvmTypeMapper.DATA_BOOLEAN : LlvmTypeMapper.DATA_NUMBER;
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishundefinedtag")
+            .append(" = select i1 %nullishundefinedflag, i32 ")
+            .append(LlvmTypeMapper.DATA_UNDEFINED).append(", i32 ")
+            .append(baseTag).append('\n');
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishdatatag")
+            .append(" = select i1 %nullishnullflag, i32 ")
+            .append(LlvmTypeMapper.DATA_NULL)
+            .append(", i32 %nullishundefinedtag\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%nullishwithtag")
+            .append(" = insertvalue %struct.deal_data { i32 0, i32 0, double 0.0, i8* null }, i32 %nullishdatatag, 0\n");
+        out.append(LlvmIrPrinter.indent(1)).append("%boxed")
+            .append(" = insertvalue %struct.deal_data %nullishwithtag, double ")
+            .append(payload).append(", 2\n");
+        return "%boxed";
+    }
+
     /** The C4 outcome value-slot type of one declared result descriptor. */
     private static String outcomeSlotType(RuntimeDescriptor descriptor) {
         if (descriptor instanceof RuntimeDescriptor.Boolean) {
             return LlvmTypeMapper.BOOLEAN_ABI;
         }
-        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)
+                || descriptor instanceof RuntimeDescriptor.Func) {
             return "i8*";
         }
         return stagedRepresentation(descriptor);
@@ -1921,7 +4102,8 @@ final class LlvmFunctionEmitter {
         if (representation.equals("i8*")) {
             return value;
         }
-        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+        if (LlvmTypeMapper.isManagedPointer(descriptor)
+                || descriptor instanceof RuntimeDescriptor.Func) {
             return emitTemporary(op, "bitcast " + representation + " " + value
                 + " to i8*");
         }
@@ -1958,6 +4140,10 @@ final class LlvmFunctionEmitter {
         // A nullish outcome slot already holds its staged representation (the
         // `i8*` of a reference nullish position or the tagged scalar struct),
         // so no nullish result is ever cast.
+        if (descriptor instanceof RuntimeDescriptor.Func) {
+            return emitTemporary(op, "bitcast i8* " + value + " to "
+                + LlvmTypeMapper.FN_POINTER);
+        }
         return value;
     }
 
@@ -2770,14 +4956,39 @@ final class LlvmFunctionEmitter {
         startSegment(exit);
     }
 
-    /** Writes one iteration's fresh binding and roots it (M4, R2). */
+    /**
+     * Writes one iteration's binding and roots it (M4, R2, C5). Every iteration
+     * binding generation owns a fresh heap cell, so a closure created in one
+     * iteration captures that iteration's own cell and two iterations never
+     * share one binding; a direct iteration binding keeps its native slot.
+     */
     private void bindIteration(BindingId binding, long generation,
                                RuntimeDescriptor element, String representation,
                                String value, SemanticOp op) {
-        String slot = bindingSlot(binding, generation, representation);
-        emit("store " + representation + " " + value + ", " + representation
-            + "* " + slot);
-        rootBindingSlot(binding, generation, element, slot, op);
+        if (!session.cellBinding(unit, binding, generation)) {
+            String slot = bindingSlot(binding, generation, representation);
+            emit("store " + representation + " " + value + ", " + representation
+                + "* " + slot);
+            rootBindingSlot(binding, generation, element, slot, op);
+            return;
+        }
+        // The element is live across the cell's allocating call, so its own
+        // datum owns a root-frame slot (M4) before the cell is created.
+        session.referenceRuntimeEntry("deal_cell_alloc_data");
+        String datum = element instanceof RuntimeDescriptor.Unknown
+            ? value : emitDatum(element, value, op);
+        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "iterationdatum");
+        emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
+            + LlvmTypeMapper.DATA + "* " + datumSlot);
+        if (LlvmTypeMapper.isManagedValue(element)) {
+            rootSlotWrite(RuntimeDescriptor.Unknown.INSTANCE, datumSlot, null, op);
+        }
+        String cell = emitTemporary(op, "call i8* @deal_cell_alloc_data("
+            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 " + generation
+            + ")");
+        String slot = bindingSlot(binding, generation, "i8*");
+        emit("store i8* " + cell + ", i8** " + slot);
+        rootCellAt(slot, op);
     }
 
     // -- classes -------------------------------------------------------------
@@ -2992,6 +5203,15 @@ final class LlvmFunctionEmitter {
         if (!atom.equals("i8* null")) {
             record = emitTemporary(op, "insertvalue %struct.deal_check_input "
                 + record + ", " + atom + ", 3");
+        }
+        // A datum that can carry the function tag also carries the carrier's
+        // interned signature text (R4): the runtime classifies the datum with
+        // it and a function position compares it against the declared
+        // signature, so no boxed function datum reaches the check without one.
+        String signature = carriedSignature(op, actual, datum);
+        if (signature != null) {
+            record = emitTemporary(op, "insertvalue %struct.deal_check_input "
+                + record + ", i8* " + signature + ", 4");
         }
         return record;
     }
@@ -3333,11 +5553,62 @@ final class LlvmFunctionEmitter {
                     + result.canonicalSpecText()
                     + "'; the entry delegation returns its error-only outcome");
             }
-            out.append(LlvmIrPrinter.indent(1)).append("%main = call ")
-                .append(LlvmTypeMapper.outcomeType(result))
-                .append(" @F").append(main.id()).append("()\n");
-            out.append(LlvmIrPrinter.indent(1))
-                .append("ret %struct.deal_outcome %main\n");
+            int export = session.exportIndexOfFunction(entryModule, main);
+            if (export < 0) {
+                if (!function.captures().isEmpty()) {
+                    throw new IllegalStateException("the entry function " + main
+                        + " captures cells but the module publishes no export"
+                        + " of it");
+                }
+                out.append(LlvmIrPrinter.indent(1)).append("%main = call ")
+                    .append(LlvmTypeMapper.outcomeType(result))
+                    .append(" @F").append(main.id())
+                    .append("(%struct.deal_fn* null)\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("ret %struct.deal_outcome %main\n");
+            } else {
+                // The entry invoke drives the closure the unit published, so
+                // the entry function's own captured cells are the recorded
+                // ones (C2/C5) and no second closure identity is created.
+                session.referenceRuntimeEntry("deal_fn_apply");
+                int count = session.exportCount(entryModule);
+                String entryPointer = "%entry" + main.id();
+                out.append(LlvmIrPrinter.indent(1)).append(entryPointer)
+                    .append(" = getelementptr [").append(count)
+                    .append(" x %struct.deal_export_entry], [").append(count)
+                    .append(" x %struct.deal_export_entry]* @")
+                    .append(LlvmData.exportTable(
+                        session.moduleIndex(entryModule)))
+                    .append(", i64 0, i64 ").append(export).append('\n');
+                out.append(LlvmIrPrinter.indent(1)).append("%mainvalue")
+                    .append(" = getelementptr %struct.deal_export_entry,"
+                        + " %struct.deal_export_entry* ").append(entryPointer)
+                    .append(", i32 0, i32 4\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%mainfunction")
+                    .append(" = load %struct.deal_fn*, %struct.deal_fn**"
+                        + " %mainvalue\n");
+                String origin = "@" + session.data.origin(
+                    session.displayName(entryModule), 1, 1);
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("%appliedslot = alloca %struct.deal_outcome_data\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("call void @deal_fn_apply(%struct.deal_outcome_data*"
+                        + " sret(%struct.deal_outcome_data) %appliedslot,"
+                        + " %struct.deal_fn* %mainfunction,"
+                        + " %struct.deal_check_input* null, i32 0,"
+                        + " %struct.deal_origin* " + origin + ")\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("%applied = load %struct.deal_outcome_data,"
+                        + " %struct.deal_outcome_data* %appliedslot\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("%error = extractvalue %struct.deal_outcome_data"
+                        + " %applied, 0\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("%result = insertvalue %struct.deal_outcome"
+                        + " zeroinitializer, i8* %error, 0\n");
+                out.append(LlvmIrPrinter.indent(1))
+                    .append("ret %struct.deal_outcome %result\n");
+            }
         }
         out.append("}\n");
         return out.toString();
@@ -3448,6 +5719,9 @@ final class LlvmFunctionEmitter {
      * one recorded export through its own code pointer.
      */
     String emitExportInvoke() {
+        session.referenceRuntimeEntry("deal_fn_apply");
+        String origin = "@" + session.data.origin(
+            session.displayName(unit.moduleId()), 1, 1);
         StringBuilder out = new StringBuilder();
         out.append("define %struct.deal_outcome @deal_export_invoke"
             + "(%struct.deal_export_entry* %entry) {\nLentry:\n");
@@ -3457,19 +5731,28 @@ final class LlvmFunctionEmitter {
             .append("br i1 %isnull, label %absent, label %invoke\n");
         out.append("invoke:\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("%codep = getelementptr %struct.deal_export_entry,"
+            .append("%valuep = getelementptr %struct.deal_export_entry,"
                 + " %struct.deal_export_entry* %entry, i32 0, i32 4\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("%code = load i8*, i8** %codep\n");
+            .append("%function = load %struct.deal_fn*,"
+                + " %struct.deal_fn** %valuep\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("%hasCode = icmp ne i8* %code, null\n");
+            .append("%appliedslot = alloca %struct.deal_outcome_data\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("br i1 %hasCode, label %invokecode, label %absent\n");
-        out.append("invokecode:\n");
+            .append("call void @deal_fn_apply(%struct.deal_outcome_data*"
+                + " sret(%struct.deal_outcome_data) %appliedslot,"
+                + " %struct.deal_fn* %function,"
+                + " %struct.deal_check_input* null, i32 0,"
+                + " %struct.deal_origin* " + origin + ")\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("%call = bitcast i8* %code to %struct.deal_outcome ()*\n");
+            .append("%applied = load %struct.deal_outcome_data,"
+                + " %struct.deal_outcome_data* %appliedslot\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("%result = call %struct.deal_outcome %call()\n");
+            .append("%error = extractvalue %struct.deal_outcome_data"
+                + " %applied, 0\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%result = insertvalue %struct.deal_outcome"
+                + " zeroinitializer, i8* %error, 0\n");
         out.append(LlvmIrPrinter.indent(1))
             .append("ret %struct.deal_outcome %result\n");
         out.append("absent:\n");

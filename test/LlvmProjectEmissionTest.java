@@ -94,22 +94,22 @@ public final class LlvmProjectEmissionTest {
         """;
 
     /**
-     * One project of a fact outside this stage's rendered set: a nested
-     * function that captures a per-activation binding needs the closure cell of
-     * C5/M6, so its {@code BINDING_ALLOC} carries no staged decision and the
+     * The one fact outside this stage's rendered set: a host declaration
+     * module's import needs the {@code host-sync} load call that fills the
+     * reserved host-import slot, so it carries no staged decision and the
      * compile fails with one origin-bearing E6005.
      */
     private static final String UNSUPPORTED_SOURCE = """
-        function detached(start: number): number {
-          function inner(delta: number): number {
-            return start + delta;
-          }
-          return inner(2);
-        }
+        import * as probe from "host/probe";
+
         export function main(): null {
-          let total: number = detached(1);
           return null;
         }
+        """;
+
+    /** The host declaration module the unsupported project imports. */
+    private static final String UNSUPPORTED_DECLARATION = """
+        export function fetch(): number;
         """;
 
     private static int passed;
@@ -224,16 +224,21 @@ public final class LlvmProjectEmissionTest {
         while (calls.find()) {
             referenced.add(calls.group(1));
         }
-        Set<String> permitted = new LinkedHashSet<>(List.of(
-            "deal_arm_table_install", "deal_call_frame_push",
-            "deal_call_frame_pop", "deal_root_frame_enter",
-            "deal_root_frame_leave"));
         referenced.removeAll(definitions);
         referenced.remove("deal_project_start");
         referenced.remove("deal_project_run_main");
-        checkEq(permitted, referenced,
-            "only the prologue/epilogue entries and the install entry are"
-                + " referenced (task stage classifier)");
+        referenced.remove("deal_text_equals");
+        for (String name : referenced) {
+            check(LlvmRuntimeAbi.declaration(name).isPresent(),
+                "every referenced runtime entry is published: " + name);
+        }
+        for (String required : List.of("deal_arm_table_install",
+                "deal_call_frame_push", "deal_call_frame_pop",
+                "deal_root_frame_enter", "deal_root_frame_leave")) {
+            check(referenced.contains(required),
+                "the prologue/epilogue and install entries are referenced: "
+                    + required);
+        }
         // The arm table is installed before any unit initialization.
         String start = functionText(module, "deal_project_start");
         int installAt = start.indexOf("@deal_arm_table_install");
@@ -246,7 +251,9 @@ public final class LlvmProjectEmissionTest {
         // leaves it before its return.
         StringBuilder generated = new StringBuilder();
         for (String name : definitions) {
-            if (name.startsWith("F") || name.startsWith("deal_module_init_")) {
+            if (name.startsWith("F") || name.startsWith("deal_module_init_")
+                    || name.startsWith("T") || name.startsWith("A")
+                    || name.startsWith("S")) {
                 generated.append(functionText(module, name)).append('\n');
             }
         }
@@ -254,7 +261,7 @@ public final class LlvmProjectEmissionTest {
         int pushes = countOccurrences(generatedText,
             "call void @deal_call_frame_push(");
         int enters = countOccurrences(generatedText,
-            "call void @deal_root_frame_enter(i32 0)");
+            "call void @deal_root_frame_enter(i32 ");
         int leaves = countOccurrences(generatedText,
             "call void @deal_root_frame_leave()");
         int pops = countOccurrences(generatedText,
@@ -264,12 +271,59 @@ public final class LlvmProjectEmissionTest {
         checkEq(generatedCount(module, definitions), pushes,
             "every generated function pushes exactly one call frame");
         checkEq(pushes, enters,
-            "every generated activation enters one zero-slot root frame");
+            "every generated activation enters exactly one root frame");
         checkEq(returns, leaves,
             "every exit path leaves the root frame");
-        checkEq(returns, pops, "every exit path pops the call frame");
-        checkEq(0, countOccurrences(module, "deal_root_frame_write"),
-            "the staged subset emits no root slot write (zero-slot frames)");
+        // The boxed apply thunk and the adapter thunk are synthesized
+        // dispatch shims, not DEAL activations: each pops its own frame label
+        // before it dispatches the body or source it calls, so the callee
+        // contributes exactly one frame to an Error snapshot, and the
+        // REEVALUATE_THUNK re-executor contributes no label at all. Every
+        // other activation pops on each of its exit paths.
+        for (String name : definitions) {
+            if (name.startsWith("R")) {
+                String shim = functionText(module, name);
+                check(!shim.contains("@deal_call_frame_push")
+                        && !shim.contains("@deal_call_frame_pop()"),
+                    "the re-executor " + name + " contributes no frame label");
+                continue;
+            }
+            if (!(name.startsWith("F") || name.startsWith("deal_module_init_")
+                    || name.startsWith("T") || name.startsWith("A")
+                    || name.startsWith("S"))) {
+                continue;
+            }
+            String body = functionText(module, name);
+            int functionReturns = countOccurrences(body, "  ret ");
+            int functionPops = countOccurrences(body,
+                "call void @deal_call_frame_pop()");
+            if (name.startsWith("T")) {
+                checkEq(1 + countOccurrences(body, "\nparamfail"),
+                    functionPops, "the thunk " + name + " pops its argument"
+                        + " check failures and its pre-dispatch frame");
+                int dispatched = body.indexOf("%body = call ");
+                check(dispatched > 0 && functionPops > 0
+                        && body.indexOf("@deal_call_frame_pop()", dispatched) < 0,
+                    "the thunk " + name + " pops its frame before the"
+                        + " dispatched body runs");
+            } else if (name.startsWith("A")) {
+                checkEq(1, functionPops, "the adapter thunk " + name
+                    + " pops its own frame label exactly once");
+                int pop = body.indexOf("@deal_call_frame_pop()");
+                int applied = body.indexOf("@deal_fn_apply(");
+                int reexecuted = body.indexOf("@R");
+                int dispatched = applied < 0 ? reexecuted
+                    : reexecuted < 0 ? applied : Math.min(applied, reexecuted);
+                check(pop >= 0 && dispatched > pop, "the adapter thunk " + name
+                    + " pops its frame before it dispatches the source");
+            } else if (functionReturns > 0) {
+                checkEq(functionReturns, functionPops, "every exit path of "
+                    + name + " pops the call frame");
+            }
+        }
+        check(module.contains("call void @deal_root_frame_write")
+                || module.contains("call void @deal_root_frame_write_data"),
+            "a managed temporary or cell pointer owns a root slot (M4)");
         check(module.contains("@deal.slot."),
             "module-scope bindings use module-level storage");
         // The frame labels carry the module path, the source name and F<id>.
@@ -462,8 +516,7 @@ public final class LlvmProjectEmissionTest {
             "the recompiled module is the same deterministic module");
         // A failing compile into the same output root preserves the prior set.
         Path failing = scratch.resolve("scalar-failing");
-        writeProject(failing, Map.of("src/main.deal", UNSUPPORTED_SOURCE),
-            Map.of("backend", "llvm"));
+        writeUnsupportedProject(failing);
         byte[] goodBytes = Files.readAllBytes(published.resolve("main.ll"));
         List<String> goodSet = filesUnder(published);
         CompileOutcome failedOutcome = compile(failing.resolve("src/main.deal"),
@@ -510,8 +563,7 @@ public final class LlvmProjectEmissionTest {
             throws Exception {
         System.out.println("-- an unclassified fact is an origin-bearing E6005 --");
         Path root = scratch.resolve("unsupported");
-        writeProject(root, Map.of("src/main.deal", UNSUPPORTED_SOURCE),
-            Map.of("backend", "llvm"));
+        writeUnsupportedProject(root);
         Path output = root.resolve("build/llvm");
         CompileOutcome outcome = compile(root.resolve("src/main.deal"), output,
             false, false);
@@ -519,8 +571,7 @@ public final class LlvmProjectEmissionTest {
         check(!Files.exists(output), "nothing is published");
         CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
         checkEq("E6005", diagnostic.code(), "the rejection is one E6005");
-        check(diagnostic.message().contains("BINDING_ALLOC")
-                || diagnostic.message().contains("CLOSURE_NEW"),
+        check(diagnostic.message().contains("MODULE_IMPORT"),
             "the rejection names the unsupported fact: " + diagnostic.message());
         check(diagnostic.range() != null
                 && diagnostic.range().file().contains("main.deal"),
@@ -706,6 +757,24 @@ public final class LlvmProjectEmissionTest {
         }
     }
 
+    /**
+     * Writes the one project of a fact outside this stage's rendered set: a
+     * host declaration module and its import (the reserved host-import slot).
+     */
+    private static void writeUnsupportedProject(Path root) throws IOException {
+        Files.createDirectories(root.resolve("src"));
+        Files.writeString(root.resolve("deal.json"),
+            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
+                + " \"backend\": \"llvm\", \"externals\":"
+                + " {\"host/probe\": {\"declaration\":"
+                + " \"src/probe.d.deal\"}}}",
+            StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/probe.d.deal"),
+            UNSUPPORTED_DECLARATION, StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("src/main.deal"), UNSUPPORTED_SOURCE,
+            StandardCharsets.UTF_8);
+    }
+
     private static void writeProject(Path root, Map<String, String> sources,
             Map<String, String> manifest) throws IOException {
         Files.createDirectories(root.resolve("src"));
@@ -788,7 +857,9 @@ public final class LlvmProjectEmissionTest {
     private static int generatedCount(String module, Set<String> definitions) {
         int count = 0;
         for (String name : definitions) {
-            if (name.startsWith("F") || name.startsWith("deal_module_init_")) {
+            if (name.startsWith("F") || name.startsWith("deal_module_init_")
+                    || name.startsWith("T") || name.startsWith("A")
+                    || name.startsWith("S")) {
                 count++;
             }
         }

@@ -12,6 +12,7 @@ import deal.semantic.ir.LoweredFunction;
 import deal.semantic.ir.LoweredModuleUnit;
 import deal.semantic.ir.ModuleImportKind;
 import deal.semantic.ir.NullableSide;
+import deal.semantic.ir.OpId;
 import deal.semantic.ir.RuntimeDescriptor;
 import deal.semantic.ir.ScalarValue;
 import deal.semantic.ir.SemanticOp;
@@ -107,11 +108,11 @@ public final class LlvmStageClassifier {
                  MEMBER_WRITE, MEMBER_DELETE, INDEX_NORMALIZE, INDEX_READ,
                  INDEX_WRITE, INDEX_DELETE, HAS_FIELD, FOR_EACH, CLASS_NEW,
                  FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS,
-                 JSON_TO_CLASS -> STAGED;
-            case BOUNDARY, DELETE -> STATIC_ONLY;
-            case OPTIONAL_READ, RECURSIVE_GROUP_INIT, FUNCTION_ADAPT,
-                 EXTERNAL_ENTRY, CALLBACK_INVOKE, STDLIB_CALL, ASYNC_START,
-                 AWAIT, CLASS_FACTORY -> REJECTED;
+                 JSON_TO_CLASS, RECURSIVE_GROUP_INIT, STDLIB_CALL, ASYNC_START,
+                 AWAIT -> STAGED;
+            case BOUNDARY, DELETE, FUNCTION_ADAPT -> STATIC_ONLY;
+            case OPTIONAL_READ, EXTERNAL_ENTRY, CALLBACK_INVOKE,
+                 CLASS_FACTORY -> REJECTED;
         };
     }
 
@@ -172,14 +173,14 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.IndexDeletePayload.class, STAGED);
         map.put(KindPayload.OptionalReadPayload.class, REJECTED);
         map.put(KindPayload.HasFieldPayload.class, STAGED);
-        map.put(KindPayload.RecursiveGroupInitPayload.class, REJECTED);
-        map.put(KindPayload.FunctionAdaptPayload.class, REJECTED);
+        map.put(KindPayload.RecursiveGroupInitPayload.class, STAGED);
+        map.put(KindPayload.FunctionAdaptPayload.class, STATIC_ONLY);
         map.put(KindPayload.DeletePayload.class, STATIC_ONLY);
         map.put(KindPayload.ExternalEntryPayload.class, REJECTED);
         map.put(KindPayload.CallbackInvokePayload.class, REJECTED);
-        map.put(KindPayload.StdlibCallPayload.class, REJECTED);
-        map.put(KindPayload.AsyncStartPayload.class, REJECTED);
-        map.put(KindPayload.AwaitPayload.class, REJECTED);
+        map.put(KindPayload.StdlibCallPayload.class, STAGED);
+        map.put(KindPayload.AsyncStartPayload.class, STAGED);
+        map.put(KindPayload.AwaitPayload.class, STAGED);
         map.put(KindPayload.ForEachPayload.class, STAGED);
         map.put(KindPayload.TryCatchPayload.class, STAGED);
         map.put(KindPayload.ThrowPayload.class, STAGED);
@@ -239,9 +240,9 @@ public final class LlvmStageClassifier {
                  CLASS_FIELD_ASSIGNMENT, ARRAY_ELEMENT_ASSIGNMENT,
                  ARRAY_ELEMENT_READ, ARRAY_ELEMENT_DELETE,
                  ARRAY_LITERAL_ELEMENT, CLASS_LITERAL_FIELD,
-                 UNTYPED_CLASS_INPUT, JSON_FROM_FIELD, JSON_TO_FIELD -> STATIC_ONLY;
-            case ASYNC_COMPLETION, HOST_TO_DEAL, DEAL_TO_HOST,
-                 STDLIB_PARAMETER, STDLIB_RETURN -> REJECTED;
+                 UNTYPED_CLASS_INPUT, JSON_FROM_FIELD, JSON_TO_FIELD,
+                 STDLIB_PARAMETER, STDLIB_RETURN, ASYNC_COMPLETION -> STATIC_ONLY;
+            case HOST_TO_DEAL, DEAL_TO_HOST -> REJECTED;
         };
     }
 
@@ -253,7 +254,7 @@ public final class LlvmStageClassifier {
                  STRING_CONTAINS, STRING_STARTS_WITH, STRING_ENDS_WITH,
                  STRING_REPLACE, STRING_SPLIT, STRING_TRIM, TABLE_KEYS,
                  JSON_PARSE, JSON_STRINGIFY, MATH_FLOOR, MATH_CEIL, MATH_SQRT,
-                 MATH_ABS_NUMBER, TIME_NOW_MILLIS -> REJECTED;
+                 MATH_ABS_NUMBER, TIME_NOW_MILLIS -> STAGED;
         };
     }
 
@@ -271,8 +272,8 @@ public final class LlvmStageClassifier {
     public static StageSupport importKind(ModuleImportKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case COMPILED -> STAGED;
-            case STDLIB, HOST -> REJECTED;
+            case COMPILED, STDLIB -> STAGED;
+            case HOST -> REJECTED;
         };
     }
 
@@ -303,9 +304,8 @@ public final class LlvmStageClassifier {
     public static StageSupport callMode(CallMode mode) {
         Objects.requireNonNull(mode, "mode must not be null");
         return switch (mode) {
-            // An INDIRECT call is staged only when its callee identity resolves
-            // to an uncaptured lowered body (the call's own decision), so the
-            // value is that function's own code pointer (C5).
+            // An INDIRECT call is staged through the callee's managed function
+            // carrier, so its operands must have staged representations (C5).
             case DIRECT, EXTERNAL, INDIRECT -> STATIC_ONLY;
             case HOST -> REJECTED;
         };
@@ -351,11 +351,7 @@ public final class LlvmStageClassifier {
                 unaryReason(op, unary);
             case KindPayload.BinaryPayload binary ->
                 binaryReason(unit, op, binary);
-            case KindPayload.BindingAllocPayload alloc ->
-                stagedCellKind(unit, alloc.binding(), alloc.cellKind())
-                    ? Optional.empty()
-                    : Optional.of(reject(op, "BINDING_ALLOC with the shared"
-                        + " cell of a captured or reassigned binding"));
+            case KindPayload.BindingAllocPayload alloc -> Optional.empty();
             case KindPayload.BindingInitPayload init ->
                 bindingReason(unit, init.binding(), init.generation());
             case KindPayload.BindingLoadPayload load ->
@@ -382,7 +378,9 @@ public final class LlvmStageClassifier {
             case KindPayload.ThrowPayload thrown ->
                 thrownValueReason(unit, op, thrown);
             case KindPayload.BoundaryPayload boundary ->
-                boundaryReason(unit, op, boundary);
+                recordedCallCell(unit, op.opId()).isPresent()
+                    ? Optional.empty()
+                    : boundaryReason(unit, op, boundary);
             case KindPayload.ReturnPayload returned ->
                 returnedValueReason(unit, op, returned.value());
             case KindPayload.DiscardPayload ignored -> Optional.empty();
@@ -395,7 +393,7 @@ public final class LlvmStageClassifier {
                 exportPublishReason(unit, op, published);
             case KindPayload.ExportReadPayload read ->
                 read.descriptor() instanceof RuntimeDescriptor.Func function
-                    && staticSignature(function)
+                    && (staticSignature(function) || function.isAsync())
                     ? Optional.empty()
                     : Optional.of(reject(op, "EXPORT_READ of the managed value '"
                         + read.descriptor().canonicalSpecText() + "'"));
@@ -448,6 +446,15 @@ public final class LlvmStageClassifier {
             case KindPayload.FieldDeletePayload remove -> Optional.empty();
             case KindPayload.JsonFromClassPayload ignored -> Optional.empty();
             case KindPayload.JsonToClassPayload ignored -> Optional.empty();
+            case KindPayload.RecursiveGroupInitPayload group ->
+                group.bindings().size() == group.functions().size()
+                    ? Optional.empty()
+                    : Optional.of(reject(op, "a RECURSIVE_GROUP_INIT whose"
+                        + " member binding and function lists differ"));
+            case KindPayload.FunctionAdaptPayload ignored -> Optional.empty();
+            case KindPayload.StdlibCallPayload ignored -> Optional.empty();
+            case KindPayload.AsyncStartPayload ignored -> Optional.empty();
+            case KindPayload.AwaitPayload ignored -> Optional.empty();
             default -> Optional.of(reject(op, op.payload()
                 .getClass().getSimpleName()));
         };
@@ -735,11 +742,10 @@ public final class LlvmStageClassifier {
                 + call.signature().canonicalSpecText() + "'"));
         }
         if (call.callee() instanceof KindPayload.CallCallee.Indirect indirect) {
-            return indirectCalleeReason(unit, op, indirect);
+            return indirectCallReason(op, indirect);
         }
-        if (call.callee() instanceof KindPayload.CallCallee.Dynamic) {
-            return Optional.of(reject(op, "a dynamic CALL whose callee is"
-                + " resolved at execution through the managed function carrier"));
+        if (call.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
+            return dynamicCallReason(unit, op, call, dynamic.callee());
         }
         if (call.callee() instanceof KindPayload.CallCallee.Static callee) {
             return switch (callee.binding()) {
@@ -763,47 +769,45 @@ public final class LlvmStageClassifier {
         return Optional.of(reject(op, "the CALL callee shape"));
     }
 
-    /**
-     * The decision of one statically registered indirect callee: the callee
-     * value's allocation identity resolves to a lowered body whose closure
-     * captures nothing, so the value is that function's own code pointer and a
-     * direct call is the recorded dispatch (C5). A captured body needs the
-     * managed {@code deal_fn*} environment of the closure stage.
-     */
-    private static Optional<String> indirectCalleeReason(LoweredModuleUnit unit,
-                                                         SemanticOp op,
-                                                         KindPayload.CallCallee.Indirect indirect) {
-        deal.semantic.ir.FunctionExecutionBinding binding =
-            bindingOfIdentity(unit, indirect.callee());
-        if (!(binding instanceof deal.semantic.ir.FunctionExecutionBinding
-                .LoweredBody body)) {
-            return Optional.of(reject(op, "an indirect CALL whose callee"
-                + " identity resolves no lowered body"));
-        }
-        for (SemanticOp candidate : unit.ops()) {
-            if (candidate.payload() instanceof KindPayload.ClosureNewPayload closure
-                    && closure.function().equals(body.functionId())) {
-                // A capture of a module-scope immutable binding is that
-                // binding's one static slot (the staged closure rule), so the
-                // value is still the function's own code pointer; a
-                // per-activation or reassigned capture needs the managed
-                // environment of the closure stage.
-                Optional<String> captureReason =
-                    closureCaptureReason(unit, closure);
-                if (captureReason.isPresent()) {
-                    return Optional.of(reject(op, "an indirect CALL of "
-                        + captureReason.get()));
-                }
+    /** The decision of one indirect call (a function value already checked). */
+    private static Optional<String> indirectCallReason(SemanticOp op,
+                                                       KindPayload.CallCallee.Indirect callee) {
+        for (RuntimeDescriptor operand : op.operandTypes()) {
+            if (LlvmTypeMapper.isStaticSingleton(operand)) {
+                continue;
+            }
+            if (!LlvmTypeMapper.representationOf(operand).isPresent()) {
+                return Optional.of(reject(op, "an indirect CALL argument of "
+                    + LlvmTypeMapper.unsupported(operand)));
             }
         }
         return Optional.empty();
     }
 
-    /** The registered binding of one identity anywhere in the emitting unit. */
-    private static deal.semantic.ir.FunctionExecutionBinding bindingOfIdentity(
-            LoweredModuleUnit unit, ValueId identity) {
-        return unit.functionBindings().get(
-            new deal.semantic.ir.FunctionAllocationIdentity(identity.id()));
+    /** The decision of one dynamically dispatched call (C5). */
+    private static Optional<String> dynamicCallReason(LoweredModuleUnit unit,
+                                                      SemanticOp op,
+                                                      KindPayload.CallPayload call,
+                                                      ValueId callee) {
+        RuntimeDescriptor descriptor = loweredTypeOf(unit, callee);
+        if (!(descriptor instanceof RuntimeDescriptor.Func function)) {
+            return Optional.of(reject(op, "a dynamic CALL whose callee is not a"
+                + " function value"));
+        }
+        if (!staticSignature(function)) {
+            return Optional.of(reject(op, "a dynamic CALL of the function '"
+                + function.canonicalSpecText() + "'"));
+        }
+        for (RuntimeDescriptor operand : op.operandTypes()) {
+            if (LlvmTypeMapper.isStaticSingleton(operand)) {
+                continue;
+            }
+            if (!LlvmTypeMapper.representationOf(operand).isPresent()) {
+                return Optional.of(reject(op, "a dynamic CALL argument of "
+                    + LlvmTypeMapper.unsupported(operand)));
+            }
+        }
+        return Optional.empty();
     }
 
     private static Optional<String> closureReason(LoweredModuleUnit unit,
@@ -813,7 +817,7 @@ public final class LlvmStageClassifier {
         if (captureReason.isPresent()) {
             return Optional.of(reject(op, captureReason.get()));
         }
-        if (!staticSignature(closure.signature())) {
+        if (!boxedSignature(closure.signature())) {
             return Optional.of(reject(op, "the closure signature '"
                 + closure.signature().canonicalSpecText() + "'"));
         }
@@ -821,6 +825,51 @@ public final class LlvmStageClassifier {
         if (function == null) {
             return Optional.of(reject(op, "a closure of a function outside the"
                 + " emitting unit"));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The recorded return/parameter boundary cell of one dynamically
+     * dispatched call or async start, or empty. Those cells carry the call
+     * op's own origins and failures; the call op executes them, so they are
+     * never classified as standalone boundary facts (C5/C7).
+     */
+    public static Optional<String> recordedCallCell(LoweredModuleUnit unit,
+                                                    OpId id) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.CallPayload call
+                    && call.callee() instanceof KindPayload.CallCallee.Dynamic
+                    && call.dynamicReturnBoundary() != null) {
+                KindPayload.DynamicReturnBoundary cells =
+                    call.dynamicReturnBoundary();
+                for (OpId cell : new OpId[] {cells.dealBodyBoundaryOpId(),
+                        cells.hostBoundaryOpId(), cells.externalBoundaryOpId()}) {
+                    if (id.equals(cell)) {
+                        return Optional.of("the dynamic call's return boundary");
+                    }
+                }
+            }
+            if (op.payload() instanceof KindPayload.AsyncStartPayload start) {
+                if (start.parameterBoundaryOpIds().contains(id)) {
+                    return Optional.of("the async start's parameter boundary");
+                }
+                if (id.equals(start.returnBoundaryOpId())) {
+                    return Optional.of("the async start's return boundary");
+                }
+            }
+            if (op.payload() instanceof KindPayload.AwaitPayload await
+                    && id.equals(await.completionBoundaryOpId())) {
+                return Optional.of("the await's completion boundary");
+            }
+            if (op.payload() instanceof KindPayload.CallPayload call
+                    && call.parameterBoundaryOpIds().contains(id)) {
+                return Optional.of("the call's parameter boundary");
+            }
+            if (op.payload() instanceof KindPayload.CallPayload call
+                    && id.equals(call.returnBoundaryOpId())) {
+                return Optional.of("the call's return boundary");
+            }
         }
         return Optional.empty();
     }
@@ -862,6 +911,11 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
                 + " whose static operand type is unknown"));
         }
+        if (declared instanceof RuntimeDescriptor.Void) {
+            // A result-only `void` completion projects to `undefined` through
+            // the result protocol (C4/R4), so it names no data representation.
+            return Optional.empty();
+        }
         if (LlvmTypeMapper.convertible(declared, actual)) {
             if (!LlvmTypeMapper.isStagedRepresentation(declared)) {
                 return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
@@ -889,13 +943,22 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "an assertion of a value without a"
                 + " persistent data form: " + actual.canonicalSpecText()));
         }
+        if (!LlvmTypeMapper.isStagedRepresentation(declared)) {
+            // The checked value is projected onto the declared descriptor's own
+            // representation, so an unsupported target fails closed with the
+            // assertion's origin instead of an unrenderable projection.
+            return Optional.of(reject(op, "an assertion to "
+                + LlvmTypeMapper.unsupported(declared)));
+        }
         return switch (declared) {
             case RuntimeDescriptor.Number _,
                  RuntimeDescriptor.Boolean _,
                  RuntimeDescriptor.String _,
                  RuntimeDescriptor.Table _,
                  RuntimeDescriptor.Class _,
-                 RuntimeDescriptor.Array _ -> Optional.empty();
+                 RuntimeDescriptor.Array _,
+                 RuntimeDescriptor.Func _,
+                 RuntimeDescriptor.Nullable _ -> Optional.empty();
             default -> Optional.of(reject(op, "the assertion to '"
                 + declared.canonicalSpecText() + "'"));
         };
@@ -1114,10 +1177,7 @@ public final class LlvmStageClassifier {
         for (SemanticOp candidate : unit.ops()) {
             if (candidate.payload() instanceof KindPayload.BindingAllocPayload alloc
                     && alloc.binding().equals(binding)) {
-                return stagedCellKind(unit, binding, alloc.cellKind())
-                    ? Optional.empty()
-                    : Optional.of(REJECTION_LEAD + ": a catch binding whose"
-                        + " shared cell is captured by a closure");
+                return Optional.empty();
             }
         }
         return Optional.of(REJECTION_LEAD
@@ -1190,14 +1250,42 @@ public final class LlvmStageClassifier {
     static Optional<String> closureCaptureReason(LoweredModuleUnit unit,
                                                  KindPayload.ClosureNewPayload closure) {
         for (deal.semantic.ir.BindingGeneration capture : closure.captures()) {
-            if (capture.generation() != 0
-                    || !moduleScoped(unit, capture.binding())
-                    || reassigned(unit, capture.binding())) {
-                return Optional.of("a closure capturing the per-activation or"
-                    + " reassigned binding " + capture.binding());
+            if (!cellBinding(unit, capture.binding(), capture.generation())) {
+                return Optional.of("the capture of " + capture.binding()
+                    + " whose generation " + capture.generation()
+                    + " is no captured-binding cell");
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Whether one binding generation is a captured-binding cell (C5): every
+     * {@code SHARED_CELL} incarnation, every recursive-group member and every
+     * for-of iteration binding, which the shared lowering derives as a
+     * {@code SHARED_CELL} incarnation of its own iteration scope.
+     */
+    public static boolean cellBinding(LoweredModuleUnit unit,
+                                      deal.semantic.ir.BindingId binding,
+                                      long generation) {
+        for (SemanticOp op : unit.ops()) {
+            if (op.payload() instanceof KindPayload.BindingAllocPayload alloc
+                    && alloc.binding().equals(binding)
+                    && alloc.generation() == generation) {
+                return alloc.cellKind()
+                    == deal.semantic.ir.BindingCellKind.SHARED_CELL;
+            }
+            if (op.payload() instanceof KindPayload.ForEachPayload forEach
+                    && forEach.binding().equals(binding)
+                    && forEach.generation() == generation) {
+                return true;
+            }
+            if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group
+                    && group.bindings().contains(binding)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Optional<String> exportPublishReason(LoweredModuleUnit unit,
@@ -1219,36 +1307,14 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "EXPORT_PUBLISH of a function outside"
                 + " the emitting unit"));
         }
-        // The record is published for every export of a lowered function; only
-        // the zero-arity synchronous value shape is invokable through the
-        // entry.h zero-arity invocation, so every other export record carries
-        // no code pointer and is reached by a direct call inside the project.
-        return Optional.empty();
-    }
-
-    /**
-     * Whether one published export is invokable through the zero-arity entry
-     * surface ({@code deal_export_invoke}, R9): a no-capture closure of a
-     * zero-arity, non-async lowered function whose result is a static
-     * singleton or {@code void}.
-     */
-    public static boolean invokableExport(LoweredModuleUnit unit,
-                                          KindPayload.ExportPublishPayload published) {
-        SemanticOp producer = producerOf(unit, published.value());
-        if (producer == null
-                || !(producer.payload() instanceof KindPayload.ClosureNewPayload closure)) {
-            return false;
-        }
-        LoweredFunction function = unit.functions().get(closure.function());
-        if (function == null) {
-            return false;
-        }
         RuntimeDescriptor.Func signature = function.descriptor();
-        if (!signature.paramTypes().isEmpty() || signature.isAsync()) {
-            return false;
+        if (!staticSignature(signature) && !signature.isAsync()) {
+            return Optional.of(reject(op, "EXPORT_PUBLISH of the export '"
+                + published.name() + "' ('"
+                + signature.canonicalSpecText() + "') outside the staged"
+                + " boxed apply surface"));
         }
-        return LlvmTypeMapper.isStaticSingleton(signature.returnType())
-            || signature.returnType() instanceof RuntimeDescriptor.Void;
+        return Optional.empty();
     }
 
     private static Optional<String> representationReason(SemanticOp op,
@@ -1293,6 +1359,25 @@ public final class LlvmStageClassifier {
      * and the result carry a staged representation (or the result is a static
      * singleton), and the call is synchronous.
      */
+    /**
+     * Whether one signature's positions all have the staged boxed apply form,
+     * with or without the async marker: a function value carries the marker
+     * and the blocking lowering invokes the body to completion (C7).
+     */
+    public static boolean boxedSignature(RuntimeDescriptor.Func signature) {
+        Objects.requireNonNull(signature, "signature must not be null");
+        for (RuntimeDescriptor parameter : signature.paramTypes()) {
+            if (!LlvmTypeMapper.representationOf(parameter).isPresent()
+                    && !(parameter instanceof RuntimeDescriptor.Null
+                        || parameter instanceof RuntimeDescriptor.Undefined)) {
+                return false;
+            }
+        }
+        RuntimeDescriptor result = signature.returnType();
+        return result instanceof RuntimeDescriptor.Void
+            || LlvmTypeMapper.isStagedRepresentation(result);
+    }
+
     public static boolean staticSignature(RuntimeDescriptor.Func signature) {
         Objects.requireNonNull(signature, "signature must not be null");
         if (signature.isAsync()) {

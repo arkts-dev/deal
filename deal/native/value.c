@@ -355,3 +355,170 @@ deal_status deal_value_crossing_resolve(deal_value_crossing *crossing,
     *out = entry->referent;
     return DEAL_OK;
 }
+
+/* =========================================================================
+ * The function value (C3, C5)
+ * ========================================================================= */
+
+/*
+ * One captured-binding cell array (C5): the cells of one function value's
+ * generation-pinned capture list, in capture order. It is a variable-payload
+ * managed object of its own layout, so the collector walks exactly the cells
+ * the creating `CLOSURE_NEW` captured and nothing else.
+ */
+typedef struct {
+    uint32_t count;
+    uint32_t reserved;
+    void *cells[1];
+} deal_fn_environment;
+
+/*
+ * One function value (C3/C5): the boxed apply thunk, the interned canonical
+ * signature atom, the captured-cell array (NULL when the function captures
+ * nothing), the async marker and the capture count. Its only managed
+ * reference is the environment; the signature atom is a process-lifetime
+ * static root of the `descriptor` group.
+ */
+typedef struct deal_fn {
+    deal_fn_thunk thunk;
+    deal_descriptor *signature;
+    deal_fn_environment *environment;
+    uint32_t capture_count;
+    uint32_t is_async;
+} deal_fn;
+
+static const uint32_t deal_fn_reference_offsets[] = {
+    (uint32_t)offsetof(deal_fn, environment)
+};
+
+static const deal_layout deal_fn_layout = {
+    DEAL_LAYOUT_FUNCTION, 0u, sizeof(deal_fn),
+    deal_fn_reference_offsets, 1u
+};
+
+static const deal_layout deal_fn_environment_layout = {
+    DEAL_LAYOUT_FUNCTION_ENV, 0u, 0u, NULL, 0u
+};
+
+static size_t deal_fn_environment_trace(const void *object, size_t position,
+                                        size_t *budget,
+                                        deal_reference_visit visit,
+                                        void *context) {
+    if (object == NULL || budget == NULL || visit == NULL) {
+        deal_platform_fault("function value: malformed environment trace");
+    }
+    const deal_fn_environment *environment = object;
+    size_t index = position;
+    while (index < (size_t)environment->count) {
+        if (*budget == 0u) {
+            return index;
+        }
+        *budget -= 1u;
+        void *cell = environment->cells[index];
+        if (cell != NULL) {
+            visit(cell, context);
+        }
+        index += 1u;
+    }
+    return DEAL_TRACE_DONE;
+}
+
+/* The payload of one function value; a non-function pointer is a fault. */
+static deal_fn *deal_fn_of(const deal_fn *function) {
+    if (function == NULL
+            || deal_object_layout(function) != DEAL_LAYOUT_FUNCTION) {
+        deal_platform_fault("function value: not a function value");
+    }
+    return (deal_fn *)(void *)function;
+}
+
+deal_fn *deal_fn_create(deal_fn_thunk thunk, const void *const *cells,
+                        uint32_t capture_count, const char *signature,
+                        int is_async) {
+    if (thunk == NULL) {
+        deal_platform_fault("function value: null apply thunk");
+    }
+    if (signature == NULL) {
+        deal_platform_fault("function value: null signature");
+    }
+    if (capture_count != 0u && cells == NULL) {
+        deal_platform_fault("function value: null capture cell array");
+    }
+    deal_layout_define(&deal_fn_layout);
+    deal_layout_define(&deal_fn_environment_layout);
+    deal_layout_trace_register(DEAL_LAYOUT_FUNCTION_ENV,
+                               deal_fn_environment_trace);
+    /* The carrier and its environment are this helper's own intermediates
+     * across the second allocation, so one scoped root keeps each alive at
+     * that allocation safepoint (M5). Faults exit the process, so the scope
+     * cannot leak. */
+    deal_root_scope_push();
+    uint32_t held_environment = 0u;
+    deal_fn_environment *environment = NULL;
+    if (capture_count != 0u) {
+        size_t bytes = offsetof(deal_fn_environment, cells)
+            + (size_t)capture_count * sizeof(void *);
+        environment = deal_alloc(DEAL_LAYOUT_FUNCTION_ENV, bytes);
+        environment->count = capture_count;
+        environment->reserved = 0u;
+        for (uint32_t index = 0; index < capture_count; index += 1u) {
+            environment->cells[index] = (void *)cells[index];
+        }
+        held_environment = deal_root_scope_hold(environment);
+    }
+    deal_fn *function = deal_alloc(DEAL_LAYOUT_FUNCTION, sizeof(*function));
+    function->thunk = thunk;
+    function->signature = deal_descriptor_intern(signature);
+    if (environment != NULL) {
+        deal_store_barrier(function, environment);
+    }
+    function->environment = environment;
+    function->capture_count = capture_count;
+    function->is_async = is_async != 0 ? 1u : 0u;
+    if (environment != NULL) {
+        deal_root_scope_release(held_environment);
+    }
+    deal_root_scope_pop();
+    return function;
+}
+
+deal_fn_thunk deal_fn_thunk_of(const deal_fn *function) {
+    return deal_fn_of(function)->thunk;
+}
+
+void *deal_fn_capture(const deal_fn *function, uint32_t index) {
+    deal_fn *payload = deal_fn_of(function);
+    if (index >= payload->capture_count || payload->environment == NULL) {
+        deal_platform_fault("function value: capture index outside the list");
+    }
+    return payload->environment->cells[index];
+}
+
+uint32_t deal_fn_capture_count(const deal_fn *function) {
+    return deal_fn_of(function)->capture_count;
+}
+
+const char *deal_fn_signature(const deal_fn *function) {
+    return deal_descriptor_text(deal_fn_of(function)->signature);
+}
+
+int deal_fn_is_async(const deal_fn *function) {
+    return deal_fn_of(function)->is_async != 0u ? 1 : 0;
+}
+
+deal_outcome_data deal_fn_apply(deal_fn *function,
+                                const deal_check_input *arguments,
+                                uint32_t argument_count,
+                                const deal_origin *origin) {
+    deal_outcome_data outcome;
+    outcome.error = NULL;
+    outcome.value = deal_data_of_undefined();
+    if (origin == NULL) {
+        deal_platform_fault("function value: null apply origin");
+    }
+    deal_fn *payload = deal_fn_of(function);
+    if (payload->thunk == NULL) {
+        deal_platform_fault("function value: missing apply thunk");
+    }
+    return payload->thunk(payload, arguments, argument_count, origin);
+}
