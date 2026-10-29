@@ -1,9 +1,9 @@
 # Host Fixtures
 
-Keep declarations and JS/Java/Lua implementations behaviorally identical on every declared consumer lane. Native-host-specific cases declare their capability limits in the case sidecar; unused companions do not establish coverage. Fixtures are harness companions, not discovered cases. A sidecar hostFixture may select a named companion set under the stable host/probe import; keep its source and external identities unchanged when materializing that alias. Pair valid/invalid export/signature/nullish/async boundaries; assert catchability, not portable native-error details. Use canonical dotted external identities consistently for generated carriers.
+Keep declarations/JS/Java/Lua behavior identical per declared lane. Sidecars declare native-host limits; unused companions establish no coverage. Companions are not discovered cases. hostFixture selects companions under stable host/probe; materialization preserves source/external identities. Pair valid/invalid export/signature/nullish/async boundaries; assert catchability, not native-error details. Generated carriers use canonical dotted external identities.
 
-Classes carry declared structural fields; functions use documented wrappers; async implementations return real operations. Declarations omit async and use Promise results. Use binary64 number/double and Record<string, unknown>; never infer an integer kind from host boxing or numeric spelling.
+Classes carry declared fields; functions use documented wrappers; async implementations return real operations. Declarations use Promise results, not async. Use binary64 number/double and Record<string, unknown>; never infer integer kinds from host boxing/numeric spelling.
 
-Hostile container/signature fixtures mutate admitted carriers: preserve identity, body, descriptors and unrelated slots to isolate later boundary failures. Oracle responders mirror mutations without production hooks. Batch drivers copy JVM fixtures under correctly named public classes; do not globally change shared lowercase-source visibility.
+Hostile container/signature fixtures mutate admitted carriers, preserving identity/body/descriptors/unrelated slots to isolate later failures. Oracle responders mirror mutations without production hooks. Batch drivers use correctly named JVM public classes; preserve shared lowercase-source visibility.
 
-Compare JSON numerically. Generated Records share generic omission/substitution/key-order/nested-class rules; reject unread malformed ingress before publication. Synchronize companions.
+Compare JSON numerically. Records share generic omission/substitution/key-order/nested-class rules; reject unread malformed ingress before publication. Synchronize companions.

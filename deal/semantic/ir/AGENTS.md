@@ -4,16 +4,16 @@ Define backend-neutral execution. Exclude AST/checker objects; preserve determin
 
 ## Admission
 
-Typed and canonical-text surfaces feed one complete raw fact model and composed admission. Validate registry identity, body membership, module/init/export links, captures, binding registrations and structural construction with the same first failure. RawUnitMaterializer is the inverse of fromTyped, not an authority; undecodable recognized positions reject.
+Typed/text surfaces share complete raw facts and composed admission. Validate registry identity, body membership, module/init/export links, captures, binding registrations and construction with identical first failures. RawUnitMaterializer inverts fromTyped without authority; undecodable recognized positions reject.
 
-Standalone units reject links requiring unavailable project providers. Project admission validates framing, module keys, profiles, index coverage, provider classification, implementation closure and dependency order. Run each production owner once over the unit's owned companion records in the established order. Resolve class factories/field operations/JSON links through recorded exact providers; ambiguous shared identities fail closed, never select a sibling.
+Standalone units reject unavailable project-provider links. Project admission validates framing, module keys, profiles, index coverage, provider classification, implementation closure and dependency order. Run each production owner once over owned companions in established order. Resolve class factories/fields/JSON through recorded exact providers; ambiguous shared identities fail closed, never select siblings.
 
-Carry the active semantic profile through constructors and guards. Recompute context hashes from the carried profile and capability hash; inconsistent comparison/project facts reject R-PROFILE. No retired-profile substitution.
+Carry active profiles through constructors/guards. Recompute context hashes from carried profiles/capability hashes; inconsistent comparison/project facts reject R-PROFILE. No retired-profile substitution.
 
 ## Values and operations
 
 - Canonical binary64 atoms preserve signed zero, subnormals, infinities and NaN across typed/raw/text transport. Integer IDs cannot substitute for numeric scalars.
-- Nominal checks validate complete declared field plans with operation-local cycle guards, never lasting validation certificates. Callable admission requires a valid payload and canonical signature, including unread graph descendants.
+- Nominal checks validate complete declared field plans using operation-local cycle guards, never lasting certificates. Callable admission validates payload/signature, including unread descendants.
 - Required fields read their declared descriptor; optional reads use RuntimeDescriptor.optionalRead and add undefined. Missing normalizes to undefined, never null. Host failure shapes distinguish language undefined from private absent-carrier nil.
 - CLASS_NEW requires every nonoptional field, including nullable and Error fields. Supplied fields own declaration-order boundaries; omissions own none. Reject retired initializer operations, payload keys and companion/default flags rather than ignoring them.
 - HOST function reads correlate with the alias cell initialized by their unique MODULE_IMPORT occurrence. STDLIB once-only surfaces record no occurrence; missing/mismatched links fail at the read origin.

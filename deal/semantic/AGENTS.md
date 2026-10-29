@@ -1,6 +1,6 @@
 # Semantics
 
-Own backend-neutral checked-project lowering and shared runtime meaning. Encode evaluation order, boundaries, failures, calls, classes, modules and stdlib behavior once; complete changes vertically through validated IR, Oracle and every emitter. No AST fallback.
+Own backend-neutral checked-project lowering/shared runtime meaning. Encode evaluation order, boundaries, failures, calls, classes, modules and stdlib once; complete changes through validated IR, Oracle and every emitter. No AST fallback.
 
 ## Providers and admission
 
@@ -8,13 +8,13 @@ Resolve construction/field layouts from checked declarations and defining provid
 
 Implementation seeds agree with exact interface/module identity; declaration seeds agree with layout fields, optional-read descriptors and canonical annotations. Optional reads add undefined, including null|undefined for optional null; absence never fabricates null. Typed/raw/text admission consumes the same complete facts. Supplied companion views must match the unit's owned records; content-equal detached views resolve to those owned records.
 
-Carry DEAL_V1_5_BINARY64/V1_5_ACTIVE through constructors, comparisons, admission and context hashes. Reject retired profiles without aliases. Evolve serialization, digests and independent pins together.
+Carry DEAL_V1_5_BINARY64/V1_5_ACTIVE through constructors/comparisons/admission/context hashes. Reject retired profiles/aliases. Evolve serialization, digests and independent pins together.
 
 ## Bindings, calls and adapters
 
 Each HOST import read records its source occurrence's alias cell; never reconstruct occurrence ownership from module/name. Declared-export validation uses shared ascending-name order without changing declaration-ordered provider facts.
 
-A function binding assigned anywhere in its declaring body's nested traversal has no static allocation identity. Reads materialize the current value; calls/await use Dynamic dispatch. Function declarations/imported exports are immutable; only function-valued variables may be reassigned. Resolve declaration signatures in their exact owner scope, excluding shadowing parameters. Declarations, recursion and fixed adapter sources retain recorded static callees. Classify runtime sources by their recorded execution class, not spelling or descriptor.
+Function-valued variables assigned anywhere in their declaring body's nested traversal lack static allocation identity: reads materialize current values; calls/await use Dynamic dispatch. Declarations/imported exports are immutable; resolve signatures in their exact owner scope, excluding shadowing parameters. Declarations, recursion and fixed adapters retain recorded static callees. Classify runtime sources by recorded execution class, never spelling/descriptor.
 
 Adapter capture modes remain distinct. REEVALUATE_THUNK resolves its expression per invocation; VALUE captures an evaluated source, including awaited completion; SHARED_CELL retains its cell. Preserve their recorded sync/async call and completion cells.
 
