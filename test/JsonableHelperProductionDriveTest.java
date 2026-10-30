@@ -2505,6 +2505,83 @@ public class JsonableHelperProductionDriveTest {
             nestedClassDepthSource(1200, nestedChainText(1200)));
     }
 
+    private static void testDeepRecordDecode() throws Exception {
+        testJvmDeepProjection();
+        driveExactHelperProgram("deep-record-decode", """
+            // @jsonable
+            export class Box { data: Record<string,unknown>; }
+            // @jsonable
+            export class Required { data: Record<string,unknown>; required:number; }
+            export function test_decode():null {
+                let text="{\\"leaf\\":null,\\"n\\":3,\\"s\\":\\"🌍\\",\\"b\\":true}";
+                let i=0;
+                while(i<5000) { text="{\\"v\\":["+text+"]}"; i=i+1; }
+                text="{\\"data\\":{\\"deep\\":"+text+",\\"leaf\\":null,\\"n\\":3,\\"s\\":\\"🌍\\",\\"b\\":true}}";
+                let decoded=Box$fromJson(text);
+                if(decoded===null) { throw {code:"TEST_FAIL",message:"deep object rejected"}; }
+                let current:Record<string,unknown>={};
+                if(decoded!==null) { current=decoded.data; }
+                if(!Object.hasOwn(current,"deep")) {
+                    throw {code:"TEST_FAIL",message:"deep member lost"};
+                }
+                if(!Object.hasOwn(current,"leaf")) { throw {code:"TEST_FAIL",message:"null member absent"}; }
+                if(current.leaf!==null) { throw {code:"TEST_FAIL",message:"null changed"}; }
+                if((current.n as number)!==3) { throw {code:"TEST_FAIL",message:"number changed"}; }
+                if((current.s as string)!=="🌍") { throw {code:"TEST_FAIL",message:"string changed"}; }
+                if((current.b as boolean)!==true) { throw {code:"TEST_FAIL",message:"boolean changed"}; }
+                if(Required$fromJson(text)!==null) {
+                    throw {code:"TEST_FAIL",message:"missing required field admitted"};
+                }
+                return null;
+            }
+            export function main():null { return null; }
+            """);
+    }
+
+    private static void testJvmDeepProjection() {
+        int[] publications = {0};
+        java.util.function.Supplier<deal.codegen.jvm.JvmRuntime.ClassInstance> supplier = () -> {
+            publications[0]++;
+            return new deal.codegen.jvm.JvmRuntime.ClassInstance() {
+                final Map<String,Object> values = new LinkedHashMap<>();
+                public String classIdText() { return "@projection/Box"; }
+                public boolean isPresent(String name) { return values.containsKey(name); }
+                public Object read(String name) { return values.get(name); }
+                public void write(String name, Object value) { values.put(name, value); }
+                public void delete(String name) { values.remove(name); }
+            };
+        };
+        var data = new deal.codegen.jvm.JvmJson.Field("data", "table", false, "table");
+        var plan = new deal.codegen.jvm.JvmJson.Plan("@projection/Box",
+            new deal.codegen.jvm.JvmJson.Field[]{data}, supplier);
+        String text = "{\"leaf\":null,\"n\":3,\"s\":\"🌍\",\"b\":true,\"empty\":[]}";
+        text = "{\"data\":" + "{\"v\":[".repeat(5000) + text + "]}".repeat(5000) + "}";
+        var instance = (deal.codegen.jvm.JvmRuntime.ClassInstance)
+            deal.codegen.jvm.JvmJson.fromClass(plan, text);
+        check(instance != null && publications[0] == 1, "deep JVM projection publishes once");
+        if (instance == null) return;
+        var current = (deal.codegen.jvm.JvmRuntime.Table) instance.read("data");
+        for (int i = 0; i < 5000; i++) {
+            var array = (deal.codegen.jvm.JvmRuntime.Array) current.entries.get("v");
+            check(array.length == 1 && "unknown".equals(array.elementDescriptor),
+                "nested decoded arrays preserve length and descriptor");
+            current = (deal.codegen.jvm.JvmRuntime.Table) array.elements.getFirst();
+        }
+        check(current.keys.contains("leaf") && current.entries.get("leaf") == null,
+            "deep null stays present null");
+        check(Double.valueOf(3).equals(current.entries.get("n"))
+                && "🌍".equals(current.entries.get("s"))
+                && Boolean.TRUE.equals(current.entries.get("b")), "deep scalar leaves survive");
+        var empty = (deal.codegen.jvm.JvmRuntime.Array) current.entries.get("empty");
+        check(empty.length == 0 && "unknown".equals(empty.elementDescriptor),
+            "deep empty array retains descriptor");
+        var required = new deal.codegen.jvm.JvmJson.Plan("@projection/Required",
+            new deal.codegen.jvm.JvmJson.Field[]{data,
+                new deal.codegen.jvm.JvmJson.Field("required", "number", false, "number")}, supplier);
+        check(deal.codegen.jvm.JvmJson.fromClass(required, text) == null && publications[0] == 1,
+            "deep missing-required rejection never publishes an instance");
+    }
+
     // =========================================================================
     // 7d. The oracle's live carrier views and the helper carrier regressions
     // =========================================================================
@@ -3498,6 +3575,7 @@ public class JsonableHelperProductionDriveTest {
                 """));
         testNestedTableNumericVariants();
         testNestedClassDepthBound();
+        testDeepRecordDecode();
         testDepthArtifactCreditNegativeControl();
         driveExactHelperProgram("committed-array-and-class-views",
             combineExactHelperSources(arrayExecutorViewSyncSource(),

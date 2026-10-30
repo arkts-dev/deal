@@ -30,7 +30,7 @@ Error throw/catch/rethrow keeps one reference identity, current code/message, or
 
 ## Classes and JSON
 
-Register structural class layouts and helper/provider facts before body lowering. Every nonoptional field, including nullable and Error fields, is required. Provided fields own declaration-order boundaries; omitted optionals remain absent. No initializer operation, default publisher or host defaults hook exists. Generated decoding rejects missing/extra keys and failed nested values without factories.
+Register structural class layouts and helper/provider facts before body lowering. Nonoptional fields, including nullable/Error, require presence. Provided fields own declaration-order boundaries; omitted optionals remain absent. No initializer operation, default publisher or host defaults hook exists. Decode rejects missing/extra keys and failed nested values without factories; parsed-tree conversions/validation are stack-safe.
 
 Preserve persistent descriptors on decoded typed arrays recursively, including empty arrays. Function assertions register execution materializations while preserving identity; assertion failures always use E8001 without replacing ordinary signature/element diagnostics.
 

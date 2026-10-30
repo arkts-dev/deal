@@ -34,6 +34,13 @@ public final class Language15FrontendTest {
             throw new AssertionError(source + "\n" + diagnostics);
     }
     public static void main(String[] args) {
+        for (int count = 0; count < 6; count++) {
+            String slashes = "\\".repeat(count);
+            for (String template : List.of("`🌍" + slashes + "`",
+                    "`🌍" + slashes + "${\"x\"}`", "`${ `🌍" + slashes + "` }`")) {
+                check("function f():void{let text=" + template + ";}", count % 2 == 0);
+            }
+        }
         check("function f(): void { return; }", true);
         check("function f(): void {}", true);
         check("function f(): null { return; }", false);

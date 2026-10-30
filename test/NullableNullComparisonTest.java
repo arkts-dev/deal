@@ -34,7 +34,7 @@ import java.util.stream.Stream;
  * LuaJIT seam additionally pins the operand-selection form: the named
  * side is chosen by an explicit branch (Lua's {@code and}/{@code or}
  * idiom would select the other operand when the named one is false), and
- * the null/missing equivalence stays the closed row.
+ * null carriers compare as null, never as undefined or missing.
  */
 public final class NullableNullComparisonTest {
 
@@ -266,10 +266,10 @@ public final class NullableNullComparisonTest {
             + "longer selects the named operand with the and/or idiom");
         check(chunk.contains(EXPLICIT_SELECTION), "luajit: the emitted __cmp "
             + "selects the named operand with an explicit branch");
-        check(chunk.contains("return (named == nil or named == __MISSING)"),
-            "luajit: the equality row keeps the null/missing equivalence");
-        check(chunk.contains("return not (named == nil or named == __MISSING)"),
-            "luajit: the inequality row keeps the null/missing equivalence");
+        check(chunk.contains("return (named == nil or named == __NULL or named == __rtNull)"),
+            "luajit: the equality row admits every null carrier, not missing");
+        check(chunk.contains("return not (named == nil or named == __NULL or named == __rtNull)"),
+            "luajit: the inequality row rejects every null carrier, not missing");
         Set<String> calls = namedCalls(chunk);
         for (String row : List.of("NULLABLE_NULL_EQ:LEFT",
                 "NULLABLE_NULL_EQ:RIGHT", "NULLABLE_NULL_NE:LEFT",

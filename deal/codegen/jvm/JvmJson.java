@@ -727,33 +727,55 @@ public final class JvmJson {
         }
     }
 
-    /**
-     * Converts one parsed JSON subtree into the shared language value
-     * model: containers recurse, a scalar leaf maps as-is (its own
-     * Long/Double/String/Boolean variant — the same per-occurrence
-     * classification the oracle's Int/Number carriers keep), and the
-     * JSON-null marker is mapped by the caller.
-     */
+    /** Project a parsed tree without consuming the Java call stack. */
     private static Object toLanguage(Object value) {
-        if (value instanceof JvmRuntime.Array array) {
+        Object root = languageShell(value);
+        java.util.ArrayDeque<ProjectionFrame> stack = new java.util.ArrayDeque<>();
+        pushProjection(stack, value, root);
+        while (!stack.isEmpty()) {
+            ProjectionFrame frame = stack.peek();
+            if (!frame.children.hasNext()) {
+                stack.pop();
+                continue;
+            }
+            Object child = frame.children.next();
+            String key = null;
+            if (frame.target instanceof JvmRuntime.Table) {
+                Map.Entry<?, ?> entry = (Map.Entry<?, ?>) child;
+                key = (String) entry.getKey();
+                child = entry.getValue();
+            }
+            Object projected = languageShell(child);
+            if (frame.target instanceof JvmRuntime.Array array) {
+                array.elements.add(projected);
+                array.length = array.elements.size();
+            } else {
+                ((JvmRuntime.Table) frame.target).write(key, projected);
+            }
+            pushProjection(stack, child, projected);
+        }
+        return root;
+    }
+
+    private record ProjectionFrame(Object target, java.util.Iterator<?> children) {}
+
+    private static Object languageShell(Object value) {
+        if (value == JNULL) return null;
+        if (value instanceof JvmRuntime.Array) {
             JvmRuntime.Array out = new JvmRuntime.Array(0);
             out.elementDescriptor = "unknown";
-            for (Object element : array.elements) {
-                out.elements.add(element == JNULL ? null : toLanguage(element));
-            }
-            out.length = out.elements.size();
             return out;
         }
-        if (!(value instanceof JvmRuntime.Table table)) {
-            return value;
+        return value instanceof JvmRuntime.Table ? new JvmRuntime.Table() : value;
+    }
+
+    private static void pushProjection(java.util.ArrayDeque<ProjectionFrame> stack,
+                                       Object source, Object target) {
+        if (source instanceof JvmRuntime.Array array) {
+            stack.push(new ProjectionFrame(target, array.elements.iterator()));
+        } else if (source instanceof JvmRuntime.Table table) {
+            stack.push(new ProjectionFrame(target, table.entries.entrySet().iterator()));
         }
-        JvmRuntime.Table out = new JvmRuntime.Table();
-        for (Map.Entry<String, Object> entry : table.entries.entrySet()) {
-            Object element = entry.getValue();
-            out.write(entry.getKey(),
-                element == JNULL ? null : toLanguage(element));
-        }
-        return out;
     }
 
     /**

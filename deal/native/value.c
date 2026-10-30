@@ -168,16 +168,18 @@ static void *deal_value_grow(void *storage, size_t *capacity, size_t needed,
     if (needed < *capacity) {
         return storage;
     }
-    size_t grown_capacity = *capacity == 0 ? 4u : *capacity * 2u;
+    size_t grown_capacity = *capacity == 0 ? 4u
+        : deal_platform_checked_multiply(*capacity, 2u);
     while (grown_capacity <= needed) {
-        grown_capacity *= 2u;
+        grown_capacity = deal_platform_checked_multiply(grown_capacity, 2u);
     }
-    void *grown = deal_platform_allocate(grown_capacity * element_size);
+    void *grown = deal_platform_allocate(
+        deal_platform_checked_multiply(grown_capacity, element_size));
     if (grown == NULL) {
         deal_platform_fault(reason);
     }
     if (storage != NULL && needed != 0u) {
-        memcpy(grown, storage, needed * element_size);
+        memcpy(grown, storage, deal_platform_checked_multiply(needed, element_size));
         deal_platform_release(storage);
     }
     *capacity = grown_capacity;
@@ -456,8 +458,8 @@ deal_fn *deal_fn_create(deal_fn_thunk thunk, const void *const *cells,
     uint32_t held_environment = 0u;
     deal_fn_environment *environment = NULL;
     if (capture_count != 0u) {
-        size_t bytes = offsetof(deal_fn_environment, cells)
-            + (size_t)capture_count * sizeof(void *);
+        size_t bytes = deal_platform_checked_add(offsetof(deal_fn_environment, cells),
+            deal_platform_checked_multiply((size_t)capture_count, sizeof(void *)));
         environment = deal_alloc(DEAL_LAYOUT_FUNCTION_ENV, bytes);
         environment->count = capture_count;
         environment->reserved = 0u;

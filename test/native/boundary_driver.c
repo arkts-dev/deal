@@ -102,6 +102,25 @@ static void check_atoms(void) {
         check(deal_descriptor_of_reference(deal_descriptor_reference(atom)) == atom,
               "an atom reference resolves back to its atom");
     }
+    char wide[1024];
+    size_t used = 0u;
+    wide[used++] = '(';
+    for (size_t index = 0u; index < 100u; index += 1u) {
+        if (index != 0u) wide[used++] = ',';
+        memcpy(wide + used, "number", 6u);
+        used += 6u;
+    }
+    memcpy(wide + used, ")->number", 10u);
+    deal_descriptor *wide_atom = deal_descriptor_intern(wide);
+    check(deal_descriptor_intern(wide) == wide_atom,
+          "wide function parameter storage survives repeated growth");
+    for (size_t index = 0u; index < 100u; index += 1u) {
+        char nominal[80];
+        (void)snprintf(nominal, sizeof(nominal), "@growth/Type%zu", index);
+        deal_descriptor *atom = deal_descriptor_intern(nominal);
+        check(deal_descriptor_intern(nominal) == atom,
+              "atom table survives repeated growth");
+    }
     deal_descriptor *number = deal_descriptor_intern("number");
     deal_descriptor *string = deal_descriptor_intern("string");
     deal_descriptor *record = deal_descriptor_intern("record");

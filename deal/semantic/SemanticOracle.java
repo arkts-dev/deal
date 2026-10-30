@@ -2678,6 +2678,57 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
             return cached;
         }
 
+        private record ParsedOracleFrame(ClassOpsExecutor.Value source, Value target,
+                                         java.util.Iterator<?> children) {}
+
+        /** Materialize parsed containers without recursive projection. */
+        private Value parsedOracleValue(ClassOpsExecutor.Value root) {
+            java.util.Deque<ParsedOracleFrame> stack = new ArrayDeque<>();
+            Value result = parsedOracleShell(root, stack);
+            while (!stack.isEmpty()) {
+                ParsedOracleFrame frame = stack.peek();
+                if (!frame.children().hasNext()) { stack.pop(); continue; }
+                Object next = frame.children().next();
+                String key = next instanceof String text ? text : null;
+                ClassOpsExecutor.Value child;
+                if (key == null) {
+                    child = (ClassOpsExecutor.Value) next;
+                } else {
+                    var lookup = ((ClassOpsExecutor.Value.Table) frame.source()).table().get(key);
+                    child = lookup instanceof SemanticTable.Lookup.Present<ClassOpsExecutor.Value> present
+                        ? present.value() : ClassOpsExecutor.Value.Missing.INSTANCE;
+                }
+                Value projected = oracleOriginals.get(child);
+                if (projected == null) projected = parsedOracleShell(child, stack);
+                if (frame.target() instanceof Value.TableValue table) {
+                    table.entries().put(key, projected);
+                } else {
+                    ((Value.ArrayValue) frame.target()).elements().add(projected);
+                }
+            }
+            return result;
+        }
+
+        private Value parsedOracleShell(ClassOpsExecutor.Value source,
+                                        java.util.Deque<ParsedOracleFrame> stack) {
+            Value result;
+            java.util.Iterator<?> children;
+            if (source instanceof ClassOpsExecutor.Value.Table table) {
+                result = new Value.TableValue(new LinkedHashMap<>());
+                children = table.table().keys().iterator();
+            } else if (source instanceof ClassOpsExecutor.Value.Array array) {
+                result = new Value.ArrayValue(new ArrayList<>(),
+                    array.elementDescriptor() == null ? RuntimeDescriptor.Unknown.INSTANCE
+                        : array.elementDescriptor(), array.elementDescriptor() == null);
+                children = array.array().elements().iterator();
+            } else {
+                return oracleValueOf(source);
+            }
+            oracleOriginals.put(source, result);
+            stack.push(new ParsedOracleFrame(source, result, children));
+            return result;
+        }
+
         /** The uncached oracle → executor conversion. */
         private ClassOpsExecutor.Value convertExecutorView(Value value) {
             return switch (value) {
@@ -2782,30 +2833,8 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         + "carries no invalid carrier (producer defect in this "
                         + "slice's corpus)");
                 }
-                case ClassOpsExecutor.Value.Table table -> {
-                    LinkedHashMap<String, Value> entries = new LinkedHashMap<>();
-                    for (String key : table.table().keys()) {
-                        SemanticTable.Lookup<ClassOpsExecutor.Value> lookup =
-                            table.table().get(key);
-                        entries.put(key, oracleValueOf(
-                            lookup instanceof SemanticTable.Lookup.Present
-                                <ClassOpsExecutor.Value> present
-                                ? present.value()
-                                : ClassOpsExecutor.Value.Missing.INSTANCE));
-                    }
-                    yield new Value.TableValue(entries);
-                }
-                case ClassOpsExecutor.Value.Array array -> {
-                    List<Value> elements = new ArrayList<>();
-                    for (int i = 0; i < array.array().size(); i++) {
-                        elements.add(oracleValueOf(array.array().elementAt(i)));
-                    }
-                    // Typed JSON decoding allocates arrays with the plan's
-                    // persistent element descriptor, including empty arrays.
-                    yield new Value.ArrayValue(elements,
-                        array.elementDescriptor() == null ? RuntimeDescriptor.Unknown.INSTANCE
-                            : array.elementDescriptor(), array.elementDescriptor() == null);
-                }
+                case ClassOpsExecutor.Value.Table ignored -> parsedOracleValue(value);
+                case ClassOpsExecutor.Value.Array ignored -> parsedOracleValue(value);
                 case ClassOpsExecutor.Value.Function function ->
                     new Value.FuncValue(null, function.signature(), Map.of());
                 case ClassOpsExecutor.Value.Class classValue -> {

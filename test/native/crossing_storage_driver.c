@@ -182,6 +182,31 @@ int main(void) {
               "the outer carrier resolves again after the nested crossing");
     }
 
+    /* Exercise repeated entry/root/stack growth and retain every old slot. */
+    deal_value issued_carriers[100];
+    for (size_t i = 0u; i < 100u; i += 1u) {
+        check(deal_value_crossing_issue_opaque(crossing, carrier_storage,
+                                               &issued_carriers[i]) == DEAL_OK,
+              "carrier table grows without losing entries");
+        check(deal_value_crossing_root(crossing, deal_null_singleton) == DEAL_OK,
+              "supplemental root table grows");
+    }
+    for (size_t i = 0u; i < 100u; i += 1u) {
+        check(deal_value_crossing_resolve(crossing, issued_carriers[i], &out) == DEAL_OK
+                  && out == carrier_storage, "each carrier survives repeated growth");
+    }
+    check(deal_value_crossing_resolve(crossing, first_carrier, &out) == DEAL_OK
+              && out == first, "first carrier survives repeated growth");
+    deal_value_crossing *nested_crossings[40];
+    for (size_t i = 0u; i < 40u; i += 1u) {
+        nested_crossings[i] = deal_value_crossing_begin();
+    }
+    for (size_t i = 40u; i > 0u; i -= 1u) {
+        deal_value_crossing_end(nested_crossings[i - 1u]);
+    }
+    check(deal_value_crossing_active() == crossing,
+          "crossing stack growth preserves the outer scope");
+
     /* a carrier of a finished crossing is foreign and never dereferenced. */
     deal_value_crossing_end(crossing);
     check(deal_value_crossing_active() == NULL, "no crossing is active again");

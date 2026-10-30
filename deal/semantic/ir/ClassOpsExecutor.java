@@ -1936,31 +1936,40 @@ public final class ClassOpsExecutor {
         }
     }
 
+    private record ParsedContentsFrame(Value value, java.util.Iterator<?> children) {}
+
     private static void boundParsedTableContents(SemanticOp op, Value value) {
-        switch (value) {
-            case Value.Table table -> {
-                for (String key : table.table().keys()) {
-                    SemanticTable.Lookup<Value> lookup = table.table().get(key);
-                    if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
-                        throw new Defect("JSON_FROM_CLASS " + op.opId() + ": a parsed "
-                            + "table key '" + key + "' reads Missing: the closed parsed "
-                            + "model keeps every listed key present — a seam-contract "
-                            + "violation is a producer defect, never executed");
-                    }
-                    requireJsonShape(op, present.value());
-                    boundParsedTableContents(op, present.value());
+        java.util.ArrayDeque<ParsedContentsFrame> stack = new java.util.ArrayDeque<>();
+        pushParsedContents(stack, value);
+        while (!stack.isEmpty()) {
+            ParsedContentsFrame frame = stack.peek();
+            if (!frame.children().hasNext()) { stack.pop(); continue; }
+            Object next = frame.children().next();
+            Value child;
+            if (frame.value() instanceof Value.Table table) {
+                String key = (String) next;
+                SemanticTable.Lookup<Value> lookup = table.table().get(key);
+                if (!(lookup instanceof SemanticTable.Lookup.Present<Value> present)) {
+                    throw new Defect("JSON_FROM_CLASS " + op.opId() + ": a parsed "
+                        + "table key '" + key + "' reads Missing: the closed parsed "
+                        + "model keeps every listed key present — a seam-contract "
+                        + "violation is a producer defect, never executed");
                 }
+                child = present.value();
+            } else {
+                child = (Value) next;
             }
-            case Value.Array array -> {
-                for (Value element : array.array().elements()) {
-                    requireJsonShape(op, element);
-                    boundParsedTableContents(op, element);
-                }
-            }
-            default -> {
-                // JSON-shaped leaves (validated by requireJsonShape at
-                // every recursion site).
-            }
+            requireJsonShape(op, child);
+            pushParsedContents(stack, child);
+        }
+    }
+
+    private static void pushParsedContents(java.util.ArrayDeque<ParsedContentsFrame> stack,
+                                           Value value) {
+        if (value instanceof Value.Table table) {
+            stack.push(new ParsedContentsFrame(value, table.table().keys().iterator()));
+        } else if (value instanceof Value.Array array) {
+            stack.push(new ParsedContentsFrame(value, array.array().elements().iterator()));
         }
     }
 

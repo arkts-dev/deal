@@ -24,6 +24,12 @@ function parsedArray(text: string): void {
     items[items.length] = "text";
 }
 export function main(): null {
+  let paired = `🌍\\`;
+  check(paired === "🌍\\\\");
+  let interpolated = `🌍\\${"x"}`;
+  check(interpolated === "🌍\\\\x");
+  let nestedTemplate = `${`🌍\\`}`;
+  check(nestedTemplate === paired);
   parsedArray("[]"); parsedArray("[1]"); parsedArray("[null]");
   let nested = json.parse("{\"inner\":[[]]}") as Record<string, unknown>;
   let outer = nested.inner as unknown[];
@@ -32,6 +38,19 @@ export function main(): null {
   if (decoded === null) { throw {code: "FAIL", message: "decode"}; }
   let box = decoded as Box;
   check(rejectsNumbers(box.data.inner));
+  let nulls = Box$fromJson("{\"data\":{\"leaf\":null},\"numbers\":[]}");
+  if (nulls !== null) {
+    let record = nulls.data;
+    check(Object.hasOwn(record, "leaf"));
+    check(record.leaf === null); check(null === record.leaf);
+    check(!(record.leaf !== null)); check(!(null !== record.leaf));
+    record.leaf = undefined;
+    check(record.leaf !== null); check(null !== record.leaf);
+    check(!(record.leaf === null)); check(!(null === record.leaf));
+    delete record.leaf;
+    check(record.leaf !== null); check(!(record.leaf === null));
+    check(!Object.hasOwn(record, "leaf"));
+  } else { throw {code: "FAIL", message: "null decode"}; }
   let numbers: unknown = box.numbers;
   check((numbers as number[]) === box.numbers);
   let wrong: boolean = false;

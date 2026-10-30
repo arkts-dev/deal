@@ -64,13 +64,15 @@ static void *deal_descriptor_grow(void *storage, size_t *capacity, size_t needed
     if (needed < *capacity) {
         return storage;
     }
-    size_t grown_capacity = *capacity == 0u ? 8u : *capacity * 2u;
+    size_t grown_capacity = *capacity == 0u ? 8u
+        : deal_platform_checked_multiply(*capacity, 2u);
     while (grown_capacity <= needed) {
-        grown_capacity *= 2u;
+        grown_capacity = deal_platform_checked_multiply(grown_capacity, 2u);
     }
-    void *grown = deal_platform_allocate(grown_capacity * element_size);
+    void *grown = deal_platform_allocate(
+        deal_platform_checked_multiply(grown_capacity, element_size));
     if (storage != NULL && needed != 0u) {
-        memcpy(grown, storage, needed * element_size);
+        memcpy(grown, storage, deal_platform_checked_multiply(needed, element_size));
         deal_platform_release(storage);
     }
     *capacity = grown_capacity;
@@ -80,7 +82,7 @@ static void *deal_descriptor_grow(void *storage, size_t *capacity, size_t needed
 /* One atom's text slice, copied into platform storage. */
 static char *deal_descriptor_slice(const char *text, size_t start, size_t end) {
     size_t length = end - start;
-    char *copy = deal_platform_allocate(length + 1u);
+    char *copy = deal_platform_allocate(deal_platform_checked_add(length, 1u));
     if (length != 0u) {
         memcpy(copy, text + start, length);
     }

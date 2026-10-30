@@ -11115,11 +11115,11 @@ local function __cmp(selector, kindL, l, kindR, r, side)
   if selector == "NULLABLE_NULL_EQ" then
     local named = l
     if side ~= "LEFT" then named = r end
-    return (named == nil or named == __MISSING)
+    return (named == nil or named == __NULL or named == __rtNull)
   elseif selector == "NULLABLE_NULL_NE" then
     local named = l
     if side ~= "LEFT" then named = r end
-    return not (named == nil or named == __MISSING)
+    return not (named == nil or named == __NULL or named == __rtNull)
   end
   if lnil or rnil then
     local both = lnil and rnil

@@ -32,7 +32,38 @@ public final class JsonClassAlgorithmAdapter {
             ((SharedStdlibSemantics.Outcome.Success<SharedStdlibSemantics.Value>) outcome).value()));
     }
 
-    private static ClassOpsExecutor.Value fromStdlib(SharedStdlibSemantics.Value value) {
+    private record ParsedFrame(SharedStdlibSemantics.Value value, boolean finish) {}
+
+    private static ClassOpsExecutor.Value fromStdlib(SharedStdlibSemantics.Value root) {
+        Deque<ParsedFrame> work = new ArrayDeque<>();
+        IdentityHashMap<SharedStdlibSemantics.Value, ClassOpsExecutor.Value> converted =
+            new IdentityHashMap<>();
+        work.push(new ParsedFrame(root, false));
+        while (!work.isEmpty()) {
+            ParsedFrame frame = work.pop();
+            var value = frame.value();
+            if (!frame.finish()) {
+                work.push(new ParsedFrame(value, true));
+                if (value instanceof SharedStdlibSemantics.Value.Table table) {
+                    var keys = table.table().keys();
+                    for (int i = keys.size() - 1; i >= 0; i--) {
+                        var present = (SemanticTable.Lookup.Present<SharedStdlibSemantics.Value>)
+                            table.table().get(keys.get(i));
+                        work.push(new ParsedFrame(present.value(), false));
+                    }
+                } else if (value instanceof SharedStdlibSemantics.Value.Array array) {
+                    for (int i = array.elements().size() - 1; i >= 0; i--)
+                        work.push(new ParsedFrame(array.elements().elementAt(i), false));
+                }
+            } else {
+                converted.put(value, parsedValue(value, converted));
+            }
+        }
+        return converted.get(root);
+    }
+
+    private static ClassOpsExecutor.Value parsedValue(SharedStdlibSemantics.Value value,
+            IdentityHashMap<SharedStdlibSemantics.Value, ClassOpsExecutor.Value> converted) {
         return switch (value) {
             case SharedStdlibSemantics.Value.Undefined ignored -> ClassOpsExecutor.Value.Undefined.INSTANCE;
             case SharedStdlibSemantics.Value.Null ignored -> ClassOpsExecutor.Value.Null.INSTANCE;
@@ -43,12 +74,12 @@ public final class JsonClassAlgorithmAdapter {
                 SemanticTable<ClassOpsExecutor.Value> result = new SemanticTable<>();
                 for (String key : t.table().keys()) {
                     var present = (SemanticTable.Lookup.Present<SharedStdlibSemantics.Value>) t.table().get(key);
-                    result.put(key, fromStdlib(present.value()));
+                    result.put(key, converted.get(present.value()));
                 }
                 yield new ClassOpsExecutor.Value.Table(result);
             }
             case SharedStdlibSemantics.Value.Array a -> new ClassOpsExecutor.Value.Array(
-                SemanticArray.of(a.elements().elements().stream().map(JsonClassAlgorithmAdapter::fromStdlib).toList()));
+                SemanticArray.of(a.elements().elements().stream().map(converted::get).toList()));
             case SharedStdlibSemantics.Value.Other other -> throw new IllegalStateException("Unsupported parsed value " + other);
         };
     }
