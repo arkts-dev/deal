@@ -262,7 +262,7 @@ public class ParserTest {
         // attaches to the EOF token; an end-of-input parse error must
         // anchor at the real EOF position with SOURCE origin and exact
         // scalar offsets.
-        String source = "let x\u0020: int = \n// @jsonable";
+        String source = "let x\u0020: number = \n// @jsonable";
         ParseResult r = parse(source);
 
         CompilerDiagnostic d = r.diagnostics().stream()
@@ -278,16 +278,16 @@ public class ParserTest {
             check(d.line() == 2 && d.column() == 13,
                 "end-of-input error must anchor at the real EOF (2,13), got ("
                     + d.line() + "," + d.column() + ")");
-            // The line before the comment is 14 scalars (the trailing
+            // The line before the comment is 17 scalars (the trailing
             // "= " included), the line break is 1, and the comment line
-            // is 12 — the EOF scalar offset is 27.
-            check(ScalarSourceCursor.scalarCount(source) == 27,
-                "fixture scalar count must be 27, got "
+            // is 12 — the EOF scalar offset is 30.
+            check(ScalarSourceCursor.scalarCount(source) == 30,
+                "fixture scalar count must be 30, got "
                     + ScalarSourceCursor.scalarCount(source));
-            check(d.range().startScalarOffset() == 27
-                    && d.range().endScalarOffset() == 27
+            check(d.range().startScalarOffset() == 30
+                    && d.range().endScalarOffset() == 30
                     && d.range().scalarLength() == 0,
-                "end-of-input error offsets must be (27,27) with zero length, got ("
+                "end-of-input error offsets must be (30,30) with zero length, got ("
                     + d.range().startScalarOffset() + ","
                     + d.range().endScalarOffset() + ")");
         }
@@ -300,7 +300,7 @@ public class ParserTest {
         // string, so the error in the second statement sits at a
         // non-trivial scalar offset. The trailing statement reaches the
         // E1037 default at the ';' token.
-        String source = "let s = \"\uD83D\uDE00\t\";\nlet x\u0020: int = ;";
+        String source = "let s = \"\uD83D\uDE00\t\";\nlet x\u0020: number = ;";
         ParseResult r = parse(source);
 
         CompilerDiagnostic d = r.diagnostics().stream()
@@ -341,10 +341,10 @@ public class ParserTest {
                     + ") != cursor end");
             // The first statement (string with the astral scalar and
             // the tab) is 13 scalars plus the line break; the second
-            // statement's prefix ("let x: int = ") is another 14, so
-            // the ';' sits at line 2, column 15.
-            check(d.range().startLine() == 2 && d.range().startColumn() == 15,
-                "E1037 start position must be (2,15), got ("
+            // statement's prefix ("let x: number = ") is another 17, so
+            // the ';' sits at line 2, column 18.
+            check(d.range().startLine() == 2 && d.range().startColumn() == 18,
+                "E1037 start position must be (2,18), got ("
                     + d.range().startLine() + "," + d.range().startColumn() + ")");
         }
     }
@@ -372,7 +372,7 @@ public class ParserTest {
     static void testVariableDeclaration() {
         System.out.println("-- VariableDeclaration --");
 
-        ParseResult r = parse("let x: int = 42;");
+        ParseResult r = parse("let x: number = 42;");
         assertNoParseErrors(r, "let with type");
         assertStmtCount(r.program(), 1, "let with type");
         assertNoParseErrors(r, "span test");
@@ -407,7 +407,7 @@ public class ParserTest {
     static void testFunctionDeclaration() {
         System.out.println("-- FunctionDeclaration --");
 
-        ParseResult r = parse("function foo(x: int): int { return x; }");
+        ParseResult r = parse("function foo(x: number): number { return x; }");
         assertNoParseErrors(r, "func decl");
         assertStmtCount(r.program(), 1, "func decl");
         FunctionDeclaration fd = assertInstance(r.program().statements().get(0),
@@ -422,12 +422,12 @@ public class ParserTest {
         }
 
         // DEAL v1.2: rest parameters are rejected with E1047.
-        r = parse("function sum(base: int, ...rest: int[]): int { return base; }");
+        r = parse("function sum(base: number, ...rest: number[]): number { return base; }");
         assertParseError(r, "E1047", "rest parameter rejected with E1047");
 
         // External declaration (semicolon body) — flagged in the AST so the
         // post-parse validator can reject it outside .d.deal files (E1051).
-        r = parse("function ext(): int;");
+        r = parse("function ext(): number;");
         assertNoParseErrors(r, "external decl");
         fd = assertInstance(r.program().statements().get(0),
                 FunctionDeclaration.class, "external decl");
@@ -440,7 +440,7 @@ public class ParserTest {
     static void testClassDeclaration() {
         System.out.println("-- ClassDeclaration --");
 
-        ParseResult r = parse("class Point { x: int; y: int; }");
+        ParseResult r = parse("class Point { x: number; y: number; }");
         assertNoParseErrors(r, "class decl");
         assertStmtCount(r.program(), 1, "class decl");
         ClassDeclaration cd = assertInstance(r.program().statements().get(0),
@@ -486,7 +486,7 @@ public class ParserTest {
     static void testReturnStatement() {
         System.out.println("-- ReturnStatement --");
 
-        ParseResult r = parse("function f(): int { return 42; }");
+        ParseResult r = parse("function f(): number { return 42; }");
         assertNoParseErrors(r, "return with expr");
         FunctionDeclaration fd = (FunctionDeclaration) r.program().statements().get(0);
         ReturnStatement ret = assertInstance(fd.body().statements().get(0),
@@ -571,7 +571,7 @@ public class ParserTest {
     }
 
     static void testForStatementVarDecl() {
-        assertParseError(parse("for (let i: int = 0; i < 3; i = i + 1) {}"), "E1013", "C-style for rejected");
+        assertParseError(parse("for (let i: number = 0; i < 3; i = i + 1) {}"), "E1013", "C-style for rejected");
     }
 
     static void testForStatementAssign() {
@@ -608,7 +608,7 @@ public class ParserTest {
     static void testExportDeclaration() {
         System.out.println("-- ExportDeclaration --");
 
-        ParseResult r = parse("export function foo(): int { return 0; }");
+        ParseResult r = parse("export function foo(): number { return 0; }");
         assertNoParseErrors(r, "export function");
         ExportDeclaration exp = assertInstance(r.program().statements().get(0),
                 ExportDeclaration.class, "export func");
@@ -616,7 +616,7 @@ public class ParserTest {
             check(exp.declaration() instanceof FunctionDeclaration, "decl is func");
         }
 
-        r = parse("export class Bar { x: int; }");
+        r = parse("export class Bar { x: number; }");
         assertNoParseErrors(r, "export class");
         exp = assertInstance(r.program().statements().get(0),
                 ExportDeclaration.class, "export class");
@@ -625,7 +625,7 @@ public class ParserTest {
         }
 
         // Export let is invalid
-        r = parse("export let x: int = 1;");
+        r = parse("export let x: number = 1;");
         assertParseError(r, "E1024", "export let invalid");
     }
 
@@ -682,7 +682,7 @@ public class ParserTest {
     static void testBlock() {
         System.out.println("-- Block --");
 
-        ParseResult r = parse("{ let x: int = 1; let y: int = 2; }");
+        ParseResult r = parse("{ let x: number = 1; let y: number = 2; }");
         assertNoParseErrors(r, "block");
         Block block = assertInstance(r.program().statements().get(0),
                 Block.class, "block");
@@ -729,7 +729,7 @@ public class ParserTest {
         lit = (LiteralExpr) vd.initializer();
         check(((LiteralValue.BooleanLiteral) lit.value()).value() == false, "false lit");
 
-        r = parse("let a: int = 42;");
+        r = parse("let a: number = 42;");
         vd = (VariableDeclaration) r.program().statements().get(0);
         lit = (LiteralExpr) vd.initializer();
         check(((LiteralValue.NumberLiteral) lit.value()).value() == 42, "int lit");
@@ -804,7 +804,7 @@ public class ParserTest {
     static void testIdentifierExpression() {
         System.out.println("-- Identifier Expression --");
 
-        ParseResult r = parse("let y: int = x;");
+        ParseResult r = parse("let y: number = x;");
         assertNoParseErrors(r, "identifier expr");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         IdentifierExpr id = assertExprInstance(vd.initializer(), IdentifierExpr.class, "ident");
@@ -848,7 +848,7 @@ public class ParserTest {
         UnaryExpr un = assertExprInstance(vd.initializer(), UnaryExpr.class, "unary NOT");
         if (un != null) check(un.op() == UnaryOp.NOT, "NOT op");
 
-        r = parse("let a: int = -5;");
+        r = parse("let a: number = -5;");
         assertNoParseErrors(r, "unary neg");
         vd = (VariableDeclaration) r.program().statements().get(0);
         un = assertExprInstance(vd.initializer(), UnaryExpr.class, "unary NEG");
@@ -892,7 +892,7 @@ public class ParserTest {
 
         // Let before a following statement.
         ParseResult beforeStatement = parse("export function main(): null {\n"
-            + "  let n: int = 1\n"
+            + "  let n: number = 1\n"
             + "  one(n);\n"
             + "  return null;\n"
             + "}\n");
@@ -901,14 +901,14 @@ public class ParserTest {
 
         // Let before return (the old whitelist admitted this).
         ParseResult beforeReturn = parse("export function main(): null {\n"
-            + "  let n: int = 1\n"
+            + "  let n: number = 1\n"
             + "  return null;\n"
             + "}\n");
         assertParseError(beforeReturn, "E1053", "let before return");
 
         // Let before a try statement.
         ParseResult beforeTry = parse("export function main(): null {\n"
-            + "  let n: int = 1\n"
+            + "  let n: number = 1\n"
             + "  try {} catch (e) {}\n"
             + "  return null;\n"
             + "}\n");
@@ -916,14 +916,14 @@ public class ParserTest {
 
         // Let before an async function declaration.
         ParseResult beforeAsync = parse("export function main(): null {\n"
-            + "  let n: int = 1\n"
+            + "  let n: number = 1\n"
             + "  async function f(): Promise<null> { return null; }\n"
             + "  return null;\n"
             + "}\n");
         assertParseError(beforeAsync, "E1053", "let before async function");
 
         // Return and break/continue before the closing '}'.
-        assertParseError(parse("function f(): int { return 1 }"), "E1053",
+        assertParseError(parse("function f(): number { return 1 }"), "E1053",
             "return before '}'");
         assertParseError(parse("function f(): null { while (true) { break } return null; }"),
             "E1053", "break before '}'");
@@ -931,7 +931,7 @@ public class ParserTest {
             "E1053", "continue before '}'");
 
         // Missing terminator at end of input.
-        assertParseError(parse("let x: int = 1"), "E1053",
+        assertParseError(parse("let x: number = 1"), "E1053",
             "let at end of input");
 
         // Class field and import terminators.
@@ -941,7 +941,7 @@ public class ParserTest {
             "E1053", "import before the next declaration");
 
         // Delete, throw and expression statements.
-        assertParseError(parse("function f(t: table): null { delete t.x return null; }"),
+        assertParseError(parse("function f(t: Record<string, unknown>): null { delete t.x return null; }"),
             "E1053", "delete before return");
         assertParseError(parse("function f(): null { throw { code: \"x\", message: \"y\" } return null; }"),
             "E1053", "throw before return");
@@ -950,7 +950,7 @@ public class ParserTest {
 
         // Explicit terminators compile clean, and block-ending forms need
         // no added ';'.
-        ParseResult ok = parse("export function main(): null {\n  let n: int = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: int = 0; while (v14Loop1 < 1) { let i: int = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return null;\n}\nclass C { x: number; }\nfunction g(): null { return null; }\n");
+        ParseResult ok = parse("export function main(): null {\n  let n: number = 1;\n  if (n === 1) { n = 2; } else { n = 3; }\n  while (n < 10) { n = n + 1; }\n  { let v14Loop1: number = 0; while (v14Loop1 < 1) { let i: number = v14Loop1; { n = n + 1; } v14Loop1 = i; v14Loop1 = v14Loop1 + 1; } }\n  try { n = 4; } catch (e) { n = 5; }\n  return null;\n}\nclass C { x: number; }\nfunction g(): null { return null; }\n");
         assertNoParseErrors(ok, "explicit terminators and block endings");
     }
 
@@ -1030,7 +1030,7 @@ public class ParserTest {
     static void testTrailingParameterComma() {
         System.out.println("-- Trailing parameter comma --");
 
-        ParseResult r = parse("function one(x: int,): int { return x; }\n");
+        ParseResult r = parse("function one(x: number,): number { return x; }\n");
         assertParseError(r, "E1054", "declaration parameter trailing comma");
         if (!r.program().statements().isEmpty()
                 && r.program().statements().get(0)
@@ -1040,12 +1040,12 @@ public class ParserTest {
         }
 
         ParseResult functionType = parse(
-            "let f: (x: int,) => int = function(x: int): int { return x; };\n");
+            "let f: (x: number,) => number = function(x: number): number { return x; };\n");
         assertParseError(functionType, "E1054",
             "function-type parameter trailing comma");
 
         ParseResult literals = parse(
-            "let a: int[] = [1, 2,];\nlet o: table = { x: 1, };\n");
+            "let a: number[] = [1, 2,];\nlet o: Record<string, unknown> = { x: 1, };\n");
         assertNoParseErrors(literals, "array and object literal trailing commas");
     }
 
@@ -1099,20 +1099,20 @@ public class ParserTest {
     static void testArrayLiteral() {
         System.out.println("-- Array Literal --");
 
-        ParseResult r = parse("let a: int[] = [1, 2, 3];");
+        ParseResult r = parse("let a: number[] = [1, 2, 3];");
         assertNoParseErrors(r, "array literal");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         ArrayLiteralExpr arr = assertExprInstance(vd.initializer(), ArrayLiteralExpr.class, "array");
         if (arr != null) check(arr.elements().size() == 3, "3 elements");
 
-        r = parse("let a: int[] = [];");
+        r = parse("let a: number[] = [];");
         assertNoParseErrors(r, "empty array");
         vd = (VariableDeclaration) r.program().statements().get(0);
         arr = assertExprInstance(vd.initializer(), ArrayLiteralExpr.class, "empty array");
         if (arr != null) check(arr.elements().isEmpty(), "0 elements");
 
         // Trailing comma
-        r = parse("let a: int[] = [1,];");
+        r = parse("let a: number[] = [1,];");
         assertNoParseErrors(r, "array trailing comma");
         vd = (VariableDeclaration) r.program().statements().get(0);
         arr = assertExprInstance(vd.initializer(), ArrayLiteralExpr.class,
@@ -1123,7 +1123,7 @@ public class ParserTest {
     static void testObjectLiteral() {
         System.out.println("-- Object Literal --");
 
-        ParseResult r = parse("let t: table = { name: \"A\", age: 30 };");
+        ParseResult r = parse("let t: Record<string, unknown> = { name: \"A\", age: 30 };");
         assertNoParseErrors(r, "object literal");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         ObjectLiteralExpr obj = assertExprInstance(vd.initializer(), ObjectLiteralExpr.class,
@@ -1134,7 +1134,7 @@ public class ParserTest {
             check(obj.properties().get(1).name().equals("age"), "prop 1 name");
         }
 
-        r = parse("let t: table = {};");
+        r = parse("let t: Record<string, unknown> = {};");
         assertNoParseErrors(r, "empty object");
         vd = (VariableDeclaration) r.program().statements().get(0);
         obj = assertExprInstance(vd.initializer(), ObjectLiteralExpr.class, "empty object");
@@ -1144,7 +1144,7 @@ public class ParserTest {
     static void testFunctionExpression() {
         System.out.println("-- Function Expression --");
 
-        ParseResult r = parse("let f = function(x: int): int { return x; };");
+        ParseResult r = parse("let f = function(x: number): number { return x; };");
         assertNoParseErrors(r, "func expr");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         FunctionExpr fe = assertExprInstance(vd.initializer(), FunctionExpr.class, "func expr");
@@ -1155,7 +1155,7 @@ public class ParserTest {
         }
 
         // Function expression as expression statement
-        r = parse("(function(): int { return 0; });");
+        r = parse("(function(): number { return 0; });");
         assertNoParseErrors(r, "func expr as stmt");
     }
 
@@ -1216,7 +1216,7 @@ public class ParserTest {
     static void testPrecedenceAddMul() {
         System.out.println("-- Precedence: add/mul --");
 
-        ParseResult r = parse("let a: int = 1 + 2 * 3;");
+        ParseResult r = parse("let a: number = 1 + 2 * 3;");
         assertNoParseErrors(r, "add/mul");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         BinaryExpr bin = (BinaryExpr) vd.initializer();
@@ -1229,7 +1229,7 @@ public class ParserTest {
     static void testPrecedenceSubAssoc() {
         System.out.println("-- Precedence: associativity --");
 
-        ParseResult r = parse("let a: int = 1 - 2 - 3;");
+        ParseResult r = parse("let a: number = 1 - 2 - 3;");
         assertNoParseErrors(r, "sub assoc");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         BinaryExpr bin = (BinaryExpr) vd.initializer();
@@ -1274,7 +1274,7 @@ public class ParserTest {
         // '**' is not in the v1.4 operator set, so it lexes as two '*'
         // tokens and the second one has no operand (E1037). No POW node
         // can enter the AST.
-        ParseResult r = parse("let a: int = 2 ** 3;");
+        ParseResult r = parse("let a: number = 2 ** 3;");
         assertParseError(r, "E1037", "exponentiation is not admitted");
         VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
         check(!(vd.initializer() instanceof BinaryExpr bin)
@@ -1282,7 +1282,7 @@ public class ParserTest {
             "no POW node is produced for '**'");
 
         // The removed operator is rejected regardless of the int32 profile.
-        LexResult lex = new Lexer("let a: int = 2 ** 3;", "test.deal").tokenize();
+        LexResult lex = new Lexer("let a: number = 2 ** 3;", "test.deal").tokenize();
         check(lex.tokens().stream().filter(t -> t.type() == TokenType.STAR).count() == 2,
             "'**' lexes as two STAR tokens");
     }
@@ -1310,7 +1310,7 @@ public class ParserTest {
     static void testClassInFunction() {
         System.out.println("-- Class in Function --");
 
-        ParseResult r = parse("function f(): null { class Inner { x: int; } return; }");
+        ParseResult r = parse("function f(): null { class Inner { x: number; } return; }");
         assertNoParseErrors(r, "class in function");
     }
 
@@ -1322,14 +1322,14 @@ public class ParserTest {
         // Actually, class fields are only field declarations. Functions in classes
         // aren't a thing yet. Let's just test that parsing doesn't crash.
         // Instead, test a function declaration inside a function body.
-        ParseResult r = parse("function outer(): null { function inner(): int { return 0; } return; }");
+        ParseResult r = parse("function outer(): null { function inner(): number { return 0; } return; }");
         assertNoParseErrors(r, "function in function");
     }
 
     static void testFuncExprInCall() {
         System.out.println("-- Function Expression in Call --");
 
-        ParseResult r = parse("f(function(x: int): int { return x; });");
+        ParseResult r = parse("f(function(x: number): number { return x; });");
         assertNoParseErrors(r, "func expr in call");
         ExpressionStatement es = (ExpressionStatement) r.program().statements().get(0);
         CallExpr call = (CallExpr) es.expr();
@@ -1343,7 +1343,7 @@ public class ParserTest {
     static void testErrorRecoveryMissingBrace() {
         System.out.println("-- Error Recovery: missing brace --");
 
-        ParseResult r = parse("function f(): int { return 0; \nlet x: int = 1;");
+        ParseResult r = parse("function f(): number { return 0; \nlet x: number = 1;");
         // Missing closing brace should produce E1006
         boolean hasE1006 = r.diagnostics().stream().anyMatch(d -> d.code().equals("E1006"));
         check(hasE1006, "error recovery: has E1006");
@@ -1354,8 +1354,8 @@ public class ParserTest {
     static void testErrorRecoveryMidFile() {
         System.out.println("-- Error Recovery: mid-file --");
 
-        ParseResult r = parse("let a: int = 1;\nlet b: int =\nlet c: int = 3;");
-        // let b: int = (missing expression) should produce an error
+        ParseResult r = parse("let a: number = 1;\nlet b: number =\nlet c: number = 3;");
+        // let b: number = (missing expression) should produce an error
         // but let c should still be parsed
         boolean hasError = r.diagnostics().stream()
                 .anyMatch(d -> d.code().startsWith("E1"));
@@ -1370,11 +1370,11 @@ public class ParserTest {
         System.out.println("-- Error Recovery: multiple errors --");
 
         ParseResult r = parse(
-            "let a: int = 1;\n" +
-            "let b: int = ;\n" +     // error: missing initializer
-            "let c: int = 3;\n" +
-            "let d: int = ;\n" +     // error: missing initializer
-            "let e: int = 5;");
+            "let a: number = 1;\n" +
+            "let b: number = ;\n" +     // error: missing initializer
+            "let c: number = 3;\n" +
+            "let d: number = ;\n" +     // error: missing initializer
+            "let e: number = 5;");
 
         long errorCount = r.diagnostics().stream()
                 .filter(d -> d.code().startsWith("E1")).count();
@@ -1392,7 +1392,7 @@ public class ParserTest {
         System.out.println("-- Error Recovery: assignment RHS null (Flaw 1 fix) --");
 
         // x = ;  —  assignment with missing RHS
-        ParseResult r = parse("x = ;\nlet y: int = 1;");
+        ParseResult r = parse("x = ;\nlet y: number = 1;");
         // Must not crash; errors must be reported
         boolean hasE1xxx = r.diagnostics().stream()
                 .anyMatch(d -> d.code().startsWith("E1"));
@@ -1406,7 +1406,7 @@ public class ParserTest {
         System.out.println("-- Error Recovery: binary RHS null (Flaw 2 fix) --");
 
         // 1 + ;  —  binary operator with missing RHS
-        ParseResult r = parse("let a: int = 1 + ;\nlet b: int = 2;");
+        ParseResult r = parse("let a: number = 1 + ;\nlet b: number = 2;");
         boolean hasE1xxx = r.diagnostics().stream()
                 .anyMatch(d -> d.code().startsWith("E1"));
         check(hasE1xxx, "flaw2: produced E1xxx diagnostic");
@@ -1420,7 +1420,7 @@ public class ParserTest {
         // + * 5  — the '+' is not a unary op in DEAL, so parsePrimary rejects it,
         // returning null. Without the fix, parseBinary would enter the loop
         // on '*' and dereference null left.
-        ParseResult r = parse("let a: int = + * 5;\nlet b: int = 2;");
+        ParseResult r = parse("let a: number = + * 5;\nlet b: number = 2;");
         boolean hasE1xxx = r.diagnostics().stream()
                 .anyMatch(d -> d.code().startsWith("E1"));
         check(hasE1xxx, "flaw3: produced E1xxx diagnostic");
@@ -1432,7 +1432,7 @@ public class ParserTest {
         System.out.println("-- Error Recovery: has() expression null (Flaw 4 fix) --");
 
         // has(;)  —  has() with a non-expression inside
-        ParseResult r = parse("let b: boolean = has(;);\nlet y: int = 1;");
+        ParseResult r = parse("let b: boolean = has(;);\nlet y: number = 1;");
         boolean hasE1xxx = r.diagnostics().stream()
                 .anyMatch(d -> d.code().startsWith("E1"));
         check(hasE1xxx, "flaw4: produced E1xxx diagnostic");
@@ -1444,7 +1444,7 @@ public class ParserTest {
         System.out.println("-- Error Recovery: unary operand null --");
 
         // !;  —  unary NOT with missing operand
-        ParseResult r = parse("let a: boolean = !;\nlet b: int = 2;");
+        ParseResult r = parse("let a: boolean = !;\nlet b: number = 2;");
         boolean hasE1xxx = r.diagnostics().stream()
                 .anyMatch(d -> d.code().startsWith("E1"));
         check(hasE1xxx, "unary-null: produced E1xxx diagnostic");
@@ -1461,7 +1461,7 @@ public class ParserTest {
 
         // Stray '}' at top level must not cause infinite loop; must emit E1041
         // and continue parsing remaining statements.
-        ParseResult r = parse("let x: int = 1; }\nlet y: int = 2;");
+        ParseResult r = parse("let x: number = 1; }\nlet y: number = 2;");
         boolean hasE1041 = r.diagnostics().stream()
                 .anyMatch(d -> d.code().equals("E1041"));
         check(hasE1041, "f1-fix: produced E1041 diagnostic");
@@ -1473,10 +1473,10 @@ public class ParserTest {
     static void testReturnFunctionExpr() {
         System.out.println("-- ReturnStatement with function expression (F2 fix) --");
 
-        // return function(): int { return 0; }
+        // return function(): number { return 0; }
         // Must parse as a single ReturnStatement wrapping a FunctionExpr,
         // not as a bare return followed by an expression statement.
-        ParseResult r = parse("function f(): int { return function(): int { return 0; }; }");
+        ParseResult r = parse("function f(): number { return function(): number { return 0; }; }");
         assertNoParseErrors(r, "return func expr");
         FunctionDeclaration fd = (FunctionDeclaration) r.program().statements().get(0);
         check(fd.body().statements().size() == 1,
@@ -2062,9 +2062,9 @@ public class ParserTest {
         System.out.println("-- Multiple Statements --");
 
         ParseResult r = parse(
-            "let a: int = 1;\n" +
-            "let b: int = 2;\n" +
-            "let c: int = 3;");
+            "let a: number = 1;\n" +
+            "let b: number = 2;\n" +
+            "let c: number = 3;");
         assertNoParseErrors(r, "multiple stmts");
         assertStmtCount(r.program(), 3, "3 statements");
     }
@@ -2073,19 +2073,19 @@ public class ParserTest {
         System.out.println("-- Semicolon Rules --");
 
         // With semicolon
-        ParseResult r1 = parse("let x: int = 1;");
+        ParseResult r1 = parse("let x: number = 1;");
         assertNoParseErrors(r1, "with semicolon");
         assertStmtCount(r1.program(), 1, "with semicolon");
 
         // v1.4 requires the terminator: a statement followed by '}' is
         // E1053 (the statement still parses for recovery).
-        ParseResult r2 = parse("{ let x: int = 1 }");
+        ParseResult r2 = parse("{ let x: number = 1 }");
         assertParseError(r2, "E1053", "without semicolon before }");
         Block b = (Block) r2.program().statements().get(0);
         check(b.statements().size() == 1, "1 stmt in block without semicolon");
 
         // Missing terminator at end of input is E1053 too.
-        ParseResult r3 = parse("let x: int = 1");
+        ParseResult r3 = parse("let x: number = 1");
         assertParseError(r3, "E1053", "without semicolon at EOF");
         assertStmtCount(r3.program(), 1, "1 stmt without semicolon at EOF");
     }
@@ -2093,7 +2093,7 @@ public class ParserTest {
     static void testJsonableExportClass() {
         System.out.println("-- @jsonable export class -> isJsonable=true --");
 
-        ParseResult r = parse("// @jsonable\nexport class C { x: int; }");
+        ParseResult r = parse("// @jsonable\nexport class C { x: number; }");
         assertNoParseErrors(r, "@jsonable export class");
         ProgramNode prog = r.program();
         assertStmtCount(prog, 1, "@jsonable export class");
@@ -2109,7 +2109,7 @@ public class ParserTest {
     static void testJsonableExportFunction() {
         System.out.println("-- @jsonable export function -> E1043 error --");
 
-        ParseResult r = parse("// @jsonable\nexport function f(): int { return 0; }");
+        ParseResult r = parse("// @jsonable\nexport function f(): number { return 0; }");
         assertParseError(r, "E1043", "@jsonable export function");
 
         List<CompilerDiagnostic> diags = r.diagnostics();
@@ -2147,7 +2147,7 @@ public class ParserTest {
     static void testJsonableStandaloneClass() {
         System.out.println("-- @jsonable standalone class -> E1043 error, isJsonable=false --");
 
-        ParseResult r = parse("// @jsonable\nclass C { x: int; }");
+        ParseResult r = parse("// @jsonable\nclass C { x: number; }");
         assertParseError(r, "E1043", "@jsonable standalone class");
 
         List<CompilerDiagnostic> diags = r.diagnostics();
@@ -2179,7 +2179,7 @@ public class ParserTest {
     static void testJsonableStandaloneFunction() {
         System.out.println("-- @jsonable standalone function -> E1043 error --");
 
-        ParseResult r = parse("// @jsonable\nfunction f(): int { return 0; }");
+        ParseResult r = parse("// @jsonable\nfunction f(): number { return 0; }");
         assertParseError(r, "E1043", "@jsonable standalone function");
 
         List<CompilerDiagnostic> diags = r.diagnostics();
@@ -2196,7 +2196,7 @@ public class ParserTest {
     static void testJsonableNotPresent() {
         System.out.println("-- no @jsonable -> isJsonable=false --");
 
-        ParseResult r = parse("export class C { x: int; }");
+        ParseResult r = parse("export class C { x: number; }");
         assertNoParseErrors(r, "export class without @jsonable");
 
         ExportDeclaration ed = (ExportDeclaration) r.program().statements().get(0);
@@ -2294,7 +2294,7 @@ public class ParserTest {
     static void testAsyncFunctionType() {
         System.out.println("-- Async Function Type --");
 
-        // Test: let f: async (int) => string;
+        // Test: let f: async (number) => string;
         ParseResult r = parse("let f: (p: number) => Promise<string> = g;");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async function type annotation");
@@ -2343,7 +2343,7 @@ public class ParserTest {
     static void testAsyncTypeAnnotation() {
         System.out.println("-- Async Type Annotation in Let --");
 
-        // let f: async (int) => string;
+        // let f: async (number) => string;
         // But since let requires an initializer, use a valid one
         ParseResult r = parse("let f: (p: number) => Promise<string> = someFunc;");
         ProgramNode prog = r.program();
@@ -2396,7 +2396,7 @@ public class ParserTest {
 
         // Verify that lexing + parsing @jsonable + let produces the
         // incompatible-attachment E1043 error through the event pipeline.
-        LexResult lex = new Lexer("// @jsonable\nlet x: int = 1;", "test.deal").tokenize();
+        LexResult lex = new Lexer("// @jsonable\nlet x: number = 1;", "test.deal").tokenize();
         Parser parser = new Parser(lex.tokens(), "test.deal",
             lex.directiveEvents());
         ParseResult r = parser.parse();
@@ -2492,15 +2492,15 @@ public class ParserTest {
 
         // The 'null |' prefix still wraps a non-null array element type.
         NullableType prefix = assertTypeInstance(
-            letAnnotationType("let xs: null | int[] = null;"),
-            NullableType.class, "null | int[]");
+            letAnnotationType("let xs: null | number[] = null;"),
+            NullableType.class, "null | number[]");
         ArrayType intArray = assertTypeInstance(prefix == null ? null : prefix.innerType(),
-            ArrayType.class, "null | int[] inner");
+            ArrayType.class, "null | number[] inner");
         NamedType intElement = assertTypeInstance(
             intArray == null ? null : intArray.elementType(), NamedType.class,
-            "null | int[] element");
-        check(intElement != null && intElement.name().equals("int"),
-            "null | int[] keeps the int element, got "
+            "null | number[] element");
+        check(intElement != null && intElement.name().equals("number"),
+            "null | number[] keeps the number element, got "
                 + (intElement == null ? "null" : intElement.name()));
 
         // null | null stays the parser's Nullable(null) node, so the
@@ -2576,9 +2576,9 @@ public class ParserTest {
         }
 
         // Rejected spellings keep their exact parse diagnostics.
-        ParseResult union = parse("let xs: null[] | int = null;");
+        ParseResult union = parse("let xs: null[] | number = null;");
         CompilerDiagnostic e1030 = diagOf(union, "E1030");
-        check(e1030 != null, "null[] | int reports E1030, got "
+        check(e1030 != null, "null[] | number reports E1030, got "
             + union.diagnostics());
         if (e1030 != null) {
             check(e1030.message().equals(
@@ -2623,7 +2623,7 @@ public class ParserTest {
 
         // Attachment to a non-class declaration is E1043 with no
         // metadata.
-        r = parseFile("// @jsonable\nexport function f(): int { return 0; }",
+        r = parseFile("// @jsonable\nexport function f(): number { return 0; }",
             "lib.d.deal");
         assertParseError(r, "E1043",
             "declaration-file @jsonable on a function errors E1043");

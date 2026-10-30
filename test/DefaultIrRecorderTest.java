@@ -147,14 +147,14 @@ public final class DefaultIrRecorderTest {
                         Types.func(List.of(REC_TYPE), Type.Number.INSTANCE)),
                     new SymbolTable(), false));
             // The declaration scope: the import alias L and the
-            // intrinsic int conversion.
+            // synthetic recorder-only binding, not a language builtin.
             SymbolTable scope = new SymbolTable();
             scope.define("L", new deal.checker.Symbol.ModuleSymbol("L",
                 Map.of("Rec", REC_TYPE, "getTag",
                     Types.func(List.of(REC_TYPE), Type.Number.INSTANCE)),
                 new Span("main.deal", 1, 1, 1, 5)));
-            scope.define("int", new deal.checker.Symbol.IntrinsicSymbol(
-                "int", Types.func(List.of(Type.Number.INSTANCE),
+            scope.define("fixtureIntrinsic", new deal.checker.Symbol.IntrinsicSymbol(
+                "fixtureIntrinsic", Types.func(List.of(Type.Number.INSTANCE),
                     Type.Number.INSTANCE), null));
             Map<String, CanonicalModuleIdentity> classification =
                 Map.of("src.main",
@@ -183,17 +183,17 @@ public final class DefaultIrRecorderTest {
     }
 
     /** A provider program declaring the exported class Rec and the
-     * exported function getTag(r: Rec): int. */
+     * exported function getTag(r: Rec): number. */
     private static ProgramNode providerProgram() {
         Span span = new Span("lib.deal", 1, 1, 1, 5);
         List<ClassField> fields = List.of(new ClassField(span, "tag",
-            false, false, new NamedType(span, "int")));
+            false, false, new NamedType(span, "number")));
         ClassDeclaration rec = new ClassDeclaration(span, "Rec", fields);
         deal.ast.FunctionDeclaration getTag = new deal.ast.FunctionDeclaration(
             span, "getTag",
             List.of(new deal.ast.Parameter(span, "r",
                 new NamedType(span, "Rec"))),
-            new NamedType(span, "int"),
+            new NamedType(span, "number"),
             new deal.ast.Block(span, List.of()), false, false);
         return new ProgramNode(span,
             List.of(new ExportDeclaration(span, rec),
@@ -311,7 +311,7 @@ public final class DefaultIrRecorderTest {
             + " deduplication --");
         // The recorder walk records the call before its callee member
         // access: the first occurrence keeps the CALL range.
-        RecorderRun run = new RecorderRun("n: int",
+        RecorderRun run = new RecorderRun("n: number",
             "L.getTag({ tag: 3 })", Type.Number.INSTANCE, REC_TYPE);
         List<DefaultResourceOccurrence> occurrences = run.occurrences();
         check(occurrences.size() == 2,
@@ -323,8 +323,8 @@ public final class DefaultIrRecorderTest {
                     && "getTag".equals(call.semanticResourceIdentity()
                         .lexicalDeclarationIdentity().declaredName()),
                 "the first occurrence is the imported getTag wrapper");
-            check(call.sourceRange().startColumn() == 14,
-                "the wrapper keeps the CALL-site range (column 14), got "
+            check(call.sourceRange().startColumn() == 17,
+                "the wrapper keeps the CALL-site range (column 17), got "
                     + call.sourceRange().startColumn());
             DefaultResourceOccurrence plan = occurrences.get(1);
             check(plan.kind().name()
@@ -341,13 +341,13 @@ public final class DefaultIrRecorderTest {
     private static void testSameModuleBindingsRecorded() {
         System.out.println("-- Same-module targets record bindings, no"
             + " occurrences --");
-        RecorderRun run = new RecorderRun("n: int", "int(3.0)",
+        RecorderRun run = new RecorderRun("n: number", "fixtureIntrinsic(3.0)",
             Type.Number.INSTANCE, null);
         check(run.occurrences().isEmpty(),
-            "an intrinsic conversion publishes no occurrence");
-        check(run.bindings().containsKey("int"),
-            "the intrinsic call records the int intrinsic binding");
-        check(run.bindings().get("int")
+            "a synthetic intrinsic call publishes no occurrence");
+        check(run.bindings().containsKey("fixtureIntrinsic"),
+            "the synthetic call records its intrinsic binding");
+        check(run.bindings().get("fixtureIntrinsic")
                 instanceof deal.checker.Symbol.IntrinsicSymbol,
             "the recorded binding is the checker's IntrinsicSymbol");
         check(run.root.kind().name().equals("CALL")
@@ -362,13 +362,13 @@ public final class DefaultIrRecorderTest {
 
     private static void testAwaitGate() {
         System.out.println("-- Await traversal preserves the awaited operand --");
-        RecorderRun evaluatorScope = new RecorderRun("x: int",
+        RecorderRun evaluatorScope = new RecorderRun("x: number",
             "await source()", Type.Number.INSTANCE, null);
         check(evaluatorScope.root.kind() == DefaultIrNode.NodeKind.AWAIT
                 && evaluatorScope.root.children().size() == 1,
             "await preserves its operand in the dependency walk");
         check(evaluatorScope.root.span().startLine() == 2
-                && evaluatorScope.root.span().startColumn() == 14,
+                && evaluatorScope.root.span().startColumn() == 17,
             "await keeps its own source range");
         // Await inside a nested async function-expression body: legal.
         RecorderRun nested = new RecorderRun("f: () => Promise<number>",
@@ -399,7 +399,7 @@ public final class DefaultIrRecorderTest {
 
     /**
      * One synthetic provider snapshot of the sibling probes: a program
-     * declaring exactly one exported class (with one int field, at a real
+     * declaring exactly one exported class (with one number field, at a real
      * scalar range) and one exported function whose signature names it,
      * plus (for the same-name collision probes) one non-exported class
      * that is never on the export surface.
@@ -465,7 +465,7 @@ public final class DefaultIrRecorderTest {
             "use" + className,
             List.of(new Parameter(functionSpan, "x",
                 new NamedType(functionSpan, className))),
-            new NamedType(functionSpan, "int"),
+            new NamedType(functionSpan, "number"),
             new Block(functionSpan, List.of()), false, false);
         ProgramNode program = new ProgramNode(functionSpan, List.of(
             new ExportDeclaration(classSpan, declaration),
@@ -496,7 +496,7 @@ public final class DefaultIrRecorderTest {
             "use" + className,
             List.of(new Parameter(functionSpan, "x",
                 new NamedType(functionSpan, className))),
-            new NamedType(functionSpan, "int"),
+            new NamedType(functionSpan, "number"),
             new Block(functionSpan, List.of()), false, false);
         ProgramNode program = new ProgramNode(functionSpan, List.of(
             privateDeclaration,
@@ -506,10 +506,10 @@ public final class DefaultIrRecorderTest {
             program, declaration, privateDeclaration);
     }
 
-    /** One int field {@code v} at the given span. */
+    /** One number field {@code v} at the given span. */
     private static List<ClassField> siblingFields(Span span) {
         return List.of(new ClassField(span, "v", false, false,
-            new NamedType(span, "int")));
+            new NamedType(span, "number")));
     }
 
     /**
@@ -534,7 +534,7 @@ public final class DefaultIrRecorderTest {
             "use" + className,
             List.of(new Parameter(functionSpan, "x",
                 new NamedType(functionSpan, className))),
-            new NamedType(functionSpan, "int"),
+            new NamedType(functionSpan, "number"),
             new Block(functionSpan, List.of()), false, false);
         ProgramNode program = new ProgramNode(functionSpan, List.of(
             new ExportDeclaration(classSpan, declaration),
@@ -584,7 +584,7 @@ public final class DefaultIrRecorderTest {
             ? "useEntry({ v: 7 })"
             : callee.alias() + "." + callee.functionName()
                 + "({ v: 7 })";
-        return siblingRun(providers, Map.of(), "x: int", call,
+        return siblingRun(providers, Map.of(), "x: number", call,
             Type.Number.INSTANCE, callee.classType(),
             localCallee ? callableType(callee)
                 : callee.planImport().exports()
@@ -616,10 +616,10 @@ public final class DefaultIrRecorderTest {
                 .append("\";\n");
         }
         source.append("function consume(x: ").append(topLevel.alias())
-            .append(".Ir): int { return x.v; }\n")
-            .append("function outer(): int {\n")
+            .append(".Ir): number { return x.v; }\n")
+            .append("function outer(): number {\n")
             .append("  function consume(x: ").append(nested.alias())
-            .append(".Ir): int { return x.v; }\n")
+            .append(".Ir): number { return x.v; }\n")
             .append("  return consume({ v: 7 });\n")
             .append("}\n");
         LexResult lex = new Lexer(source.toString(), "main.deal")
@@ -887,7 +887,7 @@ public final class DefaultIrRecorderTest {
                 .append(" from \"./").append(provider.alias())
                 .append("\";\n");
         }
-        source.append("function make(): int {\n")
+        source.append("function make(): number {\n")
             .append("  let x: ").append(outerSpelling)
             .append(" = {};\n")
             .append("  { let x: ").append(innerSpelling)
@@ -1017,7 +1017,7 @@ public final class DefaultIrRecorderTest {
                 .append("\";\n");
         }
         source.append("function make(w: ").append(ownerSpelling)
-            .append("): int { w.inner = { v: 7 }; return w.inner.v; }\n");
+            .append("): number { w.inner = { v: 7 }; return w.inner.v; }\n");
         LexResult lex = new Lexer(source.toString(), "main.deal").tokenize();
         check(!lex.hasErrors(), "member-assignment fixture lexes: "
             + lex.diagnostics());
@@ -1466,7 +1466,7 @@ public final class DefaultIrRecorderTest {
                     + " { return { v: 7 }; }", codec.classType()), codec,
                 "the return-type collision probe make(): codec.Ir");
             checkSiblingClassOccurrence(
-                siblingBodyRun(order, "function make(): int { let xs:"
+                siblingBodyRun(order, "function make(): number { let xs:"
                     + " ir.Ir[] = [{ v: 7 }]; return xs[0].v; }",
                     ir.classType()), ir,
                 "the array-annotation collision probe ir.Ir[]");
@@ -1504,25 +1504,25 @@ public final class DefaultIrRecorderTest {
                 List.of(ir, codec), List.of(codec, ir))) {
             checkSiblingClassOccurrence(
                 siblingAssignmentRun(order,
-                    "function make(): int { let x: ir.Ir = { v: 7 };"
+                    "function make(): number { let x: ir.Ir = { v: 7 };"
                         + " x = { v: 7 }; return x.v; }",
                     ir.classType()), ir,
                 "the identifier-assignment probe (ir spelling)");
             checkSiblingClassOccurrence(
                 siblingAssignmentRun(order,
-                    "function make(): int { let x: codec.Ir = { v: 7 };"
+                    "function make(): number { let x: codec.Ir = { v: 7 };"
                         + " x = { v: 7 }; return x.v; }",
                     codec.classType()), codec,
                 "the identifier-assignment probe (codec spelling)");
             checkSiblingClassOccurrence(
                 siblingAssignmentRun(order,
-                    "function make(): int { let xs: ir.Ir[] = [{ v: 7 }];"
+                    "function make(): number { let xs: ir.Ir[] = [{ v: 7 }];"
                         + " xs[0] = { v: 7 }; return xs[0].v; }",
                     ir.classType()), ir,
                 "the indexed-assignment probe (ir element spelling)");
             checkSiblingClassOccurrence(
                 siblingAssignmentRun(order,
-                    "function make(): int { let xs: codec.Ir[] ="
+                    "function make(): number { let xs: codec.Ir[] ="
                         + " [{ v: 7 }]; xs[0] = { v: 7 }; return xs[0].v; }",
                     codec.classType()), codec,
                 "the indexed-assignment probe (codec element spelling)");

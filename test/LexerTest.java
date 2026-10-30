@@ -716,7 +716,7 @@ public class LexerTest {
     static void testCompleteLine() {
         System.out.println("-- Complete Line --");
 
-        LexResult r = tokenize("let x: int = 1 + 2;");
+        LexResult r = tokenize("let x: number = 1 + 2;");
         assertNoDiagnostics(r.diagnostics(), "complete line");
         List<Token> tokens = r.tokens();
 
@@ -725,13 +725,13 @@ public class LexerTest {
         assertToken(tokens.get(0), TokenType.LET,       "let", 1, 1);
         assertToken(tokens.get(1), TokenType.IDENTIFIER, "x",   1, 5);
         assertToken(tokens.get(2), TokenType.COLON,      ":",   1, 6);
-        assertToken(tokens.get(3), TokenType.IDENTIFIER, "int", 1, 8);
-        assertToken(tokens.get(4), TokenType.EQ_SIGN,    "=",   1, 12);
-        assertToken(tokens.get(5), TokenType.NUMBER_LITERAL,"1",   1, 14);
-        assertToken(tokens.get(6), TokenType.PLUS,       "+",   1, 16);
-        assertToken(tokens.get(7), TokenType.NUMBER_LITERAL,"2",   1, 18);
-        assertToken(tokens.get(8), TokenType.SEMICOLON,  ";",   1, 19);
-        assertToken(tokens.get(9), TokenType.EOF,        "",    1, 20);
+        assertToken(tokens.get(3), TokenType.IDENTIFIER, "number", 1, 8);
+        assertToken(tokens.get(4), TokenType.EQ_SIGN,    "=",   1, 15);
+        assertToken(tokens.get(5), TokenType.NUMBER_LITERAL,"1",   1, 17);
+        assertToken(tokens.get(6), TokenType.PLUS,       "+",   1, 19);
+        assertToken(tokens.get(7), TokenType.NUMBER_LITERAL,"2",   1, 21);
+        assertToken(tokens.get(8), TokenType.SEMICOLON,  ";",   1, 22);
+        assertToken(tokens.get(9), TokenType.EOF,        "",    1, 23);
 
         r = tokenize("print(\"hello\");");
         assertNoDiagnostics(r.diagnostics(), "function call");
@@ -750,7 +750,7 @@ public class LexerTest {
     static void testLineColumnTracking() {
         System.out.println("-- Line/Column Tracking --");
 
-        String source = "let a: int = 1\nlet b: int = 2\nlet c: int = 3\n";
+        String source = "let a: number = 1\nlet b: number = 2\nlet c: number = 3\n";
         LexResult r = tokenize(source);
         assertNoDiagnostics(r.diagnostics(), "multi-line");
 
@@ -1362,7 +1362,7 @@ public class LexerTest {
         }
 
         // --- Broken C run: @c-struct broken by @extern-c never attaches ---
-        r = tokenize("// @c-struct\n// @extern-c\nclass A { x: int = 0; }");
+        r = tokenize("// @c-struct\n// @extern-c\nclass A { x: number = 0; }");
         assertDiagnosticCode(r.diagnostics(), "E1044", "removed C directives reject");
         check(r.directiveEvents().size() == 2,
             "two events (c-struct + extern-c), got " + r.directiveEvents().size());
@@ -1372,7 +1372,7 @@ public class LexerTest {
         }
 
         // --- Broken C run by an unknown directive ---
-        r = tokenize("// @c-struct\n// @nope\nclass A { x: int = 0; }");
+        r = tokenize("// @c-struct\n// @nope\nclass A { x: number = 0; }");
         assertDiagnosticCode(r.diagnostics(), "E1044",
             "unknown directive emits E1044 in the lexer");
         check(r.directiveEvents().size() == 2,

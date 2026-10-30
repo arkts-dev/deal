@@ -289,7 +289,7 @@ public class DirectiveTest {
             "ProgramNode carries fileDirectives");
 
         // Export-wrapped function: E1043 error, no metadata.
-        r = parse("// @jsonable\nexport function f(): int { return 0; }");
+        r = parse("// @jsonable\nexport function f(): number { return 0; }");
         check(r.hasErrors(), "E1043 is a compile error");
         check(diagOf(r, "E1043") != null, "E1043 for export function");
 
@@ -302,17 +302,17 @@ public class DirectiveTest {
             "standalone class carries no JSONABLE metadata");
 
         // Non-exported function.
-        r = parse("// @jsonable\nfunction f(): int { return 0; }");
+        r = parse("// @jsonable\nfunction f(): number { return 0; }");
         check(diagOf(r, "E1043") != null, "E1043 for standalone function");
 
         // Non-exported async function (start token ASYNC).
-        r = parse("// @jsonable\nasync function f(): int { return 0; }");
+        r = parse("// @jsonable\nasync function f(): number { return 0; }");
         check(diagOf(r, "E1043") != null, "E1043 for standalone async function");
 
         // E1043 incompatible-attachment error: no synthetic C$fromJson/C$toJson
         // symbols and no metadata (ExportExtractor never sees a
         // jsonable class).
-        r = parse("// @jsonable\nfunction f(): int { return 0; }");
+        r = parse("// @jsonable\nfunction f(): number { return 0; }");
         Map<String, Type> exports = new ExportExtractor("m", false)
             .extract(r.program());
         check(!exports.containsKey("C$fromJson"),
@@ -360,7 +360,7 @@ public class DirectiveTest {
             "unattached @jsonable in a .d.deal file errors E1043");
 
         // Non-class attachment errors E1043 with no metadata.
-        r = parseFile("// @jsonable\nexport function f(): int { return 0; }",
+        r = parseFile("// @jsonable\nexport function f(): number { return 0; }",
             "lib.d.deal");
         check(diagOf(r, "E1043") != null,
             "non-class attachment in a .d.deal file warns E1043");

@@ -1150,9 +1150,9 @@ public class DiagnosticRangeTest {
         // 1. Name-resolution error after an astral character: E2000
         //    'break' outside a loop, anchored at the break keyword on the
         //    line after the astral variable name. The astral counts one
-        //    scalar, so the break token starts at scalar offset 17 — a
+        //    scalar, so the break token starts at scalar offset 20 — a
         //    UTF-16 column would place it one unit later.
-        String src1 = "let \uD83D\uDE00s: int = 1;\nbreak;\n";
+        String src1 = "let \uD83D\uDE00s: number = 1;\nbreak;\n";
         List<CompilerDiagnostic> d1 = checkerDiagnostics(src1, "nr.deal");
         CompilerDiagnostic e2000 = checkerDiag(d1, "E2000");
         check(e2000 != null, "C1: E2000 present, got " + d1);
@@ -1162,10 +1162,10 @@ public class DiagnosticRangeTest {
         // 2. Type error after an astral character on the same line: E2001
         //    'Undeclared identifier' at the identifier span. The astral in
         //    the string literal counts one scalar, so 'missing' starts at
-        //    (1,35) with scalar offset 34 — a UTF-16 column would report
-        //    36.
+        //    (1,38) with scalar offset 37 — a UTF-16 column would report
+        //    39.
         String src2 =
-            "let s: string = \"\uD83D\uDE00\"; let y: int = missing;\n";
+            "let s: string = \"\uD83D\uDE00\"; let y: number = missing;\n";
         List<CompilerDiagnostic> d2 = checkerDiagnostics(src2, "tc.deal");
         CompilerDiagnostic e2001 = checkerDiag(d2, "E2001");
         check(e2001 != null, "C2: E2001 present, got " + d2);
@@ -1293,10 +1293,10 @@ public class DiagnosticRangeTest {
 
         // 6. Error position after a CRLF line break: CRLF counts two
         //    scalars and one line break, so the E2000 'break' anchor on
-        //    line 2 starts at scalar offset 17 (15 line-1 scalars + 2 CRLF
+        //    line 2 starts at scalar offset 20 (18 line-1 scalars + 2 CRLF
         //    scalars) — pinned against the independent cursor
         //    recomputation.
-        String src6 = "let x: int = 1;\r\nbreak;\r\n";
+        String src6 = "let x: number = 1;\r\nbreak;\r\n";
         List<CompilerDiagnostic> d6 = checkerDiagnostics(src6, "crlf.deal");
         CompilerDiagnostic e2000crlf = checkerDiag(d6, "E2000");
         check(e2000crlf != null, "C6: E2000 present after CRLF, got " + d6);
@@ -1304,8 +1304,8 @@ public class DiagnosticRangeTest {
         if (e2000crlf != null) {
             DiagnosticRange r6 = e2000crlf.range();
             check(r6.startLine() == 2 && r6.startColumn() == 1
-                    && r6.startScalarOffset() == 17,
-                "C6: E2000 starts at 2:1 with scalar offset 17 (CRLF = two scalars): "
+                    && r6.startScalarOffset() == 20,
+                "C6: E2000 starts at 2:1 with scalar offset 20 (CRLF = two scalars): "
                     + r6);
             checkFormattedStructuredAgree(e2000crlf, "C6");
         }
@@ -1342,9 +1342,9 @@ public class DiagnosticRangeTest {
 
         // 8. Error position after a tab: the tab counts exactly one
         //    scalar, so the E2000 'break' anchor on line 2 starts at
-        //    column 2 with scalar offset 17 (15 line-1 scalars + LF + one
+        //    column 2 with scalar offset 20 (18 line-1 scalars + LF + one
         //    tab scalar).
-        String src8 = "let x: int = 1;\n\tbreak;\n";
+        String src8 = "let x: number = 1;\n\tbreak;\n";
         List<CompilerDiagnostic> d8 = checkerDiagnostics(src8, "tab.deal");
         CompilerDiagnostic e2000tab = checkerDiag(d8, "E2000");
         check(e2000tab != null, "C8: E2000 present after the tab, got " + d8);
@@ -1352,8 +1352,8 @@ public class DiagnosticRangeTest {
         if (e2000tab != null) {
             DiagnosticRange r8 = e2000tab.range();
             check(r8.startLine() == 2 && r8.startColumn() == 2
-                    && r8.startScalarOffset() == 17,
-                "C8: E2000 starts at 2:2 with scalar offset 17 (tab = one scalar): "
+                    && r8.startScalarOffset() == 20,
+                "C8: E2000 starts at 2:2 with scalar offset 20 (tab = one scalar): "
                     + r8);
             checkFormattedStructuredAgree(e2000tab, "C8");
         }
@@ -1441,7 +1441,7 @@ public class DiagnosticRangeTest {
             // prints failed-compilation diagnostics on stderr; capture it
             // so the gate output stays clean.
             String commented = "// leading comment\n"
-                + "export function run(): int { return 1; }\n";
+                + "export function run(): number { return 1; }\n";
             Path commentedEntry = srcDir.resolve("ps_e2010.deal");
             Files.writeString(commentedEntry, commented);
             CompilationOrchestrator e2010Orch = new CompilationOrchestrator(
@@ -1480,7 +1480,7 @@ public class DiagnosticRangeTest {
             // leading comment; the entry-main validation anchors at the
             // program span, so the range starts at the export at 2:1.
             String badMain = "// leading comment\n"
-                + "export function main(x: int): null { return null; }\n";
+                + "export function main(x: number): null { return null; }\n";
             Path badMainEntry = srcDir.resolve("ps_e2011.deal");
             Files.writeString(badMainEntry, badMain);
             CompilationOrchestrator e2011Orch = new CompilationOrchestrator(

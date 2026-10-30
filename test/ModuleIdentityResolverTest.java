@@ -946,25 +946,25 @@ public final class ModuleIdentityResolverTest {
         writeText(dir.resolve("lib/utils/deep/util.deal"),
             "export function j(): null { }\n");
         writeText(dir.resolve("lib/hostonly.d.deal"),
-            "export function hostFn(x: int): int;\n");
+            "export function hostFn(x: number): number;\n");
         writeText(dir.resolve("decl/extra.d.deal"),
-            "export function extra(x: int): int;\n");
+            "export function extra(x: number): number;\n");
         writeText(dir.resolve("std/console.d.deal"),
             "export function log(s: string): null;\n");
         writeText(dir.resolve("std/string.d.deal"),
-            "export function len(s: string): int;\n");
+            "export function len(s: string): number;\n");
         writeText(dir.resolve("std/table.d.deal"),
-            "export function size(t: any): int;\n");
+            "export function size(t: unknown): number;\n");
         writeText(dir.resolve("std/json.d.deal"),
-            "export function parse(s: string): any;\n");
+            "export function parse(s: string): unknown;\n");
         writeText(dir.resolve("std/math.d.deal"),
-            "export function abs(x: int): int;\n");
+            "export function abs(x: number): number;\n");
         writeText(dir.resolve("std/time.d.deal"),
-            "export function now(): int;\n");
+            "export function now(): number;\n");
         writeText(dir.resolve("std/io.d.deal"), "export function read(): string;\n");
         writeText(outside.resolve("shared.deal"), "export function k(): null { }\n");
         writeText(outside.resolve("shared.d.deal"),
-            "export function relDecl(x: int): int;\n");
+            "export function relDecl(x: number): number;\n");
 
         // A symlink inside src pointing outside: the resolved URI of
         // src/link/shared.deal lies outside the root.
