@@ -30,7 +30,7 @@ and executes the complete selection in `tools/gate-manifest.sh` with
 assertions enabled, including the TypeScript compiler's syntactic/grammar
 diagnostics and real JS/LuaJIT/JVM runtime records. Suites run sequentially;
 `--jobs` controls work within suites (default one).
-There is no alternate full-suite profile.
+No alternate full-suite profile exists.
 
 `run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,
 `node`, `gcc`). A missing required tool fails the run with the named

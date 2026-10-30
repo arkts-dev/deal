@@ -471,8 +471,7 @@ public final class NativeRuntimeAbiTest {
         System.out.println("-- origin transport, accessors and the terminal --");
         for (int level : LEVELS) {
             accessorsCarryEveryField(level);
-            terminalSuccessIsSilent(level);
-            terminalWithholdsOnlyTheEntryInvoke(level);
+            terminalSuccessAndDeferral(level);
             terminalProjectsACarriedEntryError(level);
             terminalProjectsACarriedStartError(level);
         }
@@ -533,7 +532,7 @@ public final class NativeRuntimeAbiTest {
         return combined;
     }
 
-    private static void terminalSuccessIsSilent(int level) throws IOException {
+    private static void terminalSuccessAndDeferral(int level) throws IOException {
         Path product = buildProduct(level, "0", "terminal-success-o" + level);
         if (product == null) {
             return;
@@ -545,14 +544,8 @@ public final class NativeRuntimeAbiTest {
             "a successful entry writes no terminal output at -O" + level);
         checkEq("", run.stderr(),
             "a successful entry writes no stderr at -O" + level);
-    }
 
-    private static void terminalWithholdsOnlyTheEntryInvoke(int level)
-            throws IOException {
-        Path product = buildProduct(level, "0", "terminal-defer-o" + level);
-        if (product == null) {
-            return;
-        }
+        // Environment-only entry policies execute the same current product.
         NativeCompiler.Result invoked = NativeCompiler.execute(product, scratch,
             Map.of("DEAL_STUB_PRINT_MAIN", "1"));
         checkEq("MAIN_RAN\n", invoked.stdout(),

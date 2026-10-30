@@ -1652,7 +1652,17 @@ static void check_bounded_marking_slices(void) {
                             sizeof(test_wide)
                                 + (size_t)TEST_WIDE_SLOTS * sizeof(void *));
     deal_root_frame_write(0u, wide);
+    /* Cover the null-slot walk once explicitly, rather than repeat unused
+     * capacity scans at every stress allocation during graph construction. */
     ((test_wide *)wide)->count = TEST_WIDE_SLOTS;
+    deal_gc_collect_full(); /* Finish any allocation-triggered cycle first. */
+    size_t empty_visits = wide_slice_total;
+    deal_gc_collect_full();
+    check(wide_slice_total - empty_visits == (size_t)TEST_WIDE_SLOTS,
+          "the empty wide graph traces every null slot");
+    /* Every stress allocation still traces all initialized live children.
+     * The measured cycle below retains the complete 20,000-reference graph. */
+    ((test_wide *)wide)->count = 0u;
     for (size_t index = 0; index < (size_t)TEST_WIDE_SLOTS; index += 1u) {
         void *child = deal_alloc(TEST_LAYOUT_NODE, TEST_NODE_BYTES);
         node_set_mark(child, (uint64_t)index + 1u);
@@ -1660,8 +1670,11 @@ static void check_bounded_marking_slices(void) {
         deal_root_frame_write(1u, child);
         deal_store_barrier(wide, child);
         ((test_wide *)wide)->slots[index] = child;
+        ((test_wide *)wide)->count = index + 1u;
         deal_root_frame_write(1u, NULL);
     }
+    check(((test_wide *)wide)->count == (size_t)TEST_WIDE_SLOTS,
+          "the measured wide graph contains every initialized reference");
     /* Normalize: every object of the wide graph is marked now, so the cycle
      * observed below must trace the whole walk again from position 0. */
     deal_gc_collect_full();

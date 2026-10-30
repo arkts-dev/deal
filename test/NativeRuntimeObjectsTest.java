@@ -64,6 +64,27 @@ public final class NativeRuntimeObjectsTest {
                 scratch.resolve("duplicate"));
             check(!duplicate.succeeded() && duplicate.stderr().contains("multiple definition"),
                 "duplicate ownership is not deduplicated away");
+            Path secondSource = root.resolve("deal/native/std.c");
+            Files.writeString(secondSource, "int other(void) { return 0; }\n");
+            var batch = NativeRuntimeObjects.prepare(root, 2,
+                List.of(source, secondSource, source), List.of());
+            check(batch.size() == 3 && batch.get(0).equals(batch.get(2))
+                && batch.stream().allMatch(Files::isRegularFile),
+                "batch preparation preserves every unit and duplicate owner");
+            Files.writeString(secondSource, "invalid second translation unit\n");
+            check(NativeRuntimeObjects.prepare(root, 2, List.of(source, secondSource), List.of())
+                .equals(List.of(source, secondSource)), "one defective unit rejects the whole batch");
+            Files.writeString(source, "int main(void) { return __INCLUDE_LEVEL__; }\n");
+            check(prepare(root, source, 0, List.of()).equals(List.of(source)),
+                "relocation-sensitive sources stay cold");
+            Files.writeString(source, "#include \"untracked.h\"\nint main(void) { return 0; }\n");
+            check(prepare(root, source, 0, List.of()).equals(List.of(source)),
+                "untracked headers stay cold");
+            Files.writeString(source, "int main(void) { return 0; }\n");
+            Files.delete(header);
+            check(prepare(root, source, 0, List.of()).equals(List.of(source)),
+                "incomplete publications cannot consume prepared objects");
+            Files.writeString(header, "#define TEST_RESULT 3\n");
             Files.writeString(source, "invalid C source\n");
             check(!NativeCompiler.link(root, 0, List.of(source), scratch.resolve("invalid"))
                 .succeeded(), "invalid modified source cannot use a previous object");
