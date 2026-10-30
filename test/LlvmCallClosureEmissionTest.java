@@ -915,7 +915,7 @@ public final class LlvmCallClosureEmissionTest {
         for (int level : new int[] {0, 2}) {
             Path product = scratch.resolve("products").resolve("void-" + level);
             Files.createDirectories(product.getParent());
-            deal.toolchain.NativeToolchain.build(
+            NativeCompiler.build(
                 new deal.toolchain.NativeBuildRequest(published, product, level,
                     List.of(), null));
             NativeCompiler.Result run = NativeCompiler.execute(product, scratch,
@@ -957,7 +957,7 @@ public final class LlvmCallClosureEmissionTest {
             boolean failed = false;
             String message = "";
             try {
-                deal.toolchain.NativeToolchain.build(
+                NativeCompiler.build(
                     new deal.toolchain.NativeBuildRequest(awaited, product, level,
                         List.of(), null));
             } catch (deal.toolchain.NativeBuildException failure) {
@@ -998,7 +998,7 @@ public final class LlvmCallClosureEmissionTest {
             boolean failed = false;
             String message = "";
             try {
-                deal.toolchain.NativeToolchain.build(
+                NativeCompiler.build(
                     new deal.toolchain.NativeBuildRequest(published, product,
                         level, List.of(), null));
             } catch (deal.toolchain.NativeBuildException failure) {
@@ -1056,7 +1056,7 @@ public final class LlvmCallClosureEmissionTest {
                 boolean failed = false;
                 String message = "";
                 try {
-                    deal.toolchain.NativeToolchain.build(
+                    NativeCompiler.build(
                         new deal.toolchain.NativeBuildRequest(cross, product,
                             level, List.of(), null));
                 } catch (deal.toolchain.NativeBuildException failure) {
@@ -1547,7 +1547,7 @@ public final class LlvmCallClosureEmissionTest {
             Path product = scratch.resolve("products").resolve(name + "-" + level);
             Files.createDirectories(product.getParent());
             try {
-                deal.toolchain.NativeToolchain.build(
+                NativeCompiler.build(
                     new deal.toolchain.NativeBuildRequest(published, product,
                         level, List.of(), null));
             } catch (deal.toolchain.NativeBuildException failure) {
@@ -1974,7 +1974,7 @@ public final class LlvmCallClosureEmissionTest {
             throws Exception {
         Path product = scratch.resolve("products").resolve(name + "-" + level);
         Files.createDirectories(product.getParent());
-        deal.toolchain.NativeToolchain.build(new deal.toolchain.NativeBuildRequest(
+        NativeCompiler.build(new deal.toolchain.NativeBuildRequest(
             published, product, level, List.of(), null));
         NativeCompiler.Result run = NativeCompiler.execute(product, scratch,
             Map.of("DEAL_GC_STRESS", "1"));

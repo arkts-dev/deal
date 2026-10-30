@@ -85,6 +85,7 @@ public final class NativeRuntimeDeploymentTest {
             resolveMissingProbe();
             return;
         }
+        System.setProperty("deal.test.native.cold", "true");
         System.out.println("=== C11 Runtime Deployment Set Tests (ISSUE-0902 D6) ===\n");
         Path scratch = Files.createTempDirectory("deal-native-deployment-");
         try {

@@ -251,12 +251,34 @@ public final class NativeCompiler {
         command.add(compiler().path());
         command.addAll(flags(publishedRoot, optimizationLevel, true));
         command.addAll(extraFlags);
-        for (Path source : sources) {
+        for (Path source : NativeRuntimeObjects.prepare(publishedRoot,
+                optimizationLevel, sources, extraFlags)) {
             command.add(source.toString());
         }
         command.add("-o");
         command.add(product.toString());
         return run(command, null);
+    }
+
+    /** Production preflight/publication with reusable runtime preparation for emitter tests.
+     * Dedicated toolchain tests call NativeToolchain.build directly (cold).
+     */
+    public static deal.toolchain.NativeBuildResult build(
+            deal.toolchain.NativeBuildRequest request)
+            throws deal.toolchain.NativeBuildException {
+        var plan = deal.toolchain.NativeToolchain.plan(request);
+        List<Path> objects = NativeRuntimeObjects.prepare(request.publicationRoot(),
+            request.optLevel(), plan.runtimeUnits(), List.of());
+        List<String> command = new ArrayList<>(plan.command());
+        for (int index = 0; index < plan.runtimeUnits().size(); index++) {
+            String source = plan.runtimeUnits().get(index).toString();
+            String object = objects.get(index).toString();
+            command.replaceAll(arg -> arg.equals(source) ? object : arg);
+        }
+        return deal.toolchain.NativeToolchain.build(new deal.toolchain.NativeBuildPlan(
+            plan.request(), plan.environment(), plan.scratchDirectory(),
+            plan.registryUnit(), plan.driverUnit(), plan.registrySource(),
+            plan.driverSource(), plan.entryModule(), objects, plan.hostUnits(), command));
     }
 
     /** Compiles one source to an object (no link), returning the observation. */

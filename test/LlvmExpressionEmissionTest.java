@@ -2014,7 +2014,7 @@ public final class LlvmExpressionEmissionTest {
         Path product = scratch.resolve("products").resolve(name + "-" + level);
         Files.createDirectories(product.getParent());
         try {
-            deal.toolchain.NativeToolchain.build(new deal.toolchain.NativeBuildRequest(
+            NativeCompiler.build(new deal.toolchain.NativeBuildRequest(
                 published, product, level, List.of(), null));
         } catch (deal.toolchain.NativeBuildException failure) {
             throw new IllegalStateException("the production toolchain seam rejects"

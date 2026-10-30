@@ -246,6 +246,14 @@ public final class JvmCompilation {
         }
         DataInputStream requests = new DataInputStream(System.in);
         DataOutputStream responses = new DataOutputStream(System.out);
+        // The compiler API supports sequential tasks on one file manager.
+        // Reuse JDK/classpath archive indexes, never CompilationTask or outputs.
+        StandardJavaFileManager files = compiler.getStandardFileManager(null, null,
+            StandardCharsets.UTF_8);
+        List<Path> defaultClasspath = new ArrayList<>();
+        files.getLocationAsPaths(javax.tools.StandardLocation.CLASS_PATH)
+            .forEach(defaultClasspath::add);
+        try {
         while (true) {
             Path directory;
             try {
@@ -269,10 +277,16 @@ public final class JvmCompilation {
                 }
                 arguments.add(new String(bytes, StandardCharsets.UTF_8));
             }
+            if (requiresFreshFileManager(arguments, directory)) {
+                files.close();
+                files = compiler.getStandardFileManager(null, null, StandardCharsets.UTF_8);
+            }
+            files.setLocationFromPaths(javax.tools.StandardLocation.CLASS_PATH, defaultClasspath);
+            files.setLocation(javax.tools.StandardLocation.CLASS_OUTPUT, null);
+            files.setLocation(javax.tools.StandardLocation.SOURCE_PATH, null);
             StringWriter messages = new StringWriter();
             int exit;
-            try (StandardJavaFileManager files = compiler.getStandardFileManager(null, null,
-                    StandardCharsets.UTF_8)) {
+            try {
                 List<String> options = new ArrayList<>();
                 List<Path> sources = new ArrayList<>();
                 for (int i = 0; i < arguments.size(); i++) {
@@ -315,5 +329,24 @@ public final class JvmCompilation {
             responses.write(bytes);
             responses.flush();
         }
+        } finally {
+            files.close();
+        }
+    }
+
+    private static boolean requiresFreshFileManager(List<String> arguments, Path directory) {
+        for (int index = 0; index < arguments.size(); index++) {
+            String argument = arguments.get(index);
+            if (argument.startsWith("--module") || argument.equals("-processorpath")) return true;
+            if (!List.of("-cp", "-classpath", "--class-path").contains(argument)) continue;
+            for (String entry : arguments.get(++index).split(
+                    java.util.regex.Pattern.quote(java.io.File.pathSeparator), -1)) {
+                // Mutable archives (including manifest Class-Path and wildcards)
+                // must not reuse javac's open zip indexes. Directory entries are
+                // reread per task, as the source/output replacement controls prove.
+                if (!java.nio.file.Files.isDirectory(directory.resolve(entry))) return true;
+            }
+        }
+        return false;
     }
 }
