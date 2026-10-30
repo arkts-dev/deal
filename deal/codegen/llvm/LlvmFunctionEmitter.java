@@ -1032,9 +1032,9 @@ final class LlvmFunctionEmitter {
                 "icmp " + arm.predicate() + " i8* "
                     + identityPointer(left, inner, op) + ", "
                     + identityPointer(right, inner, op));
-            case RuntimeDescriptor.Array _,
-                 RuntimeDescriptor.Table _,
-                 RuntimeDescriptor.Class _ ->
+            case RuntimeDescriptor reference when reference instanceof RuntimeDescriptor.Array
+                || reference instanceof RuntimeDescriptor.Table
+                || reference instanceof RuntimeDescriptor.Class ->
                 // A reference base's nullish equality is managed identity: the
                 // base pointers are compared, never their contents (C6).
                 emitTemporary(op, "icmp " + arm.predicate() + " i8* "
@@ -2635,20 +2635,20 @@ final class LlvmFunctionEmitter {
                     + representation);
         }
         return switch (descriptor) {
-            case RuntimeDescriptor.Number _ -> emitTemporary(op,
+            case RuntimeDescriptor.Number ignored -> emitTemporary(op,
                 "extractvalue " + LlvmTypeMapper.DATA + " " + datum + ", 2");
-            case RuntimeDescriptor.Boolean _ -> {
+            case RuntimeDescriptor.Boolean ignored -> {
                 String number = emitTemporary(op, "extractvalue "
                     + LlvmTypeMapper.DATA + " " + datum + ", 2");
                 yield emitTemporary(op, "fcmp une double " + number + ", 0.0");
             }
-            case RuntimeDescriptor.Func _ -> {
+            case RuntimeDescriptor.Func ignored -> {
                 String reference = emitTemporary(op, "extractvalue "
                     + LlvmTypeMapper.DATA + " " + datum + ", 3");
                 yield emitTemporary(op, "bitcast i8* " + reference + " to "
                     + LlvmTypeMapper.FN_POINTER);
             }
-            case RuntimeDescriptor.Unknown _ -> datum;
+            case RuntimeDescriptor.Unknown ignored -> datum;
             case RuntimeDescriptor.Nullable nullable -> nullableFromDatum(
                 nullable, datum, op);
             default -> throw new deal.codegen.SharedEmissionFailure(
@@ -3400,7 +3400,7 @@ final class LlvmFunctionEmitter {
             + " %struct.deal_check_context* %ctx").append(index).append('\n');
         String errorName = "%error" + index;
         switch (descriptor) {
-            case RuntimeDescriptor.Number _ -> {
+            case RuntimeDescriptor.Number ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%checked")
                     .append(index).append(" = call %struct.deal_outcome_number"
                         + " @deal_check_number(%struct.deal_data* %datum")
@@ -3414,7 +3414,7 @@ final class LlvmFunctionEmitter {
                         + " %struct.deal_outcome_number %checked")
                     .append(index).append(", 1\n");
             }
-            case RuntimeDescriptor.Boolean _ -> {
+            case RuntimeDescriptor.Boolean ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%checked")
                     .append(index).append(" = call %struct.deal_outcome_boolean"
                         + " @deal_check_boolean(%struct.deal_data* %datum")
@@ -3431,7 +3431,7 @@ final class LlvmFunctionEmitter {
                     .append(index).append(" = icmp ne i8 %checkedvalue")
                     .append(index).append(", 0\n");
             }
-            case RuntimeDescriptor.String _ -> {
+            case RuntimeDescriptor.String ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%checked")
                     .append(index).append(" = call %struct.deal_outcome_string"
                         + " @deal_check_string(%struct.deal_data* %datum")
@@ -3448,13 +3448,13 @@ final class LlvmFunctionEmitter {
                     .append(index).append(" = bitcast i8* %checkedvalue")
                     .append(index).append(" to %struct.deal_string*\n");
             }
-            case RuntimeDescriptor.Unknown _ -> {
+            case RuntimeDescriptor.Unknown ignored -> {
                 thunkSignatureCheck(out, index, descriptor);
                 out.append(LlvmIrPrinter.indent(1)).append("%parameter")
                     .append(index).append(" = load %struct.deal_data,"
                         + " %struct.deal_data* %datum").append(index).append('\n');
             }
-            case RuntimeDescriptor.Func _ -> {
+            case RuntimeDescriptor.Func ignored -> {
                 thunkSignatureCheck(out, index, descriptor);
                 out.append(LlvmIrPrinter.indent(1)).append("%reference")
                     .append(index).append(" = getelementptr %struct.deal_data,"
@@ -3481,8 +3481,9 @@ final class LlvmFunctionEmitter {
                     .append(index).append(" = bitcast i8* %referent")
                     .append(index).append(" to %struct.deal_error*\n");
             }
-            case RuntimeDescriptor.Array _, RuntimeDescriptor.Table _,
-                 RuntimeDescriptor.Class _ -> {
+            case RuntimeDescriptor reference when reference instanceof RuntimeDescriptor.Array
+                || reference instanceof RuntimeDescriptor.Table
+                || reference instanceof RuntimeDescriptor.Class -> {
                 thunkSignatureCheck(out, index, descriptor);
                 out.append(LlvmIrPrinter.indent(1)).append("%reference")
                     .append(index).append(" = getelementptr %struct.deal_data,"
@@ -3664,13 +3665,13 @@ final class LlvmFunctionEmitter {
         String entry;
         String arguments;
         switch (result) {
-            case RuntimeDescriptor.Number _ -> {
+            case RuntimeDescriptor.Number ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%number = extractvalue ")
                     .append(outcome).append(' ').append(aggregate).append(", 1\n");
                 entry = "deal_data_of_number";
                 arguments = "double %number";
             }
-            case RuntimeDescriptor.Boolean _ -> {
+            case RuntimeDescriptor.Boolean ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%truthfield = extractvalue ")
                     .append(outcome).append(' ').append(aggregate).append(", 1\n");
                 out.append(LlvmIrPrinter.indent(1)).append("%truthbyte")
@@ -3678,19 +3679,19 @@ final class LlvmFunctionEmitter {
                 entry = "deal_data_of_boolean";
                 arguments = "i32 %truthbyte";
             }
-            case RuntimeDescriptor.String _ -> {
+            case RuntimeDescriptor.String ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%text = extractvalue ")
                     .append(outcome).append(' ').append(aggregate).append(", 1\n");
                 entry = "deal_data_of_reference";
                 arguments = "i32 " + LlvmTypeMapper.DATA_STRING + ", i8* %text";
             }
-            case RuntimeDescriptor.Unknown _ -> {
+            case RuntimeDescriptor.Unknown ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%boxed")
                     .append(" = extractvalue ").append(outcome).append(' ')
                     .append(aggregate).append(", 1\n");
                 return "%boxed";
             }
-            case RuntimeDescriptor.Func _ -> {
+            case RuntimeDescriptor.Func ignored -> {
                 out.append(LlvmIrPrinter.indent(1)).append("%reference = extractvalue ")
                     .append(outcome).append(' ').append(aggregate).append(", 1\n");
                 entry = "deal_data_of_reference";
@@ -3705,8 +3706,9 @@ final class LlvmFunctionEmitter {
                 arguments = "i32 " + LlvmTypeMapper.DATA_ERROR
                     + ", i8* %reference";
             }
-            case RuntimeDescriptor.Array _, RuntimeDescriptor.Table _,
-                 RuntimeDescriptor.Class _ -> {
+            case RuntimeDescriptor reference when reference instanceof RuntimeDescriptor.Array
+                || reference instanceof RuntimeDescriptor.Table
+                || reference instanceof RuntimeDescriptor.Class -> {
                 // A container or class completion is the managed pointer its
                 // datum tag names (C3); the outcome already carries it as the
                 // one `i8*` slot of a managed reference.
@@ -3720,11 +3722,12 @@ final class LlvmFunctionEmitter {
                 entry = "deal_data_of_reference";
                 arguments = "i32 " + tag + ", i8* %reference";
             }
-            case RuntimeDescriptor.Void _, RuntimeDescriptor.Undefined _ -> {
+            case RuntimeDescriptor empty when empty instanceof RuntimeDescriptor.Void
+                || empty instanceof RuntimeDescriptor.Undefined -> {
                 entry = "deal_data_of_undefined";
                 arguments = "";
             }
-            case RuntimeDescriptor.Null _ -> {
+            case RuntimeDescriptor.Null ignored -> {
                 entry = "deal_data_of_null";
                 arguments = "";
             }

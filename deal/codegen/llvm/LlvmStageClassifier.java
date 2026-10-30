@@ -951,14 +951,14 @@ public final class LlvmStageClassifier {
                 + LlvmTypeMapper.unsupported(declared)));
         }
         return switch (declared) {
-            case RuntimeDescriptor.Number _,
-                 RuntimeDescriptor.Boolean _,
-                 RuntimeDescriptor.String _,
-                 RuntimeDescriptor.Table _,
-                 RuntimeDescriptor.Class _,
-                 RuntimeDescriptor.Array _,
-                 RuntimeDescriptor.Func _,
-                 RuntimeDescriptor.Nullable _ -> Optional.empty();
+            case RuntimeDescriptor admitted when admitted instanceof RuntimeDescriptor.Number
+                || admitted instanceof RuntimeDescriptor.Boolean
+                || admitted instanceof RuntimeDescriptor.String
+                || admitted instanceof RuntimeDescriptor.Table
+                || admitted instanceof RuntimeDescriptor.Class
+                || admitted instanceof RuntimeDescriptor.Array
+                || admitted instanceof RuntimeDescriptor.Func
+                || admitted instanceof RuntimeDescriptor.Nullable -> Optional.empty();
             default -> Optional.of(reject(op, "the assertion to '"
                 + declared.canonicalSpecText() + "'"));
         };
