@@ -55,8 +55,7 @@ import java.util.Optional;
  * root-frame leave plus call-frame pop on every exit path. A synthesized
  * dispatch shim contributes no activation frame of its own: the boxed apply
  * thunk and the adapter thunk pop their own label before they dispatch the
- * body they call, and the {@code REEVALUATE_THUNK} re-executor pushes no label
- * at all and leaves only its root frame, so an Error reports exactly the DEAL
+ * body they call, so an Error reports exactly the DEAL
  * activations that raised and dispatched it. A failure routed to
  * a handler keeps the activation's frame (the materialized Error already
  * snapshotted it); a failure that leaves the activation pops it first.</p>
@@ -94,14 +93,6 @@ final class LlvmFunctionEmitter {
     private boolean entryBranched;
     private int currentDebugScope;
     private FunctionId functionId;
-    /**
-     * Whether the body being emitted pushes a call-frame label of its own. A
-     * synthesized dispatch shim (the {@code REEVALUATE_THUNK} re-executor)
-     * pushes none: it is not a DEAL activation (C8), so its exit paths leave
-     * the root frame without popping a frame nobody pushed.
-     */
-    private boolean shimActivation;
-
     /** One open loop's transfer labels. */
     private record LoopTargets(long loopId, String header, String next,
                                String exit) {
@@ -324,19 +315,10 @@ final class LlvmFunctionEmitter {
             session.function(active).descriptor().returnType());
     }
 
-    /**
-     * The exit of the body being emitted ({@code CallFrameContract}): the root
-     * frame is left and the call-frame label popped. A synthesized dispatch
-     * shim that pushes no label of its own — the {@code REEVALUATE_THUNK}
-     * re-executor — leaves only its root frame, so no exit path pops a frame
-     * nobody pushed.
-     */
+    /** Leaves the body's root frame and pops its activation label. */
     private void emitEpilogue() {
         session.referenceRuntimeEntry("deal_root_frame_leave");
         emit("call void @deal_root_frame_leave()");
-        if (shimActivation) {
-            return;
-        }
         session.referenceRuntimeEntry("deal_call_frame_pop");
         emit("call void @deal_call_frame_pop()");
     }
@@ -2398,6 +2380,12 @@ final class LlvmFunctionEmitter {
             emitDynamicCall(op, payload, indirect.callee());
             return;
         }
+        if (payload.callee() instanceof KindPayload.CallCallee.Static fixed
+                && fixed.binding() instanceof deal.semantic.ir.FunctionExecutionBinding.AdapterBinding adapter) {
+            SemanticOp creation = unitOp(adapter.adaptOpId());
+            emitDynamicCall(op, payload, (ValueId) creation.result());
+            return;
+        }
         FunctionId callee = calleeOf(payload);
         LoweredFunction calleeFunction = session.function(callee);
         List<RuntimeDescriptor> parameterTypes =
@@ -2722,17 +2710,9 @@ final class LlvmFunctionEmitter {
         KindPayload.FunctionAdaptPayload payload =
             (KindPayload.FunctionAdaptPayload) op.payload();
         requireAdapterShape(op, payload);
-        // The adapter closure captures exactly the cells its boxed apply thunk
-        // reads (C5): entry 0 is the source cell and a `REEVALUATE_THUNK`
-        // source adds one entry per activation-local captured binding of its
-        // thunk block, in recorded order. A module-scope capture is not an
-        // entry: the re-executor reads that binding's own static cell slot.
-        List<BindingGeneration> thunkCaptures = thunkLocalCaptures(op);
+        // One private immutable cell retains the evaluated function value.
         String cell;
         switch (payload.source()) {
-            case AdaptSourceRef.SharedCell shared ->
-                cell = load(op, "i8*", bindingSlot(shared.binding(),
-                    shared.generation(), "i8*"));
             case AdaptSourceRef.Value value -> {
                 String source = loadRepresentation(value.value(),
                     descriptorOfValue(value.value()), op);
@@ -2746,29 +2726,18 @@ final class LlvmFunctionEmitter {
                     + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 0)");
                 rootTemporaryCell(cell, op);
             }
-            case AdaptSourceRef.Thunk _ -> {
-                // Creation evaluates no thunk (B8): the cell starts as the
-                // `undefined` datum and the re-executor publishes the
-                // produced function value into it on every invocation.
-                cell = emitUndefinedCell(op);
-                rootTemporaryCell(cell, op);
-            }
             default -> throw new deal.codegen.SharedEmissionFailure(
                 "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of " + op.opId()
                     + ": the recorded adapter source " + payload.source()
                     + " has no staged boxed form",
                 op.origin().span().range());
         }
-        int captureCount = 1 + thunkCaptures.size();
+        int captureCount = 1;
         String arrayType = "[" + captureCount + " x i8*]";
         String array = newAlloca(arrayType, "adaptercells");
         String first = null;
         for (int index = 0; index < captureCount; index++) {
-            String captured = index == 0
-                ? cell
-                : load(op, "i8*", bindingSlot(
-                    thunkCaptures.get(index - 1).binding(),
-                    thunkCaptures.get(index - 1).generation(), "i8*"));
+            String captured = cell;
             String element = emitTemporary(op, "getelementptr " + arrayType
                 + ", " + arrayType + "* " + array + ", i64 0, i64 " + index);
             emit("store i8* " + captured + ", i8** " + element);
@@ -2789,10 +2758,8 @@ final class LlvmFunctionEmitter {
     }
 
     /**
-     * A fresh heap cell holding the {@code undefined} datum (C5): the adapter's
-     * source cell before any {@code REEVALUATE_THUNK} re-execution has
-     * published a value into it, and the group members'
-     * {@code RECURSIVE_GROUP_INIT} initial cell share this shape.
+     * A fresh heap cell holding {@code undefined} for a recursive-group member
+     * before its function value is published.
      */
     private String emitUndefinedCell(SemanticOp op) {
         session.referenceRuntimeEntry("deal_cell_alloc_data");
@@ -2806,36 +2773,9 @@ final class LlvmFunctionEmitter {
             + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 0)");
     }
 
-    /**
-     * The activation-local captures of one {@code REEVALUATE_THUNK} adapter
-     * source, in recorded order: the generation-pinned bindings whose cells the
-     * adapter closure carries and hands to the re-executor. A module-scope
-     * capture owns a static cell slot both bodies read directly, so it needs no
-     * environment entry.
-     */
-    private List<BindingGeneration> thunkLocalCaptures(SemanticOp op) {
-        if (!(((KindPayload.FunctionAdaptPayload) op.payload()).source()
-                instanceof AdaptSourceRef.Thunk thunk)) {
-            return List.of();
-        }
-        List<BindingGeneration> local = new ArrayList<>();
-        for (BindingGeneration capture : thunk.capturedBindings()) {
-            if (!session.moduleScopedAcrossProject(capture.binding(),
-                    capture.generation())) {
-                local.add(capture);
-            }
-        }
-        return local;
-    }
-
     /** The emitted name of one adapter's boxed apply thunk. */
     static String adapterThunkName(OpId opId) {
         return "A" + opId.id();
-    }
-
-    /** The emitted name of one adapter's {@code REEVALUATE_THUNK} re-executor. */
-    static String adapterSourceName(OpId opId) {
-        return "R" + opId.id();
     }
 
     /**
@@ -2886,20 +2826,15 @@ final class LlvmFunctionEmitter {
     }
 
     /**
-     * The boxed apply thunk of one adapter (C5): reads the retained (or
-     * generation-pinned) source value — for a {@code REEVALUATE_THUNK} source
-     * it first re-executes the recorded thunk block, so every invocation
-     * repeats the source expression's effects and a closure it produces is a
-     * fresh identity — validates the source signature atom against the
+     * The boxed apply thunk of one adapter: reads the retained source value,
+     * validates the source signature atom against the
      * recorded source signature, invokes the source with the target's leading
      * parameters and answers its completion unchanged.
      *
      * <p>The adapter is a synthesized dispatch shim, not a DEAL activation
      * (C8): its own frame label covers nothing but the arity test and is
-     * popped before any user code runs — the re-executed thunk block included
-     * — so an Error raised through an adapted call reports exactly the frames
-     * of the activations that raised and dispatched it, and a re-execution
-     * failure reports the frames of the source expression's own callees.</p>
+     * popped before user code runs, so an Error reports exactly the frames
+     * of the activations that raised and dispatched it.</p>
      */
     String emitAdapterThunk(SemanticOp adaptOp) {
         KindPayload.FunctionAdaptPayload payload =
@@ -2945,40 +2880,6 @@ final class LlvmFunctionEmitter {
             + " %functionvalue to %struct.deal_fn*\n");
         out.append(LlvmIrPrinter.indent(1)).append("%cell = call i8*"
             + " @deal_fn_capture(%struct.deal_fn* %carrier, i32 0)\n");
-        if (payload.source() instanceof AdaptSourceRef.Thunk) {
-            // The re-executor runs the recorded thunk block and publishes its
-            // produced function value into the adapter's own source cell
-            // (B8/E7). Its carried Error leaves the adapter unchanged.
-            List<BindingGeneration> captures = thunkLocalCaptures(adaptOp);
-            StringBuilder arguments = new StringBuilder("i8* %cell");
-            for (int index = 0; index < captures.size(); index++) {
-                out.append(LlvmIrPrinter.indent(1)).append("%captured")
-                    .append(index).append(" = call i8*"
-                        + " @deal_fn_capture(%struct.deal_fn* %carrier, i32 ")
-                    .append(index + 1).append(")\n");
-                arguments.append(", i8* %captured").append(index);
-            }
-            out.append(LlvmIrPrinter.indent(1)).append("%reevaluated = call"
-                + " %struct.deal_outcome @").append(adapterSourceName(opId))
-                .append('(').append(arguments).append(")\n");
-            out.append(LlvmIrPrinter.indent(1))
-                .append("%reevaluatederror = extractvalue %struct.deal_outcome"
-                    + " %reevaluated, 0\n");
-            out.append(LlvmIrPrinter.indent(1))
-                .append("%reevaluatedfailed = icmp ne i8* %reevaluatederror,"
-                    + " null\n");
-            out.append(LlvmIrPrinter.indent(1)).append("br i1"
-                + " %reevaluatedfailed, label %sourcefail, label %sourceread\n");
-            out.append("sourcefail:\n");
-            out.append(LlvmIrPrinter.indent(1)).append("%sourcefailure ="
-                + " insertvalue %struct.deal_outcome_data zeroinitializer,"
-                + " i8* %reevaluatederror, 0\n");
-            out.append(LlvmIrPrinter.indent(1))
-                .append("call void @deal_root_frame_leave()\n");
-            out.append(LlvmIrPrinter.indent(1)).append("ret"
-                + " %struct.deal_outcome_data %sourcefailure\n");
-            out.append("sourceread:\n");
-        }
         out.append(LlvmIrPrinter.indent(1))
             .append("%sourcedatumslot = alloca %struct.deal_data\n");
         out.append(LlvmIrPrinter.indent(1)).append("call void"
@@ -3067,122 +2968,6 @@ final class LlvmFunctionEmitter {
         out.append(LlvmIrPrinter.indent(1))
             .append("ret %struct.deal_outcome_data %applied\n}\n");
         return out.toString();
-    }
-
-    /**
-     * The re-executor of one {@code REEVALUATE_THUNK} adapter source (C5/B8):
-     * the recorded thunk block runs on every adapter invocation — creation
-     * evaluates nothing — and the function value it produces is published into
-     * the adapter's own source cell so the adapter's boxed apply thunk can
-     * validate its signature atom and apply it. The thunk's generation-pinned
-     * captures arrive as the adapter closure's environment cells (its
-     * activation-local ones) and as their own static slots (a module-scope
-     * one), exactly the cells the creation site resolved.
-     *
-     * <p>The re-executor is a synthesized dispatch shim like the adapter thunk
-     * (C8): it pushes no call-frame label of its own, so an Error raised by the
-     * re-executed source expression reports exactly the frames of the DEAL
-     * activations it entered and never a synthesized `adapter@` label.</p>
-     */
-    String emitAdapterSource(SemanticOp adaptOp) {
-        KindPayload.FunctionAdaptPayload payload =
-            (KindPayload.FunctionAdaptPayload) adaptOp.payload();
-        if (!(payload.source() instanceof AdaptSourceRef.Thunk thunk)) {
-            throw new IllegalStateException("the op " + adaptOp.opId()
-                + " carries no REEVALUATE_THUNK adapter source");
-        }
-        List<BindingGeneration> captures = thunkLocalCaptures(adaptOp);
-        String name = adapterSourceName(adaptOp.opId());
-        this.functionId = null;
-        this.shimActivation = true;
-        currentDebugScope = -1;
-        enterRootFrame();
-        List<String> cellSlots = new ArrayList<>();
-        for (int index = 0; index < captures.size(); index++) {
-            BindingGeneration capture = captures.get(index);
-            String slot = bindingSlot(capture.binding(), capture.generation(),
-                "i8*");
-            entryInit.add(LlvmIrPrinter.indent(1) + "store i8* %captured"
-                + index + ", i8** " + slot);
-            cellSlots.add(slot);
-        }
-        String setup = "Lthunkcells" + adaptOp.opId().id();
-        entryInit.add(LlvmIrPrinter.indent(1) + "br label %" + setup);
-        text.append(setup).append(":\n");
-        terminated = false;
-        for (String slot : cellSlots) {
-            rootCellAt(slot, null);
-        }
-        String finish = "Lthunkvalue" + adaptOp.opId().id();
-        emitBlock(thunk.blockId(), finish);
-        startSegment(finish);
-        ValueId produced = thunkProducedValue(adaptOp, thunk);
-        RuntimeDescriptor descriptor = descriptorOfValue(produced);
-        if (!(descriptor instanceof RuntimeDescriptor.Func)) {
-            throw new deal.codegen.SharedEmissionFailure(
-                "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of "
-                    + adaptOp.opId() + ": its REEVALUATE_THUNK block "
-                    + thunk.blockId() + " produces '"
-                    + descriptor.canonicalSpecText()
-                    + "', which is no function value",
-                adaptOp.origin().span().range());
-        }
-        String value = loadValue(produced, stagedRepresentation(descriptor),
-            adaptOp);
-        session.referenceRuntimeEntry("deal_cell_store_data");
-        String datum = emitDatum(descriptor, value, adaptOp);
-        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "thunkresult");
-        emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
-            + LlvmTypeMapper.DATA + "* " + datumSlot);
-        emit("call void @deal_cell_store_data(i8* %cell, "
-            + LlvmTypeMapper.DATA + "* " + datumSlot + ")");
-        emitEpilogue();
-        terminate("ret %struct.deal_outcome { i8* null }");
-        StringBuilder out = new StringBuilder();
-        out.append("define internal %struct.deal_outcome @").append(name)
-            .append("(i8* %cell");
-        for (int index = 0; index < captures.size(); index++) {
-            out.append(", i8* %captured").append(index);
-        }
-        out.append(") {\nLentry:\n");
-        for (String alloca : allocas) {
-            out.append(LlvmIrPrinter.indent(1)).append(alloca).append('\n');
-        }
-        patchRootEnter();
-        for (String line : entryInit) {
-            out.append(line).append('\n');
-        }
-        out.append(text);
-        out.append("}\n");
-        return out.toString();
-    }
-
-    /**
-     * The final producing value of one {@code REEVALUATE_THUNK} thunk block:
-     * the last member that publishes an SSA result, skipping the entry
-     * delegation and the payload-owned children whose owner arm emits them —
-     * that value is the expression the thunk re-executes.
-     */
-    private ValueId thunkProducedValue(SemanticOp adaptOp,
-                                       AdaptSourceRef.Thunk thunk) {
-        ValueId produced = null;
-        for (SemanticOp member : session.memberOps(thunk.blockId())) {
-            if (session.isSkipped(member.opId())
-                    || session.isOwnedChild(member.opId())) {
-                continue;
-            }
-            if (member.result() instanceof ValueId value) {
-                produced = value;
-            }
-        }
-        if (produced == null) {
-            throw new deal.codegen.SharedEmissionFailure(
-                "LlvmSemanticEmitter rejects the FUNCTION_ADAPT of "
-                    + adaptOp.opId() + ": its REEVALUATE_THUNK block "
-                    + thunk.blockId() + " publishes no value",
-                adaptOp.origin().span().range());
-        }
-        return produced;
     }
 
     /**

@@ -1310,9 +1310,7 @@ public final class SemanticIrValidator {
             && hasFunctionKey(unit, returnedFunction);
         RawBinding registration = bindingForAllocation(unit, calleeValue.id());
         String shape = registration == null ? null : registration.shape();
-        boolean runtimeResolvedAdapter = registration != null
-            && "adapter".equals(shape)
-            && "REEVALUATE_THUNK".equals(registration.captureMode());
+        boolean runtimeResolvedAdapter = registration != null && "adapter".equals(shape);
         String kindName = invocation.kind();
         if (shape == null || "dynamicFunctionValue".equals(shape)
                 || runtimeResolvedAdapter) {
@@ -2019,8 +2017,7 @@ public final class SemanticIrValidator {
                 CanonicalJson.Value source = payloadValue(payload, "source");
                 if (source instanceof CanonicalJson.Obj sourceObj) {
                     String sourceType = optionalString(sourceObj, "type");
-                    if (!"sharedCell".equals(sourceType) && !"thunk".equals(sourceType)
-                            && !"value".equals(sourceType)) {
+                    if (!"value".equals(sourceType)) {
                         return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
                             origin(R_ENUM, "open value \"" + sourceType
                                 + "\" in a closed AdaptSourceRef position"));
@@ -3396,6 +3393,26 @@ public final class SemanticIrValidator {
             return Optional.empty();
         }
         if (ret == null) {
+            if (binding != null && "adapter".equals(binding.shape())) {
+                OpId entryRef = parseOptionalOpId(call.payload(), "externalEntryRef");
+                RawBinding source = adapterExternalSource(unit, call);
+                if (entryRef != null && source != null
+                        && "SHARED_BODY".equals(source.executionOwner())
+                        && entryRef.module().path().equals(source.modulePath())) {
+                    RawOp entry = resolveOp(entryRef, unit, closure);
+                    RuntimeDescriptor.Func entrySignature = entry == null ? null
+                        : parseFuncQuiet(optionalString(entry.payload(), "signature"));
+                    if (entry != null && enumByName(SemanticOpKind.class, entry.kind())
+                            == SemanticOpKind.EXTERNAL_ENTRY && entrySignature != null
+                            && source.exportName().equals(optionalString(entry.payload(), "exportName"))
+                            && signature.returnType().equals(entrySignature.returnType())) {
+                        return Optional.empty();
+                    }
+                    if (closure.isEmpty() && !entryRef.module().path().equals(unit.modulePath())) {
+                        return Optional.empty(); // Foreign reference is checked at project admission.
+                    }
+                }
+            }
             return Optional.of("the CALL must carry its single return boundary");
         }
         RawOp resolved = resolveOp(ret, unit, closure);
@@ -3800,21 +3817,14 @@ public final class SemanticIrValidator {
         return Optional.of("the " + site + " op " + invocation.opId()
             + " resolves its callee value to the static class '" + callee.shape()
             + "': a Dynamic callee admits the producer rule's dynamic registration, a"
-            + " same-walk loweredBody registration, or an adapter whose source is"
-            + " re-evaluated per invocation (a statically classified callee belongs to the"
+            + " same-walk loweredBody registration, or an adapter value"
+            + " (a statically classified callee belongs to the"
             + " Static/Indirect arms of the closed call table)");
     }
 
-    /**
-     * Whether one adapter registration's source expression is re-evaluated
-     * per invocation (the {@code REEVALUATE_THUNK} capture mode): the source
-     * value's execution class is therefore selected at execution, so the
-     * invocation records the closed dynamic return-boundary set through the
-     * DYNAMIC callee arm instead of one statically selected cell.
-     */
+    /** An adapter value can carry a dynamically resolved source class. */
     private static boolean runtimeResolvedAdapter(BindingInfo callee) {
-        return "adapter".equals(callee.shape())
-            && "REEVALUATE_THUNK".equals(callee.captureMode());
+        return "adapter".equals(callee.shape());
     }
 
     /**
@@ -3931,6 +3941,38 @@ public final class SemanticIrValidator {
                 }
             }
             return null;
+        }
+        return null;
+    }
+
+    /** Follows only recorded retained values to a shared-body external source. */
+    private static RawBinding adapterExternalSource(RawUnit unit, RawOp call) {
+        CanonicalJson.Value rawCallee = payloadValue(call.payload(), "callee");
+        if (!(rawCallee instanceof CanonicalJson.Obj callee)) return null;
+        RawSourceRef source;
+        if ("static".equals(optionalString(callee, "type"))) {
+            CanonicalJson.Value rawBinding = payloadValue(callee, "binding");
+            if (!(rawBinding instanceof CanonicalJson.Obj binding)) return null;
+            CanonicalJson.Value rawSource = payloadValue(binding, "sourceRef");
+            if (!(rawSource instanceof CanonicalJson.Obj value)
+                    || !"value".equals(optionalString(value, "type"))) return null;
+            CanonicalJson.Value rawId = payloadValue(value, "value");
+            if (!(rawId instanceof CanonicalJson.Obj id)) return null;
+            source = new RawSourceRef.Value(parseValueId(id));
+        } else {
+            CanonicalJson.Value rawId = payloadValue(callee, "callee");
+            if (!(rawId instanceof CanonicalJson.Obj id)) return null;
+            RawBinding binding = bindingForAllocation(unit, parseValueId(id).id());
+            if (binding == null || !"adapter".equals(binding.shape())) return null;
+            source = binding.sourceRef();
+        }
+        Set<Long> visited = new LinkedHashSet<>();
+        while (source instanceof RawSourceRef.Value value && visited.add(value.value().id())) {
+            RawBinding binding = bindingForAllocation(unit, value.value().id());
+            if (binding == null) return null;
+            if ("externalFunction".equals(binding.shape())) return binding;
+            if (!"adapter".equals(binding.shape())) return null;
+            source = binding.sourceRef();
         }
         return null;
     }
@@ -4266,6 +4308,10 @@ public final class SemanticIrValidator {
             }
             BindingInfo binding = resolveCalleeBinding(unit, op, closure);
             String exportName = binding == null ? null : binding.exportName();
+            if (binding != null && "adapter".equals(binding.shape())) {
+                RawBinding source = adapterExternalSource(unit, op);
+                if (source != null) exportName = source.exportName();
+            }
             if (exportName == null) {
                 continue;
             }

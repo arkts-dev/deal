@@ -824,9 +824,14 @@ public class DynamicFunctionValueGateTest {
                 new AdaptSourceRef.Value(operand), null),
             key, adaptTarget, List.of(operand), List.of(SIG1),
             FailurePolicyId.NO_DEAL_FAILURE, null);
+        SemanticOp source = opWith(SemanticOpKind.AWAIT,
+            new KindPayload.AwaitPayload(
+                new AsyncTokenId.Canonical(4243, AsyncTokenOwner.DEAL_BODY_TASK), SIG1,
+                completionBoundary), operand, SIG1,
+            FailurePolicyId.NO_DEAL_FAILURE, null);
         assertBindingsRule(BindingsProductionValidator.validate(
-                syntheticUnit(registry, Map.of(), List.of(adapt)),
-                syntheticTable(List.of(adapt))), "REGISTRY_ONE_TO_ONE",
+                syntheticUnit(registry, Map.of(), List.of(source, adapt)),
+                syntheticTable(List.of(source, adapt))), "REGISTRY_ONE_TO_ONE",
             "a dynamic registration keyed by a FUNCTION_ADAPT result",
             "is produced by 1 static producing op(s)");
 

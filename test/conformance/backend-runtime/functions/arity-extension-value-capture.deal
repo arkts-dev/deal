@@ -1,0 +1,95 @@
+// @spec: Functions — Function type compatibility; Operational semantics summary
+// @description: Adaptation evaluates its source once, in order, and retains that function value without freezing genuine closure bindings.
+// @expected: runtime-ok
+// @features: functions, arity-extension, closures, arrays, classes
+
+import * as console from "std/console";
+
+class State { calls: number; }
+class Holder { saved: (ignored: number) => number; }
+function one(): number { return 1; }
+function two(): number { return 2; }
+function check(ok: boolean): void {
+  if (!ok) { throw {code: "TEST_FAIL", message: "adapter value capture"}; }
+}
+function make(state: State): () => number {
+  state.calls = state.calls + 1;
+  console.log("factory");
+  return one;
+}
+function widen(source: () => number): (ignored: number) => number {
+  return source;
+}
+
+export function main(): null {
+  let source: () => number = one;
+  let saved: (ignored: number) => number = source;
+  source = two;
+  check(saved(0) === 1);
+
+  function take(value: (ignored: number) => number): number {
+    source = two;
+    return value(0);
+  }
+  source = one;
+  check(take(source) === 1);
+
+  let state: State = {calls: 0};
+  let made: (ignored: number) => number = make(state);
+  console.log("after");
+  check(state.calls === 1);
+  check(made(0) === 1);
+  check(made(0) === 1);
+  check(state.calls === 1);
+
+  source = one;
+  let holder: Holder = {saved: source};
+  let values: ((ignored: number) => number)[] = [source];
+  let returned: (ignored: number) => number = widen(source);
+  source = two;
+  check(holder.saved(0) === 1);
+  check(values[0](0) === 1);
+  check(returned(0) === 1);
+
+  source = one;
+  saved = source;
+  holder.saved = source;
+  values[0] = source;
+  source = two;
+  check(saved(0) === 1);
+  check(holder.saved(0) === 1);
+  check(values[0](0) === 1);
+
+  let live: number = 3;
+  let closure: () => number = function(): number { return live; };
+  let adaptedClosure: (ignored: number) => number = closure;
+  closure = two;
+  live = 4;
+  check(adaptedClosure(0) === 4);
+
+  let loopValues: ((ignored: number) => number)[] = [];
+  for (let i of [0, 1]) {
+    source = one;
+    if (i === 1) { source = two; }
+    let iteration: (ignored: number) => number = source;
+    loopValues[i] = iteration;
+  }
+  source = one;
+  check(loopValues[0](0) === 1);
+  check(loopValues[1](0) === 2);
+
+  let stringValues: ((ignored: number) => number)[] = [];
+  let at: number = 0;
+  for (let character of "ab") {
+    let source: () => number = one;
+    if (character === "b") { source = two; }
+    let iteration: (ignored: number) => number = source;
+    stringValues[at] = iteration;
+    source = two;
+    at = at + 1;
+  }
+  check(stringValues[0](0) === 1);
+  check(stringValues[1](0) === 2);
+  console.log("OK");
+  return null;
+}

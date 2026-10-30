@@ -645,25 +645,6 @@ public final class JvmSemanticEmitter {
                     emitFunctionFactory(function);
                 }
             }
-            // The REEVALUATE_THUNK re-executor methods: one detached
-            // thunk method per FUNCTION_ADAPT op with a thunk source.
-            // The thunk ops are members only of the detached thunk block
-            // (the lowerer's single-membership rule), so the module walk
-            // never executes them; each invocation re-executes them here.
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                for (SemanticOp op : moduleUnit.ops()) {
-                    if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
-                        continue;
-                    }
-                    KindPayload.FunctionAdaptPayload payload =
-                        (KindPayload.FunctionAdaptPayload) op.payload();
-                    if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
-                        beginSourceMappedGroup(op, indent(1));
-                        emitThunkMethod(op, thunk.blockId());
-                    }
-                }
-            }
-
             // The generated class carriers (E5): one static nested class
             // per ClassId of the resolution context with per-field value
             // slots plus boolean presence flags, tagged with the
@@ -1066,48 +1047,6 @@ public final class JvmSemanticEmitter {
             out.append(indent(indent + 1)).append("throw __jsonErr;\n");
             out.append(indent(indent)).append("}\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType(), indent);
-        }
-
-        /** One thunk re-executor method name of an adapter op. */
-        private String thunkFn(OpId adaptOp) {
-            return "thunk" + adaptOp.id();
-        }
-
-        /**
-         * Emits one detached thunk re-executor for a FUNCTION_ADAPT op
-         * with a REEVALUATE_THUNK source: the thunk block's ops run in
-         * order (payload-owned children included through their owner
-         * arms) and the method returns the final producing op's result —
-         * the source value the invocation consumes.
-         */
-        private void emitThunkMethod(SemanticOp adaptOp, BlockId block) {
-            StructuredBodyTable ownerTable = blockTableOf.get(block);
-            List<OpId> ops = ownerTable == null ? null : ownerTable.blockOps().get(block);
-            if (ops == null) {
-                throw rejectedOp(adaptOp, "the adapter thunk block " + block
-                    + " has no membership row (producer defect)");
-            }
-            out.append("  private static Object ").append(thunkFn(adaptOp.opId()))
-                .append("() {\n");
-            emitBlockOps(block, 2);
-            ValueId produced = null;
-            for (int i = ops.size() - 1; i >= 0; i--) {
-                OpId opId = ops.get(i);
-                if (ownedChildren.contains(opId)) {
-                    continue;
-                }
-                SemanticOp op = opsById.get(opId);
-                if (op != null && op.result() instanceof ValueId valueId) {
-                    produced = valueId;
-                }
-                break;
-            }
-            if (produced == null) {
-                throw rejectedOp(adaptOp, "the adapter thunk block " + block
-                    + " has no final producing value (producer defect)");
-            }
-            out.append("    return ").append(slot(produced)).append(";\n");
-            out.append("  }\n");
         }
 
         /**
@@ -2693,12 +2632,7 @@ public final class JvmSemanticEmitter {
 
         /**
          * FUNCTION_ADAPT (E6, D15 creation): a generated adapter object
-         * carrying the closed capture mode — VALUE retains the
-         * creation-time source identity; SHARED_CELL records the
-         * generation cell re-read per invocation (live reassignment
-         * observed); REEVALUATE_THUNK records the detached thunk
-         * re-executor method. Creation evaluates no thunk and reads no
-         * binding (VALUE's single operand already completed); every
+         * retaining the evaluated source value at creation; every
          * invocation runs the D15 sequence through
          * {@code JvmRuntime.invokeAdapter} with the invoking op's
          * origin.
@@ -2726,29 +2660,7 @@ public final class JvmSemanticEmitter {
                 .append(javaString(descriptorText(payload.targetSignature())))
                 .append(", ")
                 .append(javaString(payload.targetSignature().canonicalSpecText()))
-                .append(", ");
-            switch (payload.mode()) {
-                case VALUE -> out.append("0");
-                case SHARED_CELL -> out.append("1");
-                case REEVALUATE_THUNK -> out.append("2");
-            }
-            switch (payload.source()) {
-                case AdaptSourceRef.Value ignored ->
-                    out.append(", ").append(valueLocal).append(", null, null");
-                case AdaptSourceRef.SharedCell cell ->
-                    // The adapter holds the creation-site incarnation cell by
-                    // identity: the enclosing factory's capture parameter when
-                    // the creating body captured the binding (the cell travels
-                    // the chain), otherwise the class-scoped cell field of the
-                    // creation-site incarnation — never a module-global slot
-                    // read for a captured binding (R7(b)).
-                    out.append(", null, (Object[]) ")
-                        .append(cellSource(cell.binding(), cell.generation()))
-                        .append(", null");
-                case AdaptSourceRef.Thunk thunk ->
-                    out.append(", null, null, __t -> ")
-                        .append(thunkFn(op.opId())).append("()");
-            }
+                .append(", ").append(valueLocal);
             out.append(", ").append(payload.sourceSignature().paramTypes().size())
                 .append(", ")
                 .append(javaString(payload.sourceSignature().canonicalSpecText()))
@@ -2793,9 +2705,7 @@ public final class JvmSemanticEmitter {
         /**
          * The FUNCTION_ADAPT START (E6): the VALUE operand's atom is the
          * creation's own value local ({@code valueLocal}) exactly when the op
-         * records that operand (the oracle atomizes its operand list); the
-         * SHARED_CELL and REEVALUATE_THUNK modes carry zero operand atoms
-         * (their operands are empty by construction).
+         * records that operand (the oracle atomizes its operand list).
          */
         private void emitAdaptStart(SemanticOp op,
                 KindPayload.FunctionAdaptPayload payload, String valueLocal,
@@ -3282,8 +3192,7 @@ public final class JvmSemanticEmitter {
 
                     String adapterSuffix = String.valueOf(op.opId().id());
                     boolean switchAdapterModule =
-                        adapter.captureMode() != deal.semantic.ir.CaptureMode
-                            .REEVALUATE_THUNK;
+                        adapter.captureMode() == deal.semantic.ir.CaptureMode.VALUE;
                     if (switchAdapterModule) {
                         out.append(indent(indent)).append("Object __as")
                             .append(adapterSuffix).append(" = JvmRuntime.adapterSource("

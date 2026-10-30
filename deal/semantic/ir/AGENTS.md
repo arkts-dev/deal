@@ -21,7 +21,7 @@ Carry active profiles through constructors/guards. Recompute context hashes from
 - NARROWED_READ consumes a refined BINDING_LOAD with its descriptor/origin. It may publish an admitted value, thread a consumer identity or validate in place; receiver/key/length/iterable/presence consumers must use that result. Ordinary boundaries retain their own projections.
 - ASSERTION carries an explicit target and reports E8001 for every mismatch, including function/array failures. CHECKED_ASSERTION maps to BOUNDARY, not fictitious UNARY.
 - INSTANCEOF alone carries a nominal unary target. Validate operand production order, types and exact results; HAS_FIELD requires one key form and valid receiver/string-key producers.
-- ASSIGN publishes original RHS identity/type while commits consume storage-typed values. Storage adapters require the explicit preceding RHS child in VALUE mode. Operand completion cannot hoist later loads before initialization.
+- ASSIGN publishes original RHS identity/type while commits consume storage-typed values. Adapters retain evaluated VALUE operands; storage adapters consume preceding RHS children. Operand completion cannot hoist later loads before initialization.
 
 ## JSON and failures
 

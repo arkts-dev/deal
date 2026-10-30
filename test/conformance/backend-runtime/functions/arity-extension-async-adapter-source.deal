@@ -26,7 +26,8 @@ export async function test_arity_extension_async_adapter_source(): Promise<numbe
   let handed: (x: number) => Promise<number> = zero;
   source = handed;
   let widened: (x: number, y: number) => Promise<number> = source;
-  let first: number = await widened(1, 2);
+  source = base;
+  let first: number = await widened(3, 2);
   check(first === 41, "an assigned adapter-valued async source descends its chain");
 
   let exact: (x: number) => Promise<number> = base;
@@ -36,7 +37,8 @@ export async function test_arity_extension_async_adapter_source(): Promise<numbe
 
   let returned: (x: number) => Promise<number> = await widen();
   let widenedReturned: (x: number, y: number) => Promise<number> = returned;
-  let third: number = await widenedReturned(1, 2);
+  returned = base;
+  let third: number = await widenedReturned(3, 2);
   check(third === 41, "a zero-to-one adapter value returned from an async function adapts");
 
   console.log("ASYNC ADAPTER SOURCE OK");

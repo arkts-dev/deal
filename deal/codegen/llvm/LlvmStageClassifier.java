@@ -757,7 +757,7 @@ public final class LlvmStageClassifier {
                         : Optional.of(reject(op, "an EXTERNAL CALL without its"
                             + " external-entry record"));
                 case deal.semantic.ir.FunctionExecutionBinding.AdapterBinding ignored ->
-                    Optional.of(reject(op, "a CALL of an adapter"));
+                    Optional.empty();
                 case deal.semantic.ir.FunctionExecutionBinding.HostFunction ignored ->
                     Optional.of(reject(op, "a CALL of a host function"));
                 case deal.semantic.ir.FunctionExecutionBinding.HostFunctionValue ignored ->

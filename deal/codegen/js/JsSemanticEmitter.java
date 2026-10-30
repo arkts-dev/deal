@@ -1917,7 +1917,6 @@ private void emitBindingLoad(SemanticOp op) {
             KindPayload.FunctionAdaptPayload payload =
                 (KindPayload.FunctionAdaptPayload) op.payload();
             String sourceExpr = null;
-            String thunkFn = null;
             switch (payload.source()) {
                 case AdaptSourceRef.Value value -> {
                     // The already-materialized operand is retained for the
@@ -1925,25 +1924,6 @@ private void emitBindingLoad(SemanticOp op) {
                     String local = "$av" + op.opId().id();
                     emit("const " + local + " = " + adaptValueExpr(value) + ";");
                     sourceExpr = local;
-                }
-                case AdaptSourceRef.SharedCell cell ->
-                    // The generation cell is read per invocation, so a later
-                    // reassignment retargets the adapter.
-                    sourceExpr = cellSource(cell.binding(), cell.generation());
-                case AdaptSourceRef.Thunk thunk -> {
-                    // One detached re-executor: every invocation re-runs the
-                    // recorded thunk block and consumes its final producing
-                    // value, so side effects repeat and a fresh closure per
-                    // run keeps fresh identity.
-                    thunkFn = "$at" + op.opId().id();
-                    emit("const " + thunkFn + " = () => {");
-                    indent++;
-                    emitFunctionBody(units.get(opModule.get(op.opId())),
-                        thunk.blockId());
-                    emit("return " + thunkResultSlot(op, thunk.blockId())
-                        + ";");
-                    indent--;
-                    emit("};");
                 }
             }
             // The adapter's ABI is the retained call shape: the target
@@ -1988,8 +1968,7 @@ private void emitBindingLoad(SemanticOp op) {
                         .canonicalSpecText())
                     + ", $p" + i + ", $file, $line, $column);");
             }
-            emit("const $src = " + (thunkFn == null ? sourceExpr
-                : thunkFn + "()") + ";");
+            emit("const $src = " + sourceExpr + ";");
             // The resolved source is recorded on the carrier instance the
             // invocation runs in: the emitted dynamic dispatch of an adapter
             // callee reads the source's own class tag to select the recorded
@@ -2009,34 +1988,6 @@ private void emitBindingLoad(SemanticOp op) {
             emit(slotOf(op) + " = " + wrapper + ";");
             indent--;
             emit("}");
-        }
-
-        /**
-         * The final producing value of one adapter thunk block: the last
-         * non-owned member op that publishes a value, exactly the source
-         * value the adapter invocation consumes (the block's own ops ran in
-         * source order inside the re-executor).
-         */
-        private String thunkResultSlot(SemanticOp adaptOp, BlockId block) {
-            LoweredModuleUnit unit = units.get(opModule.get(adaptOp.opId()));
-            List<OpId> members = memberOps(unit, block);
-            if (members == null) {
-                throw unsupported(adaptOp, "the adapter thunk block " + block
-                    + " has no membership row (producer defect)");
-            }
-            for (int i = members.size() - 1; i >= 0; i--) {
-                OpId opId = members.get(i);
-                if (ownedChildren.contains(opId)) {
-                    continue;
-                }
-                SemanticOp op = opsById.get(opId);
-                if (op != null && op.result() instanceof ValueId valueId) {
-                    return slot(valueId);
-                }
-                break;
-            }
-            throw unsupported(adaptOp, "the adapter thunk block " + block
-                + " has no final producing value (producer defect)");
         }
 
         /** The adapter's declared parameters: target arity plus the span. */

@@ -956,11 +956,13 @@ public class BindingsValidationTest {
                 base.functions(), base.moduleInit(), base.exportPlan(), base.functionBindings(),
                 changed, base.bodyTable(), base.classFactories(), base.classBindingFacts());
             var rejected = BindingsProductionValidator.validate(mutated, mutated.bodyTable());
-            check(rejected.isPresent() && rejected.get().code().equals("E6005")
-                    && rejected.get().message().contains("validatorRule ADAPTER_SOURCE_SHAPE,")
-                    && rejected.get().message().contains("module 'main'"),
-                "forged assignment snapshot " + fault + " rejects at ADAPTER_SOURCE_SHAPE: " + rejected);
-            if (List.of("rhs", "type", "source").contains(fault)) {
+            if (List.of("source", "future").contains(fault)) {
+                check(rejected.isPresent() && rejected.get().code().equals("E6005")
+                        && rejected.get().message().contains("validatorRule ADAPTER_SOURCE_SHAPE,")
+                        && rejected.get().message().contains("module 'main'"),
+                    "forged assignment snapshot " + fault + " rejects at ADAPTER_SOURCE_SHAPE: " + rejected);
+            }
+            if (!fault.equals("future")) {
                 var chainRejected = deal.semantic.ir.AddressChainProtocol.validate(mutated);
                 check(chainRejected.isPresent() && chainRejected.get().message()
                         .contains("validatorRule ADDRESS_CHAIN_SHAPE,"),
@@ -1157,31 +1159,6 @@ public class BindingsValidationTest {
             "a detached-body free reference outside the captures list",
             "outside the captures");
 
-        // A thunk-block free reference outside the pinned
-        // capturedBindings.
-        BindingId thunkFree = nextBindingId();
-        BlockId thunkBlock = nextBlock();
-        ValueId adapterResult = nextValue();
-        SemanticOp allocThunkFree = allocOp(thunkFree, INIT_BLOCK, 0);
-        SemanticOp initThunkFree = initOp(thunkFree, 0, nextValue());
-        SemanticOp thunkLoad = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
-            new KindPayload.BindingLoadPayload(thunkFree, 0),
-            nextValue(), INT, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
-        SemanticOp adapt = adaptOp(CaptureMode.REEVALUATE_THUNK,
-            new AdaptSourceRef.Thunk(thunkBlock, List.of()),
-            SIG0, SIG2, null, List.of(), List.of(), adapterResult);
-        LoweredModuleUnit unitT = unit(Map.of(),
-            Map.of(new FunctionAllocationIdentity(adapterResult.id()),
-                new FunctionExecutionBinding.AdapterBinding(adapt.opId(),
-                    CaptureMode.REEVALUATE_THUNK, new AdaptSourceRef.Thunk(thunkBlock,
-                        List.of()), SIG0, SIG2)),
-            List.of(allocThunkFree, initThunkFree, adapt, thunkLoad));
-        StructuredBodyTable tableT = tableOf(Map.ofEntries(
-            Map.entry(INIT_BLOCK, List.of(allocThunkFree, initThunkFree, adapt)),
-            Map.entry(thunkBlock, List.of(thunkLoad))));
-        assertE6005(BindingsProductionValidator.validate(unitT, tableT), "CAPTURE_RESOLUTION",
-            "a thunk-block free reference outside the pinned capturedBindings",
-            "outside the pinned capturedBindings");
     }
 
     private static void testGroupShapeNegatives() {
@@ -1227,13 +1204,13 @@ public class BindingsValidationTest {
         ValueId adapterResult = nextValue();
         SemanticOp alloc = allocOp(x, INIT_BLOCK, 0);
         SemanticOp init = initOp(x, 0, nextValue());
-        SemanticOp exact = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(x, 0), SIG1, SIG1, null, List.of(), List.of(),
+        SemanticOp exact = adaptOp(CaptureMode.VALUE,
+            new AdaptSourceRef.Value(adapterResult), SIG1, SIG1, null, List.of(), List.of(),
             adapterResult);
         LoweredModuleUnit unitExact = unit(Map.of(),
             Map.of(new FunctionAllocationIdentity(adapterResult.id()),
                 new FunctionExecutionBinding.AdapterBinding(exact.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(x, 0), SIG1,
+                    CaptureMode.VALUE, new AdaptSourceRef.Value(adapterResult), SIG1,
                     SIG1)),
             List.of(alloc, init, exact));
         StructuredBodyTable tableExact = tableOf(Map.of(INIT_BLOCK,
@@ -1247,13 +1224,13 @@ public class BindingsValidationTest {
         ValueId adapterResult2 = nextValue();
         SemanticOp allocY = allocOp(y, INIT_BLOCK, 0);
         SemanticOp initY = initOp(y, 0, nextValue());
-        SemanticOp nonAssignable = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(y, 0), SIG2, SIG1, null, List.of(), List.of(),
+        SemanticOp nonAssignable = adaptOp(CaptureMode.VALUE,
+            new AdaptSourceRef.Value(adapterResult2), SIG2, SIG1, null, List.of(), List.of(),
             adapterResult2);
         LoweredModuleUnit unitNon = unit(Map.of(),
             Map.of(new FunctionAllocationIdentity(adapterResult2.id()),
                 new FunctionExecutionBinding.AdapterBinding(nonAssignable.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(y, 0), SIG2,
+                    CaptureMode.VALUE, new AdaptSourceRef.Value(adapterResult2), SIG2,
                     SIG1)),
             List.of(allocY, initY, nonAssignable));
         StructuredBodyTable tableNon = tableOf(Map.of(INIT_BLOCK,
@@ -1264,25 +1241,25 @@ public class BindingsValidationTest {
     }
 
     private static void testAdapterSourceShapeNegatives() {
-        // A mode/source shape mismatch: SHARED_CELL carrying a Value.
+        // A source missing its producing operand.
         BindingId x = nextBindingId();
         ValueId operand = nextValue();
         ValueId adapterResult = nextValue();
         SemanticOp alloc = allocOp(x, INIT_BLOCK, 0);
         SemanticOp init = initOp(x, 0, operand);
-        SemanticOp mismatch = adaptOp(CaptureMode.SHARED_CELL, new AdaptSourceRef.Value(operand),
+        SemanticOp mismatch = adaptOp(CaptureMode.VALUE, new AdaptSourceRef.Value(operand),
             SIG1, SIG2, null, List.of(), List.of(), adapterResult);
         LoweredModuleUnit unitMismatch = unit(Map.of(),
             Map.of(new FunctionAllocationIdentity(adapterResult.id()),
                 new FunctionExecutionBinding.AdapterBinding(mismatch.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.Value(operand), SIG1,
+                    CaptureMode.VALUE, new AdaptSourceRef.Value(operand), SIG1,
                     SIG2)),
             List.of(alloc, init, mismatch));
         StructuredBodyTable tableMismatch = tableOf(Map.of(INIT_BLOCK,
             List.of(alloc, init, mismatch)));
         assertE6005(BindingsProductionValidator.validate(unitMismatch, tableMismatch),
-            "ADAPTER_SOURCE_SHAPE", "a mode/source shape mismatch",
-            "mode must match the source shape");
+            "ADAPTER_SOURCE_SHAPE", "a missing source operand",
+            "operand");
 
         // VALUE-over-binding without the proof: the operand is produced
         // by exactly one binding load (no closure re-publishes the
@@ -1291,22 +1268,26 @@ public class BindingsValidationTest {
         ValueId loadResult = nextValue();
         ValueId adapterResult2 = nextValue();
         SemanticOp allocB = allocOp(b, INIT_BLOCK, 0);
-        SemanticOp initB = initOp(b, 0, nextValue());
+        SemanticOp initialB = constInt();
+        SemanticOp initB = initOp(b, 0, (ValueId) initialB.result());
         SemanticOp loadB = opWith(nextOpId(), SemanticOpKind.BINDING_LOAD,
             new KindPayload.BindingLoadPayload(b, 0),
             loadResult, SIG1, List.of(), List.of(), FailurePolicyId.NO_DEAL_FAILURE, null);
         SemanticOp unproved = adaptOp(CaptureMode.VALUE, new AdaptSourceRef.Value(loadResult),
             SIG1, SIG2, null, List.of(loadResult), List.of(SIG1), adapterResult2);
+        BindingId savedBinding = nextBindingId();
+        SemanticOp savedAlloc = allocOp(savedBinding, INIT_BLOCK, 0);
+        SemanticOp unprovedInit = initOp(savedBinding, 0, adapterResult2);
         LoweredModuleUnit unitUnproved = unit(Map.of(),
             Map.of(new FunctionAllocationIdentity(adapterResult2.id()),
                 new FunctionExecutionBinding.AdapterBinding(unproved.opId(),
                     CaptureMode.VALUE, new AdaptSourceRef.Value(loadResult), SIG1, SIG2)),
-            List.of(allocB, initB, loadB, unproved));
+            List.of(allocB, initialB, initB, loadB, savedAlloc, unproved, unprovedInit));
         StructuredBodyTable tableUnproved = tableOf(Map.of(INIT_BLOCK,
-            List.of(allocB, initB, loadB, unproved)));
-        assertE6005(BindingsProductionValidator.validate(unitUnproved, tableUnproved),
-            "ADAPTER_SOURCE_SHAPE", "VALUE-over-binding without its proof",
-            "without its proof");
+            List.of(allocB, initialB, initB, loadB, savedAlloc, unproved, unprovedInit)));
+        var unprovedVerdict = BindingsProductionValidator.validate(unitUnproved, tableUnproved);
+        check(unprovedVerdict.isEmpty(),
+            "a binding load can be captured without an immutability proof: " + unprovedVerdict);
 
         // A proof naming the wrong binding/generation: the operand is
         // the load of {b, 0} but the proof names {other, 0}.
@@ -1506,15 +1487,15 @@ public class BindingsValidationTest {
         SemanticOp alloc = allocOp(x, INIT_BLOCK, 0);
         SemanticOp initValue = constInt();
         SemanticOp init = initOp(x, 0, (ValueId) initValue.result());
-        SemanticOp adapt = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(x, 0), SIG1, SIG2, null, List.of(), List.of(),
-            adapterResult);
+        SemanticOp adapt = adaptOp(CaptureMode.VALUE,
+            new AdaptSourceRef.Value((ValueId) initValue.result()), SIG1, SIG2, null,
+            List.of((ValueId) initValue.result()), List.of(SIG1), adapterResult);
         SemanticOp crossing = boundaryOp(BoundaryKind.STDLIB_RETURN, SIG2,
             adapterResult);
         LoweredModuleUnit unit = unit(Map.of(),
             Map.of(identity,
                 new FunctionExecutionBinding.AdapterBinding(adapt.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(x, 0), SIG1,
+                    CaptureMode.VALUE, new AdaptSourceRef.Value((ValueId) initValue.result()), SIG1,
                     SIG2)),
             List.of(alloc, initValue, init, adapt, crossing));
         StructuredBodyTable table = tableOf(Map.of(INIT_BLOCK,
@@ -1534,9 +1515,9 @@ public class BindingsValidationTest {
         SemanticOp storeAlloc = allocOp(store, INIT_BLOCK, 0);
         SemanticOp storeInitValue = constInt();
         SemanticOp storeInit = initOp(store, 0, (ValueId) storeInitValue.result());
-        SemanticOp assignedAdapt = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(store, 0), SIG1, SIG2, null, List.of(),
-            List.of(), assignedAdapter);
+        SemanticOp assignedAdapt = adaptOp(CaptureMode.VALUE,
+            new AdaptSourceRef.Value((ValueId) storeInitValue.result()), SIG1, SIG2, null,
+            List.of((ValueId) storeInitValue.result()), List.of(SIG1), assignedAdapter);
         SemanticOp assignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT, SIG2,
             assignedAdapter);
         SemanticOp commit = storeOp(store, 0, assignedAdapter);
@@ -1545,7 +1526,7 @@ public class BindingsValidationTest {
         LoweredModuleUnit unitCrossing = unit(Map.of(),
             Map.of(assignedIdentity,
                 new FunctionExecutionBinding.AdapterBinding(assignedAdapt.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(store, 0),
+                    CaptureMode.VALUE, new AdaptSourceRef.Value((ValueId) storeInitValue.result()),
                     SIG1, SIG2)),
             List.of(storeAlloc, storeInitValue, storeInit, assignedAdapt, assignment,
                 commit, sideCrossing));
@@ -1571,9 +1552,9 @@ public class BindingsValidationTest {
         SemanticOp displacedInitValue = constInt();
         SemanticOp displacedInit = initOp(displaced, 0,
             (ValueId) displacedInitValue.result());
-        SemanticOp displacedAdapt = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(displaced, 0), SIG1, SIG2, null, List.of(),
-            List.of(), displacedAdapter);
+        SemanticOp displacedAdapt = adaptOp(CaptureMode.VALUE,
+            new AdaptSourceRef.Value((ValueId) displacedInitValue.result()), SIG1, SIG2, null,
+            List.of((ValueId) displacedInitValue.result()), List.of(SIG1), displacedAdapter);
         SemanticOp displacedFiller = constInt();
         SemanticOp displacedAssignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT, SIG2,
             displacedAdapter);
@@ -1581,7 +1562,7 @@ public class BindingsValidationTest {
         LoweredModuleUnit unitDisplaced = unit(Map.of(),
             Map.of(displacedIdentity,
                 new FunctionExecutionBinding.AdapterBinding(displacedAdapt.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(displaced, 0),
+                    CaptureMode.VALUE, new AdaptSourceRef.Value((ValueId) displacedInitValue.result()),
                     SIG1, SIG2)),
             List.of(displacedAlloc, displacedInitValue, displacedInit, displacedAdapt,
                 displacedFiller, displacedAssignment, displacedCommit));
@@ -1604,9 +1585,9 @@ public class BindingsValidationTest {
         SemanticOp uncommittedInitValue = constInt();
         SemanticOp uncommittedInit = initOp(uncommitted, 0,
             (ValueId) uncommittedInitValue.result());
-        SemanticOp uncommittedAdapt = adaptOp(CaptureMode.SHARED_CELL,
-            new AdaptSourceRef.SharedCell(uncommitted, 0), SIG1, SIG2, null, List.of(),
-            List.of(), uncommittedAdapter);
+        SemanticOp uncommittedAdapt = adaptOp(CaptureMode.VALUE,
+            new AdaptSourceRef.Value((ValueId) uncommittedInitValue.result()), SIG1, SIG2, null,
+            List.of((ValueId) uncommittedInitValue.result()), List.of(SIG1), uncommittedAdapter);
         SemanticOp uncommittedAssignment = boundaryOp(BoundaryKind.VARIABLE_ASSIGNMENT,
             SIG2, uncommittedAdapter);
         SemanticOp uncommittedFiller = constInt();
@@ -1614,7 +1595,7 @@ public class BindingsValidationTest {
         LoweredModuleUnit unitUncommitted = unit(Map.of(),
             Map.of(uncommittedIdentity,
                 new FunctionExecutionBinding.AdapterBinding(uncommittedAdapt.opId(),
-                    CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(uncommitted, 0),
+                    CaptureMode.VALUE, new AdaptSourceRef.Value((ValueId) uncommittedInitValue.result()),
                     SIG1, SIG2)),
             List.of(uncommittedAlloc, uncommittedInitValue, uncommittedInit,
                 uncommittedAdapt, uncommittedAssignment, uncommittedFiller,

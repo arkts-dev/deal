@@ -6284,7 +6284,7 @@ public class ProjectLoweringTest {
             FunctionAllocationIdentity adapterId = adapterKey(app);
             FunctionExecutionBinding.AdapterBinding adapter =
                 (FunctionExecutionBinding.AdapterBinding) app.functionBindings().get(adapterId);
-            AdaptSourceRef.SharedCell shared = (AdaptSourceRef.SharedCell) adapter.sourceRef();
+            AdaptSourceRef.Value captured = (AdaptSourceRef.Value) adapter.sourceRef();
             record AdapterCase(String name, AdaptSourceRef source,
                                RuntimeDescriptor.Func target, String detail) { }
             for (AdapterCase row : List.of(
@@ -6292,7 +6292,7 @@ public class ProjectLoweringTest {
                         new RuntimeDescriptor.Func(Collections.nCopies(3, RuntimeDescriptor.Number.INSTANCE),
                             RuntimeDescriptor.Number.INSTANCE), "registration carries signatures"),
                     new AdapterCase("sourceRef",
-                        new AdaptSourceRef.SharedCell(shared.binding(), shared.generation() + 1),
+                        new AdaptSourceRef.Value(new ValueId(captured.value().id() + 1)),
                         adapter.targetSignature(), "registration carries mode"))) {
                 LoweredModuleUnit mutated = mutateUnit(app, copy -> copy.bindings.put(adapterId,
                     new FunctionExecutionBinding.AdapterBinding(adapter.adaptOpId(),
@@ -6721,6 +6721,65 @@ public class ProjectLoweringTest {
         }
     }
 
+    private static void testRetainedExternalAdapterAdmission() throws Exception {
+        RealProject fixture = compileProject("""
+            import * as util from "./util";
+            export function main(): null {
+              let saved: (ignored: number) => number = util.one;
+              let value: number = saved(0);
+              return null;
+            }
+            """, Map.of("src/util.deal", """
+                export function one(): number { return 1; }
+                export function two(): number { return 2; }
+                """), Map.of());
+        try {
+            var result = lower(fixture, invocation());
+            check(result.project() != null, "imported adapter lowers: " + result.diagnostics());
+            if (result.project() == null) return;
+            var project = result.project();
+            var facts = comparisonFacts(fixture);
+            check(SemanticIrValidator.validate(project, facts).isEmpty(),
+                "retained external adapter admits as typed project");
+            check(SemanticIrValidator.validateText(
+                SemanticIrValidator.toProjectText(project), facts).isEmpty(),
+                "retained external adapter admits through text");
+            LoweredModuleUnit app = project.modules().get(APP);
+            SemanticOp call = app.ops().stream().filter(op ->
+                op.payload() instanceof KindPayload.CallPayload payload
+                && payload.callee() instanceof KindPayload.CallCallee.Static fixed
+                && fixed.binding() instanceof FunctionExecutionBinding.AdapterBinding)
+                .findFirst().orElseThrow();
+            var payload = (KindPayload.CallPayload) call.payload();
+            check(payload.returnBoundaryOpId() == null && payload.externalEntryRef() != null,
+                "adapter delegates return validation to its recorded external entry");
+            var withoutEntry = new KindPayload.CallPayload(payload.mode(), payload.callee(),
+                payload.signature(), payload.parameterBoundaryOpIds(), null, null,
+                payload.bodyBlock(), null);
+            var missing = replaceOpWith(app, call, rebuildOp(call, withoutEntry));
+            assertMutationRule("adapter cannot waive return boundary without source entry",
+                projectAdmission(project, missing, facts), "R-BOUNDARY-TRIPLE");
+            assertMutationRule("transport retains missing-entry rejection",
+                SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
+                    mutatedProject(project, missing)), facts), "R-BOUNDARY-TRIPLE");
+            LoweredModuleUnit util = project.modules().get(UTIL);
+            OpId wrongEntry = util.ops().stream().filter(op ->
+                op.payload() instanceof KindPayload.ExternalEntryPayload entry
+                && entry.exportName().equals("two")).findFirst().orElseThrow().opId();
+            var wrong = new KindPayload.CallPayload(payload.mode(), payload.callee(),
+                payload.signature(), payload.parameterBoundaryOpIds(), null, null,
+                payload.bodyBlock(), wrongEntry);
+            var mismatched = replaceOpWith(app, call, rebuildOp(call, wrong));
+            assertMutationRule("same-signature different export cannot replace source entry",
+                projectAdmission(project, mismatched, facts), "R-BOUNDARY-TRIPLE");
+            assertMutationRule("transport retains source export correlation",
+                SemanticIrValidator.validateText(SemanticIrValidator.toProjectText(
+                    mutatedProject(project, mismatched)), facts), "R-BOUNDARY-TRIPLE");
+        } finally {
+            deleteRecursively(fixture.root());
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         System.out.println("=== Project Lowering Entry Tests (ISSUE-0634) ===\n");
         RealProject project = null;
@@ -6729,6 +6788,7 @@ public class ProjectLoweringTest {
             project = compileProject(APP_SOURCE);
             LoweredProject baseline = new LoweredProject(project,
                 lower(project, invocation()));
+            testRetainedExternalAdapterAdmission();
             testOneProjectLoweringAndDeterminism(baseline);
             testSeedsIntrinsicsAndNamespaces(baseline);
             testUnitProjectCompanionOwnership();

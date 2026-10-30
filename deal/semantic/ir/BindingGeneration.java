@@ -5,7 +5,7 @@ import java.util.Objects;
 /**
  * A binding generation reference (parent D15): a {@link BindingId} paired
  * with the generation expected by a generation-checked binding load or
- * thunk capture. Generations are immutable numeric counters of a shared
+ * closure capture. Generations are immutable numeric counters of a shared
  * cell; a stale generation is a validator error (R-* structural checks at
  * the production site).
  *

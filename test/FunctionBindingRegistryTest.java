@@ -545,8 +545,8 @@ public class FunctionBindingRegistryTest {
         FunctionBindingRegistry registry = new FunctionBindingRegistry();
         FunctionAllocationIdentity identity = new FunctionAllocationIdentity(50);
         OpId adaptOpId = new OpId(MODULE, 3);
-        CaptureMode mode = CaptureMode.SHARED_CELL;
-        AdaptSourceRef sourceRef = new AdaptSourceRef.SharedCell(new BindingId(1), 0);
+        CaptureMode mode = CaptureMode.VALUE;
+        AdaptSourceRef sourceRef = new AdaptSourceRef.Value(new ValueId(1));
         RuntimeDescriptor.Func targetSignature = new RuntimeDescriptor.Func(
             List.of(RuntimeDescriptor.Number.INSTANCE, RuntimeDescriptor.Number.INSTANCE),
             RuntimeDescriptor.Number.INSTANCE);

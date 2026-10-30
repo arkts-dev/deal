@@ -53,11 +53,10 @@ public final class AdapterShapeMap {
                 requireNoProof(proof, shape);
                 yield CaptureMode.VALUE;
             }
-            case BINDING_REFERENCE -> proof.isPresent()
-                ? CaptureMode.VALUE : CaptureMode.SHARED_CELL;
+            case BINDING_REFERENCE -> CaptureMode.VALUE;
             case NON_IDENTIFIER_EXPRESSION -> {
                 requireNoProof(proof, shape);
-                yield CaptureMode.REEVALUATE_THUNK;
+                yield CaptureMode.VALUE;
             }
         };
     }
@@ -70,26 +69,11 @@ public final class AdapterShapeMap {
         if (proof.isPresent()) {
             throw new IllegalArgumentException("the closed shape map records a "
                 + "BindingImmutabilityProof only for a binding source; got a proof for "
-                + shape + " (producer defect — the payload's proof is present iff "
-                + "VALUE's operand is a binding load)");
+                + shape + " (producer defect — only binding loads admit proofs)");
         }
     }
 
-    /**
-     * The closed position-mode map (the shape map at a statically typed
-     * function-value position): exactly the {@link #selectMode} arms except
-     * the non-identifier arm, which is the materialized {@code VALUE}. A
-     * parameter, return, class field/default or array literal/write
-     * position is a value position: its expression is evaluated exactly
-     * once, at its source position, so the adapted source is that
-     * materialized value. A {@code REEVALUATE_THUNK} source there would
-     * re-execute the position's expression at every adapter invocation and
-     * break the once-only effect and evaluation-order contract those
-     * positions carry. Variable assignments are value positions too;
-     * only declaration initializers retain the separate definition-mode
-     * selection of {@link #selectMode}.
-     *
-     */
+    /** Every adaptation position retains its source expression's evaluated value. */
     public static CaptureMode selectPositionMode(SourceShape shape,
                                                   Optional<BindingImmutabilityProof> proof) {
         Objects.requireNonNull(shape, "shape must not be null");
@@ -101,20 +85,14 @@ public final class AdapterShapeMap {
         return selectMode(shape, proof);
     }
 
-    /**
-     * The map's binding-load arm over the IR-level proof fact (the
-     * produced-source surface): a proved load → VALUE, an unproven load
-     * → SHARED_CELL — the same closed fallback arm as the checker-fact
-     * surface, so the two surfaces never disagree.
-     *
-     */
+    /** Binding loads capture their evaluated value, with or without a proof. */
     public static CaptureMode selectModeOverBindingLoad(
             Optional<BindingImmutabilityProof> proof) {
         Objects.requireNonNull(proof, "proof must not be null");
-        return proof.isPresent() ? CaptureMode.VALUE : CaptureMode.SHARED_CELL;
+        return CaptureMode.VALUE;
     }
 
-    /** Composite sources re-execute; closure values materialize at declaration. */
+    /** Every admitted producer materializes its source value before adaptation. */
     public static CaptureMode selectModeOverProducedSource(
             SemanticOpKind producingKind,
             Optional<FunctionBindingRegistry.FunctionValueMaterialization> producerFacts) {
@@ -123,7 +101,7 @@ public final class AdapterShapeMap {
         return switch (producingKind) {
             case CLOSURE_NEW -> CaptureMode.VALUE;
             case MEMBER_READ, EXPORT_READ, INDEX_READ, FIELD_READ, CALL, BINARY, BRANCH ->
-                CaptureMode.REEVALUATE_THUNK;
+                CaptureMode.VALUE;
             default -> throw new IllegalArgumentException("producing kind " + producingKind
                 + " is not a closed function-value producing op of the produced-source "
                 + "map (CLOSURE_NEW | MEMBER_READ | EXPORT_READ | INDEX_READ | "

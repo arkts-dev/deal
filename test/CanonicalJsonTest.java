@@ -185,9 +185,8 @@ public class CanonicalJsonTest {
         AsyncTokenId alias = new AsyncTokenId.Alias(6, canonical, AsyncLinkKind.ADAPTER_INNER);
         KindPayload.AsyncStartPayload asyncStart = new KindPayload.AsyncStartPayload(
             new KindPayload.CallCallee.Static(new FunctionExecutionBinding.AdapterBinding(
-                new OpId(APP, 2), CaptureMode.REEVALUATE_THUNK,
-                new AdaptSourceRef.Thunk(new BlockId(3),
-                    List.of(new BindingGeneration(new BindingId(1), 2))),
+                new OpId(APP, 2), CaptureMode.VALUE,
+                new AdaptSourceRef.Value(new ValueId(3)),
                 SIG, SIG)),
             AsyncStartSource.DEAL_BODY, ParameterBoundaryMode.RUN,
             List.of(new OpId(APP, 3)),
@@ -846,7 +845,7 @@ public class CanonicalJsonTest {
             case CLOSURE_NEW -> new KindPayload.ClosureNewPayload(new FunctionId(0), SIG,
                 List.of(), new FunctionExecutionBinding.LoweredBody(new FunctionId(0), b0));
             case FUNCTION_ADAPT -> new KindPayload.FunctionAdaptPayload(SIG, SIG,
-                CaptureMode.SHARED_CELL, new AdaptSourceRef.SharedCell(new BindingId(0), 0), null);
+                CaptureMode.VALUE, new AdaptSourceRef.Value(new ValueId(0)), null);
             case ASSIGN -> new KindPayload.AssignPayload(AssignTargetKind.VARIABLE,
                 List.of(o0, o1));
             case DELETE -> new KindPayload.DeletePayload(DeleteTargetKind.TABLE_SLOT,

@@ -450,8 +450,8 @@ public class SemanticIrValidatorTest {
             ops.add(opWith(outerOp, SemanticOpKind.ASYNC_START,
                 new KindPayload.AsyncStartPayload(
                     new KindPayload.CallCallee.Static(new FunctionExecutionBinding.AdapterBinding(
-                        nextOpId(), CaptureMode.SHARED_CELL,
-                        new AdaptSourceRef.SharedCell(new BindingId(1), 0),
+                        nextOpId(), CaptureMode.VALUE,
+                        new AdaptSourceRef.Value(new ValueId(1)),
                         SIG_II_ASYNC, SIG_II)),
                     AsyncStartSource.DEAL_BODY, ParameterBoundaryMode.RUN,
                     List.of(outerParam), INT, null, null, null),
@@ -1335,12 +1335,11 @@ public class SemanticIrValidatorTest {
         bindings.put(new FunctionAllocationIdentity(11),
             new FunctionExecutionBinding.LoweredBody(named, body));
         bindings.put(new FunctionAllocationIdentity(12),
-            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.SHARED_CELL,
-                new AdaptSourceRef.SharedCell(captureA, 2), SIG_II, SIG_II_ASYNC));
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.VALUE,
+                new AdaptSourceRef.Value(new ValueId(12)), SIG_II, SIG_II_ASYNC));
         bindings.put(new FunctionAllocationIdentity(13),
-            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.REEVALUATE_THUNK,
-                new AdaptSourceRef.Thunk(new BlockId(14),
-                    List.of(new BindingGeneration(captureB, 5))), SIG_II, SIG_II_ASYNC));
+            new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.VALUE,
+                new AdaptSourceRef.Value(new ValueId(14)), SIG_II, SIG_II_ASYNC));
         bindings.put(new FunctionAllocationIdentity(14),
             new FunctionExecutionBinding.AdapterBinding(adaptOp, CaptureMode.VALUE,
                 new AdaptSourceRef.Value(new ValueId(9)), SIG_II, SIG_II_ASYNC));
@@ -1622,9 +1621,7 @@ public class SemanticIrValidatorTest {
                 new Object[] {"ops", 0, "result"},
                 new Object[] {"functionBindings", 1, "binding", "sourceRef"},
                 new Object[] {"functionBindings", 2, "binding", "sourceRef"},
-                new Object[] {"functionBindings", 3, "binding", "sourceRef"},
-                new Object[] {"functionBindings", 2, "binding", "sourceRef",
-                    "capturedBindings", 0, "binding"})) {
+                new Object[] {"functionBindings", 3, "binding", "sourceRef"})) {
             expectDecodeFailure(extraMemberAt(complete, "extra", path),
                 "unknown semantic-id/sourceRef member at " + List.of(path));
         }
@@ -1801,10 +1798,10 @@ public class SemanticIrValidatorTest {
     }
 
     private static void testRegistrySourceRefDiscriminator(String complete) {
-        String futureCell = complete.replace("\"type\":\"sharedCell\"",
-            "\"type\":\"futureCell\"");
+        String futureCell = withEntryAt(complete, "type", CanonicalJson.str("futureCell"),
+            "functionBindings", 1, "binding", "sourceRef");
         check(!futureCell.equals(complete),
-            "the complete fixture carries the sharedCell registry sourceRef");
+            "the complete fixture carries a value registry sourceRef");
 
         RawUnit decoded = ContractSnapshotCanonicalizer.parseUnit(parseObj(futureCell));
         RawSourceRef carried = decoded.bindings().get(1).sourceRef();
@@ -1813,14 +1810,13 @@ public class SemanticIrValidatorTest {
         if (carried instanceof RawSourceRef.Unknown unknown) {
             checkEq("futureCell", unknown.type(),
                 "the unknown discriminator is the carried type");
-            checkEq(3, unknown.json().entries().size(),
+            checkEq(2, unknown.json().entries().size(),
                 "decode preserves the unknown sourceRef members");
         }
         String reserialized = CanonicalJson.serializeText(
             ContractSnapshotCanonicalizer.toJson(decoded));
         check(reserialized.contains("\"type\":\"futureCell\"")
-                && reserialized.contains("\"generation\":2")
-                && reserialized.contains("\"binding\":{\"id\":1,\"type\":\"binding\"}"),
+                && reserialized.contains("\"value\":{\"id\":12,\"type\":\"value\"}"),
             "the retained unknown sourceRef re-serializes its discriminator and members");
         checkEq(futureCell, reserialized,
             "the doctored unit re-serializes byte-identically (the unknown discriminator "
@@ -1828,6 +1824,21 @@ public class SemanticIrValidatorTest {
 
         assertE6005(SemanticIrValidator.validateText(futureCell, FACTS),
             "R-ENUM", "futureCell", "AdaptSourceRef");
+        for (String retired : List.of("sharedCell", "thunk")) {
+            String registry = withEntryAt(complete, "type", CanonicalJson.str(retired),
+                "functionBindings", 1, "binding", "sourceRef");
+            assertE6005(SemanticIrValidator.validateText(registry, FACTS),
+                "R-ENUM", retired, "AdaptSourceRef");
+            RawUnit raw = ContractSnapshotCanonicalizer.parseUnit(parseObj(registry));
+            check(raw.bindings().get(1).sourceRef() instanceof RawSourceRef.Unknown,
+                "retired source is not a recognized transport family: " + retired);
+        }
+        for (String retired : List.of("SHARED_CELL", "REEVALUATE_THUNK")) {
+            String registry = withEntryAt(complete, "captureMode", CanonicalJson.str(retired),
+                "functionBindings", 1, "binding");
+            assertE6005(SemanticIrValidator.validateText(registry, FACTS),
+                "R-ENUM", retired, "CaptureMode");
+        }
     }
 
     /**

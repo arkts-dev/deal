@@ -6,7 +6,7 @@ package deal.semantic.ir;
  *
  * <p>Immutable value record over a non-negative numeric id. Blocks are the
  * body units of the structured IR ({@code LoweredBody},
- * {@code BRANCH}/{@code LOOP} child blocks, adapter thunks, try/catch
+ * {@code BRANCH}/{@code LOOP} child blocks, try/catch
  * blocks); block IDs are behavior-referenced semantic IDs and therefore
  * live inside operation-contract snapshot digests.</p>
  *

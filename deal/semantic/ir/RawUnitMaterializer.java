@@ -254,10 +254,6 @@ public final class RawUnitMaterializer {
             throw new Defect(where, "the adapter registration carries no sourceRef");
         }
         return switch (sourceRef) {
-            case RawSourceRef.SharedCell shared ->
-                new AdaptSourceRef.SharedCell(shared.binding(), shared.generation());
-            case RawSourceRef.Thunk thunk ->
-                new AdaptSourceRef.Thunk(thunk.blockId(), thunk.capturedBindings());
             case RawSourceRef.Value value -> new AdaptSourceRef.Value(value.value());
             case RawSourceRef.Unknown unknown -> throw new Defect(where,
                 "unknown adapter sourceRef discriminator \"" + unknown.type() + "\"");
@@ -772,10 +768,6 @@ public final class RawUnitMaterializer {
         CanonicalJson.Obj obj = objectAt(payload, key, where);
         String type = stringAt(obj, "type", where + " " + key);
         return switch (type) {
-            case "sharedCell" -> new AdaptSourceRef.SharedCell(
-                bindingIdAt(obj, "binding", where), generation(obj, "generation", where));
-            case "thunk" -> new AdaptSourceRef.Thunk(blockIdAt(obj, "blockId", where),
-                bindingGenerations(obj, "capturedBindings", where));
             case "value" -> new AdaptSourceRef.Value(valueIdAt(obj, "value", where));
             default -> throw new Defect(where, "unknown adapter sourceRef discriminator \""
                 + type + "\"");

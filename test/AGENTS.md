@@ -6,7 +6,7 @@ Extend distinct regressions, not policy inventories. Reuse content-keyed prepara
 - Preserve binary64/signed-zero/NaN/infinity behavior. Compare successful JSON by decoded structure/value, not textual replacement; keep declaration-order assertions separate.
 - Preserve failure ownership: checked assertions exercise E8001; later parameter/element negatives require valid admission followed by closure invalidation or fixture-only hostile mutation. Never add production mutation hooks. Mutations retain identity, descriptors, body and unrelated slots.
 - Distinguish null, undefined and presence; unknown reads/catches require extraction. Keep explicit-null results separate from void completion and assert raw JVM resultless bodies return UNDEFINED.
-- Validate typed/raw/text mutations independently, with coherent fresh digests and provider facts. Preserve assignment RHS identity versus storage adapters and distinct capture modes.
+- Validate typed/raw/text mutations independently, with coherent fresh digests and provider facts. Preserve assignment RHS/storage identity, once-only adapter evaluation and genuine closure bindings.
 - Execute generated and deployed runtime consumers separately, including Lua load orders, host/async crossings, class cycles and generic versus generated JSON rules. Method-size tests must compile and execute recursion, captures and transfers, not inspect text alone.
 
 Keep fixture-specific contracts in executable tests and the nearest policy.

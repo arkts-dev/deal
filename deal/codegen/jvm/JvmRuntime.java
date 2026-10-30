@@ -437,33 +437,23 @@ public final class JvmRuntime {
     }
 
     /**
-     * A {@code FUNCTION_ADAPT} adapter value (D15): the closed capture
-     * mode state ({@code VALUE}: the retained source identity;
-     * {@code SHARED_CELL}: the generation cell re-read per invocation;
-     * {@code REEVALUATE_THUNK}: the thunk re-executor), the source
+     * A {@code FUNCTION_ADAPT} adapter value: the retained source value, the source
      * arity/spec, the target signature carried for boundary checks, and
      * the target signature's parameter cells the invocation protocol
      * admits (the ignored trailing parameters of an arity extension
      * included — docs/spec-v1.3.md Arity extension adapter).
      */
     public static final class AdapterValue extends FunctionValue {
-        /** 0 = VALUE, 1 = SHARED_CELL, 2 = REEVALUATE_THUNK. */
-        public final int mode;
         public final Object value;
-        public final Object[] cell;
-        public final Fn thunk;
         public final int arity;
         public final String sourceSpec;
         public final TargetCell[] targetCells;
 
-        public AdapterValue(Fn fn, String signature, String spec, int mode, Object value,
-                            Object[] cell, Fn thunk, int arity, String sourceSpec,
+        public AdapterValue(Fn fn, String signature, String spec, Object value,
+                            int arity, String sourceSpec,
                             TargetCell[] targetCells) {
             super(fn, signature, spec, null);
-            this.mode = mode;
             this.value = value;
-            this.cell = cell;
-            this.thunk = thunk;
             this.arity = arity;
             this.sourceSpec = sourceSpec;
             this.targetCells = targetCells == null ? new TargetCell[0] : targetCells;
@@ -1632,8 +1622,7 @@ public final class JvmRuntime {
      * The D15 adapter invocation: the target signature's parameter cells
      * (the ignored trailing parameters of an arity extension included —
      * docs/spec-v1.3.md Arity extension adapter), the source resolution
-     * per the closed capture mode (VALUE retains, SHARED_CELL re-reads
-     * the generation cell, REEVALUATE_THUNK re-executes the thunk), the
+     * from its retained value, the
      * source-signature check, then the source invocation with the
      * leading M arguments only. A DEAL-body source owns its own stack
      * frame (the carrier wrapper pushes and pops it); the identical
@@ -2190,20 +2179,9 @@ public final class JvmRuntime {
         err.println("F|" + kind + "|-|" + esc(text));
     }
 
-    /**
-     * The adapter's source resolution per the closed capture mode (the
-     * async adapter task's D15 protocol half): VALUE retains, SHARED_CELL
-     * re-reads the generation cell, REEVALUATE_THUNK re-executes the
-     * thunk.
-     */
+    /** Returns the function value retained when the adapter was created. */
     public static Object adapterSource(AdapterValue adapter) {
-        if (adapter.mode == 0) {
-            return adapter.value;
-        }
-        if (adapter.mode == 1) {
-            return adapter.cell[0];
-        }
-        return adapter.thunk.invoke(new Object[0]);
+        return adapter.value;
     }
 
     // =========================================================================

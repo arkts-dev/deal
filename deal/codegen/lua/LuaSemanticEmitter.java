@@ -1149,25 +1149,6 @@ public final class LuaSemanticEmitter {
                 }
             }
 
-            // The REEVALUATE_THUNK re-executors: one detached thunk
-            // function per FUNCTION_ADAPT op with a thunk source. The
-            // thunk ops are members only of the detached thunk block (the
-            // lowerer's single-membership rule), so the module walk never
-            // executes them; each invocation re-executes them here.
-            for (LoweredModuleUnit moduleUnit : units.values()) {
-                for (SemanticOp op : moduleUnit.ops()) {
-                    if (op.kind() != SemanticOpKind.FUNCTION_ADAPT) {
-                        continue;
-                    }
-                    KindPayload.FunctionAdaptPayload payload =
-                        (KindPayload.FunctionAdaptPayload) op.payload();
-                    if (payload.source() instanceof AdaptSourceRef.Thunk thunk) {
-                        beginSourceMappedGroup(op, "");
-                        emitThunkFunction(op, thunk.blockId());
-                    }
-                }
-            }
-
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (SemanticOp op : moduleUnit.ops()) {
 
@@ -1422,47 +1403,6 @@ public final class LuaSemanticEmitter {
         }
 
 
-
-        /**
-         * Emits one detached thunk re-executor for a FUNCTION_ADAPT op
-         * with a REEVALUATE_THUNK source: the thunk block's ops run in
-         * order (payload-owned children included through their owner
-         * arms) and the function returns the final producing op's result
-         * — the source value the invocation consumes.
-         */
-        private void emitThunkFunction(SemanticOp adaptOp, BlockId block) {
-            StructuredBodyTable ownerTable = blockTableOf.get(block);
-            List<OpId> ops = ownerTable == null ? null : ownerTable.blockOps().get(block);
-            if (ops == null) {
-                throw rejectedOp(adaptOp, "the adapter thunk block " + block
-                    + " has no membership row (producer defect)");
-            }
-            out.append(thunkFn(adaptOp.opId())).append(" = function()\n");
-            emitBlockOps(block);
-            ValueId produced = null;
-            for (int i = ops.size() - 1; i >= 0; i--) {
-                OpId opId = ops.get(i);
-                if (ownedChildren.contains(opId)) {
-                    continue;
-                }
-                SemanticOp op = opsById.get(opId);
-                if (op != null && op.result() instanceof ValueId valueId) {
-                    produced = valueId;
-                }
-                break;
-            }
-            if (produced == null) {
-                throw rejectedOp(adaptOp, "the adapter thunk block " + block
-                    + " has no final producing value (producer defect)");
-            }
-            out.append("  return ").append(slot(produced)).append("\n");
-            out.append("end\n");
-        }
-
-        /** One thunk re-executor field of an adapter op. */
-        private String thunkFn(OpId adaptOp) {
-            return FACTORY_TABLE + ".T" + adaptOp.id();
-        }
 
         /**
          * The fixed preamble of every emitted body function: the argument
@@ -2761,12 +2701,7 @@ public final class LuaSemanticEmitter {
 
         /**
          * FUNCTION_ADAPT (E6, D15 creation): a wrapper function value
-         * carrying the closed capture mode — VALUE retains the
-         * creation-time source identity; SHARED_CELL records the
-         * generation cell re-read per invocation (live reassignment
-         * observed); REEVALUATE_THUNK records the detached thunk
-         * re-executor. Creation evaluates no thunk and reads no binding
-         * (VALUE's single operand already completed); the wrapper's
+         * retaining the evaluated source value at creation; the wrapper's
          * invocation (the {@code __fn} protocol) runs the D15 sequence at
          * every call site with the invoking op's origin.
          */
@@ -2784,8 +2719,6 @@ public final class LuaSemanticEmitter {
             out.append(target).append(" = {[__dealCarrierKeys.mode] = ");
             switch (payload.mode()) {
                 case VALUE -> out.append("0");
-                case SHARED_CELL -> out.append("1");
-                case REEVALUATE_THUNK -> out.append("2");
             }
             out.append(", __m = ").append(payload.sourceSignature().paramTypes().size())
                 .append(", __csrc = ")
@@ -2800,11 +2733,6 @@ public final class LuaSemanticEmitter {
             switch (payload.source()) {
                 case AdaptSourceRef.Value ignored ->
                     out.append(", __value = ").append(valueExpr);
-                case AdaptSourceRef.SharedCell cell ->
-                    out.append(", __cell = ")
-                        .append(cellSource(cell.binding(), cell.generation()));
-                case AdaptSourceRef.Thunk thunk ->
-                    out.append(", __thunk = ").append(thunkFn(op.opId()));
             }
             out.append("}\n");
             out.append(target).append("[__dealCarrierKeys.fn] = __adaptInvoke\n");
@@ -2846,9 +2774,7 @@ public final class LuaSemanticEmitter {
         /**
          * The FUNCTION_ADAPT START (E6): the VALUE operand's atom is the
          * operand's own carrier expression ({@code valueExpr}) exactly when
-         * the op records that operand (the oracle atomizes its operand list);
-         * the SHARED_CELL and REEVALUATE_THUNK modes carry zero operand atoms
-         * (their operands are empty by construction).
+         * the op records that operand (the oracle atomizes its operand list).
          */
         private void emitAdaptStart(SemanticOp op,
                 KindPayload.FunctionAdaptPayload payload, String valueExpr) {
@@ -11352,7 +11278,7 @@ end
 -- carrier's own tag selects exactly one closed resolution class — never the
 -- checked descriptor, the callee spelling, or an argument value. A DEAL
 -- closure or compiled export read carries its function id (__fid); an adapter
--- carries its capture mode (__mode); a loaded host surface entry carries the
+-- carries its adapter marker (__mode); a loaded host surface entry carries the
 -- host ABI wrapper kind (__kind == "function"); the cataloged stdlib callable
 -- carries its closed catalog row tag (__sid) and resolves the HOST class,
 -- whose catalog row invoker the call site runs; a seeded intrinsic
@@ -11424,18 +11350,14 @@ local function __fncheck(v, expected, origin)
   return error(__arm("FUNCTION_SIGNATURE_MISMATCH",
     {expected = expected, actual = carried}, origin, expected, carried), 0)
 end
--- The adapter's source resolution per the closed capture mode
--- (D15 creation half): 0 VALUE, 1 SHARED_CELL, 2 REEVALUATE_THUNK.
+-- The function value evaluated at adapter creation.
 local function __adaptSource(w)
-  if w[__dealCarrierKeys.mode] == 0 then return w.__value
-  elseif w[__dealCarrierKeys.mode] == 1 then return w.__cell[1]
-  else return w.__thunk() end
+  return w.__value
 end
 -- The D15 adapter invocation protocol: the target signature's
 -- parameter cells (the ignored trailing parameters of an arity
 -- extension included — docs/spec-v1.3.md Arity extension adapter), the
--- source resolution per the closed capture mode (0 VALUE, 1
--- SHARED_CELL, 2 REEVALUATE_THUNK), the source-signature check, then
+-- retained source value, the source-signature check, then
 -- the source invocation with the leading M arguments only. A DEAL-body
 -- source owns its own frame (its carrier wrapper pushes and pops it);
 -- the identical completion error propagates unchanged.

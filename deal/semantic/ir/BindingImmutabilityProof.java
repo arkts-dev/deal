@@ -3,11 +3,8 @@ package deal.semantic.ir;
 import java.util.Objects;
 
 /**
- * A binding-immutability proof (parent D15): the recorded proof that a
- * binding is never reassigned within its enclosing scope, which makes
- * {@code FUNCTION_ADAPT(CaptureMode.VALUE)} admissible for that binding
- * source. Without the proof, a binding source must be
- * {@code SHARED_CELL} — the closed D15 lowering shape map.
+ * Optional evidence that a binding is never reassigned within its enclosing
+ * scope. Adapter value capture does not require this proof.
  *
  */
 public record BindingImmutabilityProof(BindingId binding, long generation) {

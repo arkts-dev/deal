@@ -258,11 +258,6 @@ public class DynamicResolutionIrTest {
                     blocks.add(p.bodyBlock());
                 }
             }
-            case KindPayload.FunctionAdaptPayload p -> {
-                if (p.source() instanceof AdaptSourceRef.Thunk thunk) {
-                    blocks.add(thunk.blockId());
-                }
-            }
             case KindPayload.ModuleInitPayload p -> blocks.add(p.initBlock());
             case KindPayload.BranchPayload p -> {
                 blocks.add(p.selectedBlock());
@@ -450,8 +445,8 @@ public class DynamicResolutionIrTest {
                 MOD, "f", SIG, ExternalExecutionOwner.SHARED_BODY)) == DynamicResolutionKind.SHARED_BODY,
             "a SHARED_BODY external resolves SHARED_BODY");
         check(throwsIllegalArgument(() -> DynamicReturnBoundaryProtocol.kindOf(
-                new FunctionExecutionBinding.AdapterBinding(nextOpId(), CaptureMode.SHARED_CELL,
-                    new AdaptSourceRef.SharedCell(new BindingId(3), 0), SIG, SIG))),
+                new FunctionExecutionBinding.AdapterBinding(nextOpId(), CaptureMode.VALUE,
+                    new AdaptSourceRef.Value(new ValueId(3)), SIG, SIG))),
             "an AdapterBinding fails closed (its class derives from the D15-resolved source "
                 + "binding)");
         check(throwsIllegalArgument(() -> DynamicReturnBoundaryProtocol.kindOf(

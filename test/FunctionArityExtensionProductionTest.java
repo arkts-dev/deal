@@ -146,8 +146,7 @@ public final class FunctionArityExtensionProductionTest {
     /**
      * The async adapter-valued-source corpus: an async function value whose
      * declared type is itself an adapter's adapts at a wider awaited call
-     * position whose source is an assigned binding's cell (the
-     * {@code SHARED_CELL} adapter chain), so the invocation descends each
+     * position retaining the assigned binding's evaluated value, so invocation descends each
      * level's published source with that level's leading-M projection and the
      * async marker and ignored target parameters are preserved.
      */
@@ -1739,7 +1738,7 @@ public final class FunctionArityExtensionProductionTest {
                 deal.test.SemanticDifferentialHarness.runCallback(unit,
                     unit.bodyTable(), functionValue, List.of(),
                     deal.test.SemanticDifferentialHarness.Expectation.success(
-                        "the callback return position", List.of(), "ref:1"),
+                        "the callback return position", List.of(), "ref:4"),
                     workspace);
             checkEq(3, verdict.runs().size(), "callback return: the emitted "
                 + "artifacts produce the three consumers: " + verdict.failures());
@@ -1749,7 +1748,7 @@ public final class FunctionArityExtensionProductionTest {
                     : verdict.runs()) {
                 check(run.terminal() instanceof
                         deal.semantic.SemanticRuntimeModel.Terminal.Success success
-                        && "ref:1".equals(success.resultAtom()),
+                        && "ref:4".equals(success.resultAtom()),
                     run.consumer() + ": the callback return publishes the one "
                         + "adapted function value: " + run.terminal());
             }
@@ -1792,14 +1791,33 @@ public final class FunctionArityExtensionProductionTest {
      * event-for-event trace and the same success terminal. The oracle
      * descends each nested adapter level's own published source with its own
      * leading-M projection, admits the invoked value's target parameters and
-     * reads the cell each adapter captured at creation. The fixture makes
-     * that cell escape its creating invocation: a parameter cell assigned
-     * after the adaptation (the {@code SHARED_CELL} source mode) is read by
-     * the returned adapter and by a static adapter callee inside the escaped
+     * uses the value each adapter retained at creation. The fixture makes
+     * that value escape its creating invocation: later parameter assignment
+     * cannot redirect the returned adapter or a static adapter callee inside the escaped
      * closure, so the case covers the creation-identity resolution a static
      * callee needs — not only the value-carried arms that pass a loaded
      * adapter value.
      */
+    private static void testValueCaptureOracleParity(Path root) throws Exception {
+        Project project = writeProject(root, "arity-extension-value-capture");
+        var lowering = lowerCorpusProject(project);
+        check(lowering != null && !lowering.hasErrors() && lowering.project() != null,
+            "value-capture regression lowers with complete facts");
+        if (lowering == null || lowering.hasErrors() || lowering.project() == null) return;
+        Path workspace = Files.createTempDirectory("adapter-value-parity");
+        try {
+            var verdict = SemanticDifferentialHarness.runProject(lowering.project(),
+                lowering.tables(), lowering.registries(),
+                SemanticDifferentialHarness.Expectation.success("retained source values",
+                    List.of("factory", "after", "OK"), "null"), workspace);
+            checkEq(3, verdict.runs().size(), "value capture executes Oracle/Lua/JVM");
+            check(verdict.pass(), "independent creation-time transcript and snapshots: "
+                + verdict.failures() + "\n" + verdict.report());
+        } finally {
+            deleteRecursively(workspace);
+        }
+    }
+
     private static void testNestedAdapterOracleParity(Path root) throws Exception {
         System.out.println("-- the adapter-valued-source corpus on the "
             + "oracle-driven parity case --");
@@ -1813,14 +1831,14 @@ public final class FunctionArityExtensionProductionTest {
         if (lowering == null || lowering.hasErrors() || lowering.project() == null) {
             return;
         }
-        int sharedCellAdapters = 0;
+        int valueAdapters = 0;
         int staticAdapterCallees = 0;
         for (LoweredModuleUnit unit : lowering.project().modules().values()) {
             for (SemanticOp op : unit.ops()) {
                 if (op.payload() instanceof KindPayload.FunctionAdaptPayload adapt
-                        && adapt.mode() == CaptureMode.SHARED_CELL
-                        && adapt.source() instanceof AdaptSourceRef.SharedCell) {
-                    sharedCellAdapters++;
+                        && adapt.mode() == CaptureMode.VALUE
+                        && adapt.source() instanceof AdaptSourceRef.Value) {
+                    valueAdapters++;
                 }
                 if (op.kind() == SemanticOpKind.CALL
                         && op.payload() instanceof KindPayload.CallPayload call
@@ -1832,9 +1850,9 @@ public final class FunctionArityExtensionProductionTest {
                 }
             }
         }
-        check(sharedCellAdapters >= 1, "nested adapter: the corpus carries a "
-            + "SHARED_CELL adapter over the assigned parameter cell (the "
-            + "escaping capture); got " + sharedCellAdapters);
+        check(valueAdapters >= 1, "nested adapter: the corpus carries a "
+            + "VALUE adapter retaining the assigned parameter value (the "
+            + "escaping capture); got " + valueAdapters);
         check(staticAdapterCallees >= 1, "nested adapter: the corpus carries a "
             + "static adapter callee inside the escaped closure (the "
             + "creation-identity resolution); got " + staticAdapterCallees);
@@ -1889,14 +1907,14 @@ public final class FunctionArityExtensionProductionTest {
                 || lowering.project() == null) {
             return;
         }
-        int sharedCellAdapters = 0;
+        int valueAdapters = 0;
         int dynamicNestedStarts = 0;
         for (LoweredModuleUnit unit : lowering.project().modules().values()) {
             for (SemanticOp op : unit.ops()) {
                 if (op.payload() instanceof KindPayload.FunctionAdaptPayload adapt
-                        && adapt.mode() == CaptureMode.SHARED_CELL
-                        && adapt.source() instanceof AdaptSourceRef.SharedCell) {
-                    sharedCellAdapters++;
+                        && adapt.mode() == CaptureMode.VALUE
+                        && adapt.source() instanceof AdaptSourceRef.Value) {
+                    valueAdapters++;
                 }
                 if (op.kind() == SemanticOpKind.ASYNC_START
                         && op.payload()
@@ -1909,9 +1927,9 @@ public final class FunctionArityExtensionProductionTest {
                 }
             }
         }
-        check(sharedCellAdapters >= 1, "async adapter source: the corpus "
-            + "carries a SHARED_CELL adapter over the assigned binding cell; "
-            + "got " + sharedCellAdapters);
+        check(valueAdapters >= 1, "async adapter source: the corpus "
+            + "carries a VALUE adapter retaining the assigned binding value; "
+            + "got " + valueAdapters);
         check(dynamicNestedStarts >= 1, "async adapter source: the wider "
             + "awaited position records the runtime-resolved nested source "
             + "start; got " + dynamicNestedStarts);
@@ -2219,6 +2237,7 @@ public final class FunctionArityExtensionProductionTest {
             testJsHostTargetParameter(root.resolve("js-host-target-parameter"));
             testHostParameterEmissionFact(root.resolve("host-parameter-facts"));
             testCallbackReturnPosition(root.resolve("callback-return"));
+            testValueCaptureOracleParity(root.resolve("value-capture-parity"));
             testNestedAdapterOracleParity(root.resolve("nested-adapter-parity"));
             testAssignmentSourceOracleParity(
                 root.resolve("assignment-source-parity"));

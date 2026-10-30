@@ -277,17 +277,10 @@ public final class LlvmProjectEmissionTest {
         // The boxed apply thunk and the adapter thunk are synthesized
         // dispatch shims, not DEAL activations: each pops its own frame label
         // before it dispatches the body or source it calls, so the callee
-        // contributes exactly one frame to an Error snapshot, and the
-        // REEVALUATE_THUNK re-executor contributes no label at all. Every
+        // contributes exactly one frame to an Error snapshot. Every
         // other activation pops on each of its exit paths.
         for (String name : definitions) {
-            if (name.startsWith("R")) {
-                String shim = functionText(module, name);
-                check(!shim.contains("@deal_call_frame_push")
-                        && !shim.contains("@deal_call_frame_pop()"),
-                    "the re-executor " + name + " contributes no frame label");
-                continue;
-            }
+            check(!name.startsWith("R"), "no adapter source re-executor: " + name);
             if (!(name.startsWith("F") || name.startsWith("deal_module_init_")
                     || name.startsWith("T") || name.startsWith("A")
                     || name.startsWith("S"))) {

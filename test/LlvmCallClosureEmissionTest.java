@@ -56,10 +56,8 @@ import java.util.regex.Pattern;
  *       instead of faulting ({@code llvm-native-runtime-value-model} R4);</li>
  *   <li>an arity-extension adapter is one closure over the recorded source
  *       cell whose thunk validates the source signature and re-invokes it with
- *       the target's leading parameters, and a {@code REEVALUATE_THUNK}
- *       source adds a re-executor that runs the recorded thunk block on every
- *       invocation — nothing at creation — so repeated effects repeat and a
- *       closure the block produces has fresh identity per invocation;</li>
+ *       the target's leading parameters; source expressions evaluate once at
+ *       creation, and genuine closure bindings remain live;</li>
  *   <li>every member of a recursive group is a cell whose declared descriptor
  *       is the descriptor of the function the group publishes into it, so the
  *       group initializes before any call and each member is callable;</li>
@@ -81,8 +79,8 @@ import java.util.regex.Pattern;
  *       emit, so a project whose only nullish or adapter fact is a thunk body
  *       still publishes a module {@code llvm-as} accepts (C9);</li>
  *   <li>every synthesized dispatch shim contributes no Error frame of its
- *       own: the adapter thunk pops its label before it re-executes or applies
- *       the source, the re-executor pushes none, and an adapted call reports
+ *       own: the adapter thunk pops its label before it applies the retained
+ *       source, and an adapted call reports
  *       exactly the frames of the DEAL activations that raised and dispatched
  *       it — with the caller's frame and root depth restored after every
  *       invocation, a failed one included;</li>
@@ -346,7 +344,7 @@ public final class LlvmCallClosureEmissionTest {
             testVoidResults(scratch);
             testAsyncLowering(scratch);
             testRecursiveGroups(scratch);
-            testReevaluateThunkAdapters(scratch);
+            testRetainedValueAdapters(scratch);
             testCheckedAssertions(scratch);
             testSyntheticBodyDeclarations(scratch);
             testAdapterFrames(scratch);
@@ -1192,12 +1190,12 @@ public final class LlvmCallClosureEmissionTest {
     }
 
     // =========================================================================
-    // 9. REEVALUATE_THUNK adapter sources
+    // 9. Once-evaluated adapter sources
     // =========================================================================
 
     /**
      * An imported member read as an arity-extension source: the recorded
-     * {@code AdaptSourceRef.Thunk} re-executes the member read on every
+     * {@code AdaptSourceRef.Value} retains the member read's value for every
      * invocation and hands the produced function value to the source-signature
      * check (C5, {@code AdaptSourceRef}).
      */
@@ -1218,11 +1216,10 @@ public final class LlvmCallClosureEmissionTest {
         """;
 
     /**
-     * A call-result source: creation evaluates no thunk, and each invocation
-     * re-executes it, so a side effect inside the source expression repeats
-     * once per invocation and never at the adapter's own creation.
+     * A call-result source executes once at creation; repeated adapter calls
+     * invoke the retained function without repeating factory effects.
      */
-    private static final String ADAPTER_THUNK_SOURCE = """
+    private static final String ADAPTER_FACTORY_SOURCE = """
         function ident(n: number): number { return n; }
         export function main(): null {
           let calls: number = 0;
@@ -1232,7 +1229,7 @@ public final class LlvmCallClosureEmissionTest {
           let before: number = calls;
           let first: number = fromCall(1, 2);
           let second: number = fromCall(3, 4);
-          if (before === 0 && first === 1 && second === 3 && calls === 2) {
+          if (before === 1 && first === 1 && second === 3 && calls === 1) {
             let observed: string = (calls as unknown) as string;
           }
           return null;
@@ -1240,11 +1237,10 @@ public final class LlvmCallClosureEmissionTest {
         """;
 
     /**
-     * A thunk source whose block reads an activation-local binding: the
-     * generation-pinned capture arrives in the adapter's own environment and is
-     * rooted across the re-execution's allocations (C5, M4).
+     * The retained closure captures its factory parameter and remains rooted
+     * across subsequent adapter calls and allocations.
      */
-    private static final String ADAPTER_THUNK_CAPTURE_SOURCE = """
+    private static final String ADAPTER_FACTORY_CAPTURE_SOURCE = """
         function maker(k: number): (n: number) => number {
           function add(n: number): number { return n + k; }
           return add;
@@ -1262,12 +1258,10 @@ public final class LlvmCallClosureEmissionTest {
         """;
 
     /**
-     * A thunk source whose produced closure has fresh identity per
-     * invocation: the source expression constructs a new counter every time it
-     * runs, so two invocations of the adapter observe `1` and `1` with a
-     * re-executed thunk and `1` and `2` with one materialized source value.
+     * Repeated calls share the retained counter closure: they observe 1 and 2,
+     * not two fresh closures each returning 1.
      */
-    private static final String ADAPTER_THUNK_IDENTITY_SOURCE = """
+    private static final String ADAPTER_COUNTER_SOURCE = """
         function maker(): () => number {
           let n: number = 0;
           return function(): number { n = n + 1; return n; };
@@ -1276,17 +1270,16 @@ public final class LlvmCallClosureEmissionTest {
           let h: (a: number) => number = maker();
           let first: number = h(0);
           let second: number = h(0);
-          if (first === 1 && second === 1) {
+          if (first === 1 && second === 2) {
             let observed: string = (first as unknown) as string;
           }
           return null;
         }
         """;
 
-    private static void testReevaluateThunkAdapters(Path scratch)
+    private static void testRetainedValueAdapters(Path scratch)
             throws Exception {
-        System.out.println("-- REEVALUATE_THUNK adapter sources re-execute the"
-            + " thunk block --");
+        System.out.println("-- adapter sources evaluate once and retain their values --");
         Path root = scratch.resolve("adapter-import");
         writeProject(root, Map.of("src/main.deal", ADAPTER_IMPORT_SOURCE,
             "src/lib.deal", ADAPTER_IMPORT_LIB_SOURCE));
@@ -1297,48 +1290,86 @@ public final class LlvmCallClosureEmissionTest {
         Path published = root.resolve("build/llvm");
         String module = Files.readString(published.resolve("main.ll"),
             StandardCharsets.UTF_8);
-        check(module.contains("define internal %struct.deal_outcome @R"),
-            "the adapter's re-executor is emitted");
-        check(module.contains("call %struct.deal_outcome @R"),
-            "the boxed apply thunk invokes the re-executor");
-        check(module.contains("call void @deal_cell_store_data(i8* %cell,"),
-            "the re-executor publishes the produced function value into the"
-                + " adapter's source cell");
+        check(!module.contains("define internal %struct.deal_outcome @R"),
+            "the adapter emits no source re-executor");
         check(module.contains("call i8* @deal_fn_signature("),
-            "the re-executed source value's signature atom is validated");
+            "the retained source value's signature atom is validated");
         checkEq(0, NativeCompiler.run(List.of("llvm-as",
             published.resolve("main.ll").toString()), scratch).exitCode(),
             "llvm-as accepts the imported member-read adapter module");
         for (int level : new int[] {0, 2}) {
             runProduct(scratch, published, level, "adapter-import");
         }
-        Path thunk = compileProject(scratch, "adapter-thunk",
-            ADAPTER_THUNK_SOURCE);
-        String thunkModule = Files.readString(thunk.resolve("main.ll"),
+        Path factory = compileProject(scratch, "adapter-factory",
+            ADAPTER_FACTORY_SOURCE);
+        String factoryModule = Files.readString(factory.resolve("main.ll"),
             StandardCharsets.UTF_8);
-        check(thunkModule.contains("@R"), "the call-result adapter emits its"
-            + " re-executor");
+        check(!factoryModule.contains("define internal %struct.deal_outcome @R"),
+            "the call-result adapter retains the evaluated function");
         for (int level : new int[] {0, 2}) {
-            runProduct(scratch, thunk, level, "adapter-thunk");
+            runProduct(scratch, factory, level, "adapter-factory");
         }
-        Path capture = compileProject(scratch, "adapter-thunk-capture",
-            ADAPTER_THUNK_CAPTURE_SOURCE);
+        Path capture = compileProject(scratch, "adapter-factory-capture",
+            ADAPTER_FACTORY_CAPTURE_SOURCE);
         String captureModule = Files.readString(capture.resolve("main.ll"),
             StandardCharsets.UTF_8);
         check(captureModule.contains("call i8* @deal_fn_capture("
-            + "%struct.deal_fn* %carrier, i32 1)"),
-            "the adapter closure captures the thunk's local binding cell");
-        check(captureModule.contains("call %struct.deal_outcome @R")
-            && captureModule.contains("(i8* %cell, i8* %captured0)"),
-            "the re-executor receives the captured cell beside its result"
-                + " cell");
+            + "%struct.deal_fn* %carrier, i32 0)"),
+            "the adapter retains its source value cell");
         for (int level : new int[] {0, 2}) {
-            runProduct(scratch, capture, level, "adapter-thunk-capture");
+            runProduct(scratch, capture, level, "adapter-factory-capture");
         }
-        Path identity = compileProject(scratch, "adapter-thunk-identity",
-            ADAPTER_THUNK_IDENTITY_SOURCE);
+        Path identity = compileProject(scratch, "adapter-counter",
+            ADAPTER_COUNTER_SOURCE);
         for (int level : new int[] {0, 2}) {
-            runProduct(scratch, identity, level, "adapter-thunk-identity");
+            runProduct(scratch, identity, level, "adapter-counter");
+        }
+        Path snapshots = compileProject(scratch, "adapter-value-capture", """
+            import * as console from "std/console";
+            class State { calls: number; }
+            function one(): number { return 1; }
+            function two(): number { return 2; }
+            function check(ok: boolean): void {
+                if (!ok) { throw {code: "TEST_FAIL", message: "adapter snapshot"}; }
+            }
+            function make(state: State): () => number {
+                state.calls = state.calls + 1;
+                console.log("factory");
+                return one;
+            }
+            export function main(): null {
+                let source: () => number = one;
+                let saved: (ignored: number) => number = source;
+                source = two;
+                check(saved(0) === 1);
+                function take(value: (ignored: number) => number): number {
+                    source = two;
+                    return value(0);
+                }
+                source = one;
+                check(take(source) === 1);
+                let state: State = {calls: 0};
+                let made: (ignored: number) => number = make(state);
+                console.log("after");
+                check(state.calls === 1);
+                check(made(0) === 1);
+                check(made(0) === 1);
+                check(state.calls === 1);
+                let live: number = 3;
+                let closure: () => number = function(): number { return live; };
+                let adapted: (ignored: number) => number = closure;
+                closure = two;
+                live = 4;
+                check(adapted(0) === 4);
+                console.log("OK");
+                return null;
+            }
+            """);
+        for (int level : new int[] {0, 2}) {
+            var run = runProduct(scratch, snapshots, level, "adapter-value-capture", true);
+            checkEq(0, run.exitCode(), "native adapter snapshot controls: " + run.describe());
+            checkEq("factory\nafter\nOK\n", run.stdout(),
+                "native creation timing, source snapshots and closure control");
         }
     }
 
@@ -1590,12 +1621,10 @@ public final class LlvmCallClosureEmissionTest {
         """;
 
     /**
-     * The same three activations through a `REEVALUATE_THUNK` adapter source:
-     * here the failing activation is the one the re-executed thunk block enters
-     * (`maker`), so the snapshot is `maker`, `use2`, `main` and the re-executor
-     * contributes no frame of its own (C5/C8).
+     * A factory failure occurs during source evaluation at adapter creation:
+     * the snapshot is `maker`, `main`, before `use2` can be invoked.
      */
-    private static final String ADAPTER_THUNK_FRAMES_SOURCE = """
+    private static final String ADAPTER_CREATION_FAILURE_SOURCE = """
         function one(n: number): number { return n; }
         function maker(mixed: unknown): (n: number) => number {
           let value: number = mixed as number;
@@ -1725,17 +1754,16 @@ public final class LlvmCallClosureEmissionTest {
                     + " source activations");
         }
         Path thunk = compileProject(scratch, "adapter-thunk-frames",
-            ADAPTER_THUNK_FRAMES_SOURCE);
+            ADAPTER_CREATION_FAILURE_SOURCE);
         String thunkModule = Files.readString(thunk.resolve("main.ll"),
             StandardCharsets.UTF_8);
         assertShimFrameDiscipline(thunkModule, "the thunk-source adapter");
         for (int level : new int[] {0, 2}) {
-            checkEq(List.of("code=E8001", "message=expected number", "frames=3",
+            checkEq(List.of("code=E8001", "message=expected number", "frames=2",
                     "frame0=" + recordedFrameLabel(thunkModule, "maker"),
-                    "frame1=" + recordedFrameLabel(thunkModule, "use2"),
-                    "frame2=" + recordedFrameLabel(thunkModule, "main")),
+                    "frame1=" + recordedFrameLabel(thunkModule, "main")),
                 projectedFrames(scratch, thunk, level, "adapter-thunk-frames"),
-                "-O" + level + " a re-executed adapter source reports exactly"
+                "-O" + level + " a creation-time source failure reports exactly"
                     + " the activations it entered");
         }
         Path thrown = compileProject(scratch, "adapter-thrown-frames",
@@ -1773,8 +1801,7 @@ public final class LlvmCallClosureEmissionTest {
      * The emitted frame discipline of the synthesized adapter bodies of one
      * module: the adapter thunk pops its own label before it dispatches the
      * source (so the dispatched body's label is the one frame the call
-     * contributes), and the `REEVALUATE_THUNK` re-executor pushes no label at
-     * all while still leaving the root frame on its exit path.
+     * contributes). Source evaluation happens in the creating activation.
      */
     private static void assertShimFrameDiscipline(String module, String name) {
         Matcher thunks = Pattern.compile("@(A\\d+)\\(i8\\* %functionvalue")
@@ -1784,7 +1811,7 @@ public final class LlvmCallClosureEmissionTest {
             String text = functionText(module, thunks.group(1));
             int push = text.indexOf("@deal_call_frame_push");
             int pop = text.indexOf("@deal_call_frame_pop");
-            int dispatch = indexOfPattern(text, "@deal_fn_apply\\(|@R\\d+\\(");
+            int dispatch = indexOfPattern(text, "@deal_fn_apply\\(");
             thunkCount++;
             check(push >= 0 && pop > push, name + " pushes and pops its own"
                 + " frame label: " + thunks.group(1));
@@ -1795,20 +1822,8 @@ public final class LlvmCallClosureEmissionTest {
                     + " frame push and pop: " + thunks.group(1));
         }
         check(thunkCount > 0, name + " emits at least one adapter thunk");
-        Matcher sources = Pattern.compile("@(R\\d+)\\(i8\\* %cell")
-            .matcher(module);
-        while (sources.find()) {
-            String text = functionText(module, sources.group(1));
-            check(!text.contains("@deal_call_frame_push"), name
-                + " pushes no frame label in its re-executor: "
-                + sources.group(1));
-            check(!text.contains("@deal_call_frame_pop"), name
-                + " pops no frame label in its re-executor: "
-                + sources.group(1));
-            check(text.contains("@deal_root_frame_leave"), name
-                + " leaves the root frame in its re-executor: "
-                + sources.group(1));
-        }
+        check(!Pattern.compile("define [^\\n]*@R\\d+\\(").matcher(module).find(),
+            name + " emits no source re-executor");
     }
 
     /**

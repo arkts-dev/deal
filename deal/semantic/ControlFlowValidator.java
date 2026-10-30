@@ -600,12 +600,6 @@ public final class ControlFlowValidator {
                 }
             }
 
-            case FUNCTION_ADAPT -> {
-                AdaptSourceRef source = ((KindPayload.FunctionAdaptPayload) op.payload()).source();
-                if (source instanceof AdaptSourceRef.Thunk thunk) {
-                    blocks.add(thunk.blockId());
-                }
-            }
             case MODULE_INIT ->
                 blocks.add(((KindPayload.ModuleInitPayload) op.payload()).initBlock());
             default -> {

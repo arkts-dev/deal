@@ -252,6 +252,7 @@ public final class SemanticOracle {
                 + "invocation, never an invented one)");
         }
         try {
+            state.runModuleInit(unit);
             Value returned = state.executeCallback(callback, args);
             return state.report(new SemanticRuntimeModel.Terminal.Success(
                 state.atomOf(returned)));
@@ -946,17 +947,6 @@ record NumValue(double value) implements Value {
         final IdentityHashMap<Value, FunctionExecutionBinding> bindingsByValue =
             new IdentityHashMap<>();
 
-        /**
-         * The SHARED_CELL source cell one adapter value captured at its
-         * creation: the emitters' adapters hold the cell object itself (a
-         * Lua cell table, a JVM cell array), so an adapter created over an
-         * invocation's parameter or local cell keeps that cell after the
-         * invocation returns, exactly as the allocation-time capture does. A
-         * cell that is not allocated yet at creation stays unrecorded and
-         * resolves by name at invocation.
-         */
-        final IdentityHashMap<Value, Cell> adapterSourceCells =
-            new IdentityHashMap<>();
         /**
          * The materialized source value one adapter value captured at its
          * creation (the VALUE source mode): the emitters' wrappers resolve
@@ -4414,18 +4404,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 + "' (producer defect)");
         }
 
-        /**
-         * The D15 source load: VALUE retains, SHARED_CELL re-reads, THUNK
-         * re-executes. The adapter's own {@code FUNCTION_ADAPT} op owns the
-         * load: its thunk block's membership row and captured cells belong to
-         * the unit that created the adapter, so a nested level of an adapter
-         * chain resolves its own source in its own unit exactly as the
-         * emitters' per-chunk thunk re-executor does. A SHARED_CELL source
-         * reads the cell the creation site captured when the adapter value
-         * carries one (an invocation's parameter or local cell outlives the
-         * invocation that allocated it), otherwise the cell its
-         * binding/generation names at invocation.
-         */
+        /** Loads the function value retained by this adapter's creation. */
         private Value loadAdapterSource(Value adapterValue,
                                         FunctionExecutionBinding.AdapterBinding adapter) {
             return switch (adapter.sourceRef()) {
@@ -4438,20 +4417,6 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                         ? null : adapterSourceValues.get(adapterValue);
                     yield captured != null ? captured : valueOf(value.value());
                 }
-                case AdaptSourceRef.SharedCell cell -> {
-                    Cell captured = adapterValue == null
-                        ? null : adapterSourceCells.get(adapterValue);
-                    Cell loaded = captured != null ? captured
-                        : cellOf(cell.binding(), cell.generation(), false);
-                    if (loaded == null || !loaded.initialized) {
-                        throw new IllegalStateException("the adapter's SHARED_CELL load "
-                            + "of an uninitialized cell " + cell.binding() + "#"
-                            + cell.generation() + " (producer defect)");
-                    }
-                    yield loaded.value;
-                }
-                case AdaptSourceRef.Thunk thunk ->
-                    runThunkBlock(stateOf(adapter.adaptOpId()), thunk);
             };
         }
 
@@ -4466,31 +4431,6 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 case BoundaryOutcome.Fail fail -> throw DealFailure.of(fail.failure(),
                     op.origin(), List.copyOf(frames));
             }
-        }
-
-        /** The REEVALUATE_THUNK source re-execution (side effects repeat per invoke). */
-        private Value runThunkBlock(UnitState state, AdaptSourceRef.Thunk thunk) {
-            List<OpId> ops = state.table.blockOps().get(thunk.blockId());
-            if (ops == null) {
-                throw new IllegalStateException("the adapter thunk block "
-                    + thunk.blockId() + " has no membership row (producer defect)");
-            }
-            Value produced = null;
-            for (OpId opId : ops) {
-                if (state.ownedChildren.contains(opId)) {
-                    continue;
-                }
-                SemanticOp thunkOp = state.opsById.get(opId);
-                if (thunkOp == null) {
-                    throw new IllegalStateException("op " + opId
-                        + " is not a member of the validated unit");
-                }
-                execute(thunkOp);
-                if (thunkOp.result() instanceof ValueId valueId) {
-                    produced = valueOf(valueId);
-                }
-            }
-            return produced;
         }
 
         /** One host request effect with its ordered terminal. */
@@ -4741,13 +4681,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
 
         /**
          * FUNCTION_ADAPT creation (D15): SUCCESS publishes a fresh
-         * adapter identity of the target signature; creation evaluates no
-         * thunk and reads no binding (VALUE's single operand already
-         * completed). A SHARED_CELL source records the cell object the
-         * creation site resolves, the emitters' allocation-time capture: the
-         * adapter keeps reading that cell per invocation, so an adapter over
-         * an invocation's parameter or local cell keeps it after the
-         * invocation returns. A VALUE source records the materialized value
+         * adapter identity of the target signature. It records the materialized value
          * the creation site already published, the emitters' wrapper holding
          * its resolved source from creation: an adapter over an invocation's
          * own expression result (an assignment expression's produced value,
@@ -4761,12 +4695,7 @@ private static IllegalStateException dynamicFunctionValueDefect(
             FunctionExecutionBinding binding = resolveBindingOf((ValueId) op.result());
             bindingsByValue.put(adapter, binding);
             adapterValuesByOp.put(op.opId(), adapter);
-            if (payload.source() instanceof AdaptSourceRef.SharedCell cell) {
-                Cell captured = cellOf(cell.binding(), cell.generation(), false);
-                if (captured != null) {
-                    adapterSourceCells.put(adapter, captured);
-                }
-            } else if (payload.source() instanceof AdaptSourceRef.Value source) {
+            if (payload.source() instanceof AdaptSourceRef.Value source) {
                 Value captured = valueOf(source.value());
                 if (captured != null) {
                     adapterSourceValues.put(adapter, captured);

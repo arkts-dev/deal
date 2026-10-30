@@ -747,6 +747,8 @@ public final class SemanticDifferentialHarness {
             Path driver = workspace.resolve("lua-cb-driver.lua");
             Files.writeString(driver,
                 "dofile(" + quoteLua(artifact.toAbsolutePath().toString()) + ")\n"
+                    + "local initOk, initErr = __dealMain()\n"
+                    + "if not initOk then error(initErr, 0) end\n"
                     + "local __ok, __res = pcall(__callbacks["
                     + quoteLua(callbackEntryName(callback.opId())) + "]"
                     + (args.isEmpty() ? "" : ", " + argsText) + ")\n"
@@ -819,6 +821,7 @@ public final class SemanticDifferentialHarness {
                     + jvmArrayArgHelper()
                     + "  public static void main(String[] args) {\n"
                     + "    try {\n"
+                    + "      " + emission.className() + ".dealMain();\n"
                     + "      Object r = " + emission.className() + "."
                     + callbackEntryName(callback.opId()) + "(new Object[]{"
                     + argsText + "});\n"

@@ -121,16 +121,6 @@ final class LlvmModule {
             for (deal.semantic.ir.SemanticOp op : session.unitOf(module).ops()) {
                 if (op.payload() instanceof deal.semantic.ir.KindPayload
                         .FunctionAdaptPayload adapt) {
-                    // A `REEVALUATE_THUNK` source adds its own re-executor,
-                    // which the adapter's boxed apply thunk invokes on every
-                    // invocation (C5/B8).
-                    if (adapt.source() instanceof deal.semantic.ir
-                            .AdaptSourceRef.Thunk) {
-                        functions.put(LlvmFunctionEmitter.adapterSourceName(
-                                op.opId()), new LlvmFunctionEmitter(session,
-                                    session.unitOf(module))
-                                .emitAdapterSource(op));
-                    }
                     functions.put(LlvmFunctionEmitter.adapterThunkName(
                             op.opId()), new LlvmFunctionEmitter(session,
                                 session.unitOf(module))

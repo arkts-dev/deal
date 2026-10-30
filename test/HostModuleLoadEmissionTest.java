@@ -3730,12 +3730,9 @@ public class HostModuleLoadEmissionTest {
                             extra: number) => Promise<string> = valueSrc;
           let fixedText: string = await fixed(cfg, cb, extra());
           // The arity-extended adapter-over-async host call over an assigned
-          // source binding: the reassignment defeats the source binding's
-          // immutability proof (the shared-cell source mode) and a read of
-          // that binding observes the current value at every invocation, so
-          // the source's execution class is selected at execution (the
-          // runtime-resolved nested start, the dynamic HOST arm under
-          // ELIDED_BY_ADAPTER).
+          // source binding: reassignment defeats its immutability proof,
+          // but adaptation still retains the evaluated function value. Its
+          // runtime class selects the nested HOST start under ELIDED_BY_ADAPTER.
           let src: (s: host.ServerConfig, g: (x: number) => number) => Promise<string> =
             host.describeAsync;
           src = src;
@@ -3762,7 +3759,7 @@ public class HostModuleLoadEmissionTest {
             + "dynFixed=" + dynText + "\\n"
             + "pair=" + pairText + "\\n"
             + "same=" + check(fixedText === direct, "fixed result")
-            + ":" + check(sharedFixedText === direct, "shared-cell source result")
+            + ":" + check(sharedFixedText === direct, "assigned source value result")
             + ":" + check(dynText === direct, "runtime-resolved result")
             + ":" + check(dynamicText === direct, "dynamic result")
             + ":extra=" + check(marker.count === 3, "extra evaluation");

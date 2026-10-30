@@ -500,10 +500,8 @@ public class ProductionProjectEmissionTest {
 
     /**
      * The call-result arity-extension adapter source: the adapted source is
-     * the non-identifier expression {@code make()} — the closed
-     * {@code REEVALUATE_THUNK} capture mode (the source expression is
-     * re-executed on every invocation, so the source value's execution class
-     * is selected at execution) — assigned to a longer target signature
+     * the once-evaluated expression {@code make()}, whose function value is
+     * retained when assigned to a longer target signature
      * (docs/spec-v1.5.md §Function type compatibility: M &lt;= N with the
      * extra target parameters accepted and silently ignored; §Arity
      * extension adapter). The production lowering produces the adapter from
@@ -725,8 +723,7 @@ public class ProductionProjectEmissionTest {
      * The declaration-order fixture: {@code main} is declared before both
      * classes and constructs them, {@code Holder}'s default constructs the
      * later-declared {@code Counter}, and the arity-extension adapter's
-     * source is the call result of {@code make} (re-evaluated at each
-     * invocation, so the counter observes both calls).
+     * source is the call result of {@code make}, evaluated once at creation.
      */
     private static final String CALL_RESULT_ADAPTER_APP_SOURCE = """
         import * as console from "std/console";
@@ -739,8 +736,8 @@ public class ProductionProjectEmissionTest {
           if (first !== 4 || second !== 7) {
             throw { code: "JS_PROBE", message: "adapter result" };
           }
-          if (c.n !== 2) {
-            throw { code: "JS_PROBE", message: "thunk re-execution" };
+          if (c.n !== 1) {
+            throw { code: "JS_PROBE", message: "source evaluated more than once" };
           }
           if (c.x !== 11) {
             throw { code: "JS_PROBE", message: "later class default" };
@@ -825,7 +822,7 @@ public class ProductionProjectEmissionTest {
     /**
      * The async arity-extension adapter over a call-result source: the
      * adapter's target and source markers are both {@code async}, the source is
-     * the call result of {@code make} (re-evaluated per invocation), and the
+     * the retained call result of {@code make}, and the
      * awaited invocation completes with the source's own promise.
      */
     private static final String ASYNC_CALL_RESULT_ADAPTER_APP_SOURCE = """
@@ -1279,7 +1276,7 @@ public class ProductionProjectEmissionTest {
      * function body — and a class field — to reference a class declared
      * later in the same module, and the arity-extension adapter of
      * §Function type compatibility admits a call-result source that is
-     * re-evaluated per invocation. Both compile through the public
+     * evaluated once at creation. Both compile through the public
      * {@code Backend.JS} arm, the produced project records the complete
      * declaration facts, and the published CommonJS artifact executes the
      * real behavior under Node.
@@ -1338,34 +1335,23 @@ public class ProductionProjectEmissionTest {
                         || !(op.payload()
                             instanceof KindPayload.CallPayload call)
                         || !(call.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
+                            instanceof KindPayload.CallCallee.Static fixed)) {
                     continue;
                 }
-                FunctionExecutionBinding calleeBinding = app.functionBindings().get(
-                    new FunctionAllocationIdentity(dynamic.callee().id()));
+                FunctionExecutionBinding calleeBinding = fixed.binding();
                 if (!(calleeBinding
                         instanceof FunctionExecutionBinding.AdapterBinding adapter)
-                        || !(adapter.sourceRef() instanceof AdaptSourceRef.Thunk)) {
+                        || !(adapter.sourceRef() instanceof AdaptSourceRef.Value)) {
                     continue;
                 }
                 adapterCalls++;
                 checkEq(2, call.parameterBoundaryOpIds().size(),
                     "the arity-extension adapter call records the target"
                         + " signature's two parameter cells");
-                check(call.returnBoundaryOpId() == null
-                        && call.dynamicReturnBoundary() != null,
-                    "the re-evaluated source records the closed dynamic"
-                        + " return-boundary set instead of one static cell: "
-                        + call.dynamicReturnBoundary());
-                if (call.dynamicReturnBoundary() != null) {
-                    KindPayload.DynamicReturnBoundary cells =
-                        call.dynamicReturnBoundary();
-                    check(opOf(app, cells.dealBodyBoundaryOpId()) != null
-                            && opOf(app, cells.hostBoundaryOpId()) != null
-                            && opOf(app, cells.externalBoundaryOpId()) != null,
-                        "one caller-side return cell per runtime source class"
-                            + " resolves in the unit: " + cells);
-                }
+                check(call.returnBoundaryOpId() != null
+                        && call.dynamicReturnBoundary() == null
+                        && opOf(app, call.returnBoundaryOpId()) != null,
+                    "the retained source adapter records its return cell");
             }
             checkEq(2, counterConstructions,
                 "both the entry body and the earlier class's default construct"
@@ -1436,7 +1422,7 @@ public class ProductionProjectEmissionTest {
             ExecutableLoweredProject produced = result.producedProject();
             check(produced != null,
                 "the adapter fixture's run exposes its produced project");
-            boolean thunkAdapt = false;
+            boolean valueAdapt = false;
             boolean dynamicInvocation = false;
             boolean adapterCallee = false;
             if (produced != null) {
@@ -1447,12 +1433,10 @@ public class ProductionProjectEmissionTest {
                             && op.payload()
                                 instanceof KindPayload.FunctionAdaptPayload adapt
                             && adapt.source()
-                                instanceof deal.semantic.ir.AdaptSourceRef.Thunk thunk) {
-                        thunkAdapt = true;
-                        check(entry.bodyTable().blockOps()
-                                .containsKey(thunk.blockId()),
-                            "the produced adapter's thunk block is a recorded"
-                                + " block of the entry unit");
+                                instanceof deal.semantic.ir.AdaptSourceRef.Value value) {
+                        valueAdapt = true;
+                        check(op.operands().contains(value.value()),
+                            "the adapter consumes its evaluated source");
                     }
                 }
                 for (SemanticOp op : entry.ops()) {
@@ -1462,31 +1446,26 @@ public class ProductionProjectEmissionTest {
                         continue;
                     }
                     if (!(call.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
+                            instanceof KindPayload.CallCallee.Static fixed)) {
                         continue;
                     }
-                    if (call.dynamicReturnBoundary() == null) {
+                    if (call.returnBoundaryOpId() == null) {
                         continue;
                     }
                     dynamicInvocation = true;
-                    deal.semantic.ir.FunctionExecutionBinding callee =
-                        entry.functionBindings().get(
-                            new deal.semantic.ir.FunctionAllocationIdentity(
-                                dynamic.callee().id()));
-                    adapterCallee = callee
+                    deal.semantic.ir.FunctionExecutionBinding callee = fixed.binding();
+                    adapterCallee |= callee
                         instanceof deal.semantic.ir
                             .FunctionExecutionBinding.AdapterBinding adapter
                         && adapter.sourceRef()
-                            instanceof deal.semantic.ir.AdaptSourceRef.Thunk;
+                            instanceof deal.semantic.ir.AdaptSourceRef.Value;
                 }
             }
-            check(thunkAdapt,
+            check(valueAdapt,
                 "the produced FUNCTION_ADAPT wraps the call result as its"
-                    + " REEVALUATE_THUNK source");
+                    + " retained call-result source");
             check(dynamicInvocation && adapterCallee,
-                "the adapted invocation is the closed DYNAMIC callee arm over the"
-                    + " re-evaluated adapter source, recording the dynamic"
-                    + " return-boundary set (one cell per runtime source class)");
+                "the adapted invocation records the retained adapter and its return cell");
             check(!appSource.contains("ISSUE-0531"),
                 "the artifact carries no fail-closed placeholder text");
             stager.publish();
@@ -1511,7 +1490,7 @@ public class ProductionProjectEmissionTest {
             drive, 0, "ARITY_ADAPTER|OK\nADAPTER_DRIVE|OK\n");
 
         // The async twin: the awaited adapted async function (its source is
-        // the re-evaluated call result too) starts once, awaits once and
+        // the retained call result too) starts once, awaits once and
         // returns the source's completion through the published export.
         writeFileIn(out, "adapter-async-drive.js", """
             const $app = require("./app.js");
@@ -1670,10 +1649,8 @@ public class ProductionProjectEmissionTest {
     }
 
     /**
-     * The async arity-extension adapter over a re-evaluated call-result
-     * source: the closed dynamic async arm starts the adapter's published
-     * identity, whose D15 resolution runs the re-evaluated source, and the
-     * single caller-side DEAL-body task cell checks the resolved completion.
+     * The async adapter retains its call-result source. Each invocation
+     * delegates to that value and checks the resolved completion.
      */
     private static void testAsyncCallResultAdapterShape() throws Exception {
         Path root = Files.createTempDirectory("js-async-adapter-");
@@ -1692,54 +1669,13 @@ public class ProductionProjectEmissionTest {
             if (app == null) {
                 return;
             }
-            int adapterStarts = 0;
-            for (SemanticOp op : app.ops()) {
-                if (op.kind() != SemanticOpKind.ASYNC_START
-                        || !(op.payload()
-                            instanceof KindPayload.AsyncStartPayload start)
-                        || !(start.callee()
-                            instanceof KindPayload.CallCallee.Dynamic dynamic)) {
-                    continue;
-                }
-                FunctionExecutionBinding calleeBinding = app.functionBindings().get(
-                    new FunctionAllocationIdentity(dynamic.callee().id()));
-                if (!(calleeBinding
-                        instanceof FunctionExecutionBinding.AdapterBinding adapter)
-                        || !(adapter.sourceRef() instanceof AdaptSourceRef.Thunk)) {
-                    continue;
-                }
-                adapterStarts++;
-                checkEq(ParameterBoundaryMode.RUN, start.parameterBoundaryMode(),
-                    "the closed dynamic async arm runs the target signature's"
-                        + " parameter cells at the invocation");
-                checkEq(2, start.parameterBoundaryOpIds().size(),
-                    "the start records the target signature's two parameter"
-                        + " cells");
-                SemanticOp taskCell = start.returnBoundaryOpId() == null
-                    ? null : opOf(app, start.returnBoundaryOpId());
-                check(taskCell != null
-                        && taskCell.payload()
-                            instanceof KindPayload.BoundaryPayload taskBoundary
-                        && taskBoundary.kind() == deal.semantic.ir.BoundaryKind
-                            .FUNCTION_RETURN
-                        && taskBoundary.descriptor()
-                            .equals(start.completionDescriptor()),
-                    "the runtime source class selects the single caller-side"
-                        + " DEAL-body task cell on the completion descriptor: "
-                        + taskCell);
-                check(op.result() instanceof AsyncTokenId.Canonical canonical
-                        && canonical.owner() == AsyncTokenOwner.DEAL_BODY_TASK,
-                    "the re-evaluated adapter source starts one DEAL-body"
-                        + " task token, never a nested adapter alias: "
-                        + op.result());
-            }
+            int adapterStarts = awaitedAsyncAdapterStarts(app);
             checkEq(2, adapterStarts,
-                "each awaited arity-extended call site is one closed dynamic"
-                    + " async start over the adapter carrier");
+                "each awaited arity-extended call site delegates through its retained adapter");
             writeFileIn(out, "invoke.js", ASYNC_INVOKE_RUNNER.replace("$MODULE", "app"));
             ProcessOutcome run = runProcess(List.of("node", "invoke.js", "entry", "number"),
                 out);
-            assertEmitterRun("both arity-extension awaits re-evaluate the async source",
+            assertEmitterRun("both arity-extension awaits invoke the retained async source",
                 run, 0, "PROBE|JS|ASYNC-ADAPTER\nINVOKE_OK: 41\n");
         } finally {
             deleteRecursively(root);
@@ -1769,7 +1705,7 @@ public class ProductionProjectEmissionTest {
             if (!(binding instanceof FunctionExecutionBinding.AdapterBinding adapter)
                     || adapter.targetSignature() == null
                     || !adapter.targetSignature().isAsync()
-                    || adapter.sourceRef() instanceof AdaptSourceRef.Thunk) {
+                    || !(adapter.sourceRef() instanceof AdaptSourceRef.Value)) {
                 continue;
             }
             count++;

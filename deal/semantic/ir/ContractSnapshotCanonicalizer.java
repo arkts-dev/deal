@@ -523,15 +523,6 @@ public final class ContractSnapshotCanonicalizer {
     public static CanonicalJson.Value sourceRefJson(AdaptSourceRef sourceRef) {
         Objects.requireNonNull(sourceRef, "sourceRef must not be null");
         return switch (sourceRef) {
-            case AdaptSourceRef.SharedCell s -> CanonicalJson.obj(
-                CanonicalJson.e("binding", semanticIdJson(s.binding())),
-                CanonicalJson.e("generation", idValue(s.generation(), "generation")),
-                CanonicalJson.e("type", CanonicalJson.str("sharedCell")));
-            case AdaptSourceRef.Thunk t -> CanonicalJson.obj(
-                CanonicalJson.e("blockId", semanticIdJson(t.blockId())),
-                CanonicalJson.e("capturedBindings", CanonicalJson.arr(
-                    t.capturedBindings().stream().map(ContractSnapshotCanonicalizer::bindingGenerationJson).toList())),
-                CanonicalJson.e("type", CanonicalJson.str("thunk")));
             case AdaptSourceRef.Value v -> CanonicalJson.obj(
                 CanonicalJson.e("type", CanonicalJson.str("value")),
                 CanonicalJson.e("value", semanticIdJson(v.value())));
@@ -547,15 +538,6 @@ public final class ContractSnapshotCanonicalizer {
     public static CanonicalJson.Value rawSourceRefJson(RawSourceRef sourceRef) {
         Objects.requireNonNull(sourceRef, "sourceRef must not be null");
         return switch (sourceRef) {
-            case RawSourceRef.SharedCell s -> CanonicalJson.obj(
-                CanonicalJson.e("binding", semanticIdJson(s.binding())),
-                CanonicalJson.e("generation", idValue(s.generation(), "generation")),
-                CanonicalJson.e("type", CanonicalJson.str("sharedCell")));
-            case RawSourceRef.Thunk t -> CanonicalJson.obj(
-                CanonicalJson.e("blockId", semanticIdJson(t.blockId())),
-                CanonicalJson.e("capturedBindings", CanonicalJson.arr(
-                    t.capturedBindings().stream().map(ContractSnapshotCanonicalizer::bindingGenerationJson).toList())),
-                CanonicalJson.e("type", CanonicalJson.str("thunk")));
             case RawSourceRef.Value v -> CanonicalJson.obj(
                 CanonicalJson.e("type", CanonicalJson.str("value")),
                 CanonicalJson.e("value", semanticIdJson(v.value())));
@@ -572,10 +554,6 @@ public final class ContractSnapshotCanonicalizer {
     public static RawSourceRef rawSourceRefOf(AdaptSourceRef sourceRef) {
         Objects.requireNonNull(sourceRef, "sourceRef must not be null");
         return switch (sourceRef) {
-            case AdaptSourceRef.SharedCell s ->
-                new RawSourceRef.SharedCell(s.binding(), s.generation());
-            case AdaptSourceRef.Thunk t ->
-                new RawSourceRef.Thunk(t.blockId(), t.capturedBindings());
             case AdaptSourceRef.Value v -> new RawSourceRef.Value(v.value());
         };
     }
@@ -1958,9 +1936,7 @@ public final class ContractSnapshotCanonicalizer {
     }
 
     /**
-     * Parses an adapter source reference: the recognized family is
-     * sharedCell (binding/generation), thunk (blockId/capturedBindings)
-     * and value (value), each with its existing type discriminator and its
+     * Parses an adapter source reference: only value is recognized, with its
      * exact member set. The discriminator itself stays raw: an unknown
      * shape is retained with its complete decoded member set so the
      * closed-position rule (R-ENUM) owns the rejection instead of the
@@ -1969,27 +1945,6 @@ public final class ContractSnapshotCanonicalizer {
     public static RawSourceRef parseSourceRef(CanonicalJson.Obj obj) {
         String type = requireString(obj, "type");
         switch (type) {
-            case "sharedCell" -> {
-                checkKeys(obj, "binding", "generation", "type");
-                return new RawSourceRef.SharedCell(
-                    parseBindingId(requireObject(obj, "binding")),
-                    requireGeneration(obj, "sourceRef.sharedCell"));
-            }
-            case "thunk" -> {
-                checkKeys(obj, "blockId", "capturedBindings", "type");
-                BlockId blockId = parseBlockId(requireObject(obj, "blockId"));
-                List<BindingGeneration> captured = new ArrayList<>();
-                CanonicalJson.Arr rows = requireArray(obj, "capturedBindings");
-                for (int i = 0; i < rows.items().size(); i++) {
-                    String where = "sourceRef.thunk.capturedBindings[" + i + "]";
-                    CanonicalJson.Obj row = requireObjectValue(rows.items().get(i), where);
-                    checkKeys(row, "binding", "generation");
-                    captured.add(new BindingGeneration(
-                        parseBindingId(requireObject(row, "binding")),
-                        requireGeneration(row, where)));
-                }
-                return new RawSourceRef.Thunk(blockId, captured);
-            }
             case "value" -> {
                 checkKeys(obj, "type", "value");
                 return new RawSourceRef.Value(parseValueId(requireObject(obj, "value")));

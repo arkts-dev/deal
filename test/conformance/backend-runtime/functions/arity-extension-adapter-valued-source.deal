@@ -1,5 +1,5 @@
 // @spec: Functions — Function type compatibility; Arity extension adapter
-// @description: A function value whose declared type is a shorter signature adapts at a further statically typed position, whether the source value was itself produced by an arity-extension adapter: the binding, field, array element, argument and return positions each add exactly one adapter over the value's declared signature and the nested invocation protocol forwards only each level's leading parameters. An adapter over an invocation's parameter cell that the body assigns keeps that cell after the invocation returns, so the escaped adapter and the escaped closure's static adapter callee both read the cell's current value (captured by binding).
+// @description: A function value whose declared type is a shorter signature adapts at a further statically typed position, whether the source value was itself produced by an arity-extension adapter: the binding, field, array element, argument and return positions each add exactly one adapter over the value's declared signature and the nested invocation protocol forwards only each level's leading parameters. Reassigning the parameter does not change the already adapted function value.
 // @expected: runtime-ok
 // @features: functions, arity-extension, classes, arrays, closures
 
@@ -69,11 +69,11 @@ export function main(): null {
 
   // --- a return position ---------------------------------------------------
   let widened: (x: number, y: number, z: number) => number = widenPair(pair);
-  check(widened(7, 8, 9) === 15,
-    "an adapter over an escaping parameter cell reads the cell's assigned value");
+  check(widened(7, 8, 9) === 7,
+    "an escaped adapter retains its evaluated source value");
   let call: () => number = escapingCall(pair);
-  check(call() === 15,
-    "a static adapter callee in an escaped closure reads its captured cell");
+  check(call() === 7,
+    "an escaped closure invokes the saved adapter value");
 
   // --- an assignment position ---------------------------------------------
   let assigned: (x: number, y: number, z: number) => number = one;

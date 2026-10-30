@@ -286,21 +286,14 @@ public final class BindingsProductionValidator {
         final Map<BlockId, Set<BlockId>> dominators = new LinkedHashMap<>();
         /** The function-body region roots. */
         final Set<BlockId> functionRoots = new LinkedHashSet<>();
-        /** The thunk region roots. */
-        final Set<BlockId> thunkRoots = new LinkedHashSet<>();
         /** The module-init region root. */
         final BlockId moduleRoot;
         /** The detaching op of every function-body region root. */
         final Map<BlockId, SemanticOp> detachingOfFunction = new LinkedHashMap<>();
-        /** The detaching op of every thunk region root (the FUNCTION_ADAPT op). */
-        final Map<BlockId, SemanticOp> detachingOfThunk = new LinkedHashMap<>();
         /** The generation-pinned captures of every function-body region root
          * (LoweredFunction record; each entry names the creation-site
          * incarnation of the captured binding). */
         final Map<BlockId, List<BindingGeneration>> capturesOfRegion =
-            new LinkedHashMap<>();
-        /** The pinned captures of every thunk region root. */
-        final Map<BlockId, List<BindingGeneration>> thunkCapturesOfRegion =
             new LinkedHashMap<>();
         /** Every producing allocation of every binding, in unit op order. */
         final Map<BindingId, List<Allocation>> allocationsByBinding = new LinkedHashMap<>();
@@ -402,17 +395,6 @@ public final class BindingsProductionValidator {
                     roots.add(body.blockId());
                     model.functionRoots.add(body.blockId());
                     model.capturesOfRegion.putIfAbsent(body.blockId(), List.of());
-                }
-            }
-            for (SemanticOp op : unit.ops()) {
-                if (op.payload() instanceof KindPayload.FunctionAdaptPayload adapt) {
-                    if (adapt.source() instanceof AdaptSourceRef.Thunk thunk) {
-                        roots.add(thunk.blockId());
-                        model.thunkRoots.add(thunk.blockId());
-                        model.thunkCapturesOfRegion.put(thunk.blockId(),
-                            thunk.capturedBindings());
-                        model.detachingOfThunk.put(thunk.blockId(), op);
-                    }
                 }
             }
             // Region assignment: every table block reaches a root through
@@ -831,34 +813,6 @@ public final class BindingsProductionValidator {
                 }
                 return resolveCaptureBinding(binding, detaching);
             }
-            if (thunkRoots.contains(root)) {
-                List<Allocation> candidates = captureCandidates(binding, site);
-                if (!candidates.isEmpty()) {
-                    return dominantCaptureAllocation(binding, site)
-                        .map(allocation -> new ResolvedCapture(allocation.op,
-                            allocation.generation));
-                }
-                BindingGeneration entry = null;
-                for (BindingGeneration pinned
-                        : thunkCapturesOfRegion.getOrDefault(root, List.of())) {
-                    if (pinned.binding().equals(binding)) {
-                        entry = pinned;
-                        break;
-                    }
-                }
-                if (entry == null) {
-                    return Optional.empty();
-                }
-                SemanticOp detaching = detachingOfThunk.get(root);
-                if (detaching == null) {
-                    return Optional.empty();
-                }
-                Optional<ResolvedCapture> resolved = resolveCaptureBinding(binding, detaching);
-                if (resolved.isEmpty() || resolved.get().generation != entry.generation()) {
-                    return Optional.empty();
-                }
-                return resolved;
-            }
             return dominantCaptureAllocation(binding, site)
                 .map(allocation -> new ResolvedCapture(allocation.op,
                     allocation.generation));
@@ -890,35 +844,6 @@ public final class BindingsProductionValidator {
                     return new Resolution(null, false);
                 }
                 SemanticOp detaching = detachingOfFunction.get(root);
-                if (detaching == null) {
-                    return new Resolution(null, false);
-                }
-                Optional<ResolvedCapture> resolved = resolveCaptureBinding(binding, detaching);
-                if (resolved.isEmpty() || resolved.get().generation != generation) {
-                    return new Resolution(null, false);
-                }
-                return new Resolution(resolved.get().op, false);
-            }
-            if (thunkRoots.contains(root)) {
-                List<Allocation> matches = visibleAllocations(binding, generation, site);
-                if (matches.size() == 1) {
-                    return new Resolution(matches.get(0).op, false);
-                }
-                if (matches.size() > 1) {
-                    return new Resolution(null, false);
-                }
-                BindingGeneration entry = null;
-                for (BindingGeneration pinned
-                        : thunkCapturesOfRegion.getOrDefault(root, List.of())) {
-                    if (pinned.binding().equals(binding)) {
-                        entry = pinned;
-                        break;
-                    }
-                }
-                if (entry == null || entry.generation() != generation) {
-                    return new Resolution(null, false);
-                }
-                SemanticOp detaching = detachingOfThunk.get(root);
                 if (detaching == null) {
                     return new Resolution(null, false);
                 }
@@ -1038,26 +963,6 @@ public final class BindingsProductionValidator {
                             resolveCaptureBinding(capture.binding(), op);
                         if (resolved.isPresent() && resolvesTo(resolved.get(), key)) {
                             return true;
-                        }
-                    }
-                }
-                if (op.payload() instanceof KindPayload.FunctionAdaptPayload adapt) {
-                    if (adapt.source() instanceof AdaptSourceRef.SharedCell shared) {
-                        Resolution resolution = resolveReference(shared.binding(),
-                            shared.generation(), op);
-                        if (resolution.allocation != null
-                                && allocationKeyOf(resolution.allocation) != null
-                                && allocationKeyOf(resolution.allocation).equals(key)) {
-                            return true;
-                        }
-                    }
-                    if (adapt.source() instanceof AdaptSourceRef.Thunk thunk) {
-                        for (BindingGeneration entry : thunk.capturedBindings()) {
-                            Optional<ResolvedCapture> resolved =
-                                resolveCaptureBinding(entry.binding(), op);
-                            if (resolved.isPresent() && resolvesTo(resolved.get(), key)) {
-                                return true;
-                            }
                         }
                     }
                 }
@@ -1188,7 +1093,7 @@ public final class BindingsProductionValidator {
         if (failure.isPresent()) {
             return failure;
         }
-        return checkThunkCaptureResolution(model);
+        return Optional.empty();
     }
 
     /**
@@ -1377,17 +1282,10 @@ public final class BindingsProductionValidator {
         return Optional.empty();
     }
 
-    /** The SharedCell/proof payload references of an adapt op inside a function body. */
+    /** Optional proof references of an adapt op inside a function body. */
     private static Optional<CompilerDiagnostic> adaptPayloadMembership(Model model,
             LoweredFunction function, KindPayload.FunctionAdaptPayload adapt,
             SemanticOp carrier) {
-        if (adapt.source() instanceof AdaptSourceRef.SharedCell shared) {
-            Optional<CompilerDiagnostic> membership =
-                captureMembership(model, function, shared.binding(), carrier);
-            if (membership.isPresent()) {
-                return membership;
-            }
-        }
         if (adapt.proof() != null) {
             Optional<CompilerDiagnostic> membership =
                 captureMembership(model, function, adapt.proof().binding(), carrier);
@@ -1398,94 +1296,6 @@ public final class BindingsProductionValidator {
         return Optional.empty();
     }
 
-    private static Optional<CompilerDiagnostic> checkThunkCaptureResolution(Model model) {
-        for (SemanticOp op : model.unit.ops()) {
-            if (!(op.payload() instanceof KindPayload.FunctionAdaptPayload adapt)
-                    || !(adapt.source() instanceof AdaptSourceRef.Thunk thunk)) {
-                continue;
-            }
-            // Every pinned entry resolves at the FUNCTION_ADAPT creation site.
-            for (BindingGeneration entry : thunk.capturedBindings()) {
-                Optional<ResolvedCapture> resolved =
-                    model.resolveCaptureBinding(entry.binding(), op);
-                if (resolved.isEmpty()) {
-                    return fail(op, model, CAPTURE_RESOLUTION, "the thunk capture {"
-                        + entry.binding() + ", " + entry.generation() + "} of op "
-                        + op.opId() + " resolves to zero or multiple producing "
-                        + "allocations at the creation site");
-                }
-            }
-            // Every free reference inside the thunk block resolves through
-            // exactly the pinned capturedBindings entries.
-            List<BlockId> region = model.regionBlocks.getOrDefault(thunk.blockId(), List.of());
-            for (BlockId block : region) {
-                List<SemanticOp> ops = model.opsInBlock.getOrDefault(block, List.of());
-                for (SemanticOp inner : ops) {
-                    switch (inner.payload()) {
-                        case KindPayload.BindingLoadPayload load -> {
-                            Optional<CompilerDiagnostic> membership =
-                                thunkMembership(model, thunk, load.binding(), inner);
-                            if (membership.isPresent()) {
-                                return membership;
-                            }
-                        }
-                        case KindPayload.BindingStorePayload store -> {
-                            Optional<CompilerDiagnostic> membership =
-                                thunkMembership(model, thunk, store.binding(), inner);
-                            if (membership.isPresent()) {
-                                return membership;
-                            }
-                        }
-                        case KindPayload.FunctionAdaptPayload innerAdapt -> {
-                            if (innerAdapt.source() instanceof AdaptSourceRef.SharedCell
-                                    shared) {
-                                Optional<CompilerDiagnostic> membership =
-                                    thunkMembership(model, thunk, shared.binding(), inner);
-                                if (membership.isPresent()) {
-                                    return membership;
-                                }
-                            }
-                            if (innerAdapt.proof() != null) {
-                                Optional<CompilerDiagnostic> membership = thunkMembership(
-                                    model, thunk, innerAdapt.proof().binding(), inner);
-                                if (membership.isPresent()) {
-                                    return membership;
-                                }
-                            }
-                        }
-                        default -> {
-                            // No binding reference.
-                        }
-                    }
-                }
-            }
-        }
-        return Optional.empty();
-    }
-
-    private static Optional<CompilerDiagnostic> thunkMembership(Model model,
-            AdaptSourceRef.Thunk thunk, BindingId binding, SemanticOp carrier) {
-        BlockId site = model.blockOf(carrier.opId());
-        if (site == null) {
-            return Optional.empty();
-        }
-        List<Allocation> own = model.visibleAllocations(binding, site);
-        if (own.isEmpty()) {
-            boolean pinned = false;
-            for (BindingGeneration entry : thunk.capturedBindings()) {
-                if (entry.binding().equals(binding)) {
-                    pinned = true;
-                    break;
-                }
-            }
-            if (!pinned) {
-                return fail(carrier, model, CAPTURE_RESOLUTION, "the thunk-block reference "
-                    + binding + " of op " + carrier.opId() + " is outside the pinned "
-                    + "capturedBindings of thunk " + thunk.blockId());
-            }
-        }
-        return Optional.empty();
-    }
 
     // =========================================================================
     // BINDING_GENERATION_RESOLUTION
@@ -1515,18 +1325,6 @@ public final class BindingsProductionValidator {
                     }
                 }
                 case KindPayload.FunctionAdaptPayload adapt -> {
-                    if (adapt.source() instanceof AdaptSourceRef.SharedCell shared) {
-                        Resolution resolution = model.resolveReference(shared.binding(),
-                            shared.generation(), op);
-                        if (resolution.allocation == null && !resolution.outOfScope) {
-                            return fail(op, model, BINDING_GENERATION_RESOLUTION,
-                                "the SharedCell {" + shared.binding() + ", "
-                                    + shared.generation() + "} of op " + op.opId()
-                                    + " resolves to zero or multiple producing "
-                                    + "allocations with equal generation "
-                                    + "(stale/unresolvable)");
-                        }
-                    }
                     if (adapt.proof() != null) {
                         Resolution resolution = model.resolveReference(
                             adapt.proof().binding(), adapt.proof().generation(), op);
@@ -1537,20 +1335,6 @@ public final class BindingsProductionValidator {
                                     + " resolves to zero or multiple producing "
                                     + "allocations with equal generation "
                                     + "(stale/unresolvable)");
-                        }
-                    }
-                    if (adapt.source() instanceof AdaptSourceRef.Thunk thunk) {
-                        for (BindingGeneration entry : thunk.capturedBindings()) {
-                            Resolution resolution = model.resolveReference(
-                                entry.binding(), entry.generation(), op);
-                            if (resolution.allocation == null && !resolution.outOfScope) {
-                                return fail(op, model, BINDING_GENERATION_RESOLUTION,
-                                    "the thunk capture {" + entry.binding() + ", "
-                                        + entry.generation() + "} of op " + op.opId()
-                                        + " resolves to zero or multiple producing "
-                                        + "allocations with equal generation "
-                                        + "(stale/unresolvable)");
-                            }
                         }
                     }
                 }
@@ -1907,13 +1691,6 @@ public final class BindingsProductionValidator {
                 generation, site, root, model.detachingOfFunction, true,
                 visited);
         }
-        if (model.thunkRoots.contains(root)) {
-            // Arm 3 at a thunk root: a captured detached load (no
-            // own-name terminator — a thunk body has no own name).
-            return detachedLoadValid(model, allocation, write, binding,
-                generation, site, root, model.detachingOfThunk, false,
-                visited);
-        }
         // Any other region root (e.g., a CALL body block): plain dominance
         // within that region.
         return model.writeDominates(write, site);
@@ -1925,8 +1702,7 @@ public final class BindingsProductionValidator {
      * arms — the size-1 SCC own-name arm when the root is a function,
      * the group-publication arm, and the module-init-completion arm —
      * then one step along the root's detaching chain, cycle-guarded by
-     * the visited key. The detaching map picks the region class's chain
-     * ({@code functionRoots} vs {@code thunkRoots}).
+     * the visited key. The detaching map follows function creation.
      */
     private static boolean detachedLoadValid(Model model, Allocation allocation,
                                              Write write, BindingId binding, long generation,
@@ -2044,7 +1820,6 @@ public final class BindingsProductionValidator {
     // =========================================================================
 
     private static Optional<CompilerDiagnostic> checkAdapterSourceShape(Model model) {
-        ProductionFacts facts = null;
         for (SemanticOp op : model.unit.ops()) {
             if (!(op.payload() instanceof KindPayload.FunctionAdaptPayload adapt)) {
                 continue;
@@ -2052,16 +1827,13 @@ public final class BindingsProductionValidator {
             CaptureMode mode = adapt.mode();
             AdaptSourceRef source = adapt.source();
             boolean shapeMatches = switch (mode) {
-                case SHARED_CELL -> source instanceof AdaptSourceRef.SharedCell;
-                case REEVALUATE_THUNK -> source instanceof AdaptSourceRef.Thunk;
                 case VALUE -> source instanceof AdaptSourceRef.Value;
             };
             if (!shapeMatches) {
                 return fail(op, model, ADAPTER_SOURCE_SHAPE, "the FUNCTION_ADAPT op "
                     + op.opId() + " mode " + mode + " carries the source shape "
                     + source.getClass().getSimpleName() + " (mode must match the source "
-                    + "shape: SHARED_CELL↔SharedCell, REEVALUATE_THUNK↔Thunk, "
-                    + "VALUE↔Value)");
+                    + "shape: VALUE↔Value)");
             }
             if (mode == CaptureMode.VALUE) {
                 if (op.operands().size() != 1) {
@@ -2075,21 +1847,20 @@ public final class BindingsProductionValidator {
                     return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                         + op.opId() + " source must name its single operand");
                 }
-                if (facts == null) {
-                    facts = productionFacts(model);
+                boolean produced = false;
+                for (SemanticOp producer : model.unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (operand.equals(producer.result())) produced = true;
                 }
-
-
+                if (!produced) {
+                    return fail(op, model, ADAPTER_SOURCE_SHAPE,
+                        "adapter operand has no preceding producer");
+                }
                 List<SemanticOp> producingLoads = new ArrayList<>();
-                List<SemanticOp> producingOthers = new ArrayList<>();
-                boolean precedesAdapter = true;
                 for (SemanticOp other : model.unit.ops()) {
-                    if (other.opId().equals(op.opId())) precedesAdapter = false;
                     if (other.result() instanceof ValueId value && value.equals(operand)) {
                         if (other.kind() == SemanticOpKind.BINDING_LOAD) {
                             producingLoads.add(other);
-                        } else if (precedesAdapter) {
-                            producingOthers.add(other);
                         }
                     }
                 }
@@ -2097,23 +1868,9 @@ public final class BindingsProductionValidator {
                     if (adapt.proof() != null) {
                         return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
                             + op.opId() + " carries a proof over a non-load operand "
-                            + "(proof is present iff VALUE's operand is a binding load)");
+                            + "(only binding-load operands admit proofs)");
                     }
-                } else if (adapt.proof() == null) {
-                    // A pure binding-load operand without its proof is
-                    // VALUE-over-binding without the recorded proof; an
-                    // operand a closure also publishes is an ordinary
-                    // identity-preservation flow (loads publish the cell's
-                    // tracked identity), so a mixed production set is not
-                    // proof-requiring at this level.
-                    if (producingOthers.isEmpty() && !materializedAssignmentRhs(model, op, operand)) {
-                        return fail(op, model, ADAPTER_SOURCE_SHAPE, "the VALUE adapter op "
-                            + op.opId() + " carries a binding-load operand " + operand
-                            + " without its proof (VALUE over a binding is admissible "
-                            + "only with the recorded BindingImmutabilityProof naming "
-                            + "the loaded binding/generation)");
-                    }
-                } else {
+                } else if (adapt.proof() != null) {
                     // Identity preservation: a load publishes the cell's
                     // tracked function identity, so several bindings
                     // holding the same identity produce loads with the
@@ -2137,41 +1894,9 @@ public final class BindingsProductionValidator {
                             + "(the proof must name the loaded binding/generation)");
                     }
                 }
-            } else {
-                if (!op.operands().isEmpty()) {
-                    return fail(op, model, ADAPTER_SOURCE_SHAPE, "the " + mode + " adapter op "
-                        + op.opId() + " carries " + op.operands().size()
-                        + " operands (SHARED_CELL/REEVALUATE_THUNK carry no operand)");
-                }
-                if (adapt.proof() != null) {
-                    return fail(op, model, ADAPTER_SOURCE_SHAPE, "the " + mode + " adapter op "
-                        + op.opId() + " carries a proof (SHARED_CELL/REEVALUATE_THUNK "
-                        + "carry no proof)");
-                }
             }
         }
         return Optional.empty();
-    }
-
-    /** A once-evaluated assignment RHS is a value capture, even for mutable loads. */
-    private static boolean materializedAssignmentRhs(Model model, SemanticOp adapter, ValueId operand) {
-        for (SemanticOp chain : model.unit.ops()) {
-            if (!(chain.payload() instanceof KindPayload.AssignPayload assign)
-                    || !Objects.equals(chain.result(), operand)
-                    || !Objects.equals(adapter.origin().parentOpId(), chain.opId())) continue;
-            List<OpId> children = assign.childOps();
-            int adapterIndex = children.indexOf(adapter.opId());
-            if (adapterIndex < 1 || children.lastIndexOf(adapter.opId()) != adapterIndex) continue;
-            for (SemanticOp producer : model.unit.ops()) {
-                if (producer.opId().equals(adapter.opId())) break;
-                if (producer.opId().equals(children.get(adapterIndex - 1))
-                        && Objects.equals(producer.origin().parentOpId(), chain.opId())
-                        && Objects.equals(producer.result(), operand)
-                        && Objects.equals(producer.resultType(), chain.resultType())
-                        && model.unit.ops().indexOf(adapter) < model.unit.ops().indexOf(chain)) return true;
-            }
-        }
-        return false;
     }
 
     // =========================================================================

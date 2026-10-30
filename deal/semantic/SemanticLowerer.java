@@ -5264,11 +5264,7 @@ public final class SemanticLowerer {
         }
 
         /**
-         * Completes the adapted source's VALUE arm from the checked
-         * shape (B7): a first-class intrinsic function value resolves
-         * the seeded intrinsic identity; every other source lowers its
-         * expression, and a binding reference requires the recorded
-         * proof.
+         * Evaluates the source once and retains any optional binding proof.
          */
         private AdapterValueSource completeAdapterValueSource(
                 ExpressionNode value, AdapterShapeMap.SourceShape shape,
@@ -5281,42 +5277,10 @@ public final class SemanticLowerer {
                 // binding/generation (the load emission resolves the
                 // dominant incarnation, the same resolution the proof
                 // fact names).
-                payloadProof = proof.orElseThrow(() ->
-                    new IllegalStateException("the closed shape map selects "
-                        + "VALUE over a binding only with the recorded proof "
-                        + "(producer defect)"));
+                payloadProof = proof.orElse(null);
             }
             return new AdapterValueSource(operand, payloadProof);
         }
-
-        /**
-         * The SHARED_CELL arm's source reference (B8): resolves the
-         * dominant incarnation at the adaptation position, registers
-         * the B2 capture reference, and returns the shared-cell
-         * reference.
-         */
-        private AdaptSourceRef.SharedCell lowerAdapterSharedCellSource(
-                ExpressionNode value) {
-            IdentifierExpr identifier = (IdentifierExpr) value;
-            FrameResolution resolution = resolveFrame(identifier.name());
-            if (resolution == null) {
-                throw new ConstructUnlowered("the SHARED_CELL source '"
-                    + identifier.name() + "' is not a declared binding of the "
-                    + "walk's environment (B7: a binding source resolves its "
-                    + "dominant incarnation at the adaptation position)", identifier.span());
-            }
-            // The B2 capture arm: the SharedCell source reference makes
-            // the incarnation a shared cell (its cell is read per
-            // invocation, so later writes are observed); inside a
-            // detached body the enclosing closure must also capture the
-            // binding (the detaching chain).
-            maybeRegisterCapture(identifier.name(), resolution);
-            cellKinds.registerCaptureReference(resolution.entry().incarnation());
-            return new AdaptSourceRef.SharedCell(
-                resolution.entry().cell().id,
-                resolution.entry().incarnation().generation());
-        }
-
 
         private void lowerAdaptedDeclInitializer(VariableDeclaration decl, BindingId binding,
                                                  BindingCoreIncarnation incarnation) {
@@ -5329,37 +5293,14 @@ public final class SemanticLowerer {
             Optional<BindingImmutabilityProof> proof = sourceProofOf(decl.initializer());
             AdapterShapeMap.SourceShape shape = AdapterShapeMap.sourceShapeAtPosition(
                 decl.initializer());
-            CaptureMode mode = AdapterShapeMap.selectMode(shape, proof);
-            ThunkSource thunk = null;
-            ValueId operand = null;
-            BindingImmutabilityProof payloadProof = null;
-            AdaptSourceRef sourceRef;
-            List<ValueId> operands;
-            List<RuntimeDescriptor> operandTypes;
-            switch (mode) {
-                case VALUE -> {
-                    AdapterValueSource source = completeAdapterValueSource(
-                        decl.initializer(), shape, proof);
-                    operand = source.operand();
-                    payloadProof = source.proof();
-                    sourceRef = new AdaptSourceRef.Value(operand);
-                    operands = List.of(operand);
-                    operandTypes = List.of(sourceSignature);
-                }
-                case SHARED_CELL -> {
-                    sourceRef = lowerAdapterSharedCellSource(
-                        decl.initializer());
-                    operands = List.of();
-                    operandTypes = List.of();
-                }
-                case REEVALUATE_THUNK -> {
-                    thunk = lowerThunkSource(decl.initializer());
-                    sourceRef = thunkSourceRef(thunk);
-                    operands = List.of();
-                    operandTypes = List.of();
-                }
-                default -> throw new IllegalStateException("unreachable mode " + mode);
-            }
+            CaptureMode mode = CaptureMode.VALUE;
+            AdapterValueSource source = completeAdapterValueSource(
+                decl.initializer(), shape, proof);
+            ValueId operand = source.operand();
+            BindingImmutabilityProof payloadProof = source.proof();
+            AdaptSourceRef sourceRef = new AdaptSourceRef.Value(operand);
+            List<ValueId> operands = List.of(operand);
+            List<RuntimeDescriptor> operandTypes = List.of(sourceSignature);
             // The binding enters the walk's environment after the
             // initializer's own lowering, exactly like the direct arm
             // (the checker's non-hoisting rule): the adapted declaration
@@ -5394,96 +5335,16 @@ public final class SemanticLowerer {
             recordAdapterEmission(adapter.opId(), adapterIdentity, mode, sourceRef,
                 sourceSignature, targetSignature, payloadProof, wiringTarget,
                 BoundaryKind.VARIABLE_DECLARATION);
-            if (thunk != null) {
-                emitTarget().addAll(thunk.ops());
-            }
             if (creationRuleAnalysis) {
                 classifyVarDeclPosition(decl, adapterIdentity, declarationBoundary, initOp);
             }
         }
 
         /**
-         * One detached thunk-block source of the shape-map child
-         * (B8): the fresh block wrapping the source expression's
-         * already-lowered ops in source order plus the collected
-         * captures (the thunk's free bindings in first-reference
-         * order).
-         */
-        private record ThunkSource(BlockId blockId, List<SemanticOp> ops,
-                                   List<CapturedCell> captures) {
-        }
-
-        /**
-         * Walks the source expression into a fresh detached thunk block
-         * (B8): the expression's already-lowered ops emit into a buffer
-         * whose members are the thunk block (the single emission path of
-         * the walk's thunk production), the open-walk capture collector
-         * records the thunk's free bindings in first-reference order
-         * (the same registration surface the closure child uses — the
-         * shape-map child's thunk capture arm joins the B2 cell-kind
-         * derivation through it), and zero evaluation happens at the
-         * creation site (the ops execute only when E7's protocol
-         * re-executes the thunk).
-         *
-         */
-        private ThunkSource lowerThunkSource(ExpressionNode source) {
-            BlockId thunkBlock = allocateBlock();
-            List<SemanticOp> thunkOps = new ArrayList<>();
-            List<CapturedCell> captured = new ArrayList<>();
-            emitTargets.push(thunkOps);
-            // The thunk block is detached and declares no bindings of its
-            // own: an empty binding frame is pushed so every reference
-            // inside the walk resolves outside the thunk's own scope
-            // chain and registers as a thunk capture (B9 R3 — the
-            // capturedBindings pin the thunk's free bindings with their
-            // generations). Enclosing detached-body walks keep receiving
-            // the same references through the detaching chain (B9 R2).
-            pushBindingFrame();
-            captureBorders.push(bindingScopes.size());
-            captureCollectors.push(captured);
-            blockStack.push(thunkBlock);
-            try {
-                lowerExpression(source);
-            } finally {
-                blockStack.pop();
-                captureCollectors.pop();
-                captureBorders.pop();
-                popBindingFrame();
-                emitTargets.pop();
-            }
-            if (thunkOps.isEmpty()) {
-                throw new IllegalStateException("the thunk source expression produced no "
-                    + "op (producer defect)");
-            }
-            return new ThunkSource(thunkBlock, thunkOps, captured);
-        }
-
-        /**
-         * Builds the closed {@link AdaptSourceRef.Thunk} of one thunk
-         * source (B8): the generation-pinned {@code capturedBindings}
-         * derive from the collected captures in first-reference order,
-         * and the thunk builder is the single production path of
-         * {@link AdaptSourceRef.Thunk} records (fail closed on a
-         * malformed source op list).
-         *
-         */
-        private AdaptSourceRef.Thunk thunkSourceRef(ThunkSource thunk) {
-            List<BindingGeneration> pinned = new ArrayList<>();
-            for (CapturedCell capture : thunk.captures()) {
-                pinned.add(new BindingGeneration(capture.cell().id,
-                    capture.incarnation().generation()));
-            }
-            return AdapterThunkConstruction.buildThunk(thunk.blockId(), thunk.ops(), pinned);
-        }
-
-        /**
          * Emits exactly one {@code FUNCTION_ADAPT} op carrying its
-         * closed-map mode and per-mode payload from birth (B7/B8): a
-         * fresh adapter allocation identity per creation (stable for the
-         * run), the source/target signature pair of the adaptation
-         * candidate, exactly the operand set of the mode (one operand
-         * for VALUE; zero for SHARED_CELL and REEVALUATE_THUNK — zero
-         * evaluation at creation), policy {@code NO_DEAL_FAILURE}
+         * VALUE payload: a fresh allocation identity, the source/target
+         * signature pair, one already-evaluated source operand,
+         * policy {@code NO_DEAL_FAILURE}
          * (creation is infallible), zero {@code BOUNDARY} children (the
          * adapter adds no second boundary), and the single
          * {@code AdapterBinding} registration through the registry
@@ -5609,26 +5470,13 @@ public final class SemanticLowerer {
             List<ValueId> operands;
             List<RuntimeDescriptor> operandTypes;
             BindingImmutabilityProof payloadProof = null;
-            if (mode == CaptureMode.SHARED_CELL) {
-                // The binding arm: zero evaluation and zero loads at
-                // creation; the adapter reads the dominant incarnation's
-                // cell per invocation, exactly the declaration and
-                // assignment positions' arm.
-                sourceRef = lowerAdapterSharedCellSource(value);
-                operands = List.of();
-                operandTypes = List.of();
-            } else {
-                ValueId operand = lower.get();
-                if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE && !materializedAssignment) {
-                    payloadProof = proof.orElseThrow(() ->
-                        new IllegalStateException("the closed shape map selects VALUE "
-                            + "over a binding only with the recorded proof (producer "
-                            + "defect)"));
-                }
-                sourceRef = new AdaptSourceRef.Value(operand);
-                operands = List.of(operand);
-                operandTypes = List.of(sourceSignature);
+            ValueId operand = lower.get();
+            if (shape == AdapterShapeMap.SourceShape.BINDING_REFERENCE && !materializedAssignment) {
+                payloadProof = proof.orElse(null);
             }
+            sourceRef = new AdaptSourceRef.Value(operand);
+            operands = List.of(operand);
+            operandTypes = List.of(sourceSignature);
             EmittedAdapter adapter = emitFunctionAdapt(mode, sourceRef, sourceSignature,
                 targetSignature, payloadProof, operands, operandTypes, value.span());
             positionAdapterFacts.put(adapter.identity().id(), new PositionAdapterFacts(
@@ -5858,12 +5706,8 @@ public final class SemanticLowerer {
          * The recorded proof fact of an identifier binding source (B7):
          * present exactly when the source is an {@code IdentifierExpr}
          * whose dominant incarnation at the position carries the
-         * conservative {@code BindingImmutabilityProof} — the fact the
-         * shape-map child's VALUE arm consumes (an unproven binding is
-         * the SHARED_CELL arm's). Non-identifier sources carry no proof
-         * fact (materialized operands and member reads are the
-         * shape-map child's VALUE/REEVALUATE_THUNK arms — the closed
-         * map's decision, not this child's).
+         * conservative {@code BindingImmutabilityProof}. Capture is VALUE
+         * regardless of this optional proof; non-identifiers carry none.
          */
         private Optional<BindingImmutabilityProof> sourceProofOf(ExpressionNode source) {
             if (!(source instanceof IdentifierExpr identifier)) {
@@ -5883,9 +5727,7 @@ public final class SemanticLowerer {
          * seam): present exactly when the source's allocation identity
          * has a recorded host/external function-value materialization —
          * the fact the adaptation candidate carries for the shape-map
-         * child's import-read arm (a host/external import read is a
-         * non-identifier member-read source → REEVALUATE_THUNK, B7; the
-         * mode decision is the shape-map child's). Loads, reads,
+         * child's import-read arm. Loads, reads,
          * argument passing, and returns preserve the allocation
          * identity, so the identity lookup resolves the producing
          * site's classification.
@@ -7354,9 +7196,11 @@ public final class SemanticLowerer {
             pushBlockParent(opId);
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
+            checkerScopeNodes.push(stmt.body());
             try {
                 statementWalk.walk(stmt.body().statements(), false);
             } finally {
+                checkerScopeNodes.pop();
                 popLoopTarget();
                 popBlock();
                 popBlockParent();
@@ -7458,9 +7302,11 @@ public final class SemanticLowerer {
             pushBlockParent(opId);
             pushBlock(bodyBlock);
             pushLoopTarget(opId);
+            checkerScopeNodes.push(stmt.body());
             try {
                 statementWalk.walk(stmt.body().statements(), false);
             } finally {
+                checkerScopeNodes.pop();
                 popLoopTarget();
                 popBlock();
                 popBlockParent();
@@ -9671,24 +9517,18 @@ public final class SemanticLowerer {
                 + "function-typed-value child's; producer defect)");
         }
 
-        /** The adapter's statically fixed source identity, or null (thunk sources). */
+        /** The identity of the source value retained at adapter creation. */
         private ValueId staticSourceIdentity(
                 FunctionExecutionBinding.AdapterBinding adapter) {
             return switch (adapter.sourceRef()) {
-                case AdaptSourceRef.SharedCell cell ->
-                    identityOfIncarnation(cell.binding(), cell.generation());
                 case AdaptSourceRef.Value value -> value.value();
-                case AdaptSourceRef.Thunk ignored -> null;
             };
         }
 
-        /** The adapter's statically fixed source binding, or null (thunk/call-result sources). */
+        /** The retained source's registration, if statically known. */
         private FunctionExecutionBinding staticSourceBinding(
                 FunctionExecutionBinding.AdapterBinding adapter) {
             ValueId identity = staticSourceIdentity(adapter);
-            if (identity == null) {
-                return null;
-            }
             return registry.bindings().get(new FunctionAllocationIdentity(identity.id()));
         }
 
@@ -9878,11 +9718,6 @@ public final class SemanticLowerer {
             OpId returnBoundaryOpId = null;
             OpId externalEntryRef = null;
             BlockId bodyBlock = null;
-            // The runtime-resolved adapter source's closed return-cell set
-            // (a REEVALUATE_THUNK source re-executes the source expression
-            // per invocation, so the source's execution class is selected
-            // at execution — never here).
-            KindPayload.DynamicReturnBoundary dynamicReturnCells = null;
             // The producing host crossing of a function-typed return (M2 item
             // 1): its boundary op and owning host module register the result's
             // HostFunctionValue instead of the dynamic record.
@@ -9903,29 +9738,6 @@ public final class SemanticLowerer {
                     FunctionExecutionBinding source = staticSourceBinding(adapter);
                     switch (source) {
                         case null -> {
-                            if (staticSourceIdentity(adapter) == null) {
-                                // A call-result ({@code REEVALUATE_THUNK})
-                                // source: the thunk re-executes the source
-                                // expression on every invocation, so the
-                                // source value's execution class is selected
-                                // at execution. The closed dynamic
-                                // return-cell set records exactly one
-                                // caller-side cell per runtime resolution
-                                // class (the callee runs its own cell, the
-                                // host source its HOST_TO_DEAL cell, the
-                                // retained-ABI external source its
-                                // EXTERNAL_RETURN cell), and the invocation
-                                // is the closed DYNAMIC callee arm over the
-                                // adapter's published identity.
-                                dynamicReturnCells =
-                                    new KindPayload.DynamicReturnBoundary(
-                                        emitCallOwnedReturnBoundary(signature, result,
-                                            call.span(), callOpId),
-                                        emitHostReturnBoundary(signature, result,
-                                            call.span(), callOpId).opId(),
-                                        emitExternalReturnBoundary(signature, result,
-                                            call.span(), callOpId));
-                            } else {
                                 // A retained declaration-site operand (the
                                 // {@code VALUE} capture mode — an awaited
                                 // suspension's delivered function value):
@@ -9945,7 +9757,6 @@ public final class SemanticLowerer {
                                     adapter.sourceSignature(), result, call.span(),
                                     callOpId);
                                 returnBoundaryOpId = hostCrossing.opId();
-                            }
                         }
                         case FunctionExecutionBinding.LoweredBody body -> {
                             FunctionContext context =
@@ -10047,14 +9858,12 @@ public final class SemanticLowerer {
             }
             emit(buildOp(callOpId, SemanticOpKind.CALL,
                 new KindPayload.CallPayload(CallMode.INDIRECT,
-                    dynamicReturnCells != null
-                        ? new KindPayload.CallCallee.Dynamic(calleeValue)
-                        : (valueCarried
-                            ? new KindPayload.CallCallee.Indirect(calleeValue)
-                            : new KindPayload.CallCallee.Static(binding)),
+                    valueCarried
+                        ? new KindPayload.CallCallee.Indirect(calleeValue)
+                        : new KindPayload.CallCallee.Static(binding),
                     signature, parameterBoundaryIds,
-                    dynamicReturnCells != null ? null : returnBoundaryOpId,
-                    dynamicReturnCells, bodyBlock,
+                    returnBoundaryOpId,
+                    null, bodyBlock,
                     externalEntryRef),
                 result, resultType, args, argTypes,
                 FailurePolicyId.NO_DEAL_FAILURE, origin));
@@ -10478,17 +10287,6 @@ public final class SemanticLowerer {
                         calleeValue);
                 }
                 if (binding instanceof FunctionExecutionBinding.AdapterBinding adapter) {
-                    if (staticSourceIdentity(adapter) == null) {
-                        // The REEVALUATE_THUNK adapter source: the thunk
-                        // re-executes the source expression per invocation,
-                        // so the source's execution class is selected at
-                        // execution — the closed DYNAMIC async arm over the
-                        // adapter's published identity records the single
-                        // DEAL-body task cell and runs no statically selected
-                        // source start.
-                        return lowerDynamicAwait(call, slot, awaitSpan,
-                            identifier.name(), calleeValue);
-                    }
                     return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                         identifier.name());
                 }
@@ -10539,13 +10337,6 @@ public final class SemanticLowerer {
                 new FunctionAllocationIdentity(dynamicCallee.id()));
             if (registration instanceof FunctionExecutionBinding.AdapterBinding
                     adapter) {
-                if (staticSourceIdentity(adapter) == null) {
-                    // The runtime-resolved adapter source (the sync arm's
-                    // twin): the closed DYNAMIC async arm over the adapter's
-                    // published identity.
-                    return lowerDynamicAwait(call, slot, awaitSpan,
-                        describeDynamicCallee(call.callee()), dynamicCallee);
-                }
                 return lowerAdapterOverAsync(call, slot, awaitSpan, adapter,
                     describeDynamicCallee(call.callee()));
             }
@@ -10996,19 +10787,11 @@ public final class SemanticLowerer {
          * the single caller-side {@code FUNCTION_RETURN} the closed dynamic
          * resolution applies to a resolved DEAL body. The source's own class
          * — a DEAL body, a host surface entry, a retained-ABI external, or a
-         * nested adapter — is never guessed at the call site. A
-         * {@code REEVALUATE_THUNK} source never reaches this arm: the closed
-         * dynamic async arm over the adapter's published identity owns it
-         * ({@link #lowerDynamicAwait}).</p>
+         * nested adapter — is never guessed at the call site.</p>
          */
         private ValueId lowerAdapterOverAsync(CallExpr call, ValueId slot, Span awaitSpan,
                 FunctionExecutionBinding.AdapterBinding adapter, String calleeName) {
             ValueId sourceIdentity = staticSourceIdentity(adapter);
-            if (sourceIdentity == null) {
-                throw new ConstructUnlowered("adapter-over-async of '" + calleeName
-                    + "' whose source is a re-evaluated thunk (the closed dynamic"
-                    + " async arm owns it; producer defect)", call.span());
-            }
             FunctionExecutionBinding source = registry.bindings().get(
                 new FunctionAllocationIdentity(sourceIdentity.id()));
             // The runtime-resolved source arm: the adapter protocol resolves

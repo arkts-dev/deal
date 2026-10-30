@@ -500,8 +500,7 @@ public sealed interface KindPayload
      * dominant producing allocation at the creation site — so a closure
      * created inside a loop iteration captures that iteration's incarnation
      * and the emitted factory's capture parameter is the body's binding
-     * source (the thunk source's generation-pinned captures are the same
-     * closed pair).
+     * source.
      */
     record ClosureNewPayload(FunctionId function, RuntimeDescriptor.Func signature,
                              List<BindingGeneration> captures,
@@ -525,10 +524,9 @@ public sealed interface KindPayload
 
     /**
      * {@code FUNCTION_ADAPT} — source/target signatures, the closed
-     * capture mode, the closed source reference, and the optional
-     * immutability proof ({@code VALUE} over a binding source requires it;
-     * D15 creation rule). Creation evaluates no thunk and reads no binding
-     * except VALUE's single operand/load.
+     * VALUE capture mode, the evaluated source reference, and an optional
+     * binding immutability proof. Its single source operand completes once
+     * before creation; invocation retains that value.
      */
     record FunctionAdaptPayload(RuntimeDescriptor.Func sourceSignature,
                                 RuntimeDescriptor.Func targetSignature, CaptureMode mode,
