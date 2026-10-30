@@ -198,7 +198,7 @@ public final class NativeJsonStdlibTest {
             }
         }
         NativeCompiler.Result link = NativeCompiler.link(published, level, sources,
-            List.of("-DDEAL_JSON_CASE=0"), product);
+            List.of(), product);
         check(link.succeeded(), "the json/stdlib driver builds at -O" + level
             + ": " + link.describe());
         checkEq("", link.stderr(), "the json/stdlib driver builds without"
@@ -265,8 +265,7 @@ public final class NativeJsonStdlibTest {
         // observations and no finding.
         Path sanitizedProduct = scratch.resolve("json-stdlib-asan-o" + level);
         NativeCompiler.Result sanitizedLink = NativeCompiler.link(published,
-            level, sources, concat(List.of("-DDEAL_JSON_CASE=0"),
-                NativeCompiler.SANITIZER_FLAGS), sanitizedProduct);
+            level, sources, NativeCompiler.SANITIZER_FLAGS, sanitizedProduct);
         check(sanitizedLink.succeeded(), "the json/stdlib driver builds with "
             + "ASan/UBSan at -O" + level + ": " + sanitizedLink.describe());
         if (sanitizedLink.succeeded()) {
@@ -320,13 +319,6 @@ public final class NativeJsonStdlibTest {
     // =========================================================================
     // The expectation set (authored from the shared authorities and the spec)
     // =========================================================================
-
-    /** One flag list followed by another. */
-    private static List<String> concat(List<String> first, List<String> second) {
-        List<String> combined = new ArrayList<>(first);
-        combined.addAll(second);
-        return combined;
-    }
 
     /** The emitted call origin every observation is rendered at. */
     private static SourceOrigin origin() {
@@ -982,22 +974,13 @@ public final class NativeJsonStdlibTest {
             new Negative(2, 7,
                 "json: array element layout outside the runtime boxed set"));
         for (Negative negative : negatives) {
-            Path product = scratch.resolve("negative-" + negative.selection()
-                + "-o" + negative.level());
-            List<Path> sources = new ArrayList<>();
-            sources.add(NativeCompiler.fixtures().resolve("json_stdlib_driver.c"));
-            sources.add(NativeCompiler.fixtures().resolve("registry_empty.c"));
-            for (Path unit : NativeCompiler.runtimeTranslationUnits(published)) {
-                if (!unit.getFileName().toString().equals("main.c")) {
-                    sources.add(unit);
-                }
-            }
-            NativeCompiler.Result link = NativeCompiler.link(published,
-                negative.level(), sources, List.of(), product);
-            check(link.succeeded(), "the defect product builds (case "
-                + negative.selection() + " at -O" + negative.level() + "): "
-                + link.describe());
-            if (!link.succeeded()) {
+            // Selection is environment-only: reuse this invocation's acceptance
+            // product, never a previous process's artifact or execution verdict.
+            Path product = scratch.resolve("json-stdlib-o" + negative.level());
+            boolean built = Files.isExecutable(product);
+            check(built, "the current acceptance product exists for defect case "
+                + negative.selection() + " at -O" + negative.level());
+            if (!built) {
                 continue;
             }
             NativeCompiler.Result run = NativeCompiler.execute(product, scratch,
