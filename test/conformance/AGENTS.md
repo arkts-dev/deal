@@ -1,6 +1,6 @@
 # Conformance
 
-Maintain specification-indexed frontend/runtime cases with deterministic metadata/exact outcomes. CorpusConformanceTest owns discovery/preparation/invocation/verdicts; only artifact launch protocols differ. Bound subprocesses; reconcile declared backends/exports/completions. Missing tools/invocations fail. Compile rejection is not execution.
+Maintain specification-indexed frontend/runtime cases with deterministic metadata/exact outcomes. CorpusConformanceTest owns discovery/preparation/invocation/verdicts; only artifact launch protocols differ. Bound subprocesses; reconcile backends/exports/completions. Reuse setup, isolate tasks; never cache verdicts. Missing tools/invocations fail. Rejection isn't execution.
 
 - Select membership by declared intent, never compiler success. Keep companions explicit/focused; preserve denominators and independent consumers.
 - Reach return checks through captured locals without parameter checks; construct store destinations before corruption and inspect state after rejection. Pin exact nominal atoms, including same-named siblings. Distinguish ordinary/assertion projections; include valid controls per declaration.
