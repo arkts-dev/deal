@@ -94,7 +94,7 @@ NumberLiteral ::= DecimalInteger
 StringLiteral ::= '"' StringCharacter* '"' | '\'' StringCharacter* '\''
 
 TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
-TemplateText ::= /* one or more characters containing no line terminator, '`', or '${' */
+TemplateText ::= /* maximal nonempty text excluding line-terminators, '`', '${'; trailing backslashes form pairs */
 
 StringCharacter ::= /* any SourceCharacter except line terminators and unescaped quote */
  | '\n' | '\t' | '\\' | '\"' | '\''
