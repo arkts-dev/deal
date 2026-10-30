@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: class export valid
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let n:host.N={x:1};if(n.x===1){console.log("CLASS_OK");}return null;}

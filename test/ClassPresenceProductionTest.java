@@ -151,6 +151,7 @@ public final class ClassPresenceProductionTest {
                 Path hostSource = project.resolve("HostRecord.java");
                 Files.writeString(hostSource, """
                     public final class HostRecord {
+                      public static final String HostRecord = "@$external/host/record/HostRecord";
                       public static Object HostRecord_defaults() {
                         throw new AssertionError("retired default hook was invoked");
                       }

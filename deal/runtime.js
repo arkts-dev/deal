@@ -2766,6 +2766,10 @@ const $rt = {
           pending.push(v[i]);
         }
       } else if (v.$kind === "class") {
+        if (v.$classname === "Error") {
+          $rt.checkString(v.code, file, line, column);
+          $rt.checkString(v.message, file, line, column);
+        }
         const fields = $classFieldOrder.get(v) || Object.keys(v).filter(key => key !== "$kind" && key !== "$classname");
         for (const key of fields) if (Object.prototype.hasOwnProperty.call(v, key)) pending.push(v[key]);
       } else if (v.$kind === "function") {
@@ -3733,7 +3737,7 @@ const $rt = {
           $rt.fail("E8011", "host export '" + $name + "'" + $inModule + " is not a class meta", file, line, column, "class", $rawShapeKind($v));
         }
         if ($v.$classname !== $desc) {
-          $rt.fail("E8011", "host class export '" + $name + "'" + $inModule + " has identity mismatch: expected " + $desc + ", got " + String($v.$classname), file, line, column, $desc, $v.$classname);
+          $rt.fail("E8011", "host class '" + $name + "'" + $inModule + " has identity mismatch: expected " + $desc + ", got " + String($v.$classname), file, line, column);
         }
         const $fields = $entry.$fields;
         if (!$Array.isArray($fields)) {

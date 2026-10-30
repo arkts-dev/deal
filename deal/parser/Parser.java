@@ -939,6 +939,9 @@ public final class Parser {
             Token lparen = advance();
             TypeNode inner = parseType();
             if (inner == null) return null;
+            if (inner instanceof NamedType named && named.name().equals("void")) {
+                error(DiagnosticCode.E1032, "Parenthesized void is not a data type", lparen);
+            }
             if (!match(TokenType.RPAREN)) {
                 error(DiagnosticCode.E1015, "Expected ')' after type", peek());
             }

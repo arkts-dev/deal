@@ -8769,6 +8769,21 @@ end
 -- numerics to the landed helpers. Neither composes a DEAL failure: the
 -- declared cells stay the only failure authority (a missing function-shape
 -- entry is a plain producer diagnostic, never a language failure).
+-- Error.message and the diagnostic m spelling are one live slot.
+__factories.__errorMessageMeta = {
+  __index = function(v, key) if key == "message" then return rawget(v, "m") end end,
+  __newindex = function(v, key, value)
+    if key == "message" then rawset(v, "m", value) else rawset(v, key, value) end
+  end
+}
+__factories.__errorCarrier = function(v)
+  if getmetatable(v) ~= __factories.__errorMessageMeta then
+    if rawget(v, "message") ~= nil then rawset(v, "m", rawget(v, "message")) end
+    rawset(v, "message", nil)
+    setmetatable(v, __factories.__errorMessageMeta)
+  end
+  return v
+end
 __factories.__hostCarrierOut = function(desc, v, memo)
   if memo ~= nil and not memo.__outDirection then
     if memo.__outMemo == nil then memo.__outMemo = {__outDirection = true} end
@@ -8786,8 +8801,7 @@ __factories.__hostCarrierOut = function(desc, v, memo)
   if v[__dealCarrierKeys.jn] then return v.d end
   if v[__dealCarrierKeys.d] then
     v[__dealCarrierKeys.kind] = "class"; v[__dealCarrierKeys.classname] = "Error"
-    v.message = v.m
-    return v
+    return __factories.__errorCarrier(v)
   end
   if v[__dealCarrierKeys.c] then
     v[__dealCarrierKeys.kind] = "class"; v[__dealCarrierKeys.classname] = v[__dealCarrierKeys.id]
@@ -9214,7 +9228,7 @@ __factories.__hostCarrierIn = function(desc, v, memo)
   end
   if scalarDesc(desc) then return v end
   if v[__dealCarrierKeys.c] then return v end
-  if v[__dealCarrierKeys.d] then return v end
+  if v[__dealCarrierKeys.d] then return __factories.__errorCarrier(v) end
   if v[__dealCarrierKeys.kind] == "async" then return v end
   if v[__dealCarrierKeys.kind] == "function" then return v end
   if v[__dealCarrierKeys.fn] ~= nil then return v end
@@ -9223,7 +9237,8 @@ __factories.__hostCarrierIn = function(desc, v, memo)
     if identity == nil then return v end
     if identity == "Error" then
       local out = v
-      out[__dealCarrierKeys.d] = true; out.m = v.message
+      out[__dealCarrierKeys.d] = true
+      __factories.__errorCarrier(out)
       memo[v] = out
       return out
     end
@@ -9376,9 +9391,7 @@ __factories.__hostCarrierIn = function(desc, v, memo)
       if k > length then length = k end
       present = present + 1
     end
-    local nullableElement = elementDesc == "null"
-      or string.sub(elementDesc, 1, 1) == "?"
-    if present ~= length and not nullableElement then return v end
+    if present ~= length then return v end
     local out = v
     out[__dealCarrierKeys.a] = true
     out[__dealCarrierKeys.n] = 0
@@ -9794,7 +9807,7 @@ local function __numHex(v)
 end
 local function __atom(kind, v)
   if type(v) == "table" and v[__dealCarrierKeys.d] then
-    return "err:"..v.code..":"..__esc(v.m or "")
+    return "err:"..tostring(v.code)..":"..__esc(v.m or "")
   end
   if v == __UNDEFINED then return "undefined" end
   if type(v) == "number" then return "num:"..__numHex(v) end
@@ -9823,7 +9836,7 @@ local function __atom(kind, v)
     return "str:"..__esc(v)
   end
   if kind == "err" then
-    return "err:"..v.code..":"..__esc(v.m or "")
+    return "err:"..tostring(v.code)..":"..__esc(v.m or "")
   end
   if kind == "ref" or kind == "table" or kind == "array" or kind == "function"
       or kind == "class" then
@@ -9913,7 +9926,7 @@ local function __rawAtom(kind, v)
   end
   if type(v) == "string" then return "str:"..__esc(v) end
   if type(v) == "table" then
-    if v[__dealCarrierKeys.d] then return "err:"..v.code..":"..__esc(v.m or "") end
+    if v[__dealCarrierKeys.d] then return "err:"..tostring(v.code)..":"..__esc(v.m or "") end
     return "ref:"..__allocId(v)
   end
   if type(v) == "function" then return "ref:"..__allocId(v) end
@@ -10960,6 +10973,9 @@ local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
             and rawget(member, __dealCarrierKeys.d) == nil
             and rawget(member, __dealCarrierKeys.kind) == nil then return fail("unknown") end
         if rawget(member, __dealCarrierKeys.kind) == "async" then return fail("unknown") end
+        if rawget(member, __dealCarrierKeys.d) then
+          __bcheck("Error", "ref", member, nil, completion, classSeen)
+        end
         if rawget(member, __dealCarrierKeys.fn) ~= nil or rawget(member, __dealCarrierKeys.kind) == "function" then
           if not __factories.__validFunction(member) then return fail("unknown") end
         end
@@ -10970,8 +10986,18 @@ local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
             if type(k) == "string" then
               if not __jsonValidUtf8(k) then return fail("unknown") end
               pending[#pending + 1] = val
-            elseif type(k) == "number" or k == __dealCarrierKeys.f then
+            elseif type(k) == "number" then
+              if not rawget(member, __dealCarrierKeys.a) and not rawget(member, __dealCarrierKeys.ja) then return fail("table") end
               pending[#pending + 1] = val
+            elseif k == __dealCarrierKeys.f then
+              pending[#pending + 1] = val
+            elseif type(k) ~= "table" then return fail("table")
+            else
+              local private = false
+              for _, carrierKey in pairs(__dealCarrierKeys) do
+                if k == carrierKey then private = true; break end
+              end
+              if not private then return fail("table") end
             end
           end
         end
@@ -11030,7 +11056,11 @@ local function __bcheck(desc, staticKind, v, csig, completion, classSeen)
     -- The builtin Error class (the err carrier): an Error table
     -- passes unchanged. The canonical builtin atom is exactly Error
     -- (the one class text without the leading '@').
-    if type(v) == "table" and v[__dealCarrierKeys.d] then return v end
+    if type(v) == "table" and v[__dealCarrierKeys.d] then
+      __bcheck("string", "ref", v.code, nil, completion, classSeen)
+      __bcheck("string", "ref", v.m, nil, completion, classSeen)
+      return v
+    end
     return failClass(desc, (type(v) == "table" and v[__dealCarrierKeys.c]) and v[__dealCarrierKeys.id] or nil)
   elseif string.sub(desc, 1, 1) == "@" then
     -- A nominal class descriptor (E5): the canonical @module/Class
@@ -11946,7 +11976,7 @@ local function __rawArgAtom(kind, v)
     if v[__dealCarrierKeys.jn] then
       return __atom("number", v.d)
     end
-    if v[__dealCarrierKeys.d] then return "err:"..v.code..":"..__esc(v.m or "") end
+    if v[__dealCarrierKeys.d] then return "err:"..tostring(v.code)..":"..__esc(v.m or "") end
     return "ref:"..__allocId(v)
   end
   if t == "function" then return "ref:"..__allocId(v) end

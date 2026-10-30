@@ -87,6 +87,7 @@ public final class Language15RuntimeTest {
             }
         }
         callableBodyAdmission();
+        errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language15RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
     }
@@ -145,6 +146,65 @@ public final class Language15RuntimeTest {
                         deal.semantic.SemanticRuntimeModel.Terminal.Success success)
                         || !success.resultAtom().equals("num:0x1.0p0"))
                     throw new AssertionError("bodyless callable admitted (nested=" + nested + "): " + result.comparisonReport());
+            }
+        } finally {
+            try (var paths = Files.walk(work)) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+            }
+        }
+    }
+
+    /** Exercise live builtin Error schema/descendant views through real lowering. */
+    private static void errorGraphAdmission() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "error-admission-").toAbsolutePath();
+        try {
+            Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
+            Path declaration = source.resolveSibling("probe.d.deal");
+            Files.writeString(declaration, "export function edit(e:Error):void;");
+            Files.writeString(work.resolve("deal.json"),
+                "{\"languageVersion\":\"1.5\",\"stdlib\":\"1.5\",\"moduleRoots\":[\"src\"]}");
+            for (String boundary : List.of("Error", "unknown", "Record<string,unknown>")) {
+                String value = boundary.equals("Record<string,unknown>") ? "{unread:e}" : "e";
+                Files.writeString(source, "import * as host from \"host/probe\";"
+                    + "export function main():null{return null;}"
+                    + "export function run():number{let e:Error={code:\"X\",message:\"original\"};"
+                    + "host.edit(e);try{let v:" + boundary + "=" + value
+                    + ";return 0;}catch(x){return 1;}}");
+                var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                    deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                    deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+                var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                    false, false, false, false, deal.codegen.Backend.JS,
+                    Map.of("host/probe", declaration.toString()), List.of(source.getParent()), null, null, invocation);
+                if (!compiler.compile()) throw new AssertionError("Error admission compile failed");
+                var project = Objects.requireNonNull(compiler.producedProject());
+                var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+                var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+                project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+                for (String field : List.of("code", "message")) for (boolean invalid : List.of(false, true)) {
+                    int[] calls = {0};
+                    var responder = new deal.semantic.SemanticOracle.HostResponder() {
+                        @Override public SyncOutcome call(deal.semantic.ir.ModuleId module, String export,
+                                deal.semantic.ir.RuntimeDescriptor.Func descriptor,
+                                List<deal.semantic.SemanticOracle.Value> arguments) {
+                            calls[0]++;
+                            try {
+                                var write = deal.semantic.SemanticOracle.Value.ErrorValue.class
+                                    .getDeclaredMethod("writeField", String.class, String.class);
+                                write.setAccessible(true);
+                                write.invoke(arguments.getFirst(), field, invalid ? "\ud800" : "changed 🌍");
+                            } catch (ReflectiveOperationException e) { throw new AssertionError(e); }
+                            return new SyncOutcome.Returned(deal.semantic.SemanticOracle.Value.UndefinedValue.INSTANCE);
+                        }
+                    };
+                    var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
+                        responder, compiler.checkedProject().input().entryModule(), "run", List.of());
+                    String expected = invalid ? "num:0x1.0p0" : "num:0x0.0p0";
+                    if (calls[0] != 1 || !(result.terminal() instanceof
+                            deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                            || !success.resultAtom().equals(expected))
+                        throw new AssertionError(boundary + "/" + field + "/" + invalid + ": " + result.comparisonReport());
+                }
             }
         } finally {
             try (var paths = Files.walk(work)) {

@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: error live message
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{let e:Error={code:"X",message:"m"};let alias=e;host.edit(e);console.log(e.message);console.log(host.read(e));e.message="source";console.log(host.read(e));try{throw e;}catch(x){if(x instanceof Error){if(x===alias){console.log(x.message);}}}return null;}

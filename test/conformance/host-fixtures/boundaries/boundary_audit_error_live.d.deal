@@ -1,0 +1,1 @@
+export function edit(e:Error):void;export function read(e:Error):string;

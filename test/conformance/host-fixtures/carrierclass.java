@@ -12,6 +12,8 @@ import java.util.concurrent.CompletableFuture;
 // assertion proves the declared value survived the crossing.
 
 final class HostCarrierclass {
+  public static final String Config = "@$external/host.carrierclass/Config";
+  public static final String Holder = "@$external/host.carrierclass/Holder";
   public static final java.util.Map<String, Object> Config_defaults =
       java.util.Map.of("value", Double.valueOf(0));
 

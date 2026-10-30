@@ -432,12 +432,25 @@ function __rt.validate_data(root, file, line, column)
       local kind = __rt.typed_kind(v)
       if kind == "async-operation" then reject(v) end
       if kind == "function" and not __rt.valid_function(v) then reject(v) end
+      if rawget(v, __K.d) or v[__K.classname] == "Error" then
+        __rt.check_string(v.code, file, line, column)
+        local message = v.message
+        if rawget(v, __K.d) then message = v.m end
+        __rt.check_string(message, file, line, column)
+      end
       if kind ~= "function" and not rawget(v, __K.jn) then
         for key, member in next, v do
           if type(key) == "string" then
             __rt.check_string(key, file, line, column)
             pending[#pending + 1] = member
-          elseif type(key) == "number" then pending[#pending + 1] = member end
+          elseif type(key) == "number" then
+            if not rawget(v, __K.a) and not rawget(v, __K.ja) then reject(v) end
+            pending[#pending + 1] = member
+          else
+            local private = false
+            for _, carrierKey in pairs(__K) do if key == carrierKey then private = true; break end end
+            if not private then reject(v) end
+          end
         end
       end
     end
@@ -894,6 +907,13 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
         "E8001", "expected instance of " .. ast.name .. ", got "
           .. tostring(actual_class), file, line, column, ast.name, actual_class))
     end
+    if ast.name == "Error" then
+      __rt.check_string(v.code, file, line, column)
+      local message = v.message
+      if v[__K.d] then message = v.m end
+      __rt.check_string(message, file, line, column)
+      return v
+    end
     local plan = __rt.__hostClassPlans and __rt.__hostClassPlans[ast.name]
     if plan ~= nil then
       local descriptors = seen[v]
@@ -954,7 +974,7 @@ local function check_canonical_ast(ast, v, file, line, column, seen)
       length = max
     end
     for i = 1, length do
-      local ok = pcall(check_canonical_ast, ast.element, v[i], file, line, column, seen)
+      local ok = v[i] ~= nil and pcall(check_canonical_ast, ast.element, v[i], file, line, column, seen)
       if not ok then
         error(__rt._armErr("ARRAY_ELEMENT_KIND", { oneBasedIndex = i }, "E8003",
           "array element " .. i .. " type mismatch", file, line, column,

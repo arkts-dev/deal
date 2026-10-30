@@ -1,4 +1,5 @@
 final class HostProbe {
+  public static final String C="@$external/host/probe/C";
     public static Object f() {
         return new deal.codegen.jvm.JvmRuntime.ClassInstance() {
             public String classIdText() { return "@$external/host/probe/C"; }

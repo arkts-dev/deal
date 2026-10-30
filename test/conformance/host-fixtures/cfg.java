@@ -1,6 +1,8 @@
 
 
 final class HostCfg {
+  public static final String Endpoint = "@$external/host.cfg/Endpoint";
+  public static final String ServerConfig = "@$external/host.cfg/ServerConfig";
   // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
   static String numericText(Object value) {
     if (value instanceof Number n) {

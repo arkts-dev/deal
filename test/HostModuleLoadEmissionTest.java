@@ -2165,7 +2165,7 @@ public class HostModuleLoadEmissionTest {
 
         return {
           returnPlain = function()
-            return { xs = { 1, 2 } }
+            return { xs = { [rt.__keys.a] = true, [rt.__keys.n] = 2, 1, 2 } }
           end,
 
           returnParsed = function()
@@ -2178,7 +2178,7 @@ public class HostModuleLoadEmissionTest {
 
           returnAsyncPlain = function()
             return rt.async_start(function()
-              return { xs = { 1, 2 } }
+              return { xs = { [rt.__keys.a] = true, [rt.__keys.n] = 2, 1, 2 } }
             end)
           end,
 
@@ -2347,10 +2347,8 @@ public class HostModuleLoadEmissionTest {
      * over — the return value, the callback argument, a nested member and
      * a table the DEAL side wrote after the crossing (the first write's
      * recorded order beside the host's own keys) — a self-referential
-     * host table renders the closed cycle arm, and the shared table-form
-     * rule admits the pure array form while a mixed-key host table renders
-     * the closed {@code JSON_STRINGIFY_UNSUPPORTED} tuple instead of
-     * coerced or duplicated member names (JsonEncodeV13).
+     * host table renders the closed cycle arm, while numeric and mixed-key
+     * Records reject at ingress instead of coercing or duplicating names.
      */
     private static final String HOST_TABLE_APP_SOURCE = """
         import * as host from "host/table_probe";
@@ -2413,12 +2411,10 @@ public class HostModuleLoadEmissionTest {
             throw { code: "TEST_FAIL", message: "host table cycle arm" };
           }
 
-          let fifth: string = "array=" + closedOutcome(host.makeArray());
-          // The shared table-form rule: a mixed-key host table is not
-          // JSON-shaped content, so the walk renders the closed
-          // JSON_STRINGIFY_UNSUPPORTED tuple instead of a coerced numeric
-          // member name (and never the duplicate name [1] beside "1").
-          let sixth: string = "mixed=" + closedOutcome(host.makeMixed());
+          let fifth = "array=BAD";
+          try { host.makeArray(); } catch(e) { if(e instanceof Error){fifth="array="+e.code;} }
+          let sixth = "mixed=BAD";
+          try { host.makeMixed(); } catch(e) { if(e instanceof Error){sixth="mixed="+e.code;} }
 
           return first + "\\n" + second + "\\n" + third + "\\n" + fourth
             + "\\n" + fifth + "\\n" + sixth;
@@ -2462,8 +2458,8 @@ public class HostModuleLoadEmissionTest {
         "nested={\"inner\":\"x\"} keys=inner",
         "written=extra,a:{\"extra\":9.0,\"a\":1} host=a=1 extra=9",
         "callback=cb:cb:{\"cb\":2}",
-        "array=OK:[\"a\",\"b\"]",
-        "mixed=E8001|unsupported type for JSON encoding: table",
+        "array=E8010",
+        "mixed=E8010",
         "TRANSCRIPT-END",
         "");
 
@@ -2475,11 +2471,9 @@ public class HostModuleLoadEmissionTest {
      * host built, and {@code std/table.keys} and {@code std/json.stringify}
      * consume it — no raw Lua length-of-nil failure and no false
      * {@code JSON_STRINGIFY_UNSUPPORTED} — on the published production
-     * artifact under real luajit. The same walk admits a host table's pure
-     * array form and rejects its mixed-key form with the closed
-     * {@code JSON_STRINGIFY_UNSUPPORTED} tuple — the shared table-form rule
-     * the shipped std/json realization applies too — so no member name is
-     * ever coerced from a key the DEAL table grammar cannot carry.
+     * artifact under real luajit. Numeric and mixed-key Records reject at
+     * host ingress before encoding; nested arrays carry explicit array marks,
+     * so no member name is coerced from a key the Record grammar cannot carry.
      */
     private static void testLuaHostTableValue() throws Exception {
         System.out.println("-- the host-crossed table value: the published "
@@ -5043,7 +5037,7 @@ public class HostModuleLoadEmissionTest {
         export function makeClassyTable(): Record<string, unknown>;
         export function observeClassy(t: Record<string, unknown>): string;
         export function makeDenseTable(): Record<string, unknown>;
-        export function observeDense(items: Record<string, unknown>): string;
+        export function observeDense(items: unknown[]): string;
         export function makeNullTable(): Record<string, unknown>;
         export function observeNull(t: Record<string, unknown>): string;
         export function observeMade(): string;
@@ -5217,7 +5211,7 @@ public class HostModuleLoadEmissionTest {
 
         export function runDense(): string {
           let t: Record<string, unknown> = host.makeDenseTable();
-          let items: Record<string, unknown> = t.items as Record<string, unknown>;
+          let items: unknown[] = t.items as unknown[];
           return host.observeDense(items);
         }
 
@@ -5467,7 +5461,7 @@ public class HostModuleLoadEmissionTest {
           end,
 
           makeDenseTable = function()
-            return {items = {1, 2, 3}}
+            return {items = {[K.a]=true,[K.n]=3,[K.elementDescriptor]="unknown",1,2,3}}
           end,
 
           observeDense = function(items)
@@ -5532,7 +5526,7 @@ public class HostModuleLoadEmissionTest {
         runWrongMember=wrongMember=E8010|function signature mismatch: expected (number)->number, got (string)->number
         runShare=plain=extra:9,shared:true,hostextra:9
         runCopy=classy=marker:3,hostmarker:3,copy:false,memo=yes
-        runDense=dense=n:3,array:false,v1:1
+        runDense=dense=n:3,array:true,v1:1
         runNull=null=yes,null=note:true,missing:true,ratio:number:2.5
         runNumeric=numeric={"a":1.0,"b":0.1,"n":null}
         runWrongRawFunction=rawFunction=E8010|return value 1 type mismatch: expected unknown
@@ -6175,7 +6169,9 @@ public class HostModuleLoadEmissionTest {
                     }
                     String stem = fileName.substring(0, fileName.length() - ".java".length());
                     String deployed = JvmBackend.classNameFor("host/" + stem) + ".java";
-                    Files.copy(file, workspace.resolve(deployed));
+                    String hostSource = Files.readString(file);
+                    if (stem.equals("cfg")) hostSource = hostSource.replace("@$external/host.cfg/", "@$external/host/cfg/");
+                    Files.writeString(workspace.resolve(deployed), hostSource);
                     corpusHostSources.add(deployed);
                 }
             }
@@ -6500,6 +6496,8 @@ public class HostModuleLoadEmissionTest {
         String cfgOrigin = importOrigin(cfgFixture, CFG_SPECIFIER);
         checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
             final class HostCfg {
+              public static final String Endpoint = "@$external/host/cfg/Endpoint";
+              public static final String ServerConfig = "@$external/host/cfg/ServerConfig";
               public static final java.util.Map<String, Object> Endpoint_defaults =
                   java.util.Map.of("path", "/");
               public static Object describe(Object s) { return "cfg"; }
@@ -6509,6 +6507,8 @@ public class HostModuleLoadEmissionTest {
             cfgOrigin, "missing-export-without-defaults");
         checkJvmLoadFailure(cfgFixture, "HostCfg.java", """
             final class HostCfg {
+              public static final String Endpoint = "@$external/host/cfg/Endpoint";
+              public static final String ServerConfig = "@$external/host/cfg/ServerConfig";
               public static final java.util.Map<String, Object> Endpoint_defaults =
                   java.util.Map.of("path", "/");
               public static final Object ServerConfig_defaults = 42;

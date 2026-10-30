@@ -478,14 +478,12 @@ test("table.keys returns keys of a table as strings", function()
   assert(found.a and found.b and found.c)
 end)
 
-test("table.keys excludes non-string keys", function()
-  -- luajit-v1.2-stdlib-contracts D4: non-string keys (the integer keys
-  -- of a json.parse array table) are excluded; only string keys appear.
+test("table.keys rejects non-string Record keys", function()
   local t = { [1] = "a", [2] = "b", keep = "c" }
+  assert_error_code(function() tablelib.keys.f(t) end, "E8001")
+  t[1], t[2] = nil, nil
   local keys = tablelib.keys.f(t)
-  assert(#keys == 1, "expected only the string key, got " .. #keys)
-  assert(type(keys[1]) == "string", "key should be string, got " .. type(keys[1]))
-  assert(keys[1] == "keep", "expected the string key 'keep', got " .. tostring(keys[1]))
+  assert(#keys == 1 and keys[1] == "keep")
 end)
 
 test("table.keys preserves the deterministic iteration order of the current state", function()
@@ -581,7 +579,7 @@ test("json.stringify of simple object", function()
 end)
 
 test("json.stringify of array", function()
-  local result = json.stringify.f({ 1, 2, 3 })
+  local result = json.stringify.f({ [__K.a]=true, [__K.n]=3, 1, 2, 3 })
   assert(result == '[1,2,3]')
 end)
 
@@ -606,21 +604,13 @@ test("json.stringify boolean values", function()
   assert(string.find(result, "false") ~= nil)
 end)
 
--- The shared table-form rule (JsonEncodeV13): a plain table is JSON-shaped
--- only as the pure positive-integer-keyed array or the pure string-keyed
--- object. A DEAL table has string keys, so a numeric or other key — and the
--- mixed form only a non-DEAL host table can carry — is not JSON-shaped
--- content: it renders the closed JSON_STRINGIFY_UNSUPPORTED tuple (E8001
--- "unsupported type for JSON encoding: table", expected "string, number,
--- boolean, or table", actual "table"), exactly the emitted LuaJIT chunk's
--- walk, the JS runtime's Map-key row and the JVM runtime's table/array
--- split. Never a coerced member name and never a duplicate JSON member
--- ([1] beside "1").
+-- Unknown ingress rejects foreign Record keys before encoding. Marked arrays
+-- remain distinct from string-keyed Records; numeric keys are never coerced.
 local function assert_table_form_stringify_error(fn, label, file, line, column)
   local err = assert_error_code(fn, "E8001")
-  assert(err.message == "unsupported type for JSON encoding: table",
+  assert(err.message == "unsupported unknown ingress",
     label .. ": message " .. tostring(err.message))
-  assert(err.expected == "string, number, boolean, or table",
+  assert(err.expected == "unknown",
     label .. ": expected " .. tostring(err.expected))
   assert(err.actual == "table", label .. ": actual " .. tostring(err.actual))
   if file ~= nil then
@@ -660,10 +650,10 @@ test("json.stringify rejects every key form outside the two JSON table forms", f
   end, "boolean key")
 end)
 
-test("json.stringify keeps the pure integer-keyed array and string-keyed object forms", function()
-  local array = json.stringify.f({ "a", "b" })
+test("json.stringify keeps marked arrays and string-keyed objects distinct", function()
+  local array = json.stringify.f({ [__K.a]=true, [__K.n]=2, "a", "b" })
   assert(array == '["a","b"]', "the pure integer-keyed table is the array: " .. tostring(array))
-  assert(json.stringify.f({ [2] = "b" }) == '[null,"b"]',
+  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, [2] = "b" }) == '[null,"b"]',
     "a hole in an admitted array substitutes null")
   local object = json.stringify.f({ name = "test" })
   assert(object == '{"name":"test"}', "the pure string-keyed table is the object: " .. tostring(object))
@@ -836,7 +826,7 @@ test("json.stringify substitutes null for NaN in nested object", function()
 end)
 
 test("json.stringify substitutes null for Infinity in array", function()
-  assert_nonfinite_substitution(function() return json.stringify.f({ 1, 2, 1.0/0.0 }) end,
+  assert_nonfinite_substitution(function() return json.stringify.f({ [__K.a]=true, [__K.n]=3, 1, 2, 1.0/0.0 }) end,
     '[1,2,null]', "array Infinity")
 end)
 
@@ -1440,13 +1430,13 @@ test("Record parameters reject nominal carriers independently of generic stringi
     { name = "async handle", value = __rt.async_start(function() end),
       actual = "async-operation" },
     { name = "language null", value = __rt.__NULL, actual = "null" },
-    { name = "plain array table", value = { 1, 2 }, actual = "table_control" },
+    { name = "marked array", value = { [__K.a]=true, [__K.n]=2, 1, 2 }, actual = "array" },
   }
   for _, case in ipairs(cases) do
-    if case.actual == "table_control" then
-      -- Control: the dense array form is a table value at a table cell.
+    if case.actual == "array" then
       assert(json.stringify.f(case.value) == "[1,2]", case.name .. ": array encodes")
-    else
+    end
+    do
       local err = assert_error_code(function() require("std.table").keys.f(case.value) end, "E8001")
       assert(err.message == "expected table", case.name .. ": message, got: "
         .. tostring(err.message))
@@ -1495,13 +1485,10 @@ test("json.stringify substitutes null for a deleted decoded-array slot", functio
     "a decoded present null still encodes as null")
 end)
 
--- The inferred (unmarked) array frame applies the same rule: the numeric-key
--- inference classifies a sparse plain table as an array, so its absent slot
--- is the missing value, not a fabricated JSON null.
-test("json.stringify substitutes null in sparse inferred arrays", function()
-  assert(json.stringify.f({ [2] = 2 }, "caller.deal", 3, 1) == '[null,2]', "sparse array")
-  -- The dense counterpart keeps encoding as the array of its elements.
-  assert(json.stringify.f({ 1, 2 }) == '[1,2]', "the dense inferred array still encodes")
+-- A marked array retains logical length; absent slots encode as JSON null.
+test("json.stringify substitutes null in sparse marked arrays", function()
+  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, [2] = 2 }, "caller.deal", 3, 1) == '[null,2]', "sparse array")
+  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, 1, 2 }) == '[1,2]', "the dense array still encodes")
 end)
 
 -- Chunk-shaped carriers use shared private metadata, never their transport keys.
@@ -1525,7 +1512,7 @@ test("json.stringify projects emitted class/Error carriers and omits callable me
   end
   -- The valid JSON-shaped carriers are unchanged by the marker arm.
   assert(json.stringify.f({ ok = 1 }) == '{"ok":1}', "a plain table still serializes")
-  assert(json.stringify.f({ 1, 2 }) == '[1,2]', "an array table still serializes")
+  assert(json.stringify.f({ [__K.a]=true, [__K.n]=2, 1, 2 }) == '[1,2]', "an array still serializes")
   assert(json.stringify.f({ v = __rt.__NULL }) == '{"v":null}',
     "a nested null mark still serializes")
 end)

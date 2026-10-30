@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "hostFixture": "boundaries/boundary_audit_error_code_null",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "E8001\nIDENTITY\nPARAM_BODY\nRECOVERED\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

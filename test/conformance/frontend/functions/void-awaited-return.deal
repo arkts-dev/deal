@@ -1,0 +1,6 @@
+// @spec: Functions — Return type requirements
+// @description: Promise void bodies reject awaited expression returns
+// @expected: compile-error E5003
+// @features: functions, async-await
+async function v():Promise<void>{}
+async function f():Promise<void>{return await v();}

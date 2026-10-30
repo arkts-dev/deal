@@ -1,4 +1,5 @@
 final class HostAudit15 {
+  public static final String C = "@$external/host.audit15/C";
   static $DealRt.__RefArray retained;
   static $DealRt.__NumberArray growing;
   static $DealRt.Fn0_R_$void callback;

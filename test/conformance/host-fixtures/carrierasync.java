@@ -11,6 +11,9 @@ import java.util.concurrent.CompletableFuture;
 // whose completions are the declared class/array values.
 
 final class HostCarrierasync {
+  public static final String Endpoint = "@$external/host.carrierasync/Endpoint";
+  public static final String ServerConfig = "@$external/host.carrierasync/ServerConfig";
+  public static final String Farm = "@$external/host.carrierasync/Farm";
   // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
   static String numericText(Object value) {
     if (value instanceof Number n) {

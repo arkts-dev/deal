@@ -1,0 +1,1 @@
+final class HostProbe{static deal.codegen.jvm.JvmRuntime.ErrorValue saved;public static void edit(Object e){saved=(deal.codegen.jvm.JvmRuntime.ErrorValue)e;saved.message="\ud800";}public static void repair(){saved.message="repaired";}}

@@ -10,6 +10,7 @@ import java.util.concurrent.CompletableFuture;
 // method.
 
 final class HostCarrierarity {
+  public static final String Target = "@$external/host.carrierarity/Target";
   // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
   static String numericText(Object value) {
     if (value instanceof Number n) {

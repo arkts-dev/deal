@@ -1,0 +1,25 @@
+// @spec: Runtime execution model
+// @description: Invalid live Error message rejects record graph admission and permits repair
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null {
+  let e:Error={code:"X",message:"original"};
+  let alias=e;
+  let original:Record<string,unknown>={};
+  let destination=original;
+  host.edit(e);
+  try {
+    destination={unread:e};
+    console.log("BAD");
+  } catch(x) {
+    if(x instanceof Error) { console.log(x.code); }
+  }
+  host.repair();
+  if(e===alias && destination===original) { console.log("UNCHANGED"); }
+  destination={unread:e};
+  console.log("RECOVERED");
+  return null;
+}

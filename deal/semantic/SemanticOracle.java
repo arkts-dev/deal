@@ -3457,6 +3457,14 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                     children.add(entry.getValue());
                 }
                 view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo));
+            } else if (value instanceof Value.ErrorValue error) {
+                List<Value> children = List.of(new Value.StrValue(error.code()), new Value.StrValue(error.message()));
+                view = view.withDataChildren(children.size(), i -> viewOfValue(children.get(i), memo))
+                    .withClassFields(List.of(
+                        new BoundaryValueView.ClassField("code", RuntimeDescriptor.String.INSTANCE, true, true,
+                            () -> viewOfValue(children.get(0), memo)),
+                        new BoundaryValueView.ClassField("message", RuntimeDescriptor.String.INSTANCE, true, true,
+                            () -> viewOfValue(children.get(1), memo))));
             } else if (value instanceof Value.ClassValue instance) {
                 List<Value> children = new ArrayList<>();
                 for (var field : instance.fields())

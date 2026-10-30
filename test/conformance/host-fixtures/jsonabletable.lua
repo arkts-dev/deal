@@ -10,6 +10,7 @@
 -- shapes the finite acyclic JSON domain excludes.
 
 local json = require("std.json")
+local K = require("deal.runtime").__keys
 
 local M = {}
 
@@ -18,7 +19,7 @@ function M.makeTable()
 end
 
 function M.makeNested()
-  return { inner = { a = 1 }, xs = { 10, 20 } }
+  return { inner = { a = 1 }, xs = { [K.a] = true, [K.n] = 2, 10, 20 } }
 end
 
 function M.makeParsed()
@@ -48,7 +49,7 @@ function M.makeNestedInfinite()
 end
 
 function M.makeInfiniteElements()
-  return { xs = { 1 / 0, 2 } }
+  return { xs = { [K.a] = true, [K.n] = 2, 1 / 0, 2 } }
 end
 
 function M.makeBadKey()

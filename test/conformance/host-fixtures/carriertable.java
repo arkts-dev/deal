@@ -14,6 +14,8 @@ import java.util.concurrent.CompletableFuture;
 // declared result.
 
 final class HostCarriertable {
+  public static final String Widget = "@$external/host.carriertable/Widget";
+  public static final String Board = "@$external/host.carriertable/Board";
   // Transcript formatting belongs to the fixture, not the DEAL numeric kind.
   static String numericText(Object value) {
     if (value instanceof Number n) {

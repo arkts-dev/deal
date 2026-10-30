@@ -1125,7 +1125,7 @@ public final class TypeChecker {
 
             if (exprType == Type.Error.INSTANCE) return;
 
-            if (!isAssignable(currentReturnType, exprType)) {
+            if (currentReturnType instanceof Type.Void || !isAssignable(currentReturnType, exprType)) {
                 if (!reportClassProviderCrossing(currentReturnType, exprType,
                         rs.expr().get().span())) {
                     error(DiagnosticCode.E5003,

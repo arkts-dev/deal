@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "hostFixture": "boundaries/boundary_audit_class_valid",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "CLASS_OK\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

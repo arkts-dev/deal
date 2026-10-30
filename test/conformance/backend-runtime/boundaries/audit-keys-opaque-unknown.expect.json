@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "hostFixture": "boundaries/boundary_audit_keys_opaque_unknown",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "E8010\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

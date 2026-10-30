@@ -39,6 +39,12 @@ public final class Language15FrontendTest {
         check("function f(): null { return; }", false);
         check("function f(): null {}", false);
         check("function f(): void { return null; }", false);
+        check("function v():void{} function f():void{return v();}", false);
+        check("async function v():Promise<void>{} async function f():Promise<void>{return await v();}", false);
+        check("function f():(void){}", false);
+        check("async function f():Promise<(void)>{}", false);
+        check("function f():()=>void{return function():void{};}", true);
+        check("function v():void{} function f():void{v();return;}", true);
         check("function f(x: void): void {}", false);
         check("function f(): void { let x: void = undefined; }", false);
         check("class C { x: void; }", false);

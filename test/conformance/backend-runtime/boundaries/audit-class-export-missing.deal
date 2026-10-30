@@ -1,0 +1,6 @@
+// @spec: Modules, declarations, standard library, and host ABI
+// @description: Reject missing declared class export before main
+// @expected: runtime-error E8011
+// @features: host-abi
+import * as host from "host/probe";
+export function main():null{let n:host.N={x:1};return null;}

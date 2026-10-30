@@ -1,0 +1,6 @@
+// @spec: Functions — Return type requirements
+// @description: A void body cannot return a void call expression
+// @expected: compile-error E5003
+// @features: functions
+function v():void{}
+function f():void{return v();}

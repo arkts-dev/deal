@@ -1,1 +1,1 @@
-final class HostProbe{public static void mutate(Object v){var c=(deal.codegen.jvm.JvmRuntime.ClassInstance)v;c.write("x",2.0);}}
+final class HostProbe{public static final String C="@$external/host/probe/C";public static void mutate(Object v){var c=(deal.codegen.jvm.JvmRuntime.ClassInstance)v;c.write("x",2.0);}}

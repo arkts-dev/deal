@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: keys number record
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{try{let r=host.get();console.log("ACCEPT");}catch(e){if(e instanceof Error){console.log(e.code);}}return null;}

@@ -707,7 +707,10 @@ final class JvmHostAbiEmission {
                     .append(", new java.lang.Class[]{ ").append(params)
                     .append(" }, oFile, oLine, oCol);\n");
             } else if (export.getValue() instanceof Type.Class cls) {
-                // Class declarations contribute structural metadata, not constructor hooks.
+                out.append("    __hostClass(__h, ").append(javaString(raw)).append(", ")
+                    .append(javaString(export.getKey())).append(", ")
+                    .append(javaString(descriptorText(cls)))
+                    .append(", oFile, oLine, oCol);\n");
             } else {
                 throw new IllegalStateException("the declared host export '"
                     + export.getKey() + "' of module '" + raw
@@ -1066,6 +1069,17 @@ final class JvmHostAbiEmission {
         out.append("    }\n");
         out.append("  }\n\n");
 
+        out.append("  static void __hostClass(java.lang.Class<?> h, java.lang.String module, java.lang.String name, java.lang.String identity, java.lang.String file, int line, int col) {\n");
+        out.append("    try {\n");
+        out.append("      java.lang.reflect.Field field = h.getDeclaredField(name); field.setAccessible(true);\n");
+        out.append("      if (!java.lang.reflect.Modifier.isStatic(field.getModifiers()) || !(field.get(null) instanceof java.lang.String)) throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_INVALID_METADATA, java.util.Map.of(\"name\", name, \"module\", module, \"defaults|fields\", \"fields\"), file + \":\" + line + \":\" + col, null, null);\n");
+        out.append("      java.lang.String carried = (java.lang.String) field.get(null);\n");
+        out.append("      if (!identity.equals(carried)) throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_IDENTITY_MISMATCH, java.util.Map.of(\"name\", name, \"module\", module, \"expected\", identity, \"actual\", carried), file + \":\" + line + \":\" + col, null, null);\n");
+        out.append("    } catch (java.lang.NoSuchFieldException e) {\n");
+        out.append("      throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.HOST_LOAD_MISSING_EXPORT, java.util.Map.of(\"name\", name, \"module\", module), file + \":\" + line + \":\" + col, null, null);\n");
+        out.append("    } catch (java.lang.IllegalAccessException e) { throw new java.lang.IllegalStateException(e); }\n");
+        out.append("  }\n\n");
+
         out.append("  static java.lang.Object __hostInvoke(java.lang.reflect.Method m,"
             + " java.lang.Object[] args, java.lang.String oFile, int oLine, int"
             + " oCol) {\n");
@@ -1264,7 +1278,8 @@ final class JvmHostAbiEmission {
         out.append("    return v;\n");
         out.append("  }\n\n");
         // host -> DEAL: the production array materialized from the carrier.
-        out.append("  static JvmRuntime.Array __hostArrayToDeal(java.lang.String d, java.lang.Object v) {\n");
+        out.append("  static JvmRuntime.Array __hostArrayToDeal(java.lang.String d, java.lang.Object v) { return __hostArrayToDeal(d, v, true); }\n");
+        out.append("  static JvmRuntime.Array __hostArrayToDeal(java.lang.String d, java.lang.Object v, boolean publish) {\n");
         out.append("    if (v == null) return null;\n");
         out.append("    if (v instanceof JvmRuntime.Array __a) return __a;\n");
         out.append("    if (__hostArraysIn.containsKey(v)) return __hostArraysIn.get(v);\n");
@@ -1276,7 +1291,7 @@ final class JvmHostAbiEmission {
                 .append(") && v instanceof $DealRt.").append(carrier).append(" __c) {\n");
             out.append("      JvmRuntime.Array __r = new JvmRuntime.Array(__c.data.length);\n");
             out.append("      __r.elementDescriptor = ").append(javaString(JvmSemanticEmitter.runtimeDescriptorText(DescriptorService.describe(element)))).append(";\n");
-            out.append("      __hostArraysIn.put(__c, __r); __hostArraysOut.put(__r, __c);\n");
+            out.append("      if (publish) { __hostArraysIn.put(__c, __r); __hostArraysOut.put(__r, __c); }\n");
             emitArrayView(out, element, "__r", "__c");
             out.append("      return __r;\n");
             out.append("    }\n");
@@ -1411,7 +1426,8 @@ final class JvmHostAbiEmission {
         out.append("    java.lang.Object __checked = __hostCheckPlan(d, v, oFile, oLine, oCol, __pending, __memo);\n");
         out.append("    for (int __u = 0; __u < __pending.size(); __u++) {\n");
         out.append("      java.lang.Object[] __update = __pending.get(__u);\n");
-        out.append("      ((JvmRuntime.Array) __update[0]).elements.set(((java.lang.Integer) __update[1]).intValue(), __update[2]);\n");
+        out.append("      if (__update.length == 2) { __hostArraysIn.put(__update[0], (JvmRuntime.Array) __update[1]); __hostArraysOut.put(__update[1], __update[0]); }\n");
+        out.append("      else ((JvmRuntime.Array) __update[0]).elements.set(((java.lang.Integer) __update[1]).intValue(), __update[2]);\n");
         out.append("    }\n");
         out.append("    return __checked;\n");
         out.append("  }\n\n");
@@ -1447,7 +1463,8 @@ final class JvmHostAbiEmission {
         out.append("      if (__carried != null) { throw JvmRuntime.arm(deal.semantic.ir.FailureArmId.FUNCTION_SIGNATURE_MISMATCH, java.util.Map.of(\"expected\", d, \"actual\", __carried), oFile + \":\" + oLine + \":\" + oCol, d, __carried); }\n");
         out.append("      throw __hostFail(JvmRuntime.kindReason(\"function\"), d, v, oFile, oLine, oCol);\n");
         out.append("    }\n");
-        out.append("    if (d.startsWith(\"@\") || d.equals(\"Error\")) {\n");
+        out.append("    if (d.equals(\"Error\")) return JvmRuntime.bcheck(\"Error\", \"ref\", v);\n");
+        out.append("    if (d.startsWith(\"@\")) {\n");
         out.append("      __hostCheckIdentity(d, v, oFile, oLine, oCol);\n");
         out.append("      if (__memo.get(v) instanceof java.util.Set<?> __seen && __seen.contains(d)) return v;\n");
         out.append("      java.util.Set<java.lang.String> __seen = new java.util.HashSet<>(); __seen.add(d); __memo.put(v, __seen);\n");
@@ -1499,8 +1516,8 @@ final class JvmHostAbiEmission {
             out.append("      if (__mapped != null) { __arr = (JvmRuntime.Array) __mapped; }\n");
             out.append("      else {");
             out.append(" __arr = __hostArrayToDeal(").append(desc)
-                .append(", __car);");
-            out.append(" __memo.put(__car, __arr); }\n");
+                .append(", __car, false);");
+            out.append(" __memo.put(__car, __arr); __pending.add(new java.lang.Object[]{__car, __arr}); }\n");
             out.append("    }\n");
         }
         out.append("    if (__arr == null) { throw __hostFail(JvmRuntime.kindReason(\"array\"), d, v, oFile, oLine, oCol); }\n");

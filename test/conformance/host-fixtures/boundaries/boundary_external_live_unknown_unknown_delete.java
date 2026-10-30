@@ -1,1 +1,1 @@
-final class HostProbe{public static void mutate(Object v){}}
+final class HostProbe{public static final String C="@$external/host/probe/C";public static void mutate(Object v){}}

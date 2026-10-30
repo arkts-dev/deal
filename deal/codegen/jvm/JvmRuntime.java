@@ -1421,9 +1421,14 @@ public final class JvmRuntime {
             }
             if (!seen.add(value)) continue;
             if (value instanceof Table table) {
-                for (var entry : table.entries.entrySet()) { pending.add(entry.getKey()); pending.add(entry.getValue()); }
+                for (var entry : ((java.util.Map<?, ?>) table.entries).entrySet()) {
+                    if (!(entry.getKey() instanceof String)) throw kindFailure("table", "table", completion);
+                    pending.add(entry.getKey()); pending.add(entry.getValue());
+                }
             } else if (value instanceof Array array) pending.addAll(array.elements);
-            else if (value instanceof ClassInstance instance) {
+            else if (value instanceof ErrorValue error) {
+                bcheck("Error", "ref", error, completion, null, false);
+            } else if (value instanceof ClassInstance instance) {
                 for (String key : instance.fieldNames()) if (instance.isPresent(key)) pending.add(instance.read(key));
             } else if (value instanceof FunctionValue function) {
                 if (!validFunction(function)) throw kindFailure("function", "function", completion);
@@ -1502,7 +1507,9 @@ public final class JvmRuntime {
             // passes unchanged. The canonical builtin atom is exactly
             // "Error" (the one class text without the leading '@'); the
             // superseded v1.2 spellings never reach this arm.
-            if (v instanceof ErrorValue) {
+            if (v instanceof ErrorValue error) {
+                bcheck("string", "ref", error.code, completion, null, hostCompletionCrossing);
+                bcheck("string", "ref", error.message, completion, null, hostCompletionCrossing);
                 return v;
             }
             throw classFailure(desc, v, actual, completion);

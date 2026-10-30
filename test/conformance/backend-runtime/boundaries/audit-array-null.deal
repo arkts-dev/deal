@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: array null
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{try{let xs=host.get();if(xs[0]===null && xs.length===2){console.log("NULL");}else{console.log("BAD");}}catch(e){if(e instanceof Error){console.log(e.code);}}return null;}

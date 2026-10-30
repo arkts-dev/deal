@@ -1,0 +1,8 @@
+// @spec: Runtime execution model
+// @description: array retry
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null{try{host.numbers();console.log("BAD");}catch(e){if(e instanceof Error){console.log(e.code);}}let xs=host.strings();let alias=host.strings();let x=xs[0];if(x!==undefined){if(x==="x" && xs===alias){console.log("RETRY_OK");}}return null;}

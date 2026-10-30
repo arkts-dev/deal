@@ -1,1 +1,1 @@
-final class HostProbe{public static Object f(){return new $DealRt.$Host$host$sprobe$C(null);}}
+final class HostProbe{public static final String C="@$external/host/probe/C";public static Object f(){return new $DealRt.$Host$host$sprobe$C(null);}}

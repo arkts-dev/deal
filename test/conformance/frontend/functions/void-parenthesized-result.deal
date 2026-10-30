@@ -1,0 +1,5 @@
+// @spec: Type system — Type grammar (normative)
+// @description: Parenthesized data types cannot contain void
+// @expected: compile-error E1032
+// @features: functions, parser
+function f():(void){}

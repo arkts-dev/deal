@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "hostFixture": "boundaries/boundary_audit_array_null",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "NULL\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

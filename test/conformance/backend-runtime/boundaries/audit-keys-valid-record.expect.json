@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "backends": [
+    "js",
+    "luajit",
+    "jvm"
+  ],
+  "hostFixture": "boundaries/boundary_audit_keys_valid_record",
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {
+      "stdout": "ACCEPT\n",
+      "stderr": ""
+    },
+    "exitCode": 0
+  }
+}

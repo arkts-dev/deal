@@ -1,0 +1,5 @@
+// @spec: Type system — Type grammar (normative)
+// @description: Promise results cannot wrap parenthesized void
+// @expected: compile-error E1032
+// @features: functions, parser
+async function f():Promise<(void)>{}

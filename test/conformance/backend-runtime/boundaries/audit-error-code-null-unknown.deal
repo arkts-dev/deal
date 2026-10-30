@@ -1,0 +1,25 @@
+// @spec: Runtime execution model
+// @description: Invalid live Error code rejects unknown graph admission and permits repair
+// @expected: runtime-ok
+// @features: boundary-validation, host-abi
+import * as console from "std/console";
+import * as host from "host/probe";
+
+export function main():null {
+  let e:Error={code:"X",message:"original"};
+  let alias=e;
+  let original:unknown=null;
+  let destination=original;
+  host.edit(e);
+  try {
+    destination=e;
+    console.log("BAD");
+  } catch(x) {
+    if(x instanceof Error) { console.log(x.code); }
+  }
+  host.repair();
+  if(e===alias && destination===original) { console.log("UNCHANGED"); }
+  destination=e;
+  console.log("RECOVERED");
+  return null;
+}

@@ -1,0 +1,1 @@
+final class HostProbe{static Object saved;public static void edit(Object e){saved=e;((deal.codegen.jvm.JvmRuntime.ErrorValue)e).message="changed";}public static Object read(Object e){return e==saved?((deal.codegen.jvm.JvmRuntime.ErrorValue)e).message:"LOST_IDENTITY";}}
