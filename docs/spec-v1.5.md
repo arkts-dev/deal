@@ -940,15 +940,14 @@ Declaration order:
 
 ### Definite return analysis
 
-For the bodies requiring a value return under [Return type requirements](#return-type-requirements), analyze reachable paths as follows.
+For bodies requiring a value under [Return type requirements](#return-type-requirements), definitely-returning statements are:
 
-Definitely-returning statements:
-
-- `ReturnStatement`
-- `if (cond) { A } else { B }` where both `A` and `B` definitely return
+- `return` or `throw`
+- `if`/`else` or `try`/`catch` where both arms definitely return
 - block whose final reachable statement definitely returns
+- `while (true)` whose body definitely returns, with no reachable `break` targeting that loop
 
-Loops are not assumed to return unless they contain an unconditional `return` before any possible `break`. 
+Other statements do not definitely return.
 
 ---
 
@@ -969,7 +968,7 @@ let missing = data.missing;        // unknown holding undefined
 
 Member/string-index reads infer unknown regardless of context. Reject `let name: string = data.name;`; assert or narrow first. Calls require a checked function signature, preserving identity.
 
-Writes accept all data, including undefined/unknown, without a field schema or retagging stored values. Keys are strings; literal properties use identifiers only.
+Writes accept all data, including undefined/unknown, without a field schema or retagging stored values.
 
 ```ts
 data.name = undefined;             // present-undefined
@@ -980,6 +979,8 @@ data.name = null;                  // present-null
 ```
 
 ### Literal keys and deletion
+
+Record literal keys must be distinct.
 
 ```ts
 let data: Record<string, unknown> = { name: "Ada", age: 36 };
@@ -1553,9 +1554,11 @@ PrimitiveDescriptor :=
 
 ClassDescriptor :=
   "@" ModuleRoot "/" ModuleRelativePath "/" ClassName
+ | "@$external/" ExternalSpecifier "/" ClassName
 
-ModuleRoot := /* the configured module root from deal.json, e.g. "src", "lib/utils" */
-ModuleRelativePath := /* path components from module root to defining file, e.g. "models" */
+ModuleRoot := /* configured module root from deal.json */
+ModuleRelativePath := /* path components from module root to defining file */
+ExternalSpecifier := /* raw import specifier: a key in deal.json.externals */
 
 ArrayDescriptor :=
  "[" RuntimeTypeDescriptor "]"
@@ -1601,7 +1604,7 @@ Nullish prefixes require a non-nullish/non-unknown base; no nesting. Descriptors
 
 ## Backend contracts
 
-These representation mappings preserve, and cannot override, the source semantics and [conformance contract](#backend-conformance-contract). Helper sketches and recommended implementations are illustrative, not additional semantic authorities.
+These representation mappings preserve, and cannot override, the source semantics and [conformance contract](#backend-conformance-contract).
 
 ### LuaJIT backend contract
 
@@ -1633,120 +1636,7 @@ Function values are wrappers with explicit `.f(...)` calls, never metatable `__c
 
 A LuaJIT backend may implement async lowering with internal coroutines, continuation-passing style, or explicit state-machine tables.
 
-#### Runtime library
-
-Illustrative helper pseudocode, embedded or shared; [Typed boundaries](#typed-boundaries) owns validation, failures and permitted check elision, not these sketches' helper names or diagnostic strings:
-
-```lua
-local __NULL = {} -- JSON null
-local __UNDEFINED = {} -- stored undefined; never nil
-local __MISSING = {} -- absence only
-```
-
-```lua
-local __rt = require("deal.runtime")
-
-function __rt.check_null(v)
- if v ~= __NULL then error("runtime: expected null") end
- return v
-end
-
-function __rt.check_nullish(inner_check, v, null_ok, undefined_ok)
- if null_ok and v == __NULL then return v end
- if undefined_ok and v == __UNDEFINED then return v end
- return inner_check(v)
-end
-
-function __rt.check_boolean(v)
- if type(v) ~= "boolean" then error("runtime: expected boolean") end
- return v
-end
-
-
-function __rt.check_number(v)
- if type(v) ~= "number" then error("runtime: expected number") end
- return v
-end
-
-function __rt.check_string(v)
- if type(v) ~= "string" then error("runtime: expected string") end
- -- validate boundary encoding
- return v
-end
-
-function __rt.check_record(v)
- if not __rt.is_record(v) then error("runtime: expected record") end
- return v -- distinguish records from class/array/function/sentinel tables
-end
-
-function __rt.check_array(expected, value)
- if not __rt.array_descriptor_matches(expected, value) then
- error("runtime: incompatible persistent array type")
- end
- return value
-end
-
-function __rt.check_type(expected, value)
- -- descriptor dispatch: nullish, unknown, nominal classes, persistent array types
-end
-
-function __rt.check_function_sig(expected_sig, sig, f)
- if expected_sig ~= sig then
- error("runtime: mismatched function signature")
- end
- return f
-end
-
-function __rt.class_(class_name, fields)
- -- see Construction
-end
-
-function __rt.export_class(name)
- return {__kind = "class", __classname = name}
-end
-
-function __rt.function_(sig, f)
- return {__kind = "function", sig = sig, f = f}
-end
-```
-
-#### Function wrapper
-
-Illustrative wrapper for the [typed-boundary rules](#typed-boundaries):
-
-```lua
-local add = __rt.function_("(number,number)->number", function(x, y)
- __rt.check_number(x)
- __rt.check_number(y)
- local __ret = x + y
- return __rt.check_number(__ret)
-end)
-
-local result = __rt.check_number(add.f(1, 2))
-```
-
-#### Arity extension adapter
-
-Illustrative adapter for [Function type compatibility](#function-type-compatibility):
-
-```lua
-local one = __rt.function_("(number)->number", function(x)
- return __rt.check_number(x)
-end)
-local takesTwo = __rt.function_("(number,number)->number", function(x, y)
- __rt.check_number(x)
- __rt.check_number(y)
- return __rt.check_number(one.f(x))
-end)
-```
-
 #### Class representation
-
-```lua
-__rt.class_("User",
- { id = 1, name = "Ada", active = true, bio = __NULL }
-)
-```
 
 Missing fields use nil/metadata; translate missing reads and void completion to `__UNDEFINED`. Stored undefined uses that sentinel, never nil, preserving presence and contiguous arrays.
 
