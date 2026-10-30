@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-JOBS=4
+JOBS=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --jobs)
@@ -19,9 +19,7 @@ case "$JOBS" in
   ''|*[!0-9]*|0) echo "ERROR: --jobs requires a positive integer" >&2; exit 2 ;;
 esac
 
-# JaCoCo's shared append file is not a concurrent-writer protocol.
-if [ -n "${DEAL_COVERAGE_AGENT:-}" ]; then JOBS=1; fi
-echo "=== DEAL test process budget: jobs=$JOBS (nested jobs=1) ==="
+echo "=== DEAL test parallelism: jobs=$JOBS ==="
 source tools/gate-manifest.sh
 
 # Fail-closed required-tool preflight: the selection below executes the real
@@ -44,13 +42,8 @@ javac --release 25 -proc:none -d build/test-classes \
   -cp build:/usr/share/java/junit4.jar:/usr/share/java/hamcrest-core.jar \
   "${TEST_SOURCES[@]}"
 
-# One log per isolated suite, printed whole on completion; no interleaving.
-mkdir -p build/suite-logs
-run_record() {
-  local record="$1" record_class record_rest record_banner record_command
-  local record_line suite_started
-  local -a record_args
-  suite_started=$SECONDS
+# Coverage uses a silent PATH wrapper for java, including Java subprocesses.
+for record in "${TEST_MAINS[@]}"; do
   record_class="${record%%|*}"
   record_rest="${record#*|}"
   record_banner="${record_rest%%|*}"
@@ -64,8 +57,8 @@ run_record() {
       read -r -a record_args <<< "$record_command"
       # Manifest Java commands start with java -ea -cp build[:...].
       record_args[3]="${record_args[3]}:build/test-classes"
-      # --jobs is a total suite budget, not multiplicative nested parallelism.
-      java -Ddeal.test.jobs=1 \
+      # All Java suites run sequentially; --jobs controls nested suite work.
+      java "-Ddeal.test.jobs=$JOBS" \
         "-Ddeal.test.native.objects=$PWD/build/native-test-objects" \
         "${record_args[@]:1}"
       ;;
@@ -88,52 +81,6 @@ run_record() {
       ;;
     *) echo "INTERNAL ERROR: unknown TEST_MAINS record class '$record_class'" >&2; exit 1 ;;
   esac
-  echo "=== Suite elapsed: $((SECONDS - suite_started))s: $record_command ==="
-}
-
-# Start long-running independent lanes before the short suites. Selection stays
-# exclusively in the manifest; bg denotes early admission, not extra workers.
-records=()
-for kind in bg other; do
-  for record in "${TEST_MAINS[@]}"; do
-    if { [ "$kind" = bg ] && [[ "$record" == bg\|* ]]; } ||
-       { [ "$kind" = other ] && [[ "$record" != bg\|* ]]; }; then
-      records+=("$record")
-    fi
-  done
 done
-
-declare -A active
-cleanup_suites() {
-  local pid
-  for pid in "${!active[@]}"; do kill -- "-$pid" 2>/dev/null || true; done
-  if [ "${#active[@]}" -gt 0 ]; then sleep 1; fi
-  for pid in "${!active[@]}"; do kill -KILL -- "-$pid" 2>/dev/null || true; done
-  for pid in "${!active[@]}"; do wait "$pid" 2>/dev/null || true; done
-}
-trap cleanup_suites EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-# Monitor mode gives every suite (and its children) an owned process group.
-set -m
-finish_suite() {
-  local finished status=0
-  wait -n -p finished "${!active[@]}" || status=$?
-  if [ -z "${finished:-}" ]; then return 1; fi
-  cat "${active[$finished]}"
-  unset 'active[$finished]'
-  return "$status"
-}
-index=0
-for record in "${records[@]}"; do
-  while [ "${#active[@]}" -ge "$JOBS" ]; do finish_suite; done
-  log="build/suite-logs/$index.log"
-  (run_record "$record") > "$log" 2>&1 &
-  active[$!]="$log"
-  index=$((index + 1))
-done
-while [ "${#active[@]}" -gt 0 ]; do finish_suite; done
-set +m
-trap - EXIT INT TERM
 
 echo "=== All Tests Passed ==="
