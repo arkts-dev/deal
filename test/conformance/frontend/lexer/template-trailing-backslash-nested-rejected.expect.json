@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "compile-error",
+  "diagnostic": {
+    "code": "E1042",
+    "line": 7,
+    "column": 30,
+    "message": "Invalid template literal: trailing backslashes before the closing backtick must form pairs"
+  }
+}

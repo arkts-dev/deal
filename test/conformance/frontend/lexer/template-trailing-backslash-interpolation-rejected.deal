@@ -1,0 +1,10 @@
+// @spec: Lexical elements — Template literals — TemplateText trailing backslashes
+// @description: A TemplateText run that would end with an odd trailing backslash run at a '${' opener is not TemplateText (trailing backslashes form pairs) and is rejected with E1042 at the interpolation boundary.
+// @expected: compile-error E1042
+// @features: lexer, template-literal, trailing-backslash
+
+export function main(): null {
+  let name: string = "Ada";
+  let s: string = `Hello \${name}`;
+  return null;
+}

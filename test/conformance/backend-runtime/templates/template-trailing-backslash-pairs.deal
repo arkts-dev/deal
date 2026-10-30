@@ -1,0 +1,33 @@
+// @spec: Lexical elements — Template literals — TemplateText trailing backslashes
+// @description: Even trailing-backslash runs are admitted at the closing backtick, at a '${' opener and in a nested template, and the raw TemplateText keeps every backslash (no escape decoding).
+// @expected: runtime-ok
+// @features: template-literal, trailing-backslash, runtime
+
+export function test_closing_run(): null {
+  let text: string = `a\\`;
+  if (text !== "a\\\\") {
+    throw { code: "TEST_FAIL", message: "even closing run is not verbatim" };
+  }
+  return null;
+}
+
+export function test_interpolation_boundary(): null {
+  let name: string = "N";
+  let text: string = `Hello \\${name}`;
+  if (text !== "Hello \\\\N") {
+    throw { code: "TEST_FAIL", message: "even run before '${' is not verbatim" };
+  }
+  return null;
+}
+
+export function test_nested_run(): null {
+  let text: string = `[${ `in\\` }]`;
+  if (text !== "[in\\\\]") {
+    throw { code: "TEST_FAIL", message: "nested even run is not verbatim" };
+  }
+  return null;
+}
+
+export function main(): null {
+  return null;
+}

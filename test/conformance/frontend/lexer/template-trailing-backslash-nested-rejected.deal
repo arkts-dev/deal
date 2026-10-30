@@ -1,0 +1,9 @@
+// @spec: Lexical elements — Template literals — TemplateText trailing backslashes
+// @description: A nested template literal applies the trailing-backslash rule at its own closing backtick: the odd run inside the interpolation is rejected with E1042, reported once at the rebased source position.
+// @expected: compile-error E1042
+// @features: lexer, template-literal, trailing-backslash, nested-template
+
+export function main(): null {
+  let s: string = `[${ `inner\` }]`;
+  return null;
+}

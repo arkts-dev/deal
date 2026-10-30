@@ -759,6 +759,18 @@ public final class Lexer {
      * line terminators, comments, quoted strings, balanced braces and
      * nested template literals are all part of the one template token.</p>
      *
+     * <p>{@link TemplateScanner} also owns the TemplateText
+     * trailing-backslash rule ({@code docs/spec-v1.5.md}: "trailing
+     * backslashes form pairs"): a text run that would end with an odd
+     * backslash run at the closing backtick or at a {@code ${} opener is
+     * not TemplateText. Each such run is rejected here with E1042 over the
+     * SOURCE range of the run together with its delimiter. The rejection
+     * adds no escape semantics: the token boundary is unchanged, the
+     * lexeme keeps the raw scalars, and recovery continues after the
+     * delimiter the template closed at. A nested template literal inside
+     * an interpolation is scanned by its own expression-level lexical
+     * pass, which reports its own violations.</p>
+     *
      * <p>Failure handling keeps the single-line TemplateText contract: a
      * line terminator in TemplateText, or the end of the input inside an
      * unterminated template or interpolation, produces the existing E1003
@@ -772,6 +784,7 @@ public final class Lexer {
         int contentStart = pos;
 
         TemplateScanner.Scan scan = TemplateScanner.scan(source, contentStart);
+        reportTemplateTrailingBackslashes(scan);
 
         switch (scan.status()) {
             case TERMINATED -> {
@@ -807,6 +820,54 @@ public final class Lexer {
             default -> throw new IllegalStateException(
                 "Unhandled template scan status: " + scan.status());
         }
+    }
+
+    /**
+     * Rejects every TemplateText trailing-backslash violation of one scanned
+     * template token with E1042 over the run-plus-delimiter SOURCE range.
+     *
+     * <p>The walk is non-consuming: the cursor mark taken on entry is
+     * restored, so the caller's recovery ranges and token spans stay exactly
+     * as the scan left them. Violation ranges are recorded in source order,
+     * and each range lies before the scan's stop index.</p>
+     */
+    private void reportTemplateTrailingBackslashes(TemplateScanner.Scan scan) {
+        if (scan.violations().isEmpty()) {
+            return;
+        }
+        ScalarSourceCursor.Mark entry = cursor.mark();
+        for (TemplateScanner.Violation violation : scan.violations()) {
+            ScalarSourceCursor.Mark start = markAt(violation.start());
+            ScalarSourceCursor.Mark end = markAt(violation.end());
+            error(DiagnosticCode.E1042,
+                templateTrailingBackslashMessage(violation.delimiter()),
+                rangeBetween(start, end));
+        }
+        resetCursor(entry);
+    }
+
+    /**
+     * The E1042 text for one broken trailing-backslash rule: the delimiter
+     * names the exact position where the odd run prevents TemplateText.
+     */
+    private static String templateTrailingBackslashMessage(
+            TemplateScanner.Delimiter delimiter) {
+        return switch (delimiter) {
+            case CLOSING_BACKTICK -> "Invalid template literal: trailing"
+                + " backslashes before the closing backtick must form pairs";
+            case INTERPOLATION_OPENER -> "Invalid template literal: trailing"
+                + " backslashes before '${' must form pairs";
+        };
+    }
+
+    /**
+     * Advances the cursor to the given UTF-16 index, one decoded scalar at
+     * a time, keeping {@code pos} in lockstep with the cursor, and returns
+     * the resulting mark.
+     */
+    private ScalarSourceCursor.Mark markAt(int utf16Index) {
+        advanceTo(utf16Index);
+        return cursor.mark();
     }
 
     /**

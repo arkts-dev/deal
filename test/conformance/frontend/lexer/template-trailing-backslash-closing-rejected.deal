@@ -1,0 +1,9 @@
+// @spec: Lexical elements — Template literals — TemplateText trailing backslashes
+// @description: A TemplateText run that would end with an odd trailing backslash run at the closing backtick is not TemplateText (trailing backslashes form pairs) and is rejected with E1042, with no escape semantics.
+// @expected: compile-error E1042
+// @features: lexer, template-literal, trailing-backslash
+
+export function main(): null {
+  let s: string = `path\`;
+  return null;
+}

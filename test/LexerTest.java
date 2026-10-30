@@ -178,6 +178,7 @@ public class LexerTest {
         testNumberLiterals();
         testStringLiterals();
         testTemplateLiterals();
+        testTemplateTrailingBackslashPairs();
         testIdentifiers();
         testCompleteLine();
         testLineColumnTracking();
@@ -484,13 +485,20 @@ public class LexerTest {
         assertNoDiagnostics(r.diagnostics(), "template leading interpolation");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "${greeting} world", 1, 1);
 
-        // v1.4: TemplateText has no escape mechanism — a backslash is
-        // ordinary text and does not shield a following backtick.
+        // TemplateText has no escape mechanism — a backslash is ordinary
+        // text and does not shield a following backtick — and the trailing
+        // backslash run before a delimiter must form pairs, so the closed
+        // form with an odd run is rejected while the recovery shape (the
+        // backtick still closes the token) is unchanged.
         r = tokenize("`a\\`b`");
         assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\", 1, 1);
         assertToken(r.tokens().get(1), TokenType.IDENTIFIER, "b", 1, 5);
         assertDiagnosticCode(r.diagnostics(), "E1003",
             "the backtick after b opens an unterminated template");
+        assertDiagnosticCode(r.diagnostics(), "E1042",
+            "the odd trailing backslash run before the closing backtick is rejected");
+        assertRange(findDiag(r, "E1042"), "test.deal", 1, 3, 1, 5,
+            2, 4, "odd run before the closing backtick");
 
         // A raw backslash is TemplateText content.
         r = tokenize("`a\\$b`");
@@ -686,6 +694,121 @@ public class LexerTest {
             "template with backslash-EOF produces TEMPLATE_LITERAL");
         check(r.tokens().get(0).lexeme().equals("hello\\"),
             "template lexeme keeps the raw backslash at EOF");
+    }
+
+    /**
+     * TemplateText trailing backslashes form pairs (docs/spec-v1.5.md): the
+     * backslash run that ends a text run immediately before its delimiter
+     * (the closing backtick or a {@code ${} opener) must be even. An odd run
+     * is E1042 over the run and its delimiter, with no escape semantics:
+     * the token keeps the raw scalars. Every odd case carries an even control
+     * that is admitted unchanged.
+     */
+    static void testTemplateTrailingBackslashPairs() {
+        System.out.println("-- TemplateText trailing backslash pairs --");
+        String closingMessage = "Invalid template literal: trailing"
+            + " backslashes before the closing backtick must form pairs";
+        String openerMessage = "Invalid template literal: trailing"
+            + " backslashes before '${' must form pairs";
+
+        // Odd run before the closing backtick: rejected; the backtick still
+        // closes the token, so the lexeme is the raw text before it.
+        LexResult r = tokenize("`a\\`");
+        assertDiagnosticCount(r.diagnostics(), 1, "odd run before closing backtick");
+        CompilerDiagnostic odd = findDiag(r, "E1042");
+        check(odd != null && odd.message().equals(closingMessage),
+            "odd run before the closing backtick: exact message, got "
+                + (odd == null ? "none" : odd.message()));
+        if (odd != null) {
+            assertRange(odd, "test.deal", 1, 3, 1, 5, 2, 4,
+                "odd run before the closing backtick");
+        }
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\", 1, 1);
+        check(r.tokens().get(0).scalarLength() == 4,
+            "the rejected template token still spans both backticks");
+
+        // Even control: two trailing backslashes are admitted verbatim.
+        r = tokenize("`a\\\\`");
+        assertNoDiagnostics(r.diagnostics(), "even run before closing backtick");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\\\", 1, 1);
+
+        // Three backslashes are odd again.
+        r = tokenize("`\\\\\\`");
+        assertDiagnosticCount(r.diagnostics(), 1, "three backslashes");
+        CompilerDiagnostic three = findDiag(r, "E1042");
+        if (three != null) {
+            assertRange(three, "test.deal", 1, 2, 1, 6, 1, 5, "three backslashes");
+        }
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "\\\\\\", 1, 1);
+
+        r = tokenize("`a\\\\\\\\`");
+        assertNoDiagnostics(r.diagnostics(), "four backslashes");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\\\\\\\", 1, 1);
+
+        // Odd run before the '${' interpolation boundary: rejected, and the
+        // interpolation still opens so the token keeps the raw content.
+        r = tokenize("`a\\${x}`");
+        assertDiagnosticCount(r.diagnostics(), 1, "odd run before '${'");
+        CompilerDiagnostic opener = findDiag(r, "E1042");
+        check(opener != null && opener.message().equals(openerMessage),
+            "odd run before '${': exact message, got "
+                + (opener == null ? "none" : opener.message()));
+        if (opener != null) {
+            assertRange(opener, "test.deal", 1, 3, 1, 6, 2, 5,
+                "odd run before '${'");
+        }
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\${x}", 1, 1);
+
+        // Even control at the same boundary.
+        r = tokenize("`a\\\\${x}`");
+        assertNoDiagnostics(r.diagnostics(), "even run before '${'");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL, "a\\\\${x}", 1, 1);
+
+        // A nested template literal keeps its own text-run rule: the odd run
+        // before the nested closing backtick is a chain fragment for the
+        // expression lexer, so the scanner records no violation at this level
+        // and the nested literal still ends there.
+        r = tokenize("`[${ `in\\` }]`");
+        assertNoDiagnostics(r.diagnostics(),
+            "a nested template scans one level deep for text runs");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
+            "[${ `in\\` }]", 1, 1);
+        r = tokenize("`[${ `in\\\\` }]`");
+        assertNoDiagnostics(r.diagnostics(), "nested even run");
+        assertToken(r.tokens().get(0), TokenType.TEMPLATE_LITERAL,
+            "[${ `in\\\\` }]", 1, 1);
+
+        // The rule also applies to the text run after an interpolation.
+        r = tokenize("`${x}b\\`");
+        assertDiagnosticCount(r.diagnostics(), 1, "odd run after interpolation");
+        CompilerDiagnostic after = findDiag(r, "E1042");
+        if (after != null) {
+            assertRange(after, "test.deal", 1, 7, 1, 9, 6, 8,
+                "odd run after interpolation");
+        }
+
+        // Several broken delimiters in one template are separate diagnostics in
+        // source order.
+        r = tokenize("`a\\${x}b\\`");
+        assertDiagnosticCount(r.diagnostics(), 2, "two broken delimiters");
+        List<CompilerDiagnostic> both = r.diagnostics();
+        if (both.size() == 2) {
+            assertRange(both.get(0), "test.deal", 1, 3, 1, 6, 2, 5,
+                "first broken delimiter");
+            assertRange(both.get(1), "test.deal", 1, 9, 1, 11, 8, 10,
+                "second broken delimiter");
+        }
+
+        // Line/column tracking through an interpolation stays scalar-exact.
+        r = tokenize("`a${x\n}y\\`");
+        assertDiagnosticCount(r.diagnostics(), 1, "odd run on line 2");
+        CompilerDiagnostic second = findDiag(r, "E1042");
+        if (second != null) {
+            assertRange(second, "test.deal", 2, 3, 2, 5, 8, 10,
+                "odd run on line 2");
+        }
+        check(r.tokens().get(0).lexeme().equals("a${x\n}y\\"),
+            "multi-line template keeps its raw text");
     }
 
     // =========================================================================

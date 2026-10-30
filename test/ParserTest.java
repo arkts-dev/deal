@@ -170,6 +170,7 @@ public class ParserTest {
         testTemplateNestedTemplateLiteral();
         testTemplateNestedTemplateWithInterpolation();
         testTemplateRawBackslashBeforeBacktick();
+        testTemplateTrailingBackslashPairs();
         testTemplateMalformedExpression();
         testTemplateInterpolationRangeAnchors();
 
@@ -1712,17 +1713,139 @@ public class ParserTest {
 
     static void testTemplateRawBackslashBeforeBacktick() {
         System.out.println("-- Template Literal: raw backslash does not shield"
-            + " a backtick --");
+            + " a backtick, and its odd trailing run is rejected --");
 
         // A backslash is ordinary TemplateText, so the backtick after it
-        // closes the template and the remaining backtick opens a new
-        // (unterminated) literal.
+        // closes the template; the trailing backslash run is odd, so the
+        // closed form is rejected with E1042 (the backtick is no closer for
+        // that text run) while the recovery shape is unchanged: the
+        // remaining backtick opens a new (unterminated) literal.
         LexResult lex = new Lexer("let x = `a\\`b`;", "test.deal").tokenize();
         boolean e1003 = lex.diagnostics().stream()
             .anyMatch(d -> d.code().equals("E1003"));
         check(e1003, "the unterminated trailing literal reports E1003");
+        boolean e1042 = lex.diagnostics().stream()
+            .anyMatch(d -> d.code().equals("E1042"));
+        check(e1042, "the odd trailing backslash run reports E1042");
         ParseResult r = parse("let x = `a\\`b`;");
         check(r.program() != null, "raw backslash before backtick parses");
+    }
+
+    /**
+     * TemplateText trailing backslashes form pairs (docs/spec-v1.5.md): an odd
+     * run before the closing backtick or a {@code ${} opener is rejected with
+     * E1042 over the run and delimiter, every even run is admitted with the raw
+     * text preserved verbatim, and a nested template literal is rejected at its
+     * own delimiter.
+     */
+    static void testTemplateTrailingBackslashPairs() {
+        System.out.println("-- Template Literal: trailing backslash pairs --");
+        String closingMessage = "Invalid template literal: trailing"
+            + " backslashes before the closing backtick must form pairs";
+        String openerMessage = "Invalid template literal: trailing"
+            + " backslashes before '${' must form pairs";
+
+        // Odd run before the closing backtick.
+        String oddClosing = "let x = `a\\`;";
+        LexResult lex = new Lexer(oddClosing, "test.deal").tokenize();
+        CompilerDiagnostic rejected = findDiag(lex.diagnostics(), "E1042");
+        check(rejected != null && rejected.message().equals(closingMessage),
+            "odd closing run: exact E1042 message, got "
+                + (rejected == null ? "none" : rejected.message()));
+        if (rejected != null) {
+            checkRange(rejected.range(), "test.deal", 1, 11, 1, 13, 10, 12, 2,
+                RangeOrigin.SOURCE, "odd closing run range");
+        }
+
+        // Even control: the raw text is preserved verbatim (two backslashes,
+        // no escape decoding).
+        ParseResult r = parse("let x = `a\\\\`;");
+        assertNoParseErrors(r, "even closing run is admitted");
+        VariableDeclaration vd = (VariableDeclaration) r.program().statements().get(0);
+        TemplateLiteralExpr tl = assertExprInstance(vd.initializer(),
+            TemplateLiteralExpr.class, "even closing run template");
+        if (tl != null) {
+            check(tl.parts().size() == 1, "even closing run: one text part, got "
+                + tl.parts().size());
+            if (tl.parts().get(0) instanceof LiteralExpr part
+                    && part.value() instanceof LiteralValue.StringLiteral sl) {
+                check(sl.value().equals("a\\\\"),
+                    "even closing run keeps both backslashes, got '"
+                        + sl.value() + "'");
+            }
+        }
+
+        // Odd run before the '${' interpolation boundary.
+        String oddOpener = "let y: string = \"s\"; let x = `a\\${y}`;";
+        lex = new Lexer(oddOpener, "test.deal").tokenize();
+        CompilerDiagnostic opener = findDiag(lex.diagnostics(), "E1042");
+        check(opener != null && opener.message().equals(openerMessage),
+            "odd opener run: exact E1042 message, got "
+                + (opener == null ? "none" : opener.message()));
+        if (opener != null) {
+            checkRange(opener.range(), "test.deal", 1, 32, 1, 35, 31, 34, 3,
+                RangeOrigin.SOURCE, "odd opener run range");
+        }
+
+        // Even control at the interpolation boundary: the text part keeps the
+        // backslash pair and the interpolation still splits out.
+        r = parse("let y: string = \"s\"; let x = `a\\\\${y}`;");
+        assertNoParseErrors(r, "even opener run is admitted");
+        vd = (VariableDeclaration) r.program().statements().get(1);
+        tl = assertExprInstance(vd.initializer(), TemplateLiteralExpr.class,
+            "even opener run template");
+        if (tl != null) {
+            check(tl.parts().size() == 3, "even opener run: three parts, got "
+                + tl.parts().size());
+            if (tl.parts().get(0) instanceof LiteralExpr part
+                    && part.value() instanceof LiteralValue.StringLiteral sl) {
+                check(sl.value().equals("a\\\\"),
+                    "even opener run keeps both backslashes, got '"
+                        + sl.value() + "'");
+            }
+        }
+
+        // A nested template literal is rejected at its own closing backtick:
+        // the expression sub-lexer owns that literal and reports it once, at
+        // the rebased source position.
+        lex = new Lexer("let x = `[${ `in\\` }]`;", "test.deal").tokenize();
+        check(lex.diagnostics().isEmpty(),
+            "the outer template level reports no nested violation");
+        ParseResult nested = parse("let x = `[${ `in\\` }]`;");
+        CompilerDiagnostic nestedDiag = findDiag(nested.diagnostics(), "E1042");
+        check(nestedDiag != null, "nested odd run is rejected with E1042");
+        if (nestedDiag != null) {
+            check(nestedDiag.message().equals(closingMessage),
+                "nested odd run: exact E1042 message, got "
+                    + nestedDiag.message());
+            checkRange(nestedDiag.range(), "test.deal", 1, 17, 1, 19, 16, 18, 2,
+                RangeOrigin.SOURCE, "nested odd run range");
+        }
+        check(nested.diagnostics().stream()
+                .filter(d -> d.code().equals("E1042")).count() == 1,
+            "the nested odd run is reported exactly once");
+
+        // Even control: the same nested shape is admitted and the nested text
+        // part is verbatim.
+        r = parse("let x = `[${ `in\\\\` }]`;");
+        assertNoParseErrors(r, "nested even run is admitted");
+        vd = (VariableDeclaration) r.program().statements().get(0);
+        tl = assertExprInstance(vd.initializer(), TemplateLiteralExpr.class,
+            "nested even run template");
+        if (tl != null) {
+            check(tl.parts().size() == 3, "nested even run: three parts, got "
+                + tl.parts().size());
+            if (tl.parts().get(1) instanceof TemplateLiteralExpr inner
+                    && inner.parts().size() == 1
+                    && inner.parts().get(0) instanceof LiteralExpr part
+                    && part.value() instanceof LiteralValue.StringLiteral sl) {
+                check(sl.value().equals("in\\\\"),
+                    "nested even run keeps both backslashes, got '"
+                        + sl.value() + "'");
+            } else {
+                fail("nested even run: unexpected nested template shape");
+            }
+        }
     }
 
     static void testTemplateMalformedExpression() {

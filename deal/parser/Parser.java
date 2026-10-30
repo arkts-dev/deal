@@ -1404,6 +1404,13 @@ public final class Parser {
      * verbatim through {@link TemplateScalarMap}, which rebases every
      * sub-lexed coordinate and merged directive event back onto the
      * original source (D10/D11).</p>
+     *
+     * <p>The scan's trailing-backslash violations (an odd backslash run
+     * before a text-run delimiter) are not re-reported here: the lexer
+     * already rejected the outer template token through the same shared
+     * scan, and a nested template literal's violation is reported by the
+     * expression sub-lexer below, which owns that nested literal's own
+     * admission. This split therefore reads the segments only.</p>
      */
     private List<ExpressionNode> splitTemplateLiteral(String raw, int baseLine, int baseCol,
                                                       int templateTokenStartScalarOffset,

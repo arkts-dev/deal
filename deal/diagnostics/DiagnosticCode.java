@@ -105,7 +105,11 @@ public enum DiagnosticCode {
     E1040(Phase.FRONTEND, "Expected member access (obj.field) in has() expression"),
     /** Unexpected '}'. */
     E1041(Phase.FRONTEND, "Unexpected '}'"),
-    /** Invalid template literal escape or malformed interpolation. */
+    /**
+     * Invalid template literal: a TemplateText run ending with an odd
+     * trailing backslash run (the grammar's trailing backslashes form
+     * pairs), or a malformed interpolation.
+     */
     E1042(Phase.FRONTEND, "Invalid template literal"),
 
     /** @jsonable directive is only valid on 'export class'. */

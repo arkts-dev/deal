@@ -9,8 +9,8 @@ import java.util.List;
  *
  * <pre>
  * TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
- * TemplateText    ::= /* one or more characters containing no line
- *                        terminator, '`', or '${' *&#47;
+ * TemplateText    ::= /* maximal nonempty text excluding line-terminators,
+ *                        '`', '${'; trailing backslashes form pairs *&#47;
  * </pre>
  *
  * <p>TemplateText has no escape mechanism: a backslash is an ordinary
@@ -20,6 +20,20 @@ import java.util.List;
  * {@code //} and {@code /* *&#47;} comments, the five-escape quoted strings,
  * nested template literals, and balanced braces.</p>
  *
+ * <p>The <em>trailing backslash</em> rule closes the text run: the run of
+ * backslashes that ends a TemplateText run and immediately precedes its
+ * delimiter (the closing backtick or the {@code ${} opener) must form
+ * pairs, so a text run never ends with an odd number of backslashes. The
+ * rule introduces no escape: a backslash never shields a delimiter and no
+ * scalar is rewritten or dropped. A text run that would end with an odd
+ * run is not TemplateText, so the scan records a {@link Violation} for the
+ * run and its delimiter. The scan keeps the structure it derives from the
+ * delimiters — a violating template still terminates at that backtick and
+ * a violating {@code ${} still opens its interpolation — so the caller
+ * alone decides the rejection. A line terminator or the end of the scanned
+ * text ends a run with the existing failure {@link Status}es, which already
+ * reject the template.</p>
+ *
  * <p>The scan is a pure structural walk: it records text and interpolation
  * segment ranges and never produces diagnostics, directive events, or
  * tokens. The lexer uses it to find the closing backtick of a template
@@ -28,6 +42,12 @@ import java.util.List;
  * interpolation segments. Because the scan never re-decodes or rewrites the
  * scanned text, a caller holding the raw slice can rebase sub-lexed
  * coordinates one-to-one.</p>
+ *
+ * <p>{@link #violations()} reports only the text runs of the scanned level:
+ * a nested template literal inside an interpolation is a separate
+ * TemplateLiteral production whose own scan owns its violations, because
+ * the enclosing caller re-lexes that nested literal through the normal
+ * expression lexical rules and reports the violation there.</p>
  */
 public final class TemplateScanner {
 
@@ -58,11 +78,30 @@ public final class TemplateScanner {
                           boolean unterminated) {
     }
 
+    /** The delimiter that a violating TemplateText run would end at. */
+    public enum Delimiter {
+        /** The closing backtick of the template literal. */
+        CLOSING_BACKTICK,
+        /** The {@code ${} opener of an interpolation. */
+        INTERPOLATION_OPENER
+    }
+
     /**
-     * One scan outcome: the stop status, the stop index, and the segments
-     * in source order.
+     * One broken TemplateText trailing-backslash rule: the half-open UTF-16
+     * range of an odd trailing backslash run together with the delimiter it
+     * precedes. The run and delimiter are contiguous, so the range names
+     * both sides of the violation.
      */
-    public record Scan(Status status, int endIndex, List<Segment> segments) {
+    public record Violation(int start, int end, Delimiter delimiter) {
+    }
+
+    /**
+     * One scan outcome: the stop status, the stop index, the segments and
+     * the trailing-backslash violations of the scanned level, in source
+     * order.
+     */
+    public record Scan(Status status, int endIndex, List<Segment> segments,
+                       List<Violation> violations) {
     }
 
     private TemplateScanner() {
@@ -85,6 +124,7 @@ public final class TemplateScanner {
 
     private static Scan scanContent(String source, int start) {
         List<Segment> segments = new ArrayList<>();
+        List<Violation> violations = new ArrayList<>();
         int pos = Math.max(0, start);
         int textStart = pos;
 
@@ -94,16 +134,20 @@ public final class TemplateScanner {
             if (c == '\n' || c == '\r') {
                 addText(segments, textStart, pos);
                 return new Scan(Status.TEXT_LINE_TERMINATOR, pos,
-                    List.copyOf(segments));
+                    List.copyOf(segments), List.copyOf(violations));
             }
             if (c == '`') {
                 addText(segments, textStart, pos);
+                recordTrailingBackslashes(source, textStart, pos, pos + 1,
+                    Delimiter.CLOSING_BACKTICK, violations);
                 return new Scan(Status.TERMINATED, pos + 1,
-                    List.copyOf(segments));
+                    List.copyOf(segments), List.copyOf(violations));
             }
             if (c == '$' && pos + 1 < source.length()
                     && source.charAt(pos + 1) == '{') {
                 addText(segments, textStart, pos);
+                recordTrailingBackslashes(source, textStart, pos, pos + 2,
+                    Delimiter.INTERPOLATION_OPENER, violations);
                 int opener = pos;
                 int exprStart = pos + 2;
                 InterpolationScan interp = scanInterpolation(source, exprStart);
@@ -123,10 +167,11 @@ public final class TemplateScanner {
                     // there (the interpolation stays unterminated for the
                     // parser's own scan of the returned lexeme).
                     return new Scan(Status.TERMINATED,
-                        interp.outerTerminator() + 1, List.copyOf(segments));
+                        interp.outerTerminator() + 1, List.copyOf(segments),
+                        List.copyOf(violations));
                 }
                 return new Scan(interp.status(), interp.index(),
-                    List.copyOf(segments));
+                    List.copyOf(segments), List.copyOf(violations));
             }
 
             // Every other scalar — backslash, '}', '$' not followed by '{',
@@ -136,7 +181,27 @@ public final class TemplateScanner {
         }
 
         addText(segments, textStart, pos);
-        return new Scan(Status.EOF, pos, List.copyOf(segments));
+        return new Scan(Status.EOF, pos, List.copyOf(segments),
+            List.copyOf(violations));
+    }
+
+    /**
+     * Applies the TemplateText trailing-backslash rule to the text run that
+     * ends at {@code delimiterStart}: the contiguous backslash run immediately
+     * before the delimiter (bounded by {@code textStart}) must be even. An
+     * odd run records a {@link Violation} covering the run and its
+     * {@code [delimiterStart, delimiterEnd)} delimiter.
+     */
+    private static void recordTrailingBackslashes(String source, int textStart,
+            int delimiterStart, int delimiterEnd, Delimiter delimiter,
+            List<Violation> violations) {
+        int runStart = delimiterStart;
+        while (runStart > textStart && source.charAt(runStart - 1) == '\\') {
+            runStart--;
+        }
+        if (((delimiterStart - runStart) & 1) == 1) {
+            violations.add(new Violation(runStart, delimiterEnd, delimiter));
+        }
     }
 
     /**
@@ -179,7 +244,10 @@ public final class TemplateScanner {
             if (c == '`') {
                 // A nested template literal: it is itself a TemplateLiteral
                 // production, so scan it recursively; its own
-                // interpolation braces are balanced inside it.
+                // interpolation braces are balanced inside it. The nested
+                // level owns its trailing-backslash violations: the
+                // enclosing caller re-lexes this nested literal under the
+                // normal expression rules and reports them there.
                 int nestedBacktick = pos;
                 Scan nested = scanContent(source, pos + 1);
                 if (nested.status() == Status.TERMINATED) {
