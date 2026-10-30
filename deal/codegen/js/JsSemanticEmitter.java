@@ -189,7 +189,10 @@ public final class JsSemanticEmitter {
         /** Parameter bindings of one lowered function, in JS parameter order. */
         private final Map<Long, List<BindingId>> functionParameters =
             new HashMap<>();
-        private final Set<OpId> structuralOwned = new HashSet<>();
+        private final Set<BindingId> catchBindings = new HashSet<>();
+        private final Map<OpId, List<SemanticOp>> boundaryChildren = new HashMap<>();
+        private final Map<BlockId, List<SemanticOp>> bindingDeclarations = new HashMap<>();
+        private final Map<ModuleId, ChainOperandCompletion.Index> chainOperands = new HashMap<>();
         private final Set<OpId> ownedChildren = new HashSet<>();
         private final Set<OpId> skippedOps = new HashSet<>();
         // ----- Project class facts (validated layouts/owners/export surfaces) -----
@@ -364,6 +367,21 @@ public final class JsSemanticEmitter {
                 if (op.result() instanceof ValueId valueId) {
                     producerByValue.putIfAbsent(valueId.id(), op);
                 }
+                if (op.payload() instanceof KindPayload.TryCatchPayload handler) {
+                    catchBindings.add(handler.catchBinding());
+                }
+                if (op.kind() == SemanticOpKind.BOUNDARY && op.origin().parentOpId() != null) {
+                    boundaryChildren.computeIfAbsent(op.origin().parentOpId(), ignored -> new ArrayList<>())
+                        .add(op);
+                }
+                BlockId declarationBlock = op.payload() instanceof KindPayload.BindingAllocPayload alloc
+                    ? alloc.scope() : opBlock.get(op.opId());
+                if (declarationBlock != null && (op.kind() == SemanticOpKind.BINDING_ALLOC
+                        || op.kind() == SemanticOpKind.RECURSIVE_GROUP_INIT
+                        || op.kind() == SemanticOpKind.MODULE_IMPORT)) {
+                    bindingDeclarations.computeIfAbsent(declarationBlock, ignored -> new ArrayList<>())
+                        .add(op);
+                }
                 if (op.payload() instanceof KindPayload.ModuleImportPayload payload) {
                     importKinds.putIfAbsent(payload.resolvedModule(), payload.kind());
                 }
@@ -417,7 +435,7 @@ public final class JsSemanticEmitter {
             // in allocation (declaration) order.
             for (LoweredFunction function : unit.functions().values()) {
                 List<BindingId> parameters = new ArrayList<>();
-                for (SemanticOp op : unit.ops()) {
+                for (SemanticOp op : bindingDeclarations.getOrDefault(function.body(), List.of())) {
                     if (op.kind() == SemanticOpKind.BINDING_ALLOC
                             && op.payload() instanceof KindPayload
                                 .BindingAllocPayload payload
@@ -430,11 +448,10 @@ public final class JsSemanticEmitter {
                 functionParameters.put(function.functionId().id(),
                     List.copyOf(parameters));
             }
-            Set<OpId> structural = ChainOperandCompletion.structuralOwners(unit);
-            structuralOwned.addAll(structural);
-            ownedChildren.addAll(structural);
-            ChainOperandCompletion.registerChainOperandOwners(unit, structural,
-                ownedChildren);
+            ChainOperandCompletion.Index chainIndex = ChainOperandCompletion.index(unit);
+            chainOperands.put(unit.moduleId(), chainIndex);
+            ownedChildren.addAll(chainIndex.structuralOwners());
+            chainIndex.registerChainOperandOwners(ownedChildren);
         }
 
         /**
@@ -1040,7 +1057,7 @@ public final class JsSemanticEmitter {
          */
         private void declareBlockBindings(LoweredModuleUnit unit, BlockId block) {
             Set<String> declared = new LinkedHashSet<>();
-            for (SemanticOp op : unit.ops()) {
+            for (SemanticOp op : bindingDeclarations.getOrDefault(block, List.of())) {
                 if (op.kind() == SemanticOpKind.BINDING_ALLOC
                         && op.payload() instanceof KindPayload.BindingAllocPayload
                             alloc
@@ -1086,16 +1103,7 @@ public final class JsSemanticEmitter {
 
         /** Whether one binding is some TRY_CATCH op's catch binding. */
         private boolean isCatchBinding(BindingId binding) {
-            for (LoweredModuleUnit unit : units.values()) {
-                for (SemanticOp op : unit.ops()) {
-                    if (op.payload() instanceof KindPayload.TryCatchPayload
-                            tryCatch
-                            && tryCatch.catchBinding().equals(binding)) {
-                        return true;
-                    }
-                }
-            }
-            return false;
+            return catchBindings.contains(binding);
         }
 
         // =====================================================================
@@ -2067,8 +2075,7 @@ private void emitBindingLoad(SemanticOp op) {
                         + " names the unknown child " + childId);
                 }
                 for (SemanticOp producer
-                        : ChainOperandCompletion.operandProducersOf(child, unit,
-                            structuralOwned)) {
+                        : chainOperands.get(unit.moduleId()).operandProducersOf(child)) {
                     emitOp(unit, producer);
                 }
                 if (child.kind() == SemanticOpKind.BOUNDARY) {
@@ -4291,7 +4298,7 @@ private void emitBindingLoad(SemanticOp op) {
         /** The single boundary child of one op with the given kind, or null. */
         private SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {
             SemanticOp found = null;
-            for (SemanticOp candidate : opsById.values()) {
+            for (SemanticOp candidate : boundaryChildren.getOrDefault(op.opId(), List.of())) {
                 if (candidate.kind() != SemanticOpKind.BOUNDARY
                         || !op.opId().equals(candidate.origin().parentOpId())) {
                     continue;
@@ -4398,7 +4405,7 @@ private void emitBindingLoad(SemanticOp op) {
          */
         private SemanticOp boundaryChildOf(SemanticOp op) {
             SemanticOp found = null;
-            for (SemanticOp candidate : opsById.values()) {
+            for (SemanticOp candidate : boundaryChildren.getOrDefault(op.opId(), List.of())) {
                 if (candidate.kind() != SemanticOpKind.BOUNDARY
                         || !op.opId().equals(candidate.origin().parentOpId())) {
                     continue;

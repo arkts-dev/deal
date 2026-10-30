@@ -162,10 +162,9 @@ public abstract class EmitterSessionBase {
     private final Map<FunctionId, String> frameLabels = new HashMap<>();
     protected final Set<OpId> ownedChildren = new HashSet<>();
     /**
-     * The payload-owned children only (closure computation excludes
-     * them): the union of every registered unit's structural owners.
+     * Unit-local structural ownership and retained chain operand closures.
      */
-    protected final Set<OpId> structuralOwned = new HashSet<>();
+    protected final Map<ModuleId, ChainOperandCompletion.Index> chainOperands = new HashMap<>();
     /**
      * Each resolved import's closed kind, collected from the
      * session's own {@code MODULE_IMPORT} payloads (M6).
@@ -449,12 +448,10 @@ public abstract class EmitterSessionBase {
         // Payload-owned children are emitted exactly once by their
         // owner arms; the block walk skips them (a double emission
         // would duplicate effects and events).
-        java.util.Set<OpId> structural =
-            ChainOperandCompletion.structuralOwners(moduleUnit);
-        structuralOwned.addAll(structural);
-        ownedChildren.addAll(structural);
-        ChainOperandCompletion.registerChainOperandOwners(moduleUnit, structural,
-            ownedChildren);
+        ChainOperandCompletion.Index chainIndex = ChainOperandCompletion.index(moduleUnit);
+        chainOperands.put(moduleUnit.moduleId(), chainIndex);
+        ownedChildren.addAll(chainIndex.structuralOwners());
+        chainIndex.registerChainOperandOwners(ownedChildren);
         // The nested source ASYNC_START of an adapter-over-async task
         // executes under its outer op's arm, never at its flat
         // block-list position (the oracle's UnitState rule).

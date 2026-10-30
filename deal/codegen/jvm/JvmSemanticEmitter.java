@@ -2894,8 +2894,7 @@ public final class JvmSemanticEmitter {
          * each is emitted exactly once, here.
          */
         private void emitChainOperandProducers(SemanticOp child, int indent) {
-            for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
-                    child, unitOwning(child), structuralOwned)) {
+            for (SemanticOp producer : chainOperands.get(unitOwning(child).moduleId()).operandProducersOf(child)) {
                 emitOp(producer, indent);
             }
         }

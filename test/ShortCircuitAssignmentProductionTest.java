@@ -775,6 +775,29 @@ public final class ShortCircuitAssignmentProductionTest {
         }
         Map<OpId, BlockId> opBlocks = unit.bodyTable().opBlocks();
         Set<OpId> structuralOwned = ChainOperandCompletion.structuralOwners(unit);
+        ChainOperandCompletion.Index chainIndex = ChainOperandCompletion.index(unit);
+        checkEq(structuralOwned, chainIndex.structuralOwners(),
+            "the retained index preserves structural ownership");
+        Set<OpId> indexedSkips = new LinkedHashSet<>();
+        chainIndex.registerChainOperandOwners(indexedSkips);
+        Set<OpId> isolatedSkips = new LinkedHashSet<>();
+        ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned, isolatedSkips);
+        checkEq(isolatedSkips, indexedSkips, "skip registration shares the retained plan");
+        for (SemanticOp chain : unit.ops()) {
+            List<OpId> children = switch (chain.payload()) {
+                case KindPayload.AssignPayload assign -> assign.childOps();
+                case KindPayload.DeletePayload delete -> delete.childOps();
+                default -> List.of();
+            };
+            for (OpId id : children) {
+                SemanticOp child = byId.get(id);
+                List<SemanticOp> closure = chainIndex.operandProducersOf(child);
+                check(closure == chainIndex.operandProducersOf(child),
+                    "repeated completion reuses the immutable closure for " + id);
+                checkEq(ChainOperandCompletion.operandProducersOf(child, unit, structuralOwned),
+                    closure, "retained and isolated child queries agree for " + id);
+            }
+        }
 
         // (a) No chain child escapes its chain's block: a child inside a
         // selected block is the flattened conditional operand the defect

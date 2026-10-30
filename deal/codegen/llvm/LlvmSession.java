@@ -74,6 +74,12 @@ final class LlvmSession extends EmitterSessionBase {
     private final Map<Long, List<BindingId>> parameters = new LinkedHashMap<>();
     private final Map<Long, SemanticOp> producerByValue = new LinkedHashMap<>();
     private final Map<Long, ModuleId> valueOwner = new LinkedHashMap<>();
+    private record BindingTypeKey(ModuleId module, BindingId binding, long generation) {}
+    private final Map<BindingTypeKey, RuntimeDescriptor> bindingTypes = new LinkedHashMap<>();
+    private final Map<BindingId, List<SemanticOp>> bindingRoles = new LinkedHashMap<>();
+    private final Map<BindingTypeKey, List<Integer>> bindingWrites = new LinkedHashMap<>();
+    private final Map<BindingId, LoweredFunction> parameterOwners = new LinkedHashMap<>();
+    private List<LlvmData.UnitModule> cachedUnitModules;
     private List<ModuleId> orderedModules = List.of();
     private final java.util.Set<String> runtimeEntries =
         new java.util.LinkedHashSet<>();
@@ -111,26 +117,38 @@ final class LlvmSession extends EmitterSessionBase {
                 functionsById.put(function.functionId().id(), function);
                 functionOwner.put(function.functionId().id(), module);
             }
-            for (SemanticOp op : unit.ops()) {
+            Map<BlockId, List<BindingId>> parametersByBlock = new LinkedHashMap<>();
+            for (int position = 0; position < unit.ops().size(); position++) {
+                SemanticOp op = unit.ops().get(position);
                 if (op.result() instanceof ValueId value) {
                     producerByValue.putIfAbsent(value.id(), op);
                     valueOwner.putIfAbsent(value.id(), module);
                 }
+                switch (op.payload()) {
+                    case KindPayload.TryCatchPayload caught -> addBindingRole(caught.catchBinding(), op);
+                    case KindPayload.ForEachPayload iteration -> addBindingRole(iteration.binding(), op);
+                    case KindPayload.RecursiveGroupInitPayload group -> {
+                        for (BindingId binding : group.bindings()) addBindingRole(binding, op);
+                    }
+                    case KindPayload.BindingInitPayload init -> bindingWrites
+                        .computeIfAbsent(new BindingTypeKey(module, init.binding(), init.generation()),
+                            ignored -> new ArrayList<>()).add(position);
+                    case KindPayload.BindingStorePayload store -> bindingWrites
+                        .computeIfAbsent(new BindingTypeKey(module, store.binding(), store.generation()),
+                            ignored -> new ArrayList<>()).add(position);
+                    case KindPayload.BindingAllocPayload alloc -> {
+                        if (unit.classBindingFacts().parameters().contains(alloc.binding())) {
+                            parametersByBlock.computeIfAbsent(alloc.scope(), ignored -> new ArrayList<>())
+                                .add(alloc.binding());
+                        }
+                    }
+                    default -> {}
+                }
             }
             for (LoweredFunction function : unit.functions().values()) {
-                List<BindingId> functionParameters = new ArrayList<>();
-                for (SemanticOp op : unit.ops()) {
-                    if (op.kind() == SemanticOpKind.BINDING_ALLOC
-                            && op.payload() instanceof KindPayload
-                                .BindingAllocPayload alloc
-                            && unit.classBindingFacts().parameters()
-                                .contains(alloc.binding())
-                            && alloc.scope().equals(function.body())) {
-                        functionParameters.add(alloc.binding());
-                    }
-                }
-                parameters.put(function.functionId().id(),
-                    List.copyOf(functionParameters));
+                List<BindingId> functionParameters = parametersByBlock.getOrDefault(function.body(), List.of());
+                parameters.put(function.functionId().id(), List.copyOf(functionParameters));
+                for (BindingId binding : functionParameters) parameterOwners.putIfAbsent(binding, function);
             }
         }
         indexClasses();
@@ -139,6 +157,10 @@ final class LlvmSession extends EmitterSessionBase {
         for (ModuleId module : project.modules().keySet()) {
             debug.compileUnit(displayName(module));
         }
+    }
+
+    private void addBindingRole(BindingId binding, SemanticOp op) {
+        bindingRoles.computeIfAbsent(binding, ignored -> new ArrayList<>()).add(op);
     }
 
     /**
@@ -507,10 +529,19 @@ final class LlvmSession extends EmitterSessionBase {
      */
     RuntimeDescriptor bindingType(LoweredModuleUnit unit, BindingId binding,
                                   long generation) {
+        BindingTypeKey key = new BindingTypeKey(unit.moduleId(), binding, generation);
+        if (!bindingTypes.containsKey(key)) {
+            bindingTypes.put(key, resolveBindingType(unit, binding, generation));
+        }
+        return bindingTypes.get(key);
+    }
+
+    private RuntimeDescriptor resolveBindingType(LoweredModuleUnit unit, BindingId binding,
+                                                 long generation) {
         if (isImportAlias(unit, binding)) {
             return null;
         }
-        for (SemanticOp op : unit.ops()) {
+        for (SemanticOp op : bindingRoles.getOrDefault(binding, List.of())) {
             if (op.payload() instanceof KindPayload.TryCatchPayload caught
                     && caught.catchBinding().equals(binding)) {
                 // docs/spec-v1.5.md try/catch: the catch variable binds the
@@ -553,7 +584,9 @@ final class LlvmSession extends EmitterSessionBase {
                 return member.descriptor();
             }
         }
-        for (LoweredFunction function : unit.functions().values()) {
+        LoweredFunction parameterOwner = parameterOwners.get(binding);
+        if (parameterOwner != null) {
+            LoweredFunction function = parameterOwner;
             List<BindingId> functionParameters = parametersOf(function.functionId());
             int index = functionParameters.indexOf(binding);
             if (index >= 0) {
@@ -570,7 +603,8 @@ final class LlvmSession extends EmitterSessionBase {
         RuntimeDescriptor declaredByBoundary = null;
         RuntimeDescriptor produced = null;
         List<SemanticOp> ops = unit.ops();
-        for (int index = 0; index < ops.size(); index++) {
+        for (int index : bindingWrites.getOrDefault(
+                new BindingTypeKey(unit.moduleId(), binding, generation), List.of())) {
             ValueId value = writeValue(ops.get(index), binding, generation);
             if (value == null) {
                 continue;
@@ -724,6 +758,7 @@ final class LlvmSession extends EmitterSessionBase {
      * already accepted it).
      */
     private List<LlvmData.UnitModule> unitModules() {
+        if (cachedUnitModules != null) return cachedUnitModules;
         List<LlvmData.UnitModule> modules = new ArrayList<>();
         for (ModuleId module : modules()) {
             LoweredModuleUnit unit = project.modules().get(module);
@@ -745,7 +780,8 @@ final class LlvmSession extends EmitterSessionBase {
             }
             modules.add(new LlvmData.UnitModule(module.path(), exports));
         }
-        return modules;
+        cachedUnitModules = List.copyOf(modules);
+        return cachedUnitModules;
     }
 
     /** The index of one unit's published export name in its export table. */

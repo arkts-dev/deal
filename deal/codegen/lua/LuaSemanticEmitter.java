@@ -2970,8 +2970,7 @@ public final class LuaSemanticEmitter {
          * each is emitted exactly once, here.
          */
         private void emitChainOperandProducers(SemanticOp child) {
-            for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
-                    child, unitOwning(child), structuralOwned)) {
+            for (SemanticOp producer : chainOperands.get(unitOwning(child).moduleId()).operandProducersOf(child)) {
                 emitOp(producer);
             }
         }

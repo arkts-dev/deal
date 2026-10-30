@@ -2429,13 +2429,15 @@ public final class SemanticIrValidator {
     private static Optional<CompilerDiagnostic> checkBoundaryTriple(RawUnit unit,
                                                                     ComparisonFacts facts,
                                                                     Map<String, RawUnit> closure) {
+        Map<OpId, RawOp> localOps = new LinkedHashMap<>();
+        for (RawOp op : unit.ops()) localOps.putIfAbsent(op.opId(), op);
         // Direction (a): every BOUNDARY op's (kind, descriptor, policy)
         // triple against the closed boundary-assignment table.
         for (RawOp op : unit.ops()) {
             if (enumByName(SemanticOpKind.class, op.kind()) != SemanticOpKind.BOUNDARY) {
                 continue;
             }
-            Optional<String> failure = cellOfBoundary(unit, op, closure);
+            Optional<String> failure = cellOfBoundary(unit, op, closure, localOps);
             if (failure.isPresent()) {
                 return fail(op, unit, facts, R_BOUNDARY_TRIPLE, SemanticCapability.FOUNDATION_VALUES,
                     origin(R_BOUNDARY_TRIPLE, failure.get()));
@@ -2483,7 +2485,8 @@ public final class SemanticIrValidator {
      * returns empty on a matching cell and a failure description otherwise.
      */
     private static Optional<String> cellOfBoundary(RawUnit unit, RawOp boundary,
-                                                   Map<String, RawUnit> closure) {
+                                                   Map<String, RawUnit> closure,
+                                                   Map<OpId, RawOp> localOps) {
         BoundaryKind kind = enumByName(BoundaryKind.class,
             optionalString(boundary.payload(), "kind"));
         if (kind == null) {
@@ -2632,11 +2635,11 @@ public final class SemanticIrValidator {
             }
             case FUNCTION_PARAMETER, FUNCTION_RETURN, STDLIB_PARAMETER, STDLIB_RETURN,
                  EXTERNAL_PARAMETER, EXTERNAL_RETURN, HOST_TO_DEAL, DEAL_TO_HOST -> {
-                RawOp invocation = resolveEnclosingInvocation(boundary, unit, closure);
+                RawOp invocation = resolveEnclosingInvocation(boundary, unit, closure, localOps);
                 if (invocation == null) {
                     return Optional.of(kind.name() + " boundary outside any invocation shape");
                 }
-                return invocationCell(unit, invocation, boundary, closure);
+                return invocationCell(unit, invocation, boundary, closure, localOps);
             }
         }
         return Optional.empty();
@@ -2644,8 +2647,9 @@ public final class SemanticIrValidator {
 
     /** Resolves a boundary's enclosing invocation: its parent, or the RETURN's enclosing invocation. */
     private static RawOp resolveEnclosingInvocation(RawOp boundary, RawUnit unit,
-                                                    Map<String, RawUnit> closure) {
-        RawOp parent = resolveParent(boundary, unit, closure);
+                                                    Map<String, RawUnit> closure,
+                                                    Map<OpId, RawOp> localOps) {
+        RawOp parent = resolveLocalParent(boundary, unit, closure, localOps);
         if (parent == null) {
             return null;
         }
@@ -2654,13 +2658,15 @@ public final class SemanticIrValidator {
             if (enclosing == null) {
                 return null;
             }
-            return resolveOp(enclosing, unit, closure);
+            return enclosing.module().path().equals(unit.modulePath())
+                ? localOps.get(enclosing) : resolveOp(enclosing, unit, closure);
         }
         return parent;
     }
 
     private static Optional<String> invocationCell(RawUnit unit, RawOp invocation, RawOp boundary,
-                                                   Map<String, RawUnit> closure) {
+                                                   Map<String, RawUnit> closure,
+                                                   Map<OpId, RawOp> localOps) {
         SemanticOpKind invocationKind =
             enumByName(SemanticOpKind.class, invocation.kind());
         if (invocationKind == null) {
@@ -2674,7 +2680,7 @@ public final class SemanticIrValidator {
             case EXTERNAL_ENTRY -> entryCell(unit, invocation, boundary);
             case CLASS_NEW -> classNewCell(unit, invocation, boundary);
             case CLOSURE_NEW, RECURSIVE_GROUP_INIT ->
-                bodyLocalReturnCell(unit, invocation, boundary, closure);
+                bodyLocalReturnCell(unit, invocation, boundary, closure, localOps);
             case CLASS_FACTORY ->
                 Optional.of("a boundary parented to " + invocationKind.name()
                     + " is outside the closed table (zero boundary children)");
@@ -2685,8 +2691,9 @@ public final class SemanticIrValidator {
 
     private static Optional<String> bodyLocalReturnCell(RawUnit unit, RawOp creation,
                                                         RawOp boundary,
-                                                        Map<String, RawUnit> closure) {
-        RawOp parent = resolveParent(boundary, unit, closure);
+                                                        Map<String, RawUnit> closure,
+                                                        Map<OpId, RawOp> localOps) {
+        RawOp parent = resolveLocalParent(boundary, unit, closure, localOps);
         if (parent == null
                 || enumByName(SemanticOpKind.class, parent.kind()) != SemanticOpKind.RETURN) {
             return Optional.of("the body-local return boundary must be parented to the "
@@ -3995,6 +4002,14 @@ public final class SemanticIrValidator {
                 binding.targetSignature(), binding.descriptor(), binding.exportName(),
                 binding.captureMode());
         }
+    }
+
+    private static RawOp resolveLocalParent(RawOp op, RawUnit unit,
+                                            Map<String, RawUnit> closure,
+                                            Map<OpId, RawOp> localOps) {
+        OpId parent = op.parentOpId();
+        return parent == null ? null : parent.module().path().equals(unit.modulePath())
+            ? localOps.get(parent) : resolveOp(parent, unit, closure);
     }
 
     private static RawOp resolveParent(RawOp op, RawUnit unit, Map<String, RawUnit> closure) {

@@ -1124,11 +1124,6 @@ record NumValue(double value) implements Value {
             // position inside the chain, never at their flat block-list
             // position (the hoisted-operand interleaving the parity
             // fixtures pin).
-            java.util.Set<OpId> structuralOwned =
-                ChainOperandCompletion.structuralOwners(unit);
-            ownedChildren.addAll(structuralOwned);
-            ChainOperandCompletion.registerChainOperandOwners(unit, structuralOwned,
-                ownedChildren);
             ownedChildren.addAll(entryState.ownedChildren);
             for (UnitState state : units.values()) {
                 ownedChildren.addAll(state.ownedChildren);
@@ -1254,11 +1249,6 @@ record NumValue(double value) implements Value {
             for (SemanticOp op : entryUnit.ops()) {
                 opsById.put(op.opId(), op);
             }
-            java.util.Set<OpId> structuralOwned =
-                ChainOperandCompletion.structuralOwners(entryUnit);
-            ownedChildren.addAll(structuralOwned);
-            ChainOperandCompletion.registerChainOperandOwners(entryUnit, structuralOwned,
-                ownedChildren);
             ownedChildren.addAll(entryState.ownedChildren);
             for (UnitState state : units.values()) {
                 ownedChildren.addAll(state.ownedChildren);
@@ -1299,9 +1289,9 @@ record NumValue(double value) implements Value {
              * against the skip set, which already contains the chain's
              * own operand producers.
              */
-            final Set<OpId> structuralOwned;
+            final ChainOperandCompletion.Index chainOperands;
             /**
-             * The block-walk skip set: {@code structuralOwned} plus every
+             * The block-walk skip set: structural owners plus every
              * chain child's operand closure (the chain arm executes
              * those at the consuming child's position).
              */
@@ -1328,10 +1318,9 @@ record NumValue(double value) implements Value {
                             k -> new ArrayList<>()).add(op);
                     }
                 }
-                structuralOwned = ChainOperandCompletion.structuralOwners(unit);
-                ownedChildren = new HashSet<>(structuralOwned);
-                ChainOperandCompletion.registerChainOperandOwners(unit,
-                    structuralOwned, ownedChildren);
+                chainOperands = ChainOperandCompletion.index(unit);
+                ownedChildren = new HashSet<>(chainOperands.structuralOwners());
+                chainOperands.registerChainOperandOwners(ownedChildren);
                 for (SemanticOp op : unit.ops()) {
                     if (op.payload() instanceof KindPayload.TryCatchPayload tryCatch) {
                         catchBindings.add(tryCatch.catchBinding());
@@ -3876,8 +3865,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
          */
         private void completeChainOperands(SemanticOp child) {
             UnitState owner = stateOf(child.opId());
-            for (SemanticOp producer : ChainOperandCompletion.operandProducersOf(
-                    child, owner.unit, owner.structuralOwned)) {
+            for (SemanticOp producer : owner.chainOperands.operandProducersOf(child)) {
                 execute(producer);
             }
         }

@@ -308,6 +308,7 @@ public final class BindingsProductionValidator {
             FunctionExecutionBinding>> registryByFunction = new LinkedHashMap<>();
         /** The MODULE_IMPORT ops in unit op order (the import-alias completions). */
         final List<SemanticOp> moduleImports = new ArrayList<>();
+        final Set<BindingId> catchBindings = new LinkedHashSet<>();
 
         final Map<BindingId, List<SemanticOp>> completionsByCell = new LinkedHashMap<>();
         /** The no-INIT module-region ALLOCs in unit op order (the import aliases). */
@@ -339,6 +340,9 @@ public final class BindingsProductionValidator {
             Model model = new Model(unit, table, moduleRoot, facts);
             for (SemanticOp op : unit.ops()) {
                 model.opById.put(op.opId(), op);
+                if (op.payload() instanceof KindPayload.TryCatchPayload handler) {
+                    model.catchBindings.add(handler.catchBinding());
+                }
             }
             for (Map.Entry<BlockId, List<OpId>> entry : table.blockOps().entrySet()) {
                 List<SemanticOp> ops = new ArrayList<>();
@@ -1416,14 +1420,11 @@ public final class BindingsProductionValidator {
                     + "completion write is the pinned initializing write — an import "
                     + "alias never carries a BINDING_INIT)");
             }
-            for (SemanticOp other : model.unit.ops()) {
-                if (other.payload() instanceof KindPayload.TryCatchPayload payload
-                        && payload.catchBinding().equals(entry.getKey().binding())) {
-                    return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
-                        .binding() + ", " + entry.getKey().generation()
-                        + "} targets a catch binding's cell (the catch-entry write is "
-                        + "TRY_CATCH's pinned initializing write)");
-                }
+            if (model.catchBindings.contains(entry.getKey().binding())) {
+                return fail(init, model, BINDING_INIT_ONCE, "the INIT of {" + entry.getKey()
+                    .binding() + ", " + entry.getKey().generation()
+                    + "} targets a catch binding's cell (the catch-entry write is "
+                    + "TRY_CATCH's pinned initializing write)");
             }
         }
         return checkAliasCompletionAgreement(model);
