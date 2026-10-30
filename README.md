@@ -22,14 +22,14 @@ an executable [capability demo](docs/deal-v1.5-capabilities.deal).
 ## Build and Test
 
 ```bash
-./run_tests.sh --jobs 1
+./run_tests.sh --jobs 4
 ```
 
 Compiles all production and test sources with `javac --release 25`
 and executes the complete selection in `tools/gate-manifest.sh` with
 assertions enabled, including the TypeScript compiler's syntactic/grammar
-diagnostics and real JS/LuaJIT/JVM runtime records. Suites run sequentially;
-`--jobs` controls work within suites (default one).
+diagnostics and real JS/LuaJIT/JVM runtime records. `--jobs` bounds suites
+(default four); nested work/coverage stay serial.
 No alternate full-suite profile exists.
 
 `run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,

@@ -8,6 +8,13 @@ import java.util.Map;
 /** Real compiler controls for preparation reuse; executions always run anew. */
 public final class NativeRuntimeObjectsTest {
     public static void main(String[] args) throws Exception {
+        if (args.length == 2) {
+            Path root = Path.of(args[0]);
+            Path work = Files.createDirectories(Path.of(args[1]).resolve("child-" + ProcessHandle.current().pid()));
+            execute(root, root.resolve("deal/native/main.c"), work, 3);
+            System.out.println(prepare(root, root.resolve("deal/native/main.c"), 0, List.of()).getFirst());
+            return;
+        }
         Path scratch = NativeCompiler.executableScratch("native-object-controls");
         try {
             Path root = Files.createDirectories(scratch.resolve("published"));
@@ -17,6 +24,20 @@ public final class NativeRuntimeObjectsTest {
             Files.writeString(header, "#define TEST_RESULT 3\n");
             Files.writeString(source, "#include \"deal/native/entry.h\"\n"
                 + "int main(void) { return TEST_RESULT; }\n");
+            // Independent JVMs compete for an initially empty shared key.
+            List<String> child = List.of(Path.of(System.getProperty("java.home"), "bin/java").toString(),
+                "-Djava.io.tmpdir=" + System.getProperty("java.io.tmpdir"),
+                "-Ddeal.test.native.objects=" + scratch.resolve("shared"), "-ea", "-cp",
+                System.getProperty("java.class.path"), NativeRuntimeObjectsTest.class.getName(),
+                root.toString(), scratch.toString());
+            try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+                var first = workers.submit(() -> BoundedProcess.runCaptured(child));
+                var second = workers.submit(() -> BoundedProcess.runCaptured(child));
+                var a = first.get();
+                var b = second.get();
+                check(a.exitCode() == 0 && b.exitCode() == 0 && a.stdout().equals(b.stdout()),
+                    "concurrent preparation publishes one executable object: " + a + " / " + b);
+            }
             var initial = prepare(root, source, 0, List.of());
             check(!initial.getFirst().equals(source), "runtime is prepared as an object");
             check(initial.equals(prepare(root, source, 0, List.of())), "identical bytes reuse object");

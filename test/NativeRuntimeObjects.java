@@ -13,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Sequential gate-local preparation; fixture compilation and execution always run. */
+/** Gate-local preparation; fixture compilation and execution always run. */
 final class NativeRuntimeObjects {
     private NativeRuntimeObjects() {}
     private static Path directory;
@@ -67,6 +67,12 @@ final class NativeRuntimeObjects {
                 add(hash, file.getValue());
             }
             Path cache = directory().resolve(HexFormat.of().formatHex(hash.digest()));
+            Files.createDirectories(cache);
+            // Suites share keys across JVMs: protect snapshots and object publication.
+            try (var channel = java.nio.channels.FileChannel.open(cache.resolve("lock"),
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE);
+                    var lock = channel.lock()) {
+            if (!lock.isValid()) throw new IOException("native object lock was lost");
             Path published = cache.resolve("published");
             for (var file : tree.entrySet()) {
                 Path target = published.resolve(file.getKey());
@@ -110,6 +116,7 @@ final class NativeRuntimeObjects {
                 }
             }
             return List.copyOf(result);
+            }
         } catch (IOException error) {
             throw new UncheckedIOException("cannot prepare native runtime", error);
         }
@@ -120,7 +127,7 @@ final class NativeRuntimeObjects {
             String shared = System.getProperty("deal.test.native.objects");
             directory = shared == null ? Files.createTempDirectory(
                 NativeCompiler.repository().resolve("build"), "native-objects-") : Path.of(shared);
-            // The sequential gate clears build before any suite; standalone
+            // The gate clears build before any suite; standalone
             // suites use fresh preparation, so system/compiler changes cannot leak.
             if (shared == null) Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 try (var paths = Files.walk(directory)) {
