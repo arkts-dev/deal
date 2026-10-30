@@ -99,15 +99,28 @@ public final class LlvmProjectEmissionTest {
      * reserved host-import slot, so it carries no staged decision and the
      * compile fails with one origin-bearing E6005.
      */
+    /**
+     * The still-unsupported fact: a nullable-boundary projection whose static
+     * operand type does not prove the declared nullish descriptor. The host
+     * import is rendered by the host stage (ISSUE-0912), so it is no longer the
+     * unsupported fixture.
+     */
     private static final String UNSUPPORTED_SOURCE = """
-        import * as probe from "host/probe";
+        class Box {
+          total?: number;
+        }
 
         export function main(): null {
+          let box: Box = { total: 42 };
+          let value: number | null | undefined = box.total;
+          if (value === null || value === undefined) {
+            throw {code: "T", message: "n"};
+          }
           return null;
         }
         """;
 
-    /** The host declaration module the unsupported project imports. */
+    /** The unsupported project declares no host declaration module. */
     private static final String UNSUPPORTED_DECLARATION = """
         export function fetch(): number;
         """;
@@ -564,7 +577,7 @@ public final class LlvmProjectEmissionTest {
         check(!Files.exists(output), "nothing is published");
         CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
         checkEq("E6005", diagnostic.code(), "the rejection is one E6005");
-        check(diagnostic.message().contains("MODULE_IMPORT"),
+        check(diagnostic.message().contains("BOUNDARY"),
             "the rejection names the unsupported fact: " + diagnostic.message());
         check(diagnostic.range() != null
                 && diagnostic.range().file().contains("main.deal"),
@@ -758,12 +771,8 @@ public final class LlvmProjectEmissionTest {
         Files.createDirectories(root.resolve("src"));
         Files.writeString(root.resolve("deal.json"),
             "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
-                + " \"backend\": \"llvm\", \"externals\":"
-                + " {\"host/probe\": {\"declaration\":"
-                + " \"src/probe.d.deal\"}}}",
+                + " \"backend\": \"llvm\"}",
             StandardCharsets.UTF_8);
-        Files.writeString(root.resolve("src/probe.d.deal"),
-            UNSUPPORTED_DECLARATION, StandardCharsets.UTF_8);
         Files.writeString(root.resolve("src/main.deal"), UNSUPPORTED_SOURCE,
             StandardCharsets.UTF_8);
     }

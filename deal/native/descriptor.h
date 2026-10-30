@@ -94,6 +94,14 @@ typedef enum {
  * (it never becomes a DEAL Error). */
 deal_descriptor *deal_descriptor_intern(const char *descriptor_text);
 
+/*
+ * The result-position intern: identical to `deal_descriptor_intern` for every
+ * data descriptor and additionally admits the result-only `void` atom, which is
+ * the declared descriptor of a `void` result position (R4). A text outside the
+ * grammar is the same producer defect.
+ */
+deal_descriptor *deal_descriptor_intern_result(const char *descriptor_text);
+
 /* The atom's canonical text, unchanged from the interned text. */
 const char *deal_descriptor_text(deal_descriptor *atom);
 
@@ -106,6 +114,15 @@ deal_descriptor *deal_descriptor_element(deal_descriptor *atom);
 /* The base atom of a nullish descriptor (`?T`, `!T`, `?!T`, `null|undefined`);
  * a non-nullish atom faults. */
 deal_descriptor *deal_descriptor_inner(deal_descriptor *atom);
+
+/* The parameter atoms of one function descriptor `(T, U)->R`, in declaration
+ * order (`count` answers their number); a non-function atom faults. */
+deal_descriptor *const *deal_descriptor_parameters(deal_descriptor *atom,
+                                                   size_t *count);
+
+/* The result atom of one function descriptor, `void` included; a non-function
+ * atom faults. */
+deal_descriptor *deal_descriptor_result(deal_descriptor *atom);
 
 /* 1 when the nullish descriptor admits `null`, 0 otherwise. */
 int deal_descriptor_admits_null(deal_descriptor *atom);

@@ -80,6 +80,15 @@ final class LlvmFunctionEmitter {
     private final Map<Long, String> blockLabels = new LinkedHashMap<>();
     private final Map<Long, String> tokenSlots = new LinkedHashMap<>();
     private final Map<String, Integer> rootSlots = new LinkedHashMap<>();
+    /**
+     * The imported host declaration modules whose load succeeded during the
+     * unit initialization being emitted, in imported-module order. Their
+     * module records are published in the initialization's {@code finish}
+     * segment, together with the unit's own record, so a module whose
+     * initialization fails leaves no visible or invocable host export surface
+     * (H6).
+     */
+    private final List<Integer> initHostRecords = new ArrayList<>();
     private final Deque<LoopTargets> loops = new ArrayDeque<>();
     private final Deque<FailureHandler> handlers = new ArrayDeque<>();
     private int loadCounter;
@@ -102,9 +111,71 @@ final class LlvmFunctionEmitter {
     private record FailureHandler(String label, String pendingSlot) {
     }
 
+    /**
+     * One recorded host parameter cell of this unit: the crossing op whose
+     * origin the cell's arm carries and the cell's one-based position (H2/H4).
+     */
+    private record HostParameterCell(SemanticOp crossing, int index) {
+    }
+
+    /**
+     * The recorded host parameter cells indexed by the argument value each one
+     * checks, resolved on first use. A read that feeds a declared host parameter
+     * position validates at that cell's boundary — the composite {@code E8010}
+     * arm, its one-based index and the call origin — because the parameter cell
+     * is the position that owns that projection, exactly as the other backends'
+     * emitted crossings do.
+     */
+    private Map<Long, HostParameterCell> hostParameterCells;
+
     LlvmFunctionEmitter(LlvmSession session, LoweredModuleUnit unit) {
         this.session = session;
         this.unit = unit;
+    }
+
+    /**
+     * This unit's recorded host-call parameter cells by their argument value
+     * (H2 {@code HostCallSync}, H4): every {@code DEAL_TO_HOST}+
+     * {@code HOST_PARAMETER} cell of a host callee, static or value-carried, is
+     * recorded with its crossing op and one-based position. A value that feeds
+     * more than one position keeps the first recorded cell in unit order, so
+     * the arm data stay deterministic.
+     */
+    private Map<Long, HostParameterCell> hostParameterCells() {
+        if (hostParameterCells != null) {
+            return hostParameterCells;
+        }
+        Map<Long, HostParameterCell> cellsByArgument = new LinkedHashMap<>();
+        Map<Long, SemanticOp> opsById = new LinkedHashMap<>();
+        for (SemanticOp op : unit.ops()) {
+            opsById.put(op.opId().id(), op);
+        }
+        for (SemanticOp op : unit.ops()) {
+            if (!(op.payload() instanceof KindPayload.CallPayload call)
+                    || !(call.callee()
+                        instanceof KindPayload.CallCallee.Static callee)
+                    || !(callee.binding()
+                        instanceof deal.semantic.ir.FunctionExecutionBinding
+                            .HostFunction
+                        || callee.binding()
+                        instanceof deal.semantic.ir.FunctionExecutionBinding
+                            .HostFunctionValue)) {
+                continue;
+            }
+            List<OpId> cells = call.parameterBoundaryOpIds();
+            for (int index = 0; index < cells.size(); index++) {
+                SemanticOp cell = opsById.get(cells.get(index).id());
+                if (cell == null
+                        || !(cell.payload()
+                            instanceof KindPayload.BoundaryPayload boundary)) {
+                    continue;
+                }
+                cellsByArgument.putIfAbsent(boundary.input().id(),
+                    new HostParameterCell(op, index + 1));
+            }
+        }
+        hostParameterCells = cellsByArgument;
+        return hostParameterCells;
     }
 
     // =========================================================================
@@ -336,6 +407,7 @@ final class LlvmFunctionEmitter {
      */
     String emitUnitInit(ModuleId module) {
         this.functionId = null;
+        initHostRecords.clear();
         LoweredModuleUnit initUnit = session.unitOf(module);
         long index = session.moduleIndex(module);
         String record = "@" + LlvmData.moduleRecord(index);
@@ -403,6 +475,16 @@ final class LlvmFunctionEmitter {
         terminate("ret %struct.deal_outcome " + failureAggregate);
         startSegment(finish);
         emit("store i32 2, i32* " + statePointer);
+        // The host imports of this unit become visible only here, after the
+        // whole initialization walk succeeded (H6): a failed unit publishes
+        // neither its own record nor the module record of an import it had
+        // already loaded.
+        for (Integer hostIndex : initHostRecords) {
+            emit("%hostpublish" + hostIndex + " = getelementptr"
+                + " %struct.deal_module, %struct.deal_module* @"
+                + LlvmData.hostModuleRecord(hostIndex) + ", i32 0, i32 1");
+            emit("store i32 2, i32* %hostpublish" + hostIndex);
+        }
         emitEpilogue();
         terminate("ret %struct.deal_outcome { i8* null }");
         StringBuilder out = new StringBuilder();
@@ -597,6 +679,10 @@ final class LlvmFunctionEmitter {
             case BINDING_INIT, BINDING_STORE -> emitBindingWrite(op);
             case BINDING_LOAD -> emitBindingLoad(op);
             case MODULE_IMPORT -> emitModuleImport(op);
+            case CALLBACK_INVOKE -> {
+                // The host-driven re-entry is one emitted module-level entry
+                // (H4); the block walk itself performs no work for it.
+            }
             case CLOSURE_NEW -> emitClosureNew(op);
             case EXPORT_READ -> emitExportRead(op);
             case CALL -> emitCall(op);
@@ -1250,10 +1336,14 @@ final class LlvmFunctionEmitter {
     }
 
     /**
-     * Validates one held persistent datum against the refined descriptor at the
-     * read's own origin and projects the refined representation out of it
-     * (C3, R4). A stale refinement fails with the declared E8001 arm there
-     * instead of yielding a base value the binding never held.
+     * Validates one held persistent datum against the refined descriptor and
+     * projects the refined representation out of it (C3, R4). A stale
+     * refinement fails with the declared arm instead of yielding a base value
+     * the binding never held: at the read's own origin on the typed boundary,
+     * or — when the read feeds a declared host parameter position — at that
+     * parameter cell's {@code HOST_PARAMETER} boundary with its one-based index
+     * and the crossing's origin (H2/H4), because the cell is the position that
+     * owns the projection.
      */
     private String narrowedFromDatum(SemanticOp op, RuntimeDescriptor declared,
                                      RuntimeDescriptor refined, String held) {
@@ -1268,7 +1358,15 @@ final class LlvmFunctionEmitter {
         emit("store %struct.deal_check_input "
             + checkInputRecordOf(op, declared, held)
             + ", %struct.deal_check_input* " + slot);
-        emitCheckCall(op, refined, slot);
+        HostParameterCell cell = op.result() instanceof ValueId result
+            ? hostParameterCells().get(result.id()) : null;
+        if (cell == null) {
+            emitCheckCall(op, refined, slot);
+        } else {
+            emitCheckCall(op, refined, slot,
+                LlvmRuntimeAbi.BOUNDARY_HOST_PARAMETER, cell.crossing(),
+                cell.index());
+        }
         return LlvmDataValues.unbox(session, sink, refined, held);
     }
 
@@ -1549,17 +1647,30 @@ final class LlvmFunctionEmitter {
      */
     private void emitCheckCall(SemanticOp op, RuntimeDescriptor declared,
                                String inputSlot) {
+        emitCheckCall(op, declared, inputSlot, checkBoundaryKind(declared),
+            null, 0);
+    }
+
+    /**
+     * One descriptor-driven check at an explicitly selected closed boundary
+     * (R4): a host cell selects its own boundary and, for a parameter cell, its
+     * one-based index and the crossing's origin, so the rendered arm is the
+     * shared host tuple rather than the typed boundary's.
+     */
+    private void emitCheckCall(SemanticOp op, RuntimeDescriptor declared,
+                               String inputSlot, int boundaryKind,
+                               SemanticOp originOp, int parameterIndex) {
         session.referenceRuntimeEntry("deal_descriptor_intern");
         session.referenceRuntimeEntry("deal_check_value");
         String atom = emitTemporary(op, "call"
             + " %struct.deal_descriptor* @deal_descriptor_intern("
             + session.data.operand(session.data.intern(
                 declared.canonicalSpecText())) + ")");
-        String context = checkContext(op);
+        String context = checkContext(op, originOp, parameterIndex);
         String outcome = emitTemporary(op, "call %struct.deal_outcome"
             + " @deal_check_value(%struct.deal_descriptor* " + atom
             + ", %struct.deal_check_input* byval(%struct.deal_check_input) "
-            + inputSlot + ", i32 " + checkBoundaryKind(declared)
+            + inputSlot + ", i32 " + boundaryKind
             + ", %struct.deal_check_context* " + context + ")");
         String error = emitTemporary(op, "extractvalue %struct.deal_outcome "
             + outcome + ", 0");
@@ -1685,9 +1796,20 @@ final class LlvmFunctionEmitter {
 
     /** The {@code deal_check_context} of one checked boundary. */
     private String checkContext(SemanticOp op) {
+        return checkContext(op, null, 0);
+    }
+
+    /**
+     * The {@code deal_check_context} of one checked boundary (R4): the op's own
+     * origin, or the recorded crossing origin of a host cell together with its
+     * one-based parameter index (the host parameter arm's {@code {index}}).
+     */
+    private String checkContext(SemanticOp op, SemanticOp originOp,
+                                int parameterIndex) {
         String slot = newAlloca("%struct.deal_check_context", "checkcontext");
         emit("store %struct.deal_check_context { %struct.deal_origin* "
-            + originValue(op) + ", i32 0 },"
+            + (originOp == null ? originValue(op) : originValue(originOp))
+            + ", i32 " + parameterIndex + " },"
             + " %struct.deal_check_context* " + slot);
         return slot;
     }
@@ -2004,6 +2126,10 @@ final class LlvmFunctionEmitter {
     private void emitModuleImport(SemanticOp op) {
         KindPayload.ModuleImportPayload payload =
             (KindPayload.ModuleImportPayload) op.payload();
+        if (payload.kind() == deal.semantic.ir.ModuleImportKind.HOST) {
+            emitHostImport(op, payload);
+            return;
+        }
         if (payload.kind() == deal.semantic.ir.ModuleImportKind.STDLIB) {
             // A stdlib declaration module is the compile-time type authority;
             // its operations reach the `std` group through STDLIB_CALL, so
@@ -2031,6 +2157,260 @@ final class LlvmFunctionEmitter {
                 + LlvmData.moduleRecord(session.moduleIndex(imported)) + ", "
                 + representation + "* " + bindingSlot(alias, 0, representation));
         }
+    }
+
+    /**
+     * The host import of one unit's initialization (H1/H7, `LoadHostModule`):
+     * the emitted declared-module record, the origin-carrying load call at the
+     * importing statement, the carried-Error route on failure, and the import's
+     * own `deal_module` record built from the returned runtime-known binding and
+     * published after the load succeeded. The runtime never reads or builds a
+     * module layout (C2/C3/H6 opacity).
+     */
+    private void emitHostImport(SemanticOp op,
+                                KindPayload.ModuleImportPayload payload) {
+        LlvmHostModules.Module host =
+            session.hostModules().byModule(payload.resolvedModule());
+        if (host == null) {
+            throw new IllegalStateException("the host import "
+                + payload.rawSpecifier() + " of " + payload.resolvedModule()
+                + " carries no declared-module facts");
+        }
+        int hostIndex = session.hostModules().modules().indexOf(host);
+        session.referenceRuntimeEntry("deal_host_load");
+        String declared = "%struct.deal_host_declared_module* @"
+            + LlvmData.hostDeclared(hostIndex);
+        String slot = newAlloca("%struct.deal_host_binding*", "hostbinding");
+        String loaded = emitTemporary(op, "call %struct.deal_outcome"
+            + " @deal_host_load(" + declared + ", %struct.deal_origin* "
+            + originValue(op) + ", %struct.deal_host_binding** " + slot + ")");
+        String error = emitTemporary(op,
+            "extractvalue %struct.deal_outcome " + loaded + ", 0");
+        branchOnFailure(op, error, "hostload");
+        String binding = load(op, "%struct.deal_host_binding*", slot);
+        emit("store %struct.deal_host_binding* " + binding
+            + ", %struct.deal_host_binding** @"
+            + LlvmData.hostBindingSlot(hostIndex));
+        // One export entry per declared export, in declaration order: the
+        // resolved registration record of the binding's own array. The entry's
+        // reserved word marks the host entry (already 1 in the static data).
+        String exportsPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_binding, %struct.deal_host_binding* "
+            + binding + ", i32 0, i32 2");
+        String exports = emitTemporary(op, "load %struct.deal_host_export**,"
+            + " %struct.deal_host_export*** " + exportsPointer);
+        for (int index = 0; index < host.exports().size(); index++) {
+            String slotPointer = emitTemporary(op, "getelementptr"
+                + " %struct.deal_host_export*, %struct.deal_host_export** "
+                + exports + ", i64 " + index);
+            String record = emitTemporary(op, "load %struct.deal_host_export*,"
+                + " %struct.deal_host_export** " + slotPointer);
+            String asFunction = emitTemporary(op, "bitcast"
+                + " %struct.deal_host_export* " + record
+                + " to %struct.deal_fn*");
+            String entry = emitTemporary(op, "getelementptr ["
+                + host.exports().size() + " x %struct.deal_export_entry], ["
+                + host.exports().size() + " x %struct.deal_export_entry]* @"
+                + LlvmData.hostExportEntries(hostIndex) + ", i64 0, i64 "
+                + index + ", i32 4");
+            emit("store %struct.deal_fn* " + asFunction + ", %struct.deal_fn** "
+                + entry);
+        }
+        // The import's own module record becomes visible only when the
+        // importing unit's initialization completes (H6): the record's `ready`
+        // store is emitted in the initialization's `finish` segment, together
+        // with the unit's own publication. A unit that fails later in its init
+        // walk therefore publishes no host export surface, so a failed
+        // initialization leaves every module of the project uncallable.
+        if (!initHostRecords.contains(hostIndex)) {
+            initHostRecords.add(hostIndex);
+        }
+        String moduleValue = "@" + LlvmData.hostModuleRecord(hostIndex);
+        for (BindingId alias : payload.aliasCells()) {
+            String representation = session.bindingRepresentation(unit, alias, 0)
+                .orElseThrow(() -> new IllegalStateException(
+                    "the import alias " + alias + " carries no representation"));
+            emit("store " + representation + " " + moduleValue + ", "
+                + representation + "* " + bindingSlot(alias, 0, representation));
+        }
+    }
+
+    /**
+     * One synchronous host call (H2 `HostCallSync`, H4): the checked argument
+     * presentations of the recorded `HOST_PARAMETER` cells, the crossing entry
+     * with the export's declared canonical signature, and the admitted datum
+     * projected onto the declared result representation. A carried Error routes
+     * exactly like a DEAL call's (C4), and a rejected return admits nothing.
+     */
+    private void emitHostCall(SemanticOp op, KindPayload.CallPayload payload,
+                              deal.semantic.ir.FunctionExecutionBinding.HostFunction host) {
+        LlvmHostModules.Module hostModule =
+            session.hostModules().byModule(host.hostModuleId());
+        if (hostModule == null) {
+            throw new IllegalStateException("the host call of "
+                + host.hostModuleId() + "." + host.exportName()
+                + " carries no declared-module facts");
+        }
+        int hostIndex = session.hostModules().modules().indexOf(hostModule);
+        int exportIndex = hostModule.exportIndex(host.exportName());
+        if (exportIndex < 0) {
+            throw new IllegalStateException("the host call of "
+                + host.exportName() + " names no declared export");
+        }
+        for (OpId boundary : payload.parameterBoundaryOpIds()) {
+            recordOrigin(unitOp(boundary));
+        }
+        if (payload.returnBoundaryOpId() != null) {
+            recordOrigin(unitOp(payload.returnBoundaryOpId()));
+        }
+        if (op.operands().size() != host.descriptor().paramTypes().size()) {
+            throw new IllegalStateException("the host call " + op.opId()
+                + " supplies " + op.operands().size() + " operands for "
+                + host.descriptor().paramTypes().size() + " parameters");
+        }
+        String arguments = hostParameterArguments(op, op.operands(),
+            op.operandTypes(), host.descriptor().paramTypes());
+        String binding = load(op, "%struct.deal_host_binding*",
+            "@" + LlvmData.hostBindingSlot(hostIndex));
+        String exportsPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_binding, %struct.deal_host_binding* "
+            + binding + ", i32 0, i32 2");
+        String exports = emitTemporary(op, "load %struct.deal_host_export**,"
+            + " %struct.deal_host_export*** " + exportsPointer);
+        String slotPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_export*, %struct.deal_host_export** "
+            + exports + ", i64 " + exportIndex);
+        String record = emitTemporary(op, "load %struct.deal_host_export*,"
+            + " %struct.deal_host_export** " + slotPointer);
+        RuntimeDescriptor returned = host.descriptor().returnType();
+        // The export's declared canonical signature is the crossing's declaration
+        // (H2/H4): the runtime reads the declared result position from its own
+        // result atom, so a function-typed result is that function descriptor and
+        // the result-only `void` is the no-value position.
+        String descriptor = session.data.operand(session.data.intern(
+            host.descriptor().canonicalSpecText()));
+        session.referenceRuntimeEntry("deal_host_invoke_sync");
+        String outcomeSlot = newAlloca("%struct.deal_outcome_data", "hostout");
+        emit("call void @deal_host_invoke_sync(%struct.deal_outcome_data*"
+            + " sret(%struct.deal_outcome_data) " + outcomeSlot
+            + ", %struct.deal_host_export* " + record
+            + ", %struct.deal_check_input* " + arguments + ", i32 "
+            + op.operands().size() + ", " + descriptor
+            + ", %struct.deal_origin* " + originValue(op) + ")");
+        String outcome = load(op, "%struct.deal_outcome_data", outcomeSlot);
+        String error = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_data " + outcome + ", 0");
+        branchOnFailure(op, error, "hostcall");
+        if (LlvmTypeMapper.isStaticSingleton(returned)
+                || returned instanceof RuntimeDescriptor.Void) {
+            return;
+        }
+        String datum = emitTemporary(op, "extractvalue"
+            + " %struct.deal_outcome_data " + outcome + ", 1");
+        // The declared representation's own projection already answers a boolean
+        // position as the C3 `i1` (`LlvmDataValues.unbox` compares the payload),
+        // so no second narrowing applies here.
+        String value = LlvmDataValues.unbox(session, sink, returned, datum);
+        String type = resultRepresentation(op).orElseThrow(() ->
+            new IllegalStateException("the host call result "
+                + returned.canonicalSpecText() + " carries no representation"));
+        storeResult(op, type, value);
+    }
+
+    /**
+     * The host-driven re-entry entry of one DEAL function (H4
+     * `CALLBACK_INVOKE`): the module-level entry a host calls with crossing
+     * carriers, exactly as it calls `deal_apply` on a function value. It has
+     * H2's `deal_host_result` shape and forwards to the recorded function's own
+     * boxed apply thunk, which applies the recorded `HOST_TO_DEAL` parameter
+     * boundaries, runs the body and applies the `DEAL_TO_HOST` return boundary.
+     * A DEAL failure inside the re-entered code is the runtime's relay record
+     * (`DEAL_FAILURE_DEAL_ERROR`, the runtime-issued token and the class carrier
+     * of that very Error), so a free function value applied by a host and this
+     * entry share one behavior and the carried Error is the identical object.
+     *
+     * <p>The entry has default linkage under a deterministic C identifier, so a
+     * statically linked host unit is the caller H4 describes; it answers the
+     * closed status of the runtime entry (`DEAL_OK`, or the host-boundary status
+     * of a rejected argument or a missing crossing) and the recorded function's
+     * published value, so the thunk reads the cells its export captured.</p>
+     */
+    String emitCallbackInvokeEntry(SemanticOp op) {
+        KindPayload.CallbackInvokePayload payload =
+            (KindPayload.CallbackInvokePayload) op.payload();
+        deal.semantic.ir.FunctionExecutionBinding binding =
+            session.unitOf(unit.moduleId()).functionBindings().get(
+                new deal.semantic.ir.FunctionAllocationIdentity(
+                    payload.function().id()));
+        if (binding == null) {
+            throw new IllegalStateException("the CALLBACK_INVOKE " + op.opId()
+                + " resolves no function binding");
+        }
+        FunctionId recorded = null;
+        String target;
+        switch (binding) {
+            case deal.semantic.ir.FunctionExecutionBinding.LoweredBody body -> {
+                recorded = body.functionId();
+                target = thunkName(recorded);
+            }
+            case deal.semantic.ir.FunctionExecutionBinding.AdapterBinding adapter ->
+                target = adapterThunkName(adapter.adaptOpId());
+            default -> throw new IllegalStateException("the CALLBACK_INVOKE "
+                + op.opId() + " of a non-DEAL binding " + binding);
+        }
+        for (OpId boundary : payload.parameterBoundaryOpIds()) {
+            recordOrigin(unitOp(boundary));
+        }
+        recordOrigin(unitOp(payload.returnBoundaryOpId()));
+        session.referenceRuntimeEntry("deal_host_callback_invoke");
+        StringBuilder out = new StringBuilder();
+        out.append("define i32 @")
+            .append(callbackEntryName(
+                session.moduleIndex(unit.moduleId()), op.opId()))
+            .append("(%struct.deal_host_result* %out, %struct.deal_value*"
+                + " %arguments, i64 %argument_count) {\n")
+            .append("Lentry:\n");
+        // The recorded function's published value: the export record's value
+        // slot, which the unit's export publish filled with the closure carrying
+        // the cells the exported body captured (C5).
+        String functionValue = "i8* null";
+        if (recorded != null) {
+            int exportIndex = session.exportIndexOfFunction(unit.moduleId(),
+                recorded);
+            if (exportIndex >= 0) {
+                int count = session.exportCount(unit.moduleId());
+                String table = "[" + count + " x %struct.deal_export_entry]"
+                    + "* @" + LlvmData.exportTable(
+                        session.moduleIndex(unit.moduleId()));
+                out.append(LlvmIrPrinter.indent(1)).append("%recordedslot ="
+                    + " getelementptr [" + count + " x"
+                    + " %struct.deal_export_entry], " + table + ", i64 0,"
+                    + " i64 " + exportIndex + ", i32 4\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%recorded = load"
+                    + " %struct.deal_fn*, %struct.deal_fn** %recordedslot\n");
+                out.append(LlvmIrPrinter.indent(1)).append("%functionvalue ="
+                    + " bitcast %struct.deal_fn* %recorded to i8*\n");
+                functionValue = "%functionvalue";
+            }
+        }
+        out.append(LlvmIrPrinter.indent(1)).append("%status = call i32"
+            + " @deal_host_callback_invoke(%struct.deal_host_result* %out,"
+            + " i8* bitcast (" + thunkType() + " @" + target + " to i8*),"
+            + " i8* " + functionValue + ", %struct.deal_value* %arguments,"
+            + " i64 %argument_count, %struct.deal_origin* " + originValue(op)
+            + ")\n");
+        out.append(LlvmIrPrinter.indent(1)).append("ret i32 %status\n}\n");
+        return out.toString();
+    }
+
+    /**
+     * The module symbol of one host-driven callback entry: a deterministic C
+     * identifier, so the statically linked host unit that re-enters DEAL code
+     * declares and calls it (H4).
+     */
+    static String callbackEntryName(long moduleIndex,
+                                    deal.semantic.ir.OpId opId) {
+        return "deal_callback_" + moduleIndex + "_" + opId.id();
     }
 
     /**
@@ -2266,6 +2646,11 @@ final class LlvmFunctionEmitter {
             storeResult(op, LlvmTypeMapper.FN_POINTER, value);
             return;
         }
+        LlvmHostModules.Module host = session.hostModules().byModule(module);
+        if (host != null) {
+            emitHostExportRead(op, payload, host);
+            return;
+        }
         String path = session.data.operand(
             session.data.intern(module.path()));
         String name = session.data.operand(session.data.intern(payload.name()));
@@ -2293,6 +2678,51 @@ final class LlvmFunctionEmitter {
         String value = emitTemporary(op, "load " + LlvmTypeMapper.FN_POINTER
             + ", " + LlvmTypeMapper.FN_POINTER + "* " + valuePointer);
         storeResult(op, LlvmTypeMapper.FN_POINTER, value);
+    }
+
+    /**
+     * One imported host export read (H2/H4): the resolved registration record of
+     * the import's binding, projected into a DEAL function value whose boxed
+     * apply thunk invokes the host entry. The read names the declared canonical
+     * descriptor, so the function value's signature is the declared one.
+     */
+    private void emitHostExportRead(SemanticOp op,
+                                    KindPayload.ExportReadPayload payload,
+                                    LlvmHostModules.Module host) {
+        int hostIndex = session.hostModules().modules().indexOf(host);
+        int exportIndex = host.exportIndex(payload.name());
+        if (exportIndex < 0) {
+            throw new IllegalStateException("the host export read "
+                + payload.name() + " names no declared export of "
+                + host.specifier());
+        }
+        session.referenceRuntimeEntry("deal_host_export_value");
+        String binding = load(op, "%struct.deal_host_binding*",
+            "@" + LlvmData.hostBindingSlot(hostIndex));
+        String exportsPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_binding, %struct.deal_host_binding* "
+            + binding + ", i32 0, i32 2");
+        String exports = emitTemporary(op, "load %struct.deal_host_export**,"
+            + " %struct.deal_host_export*** " + exportsPointer);
+        String slotPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_export*, %struct.deal_host_export** "
+            + exports + ", i64 " + exportIndex);
+        String record = emitTemporary(op, "load %struct.deal_host_export*,"
+            + " %struct.deal_host_export** " + slotPointer);
+        String signature = session.data.operand(session.data.intern(
+            payload.descriptor().canonicalSpecText()));
+        String outcome = emitTemporary(op, "call %struct.deal_outcome_reference"
+            + " @deal_host_export_value(%struct.deal_host_export* " + record
+            + ", " + signature + ", %struct.deal_origin* " + originValue(op)
+            + ")");
+        String error = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_reference " + outcome + ", 0");
+        branchOnFailure(op, error, "hostread");
+        String value = emitTemporary(op, "extractvalue"
+            + " %struct.deal_outcome_reference " + outcome + ", 1");
+        String typed = emitTemporary(op, "bitcast i8* " + value + " to "
+            + LlvmTypeMapper.FN_POINTER);
+        storeResult(op, LlvmTypeMapper.FN_POINTER, typed);
     }
 
     /**
@@ -2372,6 +2802,13 @@ final class LlvmFunctionEmitter {
 
     private void emitCall(SemanticOp op) {
         KindPayload.CallPayload payload = (KindPayload.CallPayload) op.payload();
+        if (payload.callee() instanceof KindPayload.CallCallee.Static callee
+                && callee.binding()
+                    instanceof deal.semantic.ir.FunctionExecutionBinding
+                        .HostFunction host) {
+            emitHostCall(op, payload, host);
+            return;
+        }
         if (payload.callee() instanceof KindPayload.CallCallee.Dynamic dynamic) {
             emitDynamicCall(op, payload, dynamic.callee());
             return;
@@ -2605,6 +3042,52 @@ final class LlvmFunctionEmitter {
             emit("store %struct.deal_check_input "
                 + checkInputRecordOf(op, actual, datum) + ", "
                 + "%struct.deal_check_input* " + element);
+            if (index == 0) {
+                first = element;
+            }
+        }
+        return first;
+    }
+
+    /**
+     * Boxes the ordered arguments of one synchronous host crossing and runs the
+     * declared parameter cells (H2 {@code HostCallSync}, H4): each declared
+     * position is checked at the {@code HOST_PARAMETER} boundary with its
+     * one-based index at the call origin, so a wrong-kind, malformed-text,
+     * absent or wrong-signature argument renders the shared host parameter arm
+     * (E8010, the composite with the inner reason, the declared cell descriptor
+     * as expected and the host-carrier token as actual) and the crossing only
+     * receives admitted carriers. The synchronous static host invocation renders
+     * its arguments here, so every emitted argument check is the recorded
+     * {@code DEAL_TO_HOST} cell's own boundary rather than the typed boundary's.
+     */
+    private String hostParameterArguments(SemanticOp op, List<ValueId> operands,
+                                          List<RuntimeDescriptor> types,
+                                          List<RuntimeDescriptor> declared) {
+        if (operands.isEmpty()) {
+            return "null";
+        }
+        if (declared.size() != operands.size()) {
+            throw new IllegalStateException("the host call " + op.opId()
+                + " declares " + declared.size() + " parameters for "
+                + operands.size() + " operands");
+        }
+        String arrayType = "[" + operands.size() + " x %struct.deal_check_input]";
+        String array = newAlloca(arrayType, "arguments");
+        String first = null;
+        for (int index = 0; index < operands.size(); index++) {
+            RuntimeDescriptor actual = types.get(index);
+            String datum = LlvmTypeMapper.isStaticSingleton(actual)
+                ? emitDatum(actual, "", op)
+                : emitDatum(actual, loadRepresentation(operands.get(index),
+                    actual, op), op);
+            String element = emitTemporary(op, "getelementptr " + arrayType
+                + ", " + arrayType + "* " + array + ", i64 0, i64 " + index);
+            emit("store %struct.deal_check_input "
+                + checkInputRecordOf(op, actual, datum) + ", "
+                + "%struct.deal_check_input* " + element);
+            emitCheckCall(op, declared.get(index), element,
+                LlvmRuntimeAbi.BOUNDARY_HOST_PARAMETER, null, index + 1);
             if (index == 0) {
                 first = element;
             }
@@ -5431,6 +5914,34 @@ final class LlvmFunctionEmitter {
                 + LlvmData.moduleRecord(moduleIndex));
             entry.add("next" + index + ":");
         }
+        // The imported host declaration modules publish their own module record
+        // for the same lookup (H1/H6): the path is the declaration module's
+        // module-id path and the record is visible only after a successful load.
+        for (int index = 0; index < session.hostModules().modules().size();
+                index++) {
+            LlvmHostModules.Module host =
+                session.hostModules().modules().get(index);
+            String path = session.data.operand(
+                session.data.intern(host.specifier()));
+            entry.add(LlvmIrPrinter.indent(1) + "%hosteq" + index
+                + " = call i1 @deal_text_equals(i8* %module_path, "
+                + path + ")");
+            entry.add(LlvmIrPrinter.indent(1) + "%hoststate" + index
+                + " = getelementptr %struct.deal_module, %struct.deal_module* @"
+                + LlvmData.hostModuleRecord(index) + ", i32 0, i32 1");
+            entry.add(LlvmIrPrinter.indent(1) + "%hoststatevalue" + index
+                + " = load i32, i32* %hoststate" + index);
+            entry.add(LlvmIrPrinter.indent(1) + "%hostready" + index
+                + " = icmp eq i32 %hoststatevalue" + index + ", 2");
+            entry.add(LlvmIrPrinter.indent(1) + "%hostfound" + index
+                + " = and i1 %hosteq" + index + ", %hostready" + index);
+            entry.add(LlvmIrPrinter.indent(1) + "br i1 %hostfound" + index
+                + ", label %hosthit" + index + ", label %hostnext" + index);
+            entry.add("hosthit" + index + ":");
+            entry.add(LlvmIrPrinter.indent(1) + "ret %struct.deal_module* @"
+                + LlvmData.hostModuleRecord(index));
+            entry.add("hostnext" + index + ":");
+        }
         entry.add(LlvmIrPrinter.indent(1) + "ret %struct.deal_module* null");
         for (String line : entry) {
             out.append(line).append('\n');
@@ -5513,7 +6024,59 @@ final class LlvmFunctionEmitter {
         out.append(LlvmIrPrinter.indent(1))
             .append("%isnull = icmp eq %struct.deal_export_entry* %entry, null\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("br i1 %isnull, label %absent, label %invoke\n");
+            .append("br i1 %isnull, label %absent, label %classify\n");
+        // A host export entry carries the host marker and the resolved
+        // registration record, so its invocation is one synchronous crossing of
+        // a zero-arity export (H2/H6).
+        out.append("classify:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%reservedp = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 3\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%reserved = load i32, i32* %reservedp\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%ishost = icmp eq i32 %reserved, 1\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("br i1 %ishost, label %hostcall, label %invoke\n");
+        out.append("hostcall:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostvaluep = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 4\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostrecord = load %struct.deal_fn*, %struct.deal_fn**"
+                + " %hostvaluep\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostexport = bitcast %struct.deal_fn* %hostrecord to"
+                + " %struct.deal_host_export*\n");
+        // The export entry's own declared canonical signature (field 1) declares
+        // the result position the crossing checks through its result atom
+        // (H2/H6), so a host export whose result is not `void` is callable
+        // through this surface.
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostdescp = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 1\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostdesc = load i8*, i8** %hostdescp\n");
+        session.referenceRuntimeEntry("deal_host_invoke_sync");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostout = alloca %struct.deal_outcome_data\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("call void @deal_host_invoke_sync("
+                + "%struct.deal_outcome_data* sret(%struct.deal_outcome_data)"
+                + " %hostout, %struct.deal_host_export*"
+                + " %hostexport, %struct.deal_check_input* null, i32 0,"
+                + " i8* %hostdesc, %struct.deal_origin* " + origin + ")\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostapplied = load %struct.deal_outcome_data,"
+                + " %struct.deal_outcome_data* %hostout\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hosterror = extractvalue %struct.deal_outcome_data"
+                + " %hostapplied, 0\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostoutcome = insertvalue %struct.deal_outcome"
+                + " zeroinitializer, i8* %hosterror, 0\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome %hostoutcome\n");
         out.append("invoke:\n");
         out.append(LlvmIrPrinter.indent(1))
             .append("%valuep = getelementptr %struct.deal_export_entry,"

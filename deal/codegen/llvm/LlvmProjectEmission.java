@@ -1,5 +1,6 @@
 package deal.codegen.llvm;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -13,12 +14,28 @@ import java.util.Objects;
  * publication transaction. No per-module artifact and no source-map sidecar
  * exists for this backend (C8).</p>
  */
-public record LlvmProjectEmission(String artifactRelativePath, String source) {
+public record LlvmProjectEmission(String artifactRelativePath, String source,
+                                 List<GeneratedSource> generatedSources) {
+
+    /** One further artifact of the same emission (a generated declaration header). */
+    public record GeneratedSource(String relativePath, String source) {
+        public GeneratedSource {
+            Objects.requireNonNull(relativePath, "relativePath must not be null");
+            Objects.requireNonNull(source, "source must not be null");
+            if (relativePath.isBlank()) {
+                throw new IllegalArgumentException(
+                    "a generated source names its publication-relative path");
+            }
+        }
+    }
 
     public LlvmProjectEmission {
         Objects.requireNonNull(artifactRelativePath,
             "artifactRelativePath must not be null");
         Objects.requireNonNull(source, "source must not be null");
+        generatedSources = List.copyOf(
+            Objects.requireNonNull(generatedSources,
+                "generatedSources must not be null"));
         if (artifactRelativePath.isBlank() || !artifactRelativePath.endsWith(".ll")) {
             throw new IllegalArgumentException(
                 "the LLVM project artifact is one '<entry module path>.ll' file,"

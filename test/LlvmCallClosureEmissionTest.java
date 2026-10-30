@@ -1861,6 +1861,7 @@ public final class LlvmCallClosureEmissionTest {
             }
         }
         sources.add(driver);
+        sources.add(NativeCompiler.fixtures().resolve("registry_empty.c"));
         Path product = scratch.resolve("products")
             .resolve(name + "-frames-" + level);
         Files.createDirectories(product.getParent());

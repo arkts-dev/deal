@@ -1562,8 +1562,11 @@ public final class LlvmDataClassEmissionTest {
             }
             """, StandardCharsets.UTF_8);
         Path product = scratch.resolve("deal_data_offset");
+        // The published registry externs resolve exactly once (H2), so a probe
+        // that links the runtime supplies the count-zero sentinel fixture.
         NativeCompiler.Result build = NativeCompiler.link(published, 0,
-            List.of(source), product);
+            List.of(source, NativeCompiler.fixtures().resolve(
+                "registry_empty.c")), product);
         check(build.succeeded(), "the published datum layout probe builds: "
             + build.describe());
         if (!build.succeeded()) {
@@ -1779,6 +1782,7 @@ public final class LlvmDataClassEmissionTest {
                 }
             }
             sources.add(driver);
+            sources.add(NativeCompiler.fixtures().resolve("registry_empty.c"));
             NativeCompiler.Result link = NativeCompiler.link(published, level,
                 sources, product);
             check(link.succeeded(), "-O" + level + " the driver build links"

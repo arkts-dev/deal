@@ -228,17 +228,17 @@ _Static_assert(offsetof(deal_host_declared_module, specifier) == 0,
 _Static_assert(offsetof(deal_host_declared_module, module_path)
     > offsetof(deal_host_declared_module, specifier),
     "the module path follows the specifier");
-_Static_assert(offsetof(deal_host_declared_module, exports)
+_Static_assert(offsetof(deal_host_declared_module, declared_exports)
     > offsetof(deal_host_declared_module, module_path),
     "the declared exports follow the module path");
-_Static_assert(offsetof(deal_host_declared_module, export_count)
-    > offsetof(deal_host_declared_module, exports),
+_Static_assert(offsetof(deal_host_declared_module, declared_export_count)
+    > offsetof(deal_host_declared_module, declared_exports),
     "the declared export count follows the exports");
-_Static_assert(offsetof(deal_host_declared_module, classes)
-    > offsetof(deal_host_declared_module, export_count),
+_Static_assert(offsetof(deal_host_declared_module, declared_classes)
+    > offsetof(deal_host_declared_module, declared_export_count),
     "the declared class metadata follows the export count");
-_Static_assert(offsetof(deal_host_declared_module, class_count)
-    > offsetof(deal_host_declared_module, classes),
+_Static_assert(offsetof(deal_host_declared_module, declared_class_count)
+    > offsetof(deal_host_declared_module, declared_classes),
     "the declared class count follows the class metadata");
 _Static_assert(offsetof(deal_host_binding, specifier) == 0,
     "a binding starts with its raw specifier");
@@ -251,6 +251,19 @@ _Static_assert(offsetof(deal_host_binding, exports)
 _Static_assert(offsetof(deal_host_binding, export_count)
     > offsetof(deal_host_binding, exports),
     "the validated export count follows the exports");
+/* The load surface's member types are the ISSUE-0912 contract's: the declared
+ * export and class records are immutable views and the binding's export table
+ * is a pointer to a const pointer (the runtime fills one pointer per declared
+ * export). */
+_Static_assert(_Generic(((deal_host_declared_module *)0)->declared_exports,
+                        const deal_host_export *: 1, default: 0),
+    "the declared exports are an immutable record view");
+_Static_assert(_Generic(((deal_host_declared_module *)0)->declared_classes,
+                        const deal_host_class *: 1, default: 0),
+    "the declared classes are an immutable record view");
+_Static_assert(_Generic(((deal_host_binding *)0)->exports,
+                        const deal_host_export *const *: 1, default: 0),
+    "the binding's export view is a pointer to a const pointer");
 
 /* =========================================================================
  * Runtime construction of every record and completion arm.
@@ -312,11 +325,11 @@ int main(void) {
 
     deal_host_declared_module declared;
     declared.specifier = "probe/host";
-    declared.module_path = "probe/host";
-    declared.exports = &exports[0];
-    declared.export_count = 1;
-    declared.classes = &classes[0];
-    declared.class_count = 1;
+    declared.module_path = "$external/probe/host";
+    declared.declared_exports = &exports[0];
+    declared.declared_export_count = 1;
+    declared.declared_classes = &classes[0];
+    declared.declared_class_count = 1;
 
     deal_host_binding binding;
     binding.specifier = "probe/host";
@@ -373,7 +386,7 @@ int main(void) {
 
     if (completion.kind != DEAL_COMPLETION_UNDEFINED
             || span.length != 0
-            || declared.export_count != 1
+            || declared.declared_export_count != 1
             || binding.export_count != 0
             || table.count != 0
             || origin.line != 1

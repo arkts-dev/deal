@@ -165,6 +165,10 @@ uint32_t deal_root_frame_depth(void);
 /* The function carrier of C3/C5 and its capture-cell array. */
 #define DEAL_LAYOUT_FUNCTION          14u   /* one function value (C5)            */
 #define DEAL_LAYOUT_FUNCTION_ENV      15u   /* one closure capture cell array     */
+/* The host group's own wrapper of one host-created function value (H4): one
+ * `deal_host_function` pointer and nothing the collector traces, so the
+ * function value's capture cell roots it and its precise map is empty. */
+#define DEAL_LAYOUT_HOST_FUNCTION     16u   /* one host function entry (H4)       */
 
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 

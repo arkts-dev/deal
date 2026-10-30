@@ -1252,35 +1252,32 @@ public final class LlvmExpressionEmissionTest {
     // =========================================================================
 
     private static void testRejections(Path scratch) throws Exception {
-        System.out.println("-- a fact outside the staged set is one E6005 --");
-        // The one fact this stage still rejects is the reserved host-import
-        // slot: every other family this test once recorded as rejected is
-        // rendered by the data/class, call/closure or stdlib stage.
-        Map<String, String> fixtures = new LinkedHashMap<>();
-        fixtures.put("a host import", """
+        System.out.println("-- the host-import fact is rendered, not rejected --");
+        // Every family this test once recorded as rejected — the host import
+        // among them — is now rendered by the host, data/class, call/closure or
+        // stdlib stage, so the host-importing project publishes its module with
+        // the declared-module record and the load call (ISSUE-0912).
+        Path root = scratch.resolve("host-import");
+        writeHostProject(root, """
             import * as probe from "host/probe";
             export function main(): null { return null; }
             """);
-        for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
-            Path root = scratch.resolve("reject-"
-                + fixture.getKey().replaceAll("[^a-z]+", "-"));
-            writeHostProject(root, fixture.getValue());
-            CompileOutcome outcome = compile(root);
-            check(!outcome.success(), "the " + fixture.getKey()
-                + " project fails closed");
-            check(!outcome.diagnostics().isEmpty(), "the "
-                + fixture.getKey() + " rejection carries a diagnostic");
-            if (!outcome.diagnostics().isEmpty()) {
-                CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
-                checkEq("E6005", diagnostic.code(), "the " + fixture.getKey()
-                    + " rejection is one E6005");
-                check(diagnostic.range() != null
-                        && diagnostic.range().startLine() >= 1,
-                    "the " + fixture.getKey() + " rejection carries its"
-                        + " one-based origin");
-            }
-            check(!Files.exists(root.resolve("build/llvm")),
-                "the " + fixture.getKey() + " rejection publishes nothing");
+        CompileOutcome outcome = compile(root);
+        check(outcome.success(), "the host-import project stages: "
+            + outcome.diagnostics());
+        Path module = root.resolve("build/llvm/main.ll");
+        check(Files.isRegularFile(module),
+            "the host-import project publishes its module");
+        if (Files.isRegularFile(module)) {
+            String text = Files.readString(module, StandardCharsets.UTF_8);
+            check(text.contains("@deal.host.0.declared")
+                    && text.contains("@deal.host.0.module"),
+                "the emitted module carries the per-import declared and module"
+                    + " records");
+            check(text.contains("@deal_host_load("),
+                "the unit's initialization loads the declared host module");
+            check(Files.isRegularFile(root.resolve("build/llvm/host/probe.h")),
+                "the compile publishes the generated declaration header");
         }
     }
 

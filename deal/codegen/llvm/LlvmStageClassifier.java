@@ -110,9 +110,12 @@ public final class LlvmStageClassifier {
                  FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS,
                  JSON_TO_CLASS, RECURSIVE_GROUP_INIT, STDLIB_CALL, ASYNC_START,
                  AWAIT -> STAGED;
-            case BOUNDARY, DELETE, FUNCTION_ADAPT -> STATIC_ONLY;
-            case OPTIONAL_READ, EXTERNAL_ENTRY, CALLBACK_INVOKE,
-                 CLASS_FACTORY -> REJECTED;
+            // CALLBACK_INVOKE emits the host-driven re-entry of one DEAL
+            // function: the recorded `HOST_TO_DEAL` parameter boundaries and
+            // the `DEAL_TO_HOST` return boundary with the relay-or-discard
+            // failure channel (H4).
+            case BOUNDARY, DELETE, FUNCTION_ADAPT, CALLBACK_INVOKE -> STATIC_ONLY;
+            case OPTIONAL_READ, EXTERNAL_ENTRY, CLASS_FACTORY -> REJECTED;
         };
     }
 
@@ -242,7 +245,11 @@ public final class LlvmStageClassifier {
                  ARRAY_LITERAL_ELEMENT, CLASS_LITERAL_FIELD,
                  UNTYPED_CLASS_INPUT, JSON_FROM_FIELD, JSON_TO_FIELD,
                  STDLIB_PARAMETER, STDLIB_RETURN, ASYNC_COMPLETION -> STATIC_ONLY;
-            case HOST_TO_DEAL, DEAL_TO_HOST -> REJECTED;
+            // The host cell pair: `DEAL_TO_HOST` is the parameter position
+            // checked at `HOST_PARAMETER` and `HOST_TO_DEAL` the return
+            // position checked at `HOST_SYNC_RETURN` inside the crossing
+            // (H2/H4).
+            case HOST_TO_DEAL, DEAL_TO_HOST -> STATIC_ONLY;
         };
     }
 
@@ -272,8 +279,11 @@ public final class LlvmStageClassifier {
     public static StageSupport importKind(ModuleImportKind kind) {
         Objects.requireNonNull(kind, "kind must not be null");
         return switch (kind) {
-            case COMPILED, STDLIB -> STAGED;
-            case HOST -> REJECTED;
+            // A host import is the emitted declared-module record, the
+            // origin-carrying load call in the unit's initialization and the
+            // import's own module record built from the returned binding
+            // (H1/H7, `LoadHostModule`).
+            case COMPILED, STDLIB, HOST -> STAGED;
         };
     }
 
@@ -306,8 +316,9 @@ public final class LlvmStageClassifier {
         return switch (mode) {
             // An INDIRECT call is staged through the callee's managed function
             // carrier, so its operands must have staged representations (C5).
-            case DIRECT, EXTERNAL, INDIRECT -> STATIC_ONLY;
-            case HOST -> REJECTED;
+            // A HOST call is one synchronous crossing with its declared
+            // parameter and return boundaries (H2 `HostCallSync`).
+            case DIRECT, EXTERNAL, INDIRECT, HOST -> STATIC_ONLY;
         };
     }
 
@@ -759,8 +770,11 @@ public final class LlvmStageClassifier {
                 case deal.semantic.ir.FunctionExecutionBinding.AdapterBinding ignored ->
                     Optional.empty();
                 case deal.semantic.ir.FunctionExecutionBinding.HostFunction ignored ->
-                    Optional.of(reject(op, "a CALL of a host function"));
+                    Optional.empty();
                 case deal.semantic.ir.FunctionExecutionBinding.HostFunctionValue ignored ->
+                    // A host-materialized function value is invoked through its
+                    // managed carrier (the dynamic call arm), never through a
+                    // static export record.
                     Optional.of(reject(op, "a CALL of a host function value"));
                 case deal.semantic.ir.FunctionExecutionBinding.DynamicFunctionValue ignored ->
                     Optional.of(reject(op, "a CALL of a dynamic function value"));
@@ -894,6 +908,14 @@ public final class LlvmStageClassifier {
             return Optional.of(reject(op, "BOUNDARY " + boundary.kind()));
         }
         RuntimeDescriptor declared = boundary.descriptor();
+        if (boundary.kind() == BoundaryKind.HOST_TO_DEAL
+                || boundary.kind() == BoundaryKind.DEAL_TO_HOST) {
+            /* The recorded positions of a host-driven re-entry (H4): the boxed
+             * apply thunk of the recorded function realizes them from the
+             * crossing's untyped presentations, so no static operand type has to
+             * prove the declared descriptor here. */
+            return Optional.empty();
+        }
         if (LlvmTypeMapper.isStaticSingleton(declared)) {
             // A declared `null`/`undefined` position carries no value slot at
             // all (C4 rebuilds the distinct singleton at the use site), so the

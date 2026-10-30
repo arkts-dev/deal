@@ -399,6 +399,19 @@ deal_descriptor *deal_descriptor_intern(const char *descriptor_text) {
     return atom;
 }
 
+deal_descriptor *deal_descriptor_intern_result(const char *descriptor_text) {
+    if (descriptor_text == NULL) {
+        deal_platform_fault("descriptor: null descriptor text");
+    }
+    size_t length = strlen(descriptor_text);
+    deal_descriptor *atom = NULL;
+    size_t end = deal_descriptor_parse_at(descriptor_text, length, 0u, 1, &atom);
+    if (end != length) {
+        deal_platform_fault("descriptor: trailing content after the descriptor");
+    }
+    return atom;
+}
+
 const char *deal_descriptor_text(deal_descriptor *atom) {
     if (atom == NULL) {
         deal_platform_fault("descriptor: null atom");
@@ -425,6 +438,28 @@ deal_descriptor *deal_descriptor_inner(deal_descriptor *atom) {
         deal_platform_fault("descriptor: not a nullish descriptor");
     }
     return atom->inner;
+}
+
+deal_descriptor *const *deal_descriptor_parameters(deal_descriptor *atom,
+                                                   size_t *count) {
+    if (atom == NULL || atom->kind != DEAL_DESCRIPTOR_FUNCTION) {
+        deal_platform_fault("descriptor: not a function descriptor");
+    }
+    if (count != NULL) {
+        *count = atom->parameter_count;
+    }
+    return atom->parameters;
+}
+
+deal_descriptor *deal_descriptor_result(deal_descriptor *atom) {
+    if (atom == NULL || atom->kind != DEAL_DESCRIPTOR_FUNCTION) {
+        deal_platform_fault("descriptor: not a function descriptor");
+    }
+    if (atom->result == NULL) {
+        deal_platform_fault("descriptor: a function descriptor without its"
+                            " result");
+    }
+    return atom->result;
 }
 
 int deal_descriptor_admits_null(deal_descriptor *atom) {
@@ -703,6 +738,11 @@ static const char *deal_check_carrier_token(const deal_classification *classific
     case DEAL_KIND_STRING:
     case DEAL_KIND_INVALID_UNICODE:
         return "string";
+    /* Every other presentation is table-carried at a host cell arm, the closed
+     * DEAL function value included: the shared carrier-kind projection of a
+     * function view is `table` (P2 item 2), and this surface has no raw
+     * host-facing function kind to spell `function` (the typed boundary keeps
+     * that token). */
     default:
         return "table";
     }

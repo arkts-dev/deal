@@ -102,7 +102,10 @@ typedef deal_outcome_data (*deal_json_construct)(
  * presentation (`DEAL_PRESENT_DATUM` with the boxed persistent datum, plus the
  * carried class atom of a class datum) and its presence (0 = absent optional
  * field), and returns 1 — or returns 0 when the supplied datum is not an
- * instance of the plan's class. A class instance is opaque to every runtime
+ * instance of the plan's class. The nominal tag alone identifies the class, so
+ * an index outside the declared field list answers 1 with presence 0 ("this is
+ * my class, no such field") and a class that declares no field is identifiable
+ * without one. A class instance is opaque to every runtime
  * group, so the emitted module owns both its field slots and its nominal tag
  * and this group never inspects either.
  */

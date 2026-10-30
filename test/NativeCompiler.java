@@ -333,6 +333,7 @@ public final class NativeCompiler {
                                             List<Path> fixtureSources) {
         List<Path> sources = new ArrayList<>(fixtureSources);
         sources.addAll(runtimeTranslationUnits(publishedRoot));
+        addEmptyRegistry(sources);
         return sources;
     }
 
@@ -349,8 +350,27 @@ public final class NativeCompiler {
                 sources.add(unit);
             }
         }
+        addEmptyRegistry(sources);
         sources.add(driverSource);
         return sources;
+    }
+
+    /**
+     * The published registry externs every build resolves exactly once
+     * (`llvm-native-host-abi-and-async` H2): the production seam generates one
+     * registry unit per build, so a fixture build that links the published
+     * runtime directly supplies the count-zero sentinel fixture, unless the
+     * caller already named it.
+     */
+    private static void addEmptyRegistry(List<Path> sources) {
+        Path registry = fixtures().resolve("registry_empty.c")
+            .toAbsolutePath().normalize();
+        for (Path source : sources) {
+            if (source.toAbsolutePath().normalize().equals(registry)) {
+                return;
+            }
+        }
+        sources.add(registry);
     }
 
     // =========================================================================

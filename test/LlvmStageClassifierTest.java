@@ -99,7 +99,7 @@ public final class LlvmStageClassifierTest {
         export function fetchDelayed(): Promise<number>;
         """;
 
-    /** The reserved host-import slot: rejected with the import's own origin. */
+    /** A host import: the emitted declared record, load call and module record. */
     private static final String HOST_IMPORT_SOURCE = """
         import * as probe from "host/probe";
 
@@ -108,7 +108,7 @@ public final class LlvmStageClassifierTest {
         }
         """;
 
-    /** A host call reaches the same closed host-import fact at the import. */
+    /** A host call: one synchronous crossing with its declared boundaries. */
     private static final String HOST_CALL_SOURCE = """
         import * as probe from "host/probe";
 
@@ -219,12 +219,12 @@ public final class LlvmStageClassifierTest {
                 "EXPORT_PUBLISH", "ENTRY_INVOKE", "STDLIB_CALL",
                 "ASYNC_START", "AWAIT"),
             stagedKinds, "the staged operation kinds");
-        checkEq(Set.of("BOUNDARY", "DELETE", "FUNCTION_ADAPT"), staticKinds,
-            "the statically-proven operation kinds are the typed boundary, the"
-                + " delete envelope and the adapter shape");
+        checkEq(Set.of("BOUNDARY", "DELETE", "FUNCTION_ADAPT", "CALLBACK_INVOKE"),
+            staticKinds, "the statically-proven operation kinds are the typed"
+                + " boundary, the delete envelope, the adapter shape and the"
+                + " host-driven callback entry");
         check(rejectedKinds.contains("OPTIONAL_READ")
                 && rejectedKinds.contains("CLASS_FACTORY")
-                && rejectedKinds.contains("CALLBACK_INVOKE")
                 && rejectedKinds.contains("EXTERNAL_ENTRY"),
             "the runtime-service op families outside this stage are rejected: "
                 + rejectedKinds);
@@ -248,9 +248,10 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.importKind(ModuleImportKind.COMPILED),
             "a compiled import is staged");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STAGED,
             LlvmStageClassifier.importKind(ModuleImportKind.HOST),
-            "a host import is rejected here and belongs to host-sync");
+            "a host import emits its declared-module record, load call and"
+                + " module record");
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.importKind(ModuleImportKind.STDLIB),
             "a stdlib import is dispatched through the std group");
@@ -306,9 +307,9 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.boundaryKind(BoundaryKind.VARIABLE_DECLARATION),
             "a variable-declaration boundary is statically proven");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.boundaryKind(BoundaryKind.HOST_TO_DEAL),
-            "a host crossing boundary is outside the stage");
+            "a host crossing boundary is the crossing's own return cell");
         checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.boundaryKind(BoundaryKind.ASYNC_COMPLETION),
             "an async completion boundary is validated at the await origin");
@@ -318,9 +319,9 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.callMode(CallMode.DIRECT),
             "a direct call is statically resolved");
-        checkEq(StageSupport.REJECTED,
+        checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.callMode(CallMode.HOST),
-            "a host call needs the crossing machinery");
+            "a host call runs one synchronous crossing");
         checkEq(StageSupport.STATIC_ONLY,
             LlvmStageClassifier.callMode(CallMode.INDIRECT),
             "an indirect call dispatches through the function value carrier");
@@ -337,33 +338,34 @@ public final class LlvmStageClassifierTest {
         fixtures.put("a host call", HOST_CALL_SOURCE);
         Path scratch = NativeCompiler.executableScratch("llvm-classifier");
         try {
+            // The host-import and host-call facts are rendered by the host
+            // stage of this task: both projects now emit their declared-module
+            // record, the load call and the crossing, and neither stops at a
+            // compile-time rejection.
             for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
                 Path root = scratch.resolve(fixture.getKey()
                     .replaceAll("[^a-z]+", "-"));
                 writeHostProject(root, fixture.getValue());
                 CompileOutcome outcome = compile(root);
-                check(!outcome.success(), "the " + fixture.getKey()
-                    + " project fails closed: "
-                    + (!outcome.success() ? "" : outcome.stdout()));
-                if (outcome.diagnostics().isEmpty()) {
-                    check(false, "the " + fixture.getKey()
-                        + " failure carries a diagnostic");
+                check(outcome.success(), "the " + fixture.getKey()
+                    + " project is stage-compatible: "
+                    + (outcome.success() ? "" : String.valueOf(
+                        outcome.diagnostics())));
+                if (!outcome.success()) {
                     continue;
                 }
-                CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
-                checkEq("E6005", diagnostic.code(), "the " + fixture.getKey()
-                    + " rejection is one E6005");
-                DiagnosticRange range = diagnostic.range();
-                // The frontend rejects some fixtures before emission; then the
-                // diagnostic is the preserved frontend error, which is equally
-                // fail-closed and never a native-only acceptance.
-                if ("E6005".equals(diagnostic.code())) {
-                    check(range != null && range.file().contains("main.deal"),
-                        "the " + fixture.getKey()
-                            + " rejection names the offending source file");
-                    check(range != null && range.startLine() >= 1,
-                        "the " + fixture.getKey()
-                            + " rejection carries a one-based line");
+                Path module = root.resolve("build/llvm/main.ll");
+                check(java.nio.file.Files.isRegularFile(module), "the "
+                    + fixture.getKey() + " project publishes its module");
+                if (java.nio.file.Files.isRegularFile(module)) {
+                    String text = java.nio.file.Files.readString(module,
+                        StandardCharsets.UTF_8);
+                    check(text.contains("@deal.host.0.declared"),
+                        "the " + fixture.getKey() + " project emits the"
+                            + " declared-module record");
+                    check(text.contains("@deal_host_load("),
+                        "the " + fixture.getKey() + " project emits the"
+                            + " import's load call");
                 }
             }
             // The scalar project's own facts are all staged.

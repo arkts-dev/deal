@@ -26,6 +26,7 @@ import deal.diagnostics.DiagnosticCode;
 import deal.diagnostics.DiagnosticRange;
 import deal.distribution.DistributionHome;
 import deal.identity.CanonicalModuleIdentity;
+import deal.module.ModuleIdentityResolver;
 import deal.publication.PublicationStager;
 import deal.semantic.CheckedModuleInput;
 import deal.semantic.CheckedModuleKind;
@@ -185,7 +186,8 @@ public final class ProductionProjectEmission {
 
         if (backend == Backend.LLVM) {
             return emitLlvmProject(project, lowering, checkedProject,
-                invocation, distributionHome, stager);
+                declarationSurface, declarationModuleIdentities, invocation,
+                distributionHome, stager);
         }
 
         // (4) The one emission per target — with the one source-map
@@ -351,13 +353,16 @@ public final class ProductionProjectEmission {
             ExecutableLoweredProject project,
             SemanticLowerer.ProjectLoweringResult lowering,
             CheckedProjectInput checkedProject,
+            HostDeclarationSurface declarationSurface,
+            Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             CompilerInvocation invocation,
             DistributionHome distributionHome,
             PublicationStager stager) throws IOException {
         LlvmEmissionInput input;
         LlvmProjectEmission emission;
         try {
-            input = llvmEmissionInput(project, lowering, checkedProject, stager);
+            input = llvmEmissionInput(project, lowering, checkedProject,
+                declarationSurface, declarationModuleIdentities, stager);
             emission = LlvmSemanticEmitter.emitProductionProject(input);
         } catch (IllegalStateException emitterGap) {
             return new Result(Outcome.FAILED,
@@ -371,6 +376,15 @@ public final class ProductionProjectEmission {
         }
         stager.stage(emission.artifactRelativePath(),
             emission.source().getBytes(StandardCharsets.UTF_8));
+        // The generated declaration header of every imported host declaration
+        // module (H1): one `<host module path>.h` inside the same transaction,
+        // so the build seam resolves it through the published include path and
+        // pairs it with the supplied host unit of the same stem.
+        for (LlvmProjectEmission.GeneratedSource generated
+                : emission.generatedSources()) {
+            stager.stage(generated.relativePath(),
+                generated.source().getBytes(StandardCharsets.UTF_8));
+        }
 
         // The complete closed C11 runtime deployment set (D6), resolved
         // through the one distribution precedence. The set is staged in its
@@ -395,6 +409,8 @@ public final class ProductionProjectEmission {
             ExecutableLoweredProject project,
             SemanticLowerer.ProjectLoweringResult lowering,
             CheckedProjectInput checkedProject,
+            HostDeclarationSurface declarationSurface,
+            Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             PublicationStager stager) {
         java.util.Map<String, String> displayNames = new LinkedHashMap<>();
         for (CheckedModuleInput module : checkedProject.modules()) {
@@ -403,7 +419,7 @@ public final class ProductionProjectEmission {
                     stager.publicationRoot()));
         }
         return new LlvmEmissionInput(project, lowering.tables(),
-            lowering.registries(), displayNames);
+            lowering.registries(), displayNames, declarationSurface);
     }
 
     /**

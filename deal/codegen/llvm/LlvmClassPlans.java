@@ -77,6 +77,11 @@ final class LlvmClassPlans {
             return "deal.class." + index + ".plan";
         }
 
+        /** The module symbol of the class's host access record (H2/R11). */
+        String hostAccessSymbol() {
+            return "deal.class." + index + ".hostaccess";
+        }
+
         /** The index of one declared field, or -1. */
         int indexOf(String name) {
             for (int position = 0; position < fields.size(); position++) {
@@ -154,7 +159,11 @@ final class LlvmClassPlans {
      * when the slot holds no managed reference (M1/M4). A persistent datum
      * ({@code unknown}) holds its referent in its own {@code reference} member,
      * so the reference map names that member and never the tag word the slot
-     * starts with; every other managed slot is one pointer at the slot start.
+     * starts with; every other managed slot is one pointer at the slot start,
+     * including a function-typed slot: a {@code deal_fn*} is a managed object
+     * (`isManagedValue`), so its slot is traced and barriered like any other
+     * managed reference and a function value stored in a declared class field
+     * survives every collection (C3/M1/M2).
      */
     private static int managedReferenceOffset(String slotType,
                                               RuntimeDescriptor descriptor,
@@ -162,7 +171,8 @@ final class LlvmClassPlans {
         if (descriptor instanceof RuntimeDescriptor.Unknown) {
             return slotOffset + LlvmTypeMapper.dataReferenceOffset();
         }
-        if (LlvmTypeMapper.isManagedPointer(descriptor)) {
+        if (descriptor instanceof RuntimeDescriptor.Func
+                || LlvmTypeMapper.isManagedPointer(descriptor)) {
             return slotOffset;
         }
         return LlvmTypeMapper.REFERENCE_NULLISH.equals(slotType)
@@ -253,6 +263,18 @@ final class LlvmClassPlans {
                         + " x %struct.deal_class_field]* @" + def.fieldsSymbol()
                         + ", i64 0, i64 0)")
                 + ", i64 " + def.fields().size() + " }");
+            lines.add("@" + def.hostAccessSymbol()
+                + " = internal constant %struct.deal_host_class_access {"
+                + " %struct.deal_class_layout* @" + def.constructionSymbol()
+                + ", i8* bitcast (%struct.deal_outcome (i8*, i8**)* @"
+                + createName(def) + " to i8*)"
+                + ", i8* bitcast (%struct.deal_outcome (i8*, i8*, i64,"
+                + " %struct.deal_check_input*, i32)* @" + storeName(def)
+                + " to i8*)"
+                + ", i8* bitcast (i32 (%struct.deal_data*, i64,"
+                + " %struct.deal_check_input*, i8*, i8*)* @" + readName(def)
+                + " to i8*)"
+                + ", i8* null }");
             lines.add("@" + def.planSymbol()
                 + " = internal constant %struct.deal_json_class_plan {"
                 + " %struct.deal_class_layout* @" + def.constructionSymbol()
@@ -315,6 +337,15 @@ final class LlvmClassPlans {
         }
         int counter = 0;
         for (ClassDef def : classes) {
+            // The host group's access surface of this class (H2/R11): the
+            // allocation, the validated field store and the field read, keyed
+            // by the class's canonical atom.
+            session.referenceRuntimeEntry("deal_host_class_access_register");
+            out.append(LlvmIrPrinter.indent(1))
+                .append("call void @deal_host_class_access_register(")
+                .append(session.data.operand(session.data.intern(def.atomText())))
+                .append(", %struct.deal_host_class_access* @")
+                .append(def.hostAccessSymbol()).append(")\n");
             for (int index = 0; index < def.fields().size(); index++) {
                 Field field = def.fields().get(index);
                 session.referenceRuntimeEntry("deal_descriptor_intern");
@@ -393,6 +424,14 @@ final class LlvmClassPlans {
         return "deal.class." + def.index() + ".read";
     }
 
+    static String createName(ClassDef def) {
+        return "deal.class." + def.index() + ".create";
+    }
+
+    static String storeName(ClassDef def) {
+        return "deal.class." + def.index() + ".store";
+    }
+
     /** Every generated function of the class and JSON plan surface. */
     Map<String, String> functions() {
         Map<String, String> functions = new LinkedHashMap<>();
@@ -400,6 +439,8 @@ final class LlvmClassPlans {
             functions.put("deal.class." + def.index() + ".construct",
                 constructSeam(def));
             functions.put("deal.class." + def.index() + ".read", readSeam(def));
+            functions.put(createName(def), createSeam(def));
+            functions.put(storeName(def), storeSeam(def));
         }
         if (!session.classes().isEmpty()) {
             functions.put(LOOKUP_NAME, lookupFunction());
@@ -500,10 +541,107 @@ final class LlvmClassPlans {
     }
 
     /**
+     * The host group's allocation seam of one class (H2/R11): one zero-initialized
+     * managed instance of the emitted layout, tagged with the class atom and with
+     * every declared field absent. The runtime creates the instance before it
+     * materializes the graph's fields, so a self-referential host graph keeps its
+     * one identity, and it validates every field before the store seam commits.
+     */
+    private String createSeam(ClassDef def) {
+        Ir ir = new Ir();
+        session.referenceRuntimeEntry("deal_alloc");
+        String instance = ir.temp("call i8* @deal_alloc(i32 " + def.layoutId()
+            + ", i64 " + def.size() + ")");
+        String typed = ir.temp("bitcast i8* " + instance + " to "
+            + def.recordName() + "*");
+        String atomPointer = ir.temp("getelementptr " + def.recordName() + ", "
+            + def.recordName() + "* " + typed + ", i32 0, i32 0");
+        ir.line("store " + stringPointer(def.atomText())
+            + ", i8** " + atomPointer);
+        ir.line("store i8* " + instance + ", i8** %out");
+        ir.line("ret %struct.deal_outcome { i8* null }");
+        return function(createName(def), "%struct.deal_outcome", List.of(
+            "i8* %context", "i8** %out"), ir);
+    }
+
+    /**
+     * The host group's field-store seam of one class (H2/R11): one already
+     * validated presentation is written into its declared typed slot, the
+     * insertion barrier runs on the committed slot, and the field's presence bit
+     * follows the given flag. A delete clears the presence bit and the slot and
+     * writes no value.
+     */
+    private String storeSeam(ClassDef def) {
+        Ir ir = new Ir();
+        String typed = ir.temp("bitcast i8* %instance to " + def.recordName()
+            + "*");
+        String clearing = ir.temp("icmp eq i32 %present, 0");
+        ir.line("br i1 " + clearing + ", label %clear, label %choose");
+        ir.label("choose");
+        StringBuilder arms = new StringBuilder();
+        for (int index = 0; index < def.fields().size(); index++) {
+            arms.append("i64 ").append(index).append(", label %field")
+                .append(index).append(' ');
+        }
+        ir.line("switch i64 %index, label %done [ " + arms + "]");
+        for (int index = 0; index < def.fields().size(); index++) {
+            Field field = def.fields().get(index);
+            ir.label("field" + index);
+            String datumPointer = ir.temp("getelementptr"
+                + " %struct.deal_check_input, %struct.deal_check_input* %value,"
+                + " i32 0, i32 2");
+            String datum = ir.temp("load %struct.deal_data,"
+                + " %struct.deal_data* " + datumPointer);
+            String nativeValue = LlvmDataValues.unbox(session, ir,
+                field.layout().descriptor(), datum);
+            if (field.layout().descriptor()
+                    instanceof RuntimeDescriptor.Boolean) {
+                nativeValue = ir.temp("zext i1 " + nativeValue + " to i8");
+            }
+            String slot = ir.temp("getelementptr " + def.recordName() + ", "
+                + def.recordName() + "* " + typed + ", i32 0, i32 "
+                + field.structIndex());
+            ir.line("store " + field.slotType() + " " + nativeValue + ", "
+                + field.slotType() + "* " + slot);
+            if (holdsManagedReference(field)) {
+                storeBarrier(ir, field, "%instance", slot, nativeValue);
+            }
+            if (field.presenceIndex() >= 0) {
+                String presenceSlot = ir.temp("getelementptr " + def.recordName()
+                    + ", " + def.recordName() + "* " + typed + ", i32 0, i32 "
+                    + (1 + field.presenceIndex()));
+                ir.line("store i8 1, i8* " + presenceSlot);
+            }
+            ir.line("br label %done");
+        }
+        ir.label("clear");
+        for (int index = 0; index < def.fields().size(); index++) {
+            Field field = def.fields().get(index);
+            if (field.presenceIndex() < 0) {
+                continue;
+            }
+            String presenceSlot = ir.temp("getelementptr " + def.recordName()
+                + ", " + def.recordName() + "* " + typed + ", i32 0, i32 "
+                + (1 + field.presenceIndex()));
+            ir.line("store i8 0, i8* " + presenceSlot);
+        }
+        ir.line("br label %done");
+        ir.label("done");
+        ir.line("ret %struct.deal_outcome { i8* null }");
+        return function(storeName(def), "%struct.deal_outcome", List.of(
+            "i8* %context", "i8* %instance", "i64 %index",
+            "%struct.deal_check_input* %value", "i32 %present"), ir);
+    }
+
+    /**
      * The {@code read_field} seam of {@code JsonToClass}: one declaration-order
      * field of the instance as its closed check presentation, with the carried
      * class atom of a class-typed field, or 0 when the datum is not an instance
-     * of the plan's class. An absent optional field answers presence 0.
+     * of the plan's class. An absent optional field answers presence 0. The
+     * class is identified by its nominal tag alone, so an index outside the
+     * declared field list answers "this is my class, no such field": a
+     * zero-declared-field class is identifiable without having a field to read
+     * (R11 instance identity).
      */
     private String readSeam(ClassDef def) {
         Ir ir = new Ir();
@@ -526,7 +664,7 @@ final class LlvmClassPlans {
         ir.label("mismatch");
         ir.line("ret i32 0");
         ir.label("scan");
-        ir.line("switch i64 %index, label %mismatch [ "
+        ir.line("switch i64 %index, label %identified [ "
             + fieldSwitchArms(def) + "]");
         for (int index = 0; index < def.fields().size(); index++) {
             Field field = def.fields().get(index);
@@ -574,6 +712,12 @@ final class LlvmClassPlans {
             }
             ir.line("ret i32 1");
         }
+        // The instance carries this plan's atom, so it is this plan's class
+        // even when the requested index names no declared field: identify it
+        // with an absent value rather than answering "not my class".
+        ir.label("identified");
+        ir.line("store i8 0, i8* %present");
+        ir.line("ret i32 1");
         return function(readName(def), "i32", List.of(
             "%struct.deal_data* %instance",
             "i64 %index",

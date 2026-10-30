@@ -56,6 +56,7 @@ public final class LlvmData {
     private final Map<String, String> globalSlots = new LinkedHashMap<>();
     private final Map<String, String> globalSlotTypes = new LinkedHashMap<>();
     private List<UnitModule> units = List.of();
+    private List<LlvmHostModules.Module> hostModules = List.of();
     private boolean armTableDeclared;
     private boolean nullPointerDeclared;
 
@@ -222,6 +223,37 @@ public final class LlvmData {
         return "deal.exports." + index;
     }
 
+    /** The per-import declared-module record of one host import (H1). */
+    public static String hostDeclared(long index) {
+        return "deal.host." + index + ".declared";
+    }
+
+    /** The import module record of one host import (H7/H6). */
+    public static String hostModuleRecord(long index) {
+        return "deal.host." + index + ".module";
+    }
+
+    /** The export-entry array of one host import's module record. */
+    public static String hostExportEntries(long index) {
+        return "deal.host." + index + ".entries";
+    }
+
+    /** The module-level slot holding one host import's validated binding. */
+    public static String hostBindingSlot(long index) {
+        return "deal.host." + index + ".binding";
+    }
+
+    /** Declares the imported host declaration modules of this project. */
+    public void defineHostModules(List<LlvmHostModules.Module> modules) {
+        hostModules = List.copyOf(
+            Objects.requireNonNull(modules, "modules must not be null"));
+    }
+
+    /** Every imported host declaration module of this emission. */
+    public List<LlvmHostModules.Module> hostModules() {
+        return hostModules;
+    }
+
     // =========================================================================
     // Rendering
     // =========================================================================
@@ -247,6 +279,7 @@ public final class LlvmData {
         List<String> sections = new ArrayList<>(extraSections);
         defineArmTable(sections);
         defineModuleRecords(sections);
+        defineHostModuleRecords(sections);
         List<String> lines = new ArrayList<>();
         for (Map.Entry<String, StringConstant> entry : strings.entrySet()) {
             StringConstant constant = entry.getValue();
@@ -364,6 +397,127 @@ public final class LlvmData {
                         + exportTable(index) + ", i64 0, i64 0)")
                 + ", i8* null }");
         }
+    }
+
+    /**
+     * The per-import declared-module records and import module records of the
+     * host imports (H1/H2/H7): the declared export metadata, the declared class
+     * metadata, the record the load entry receives, the mutable
+     * `deal_module` record the importing unit publishes after its
+     * initialization succeeded, and the module-level slot holding the returned
+     * binding. Every member is emitted-only static data; the layouts belong to
+     * the published `deal/native/host.h` and `deal_rt.h` declarations.
+     */
+    private void defineHostModuleRecords(List<String> lines) {
+        for (int index = 0; index < hostModules.size(); index++) {
+            LlvmHostModules.Module host = hostModules.get(index);
+            lines.addAll(hostStaticData(index, host));
+        }
+    }
+
+    /** The static data of one imported host declaration module. */
+    private List<String> hostStaticData(int index, LlvmHostModules.Module host) {
+        List<String> lines = new ArrayList<>();
+        String prefix = "deal.host." + index + ".facts";
+        List<LlvmHostModules.Export> exports = host.exports();
+        // The declared export metadata, declaration order.
+        List<String> exportLiterals = new ArrayList<>();
+        for (LlvmHostModules.Export declared : exports) {
+            int kind = declared.isClass() ? 2
+                : declared.isAsync() ? 1 : 0;
+            exportLiterals.add("%struct.deal_host_export { "
+                + operand(intern(declared.name())) + ", "
+                + operand(intern(declared.descriptor())) + ", i32 " + kind
+                + ", i32 " + (declared.isAsync() ? 1 : 0)
+                + ", i8* null, i8* null, %struct.deal_host_class* null }");
+        }
+        lines.add("@" + prefix + ".exports = internal constant ["
+            + exportLiterals.size() + " x %struct.deal_host_export] ["
+            + String.join(", ", exportLiterals) + "]");
+        // The declared class metadata, declaration order.
+        List<String> classPointers = new ArrayList<>();
+        List<String> classLiterals = new ArrayList<>();
+        for (int position = 0; position < host.classes().size(); position++) {
+            LlvmHostModules.DeclaredClass declared =
+                host.classes().get(position);
+            List<String> fieldLiterals = new ArrayList<>();
+            for (LlvmHostModules.Field field : declared.fields()) {
+                fieldLiterals.add("%struct.deal_host_field { "
+                    + operand(intern(field.name())) + ", "
+                    + operand(intern(field.descriptor())) + ", i32 "
+                    + (field.optional() ? 1 : 0) + " }");
+            }
+            lines.add("@" + prefix + ".fields." + position
+                + " = internal constant [" + fieldLiterals.size()
+                + " x %struct.deal_host_field] ["
+                + String.join(", ", fieldLiterals) + "]");
+            classLiterals.add("%struct.deal_host_class { "
+                + operand(intern(declared.identity())) + ", "
+                + (fieldLiterals.isEmpty() ? "%struct.deal_host_field* null"
+                    : "%struct.deal_host_field* getelementptr (["
+                        + fieldLiterals.size() + " x %struct.deal_host_field],"
+                        + " [" + fieldLiterals.size()
+                        + " x %struct.deal_host_field]* @" + prefix + ".fields."
+                        + position + ", i64 0, i64 0)")
+                + ", i64 " + fieldLiterals.size() + " }");
+            classPointers.add("%struct.deal_host_class* getelementptr (["
+                + host.classes().size() + " x %struct.deal_host_class], ["
+                + host.classes().size() + " x %struct.deal_host_class]* @"
+                + prefix + ".classes, i64 0, i64 " + position + ")");
+        }
+        lines.add("@" + prefix + ".classes = internal constant ["
+            + classLiterals.size() + " x %struct.deal_host_class] ["
+            + String.join(", ", classLiterals) + "]");
+        lines.add("@" + prefix + ".classptr = internal constant ["
+            + classPointers.size() + " x %struct.deal_host_class*] ["
+            + String.join(", ", classPointers) + "]");
+        // The declared-module record the load entry receives.
+        lines.add("@" + hostDeclared(index)
+            + " = internal constant %struct.deal_host_declared_module { "
+            + operand(intern(host.specifier())) + ", "
+            + operand(intern(host.modulePath())) + ", "
+            + (exportLiterals.isEmpty() ? "%struct.deal_host_export* null"
+                : "%struct.deal_host_export* getelementptr (["
+                    + exportLiterals.size() + " x %struct.deal_host_export], ["
+                    + exportLiterals.size() + " x %struct.deal_host_export]* @"
+                    + prefix + ".exports, i64 0, i64 0)")
+            + ", i64 " + exportLiterals.size() + ", "
+            + (classLiterals.isEmpty() ? "%struct.deal_host_class* null"
+                : "%struct.deal_host_class* getelementptr (["
+                    + classLiterals.size() + " x %struct.deal_host_class], ["
+                    + classLiterals.size() + " x %struct.deal_host_class]* @"
+                    + prefix + ".classes, i64 0, i64 0)")
+            + ", i64 " + classLiterals.size() + " }");
+        // The import module record and its export entries: the reserved word
+        // marks one host export entry, and the value slot is filled with the
+        // binding's resolved export record after the load succeeded.
+        List<String> entries = new ArrayList<>();
+        for (LlvmHostModules.Export declared : exports) {
+            entries.add("%struct.deal_export_entry { "
+                + operand(intern(declared.name())) + ", "
+                + operand(intern(declared.descriptor())) + ", i32 "
+                + (declared.isAsync() ? 1 : 0) + ", i32 1,"
+                + " %struct.deal_fn* null }");
+        }
+        lines.add("@" + hostExportEntries(index) + " = internal global ["
+            + entries.size() + " x %struct.deal_export_entry] ["
+            + String.join(", ", entries) + "]");
+        // The import module record answers the raw specifier the driver and
+        // the generated registry name the import by; the declared-module record
+        // above carries the declaration module's module-id path (H2/H6).
+        lines.add("@" + hostModuleRecord(index)
+            + " = internal global %struct.deal_module { "
+            + operand(intern(host.specifier())) + ", i32 0, i32 "
+            + entries.size() + ", %struct.deal_export_entry* "
+            + (entries.isEmpty() ? "null"
+                : "getelementptr ([" + entries.size()
+                    + " x %struct.deal_export_entry], [" + entries.size()
+                    + " x %struct.deal_export_entry]* @" + hostExportEntries(index)
+                    + ", i64 0, i64 0)")
+            + ", i8* null }");
+        lines.add("@" + hostBindingSlot(index)
+            + " = internal global %struct.deal_host_binding* null");
+        return lines;
     }
 
     /**

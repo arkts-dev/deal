@@ -121,7 +121,8 @@ public final class LlvmTypeMapper {
         "deal_json_plan_lookup",
         "deal_json_construct",
         "deal_json_read_field",
-        "deal_fn_thunk");
+        "deal_fn_thunk",
+        "deal_host_boxed_thunk");
 
     /**
      * The named record layouts this backend declares: the published runtime
@@ -165,15 +166,32 @@ public final class LlvmTypeMapper {
         // the mirror names them and never declares a member.
         map.put("deal_module", "opaque");
         map.put("deal_export_entry", "opaque");
+        // The host ABI's declaration records: the emitted module builds its
+        // per-import declared-module record and its declared export and class
+        // metadata as static data, so their member order is pinned here exactly
+        // as `deal/native/host.h` and `deal/native/deal_rt.h` declare it.
+        map.put("deal_host_field", "{ i8*, i8*, i32 }");
+        map.put("deal_host_class",
+            "{ i8*, %struct.deal_host_field*, i64 }");
+        map.put("deal_host_export", "{ i8*, i8*, i32, i32, i8*, i8*,"
+            + " %struct.deal_host_class* }");
+        map.put("deal_host_module", "{ i8*, %struct.deal_host_export*, i64,"
+            + " %struct.deal_host_class*, i64, i8* }");
+        map.put("deal_host_registry_entry",
+            "{ i8*, %struct.deal_host_module* }");
+        map.put("deal_host_declared_module", "{ i8*, i8*,"
+            + " %struct.deal_host_export*, i64, %struct.deal_host_class*,"
+            + " i64 }");
+        map.put("deal_host_binding", "{ i8*, %struct.deal_host_module*,"
+            + " %struct.deal_host_export**, i64 }");
+        map.put("deal_host_class_access", "{ %struct.deal_class_layout*, i8*,"
+            + " i8*, i8*, i8* }");
         for (String opaque : List.of(
                 "deal_string", "deal_array", "deal_table", "deal_object",
                 "deal_fn", "deal_error", "deal_async_op",
                 "deal_descriptor", "deal_completion_frame",
                 "deal_value_crossing",
-                "deal_host_completion", "deal_host_field", "deal_host_class",
-                "deal_host_export", "deal_host_module",
-                "deal_host_registry_entry", "deal_gc_statistics_record",
-                "deal_host_declared_module", "deal_host_binding")) {
+                "deal_host_completion", "deal_gc_statistics_record")) {
             map.put(opaque, "opaque");
         }
         return java.util.Collections.unmodifiableMap(

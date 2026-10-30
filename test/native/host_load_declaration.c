@@ -21,14 +21,16 @@ static deal_outcome (*const load_entry)(
 static size_t declared_members(void) {
     deal_host_declared_module declared;
     declared.specifier = "probe/host";
-    declared.module_path = "probe/host";
-    declared.exports = NULL;
-    declared.export_count = 0;
-    declared.classes = NULL;
-    declared.class_count = 0;
+    declared.module_path = "$external/probe/host";
+    declared.declared_exports = NULL;
+    declared.declared_export_count = 0;
+    declared.declared_classes = NULL;
+    declared.declared_class_count = 0;
     return sizeof(declared.specifier) + sizeof(declared.module_path)
-        + sizeof(declared.exports) + sizeof(declared.export_count)
-        + sizeof(declared.classes) + sizeof(declared.class_count);
+        + sizeof(declared.declared_exports)
+        + sizeof(declared.declared_export_count)
+        + sizeof(declared.declared_classes)
+        + sizeof(declared.declared_class_count);
 }
 
 static size_t binding_members(void) {

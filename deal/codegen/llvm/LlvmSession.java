@@ -89,6 +89,7 @@ final class LlvmSession extends EmitterSessionBase {
     final LlvmData data = new LlvmData();
     final LlvmDebugInfo debug = new LlvmDebugInfo();
     private final LlvmClassPlans classPlans = new LlvmClassPlans(this);
+    private LlvmHostModules hostModules = new LlvmHostModules();
     private final Map<String, LlvmClassPlans.ClassDef> classDefinitions =
         new LinkedHashMap<>();
 
@@ -151,9 +152,12 @@ final class LlvmSession extends EmitterSessionBase {
                 for (BindingId binding : functionParameters) parameterOwners.putIfAbsent(binding, function);
             }
         }
+        hostModules = LlvmHostModules.of(orderedModules, project.modules(),
+            input.declarationSurface());
         indexClasses();
         markSkippedEntryOps(project.modules().get(project.entryModule()));
         data.defineUnits(unitModules());
+        data.defineHostModules(hostModules.modules());
         for (ModuleId module : project.modules().keySet()) {
             debug.compileUnit(displayName(module));
         }
@@ -179,9 +183,25 @@ final class LlvmSession extends EmitterSessionBase {
                 layouts.add(unit.classLayouts().get(id));
             }
         }
+        // The declaration surface's classes are host-declared classes this
+        // project constructs and reads, so their structural layout is emitted
+        // with the project's own (H1: "construct from a host declaration's
+        // structural layout, never host hooks").
+        for (deal.semantic.ir.ClassLayout layout
+                : hostModules.classLayouts()) {
+            if (layouts.stream().noneMatch(existing ->
+                    existing.classId().equals(layout.classId()))) {
+                layouts.add(layout);
+            }
+        }
         for (LlvmClassPlans.ClassDef def : LlvmClassPlans.definitions(layouts)) {
             classDefinitions.putIfAbsent(def.classId().text(), def);
         }
+    }
+
+    /** The imported host declaration modules and their generated headers. */
+    LlvmHostModules hostModules() {
+        return hostModules;
     }
 
     /** The emitted class plans and static data of this project. */

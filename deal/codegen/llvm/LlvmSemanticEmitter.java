@@ -42,7 +42,16 @@ public final class LlvmSemanticEmitter {
         LlvmModule module = new LlvmModule(session);
         ModuleId entry = input.project().entryModule();
         String artifactRelativePath = entry.path().replace('.', '/') + ".ll";
-        return new LlvmProjectEmission(artifactRelativePath, module.render());
+        java.util.List<LlvmProjectEmission.GeneratedSource> generated =
+            new java.util.ArrayList<>();
+        for (LlvmHostModules.Module host : session.hostModules().modules()) {
+            // The generated declaration header of one imported host
+            // declaration module (H1) is one artifact of the same emission.
+            generated.add(new LlvmProjectEmission.GeneratedSource(
+                host.headerPath(), session.hostModules().header(host)));
+        }
+        return new LlvmProjectEmission(artifactRelativePath, module.render(),
+            generated);
     }
 
     /**

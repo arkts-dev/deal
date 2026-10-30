@@ -1,5 +1,6 @@
 package deal.codegen.llvm;
 
+import deal.semantic.HostDeclarationSurface;
 import deal.semantic.ir.ClassFactoryRegistry;
 import deal.semantic.ir.ExecutableLoweredProject;
 import deal.semantic.ir.ModuleId;
@@ -25,7 +26,8 @@ public record LlvmEmissionInput(
         ExecutableLoweredProject project,
         Map<ModuleId, StructuredBodyTable> tables,
         Map<ModuleId, ClassFactoryRegistry> registries,
-        Map<String, String> sourceDisplayNames) {
+        Map<String, String> sourceDisplayNames,
+        HostDeclarationSurface declarationSurface) {
 
     public LlvmEmissionInput {
         Objects.requireNonNull(project, "project must not be null");
@@ -33,6 +35,8 @@ public record LlvmEmissionInput(
         Objects.requireNonNull(registries, "registries must not be null");
         Objects.requireNonNull(sourceDisplayNames,
             "sourceDisplayNames must not be null");
+        Objects.requireNonNull(declarationSurface,
+            "declarationSurface must not be null");
         tables = Map.copyOf(tables);
         registries = Map.copyOf(registries);
         sourceDisplayNames = new LinkedHashMap<>(sourceDisplayNames);

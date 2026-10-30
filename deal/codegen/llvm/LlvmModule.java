@@ -119,6 +119,15 @@ final class LlvmModule {
         }
         for (ModuleId module : session.modules()) {
             for (deal.semantic.ir.SemanticOp op : session.unitOf(module).ops()) {
+                if (op.kind() == deal.semantic.ir.SemanticOpKind.CALLBACK_INVOKE) {
+                    // The host-driven re-entry entry of one DEAL function (H4).
+                    functions.put(LlvmFunctionEmitter.callbackEntryName(
+                            session.moduleIndex(module), op.opId()),
+                        new LlvmFunctionEmitter(session,
+                                session.unitOf(module))
+                            .emitCallbackInvokeEntry(op));
+                    continue;
+                }
                 if (op.payload() instanceof deal.semantic.ir.KindPayload
                         .FunctionAdaptPayload adapt) {
                     functions.put(LlvmFunctionEmitter.adapterThunkName(

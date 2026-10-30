@@ -2,10 +2,12 @@
  * deal/native/host.h — the `host` service group.
  *
  * The native host load surface and the crossing machinery
- * (`llvm-native-host-abi-and-async` H1, H2, H4, H7). The host-visible value
+ * (`llvm-native-host-abi-and-async` H1, H2, H3, H4, H7). The host-visible value
  * surface itself is H2's canonical declaration set in `deal_rt.h`; this header
- * carries the two records the emitted module hands to the runtime loader and the
- * one entry the loader implements.
+ * carries the two declared-module records the emitted module hands to the
+ * runtime loader, the one load entry the loader implements, and the two
+ * crossing entries the emitted module calls for a synchronous host call and for
+ * the DEAL-origin failure relay of a host-driven re-entry.
  *
  * Load contract (H1, H7, `LoadHostModule`): at module initialization the
  * importing unit passes its generated declared-module record and the origin of
@@ -21,9 +23,18 @@
  *
  * The binding is platform memory created once at module initialization, holds
  * no managed pointer, and lives for the process lifetime; allocation failure is
- * the R10 resource fault. The crossing entries, the generated host headers, the
- * handle table and the error-token table land with the host-sync child, which
- * extends this header.
+ * the R10 resource fault.
+ *
+ * Crossings (`HostCallSync`, `HostValueSurface`, R11). One synchronous host
+ * call pushes one crossing scope, hands every declared parameter position a
+ * carrier of the current crossing, calls the host once, validates the returned
+ * carrier against the declared return descriptor through the one
+ * `deal_check_value` entry, admits the result (a view keeps the DEAL identity, a
+ * host-built carrier is materialized into the managed representation with alias
+ * identity, self-reference and host-object non-mutation preserved), and pops the
+ * scope. Handles (`deal_retain`, `deal_handle_value`, `deal_release`) and the
+ * DEAL-origin failure token table are owned here beside the value table the
+ * `value` group exposes, and both are root sources of the collector (M5).
  */
 #ifndef DEAL_NATIVE_HOST_H
 #define DEAL_NATIVE_HOST_H
@@ -38,12 +49,12 @@
  * the importing unit's module walk.
  */
 typedef struct {
-  const char *specifier;               /* raw specifier, e.g. "host/http" */
-  const char *module_path;             /* the declaration module's module-id path */
-  const deal_host_export *exports;     /* declared exports, declaration order */
-  size_t export_count;
-  const deal_host_class *classes;      /* declared class metadata */
-  size_t class_count;
+  const char *specifier;                     /* raw specifier, e.g. "host/http" */
+  const char *module_path;                   /* module-id path used for labels */
+  const deal_host_export *declared_exports;  /* declared exports, in order */
+  size_t declared_export_count;
+  const deal_host_class *declared_classes;   /* declared class metadata */
+  size_t declared_class_count;
 } deal_host_declared_module;
 
 /*
@@ -55,13 +66,160 @@ typedef struct {
 typedef struct {
   const char *specifier;
   const deal_host_module *module;
-  const deal_host_export **exports;
+  const deal_host_export *const *exports;   /* one per declared export */
   size_t export_count;
 } deal_host_binding;
 
-/* The native host load entry (H1, H7); implemented by the host-sync child. */
+/*
+ * The native host load entry (H1, H7): resolves, validates and answers one
+ * runtime-known binding, or the carried E8011 Error that marks the importing
+ * unit failed. `*out` is written on success only.
+ */
 deal_outcome deal_host_load(const deal_host_declared_module *declared,
                             const deal_origin *origin,
                             const deal_host_binding **out);
+
+/* =========================================================================
+ * The synchronous crossing
+ * ========================================================================= */
+
+/*
+ * The synchronous external call of one validated host export (H2
+ * `HostCallSync`, H4). The emitted module has already run every declared
+ * parameter position's `HOST_PARAMETER` boundary check, so `arguments` carries
+ * the admitted presentations in declaration order; `signature_descriptor` is
+ * the export's declared canonical signature (the same text the declaration
+ * surface, the generated header and the export entry record carry) and
+ * `origin` is the call statement's own origin.
+ *
+ * The entry pushes one crossing, presents the parameters as that crossing's
+ * carriers, calls the export once, applies H2's failure protocol (host-authored
+ * text becomes the carried Error, a relayed DEAL failure is the identical
+ * Error, an unconsumed token is the deterministic protocol failure reported
+ * before the return value is checked), validates and admits the returned
+ * carrier at the `HOST_SYNC_RETURN` boundary, and pops the crossing on every
+ * path. The declared result position comes from the signature's own result
+ * atom through the published descriptor grammar, so a function-typed result is
+ * checked as that function, and the result-only `void` is the no-value position
+ * projected to the `undefined` datum. A rejected return admits nothing.
+ */
+deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
+                                        const deal_check_input *arguments,
+                                        uint32_t argument_count,
+                                        const char *signature_descriptor,
+                                        const deal_origin *origin);
+
+/*
+ * The function value of one declared, validated host export (H2/H4): the
+ * carrier whose boxed apply thunk invokes the host entry with the crossing
+ * carriers of the checked argument presentations and applies the declared
+ * result boundary. It is the emitted import read's projection of
+ * `<host module>.<export>`, so a DEAL call reaches the host through the one
+ * function-value protocol instead of a second call path.
+ */
+deal_outcome_reference deal_host_export_value(const deal_host_export *exported,
+                                              const char *signature_descriptor,
+                                              const deal_origin *origin);
+
+/*
+ * Issues one DEAL-origin failure token in the current crossing and fills one
+ * `DEAL_FAILURE_DEAL_ERROR` result whose value is the class carrier naming that
+ * very Error (H2/H4). It is the emitted `CALLBACK_INVOKE` entry's failure path,
+ * so a host re-entering DEAL code receives exactly the record `deal_apply`
+ * answers. A null Error, a non-Error value and a missing crossing are producer
+ * defects.
+ */
+deal_status deal_host_relay_error(deal_error *error, deal_host_result *out);
+
+/*
+ * The boxed apply thunk of the recorded function a host-driven re-entry
+ * invokes: the same shape the emitted module supplies for every function value
+ * (the `value` group's `deal_fn_thunk`), restated here because a group header
+ * declares only H2's own records and its own function-pointer types.
+ */
+typedef deal_outcome_data (*deal_host_boxed_thunk)(void *function,
+                                                   const deal_check_input *arguments,
+                                                   uint32_t argument_count,
+                                                   const deal_origin *origin);
+
+/*
+ * The host-driven re-entry of one recorded DEAL function (H4 `CALLBACK_INVOKE`,
+ * `HostCallSync`). The emitted module emits one entry per recorded
+ * `CALLBACK_INVOKE` with the published `deal_host_function` shape, so a host
+ * calls it with crossing carriers exactly as it calls `deal_apply`, and this
+ * entry answers the same `deal_host_result`:
+ *
+ *   - `thunk` is the recorded function's own boxed apply thunk and `function`
+ *     its published function value, so the thunk's `HOST_TO_DEAL` parameter
+ *     boundaries, the body and the `DEAL_TO_HOST` return boundary run exactly
+ *     as they do for a free function value;
+ *   - a DEAL failure inside the re-entered code answers `failed = 1` with
+ *     `DEAL_FAILURE_DEAL_ERROR`, the runtime-issued single-use token of this
+ *     crossing and the `DEAL_KIND_CLASS` carrier of that same Error, so the
+ *     host relays the record unchanged or discards the token under H2's
+ *     relay-or-discard rule;
+ *   - a successful re-entry answers `failed = 0` and the admitted return
+ *     carrier.
+ *
+ * The entry runs inside the mutator's current crossing (a host only runs there),
+ * so a missing crossing answers `DEAL_STATUS_OUT_OF_SCOPE`, an argument pair of
+ * the wrong shape `DEAL_STATUS_PROTOCOL` and an argument carrier that cannot be
+ * presented `DEAL_STATUS_KIND`; nothing is written in those cases.
+ */
+deal_status deal_host_callback_invoke(deal_host_result *out,
+                                      deal_host_boxed_thunk thunk, void *function,
+                                      const deal_value *arguments,
+                                      size_t argument_count,
+                                      const deal_origin *origin);
+
+/* =========================================================================
+ * The emitted class access surface
+ * ========================================================================= */
+
+/*
+ * One emitted class's host-visible access seams: the declared layout, an
+ * allocation seam that creates and tags one instance with every field absent,
+ * a field-store seam that writes one already validated presentation (and its
+ * presence flag) into the declared slot with the insertion barrier, and the
+ * field-read seam the JSON walks already use. A class instance is opaque to
+ * every runtime group, so the emitted module owns the slots and the nominal
+ * tag; the runtime owns the descriptor checks, the materialization order and
+ * the barriers' invocation.
+ */
+typedef deal_outcome (*deal_host_class_create)(void *context, void **out);
+
+typedef deal_outcome (*deal_host_class_store)(void *context, void *instance,
+                                              size_t index,
+                                              const deal_check_input *value,
+                                              int present);
+
+typedef int (*deal_host_class_read)(const deal_data *instance, size_t index,
+                                    deal_check_input *value, uint8_t *present,
+                                    void *context);
+
+typedef struct {
+  const deal_class_layout *declared;   /* class atom + declaration-order fields */
+  deal_host_class_create create;       /* allocation + nominal tag           */
+  deal_host_class_store store;         /* validated field store + barrier    */
+  deal_host_class_read read;           /* field extraction (R11)             */
+  void *context;                       /* the emitted module's own context   */
+} deal_host_class_access;
+
+
+/*
+ * Registers one emitted class's access seams by canonical class atom before any
+ * user code (`deal_class_plans_init`). Registering the same atom again with the
+ * same record is idempotent; a different record for one atom, a null seam and a
+ * blank atom are invariant faults.
+ */
+void deal_host_class_access_register(const char *class_atom,
+                                     const deal_host_class_access *access);
+
+/*
+ * The registered access record of one canonical class atom, or NULL when the
+ * project emits no such class. The runtime's host crossings and the value
+ * surface read it and never inspect an instance's layout themselves.
+ */
+const deal_host_class_access *deal_host_class_access_of(const char *class_atom);
 
 #endif /* DEAL_NATIVE_HOST_H */
