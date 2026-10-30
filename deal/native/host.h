@@ -222,4 +222,97 @@ void deal_host_class_access_register(const char *class_atom,
  */
 const deal_host_class_access *deal_host_class_access_of(const char *class_atom);
 
+/*
+ * The typed presentation of one persistent datum (R11/R4): a datum
+ * presentation whose class atom and function signature are taken from the value
+ * itself, exactly as a crossing's own classification derives them, so a check
+ * at a class or function position compares that value's nominal identity and
+ * signature. The `async` group's await-origin completion check reuses this
+ * projection, so the `ASYNC_COMPLETION` boundary reads one presentation set
+ * and never derives a second classification.
+ */
+void deal_host_present_datum(deal_data datum, deal_check_input *out);
+
+/*
+ * Resolves one host failure record of the current crossing into the Error it
+ * names and consumes a DEAL-origin token (H2/R5): host-authored text becomes a
+ * builtin Error carrying exactly the host's text, and a relayed token resolves
+ * to the identical Error. `DEAL_STATUS_OK` writes the resolved Error;
+ * `DEAL_STATUS_PROTOCOL` means the token is not live in this crossing or was
+ * already consumed, and `DEAL_STATUS_OUT_OF_SCOPE` means no crossing is active.
+ * A malformed record (an unknown kind, host text without its code or message, a
+ * relayed record carrying code/message text) is the deterministic host protocol
+ * failure of H2. Nothing is written on a status answer.
+ */
+deal_status deal_host_resolve_failure(const deal_host_failure *failure,
+                                      deal_error **out);
+
+/*
+ * The persistent presentation of one carrier of the current crossing (R11/R4):
+ * a managed view keeps its datum form and a host-built carrier is materialized
+ * into the managed representation with one memo, so alias identity inside the
+ * returned graph is preserved. `DEAL_STATUS_OK` writes the presentation plan a
+ * boundary check reads; no crossing answers `DEAL_STATUS_OUT_OF_SCOPE`, a
+ * carrier of another crossing `DEAL_STATUS_FOREIGN_VALUE`, and a carrier that is
+ * never DEAL data (the absence marker, the no-value marker or the untyped-array
+ * negative presentation) `DEAL_STATUS_KIND`; a failing materialization also
+ * answers `DEAL_STATUS_KIND` and, through `cause`, that arm's own carried
+ * Error. Nothing is published by a rejected carrier. The materialized graph
+ * stays rooted for the crossing's lifetime (M5), so a caller stores the datum
+ * before its scope ends.
+ */
+deal_status deal_host_value_presentation(deal_value value,
+                                         deal_check_input *out,
+                                         deal_error **cause);
+
+/*
+ * 1 when `function` is the runtime's own carrier of a declared host async
+ * export (H2/H4), 0 for every other function value. The carrier wraps the host
+ * async entry in one runtime-private record whose layout identity distinguishes
+ * it from a captured-binding cell, so the `async` group routes `ASYNC_START`
+ * over this carrier to the host async crossing below instead of the boxed apply
+ * thunk.
+ */
+int deal_host_is_async_function_value(deal_fn *function);
+
+/*
+ * The host async crossing (H2/H5, `HostCallAsync`): the runtime has already
+ * allocated the operation record and its token, so this entry pushes the
+ * crossing, presents the checked parameter carriers, calls the carrier's own
+ * async entry with the token, applies H2's failure protocol (host-authored text
+ * becomes the carried Error, a relayed failure is the identical Error, an
+ * unconsumed token is the protocol failure reported first) and checks the
+ * returned carrier: `DEAL_KIND_ASYNC_OPERATION` naming exactly `token`
+ * succeeds, every other kind renders the closed `ASYNC_OPERATION_HANDLE` arm at
+ * `origin` (E8010, typed-boundary actual projection) and a substituted token is
+ * the deterministic protocol failure. Answers the carried Error on failure and
+ * NULL on success; the crossing is released on both paths.
+ */
+deal_error *deal_host_invoke_async_value(deal_fn *callee,
+                                         deal_async_token token,
+                                         const deal_check_input *arguments,
+                                         uint32_t argument_count,
+                                         const deal_origin *origin);
+
+/*
+ * The pump's crossing-equivalent scope (H5, M5): pushes one crossing for the
+ * duration of one pump cycle, so a module service hook constructs, inspects,
+ * completes with and re-enters DEAL code through crossing carriers exactly as
+ * it does inside one of its export calls, and every carrier the cycle issued
+ * becomes foreign when the cycle ends. The scope is popped on the completing
+ * and on the still-pending path alike; a cycle that still roots an unconsumed
+ * DEAL-origin failure token is the deterministic protocol failure. `origin` may
+ * be NULL for a pump cycle, which carries the file-less origin of the runtime.
+ */
+void deal_host_scope_push(const deal_origin *origin);
+void deal_host_scope_pop(void);
+
+/*
+ * The one deterministic host protocol failure (H2/H5): one stderr line,
+ * `DEAL_HOST_PROTOCOL: <reason>`, and exit 2. The `async` group reports an
+ * unattributable completion, a duplicate delivery and a reentrant pump through
+ * this same spelling, so the native lane has exactly one protocol surface.
+ */
+_Noreturn void deal_host_protocol_fault(const char *reason);
+
 #endif /* DEAL_NATIVE_HOST_H */

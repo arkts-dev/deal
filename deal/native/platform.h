@@ -95,6 +95,19 @@ size_t deal_platform_frame_payload_size(const deal_completion_frame *frame);
  */
 const unsigned char *deal_platform_frame_bytes(const deal_completion_frame *frame);
 
+/* -- the one mutator thread (R1, M3, H5) ---------------------------------- */
+
+/*
+ * The process's one mutator thread: the first caller of this entry establishes
+ * it, that thread answers 1 on every later call, and every other thread
+ * answers 0. The completion queue's established consumer is the same thread,
+ * so a take/wait from another thread stays the invariant fault below. Every
+ * entry that requires the mutator (a managed completion, the pump's service
+ * hooks, `deal_async_post`'s delivery) asks this entry instead of inventing a
+ * second thread identity.
+ */
+int deal_platform_on_mutator_thread(void);
+
 /* -- clocks (R1, R7) ------------------------------------------------------ */
 
 /* Monotonic nanoseconds; the pump slice and the queue bound use this clock. */
@@ -116,8 +129,8 @@ void deal_platform_flush_stderr(void);
 /* The environment value, or NULL when the variable is absent. */
 const char *deal_platform_environment(const char *name);
 
-/* Flushes both streams and exits with the given status. */
-void deal_platform_exit(int status);
+/* Flushes both streams and exits with the given status; it never returns. */
+_Noreturn void deal_platform_exit(int status);
 
 /* -- platform memory (R1, R8, R10) --------------------------------------- */
 

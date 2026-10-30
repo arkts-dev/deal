@@ -2726,6 +2726,66 @@ final class LlvmFunctionEmitter {
     }
 
     /**
+     * The carrier of one {@code ASYNC_START} over a declared host async export
+     * (H2/H4/H5): the export's own function value, created through the one
+     * export-value entry with the call's declared canonical signature, so the
+     * runtime's async start routes the carrier to the token-bound host crossing
+     * and the returned operation names that export's own entry.
+     */
+    private String emitHostAsyncCarrier(SemanticOp op,
+                                        deal.semantic.ir.FunctionExecutionBinding
+                                            .HostFunction host) {
+        LlvmHostModules.Module hostModule =
+            session.hostModules().byModule(host.hostModuleId());
+        if (hostModule == null) {
+            throw new IllegalStateException("the async host call of "
+                + host.hostModuleId() + "." + host.exportName()
+                + " carries no declared-module facts");
+        }
+        int hostIndex = session.hostModules().modules().indexOf(hostModule);
+        int exportIndex = hostModule.exportIndex(host.exportName());
+        if (exportIndex < 0) {
+            throw new IllegalStateException("the async host call of "
+                + host.exportName() + " names no declared export");
+        }
+        String record = hostExportRecord(op, hostIndex, exportIndex);
+        String signature = session.data.operand(session.data.intern(
+            host.descriptor().canonicalSpecText()));
+        session.referenceRuntimeEntry("deal_host_export_value");
+        String outcome = emitTemporary(op, "call %struct.deal_outcome_reference"
+            + " @deal_host_export_value(%struct.deal_host_export* " + record
+            + ", " + signature + ", %struct.deal_origin* " + originValue(op)
+            + ")");
+        String error = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_reference " + outcome + ", 0");
+        branchOnFailure(op, error, "hostasync");
+        String value = emitTemporary(op,
+            "extractvalue %struct.deal_outcome_reference " + outcome + ", 1");
+        return emitTemporary(op, "bitcast i8* " + value + " to "
+            + LlvmTypeMapper.FN_POINTER);
+    }
+
+    /**
+     * The resolved export record of one declared export: the binding's own
+     * export array slot, in declaration order (H1/H2).
+     */
+    private String hostExportRecord(SemanticOp op, int hostIndex,
+                                    int exportIndex) {
+        String binding = load(op, "%struct.deal_host_binding*",
+            "@" + LlvmData.hostBindingSlot(hostIndex));
+        String exportsPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_binding, %struct.deal_host_binding* "
+            + binding + ", i32 0, i32 2");
+        String exports = emitTemporary(op, "load %struct.deal_host_export**,"
+            + " %struct.deal_host_export*** " + exportsPointer);
+        String slotPointer = emitTemporary(op, "getelementptr"
+            + " %struct.deal_host_export*, %struct.deal_host_export** "
+            + exports + ", i64 " + exportIndex);
+        return emitTemporary(op, "load %struct.deal_host_export*,"
+            + " %struct.deal_host_export** " + slotPointer);
+    }
+
+    /**
      * {@code EXPORT_PUBLISH}: stores the published function value into this
      * unit's export record. The record becomes visible only after the unit's
      * initialization succeeds, and every import reads it through the emitted
@@ -3516,7 +3576,16 @@ final class LlvmFunctionEmitter {
             recordOrigin(unitOp(payload.returnBoundaryOpId()));
         }
         String carrier;
-        if (payload.callee() instanceof KindPayload.CallCallee.Static callee) {
+        if (payload.callee() instanceof KindPayload.CallCallee.Static callee
+                && callee.binding() instanceof
+                    deal.semantic.ir.FunctionExecutionBinding.HostFunction host) {
+            // A declared host async export (H2/H5): the carrier is the export's
+            // own function value, whose wrapper holds the async entry, so the
+            // runtime allocates the record and token and calls the host entry
+            // with the checked argument carriers at the token-bound crossing.
+            carrier = emitHostAsyncCarrier(op, host);
+        } else if (payload.callee()
+                instanceof KindPayload.CallCallee.Static callee) {
             FunctionId function = switch (callee.binding()) {
                 case deal.semantic.ir.FunctionExecutionBinding.LoweredBody body ->
                     body.functionId();
@@ -6109,16 +6178,96 @@ final class LlvmFunctionEmitter {
         return out.toString();
     }
 
-    /** {@code deal_async_export_invoke}: the recorded export's own outcome. */
+    /**
+     * {@code deal_async_export_invoke} (H6): the recorded export's own outcome.
+     * A record whose declared signature carries the async marker is invoked
+     * through the runtime's async export surface — the record's own host async
+     * export crossing for a host-marked entry and the export's function value
+     * for a DEAL export — so its operation is pumped to completion and the
+     * completion is checked at the result atom of the record's own descriptor.
+     * Every other record keeps the synchronous invocation.
+     */
     String emitAsyncExportInvoke() {
+        session.referenceRuntimeEntry("deal_async_export_call");
+        session.referenceRuntimeEntry("deal_async_export_call_host");
+        String origin = "@" + session.data.origin(
+            session.displayName(unit.moduleId()), 1, 1);
         StringBuilder out = new StringBuilder();
         out.append("define %struct.deal_outcome @deal_async_export_invoke"
             + "(%struct.deal_export_entry* %entry) {\nLentry:\n");
         out.append(LlvmIrPrinter.indent(1))
+            .append("%isnull = icmp eq %struct.deal_export_entry* %entry, null\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("br i1 %isnull, label %absent, label %classify\n");
+        out.append("classify:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%asyncmarkerp = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 2\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%asyncmarker = load i32, i32* %asyncmarkerp\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%isasync = icmp eq i32 %asyncmarker, 1\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("br i1 %isasync, label %asyncexport, label %sync\n");
+        out.append("asyncexport:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostmarkerp = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 3\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostmarker = load i32, i32* %hostmarkerp\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%ishost = icmp eq i32 %hostmarker, 1\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("br i1 %ishost, label %hostasync, label %dealasync\n");
+        out.append("hostasync:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostvaluep = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 4\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostvalue = load %struct.deal_fn*, %struct.deal_fn**"
+                + " %hostvaluep\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostrecord = bitcast %struct.deal_fn* %hostvalue to"
+                + " %struct.deal_host_export*\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostdescp = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 1\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostdesc = load i8*, i8** %hostdescp\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%hostoutcome = call %struct.deal_outcome"
+                + " @deal_async_export_call_host(%struct.deal_host_export*"
+                + " %hostrecord, i8* %hostdesc, %struct.deal_origin* "
+                + origin + ")\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome %hostoutcome\n");
+        out.append("dealasync:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%valuep = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 4\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%function = load %struct.deal_fn*, %struct.deal_fn**"
+                + " %valuep\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%descp = getelementptr %struct.deal_export_entry,"
+                + " %struct.deal_export_entry* %entry, i32 0, i32 1\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%desc = load i8*, i8** %descp\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("%outcome = call %struct.deal_outcome"
+                + " @deal_async_export_call(%struct.deal_fn* %function, i8*"
+                + " %desc, %struct.deal_origin* " + origin + ")\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome %outcome\n");
+        out.append("sync:\n");
+        out.append(LlvmIrPrinter.indent(1))
             .append("%result = call %struct.deal_outcome @deal_export_invoke"
                 + "(%struct.deal_export_entry* %entry)\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("ret %struct.deal_outcome %result\n}\n");
+            .append("ret %struct.deal_outcome %result\n");
+        out.append("absent:\n");
+        out.append(LlvmIrPrinter.indent(1))
+            .append("ret %struct.deal_outcome { i8* null }\n}\n");
         return out.toString();
     }
 

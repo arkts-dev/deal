@@ -73,8 +73,8 @@ import java.util.regex.Pattern;
  *       static type, and the executed operations agree with the shared
  *       semantics at both optimization levels;</li>
  *   <li>an async project publishes valid IR that references the C7 operation
- *       and await entries and fails its native link with the seam's pinned
- *       diagnostic until the async runtime group exists;</li>
+ *       and await entries, and its product links and completes through the
+ *       async runtime group;</li>
  *   <li>the synthetic bodies of the thunks declare every runtime entry they
  *       emit, so a project whose only nullish or adapter fact is a thunk body
  *       still publishes a module {@code llvm-as} accepts (C9);</li>
@@ -889,8 +889,8 @@ public final class LlvmCallClosureEmissionTest {
     /**
      * A {@code Promise<void>} await: the completion descriptor is result-only
      * {@code void}, so the await projects undefined through the result protocol
-     * and never a data value. The program publishes valid IR and reaches the
-     * pinned native-link failure until the async runtime group exists.
+     * and never a data value. The program publishes valid IR and its product
+     * links and completes through the async runtime group (ISSUE-0913).
      */
     private static final String VOID_AWAIT_SOURCE = """
         async function asyncTick(): Promise<void> { return; }
@@ -948,25 +948,24 @@ public final class LlvmCallClosureEmissionTest {
             List.of("llvm-as", awaited.resolve("main.ll").toString()), scratch);
         checkEq(0, assembled.exitCode(), "the Promise<void> IR is valid: "
             + assembled.describe());
+        // The async runtime group (ISSUE-0913) defines the C7 entries, so the
+        // Promise<void> project links and runs to completion: the await of a
+        // void completion is no data value and raises nothing.
         for (int level : new int[] {0, 2}) {
             Path product = scratch.resolve("products")
                 .resolve("void-await-" + level);
             Files.createDirectories(product.getParent());
-            boolean failed = false;
-            String message = "";
-            try {
-                NativeCompiler.build(
-                    new deal.toolchain.NativeBuildRequest(awaited, product, level,
-                        List.of(), null));
-            } catch (deal.toolchain.NativeBuildException failure) {
-                failed = true;
-                message = String.valueOf(failure.getMessage());
-            }
-            check(failed, "-O" + level + " the Promise<void> project fails its"
-                + " native link (the async runtime group is 0913's)");
-            check(message.startsWith("deal: native link failed:"),
-                "-O" + level + " the staging departure is the seam's pinned"
-                    + " diagnostic: " + message);
+            NativeCompiler.build(
+                new deal.toolchain.NativeBuildRequest(awaited, product, level,
+                    List.of(), null));
+            NativeCompiler.Result run = NativeCompiler.execute(product, scratch,
+                Map.of("DEAL_GC_STRESS", "1"));
+            checkEq(0, run.exitCode(), "-O" + level + " the Promise<void>"
+                + " project links and completes: " + run.describe());
+            checkEq("", run.stdout(), "-O" + level + " the void-completion"
+                + " product writes no terminal output: " + run.describe());
+            checkEq("", run.stderr(), "-O" + level + " the void-completion"
+                + " product writes no diagnostics: " + run.describe());
         }
     }
 
@@ -991,25 +990,24 @@ public final class LlvmCallClosureEmissionTest {
             List.of("llvm-as", published.resolve("main.ll").toString()), scratch);
         checkEq(0, assembled.exitCode(),
             "the async project's IR is valid: " + assembled.describe());
+        // The C7 entries the emitted calls reference are the published async
+        // runtime group's (ISSUE-0913), so the async project links and its
+        // product runs; the awaited DEAL body completes synchronously.
         for (int level : new int[] {0, 2}) {
             Path product = scratch.resolve("async-product-" + level);
-            boolean failed = false;
-            String message = "";
-            try {
-                NativeCompiler.build(
-                    new deal.toolchain.NativeBuildRequest(published, product,
-                        level, List.of(), null));
-            } catch (deal.toolchain.NativeBuildException failure) {
-                failed = true;
-                message = String.valueOf(failure.getMessage());
-            }
-            check(failed, "-O" + level + " the async project fails its native"
-                + " link (the async runtime group is 0913's)");
-            check(message.startsWith("deal: native link failed:"),
-                "-O" + level + " the staging departure is the seam's pinned"
-                    + " diagnostic: " + message);
             check(!Files.exists(product),
-                "-O" + level + " the failed async build produces no product");
+                "-O" + level + " the async build starts from no product");
+            NativeCompiler.build(
+                new deal.toolchain.NativeBuildRequest(published, product,
+                    level, List.of(), null));
+            NativeCompiler.Result run = NativeCompiler.execute(product, scratch,
+                Map.of());
+            checkEq(0, run.exitCode(), "-O" + level + " the async project"
+                + " links and runs to completion: " + run.describe());
+            checkEq("", run.stdout(), "-O" + level + " the async product writes"
+                + " no terminal output: " + run.describe());
+            checkEq("", run.stderr(), "-O" + level + " the async product writes"
+                + " no diagnostics: " + run.describe());
         }
         // A cross-module async callee resolves through the payload's own
         // external async link to the published lowered body, so the call
@@ -1051,22 +1049,17 @@ public final class LlvmCallClosureEmissionTest {
                     + crossAssembled.describe());
             for (int level : new int[] {0, 2}) {
                 Path product = scratch.resolve("async-cross-product-" + level);
-                boolean failed = false;
-                String message = "";
-                try {
-                    NativeCompiler.build(
-                        new deal.toolchain.NativeBuildRequest(cross, product,
-                            level, List.of(), null));
-                } catch (deal.toolchain.NativeBuildException failure) {
-                    failed = true;
-                    message = String.valueOf(failure.getMessage());
-                }
-                check(failed, "-O" + level + " the cross-module async project"
-                    + " fails its native link (the async runtime group is"
-                    + " 0913's)");
-                check(message.startsWith("deal: native link failed:"),
-                    "-O" + level + " the staging departure is the seam's"
-                        + " pinned diagnostic: " + message);
+                NativeCompiler.build(
+                    new deal.toolchain.NativeBuildRequest(cross, product,
+                        level, List.of(), null));
+                NativeCompiler.Result run = NativeCompiler.execute(product,
+                    scratch, Map.of());
+                checkEq(0, run.exitCode(), "-O" + level + " the cross-module"
+                    + " async project links and runs to completion: "
+                    + run.describe());
+                checkEq("", run.stderr(), "-O" + level + " the cross-module"
+                    + " async product writes no diagnostics: "
+                    + run.describe());
             }
         }
         // A dynamically checked async callee owns the same E8010 arm as the

@@ -169,6 +169,11 @@ uint32_t deal_root_frame_depth(void);
  * `deal_host_function` pointer and nothing the collector traces, so the
  * function value's capture cell roots it and its precise map is empty. */
 #define DEAL_LAYOUT_HOST_FUNCTION     16u   /* one host function entry (H4)       */
+/* One live async operation record (H5, `OpenOperationRecord`): the token, the
+ * exactly-once completion state and the delivered completion as the persistent
+ * tagged datum whose managed payload the layout traces. The open-operation
+ * table roots it while the operation is live (M5). */
+#define DEAL_LAYOUT_ASYNC_OPERATION   17u   /* one async operation record (H5)    */
 
 #define DEAL_LAYOUT_EMITTED_BASE  1024u
 

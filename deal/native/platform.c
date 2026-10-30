@@ -128,7 +128,7 @@ const char *deal_platform_environment(const char *name) {
     return getenv(name);
 }
 
-void deal_platform_exit(int status) {
+_Noreturn void deal_platform_exit(int status) {
     deal_platform_flush_stdout();
     deal_platform_flush_stderr();
     exit(status);
@@ -312,14 +312,23 @@ static void deal_queue_drain_wake(void) {
     }
 }
 
-static void deal_queue_establish_consumer(void) {
+/* The one mutator thread of the process (R1, M3, H5): the first caller
+ * establishes it, that thread answers 1 and every other thread 0. The
+ * completion queue's single consumer is the same thread, so the queue's own
+ * take/wait guard and this entry never disagree about which thread is the
+ * waiting thread. */
+int deal_platform_on_mutator_thread(void) {
     thrd_t current = thrd_current();
     if (!deal_queue_consumer_known) {
         deal_queue_consumer = current;
         deal_queue_consumer_known = 1;
-        return;
+        return 1;
     }
-    if (!thrd_equal(deal_queue_consumer, current)) {
+    return thrd_equal(deal_queue_consumer, current) ? 1 : 0;
+}
+
+static void deal_queue_establish_consumer(void) {
+    if (deal_platform_on_mutator_thread() == 0) {
         deal_platform_fault("completion take from a thread that is not the "
                             "waiting thread");
     }

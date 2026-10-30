@@ -89,6 +89,45 @@ static deal_status (*const async_post)(deal_async_token,
                                        const deal_host_completion *) =
     deal_async_post;
 
+/* The async runtime group's own entries (ISSUE-0913): the C7 lowering surface,
+ * the host async crossing and the async export invocation surface. */
+static int (*const platform_on_mutator_thread)(void) =
+    deal_platform_on_mutator_thread;
+static deal_outcome_reference (*const async_start)(deal_fn *,
+                                                   const deal_check_input *,
+                                                   uint32_t,
+                                                   const deal_origin *) =
+    deal_async_start;
+static deal_outcome_data (*const async_await)(void *, const char *,
+                                              const deal_origin *) =
+    deal_async_await;
+static deal_outcome (*const async_export_call)(deal_fn *, const char *,
+                                               const deal_origin *) =
+    deal_async_export_call;
+static deal_outcome (*const async_export_call_host)(const deal_host_export *,
+                                                    const char *,
+                                                    const deal_origin *) =
+    deal_async_export_call_host;
+static void (*const host_present_datum)(deal_data, deal_check_input *) =
+    deal_host_present_datum;
+static deal_status (*const host_resolve_failure)(const deal_host_failure *,
+                                                 deal_error **) =
+    deal_host_resolve_failure;
+static int (*const host_is_async_function_value)(deal_fn *) =
+    deal_host_is_async_function_value;
+static deal_error *(*const host_invoke_async_value)(deal_fn *, deal_async_token,
+                                                    const deal_check_input *,
+                                                    uint32_t,
+                                                    const deal_origin *) =
+    deal_host_invoke_async_value;
+static deal_status (*const host_value_presentation)(deal_value,
+                                                    deal_check_input *,
+                                                    deal_error **) =
+    deal_host_value_presentation;
+static void (*const host_scope_push)(const deal_origin *) =
+    deal_host_scope_push;
+static void (*const host_scope_pop)(void) = deal_host_scope_pop;
+
 /* The C3 v1.5 nullish representation authority (value.h). */
 static int (*const value_is_null)(const void *) = deal_value_is_null;
 static int (*const value_is_undefined)(const void *) = deal_value_is_undefined;
@@ -156,7 +195,17 @@ void deal_abi_signature_references(void) {
             || host_handle_value == NULL || host_release == NULL
             || host_discard == NULL || host_error_from_handle == NULL
             || async_complete_value == NULL || async_complete_error == NULL
-            || async_post == NULL) {
+            || async_post == NULL || async_start == NULL
+            || async_await == NULL || async_export_call == NULL
+            || async_export_call_host == NULL
+            || platform_on_mutator_thread == NULL) {
+        referenced += 1;
+    }
+    if (host_present_datum == NULL || host_resolve_failure == NULL
+            || host_is_async_function_value == NULL
+            || host_invoke_async_value == NULL
+            || host_value_presentation == NULL || host_scope_push == NULL
+            || host_scope_pop == NULL) {
         referenced += 1;
     }
     if (project_start == NULL || project_run_main == NULL

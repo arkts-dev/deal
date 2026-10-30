@@ -95,14 +95,21 @@ static int deal_host_text_equal(const char *left, const char *right) {
 }
 
 /* The one deterministic host protocol violation (H2/H5): one stderr line and
- * exit 2, never a DEAL-visible Error. */
-static void deal_host_protocol(const char *reason) {
+ * exit 2, never a DEAL-visible Error. The `async` group reports its own
+ * unattributable completion, duplicate delivery and reentrant pump through this
+ * same published spelling, so no second protocol surface exists. */
+_Noreturn void deal_host_protocol_fault(const char *reason) {
     static const char prefix[] = "DEAL_HOST_PROTOCOL: ";
+    const char *text = reason != NULL ? reason : "unspecified";
     deal_platform_write_stderr(prefix, sizeof prefix - 1);
-    deal_platform_write_stderr(reason, strlen(reason));
+    deal_platform_write_stderr(text, strlen(text));
     deal_platform_write_stderr("\n", 1);
     deal_platform_flush_stderr();
     deal_platform_exit(2);
+}
+
+static void deal_host_protocol(const char *reason) {
+    deal_host_protocol_fault(reason);
 }
 
 /* The decimal text of one non-negative count, into a caller buffer. */
@@ -919,8 +926,21 @@ static void deal_host_keep(deal_host_crossing *crossing, void *referent) {
     }
 }
 
-/* The host group's own function-wrapper layout (H4): one host entry pointer
- * and nothing the collector traces, so its precise map is empty. */
+/*
+ * The runtime-private wrapper of one host-backed function value (H2/H4): the
+ * closed kind marker of the entry it carries and that entry. A declared
+ * synchronous export holds its `deal_host_function`; a declared async export
+ * holds its `deal_host_async_function`, which is only reachable through the
+ * token-bound async crossing of H5. The payload holds no managed pointer, so
+ * its precise map is empty and the function value's capture cell roots it.
+ */
+typedef struct {
+    int is_async;
+    deal_host_function function;
+    deal_host_async_function async_function;
+} deal_host_entry;
+
+/* The host group's own function-wrapper layout (H4). */
 static void deal_host_layouts_ensure(void) {
     static int defined;
     if (defined != 0) {
@@ -928,9 +948,29 @@ static void deal_host_layouts_ensure(void) {
     }
     defined = 1;
     static const deal_layout hostFunctionLayout = {
-        DEAL_LAYOUT_HOST_FUNCTION, 0u, sizeof(deal_host_function), NULL, 0u
+        DEAL_LAYOUT_HOST_FUNCTION, 0u, sizeof(deal_host_entry), NULL, 0u
     };
     deal_layout_define(&hostFunctionLayout);
+}
+
+/* The wrapper of one host-backed function value, or NULL when the value is not
+ * host-backed (a DEAL closure's first capture is a binding cell, whose layout
+ * identity is the cell's). */
+static const deal_host_entry *deal_host_entry_of(deal_fn *function) {
+    if (function == NULL || deal_fn_capture_count(function) < 1u) {
+        return NULL;
+    }
+    void *wrapper = deal_fn_capture(function, 0u);
+    if (wrapper == NULL
+            || deal_object_layout(wrapper) != DEAL_LAYOUT_HOST_FUNCTION) {
+        return NULL;
+    }
+    return wrapper;
+}
+
+int deal_host_is_async_function_value(deal_fn *function) {
+    const deal_host_entry *entry = deal_host_entry_of(function);
+    return entry != NULL && entry->is_async != 0 ? 1 : 0;
 }
 
 /* =========================================================================
@@ -1179,7 +1219,7 @@ static uint32_t deal_host_boundary_of(deal_descriptor *declared) {
  * another identity, a function of another signature and a class datum at a
  * position outside the class grammar all select the closed kind/identity arm
  * instead of matching by construction. */
-static void deal_host_present(deal_data datum, deal_check_input *out) {
+void deal_host_present_datum(deal_data datum, deal_check_input *out) {
     memset(out, 0, sizeof(*out));
     out->presentation = DEAL_PRESENT_DATUM;
     out->datum = datum;
@@ -1283,7 +1323,7 @@ static deal_error *deal_host_materialize_array(deal_host_crossing *crossing,
             element_value = deal_host_datum_of_referent(referent);
         }
         deal_check_input checked;
-        deal_host_present(element_value, &checked);
+        deal_host_present_datum(element_value, &checked);
         deal_check_context context;
         context.origin = &crossing->origin;
         context.parameter_index = 0;
@@ -1624,11 +1664,15 @@ static deal_error *deal_host_materialize_function(deal_host_crossing *crossing,
     }
     /* The wrapper object holds the host function; it is one managed object of
      * the host group's own layout, so the function value's capture cell roots it
-     * and the collector walks it as a reference-free object (M1, M5). */
+     * and the collector walks it as a reference-free object (M1, M5). A
+     * host-created function value always carries a synchronous entry: an async
+     * signature on it is a completion-producing function, not a token-bound
+     * async export. */
     deal_host_layouts_ensure();
     void *wrapper = deal_alloc(DEAL_LAYOUT_HOST_FUNCTION,
-        sizeof(deal_host_function));
-    memcpy(wrapper, &box->function, sizeof(deal_host_function));
+        sizeof(deal_host_entry));
+    deal_host_entry entry = {0, box->function, NULL};
+    memcpy(wrapper, &entry, sizeof(entry));
     deal_host_keep(crossing, wrapper);
     const void *cells[1];
     cells[0] = wrapper;
@@ -1923,8 +1967,11 @@ deal_outcome_reference deal_host_export_value(const deal_host_export *exported,
     if (exported == NULL || origin == NULL) {
         deal_platform_fault("host: malformed export-value call");
     }
-    if (exported->kind != DEAL_HOST_EXPORT_FUNCTION
-            || exported->function == NULL) {
+    if (!((exported->kind == DEAL_HOST_EXPORT_FUNCTION
+                && exported->is_async == 0 && exported->function != NULL)
+            || (exported->kind == DEAL_HOST_EXPORT_ASYNC_FUNCTION
+                && exported->is_async == 1
+                && exported->async_function != NULL))) {
         deal_platform_fault("host: the export value of a non-function export");
     }
     if (signature_descriptor == NULL
@@ -1937,13 +1984,15 @@ deal_outcome_reference deal_host_export_value(const deal_host_export *exported,
      * `deal_fn_create`, so a collection at that safepoint cannot reclaim it. */
     deal_root_scope_push();
     void *wrapper = deal_alloc(DEAL_LAYOUT_HOST_FUNCTION,
-        sizeof(deal_host_function));
+        sizeof(deal_host_entry));
     uint32_t held = deal_root_scope_hold(wrapper);
-    memcpy(wrapper, &exported->function, sizeof(deal_host_function));
+    deal_host_entry entry = {exported->is_async,
+        exported->function, exported->async_function};
+    memcpy(wrapper, &entry, sizeof(entry));
     const void *cells[1];
     cells[0] = wrapper;
     deal_fn *created = deal_fn_create(deal_host_function_thunk, cells, 1u,
-        signature_descriptor, 0);
+        signature_descriptor, exported->is_async);
     deal_root_scope_release(held);
     deal_root_scope_pop();
     outcome.value = created;
@@ -1984,6 +2033,48 @@ deal_status deal_failure_discard(deal_error_token token) {
         return DEAL_STATUS_PROTOCOL;
     }
     entry->consumed = 1;
+    return DEAL_OK;
+}
+
+deal_status deal_host_resolve_failure(const deal_host_failure *failure,
+                                      deal_error **out) {
+    if (failure == NULL || out == NULL) {
+        deal_platform_fault("host: malformed failure resolution");
+    }
+    deal_host_crossing *crossing = deal_host_crossing_current();
+    if (crossing == NULL) {
+        return DEAL_STATUS_OUT_OF_SCOPE;
+    }
+    if (failure->kind == DEAL_FAILURE_DEAL_ERROR) {
+        deal_host_token_entry *entry = deal_host_token_find(crossing,
+            failure->error);
+        if (entry == NULL || entry->consumed != 0) {
+            /* The token is not live in this crossing: the closed protocol
+             * status, and nothing is consumed. */
+            return DEAL_STATUS_PROTOCOL;
+        }
+        if (failure->code != NULL || failure->message != NULL) {
+            deal_host_protocol("a relayed DEAL failure carries host text");
+        }
+        entry->consumed = 1;
+        *out = entry->error;
+        return DEAL_OK;
+    }
+    if (failure->kind != DEAL_FAILURE_HOST_TEXT) {
+        deal_host_protocol("a host failure record has an unknown kind");
+    }
+    if (failure->error != 0u) {
+        deal_host_protocol("a host-authored failure carries an error token");
+    }
+    if (failure->code == NULL || failure->message == NULL) {
+        /* A required text field of the closed record is absent: the completion
+         * entry's protocol status, and nothing is materialized. */
+        return DEAL_STATUS_PROTOCOL;
+    }
+    /* Host-authored text is materialized once, with no invented arm, origin,
+     * frames or cause (R5). */
+    *out = deal_error_host_text(failure->code, failure->message,
+        failure->expected, failure->actual);
     return DEAL_OK;
 }
 
@@ -2031,12 +2122,17 @@ static deal_outcome_data deal_host_function_thunk(void *function,
     if (function == NULL) {
         deal_platform_fault("host: a function thunk without its carrier");
     }
-    void *wrapper = deal_fn_capture(function, 0u);
-    if (wrapper == NULL) {
+    const deal_host_entry *wrapped = deal_host_entry_of(function);
+    if (wrapped == NULL) {
         deal_platform_fault("host: a host function value without its wrapper");
     }
-    deal_host_function host = NULL;
-    memcpy(&host, wrapper, sizeof(host));
+    if (wrapped->is_async != 0) {
+        /* An async function value is never applied synchronously (H5): the
+         * only path is `ASYNC_START`'s token-bound crossing. */
+        deal_host_protocol_fault("a host applied an async function value"
+                                 " synchronously");
+    }
+    deal_host_function host = wrapped->function;
     if (host == NULL) {
         deal_platform_fault("host: a host function value without its entry");
     }
@@ -2404,6 +2500,175 @@ deal_outcome_data deal_host_invoke_sync(const deal_host_export *exported,
 }
 
 /* =========================================================================
+ * The host async crossing (H2/H5, `HostCallAsync`)
+ * ========================================================================= */
+
+/* The typed-boundary actual token of one host carrier presented at the host
+ * async return position (H5's `ASYNC_OPERATION_HANDLE` actual projection): the
+ * closed token of the carrier's own kind, read from the carrier's presentation
+ * so a malformed graph still projects its kind and never fabricates data. */
+static const char *deal_host_shape_token(deal_host_box *box, void *referent) {
+    if (box != NULL) {
+        switch (box->kind) {
+        case DEAL_HOST_BOX_MISSING:
+            return "undefined";
+        case DEAL_HOST_BOX_NOTHING:
+            return "nothing";
+        case DEAL_HOST_BOX_NULL:
+            return "null";
+        case DEAL_HOST_BOX_UNDEFINED:
+            return "undefined";
+        case DEAL_HOST_BOX_BOOLEAN:
+            return "boolean";
+        case DEAL_HOST_BOX_NUMBER:
+            return "number";
+        case DEAL_HOST_BOX_STRING:
+            return "string";
+        case DEAL_HOST_BOX_INVALID_UNICODE:
+            return "invalid-unicode";
+        case DEAL_HOST_BOX_ARRAY:
+            return "array";
+        case DEAL_HOST_BOX_RECORD:
+            return "table";
+        case DEAL_HOST_BOX_CLASS:
+        case DEAL_HOST_BOX_CLASS_ATOM:
+            return box->bytes != NULL ? box->bytes : "table";
+        case DEAL_HOST_BOX_FUNCTION:
+            return "function";
+        case DEAL_HOST_BOX_ASYNC_OPERATION:
+            return "async-operation";
+        }
+        deal_platform_fault("host: a boxed carrier names no closed value kind");
+    }
+    deal_check_input checked;
+    deal_host_present_datum(deal_host_datum_of_referent(referent), &checked);
+    return deal_check_token(&checked);
+}
+
+/* The closed `ASYNC_OPERATION_HANDLE` arm of one host async return position
+ * (H5): the arm's own template instantiated with its typed-boundary actual
+ * projection, its pinned `async operation` expected field and the async call's
+ * own origin. */
+static deal_error *deal_host_async_shape_arm(const char *actual,
+                                             const deal_origin *origin) {
+    deal_arm_parameter parameter = {"actual", actual};
+    return deal_error_materialize(DEAL_ARM_ID_ASYNC_SHAPE, &parameter, 1u,
+        "async operation", actual, origin, NULL);
+}
+
+void deal_host_scope_push(const deal_origin *origin) {
+    (void)deal_host_crossing_push(origin);
+}
+
+void deal_host_scope_pop(void) {
+    deal_host_crossing *crossing = deal_host_crossing_current();
+    if (crossing == NULL) {
+        deal_platform_fault("host: end of a non-active scope");
+    }
+    deal_host_crossing_require_tokens_consumed(crossing);
+    deal_host_crossing_pop(crossing);
+}
+
+deal_status deal_host_value_presentation(deal_value value,
+                                         deal_check_input *out,
+                                         deal_error **cause) {
+    if (out == NULL) {
+        deal_platform_fault("host: null presentation out-parameter");
+    }
+    if (cause != NULL) {
+        *cause = NULL;
+    }
+    deal_host_crossing *crossing = deal_host_crossing_current();
+    if (crossing == NULL) {
+        return DEAL_STATUS_OUT_OF_SCOPE;
+    }
+    if (deal_host_is_untyped_array(crossing, value)) {
+        return DEAL_STATUS_KIND;
+    }
+    deal_host_memo memo = {0};
+    deal_status status = deal_host_classify_into(crossing, value, &memo, out,
+        cause);
+    if (status == DEAL_OK && out->presentation == DEAL_PRESENT_MISSING) {
+        /* The absence marker is presence metadata, never a completion value. */
+        status = DEAL_STATUS_KIND;
+    }
+    deal_host_memo_release(&memo);
+    return status;
+}
+
+deal_error *deal_host_invoke_async_value(deal_fn *callee,
+                                         deal_async_token token,
+                                         const deal_check_input *arguments,
+                                         uint32_t argument_count,
+                                         const deal_origin *origin) {
+    if (callee == NULL || origin == NULL) {
+        deal_platform_fault("host: malformed async crossing");
+    }
+    if (arguments == NULL && argument_count != 0u) {
+        deal_platform_fault("host: an async crossing without its arguments");
+    }
+    const deal_host_entry *wrapped = deal_host_entry_of(callee);
+    if (wrapped == NULL || wrapped->is_async == 0
+            || wrapped->async_function == NULL) {
+        deal_platform_fault("host: the async crossing of a non-async carrier");
+    }
+    if (deal_fn_is_async(callee) == 0) {
+        deal_platform_fault("host: the async crossing of a synchronous"
+                            " signature");
+    }
+    deal_host_crossing *crossing = deal_host_crossing_push(origin);
+    deal_value *carriers = NULL;
+    if (argument_count != 0u) {
+        carriers = deal_platform_allocate(deal_platform_checked_multiply(
+            argument_count, sizeof(*carriers)));
+        if (carriers == NULL) {
+            deal_platform_fault("host: argument carrier allocation failed");
+        }
+    }
+    for (uint32_t index = 0; index < argument_count; index += 1u) {
+        if (deal_host_carrier_of_input(&arguments[index], &carriers[index])
+                != DEAL_OK) {
+            deal_platform_fault("host: argument position outside the declared"
+                                " domain");
+        }
+    }
+    deal_host_result result =
+        wrapped->async_function(token, carriers, argument_count);
+    deal_platform_release(carriers);
+    if (result.failed != 0) {
+        deal_error *error = deal_host_admit_failure(crossing, &result.failure);
+        deal_host_crossing_require_tokens_consumed(crossing);
+        deal_host_crossing_pop(crossing);
+        return error;
+    }
+    /* The token rule precedes the return check (H2). */
+    deal_host_crossing_require_tokens_consumed(crossing);
+    deal_host_box *box = NULL;
+    void *referent = NULL;
+    if (deal_host_resolve(result.value, &box, &referent) != DEAL_OK) {
+        /* A carrier of another crossing, an unknown slot or a stale generation
+         * is a host protocol defect, never a DEAL arm. */
+        deal_host_protocol("a host async export returned a foreign carrier");
+    }
+    if (box == NULL || box->kind != DEAL_HOST_BOX_ASYNC_OPERATION) {
+        /* The closed shape arm (H5): the returned carrier is not an async
+         * operation, so the caller abandons the operation. */
+        deal_error *error = deal_host_async_shape_arm(
+            deal_host_shape_token(box, referent), origin);
+        deal_host_crossing_pop(crossing);
+        return error;
+    }
+    if (box->token != token) {
+        /* A substituted operation would break the token-to-record binding, so
+         * it is the deterministic protocol failure (H5), never a DEAL arm. */
+        deal_host_protocol("a host async export returned a substituted"
+                           " operation token");
+    }
+    deal_host_crossing_pop(crossing);
+    return NULL;
+}
+
+/* =========================================================================
  * The value surface: construction, inspection and access (H2, R11)
  * ========================================================================= */
 
@@ -2644,6 +2909,26 @@ deal_status deal_function_new(deal_host_function fn,
     box->length = length;
     box->signature = box->bytes;
     box->is_async = signatureDescriptor[0] == 'a' ? 1 : 0;
+    return deal_host_box_publish(box, out);
+}
+
+deal_status deal_async_operation(deal_async_token token, deal_value *out) {
+    if (out == NULL) {
+        deal_platform_fault("host: null out-parameter");
+    }
+    if (token == 0) {
+        /* The token counter never issues zero and the runtime never accepts a
+         * host-chosen token, so zero names no operation at all. */
+        return DEAL_STATUS_KIND;
+    }
+    deal_host_crossing *crossing = deal_host_crossing_current();
+    if (crossing == NULL) {
+        return DEAL_STATUS_OUT_OF_SCOPE;
+    }
+    deal_host_box *box = deal_host_box_new(crossing,
+        DEAL_HOST_BOX_ASYNC_OPERATION);
+    box->token = token;
+    box->is_async = 1;
     return deal_host_box_publish(box, out);
 }
 
@@ -3544,7 +3829,7 @@ deal_status deal_handle_value(deal_handle handle, const char *descriptorText,
         }
         deal_descriptor *declared = deal_descriptor_intern(descriptorText);
         deal_check_input checked;
-        deal_host_present(entry->value, &checked);
+        deal_host_present_datum(entry->value, &checked);
         deal_check_context context;
         context.origin = &crossing->origin;
         context.parameter_index = 0;
