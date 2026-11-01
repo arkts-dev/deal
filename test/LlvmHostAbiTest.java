@@ -2616,6 +2616,28 @@ public final class LlvmHostAbiTest {
                 + level + ": " + stressed.describe());
             checkEq("", stressed.stdout(), "carrier regressions stress stdout");
             checkEq("", stressed.stderr(), "carrier regressions stress stderr");
+            Path product = root.resolve("sanitized-" + level);
+            var plan = deal.toolchain.NativeToolchain.plan(
+                new deal.toolchain.NativeBuildRequest(root.resolve("out"),
+                    product, level, List.of(host), null));
+            List<String> command = new ArrayList<>(plan.command());
+            command.addAll(1, NativeCompiler.SANITIZER_FLAGS);
+            deal.toolchain.NativeToolchain.build(new deal.toolchain.NativeBuildPlan(
+                plan.request(), plan.environment(), plan.scratchDirectory(),
+                plan.registryUnit(), plan.driverUnit(), plan.registrySource(),
+                plan.driverSource(), plan.entryModule(), plan.runtimeUnits(),
+                plan.hostUnits(), command));
+            for (String stress : List.of("0", "1")) {
+                Map<String, String> environment = new LinkedHashMap<>(
+                    NativeCompiler.sanitizerEnvironment());
+                environment.put("DEAL_GC_STRESS", stress);
+                NativeCompiler.Result instrumented = NativeCompiler.runSanitized(
+                    product, root, environment).result();
+                checkEq(0, instrumented.exitCode(), "sanitized carriers -O"
+                    + level + " stress=" + stress + ": " + instrumented.describe());
+                checkEq("", instrumented.stdout(), "sanitized carriers stdout");
+                checkEq("", instrumented.stderr(), "sanitized carriers stderr");
+            }
         }
     }
 
