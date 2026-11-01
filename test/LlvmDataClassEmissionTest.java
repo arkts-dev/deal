@@ -1693,6 +1693,39 @@ public final class LlvmDataClassEmissionTest {
         fixtures.put("nullish", nullishFixture());
         fixtures.put("optional-unknown", optionalUnknownFixture());
         fixtures.put("narrowing", narrowingFixture());
+        fixtures.put("callable-storage", """
+            class Holder { run: () => number; }
+            function make(n: number): () => number {
+              function value(): number { return n; }
+              return value;
+            }
+            function check(ok: boolean): void {
+              if (!ok) { throw {code: "TEST_FAIL", message: "callable storage"}; }
+            }
+            export function main(): null {
+              let functions: (() => number)[] = [];
+              for (let n of [1, 2, 3]) {
+                function capture(): number { return n; }
+                functions[functions.length] = capture;
+              }
+              check(functions[0]() === 1);
+              check(functions[1]() === 2);
+              check(functions[2]() === 3);
+              functions[1] = make(9);
+              let total: number = 0;
+              for (let f of functions) { total = total + f(); }
+              check(total === 13);
+              let holder: Holder = {run: make(7)};
+              check(holder.run() === 7);
+              holder.run = functions[0];
+              check(holder.run() === 1);
+              let alias: unknown = functions;
+              let restored: (() => number)[] = alias as (() => number)[];
+              check(restored === functions);
+              check(restored[1]() === 9);
+              throw {code: "DONE", message: "callable-storage"};
+            }
+            """);
         Path jsonPublished = compileProject(scratch, "json-structure",
             jsonFixture());
         String jsonModule = Files.readString(jsonPublished.resolve("main.ll"),
@@ -1729,6 +1762,7 @@ public final class LlvmDataClassEmissionTest {
             + "|{\"name\":\"u\"}");
         messages.put("optional-unknown", "value|t");
         messages.put("narrowing", "narrowing");
+        messages.put("callable-storage", "callable-storage");
         for (Map.Entry<String, String> fixture : fixtures.entrySet()) {
             Path published = compileProject(scratch, fixture.getKey(),
                 fixture.getValue());

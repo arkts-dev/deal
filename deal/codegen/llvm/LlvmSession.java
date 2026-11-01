@@ -254,7 +254,8 @@ final class LlvmSession extends EmitterSessionBase {
                     : ELEMENT_LAYOUT_NULLISH_BOOLEAN;
             }
             default -> {
-                if (LlvmTypeMapper.isManagedPointer(element)) {
+                if (LlvmTypeMapper.isManagedPointer(element)
+                        || element instanceof RuntimeDescriptor.Func) {
                     yield ELEMENT_LAYOUT_REFERENCE;
                 }
                 throw new IllegalStateException("the array element type '"

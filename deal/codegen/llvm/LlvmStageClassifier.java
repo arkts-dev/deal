@@ -514,7 +514,8 @@ public final class LlvmStageClassifier {
                 || element instanceof RuntimeDescriptor.Undefined) {
             return true;
         }
-        if (LlvmTypeMapper.isManagedPointer(element)) {
+        if (LlvmTypeMapper.isManagedPointer(element)
+                || element instanceof RuntimeDescriptor.Func) {
             return true;
         }
         return element instanceof RuntimeDescriptor.Nullable nullable
