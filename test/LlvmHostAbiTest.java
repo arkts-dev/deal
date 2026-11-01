@@ -2568,6 +2568,7 @@ public final class LlvmHostAbiTest {
         Files.writeString(root.resolve("deal.json"), DEAL_JSON);
         Files.writeString(root.resolve("bindings/probe.d.deal"), """
             export function aliases(a: unknown[], r: Record<string, unknown>): unknown;
+            export function errorFields(e: Error): Error;
             """);
         Files.writeString(root.resolve("src/main.deal"), """
             import * as p from "host/probe";
@@ -2590,6 +2591,10 @@ public final class LlvmHostAbiTest {
               check((child.value as number) === 7);
               check((child.later as number) === 7);
               check(!Object.hasOwn(child, "deleted"));
+              let e: Error = {code: "A", message: "old"};
+              check(p.errorFields(e) === e);
+              check(e.code === "B");
+              check(e.message === "B");
               return null;
             }
             """);

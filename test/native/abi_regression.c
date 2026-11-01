@@ -46,9 +46,32 @@ static deal_host_result aliases(const deal_value *args, size_t argc) {
     return result;
 }
 
+static deal_host_result error_fields(const deal_value *args, size_t argc) {
+    (void)argc;
+    deal_host_result result = {0};
+    deal_value text, borrowed, wrong, absent, invalid;
+    const unsigned char surrogate[] = {0xed, 0xa0, 0x80};
+    REQUIRE(deal_string_new("B", 1, &text));
+    REQUIRE(deal_field_set(args[0], "code", text));
+    REQUIRE(deal_field_set(args[0], "message", text));
+    REQUIRE(deal_field_get(args[0], "message", &borrowed));
+    REQUIRE(deal_field_set(args[0], "code", borrowed));
+    REQUIRE(deal_number(3, &wrong));
+    REQUIRE(deal_absent(&absent));
+    REQUIRE(deal_string_new(surrogate, sizeof surrogate, &invalid));
+    EXPECT(deal_field_set(args[0], "code", wrong) == DEAL_STATUS_KIND);
+    EXPECT(deal_field_set(args[0], "message", absent) == DEAL_STATUS_KIND);
+    EXPECT(deal_field_set(args[0], "message", invalid) == DEAL_STATUS_KIND);
+    EXPECT(deal_field_set(args[0], "other", text) == DEAL_STATUS_UNKNOWN_FIELD);
+    result.value = args[0];
+    return result;
+}
+
 static const deal_host_export exports[] = {
     {"aliases", "([unknown],record)->unknown", DEAL_HOST_EXPORT_FUNCTION,
-     0, aliases, NULL, NULL}
+     0, aliases, NULL, NULL},
+    {"errorFields", "(Error)->Error", DEAL_HOST_EXPORT_FUNCTION,
+     0, error_fields, NULL, NULL}
 };
 const deal_host_module deal_host_module_probe = {
     DEAL_HOST_SPECIFIER_PROBE, exports, sizeof exports / sizeof exports[0],

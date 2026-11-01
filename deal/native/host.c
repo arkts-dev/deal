@@ -3663,25 +3663,27 @@ deal_status deal_field_set(deal_value object, const char *field,
     if (access == NULL) {
         /* The builtin Error instance's two declared fields are strings (C3). */
         deal_error *error = instance;
-        deal_host_box *inner = NULL;
-        void *referent = NULL;
-        status = deal_host_resolve(value, &inner, &referent);
-        if (status != DEAL_OK) {
-            return status;
+        int code = deal_host_text_equal(field, "code");
+        int message = deal_host_text_equal(field, "message");
+        if (code == 0 && message == 0) {
+            return DEAL_STATUS_UNKNOWN_FIELD;
         }
-        if (inner != NULL || referent == NULL
-                || deal_object_layout(referent) != DEAL_LAYOUT_STRING) {
-            return DEAL_STATUS_KIND;
+        deal_host_memo memo = {0};
+        deal_check_input checked;
+        status = deal_host_classify(deal_host_crossing_current(), value,
+            &memo, &checked);
+        if (status != DEAL_OK || checked.presentation != DEAL_PRESENT_DATUM
+                || checked.datum.tag != DEAL_DATA_STRING) {
+            deal_host_memo_release(&memo);
+            return status == DEAL_OK ? DEAL_STATUS_KIND : status;
         }
-        if (deal_host_text_equal(field, "code")) {
-            deal_error_set_code_value(error, referent);
-            return DEAL_OK;
+        if (code != 0) {
+            deal_error_set_code_value(error, checked.datum.reference);
+        } else {
+            deal_error_set_message_value(error, checked.datum.reference);
         }
-        if (deal_host_text_equal(field, "message")) {
-            deal_error_set_message_value(error, referent);
-            return DEAL_OK;
-        }
-        return DEAL_STATUS_UNKNOWN_FIELD;
+        deal_host_memo_release(&memo);
+        return DEAL_OK;
     }
     long position = deal_host_class_field_index(access->declared, field);
     if (position < 0) {
