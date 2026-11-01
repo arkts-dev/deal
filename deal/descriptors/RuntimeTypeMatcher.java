@@ -315,20 +315,7 @@ public final class RuntimeTypeMatcher {
         return "unknown";
     }
 
-    /** The JVM-pinned unpaired-surrogate scan (mirrors the emitted
-     * {@code __hasUnpairedSurrogate} helper byte-for-byte in behavior). */
     private static boolean hasUnpairedSurrogate(String text) {
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (Character.isHighSurrogate(c)) {
-                if (i + 1 >= text.length() || !Character.isLowSurrogate(text.charAt(i + 1))) {
-                    return true;
-                }
-                i++;
-            } else if (Character.isLowSurrogate(c)) {
-                return true;
-            }
-        }
-        return false;
+        return deal.semantic.ir.UnicodeScalars.carrierDefect(text) != null;
     }
 }

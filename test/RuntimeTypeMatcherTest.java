@@ -277,6 +277,20 @@ public class RuntimeTypeMatcherTest {
     static void testStringRow() {
         System.out.println("-- string row --");
 
+        for (String valid : new String[] {"", "hello", "\uD800\uDC00",
+                "\uDBFF\uDFFF", "a\uD83D\uDE00z", "\uFFFD"}) {
+            assertPass("string", valid, "scalar sequence matches");
+            check(deal.codegen.jvm.JvmJson.validScalars(valid),
+                "JSON accepts the same scalar sequence");
+        }
+        for (String invalid : new String[] {"\uD800", "\uDC00", "a\uD800b",
+                "\uD800\uD800\uDC00", "\uDC00\uD800", "\uDBFF\uDFFF\uDC00"}) {
+            assertFailure("string", invalid, "E8001",
+                "expected string, got string with unpaired surrogate code units",
+                "malformed scalar sequence rejects");
+            check(!deal.codegen.jvm.JvmJson.validScalars(invalid),
+                "JSON rejects the same malformed scalar sequence");
+        }
         assertPass("string", "hello", "string passes");
         assertPass("string", "", "empty string passes");
         assertPass("string", "\uD83D\uDE00", "well-formed surrogate pair passes");

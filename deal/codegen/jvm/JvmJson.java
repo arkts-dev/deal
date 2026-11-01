@@ -553,18 +553,7 @@ public final class JvmJson {
      * carrier is UTF-8-decoded by the runtime already).
      */
     public static boolean validScalars(String text) {
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (Character.isHighSurrogate(c)) {
-                if (i + 1 >= text.length() || !Character.isLowSurrogate(text.charAt(i + 1))) {
-                    return false;
-                }
-                i++;
-            } else if (Character.isLowSurrogate(c)) {
-                return false;
-            }
-        }
-        return true;
+        return deal.semantic.ir.UnicodeScalars.carrierDefect(text) == null;
     }
 
     // =========================================================================
