@@ -133,6 +133,7 @@ luajit test_runtime_number.lua'
   'fg|=== Running C11 Descriptor / Typed Boundary / Class Construction / Error Materialization Tests (ISSUE-0907) ===|java -ea -cp build deal.test.NativeBoundaryErrorsTest'
   'fg|=== Running C11 JSON Runtime / Standard Library Dispatch Tests (ISSUE-0908) ===|java -ea -cp build deal.test.NativeJsonStdlibTest'
   'fg|=== Running Native GC Stress Suite (ISSUE-0914 G6) ===|java -ea -cp build deal.test.LlvmGcStressTest'
+  'fg|=== Running LLVM Two-Module Debug Info and Cross-Module Diagnostics (ISSUE-0914 G7/C8) ===|java -ea -cp build deal.test.LlvmDebugInfoTest'
 )
 
 # No record may carry a warning, skip or fallback line: a missing required tool

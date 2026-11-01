@@ -782,10 +782,93 @@ static deal_host_result malformed_impl(deal_async_token token,
 }
 
 /* =========================================================================
+ * The delivered-completion case (case 15, M5 Verification 11)
+ * ========================================================================= */
+
+#if DEAL_HOST_ASYNC_CASE == 15
+/* The open-operation record must root a *delivered* completion until the
+ * consuming AWAIT reads it (M5 `OpenOperationRecord`, H5). The service hook
+ * completes the token with a managed class instance, then re-enters the DEAL
+ * callback the program armed, whose body runs one complete collection while the
+ * record still holds the delivered value and the pump has not re-checked the
+ * operation yet. A record that does not root its completion slot loses the
+ * instance at that collection. */
+static deal_async_token record_token;
+static int record_armed;
+static deal_handle retained_callback;
+
+static deal_host_result arm_impl(const deal_value *args, size_t argc) {
+  deal_value carrier;
+  if (argc != 1u || deal_retain(args[0], &retained_callback) != DEAL_OK) {
+    return failure_result("E_HOST_RECORD",
+        "arming the collection callback failed");
+  }
+  if (deal_null(&carrier) != DEAL_OK) {
+    return failure_result("E_HOST_RECORD", "the null result failed");
+  }
+  record_armed = 1;
+  return ok_result(carrier);
+}
+
+static deal_host_result pending_managed_impl(deal_async_token token,
+                                             const deal_value *args,
+                                             size_t argc) {
+  (void)args;
+  (void)argc;
+  record_token = token;
+  record_armed = 1;
+  return operation_result(token);
+}
+
+static void record_failure(const char *message) {
+  deal_host_completion failure;
+  memset(&failure, 0, sizeof failure);
+  failure.kind = DEAL_COMPLETION_ERROR;
+  failure.as.error.code = "E_HOST_RECORD";
+  failure.as.error.message = message;
+  (void)deal_async_post(record_token, &failure);
+  record_token = 0;
+}
+#endif
+
+/* =========================================================================
  * The service hook (H5)
  * ========================================================================= */
 
-#if DEAL_HOST_ASYNC_CASE == 1 || DEAL_HOST_ASYNC_CASE == 2 \
+#if DEAL_HOST_ASYNC_CASE == 15
+static void module_service(void) {
+  if (record_armed == 0 || record_token == 0) {
+    return;
+  }
+  deal_async_token token = record_token;
+  record_token = 0;
+  deal_value atom;
+  deal_value payload;
+  deal_value number;
+  if (deal_class_atom(DEAL_HOST_CLASS_ATOM_ASYNC_PAYLOAD, &atom) != DEAL_OK
+      || deal_class_new(atom, &payload) != DEAL_OK
+      || deal_number(42.0, &number) != DEAL_OK
+      || deal_field_set(payload, "value", number) != DEAL_OK) {
+    record_failure("the delivered completion construction failed");
+    return;
+  }
+  if (deal_async_complete_value(token, payload) != DEAL_OK) {
+    record_failure("the delivered completion failed");
+    return;
+  }
+  /* Re-enter DEAL *after* the completion is stored in the open-operation
+   * record and *before* the pump re-checks the operation: the callback runs one
+   * complete collection, so it observes exactly the delivery window. */
+  deal_value callback;
+  deal_host_result applied;
+  memset(&applied, 0, sizeof applied);
+  if (deal_handle_value(retained_callback, "()->null", &callback) != DEAL_OK
+      || deal_apply(callback, NULL, 0u, &applied) != DEAL_OK
+      || applied.failed != 0) {
+    record_failure("the collection callback failed");
+  }
+}
+#elif DEAL_HOST_ASYNC_CASE == 1 || DEAL_HOST_ASYNC_CASE == 2 \
     || DEAL_HOST_ASYNC_CASE == 9 || DEAL_HOST_ASYNC_CASE == 10
 static void module_service(void) {
   if (pending_token == 0 || pending_done != 0) {
@@ -871,6 +954,23 @@ static void module_service(void) {
 }
 #endif
 
+#if DEAL_HOST_ASYNC_CASE == 15
+const deal_host_field deal_host_fields_async_Payload[] = {
+    {"value", "number", 0},
+};
+
+const deal_host_class deal_host_classes_async[] = {
+    {DEAL_HOST_CLASS_ATOM_ASYNC_PAYLOAD, deal_host_fields_async_Payload,
+     sizeof deal_host_fields_async_Payload
+         / sizeof deal_host_fields_async_Payload[0]},
+};
+
+const deal_host_class deal_host_class_async_Payload = {
+    DEAL_HOST_CLASS_ATOM_ASYNC_PAYLOAD, deal_host_fields_async_Payload,
+    sizeof deal_host_fields_async_Payload
+        / sizeof deal_host_fields_async_Payload[0]};
+#endif
+
 const deal_host_export deal_host_exports_async[] = {
     {"applyAsync", "(async()->number)->number", DEAL_HOST_EXPORT_FUNCTION, 0,
      apply_async_impl, NULL, NULL},
@@ -920,15 +1020,29 @@ const deal_host_export deal_host_exports_async[] = {
      NULL, ingress_impl, NULL},
     {"armFailure", "(()->number)->number", DEAL_HOST_EXPORT_FUNCTION, 0,
      arm_failure_impl, NULL, NULL},
+#if DEAL_HOST_ASYNC_CASE == 15
+    {"Payload", "@$external/host/async/Payload", DEAL_HOST_EXPORT_CLASS, 0,
+     NULL, NULL, &deal_host_classes_async[0]},
+    {"arm", "(()->null)->null", DEAL_HOST_EXPORT_FUNCTION, 0, arm_impl, NULL,
+     NULL},
+    {"pendingManaged", "async()->@$external/host/async/Payload",
+     DEAL_HOST_EXPORT_ASYNC_FUNCTION, 1, NULL, pending_managed_impl, NULL},
+#endif
 };
 
 const deal_host_module deal_host_module_async = {
     DEAL_HOST_SPECIFIER_ASYNC, deal_host_exports_async,
     sizeof deal_host_exports_async / sizeof deal_host_exports_async[0],
+#if DEAL_HOST_ASYNC_CASE == 15
+    deal_host_classes_async,
+    sizeof deal_host_classes_async / sizeof deal_host_classes_async[0],
+#else
     NULL, 0u,
+#endif
 #if DEAL_HOST_ASYNC_CASE == 1 || DEAL_HOST_ASYNC_CASE == 2 \
     || DEAL_HOST_ASYNC_CASE == 9 || DEAL_HOST_ASYNC_CASE == 10 \
-    || DEAL_HOST_ASYNC_CASE == 12 || DEAL_HOST_ASYNC_CASE == 13
+    || DEAL_HOST_ASYNC_CASE == 12 || DEAL_HOST_ASYNC_CASE == 13 \
+    || DEAL_HOST_ASYNC_CASE == 15
     module_service
 #else
     NULL

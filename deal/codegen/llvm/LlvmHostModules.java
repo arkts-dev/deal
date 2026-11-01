@@ -76,16 +76,33 @@ final class LlvmHostModules {
             fields = List.copyOf(fields);
         }
 
-        /** The emitted instance layout of one declared host class (H1/R2). */
-        ClassLayout layout(String specifier) {
+        /**
+         * The emitted instance layout of one declared host class (H1/R2). The
+         * identity is the declaration surface's own canonical class
+         * descriptor text, so the emitted layout is keyed by exactly the atom
+         * the lowered project and the boundary projections carry; the raw
+         * specifier spelling is only the fallback for a declaration whose
+         * class is not itself an export.
+         */
+        ClassLayout layout() {
             List<ClassLayout.FieldLayout> declaredFields = new ArrayList<>();
             for (Field field : fields) {
                 declaredFields.add(new ClassLayout.FieldLayout(field.name(),
                     field.declared(), !field.optional(),
                     ConstructionProvider.HOST_DECLARATION));
             }
-            return new ClassLayout(new ClassId(externalModulePath(specifier),
-                name), declaredFields);
+            return new ClassLayout(classId(), declaredFields);
+        }
+
+        /** The declared class's own identity. */
+        ClassId classId() {
+            RuntimeDescriptor descriptor =
+                RuntimeDescriptor.parseCanonicalText(identity);
+            if (descriptor instanceof RuntimeDescriptor.Class classType) {
+                return classType.classId();
+            }
+            throw new IllegalStateException("the declared host class identity '"
+                + identity + "' is not a class descriptor");
         }
     }
 
@@ -222,11 +239,12 @@ final class LlvmHostModules {
                     // projection never defaults a missing fact.
                     continue;
                 }
+                List<Export> exports = exportsOf(declaration, declarationFacts);
                 facts.add(new Module(declaration, payload.rawSpecifier(),
                     externalModulePath(payload.rawSpecifier()),
-                    stemOf(payload.rawSpecifier()),
-                    exportsOf(declaration, declarationFacts),
-                    classesOf(payload.rawSpecifier(), declarationFacts)));
+                    stemOf(payload.rawSpecifier()), exports,
+                    classesOf(payload.rawSpecifier(), declarationFacts,
+                        exports)));
             }
         }
         return new LlvmHostModules(facts);
@@ -250,13 +268,27 @@ final class LlvmHostModules {
 
     /** The declaration's declared classes in declaration order. */
     private static List<DeclaredClass> classesOf(String specifier,
-            HostDeclarationSurface.DeclarationFacts facts) {
+            HostDeclarationSurface.DeclarationFacts facts, List<Export> exports) {
         List<DeclaredClass> classes = new ArrayList<>();
         for (Map.Entry<String, HostDeclarationSurface.DeclaredClass> entry
                 : facts.classes().entrySet()) {
             HostDeclarationSurface.DeclaredClass declared = entry.getValue();
-            String identity = "@" + externalModulePath(specifier) + "/"
-                + entry.getKey();
+            // The declaration surface's class export carries the canonical
+            // class descriptor text the lowered project uses for the same
+            // declaration; the identity must be that text, never a second
+            // spelling derived from the raw specifier.
+            String identity = null;
+            for (Export exported : exports) {
+                if (exported.name().equals(entry.getKey())
+                        && exported.isClass()) {
+                    identity = exported.descriptor();
+                    break;
+                }
+            }
+            if (identity == null) {
+                identity = "@" + externalModulePath(specifier) + "/"
+                    + entry.getKey();
+            }
             List<Field> fields = new ArrayList<>();
             for (HostDeclarationSurface.DeclaredField field
                     : declared.fields()) {
@@ -281,7 +313,7 @@ final class LlvmHostModules {
         List<ClassLayout> layouts = new ArrayList<>();
         for (Module module : modules) {
             for (DeclaredClass declared : module.classes()) {
-                layouts.add(declared.layout(module.specifier()));
+                layouts.add(declared.layout());
             }
         }
         return layouts;

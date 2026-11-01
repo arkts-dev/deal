@@ -659,7 +659,7 @@ public final class LlvmStageClassifier {
                 }
                 return Optional.empty();
             }
-            case LOCAL -> {
+            case LOCAL, SHARED_FACTORY, HOST_DECLARATION -> {
                 for (deal.semantic.ir.ClassLayout.FieldLayout field
                         : created.layout().fields()) {
                     boolean supplied = created.providedFields().stream()
@@ -685,9 +685,8 @@ public final class LlvmStageClassifier {
             default -> {
                 return Optional.of(reject(op, "the construction provider "
                     + created.constructionProvider()
-                    + ": a shared-factory, retained-ABI or host-declared class"
-                    + " construction belongs to the module-export and host"
-                    + " stages"));
+                    + ": a retained-ABI class construction belongs to the"
+                    + " module-export stage"));
             }
         }
     }
@@ -931,8 +930,11 @@ public final class LlvmStageClassifier {
         }
         RuntimeDescriptor actual = loweredTypeOf(unit, boundary.input());
         if (actual == null) {
-            return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
-                + " whose static operand type is unknown"));
+            // The operand carries no recorded static type (the lowered async
+            // completion position): the emitter renders the boundary as the
+            // one descriptor-driven runtime check at the boundary's own
+            // origin, which is exactly the untyped-operand case below (R4).
+            actual = RuntimeDescriptor.Unknown.INSTANCE;
         }
         if (declared instanceof RuntimeDescriptor.Void) {
             // A result-only `void` completion projects to `undefined` through
@@ -944,6 +946,16 @@ public final class LlvmStageClassifier {
                 return Optional.of(reject(op, "BOUNDARY " + boundary.kind()
                     + " over " + LlvmTypeMapper.unsupported(declared)));
             }
+            return Optional.empty();
+        }
+        if (actual instanceof RuntimeDescriptor.Unknown
+                && LlvmTypeMapper.hasDatumForm(declared)
+                && LlvmTypeMapper.isStagedRepresentation(declared)) {
+            // An untyped operand at a declared position is the one checked
+            // boundary the staged representation renders (R4): the value is
+            // carried as the persistent datum, the declared descriptor is
+            // interned and checked at the boundary's own origin, and the
+            // admitted datum is projected at the declared representation.
             return Optional.empty();
         }
         if (boundary.kind() != BoundaryKind.ASSERTION) {

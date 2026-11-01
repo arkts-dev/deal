@@ -2621,6 +2621,7 @@ final class LlvmFunctionEmitter {
     private static boolean thunkBoxable(RuntimeDescriptor descriptor) {
         return descriptor instanceof RuntimeDescriptor.Void
             || descriptor instanceof RuntimeDescriptor.Null
+            || descriptor instanceof RuntimeDescriptor.Undefined
             || LlvmTypeMapper.representationOf(descriptor).isPresent()
             || (descriptor instanceof RuntimeDescriptor.Nullable nullable
                 && nullableBoxable(nullable));
@@ -4000,6 +4001,19 @@ final class LlvmFunctionEmitter {
                     .append(index).append(" = bitcast i8* %checkedvalue")
                     .append(index).append(" to %struct.deal_string*\n");
             }
+            case RuntimeDescriptor.Null _, RuntimeDescriptor.Undefined _ -> {
+                // A static singleton parameter is the distinct runtime
+                // singleton pointer the boxed presentation carries (C3): the
+                // check admits exactly that tag, and the body receives the
+                // same singleton the caller's datum names.
+                thunkSignatureCheck(out, index, descriptor);
+                String singleton = descriptor instanceof RuntimeDescriptor.Null
+                    ? "deal_null_singleton" : "deal_undefined_singleton";
+                session.referenceExternalGlobal(singleton);
+                out.append(LlvmIrPrinter.indent(1)).append("%parameter")
+                    .append(index).append(" = load i8*, i8** @")
+                    .append(singleton).append('\n');
+            }
             case RuntimeDescriptor.Unknown _ -> {
                 thunkSignatureCheck(out, index, descriptor);
                 out.append(LlvmIrPrinter.indent(1)).append("%parameter")
@@ -5336,14 +5350,20 @@ final class LlvmFunctionEmitter {
             (KindPayload.ClassNewPayload) op.payload();
         switch (payload.constructionProvider()) {
             case BUILTIN_ERROR -> emitBuiltinErrorNew(op, payload);
-            case LOCAL -> emitLocalClassNew(op, payload);
+            // The project emits one module for the whole project closure, so
+            // an in-project shared factory and a host declaration's
+            // structural layout are the same instance record the local arm
+            // constructs (H1: construct from the declaration's layout, never
+            // from host hooks; C2: the class plans are per-project static
+            // data). The retained-ABI arm stays unrendered.
+            case LOCAL, SHARED_FACTORY, HOST_DECLARATION ->
+                emitLocalClassNew(op, payload);
             default -> throw new deal.codegen.SharedEmissionFailure(
                 "LlvmSemanticEmitter rejects the construction provider "
                     + payload.constructionProvider() + " of "
                     + payload.classId().text()
-                    + ": the emitted construction of a shared-factory, retained"
-                    + " ABI or host-declared class belongs to the module-export"
-                    + " and host stages",
+                    + ": the emitted construction of a retained-ABI class"
+                    + " belongs to the module-export stage",
                 op.origin().span().range());
         }
     }

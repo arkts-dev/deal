@@ -147,7 +147,7 @@ public final class LlvmProjectEmissionTest {
             testDeterminism(scratch, published, module);
             testStaleAndFailedPublication(scratch, projectRoot, published);
             testFrontendErrorPublishesNothing(scratch);
-            testUnsupportedFactCarriesOrigin(scratch);
+            testPreviouslyUnsupportedFactPublishes(scratch);
             testNoExternalTool(scratch);
             testMissingRuntimeFailsClosed(scratch);
             testProductBuildAndRun(scratch, published);
@@ -521,14 +521,20 @@ public final class LlvmProjectEmissionTest {
                 Files.readAllBytes(recompiled.resolve("main.ll"))),
             "the recompiled module is the same deterministic module");
         // A failing compile into the same output root preserves the prior set.
+        // The failing source is a frontend error: every lowered fact the
+        // v1.5 surface reaches is staged now, so the transactional
+        // publication guard is exercised through the preserved frontend
+        // diagnostic instead of a retired staging gap.
         Path failing = scratch.resolve("scalar-failing");
-        writeUnsupportedProject(failing);
+        writeProject(failing, Map.of("src/main.deal",
+            "export function main(): null {\n  let x: number = ;\n"
+                + "  return null;\n}\n"), Map.of("backend", "llvm"));
         byte[] goodBytes = Files.readAllBytes(published.resolve("main.ll"));
         List<String> goodSet = filesUnder(published);
         CompileOutcome failedOutcome = compile(failing.resolve("src/main.deal"),
             published, false, false);
         check(!failedOutcome.success(),
-            "the unsupported project is rejected with E6005");
+            "the failing project is rejected");
         checkEq(goodSet, filesUnder(published),
             "a failed compile leaves the prior published set exactly");
         check(java.util.Arrays.equals(goodBytes,
@@ -565,25 +571,25 @@ public final class LlvmProjectEmissionTest {
             "the frontend diagnostic is preserved, not replaced");
     }
 
-    private static void testUnsupportedFactCarriesOrigin(Path scratch)
+    /**
+     * A previously unclassified nullish narrowing now renders: the declared
+     * {@code ?!number} form is admitted by its {@code !number} refinement, so
+     * the project compiles and publishes instead of stopping at the retired
+     * staging rejection (C3, R4). The origin-bearing E6005 path itself stays
+     * covered by the classifier's closed-set table.
+     */
+    private static void testPreviouslyUnsupportedFactPublishes(Path scratch)
             throws Exception {
-        System.out.println("-- an unclassified fact is an origin-bearing E6005 --");
-        Path root = scratch.resolve("unsupported");
+        System.out.println("-- a previously unclassified narrowing publishes --");
+        Path root = scratch.resolve("previously-unsupported");
         writeUnsupportedProject(root);
         Path output = root.resolve("build/llvm");
         CompileOutcome outcome = compile(root.resolve("src/main.deal"), output,
             false, false);
-        check(!outcome.success(), "the unsupported project fails the compile");
-        check(!Files.exists(output), "nothing is published");
-        CompilerDiagnostic diagnostic = outcome.diagnostics().get(0);
-        checkEq("E6005", diagnostic.code(), "the rejection is one E6005");
-        check(diagnostic.message().contains("BOUNDARY"),
-            "the rejection names the unsupported fact: " + diagnostic.message());
-        check(diagnostic.range() != null
-                && diagnostic.range().file().contains("main.deal"),
-            "the rejection carries the offending source file");
-        check(diagnostic.range() != null && diagnostic.range().startLine() >= 1,
-            "the rejection carries the offending one-based line");
+        check(outcome.success(), "the nullish narrowing is staged now: "
+            + outcome.diagnostics());
+        check(Files.isRegularFile(output.resolve("main.ll")),
+            "the admitted project publishes its textual module");
     }
 
     // =========================================================================

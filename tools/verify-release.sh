@@ -23,6 +23,12 @@
 #   7. missing runtime     a missing runtime library is rejected
 #   8. mismatched resource a declaration mismatched with its use is rejected
 #   9. bad deployment      a broken stdlib implementation fails at execution
+#  10. native package      the packaged smoke project compiles with
+#                          Backend.LLVM, the published runtime files are
+#                          byte-equal to the distribution copies, the product
+#                          is built outside the publication root and runs at
+#                          -O0 and -O2 with the pinned stdout, and the packaged
+#                          debug information names the smoke source file and line
 #
 # A failing leg prints an "ERROR:" line naming the leg and the observed
 # value on stderr and exits 1. All legs green prints "verify-release: PASS".

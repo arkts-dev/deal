@@ -99,7 +99,15 @@ public final class LlvmGcStressTest {
             """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 1\n"),
         "async-thread", new TestHost("host/async", """
             export function pending(): Promise<number>;
-            """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 2\n"));
+            """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 2\n"),
+        "async-record", new TestHost("host/async", """
+            export class Payload {
+              value: number;
+            }
+
+            export function arm(callback: () => null): null;
+            export function pendingManaged(): Promise<Payload>;
+            """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 15\n"));
 
     // =========================================================================
     // Counters and entry point
@@ -569,7 +577,10 @@ public final class LlvmGcStressTest {
                 List.of("gc", "async-service"), ""),
             new Program("async-thread-poster", ASYNC_THREAD_SOURCE,
                 List.of("test_async_completion"), List.of("test_async_completion"),
-                List.of("gc", "async-thread"), ""));
+                List.of("gc", "async-thread"), ""),
+            new Program("open-operation-record", ASYNC_RECORD_SOURCE,
+                List.of("test_arm", "test_delivered"), List.of("test_delivered"),
+                List.of("gc", "async-record"), ""));
     }
 
     private static final String LIVE_VALUES_SOURCE = """
@@ -961,6 +972,50 @@ public final class LlvmGcStressTest {
             throw { code: "TEST_FAIL", message: "posted completion changed" };
           }
           return value;
+        }
+
+        export function main(): null {
+          return null;
+        }
+        """;
+
+    private static final String ASYNC_RECORD_SOURCE = """
+        // The open-operation record roots a *delivered* completion until the
+        // consuming AWAIT reads it (M5 `OpenOperationRecord`, Verification 11).
+        // The module's service hook completes the pending operation with a
+        // managed class instance and then re-enters the DEAL callback armed
+        // below, whose body runs one complete collection while the delivered
+        // value is still only reachable through the record's completion slot
+        // and the pump has not re-checked the operation yet. A record that does
+        // not root that slot loses the instance before the AWAIT consumes it.
+        import * as gc from "host/gc";
+        import * as async from "host/async";
+
+        function collectNow(): null {
+          gc.collect();
+          return null;
+        }
+
+        export function test_arm(): null {
+          async.arm(collectNow);
+          return null;
+        }
+
+        export async function test_delivered(): Promise<null> {
+          let delivered: async.Payload = await async.pendingManaged();
+          if (delivered.value !== 42) {
+            throw { code: "TEST_FAIL", message: "the delivered completion value" };
+          }
+          let alias: unknown = delivered;
+          gc.collect();
+          let again: async.Payload = alias as async.Payload;
+          if (again !== delivered) {
+            throw { code: "TEST_FAIL", message: "the delivered completion identity" };
+          }
+          if (again.value !== 42) {
+            throw { code: "TEST_FAIL", message: "the consumed completion value" };
+          }
+          return null;
         }
 
         export function main(): null {

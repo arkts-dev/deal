@@ -773,6 +773,16 @@ public final class LlvmTypeMapper {
             if (actual instanceof RuntimeDescriptor.Undefined) {
                 return admitsUndefined(nullable);
             }
+            if (actual instanceof RuntimeDescriptor.Nullable narrower) {
+                // A narrower nullish form (`?!T` refined to `!T` or `?T`) is
+                // admitted when its base is admitted and every member it can
+                // carry is a member the declared form carries (C3, R4): the
+                // refinement only removes language null/undefined, so no value
+                // of the narrower form is outside the declared form.
+                return admits(nullable.inner(), narrower.inner())
+                    && (!admitsNull(narrower) || admitsNull(nullable))
+                    && (!admitsUndefined(narrower) || admitsUndefined(nullable));
+            }
             return admits(nullable.inner(), actual);
         }
         return false;
