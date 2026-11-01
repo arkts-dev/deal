@@ -424,7 +424,7 @@ public final class CompilationOrchestrator {
 
         String surface = probeLegacySurface(stdlibDir, entryDir);
         List<String> stdlibDeclarationFiles =
-            resolveSurfaceDeclarationFiles(surface);
+            ProjectLocator.resolveStdlibDeclarationFiles(surface);
 
         Map<String, ExternalEntry> externals = new LinkedHashMap<>();
         if (externalsDeclarations != null) {
@@ -491,32 +491,6 @@ public final class CompilationOrchestrator {
         Optional<Path> distribution = ProtectedPathOps.probeDirectory(
             Path.of("").toAbsolutePath().resolve("std"));
         return distribution.map(Path::toString).orElse(null);
-    }
-
-    /**
-     * The six spec-listed stdlib declaration files under a resolved
-     * surface, each fully symlink-resolved (the
-     * {@link ProjectContext#stdlibDeclarationFiles()} derivation of a
-     * synthesized context); missing/non-regular/unresolvable files are
-     * omitted, and an absent surface yields the empty list.
-     */
-    private static List<String> resolveSurfaceDeclarationFiles(String surface) {
-        List<String> files = new ArrayList<>();
-        if (surface == null) {
-            return files;
-        }
-        for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
-            Path pinned = Path.of(surface).resolve(module + ".d.deal");
-            if (!Files.isRegularFile(pinned)) {
-                continue;
-            }
-            try {
-                files.add(pinned.toRealPath().toString());
-            } catch (IOException ignored) {
-                // No canonical path: no resolved source can equal it.
-            }
-        }
-        return files;
     }
 
     /**

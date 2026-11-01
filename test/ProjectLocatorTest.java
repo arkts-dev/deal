@@ -69,6 +69,7 @@ public final class ProjectLocatorTest {
             testExternalsDuplicateDeclarations();
             testStdlibOverlapRejection();
             testStdlibDeclarationFilesPublication();
+            testSharedDeclarationDiscovery();
             testOutputResolution();
             testStdlibSurface();
             testDeploymentIdentity();
@@ -276,6 +277,32 @@ public final class ProjectLocatorTest {
             current = current.getParent();
         }
         return false;
+    }
+
+    private static void testSharedDeclarationDiscovery() throws IOException {
+        Path surface = fixture("shared-declaration-discovery");
+        Path string = writeText(surface.resolve("string.d.deal"), "");
+        Path console = writeText(surface.resolve("console.d.deal"), "");
+        Files.createDirectory(surface.resolve("table.d.deal"));
+        Path json = surface.resolve("json.d.deal");
+        Files.createSymbolicLink(json, string.getFileName());
+        Files.createSymbolicLink(surface.resolve("math.d.deal"), Path.of("missing"));
+        List<String> expected = new ArrayList<>();
+        for (String module : ProjectLocator.SPEC_STDLIB_MODULES) {
+            if (module.equals("console")) { expected.add(console.toRealPath().toString()); }
+            if (module.equals("string") || module.equals("json")) {
+                expected.add(string.toRealPath().toString());
+            }
+        }
+        check(ProjectLocator.resolveStdlibDeclarationFiles(surface.toString())
+                .equals(expected),
+            "shared declaration discovery preserves module order, canonical aliases"
+                + " and regular-file filtering");
+        check(ProjectLocator.resolveStdlibDeclarationFiles(null).isEmpty(),
+            "an absent declaration surface has no files");
+        check(ProjectLocator.resolveStdlibDeclarationFiles(
+                surface.resolve("absent").toString()).isEmpty(),
+            "a missing declaration surface has no files");
     }
 
     /** Removes a directory tree, symlinks included. */

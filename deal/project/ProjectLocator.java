@@ -520,7 +520,7 @@ public final class ProjectLocator {
      * pinned {@code BuiltinModule} classification.</p>
      *
      */
-    private static List<String> resolveStdlibDeclarationFiles(String stdlibSurface) {
+    public static List<String> resolveStdlibDeclarationFiles(String stdlibSurface) {
         List<String> files = new ArrayList<>();
         if (stdlibSurface == null) {
             return files;
