@@ -241,6 +241,10 @@ final class LlvmSession extends EmitterSessionBase {
             // reference element stores.
             case RuntimeDescriptor.Null ignored -> ELEMENT_LAYOUT_REFERENCE;
             case RuntimeDescriptor.Undefined ignored -> ELEMENT_LAYOUT_REFERENCE;
+            // A function value is one collector-managed `deal_fn*` (C3), so a
+            // `(() => R)[]` element is the same managed reference slot a
+            // string, array, record or class element uses.
+            case RuntimeDescriptor.Func ignored -> ELEMENT_LAYOUT_REFERENCE;
             case RuntimeDescriptor.Nullable nullable -> {
                 String representation = LlvmTypeMapper.representationOf(nullable)
                     .orElseThrow(() -> new IllegalStateException("the array"

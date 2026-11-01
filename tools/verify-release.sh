@@ -61,7 +61,7 @@ trap 'rm -rf "$SCRATCH"' EXIT HUP INT TERM
 # 1. The matched resource set.
 # =========================================================================
 
-leg "leg 1/9 distribution resource set"
+leg "leg 1/10 distribution resource set"
 
 if [ ! -x "$DIST/bin/deal" ]; then
   fail "distribution launcher not found: $DIST/bin/deal"
@@ -192,7 +192,7 @@ rejected_compile() {
 
 verify_backend() {
   backend=$1
-  leg "leg 2/9 the packaged smoke project on $backend"
+  leg "leg 2/10 the packaged smoke project on $backend"
 
   project="$SCRATCH/$backend/smoke"
   out="$SCRATCH/$backend/out"
@@ -279,7 +279,7 @@ done
 # 3. A thrown Error is a rejected runtime outcome on every backend.
 # =========================================================================
 
-leg "leg 3/9 runtime failures are rejected"
+leg "leg 3/10 runtime failures are rejected"
 
 FAILURE_PROJECT="$SCRATCH/runtime-failure"
 mkdir -p "$FAILURE_PROJECT/src"
@@ -322,7 +322,7 @@ done
 # 4. Older declared versions are rejected before any artifact exists.
 # =========================================================================
 
-leg "leg 4/9 old versions are rejected"
+leg "leg 4/10 old versions are rejected"
 
 OLD_PROJECT="$SCRATCH/old-version"
 mkdir -p "$OLD_PROJECT"
@@ -359,22 +359,22 @@ rejected_compile old-declaration-version "$old_declaration" E1044
 #      execution.
 # =========================================================================
 
-leg "leg 5/9 a missing stdlib declaration is rejected"
+leg "leg 5/10 a missing stdlib declaration is rejected"
 missing_declaration=$(private_dist missing-declaration)
 rm "$missing_declaration/std/string.d.deal"
 rejected_compile missing-declaration "$missing_declaration" E2003
 
-leg "leg 6/9 a missing stdlib implementation is rejected"
+leg "leg 6/10 a missing stdlib implementation is rejected"
 missing_implementation=$(private_dist missing-implementation)
 rm "$missing_implementation/std/string.lua"
 rejected_compile missing-implementation "$missing_implementation" E6000
 
-leg "leg 7/9 a missing runtime library is rejected"
+leg "leg 7/10 a missing runtime library is rejected"
 missing_runtime=$(private_dist missing-runtime)
 rm "$missing_runtime/deal/runtime.lua"
 rejected_compile missing-runtime "$missing_runtime" E6000
 
-leg "leg 8/9 a mismatched declaration is rejected"
+leg "leg 8/10 a mismatched declaration is rejected"
 mismatched=$(private_dist mismatched-declaration)
 sed 's/^export function trim(s: string): string;$/export function trim(s: boolean): string;/' \
   "$mismatched/std/string.d.deal" >"$mismatched/std/string.d.deal.tmp"
@@ -388,7 +388,7 @@ rejected_compile mismatched-declaration "$mismatched" E5001
 # 9. A broken deployed stdlib implementation is not a passing execution.
 # =========================================================================
 
-leg "leg 9/9 a broken deployment copy fails at execution"
+leg "leg 9/10 a broken deployment copy fails at execution"
 
 bad_deployment=$(private_dist bad-deployment)
 printf '%s\n' '"use strict";' 'module.exports = {};' \
@@ -409,6 +409,125 @@ execute_artifact js "$bad_deployment" "$bad_out" "$artifact" \
   || status=$?
 if [ "$status" -eq 0 ]; then
   fail "a broken deployed stdlib implementation executed successfully"
+fi
+
+# =========================================================================
+# 10. The packaged native distribution (llvm-native-conformance-gate G7).
+#
+# The packaged smoke project compiles with Backend.LLVM, every published
+# runtime file is byte-equal to the distribution copy, the product is built
+# through the toolchain seam into this script's scratch area (outside the
+# publication root) and executed at -O0 and -O2 with the pinned stdout and a
+# zero exit, and the packaged debug information names the smoke source file
+# and its line. A missing required tool is the named TOOL_MISSING failure.
+# =========================================================================
+
+leg "leg 10/10 the packaged native smoke project"
+
+# The closed C11 runtime deployment set (llvm-native-backend-integration D6),
+# the packaging mirror of deal.toolchain.NativeRuntime.FILES.
+NATIVE_RUNTIME_FILES="deal/native/deal_rt.h \
+deal/native/platform.c deal/native/platform.h \
+deal/native/value.c deal/native/value.h \
+deal/native/memory.c deal/native/memory.h \
+deal/native/text.c deal/native/text.h \
+deal/native/container.c deal/native/container.h \
+deal/native/descriptor.c deal/native/descriptor.h \
+deal/native/error.c deal/native/error.h \
+deal/native/json.c deal/native/json.h \
+deal/native/std.c deal/native/std.h \
+deal/native/host.c deal/native/host.h \
+deal/native/async.c deal/native/async.h \
+deal/native/entry.c deal/native/entry.h \
+deal/native/main.c"
+
+for asset in $NATIVE_RUNTIME_FILES; do
+  if [ ! -f "$DIST/$asset" ]; then
+    fail "distribution native runtime missing: $asset"
+  fi
+done
+
+for tool in clang llvm-as llvm-dwarfdump; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    fail "TOOL_MISSING: $tool is required by the native distribution leg"
+  fi
+done
+
+mkdir -p "$SCRATCH/native"
+for level in 0 2; do
+  project="$SCRATCH/native/smoke-$level"
+  # The documented default publication root of `deal native build`:
+  # <manifestDirectory>/build/llvm, so the source display names the emitted
+  # module carries stay project-relative ("src/main.deal").
+  out="$project/build/llvm"
+  products="$SCRATCH/native/products-$level"
+  log="$SCRATCH/native/build-$level.log"
+  copy_smoke "$project"
+  if ! ( cd "$project" && "$DIST/bin/deal" native build \
+      src/main.deal --product "$products" \
+      --opt-level "$level" ) >"$log" 2>&1; then
+    cat "$log" >&2
+    fail "native smoke build at -O$level failed"
+  fi
+
+  # The publication set: exactly one textual module, and every runtime file
+  # byte-equal to the packaged copy it came from.
+  ir_count=$(find "$out" -name '*.ll' -type f | wc -l | tr -d ' ')
+  if [ "$ir_count" -ne 1 ]; then
+    fail "native -O$level published $ir_count textual modules, expected 1"
+  fi
+  module=$(find "$out" -name '*.ll' -type f)
+  if ! llvm-as "$module" -o /dev/null >"$SCRATCH/native/assemble-$level.log" 2>&1; then
+    cat "$SCRATCH/native/assemble-$level.log" >&2
+    fail "native -O$level published module is not accepted by llvm-as"
+  fi
+  for asset in $NATIVE_RUNTIME_FILES; do
+    require_copy "$out/$asset" "$DIST/$asset"
+  done
+
+  product="$products/native/main"
+  if [ ! -x "$product" ]; then
+    fail "native -O$level product not executable: $product"
+  fi
+  case "$product" in
+    "$out"/*) fail "native -O$level product was written inside the publication root" ;;
+  esac
+
+  stdout="$SCRATCH/native/run-$level.stdout"
+  stderr="$SCRATCH/native/run-$level.stderr"
+  status=0
+  ( cd "$SCRATCH/native" && "$product" ) >"$stdout" 2>"$stderr" || status=$?
+  if [ "$status" -ne 0 ]; then
+    cat "$stderr" >&2
+    fail "native -O$level smoke execution exited $status"
+  fi
+  printf '%s\n' "$SMOKE_STDOUT" >"$SCRATCH/native/expected.stdout"
+  if ! cmp -s "$stdout" "$SCRATCH/native/expected.stdout"; then
+    fail "native -O$level smoke stdout mismatch: $(cat "$stdout")"
+  fi
+  if [ -s "$stderr" ]; then
+    cat "$stderr" >&2
+    fail "native -O$level smoke execution wrote to stderr"
+  fi
+
+done
+
+# The packaged debug information names the smoke source file and its line, and
+# carries one source-mapped subprogram for the entry function.
+DWARF="$SCRATCH/native/debug-info.txt"
+if ! llvm-dwarfdump --debug-info "$SCRATCH/native/products-2/native/main" \
+    >"$DWARF" 2>&1; then
+  cat "$DWARF" >&2
+  fail "llvm-dwarfdump could not read the native product's debug information"
+fi
+if ! grep -q 'DW_AT_name.*("src/main.deal")' "$DWARF"; then
+  fail "native debug information does not name the smoke source file src/main.deal"
+fi
+if ! grep -q 'DW_AT_decl_line.*(11)' "$DWARF"; then
+  fail "native debug information does not carry the smoke source line 11"
+fi
+if ! grep -q 'DW_AT_name.*("main")' "$DWARF"; then
+  fail "native debug information does not name the entry function main"
 fi
 
 printf 'verify-release: PASS\n'

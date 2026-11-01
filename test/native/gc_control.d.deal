@@ -1,0 +1,12 @@
+// @expected: host-fixture
+// @description: Host declaration of the GC control surface the native stress
+// suite drives from inside a DEAL activation: one full collection and the
+// runtime's own allocation/reclamation statistics (M7). It is a test host of
+// the compile-in host ABI, not a language surface.
+export function collect(): null;
+
+export function sweptObjects(): number;
+
+export function collections(): number;
+
+export function allocatedBytes(): number;

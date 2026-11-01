@@ -1,7 +1,8 @@
 # DEAL Compiler v1.5
 
 DEAL: a statically typed, embeddable language using a strict subset of
-TypeScript syntax with runtime-enforced types. Targets: JavaScript, LuaJIT, JVM.
+TypeScript syntax with runtime-enforced types. Targets: JavaScript, LuaJIT, JVM
+and native Linux x86-64 executables.
 Sole authority: [`docs/spec-v1.5.md`](docs/spec-v1.5.md).
 Projects require `"languageVersion": "1.5"` and stdlib `"1.5"`.
 
@@ -13,7 +14,39 @@ null/undefined/presence semantics. Supply required fields explicitly.
 
 Removed source version directives, source `table`/`has`, C-style loops,
 remainder, C FFI, bytes, integer/conversion intrinsics and class field
-initializers are not compatibility features. There is no LLVM backend.
+initializers are not compatibility features.
+
+## Native backend (Linux x86-64)
+
+`Backend.LLVM` compiles the one validated project lowering to a deterministic
+textual LLVM module and publishes it with the complete C11 runtime; a
+product-owned toolchain seam links the externally linked Linux x86-64
+executable. The toolchain is pinned to `clang`/LLVM major 14, with the accepted
+window LLVM 14-16 and typed-pointer textual IR; the emitted module declares the
+target triple `x86_64-pc-linux-gnu`.
+
+The reproducible command set for this backend, unchanged by checkout layout:
+
+```bash
+./tools/build-release.sh
+./run_tests.sh --jobs 1
+JACOCO_DIR=... ./coverage.sh --jobs 1
+./tools/verify-release.sh [dist]
+deal compile --backend llvm --output build/llvm <entry>
+deal native build <entry> --opt-level 0|2 [--output <artifactsDir>] [--product <productDir>] [--host <file.c>...]
+deal native run <entry> --opt-level 0|2
+```
+
+`deal compile --backend llvm` only publishes the deterministic textual set (the
+project module, the complete C11 runtime and one generated header per imported
+host declaration module) and never executes an external tool. `deal native
+build` compiles with `Backend.LLVM` and then links the published set into
+`<productDir>/native/<entry-stem>`; `deal native run` builds and executes it.
+Products are durable and caller-owned, live outside the publication root, and a
+failed rebuild preserves the previous executables byte-identical. The native
+suites print per-fixture results with the optimization level and a final
+pass/fail count; a missing required tool or artifact fails the run instead of
+skipping a case.
 
 Executable v1.5 examples are in [`test/conformance/backend-runtime/language15/`](test/conformance/backend-runtime/language15/),
 with a language guide in [`docs/learn-deal.ts`](docs/learn-deal.ts) and
@@ -33,7 +66,7 @@ diagnostics and real JS/LuaJIT/JVM runtime records. `--jobs` bounds suites
 No alternate full-suite profile exists.
 
 `run_tests.sh` first preflights its required tools (`javac`, `java`, `luajit`,
-`node`, `gcc`). A missing required tool fails the run with the named
+`node`, `gcc`, `clang`, `llvm-as`, `llvm-dwarfdump`). A missing required tool fails the run with the named
 `TOOL_MISSING` outcome before any build work, and the LuaJIT/Node records and
 JS production suites have no skip path: a run that omits a supported lane is
 a failure, never a pass.
@@ -46,7 +79,10 @@ Build the packaged compiler with its matched v1.5 runtime and standard library:
 ./tools/build-release.sh
 ```
 
-Verify the packaged compiler outside the checkout on JS, LuaJIT and JVM:
+Verify the packaged compiler outside the checkout on JS, LuaJIT, JVM and the
+native backend (compiled with `Backend.LLVM`, byte-equal published runtime
+copies, product built outside the publication root and executed at `-O0` and
+`-O2`, packaged debug information):
 
 ```bash
 ./tools/verify-release.sh [dist]

@@ -1,0 +1,23 @@
+// @expected: host-fixture
+// @description: Host declaration of the crossing surface the native stress
+// suite drives: a host-built class/array graph materialized at the return
+// crossing, a host-retained handle that roots a DEAL value across full
+// collections, and the two closed DEAL-origin failure choices (relay the
+// unchanged record, or discard the token) (H2/H3).
+export class Holder {
+  label: string;
+  count: number;
+  tags: string[];
+}
+
+export function makeHolder(label: string): Holder;
+
+export function retain(holder: Holder): null;
+
+export function retainedLabel(): string;
+
+export function release(): null;
+
+export function swallow(f: () => number): number;
+
+export function relay(f: () => number): number;

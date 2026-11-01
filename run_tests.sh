@@ -25,12 +25,15 @@ echo "=== DEAL test process budget: jobs=$JOBS (nested jobs=1) ==="
 source tools/gate-manifest.sh
 
 # Fail-closed required-tool preflight: the selection below executes the real
-# LuaJIT and Node runtime records, the production corpus and the published C11
-# runtime suites (compiled and executed through clang) under these toolchains. A
-# missing tool is the named TOOL_MISSING outcome and stops the gate here, before
-# any build output is touched and before any suite could drop a supported case:
-# never a warning or a skip.
-REQUIRED_TOOLS=(javac java luajit node gcc clang)
+# LuaJIT and Node runtime records, the production corpus, the published C11
+# runtime suites (compiled and executed through clang) and the native GC stress
+# suite under these toolchains. The native preflight names every tool the native
+# suites and the packaged release leg invoke: the pinned compiler, the textual
+# module assembler and the debug-information reader. A missing tool is the named
+# TOOL_MISSING outcome and stops the gate here, before any build output is
+# touched and before any suite could drop a supported case: never a warning or a
+# skip.
+REQUIRED_TOOLS=(javac java luajit node gcc clang llvm-as llvm-dwarfdump)
 tools/tool-preflight.sh "${REQUIRED_TOOLS[@]}"
 
 rm -rf build

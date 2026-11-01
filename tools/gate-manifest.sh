@@ -132,6 +132,7 @@ luajit test_runtime_number.lua'
   'bg|=== Running C11 Incremental Collector / Barriers / Stress Tests (ISSUE-0906) ===|java -ea -cp build deal.test.NativeCollectorTest'
   'fg|=== Running C11 Descriptor / Typed Boundary / Class Construction / Error Materialization Tests (ISSUE-0907) ===|java -ea -cp build deal.test.NativeBoundaryErrorsTest'
   'fg|=== Running C11 JSON Runtime / Standard Library Dispatch Tests (ISSUE-0908) ===|java -ea -cp build deal.test.NativeJsonStdlibTest'
+  'fg|=== Running Native GC Stress Suite (ISSUE-0914 G6) ===|java -ea -cp build deal.test.LlvmGcStressTest'
 )
 
 # No record may carry a warning, skip or fallback line: a missing required tool
