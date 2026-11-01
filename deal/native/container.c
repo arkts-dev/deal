@@ -514,6 +514,12 @@ void deal_container_table_write(deal_table *table, deal_string *key,
         entry->value = *value;
         return;
     }
+    /* The entry allocation is a safepoint. Its inputs are not reachable from
+     * the table until publication, and C locals are not collector roots. */
+    deal_root_scope_push();
+    deal_root_scope_hold(table);
+    deal_root_scope_hold(key);
+    deal_root_scope_hold_data(value);
     entry = deal_alloc(DEAL_LAYOUT_TABLE_ENTRY, sizeof(*entry));
     entry->key = key;
     deal_store_barrier(entry, key);
@@ -530,6 +536,7 @@ void deal_container_table_write(deal_table *table, deal_string *key,
     record->tail = entry;
     deal_store_barrier(record, entry);
     record->count += 1u;
+    deal_root_scope_pop();
 }
 
 void deal_container_table_delete(deal_table *table, deal_string *key) {

@@ -128,6 +128,27 @@ static deal_host_result construct_case(const deal_value *args, size_t argc) {
     if (deal_table_has(record, "absent", 6, &present) != DEAL_OK || present != 0) {
         return fail("the absent member is not absent");
     }
+    /* A fresh key written through a managed view must survive the entry
+     * allocation safepoint. Use scalar values to isolate key lifetime from
+     * graph materialization, and check replacement and deletion too. */
+    deal_handle record_handle = 0;
+    deal_value view;
+    if (deal_retain(record, &record_handle) != DEAL_OK
+            || deal_handle_value(record_handle, "record", &view) != DEAL_OK
+            || deal_table_set(view, "fresh", 5, total) != DEAL_OK
+            || deal_table_set(view, "second", 6, total) != DEAL_OK
+            || deal_table_get(view, "fresh", 5, &read) != DEAL_OK
+            || deal_as_number(read, &number) != DEAL_OK || number != 42.0
+            || deal_table_get(view, "second", 6, &read) != DEAL_OK
+            || deal_as_number(read, &number) != DEAL_OK || number != 42.0
+            || deal_table_set(view, "fresh", 5, null_value) != DEAL_OK
+            || deal_table_get(view, "fresh", 5, &read) != DEAL_OK
+            || deal_kind_of(read, &kind) != DEAL_OK || kind != DEAL_KIND_NULL
+            || deal_table_delete(view, "fresh", 5) != DEAL_OK
+            || deal_table_has(view, "fresh", 5, &present) != DEAL_OK
+            || present != 0 || deal_release(record_handle) != DEAL_OK) {
+        return fail("managed record keys did not survive publication");
+    }
     /* A typed array with two slots naming one host-built record. */
     deal_value array;
     deal_value element;
