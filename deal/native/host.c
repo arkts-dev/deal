@@ -3159,7 +3159,9 @@ deal_status deal_array_length(deal_value array, int64_t *out) {
         if (box->kind != DEAL_HOST_BOX_ARRAY) {
             return DEAL_STATUS_KIND;
         }
-        *out = (int64_t)box->slot_count;
+        *out = box->materialized != 0
+            ? (int64_t)deal_container_array_count(box->managed.reference)
+            : (int64_t)box->slot_count;
         return DEAL_OK;
     }
     if (deal_host_kind_of_object(referent) != DEAL_KIND_ARRAY) {
@@ -3227,6 +3229,11 @@ deal_status deal_array_get(deal_value array, int64_t index, deal_value *out) {
         if (box->kind != DEAL_HOST_BOX_ARRAY) {
             return DEAL_STATUS_KIND;
         }
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_array_get(view, index, out) : status;
+        }
         if (index < 0 || (size_t)index >= box->slot_count) {
             return DEAL_STATUS_BOUNDS;
         }
@@ -3259,18 +3266,13 @@ deal_status deal_array_set(deal_value array, int64_t index, deal_value element) 
         if (box->kind != DEAL_HOST_BOX_ARRAY) {
             return DEAL_STATUS_KIND;
         }
-        if (index < 0 || (size_t)index > box->slot_count) {
-            return DEAL_STATUS_BOUNDS;
-        }
         if (box->materialized != 0) {
             deal_value view;
             status = deal_host_datum_carrier(box->managed, &view);
-            if (status == DEAL_OK) {
-                status = deal_array_set(view, index, element);
-            }
-            if (status != DEAL_OK) {
-                return status;
-            }
+            return status == DEAL_OK ? deal_array_set(view, index, element) : status;
+        }
+        if (index < 0 || (size_t)index > box->slot_count) {
+            return DEAL_STATUS_BOUNDS;
         }
         if ((size_t)index == box->slot_count) {
             box->slots = deal_host_grow(box->slots, &box->slot_capacity,
@@ -3349,6 +3351,11 @@ deal_status deal_table_get(deal_value table, const void *key, size_t keyLength,
         if (box->kind != DEAL_HOST_BOX_RECORD) {
             return DEAL_STATUS_KIND;
         }
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_table_get(view, key, keyLength, out) : status;
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
             if (member->key_length == keyLength
@@ -3398,11 +3405,9 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
             deal_value view;
             status = deal_host_datum_carrier(box->managed, &view);
             if (status == DEAL_OK) {
-                status = deal_table_set(view, key, keyLength, value);
+                return deal_table_set(view, key, keyLength, value);
             }
-            if (status != DEAL_OK) {
-                return status;
-            }
+            return status;
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
@@ -3487,6 +3492,11 @@ deal_status deal_table_has(deal_value table, const void *key, size_t keyLength,
         if (box->kind != DEAL_HOST_BOX_RECORD) {
             return DEAL_STATUS_KIND;
         }
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_table_has(view, key, keyLength, present) : status;
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
             if (member->key_length == keyLength
@@ -3526,22 +3536,17 @@ deal_status deal_table_delete(deal_value table, const void *key,
         if (box->kind != DEAL_HOST_BOX_RECORD) {
             return DEAL_STATUS_KIND;
         }
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_table_delete(view, key, keyLength) : status;
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
             if (member->key_length != keyLength
                     || (keyLength != 0u
                         && memcmp(member->key_bytes, key, keyLength) != 0)) {
                 continue;
-            }
-            if (box->materialized != 0) {
-                deal_value view;
-                status = deal_host_datum_carrier(box->managed, &view);
-                if (status == DEAL_OK) {
-                    status = deal_table_delete(view, key, keyLength);
-                }
-                if (status != DEAL_OK) {
-                    return status;
-                }
             }
             deal_platform_release(member->key_bytes);
             for (size_t rest = index + 1u; rest < box->member_count;
@@ -3632,6 +3637,11 @@ deal_status deal_field_get(deal_value object, const char *field,
         return status;
     }
     if (box != NULL) {
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_field_get(view, field, out) : status;
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             if (deal_host_text_equal(box->members[index].key_bytes, field)) {
                 return deal_host_slot_carrier(box->members[index].value, out);
@@ -3701,12 +3711,7 @@ deal_status deal_field_set(deal_value object, const char *field,
         if (box->materialized != 0) {
             deal_value view;
             status = deal_host_datum_carrier(box->managed, &view);
-            if (status == DEAL_OK) {
-                status = deal_field_set(view, field, value);
-            }
-            if (status != DEAL_OK) {
-                return status;
-            }
+            return status == DEAL_OK ? deal_field_set(view, field, value) : status;
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             if (deal_host_text_equal(box->members[index].key_bytes, field)) {
@@ -3802,6 +3807,11 @@ deal_status deal_field_has(deal_value object, const char *field, int *present) {
         return status;
     }
     if (box != NULL) {
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_field_has(view, field, present) : status;
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             if (deal_host_text_equal(box->members[index].key_bytes, field)) {
                 *present = 1;
@@ -3849,19 +3859,14 @@ deal_status deal_field_delete(deal_value object, const char *field) {
         return status;
     }
     if (box != NULL) {
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            return status == DEAL_OK ? deal_field_delete(view, field) : status;
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             if (!deal_host_text_equal(box->members[index].key_bytes, field)) {
                 continue;
-            }
-            if (box->materialized != 0) {
-                deal_value view;
-                status = deal_host_datum_carrier(box->managed, &view);
-                if (status == DEAL_OK) {
-                    status = deal_field_delete(view, field);
-                }
-                if (status != DEAL_OK) {
-                    return status;
-                }
             }
             deal_platform_release(box->members[index].key_bytes);
             for (size_t rest = index + 1u; rest < box->member_count;

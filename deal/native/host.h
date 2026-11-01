@@ -252,8 +252,9 @@ deal_status deal_host_resolve_failure(const deal_host_failure *failure,
  * a managed view keeps its datum form and a host-built carrier is materialized
  * into the managed representation with one identity per boxed node for the
  * crossing, including separate view stores and return. Failed graph conversions
- * publish no partial identity; later host edits update the published object. `DEAL_STATUS_OK` writes the presentation plan a
- * boundary check reads; no crossing answers `DEAL_STATUS_OUT_OF_SCOPE`, a
+ * publish no partial identity; later accesses use that live managed object,
+ * including mutations made through DEAL re-entry. `DEAL_STATUS_OK` writes the
+ * presentation plan a boundary check reads; no crossing answers `DEAL_STATUS_OUT_OF_SCOPE`, a
  * carrier of another crossing `DEAL_STATUS_FOREIGN_VALUE`, and a carrier that is
  * never DEAL data (the absence marker, the no-value marker or the untyped-array
  * negative presentation) `DEAL_STATUS_KIND`; a failing materialization also

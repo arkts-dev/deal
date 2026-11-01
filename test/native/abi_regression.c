@@ -16,6 +16,7 @@ static deal_host_result aliases(const deal_value *args, size_t argc) {
     deal_host_result result = {0};
     deal_value child, absent, number, read;
     int present = 0;
+    int same = 0;
     int64_t length = -1;
     REQUIRE(deal_table_new(&child));
     REQUIRE(deal_absent(&absent));
@@ -37,11 +38,47 @@ static deal_host_result aliases(const deal_value *args, size_t argc) {
     REQUIRE(deal_table_set(child, "deleted", 7, number));
     REQUIRE(deal_table_delete(child, "deleted", 7));
     REQUIRE(deal_table_get(child, "self", 4, &read));
-    EXPECT(read.slot == child.slot && read.generation == child.generation);
+    REQUIRE(deal_same(read, child, &same));
+    EXPECT(same == 1);
     EXPECT(deal_table_set(child, "value", 5, absent) == DEAL_STATUS_KIND);
     REQUIRE(deal_table_has(child, "deleted", 7, &present));
     EXPECT(present == 0);
     REQUIRE(deal_table_set(args[1], "self", 4, args[1]));
+    deal_value nested, atom, error, text;
+    REQUIRE(deal_array_new_typed(0, "unknown", &nested));
+    REQUIRE(deal_class_atom("Error", &atom));
+    REQUIRE(deal_class_new(atom, &error));
+    REQUIRE(deal_string_new("before", 6, &text));
+    REQUIRE(deal_field_set(error, "code", text));
+    REQUIRE(deal_field_set(error, "message", text));
+    REQUIRE(deal_array_set(nested, 0, error));
+    REQUIRE(deal_array_set(args[0], 2, nested));
+    deal_value callback_args[3] = {child, nested, error};
+    deal_host_result applied = {0};
+    REQUIRE(deal_apply(args[2], callback_args, 3, &applied));
+    EXPECT(applied.failed == 0);
+    REQUIRE(deal_table_get(child, "value", 5, &read));
+    double changed = 0;
+    REQUIRE(deal_as_number(read, &changed));
+    EXPECT(changed == 11);
+    REQUIRE(deal_table_has(child, "later", 5, &present));
+    EXPECT(present == 0);
+    REQUIRE(deal_table_delete(child, "added", 5));
+    REQUIRE(deal_array_length(nested, &length));
+    EXPECT(length == 2);
+    REQUIRE(deal_array_get(nested, 1, &read));
+    REQUIRE(deal_as_number(read, &changed));
+    EXPECT(changed == 12);
+    REQUIRE(deal_array_set(nested, 2, child));
+    REQUIRE(deal_field_get(error, "code", &read));
+    const void *bytes = NULL;
+    size_t size = 0;
+    REQUIRE(deal_as_string(read, &bytes, &size));
+    EXPECT(size == 5 && memcmp(bytes, "after", 5) == 0);
+    REQUIRE(deal_field_has(error, "message", &present));
+    EXPECT(present == 1);
+    REQUIRE(deal_field_set(error, "message", text));
+    EXPECT(deal_field_delete(error, "message") == DEAL_STATUS_UNKNOWN_FIELD);
     result.value = child;
     return result;
 }
@@ -125,7 +162,7 @@ static deal_host_result scalar_same(const deal_value *args, size_t argc) {
 }
 
 static const deal_host_export exports[] = {
-    {"aliases", "([unknown],record)->unknown", DEAL_HOST_EXPORT_FUNCTION,
+    {"aliases", "([unknown],record,(record,[unknown],Error)->number)->unknown", DEAL_HOST_EXPORT_FUNCTION,
      0, aliases, NULL, NULL},
     {"errorFields", "(Error)->Error", DEAL_HOST_EXPORT_FUNCTION,
      0, error_fields, NULL, NULL},

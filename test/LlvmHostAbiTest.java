@@ -2567,7 +2567,8 @@ public final class LlvmHostAbiTest {
         Files.createDirectories(root.resolve("bindings"));
         Files.writeString(root.resolve("deal.json"), DEAL_JSON);
         Files.writeString(root.resolve("bindings/probe.d.deal"), """
-            export function aliases(a: unknown[], r: Record<string, unknown>): unknown;
+            export function aliases(a: unknown[], r: Record<string, unknown>,
+              mutate: (child: Record<string, unknown>, a: unknown[], e: Error) => number): unknown;
             export function errorFields(e: Error): Error;
             export function scalarSame(s: string, n: number, z: number): boolean;
             """);
@@ -2580,8 +2581,21 @@ public final class LlvmHostAbiTest {
             export function main(): null {
               let a: unknown[] = [];
               let r: Record<string, unknown> = {};
-              let u: unknown = p.aliases(a, r);
-              check(a.length === 2);
+              function mutate(child: Record<string, unknown>, nested: unknown[], e: Error): number {
+                child.value = 11;
+                delete child.later;
+                child.added = 1;
+                nested[1] = 12;
+                e.code = "after";
+                return 1;
+              }
+              let u: unknown = p.aliases(a, r, mutate);
+              check(a.length === 3);
+              let nested: unknown[] = a[2] as unknown[];
+              check(nested.length === 3);
+              check(nested[2] === u);
+              check((nested[0] as Error).code === "after");
+              check((nested[0] as Error).message === "before");
               check(a[0] === a[1]);
               check(u === a[0]);
               check(r.a === u);
@@ -2589,8 +2603,9 @@ public final class LlvmHostAbiTest {
               check((r.self as Record<string, unknown>) === r);
               let child: Record<string, unknown> = u as Record<string, unknown>;
               check(child.self === u);
-              check((child.value as number) === 7);
-              check((child.later as number) === 7);
+              check((child.value as number) === 11);
+              check(!Object.hasOwn(child, "later"));
+              check(!Object.hasOwn(child, "added"));
               check(!Object.hasOwn(child, "deleted"));
               let e: Error = {code: "A", message: "old"};
               check(p.errorFields(e) === e);
