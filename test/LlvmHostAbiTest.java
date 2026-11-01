@@ -2569,6 +2569,7 @@ public final class LlvmHostAbiTest {
         Files.writeString(root.resolve("bindings/probe.d.deal"), """
             export function aliases(a: unknown[], r: Record<string, unknown>): unknown;
             export function errorFields(e: Error): Error;
+            export function scalarSame(s: string, n: number, z: number): boolean;
             """);
         Files.writeString(root.resolve("src/main.deal"), """
             import * as p from "host/probe";
@@ -2595,6 +2596,7 @@ public final class LlvmHostAbiTest {
               check(p.errorFields(e) === e);
               check(e.code === "B");
               check(e.message === "B");
+              check(p.scalarSame("x", 0.0 / 0.0, 0.0));
               return null;
             }
             """);

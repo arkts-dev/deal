@@ -3061,12 +3061,85 @@ deal_status deal_same(deal_value a, deal_value b, int *same) {
     if (status != DEAL_OK) {
         return status;
     }
-    if (left_box != NULL || right_box != NULL) {
-        /* Carrier identity for host-built values, matching the graph's `===`. */
-        *same = left_box != NULL && left_box == right_box ? 1 : 0;
+    deal_value_kind left_kind;
+    deal_value_kind right_kind;
+    status = deal_kind_of(a, &left_kind);
+    if (status != DEAL_OK) {
+        return status;
+    }
+    status = deal_kind_of(b, &right_kind);
+    if (status != DEAL_OK) {
+        return status;
+    }
+    if (left_kind != right_kind) {
+        *same = 0;
         return DEAL_OK;
     }
-    *same = left == right ? 1 : 0;
+    switch (left_kind) {
+    case DEAL_KIND_NULL:
+    case DEAL_KIND_UNDEFINED:
+        *same = 1;
+        return DEAL_OK;
+    case DEAL_KIND_NUMBER: {
+        double x;
+        double y;
+        status = deal_as_number(a, &x);
+        if (status != DEAL_OK) {
+            return status;
+        }
+        status = deal_as_number(b, &y);
+        if (status != DEAL_OK) {
+            return status;
+        }
+        *same = x == y;
+        return DEAL_OK;
+    }
+    case DEAL_KIND_BOOLEAN: {
+        int x;
+        int y;
+        status = deal_as_boolean(a, &x);
+        if (status != DEAL_OK) {
+            return status;
+        }
+        status = deal_as_boolean(b, &y);
+        if (status != DEAL_OK) {
+            return status;
+        }
+        *same = x == y;
+        return DEAL_OK;
+    }
+    case DEAL_KIND_STRING: {
+        const void *x;
+        const void *y;
+        size_t x_length;
+        size_t y_length;
+        status = deal_as_string(a, &x, &x_length);
+        if (status != DEAL_OK) {
+            return status;
+        }
+        status = deal_as_string(b, &y, &y_length);
+        if (status != DEAL_OK) {
+            return status;
+        }
+        /* Both carriers are scalar-valid UTF-8; equal bytes are exactly equal
+         * scalar sequences, without allocating or admitting a graph. */
+        *same = x_length == y_length
+            && (x_length == 0u || memcmp(x, y, x_length) == 0);
+        return DEAL_OK;
+    }
+    default:
+        break;
+    }
+    if (left_box != NULL && left_box->materialized != 0) {
+        left = deal_data_referent(&left_box->managed);
+        left_box = NULL;
+    }
+    if (right_box != NULL && right_box->materialized != 0) {
+        right = deal_data_referent(&right_box->managed);
+        right_box = NULL;
+    }
+    *same = left_box != NULL || right_box != NULL
+        ? left_box != NULL && left_box == right_box : left == right;
     return DEAL_OK;
 }
 
