@@ -85,6 +85,7 @@ public final class LlvmGcStressTest {
               label: string;
               count: number;
               tags: string[];
+              record: Record<string, unknown>;
             }
 
             export function makeHolder(label: string): Holder;
@@ -639,8 +640,13 @@ public final class LlvmGcStressTest {
 
     private static final String CAPTURED_CELLS_SOURCE = """
         // Captured mutable bindings keep one cell per binding generation and
-        // survive a full collection (M6, Verification 5).
+        // survive a full collection (M6, Verification 5). A captured catch
+        // binding is one cell too: its incarnation carries the caught Error
+        // itself, so a closure over the catch binding and the direct name read
+        // the same value across full collections (C5, C4).
         import * as gc from "host/gc";
+
+        function errorOf(value: unknown): Error { return value as Error; }
 
         export function test_captured_cells(): number {
           let readers: (() => number)[] = [];
@@ -653,6 +659,18 @@ public final class LlvmGcStressTest {
             return counter;
           };
           let alias: () => number = bump;
+          let read: () => string = function (): string { return ""; };
+          let held: Error | null = null;
+          try {
+            throw { code: "E_CELL", message: "caught" };
+          } catch (e) {
+            read = function (): string { return errorOf(e).message; };
+            held = e as Error;
+          }
+          if (held === null) {
+            throw { code: "TEST_FAIL", message: "the caught Error was dropped" };
+          }
+          let caught: Error = held as Error;
           gc.collect();
           let before: number = gc.sweptObjects();
           gc.collect();
@@ -665,6 +683,12 @@ public final class LlvmGcStressTest {
           }
           if (bump() !== 1 || alias() !== 2) {
             throw { code: "TEST_FAIL", message: "cell aliases diverged" };
+          }
+          if (read() !== "caught") {
+            throw { code: "TEST_FAIL", message: "the captured catch cell was replaced" };
+          }
+          if (caught.code !== "E_CELL" || caught.message !== "caught") {
+            throw { code: "TEST_FAIL", message: "the caught Error changed" };
           }
           return counter;
         }
@@ -817,14 +841,18 @@ public final class LlvmGcStressTest {
         """;
 
     private static final String HOST_GRAPH_SOURCE = """
-        // A host-built class/array graph is materialized at the return crossing
-        // and survives full collections before and after DEAL stores it
-        // (M5 Verification 10, R11).
+        // A host-built class/table/array graph is materialized at the return
+        // crossing and survives full collections before and after DEAL stores
+        // it (M5 Verification 10, R11). The record member is the host-built
+        // table carrier itself: its own identity, its insertion-ordered members
+        // and its alias of the class's array carrier are all observed across
+        // collections.
         import * as gc from "host/gc";
         import * as gccross from "host/gccross";
 
         export function test_host_graph(): number {
           let holder: gccross.Holder = gccross.makeHolder("built");
+          let record: Record<string, unknown> = holder.record;
           gc.collect();
           let label: string = holder.label;
           if (label !== "built") {
@@ -834,8 +862,26 @@ public final class LlvmGcStressTest {
           if (tags.length !== 2 || tags[0] !== "alpha" || tags[1] !== "beta") {
             throw { code: "TEST_FAIL", message: "host graph array changed" };
           }
+          let alpha: number = record["alpha"] as number;
+          if (alpha !== 3) {
+            throw { code: "TEST_FAIL", message: "host-built table member changed" };
+          }
+          let beta: string = record["beta"] as string;
+          if (beta !== "two") {
+            throw { code: "TEST_FAIL", message: "host-built table text changed" };
+          }
+          let aliased: string[] = record["tags"] as string[];
+          if (aliased !== tags) {
+            throw { code: "TEST_FAIL", message: "host graph alias identity changed" };
+          }
+          let nested: Record<string, unknown> = record["nested"] as Record<string, unknown>;
+          let deep: number = nested["deep"] as number;
+          if (deep !== 1) {
+            throw { code: "TEST_FAIL", message: "nested host table changed" };
+          }
           let table: Record<string, unknown> = {};
           table["holder"] = holder;
+          table["record"] = record;
           gc.collect();
           let stored: gccross.Holder = table["holder"] as gccross.Holder;
           if (stored !== holder) {
@@ -844,10 +890,25 @@ public final class LlvmGcStressTest {
           if (stored.count !== 2) {
             throw { code: "TEST_FAIL", message: "host graph field changed" };
           }
+          let storedRecord: Record<string, unknown> = table["record"] as Record<string, unknown>;
+          if (storedRecord !== record) {
+            throw { code: "TEST_FAIL", message: "stored table lost identity" };
+          }
+          let again: number = storedRecord["alpha"] as number;
+          if (again !== 3) {
+            throw { code: "TEST_FAIL", message: "stored table member changed" };
+          }
           let kept: gccross.Holder[] = [stored];
           gc.collect();
           if (kept[0].label !== "built") {
             throw { code: "TEST_FAIL", message: "kept graph changed" };
+          }
+          if (kept[0].record !== record) {
+            throw { code: "TEST_FAIL", message: "kept table lost identity" };
+          }
+          let keptDeep: Record<string, unknown> = (kept[0].record)["nested"] as Record<string, unknown>;
+          if ((keptDeep["deep"] as number) !== 1) {
+            throw { code: "TEST_FAIL", message: "kept nested table changed" };
           }
           return kept.length;
         }

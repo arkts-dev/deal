@@ -77,6 +77,16 @@ final class LlvmFunctionEmitter {
     private final Map<Long, String> valueSlotTypes = new LinkedHashMap<>();
     private final Map<String, String> bindingSlots = new LinkedHashMap<>();
     private final Map<String, String> bindingSlotTypes = new LinkedHashMap<>();
+    /**
+     * The binding generations whose heap cell this activation already
+     * published, so a later {@code BINDING_ALLOC} of the same incarnation owns
+     * no second allocation: the prologue publishes parameter cells (C5), and a
+     * {@code TRY_CATCH} handler publishes the captured catch binding's cell
+     * carrying the caught Error (M6). A second cell would replace the bound
+     * value with {@code undefined} and break every alias.
+     */
+    private final java.util.Set<String> publishedCells =
+        new java.util.LinkedHashSet<>();
     private final Map<Long, String> blockLabels = new LinkedHashMap<>();
     private final Map<Long, String> tokenSlots = new LinkedHashMap<>();
     private final Map<String, Integer> rootSlots = new LinkedHashMap<>();
@@ -2428,24 +2438,17 @@ final class LlvmFunctionEmitter {
         }
         if (setupPublishedCell(payload.binding(), payload.generation())) {
             // A parameter's generation 0 cell is published by the activation's
-            // setup segment from the incoming argument (C5): its own
-            // BINDING_ALLOC must not allocate a second cell holding
-            // `undefined`, or the closure and every alias would observe it.
+            // setup segment from the incoming argument (C5), and a captured
+            // catch binding's cell is published by the handler that binds the
+            // caught Error (M6): their own BINDING_ALLOC must not allocate a
+            // second cell holding `undefined`, or the closure and every alias
+            // would observe it.
             return;
         }
-        session.referenceRuntimeEntry("deal_cell_alloc_data");
         session.referenceRuntimeEntry("deal_data_of_undefined");
         String undefined = callRecord(op, LlvmTypeMapper.DATA,
             "deal_data_of_undefined", "");
-        String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
-        emit("store " + LlvmTypeMapper.DATA + " " + undefined + ", "
-            + LlvmTypeMapper.DATA + "* " + datumSlot);
-        String cell = emitTemporary(op, "call i8* @deal_cell_alloc_data("
-            + LlvmTypeMapper.DATA + "* " + datumSlot + ", i32 "
-            + payload.generation() + ")");
-        String slot = bindingSlot(payload.binding(), payload.generation(), "i8*");
-        emit("store i8* " + cell + ", i8** " + slot);
-        rootCellAt(slot, op);
+        publishCellDatum(payload.binding(), payload.generation(), undefined, op);
     }
 
     /**
@@ -2455,6 +2458,9 @@ final class LlvmFunctionEmitter {
      * body's own {@code BINDING_ALLOC} for that incarnation owns no allocation.
      */
     private boolean setupPublishedCell(BindingId binding, long generation) {
+        if (publishedCells.contains(binding.id() + "_" + generation)) {
+            return true;
+        }
         return generation == 0 && functionId != null
             && session.parametersOf(functionId).contains(binding);
     }
@@ -2515,8 +2521,19 @@ final class LlvmFunctionEmitter {
     private void publishCell(BindingId binding, long generation,
                              RuntimeDescriptor descriptor, String value,
                              SemanticOp op) {
-        session.referenceRuntimeEntry("deal_cell_alloc_data");
         String datum = emitDatum(descriptor, value, op);
+        publishCellDatum(binding, generation, datum, op);
+    }
+
+    /**
+     * Allocates one heap cell holding an already-built datum and stores its
+     * pointer in the binding's slot (C5, M6). The incarnation is recorded, so
+     * the body's own {@code BINDING_ALLOC} never replaces the bound value with
+     * {@code undefined}.
+     */
+    private void publishCellDatum(BindingId binding, long generation,
+                                  String datum, SemanticOp op) {
+        session.referenceRuntimeEntry("deal_cell_alloc_data");
         String datumSlot = newAlloca(LlvmTypeMapper.DATA, "celldatum");
         emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "
             + LlvmTypeMapper.DATA + "* " + datumSlot);
@@ -2526,6 +2543,7 @@ final class LlvmFunctionEmitter {
         String slot = bindingSlot(binding, generation, "i8*");
         emit("store i8* " + cell + ", i8** " + slot);
         rootCellAt(slot, op);
+        publishedCells.add(binding.id() + "_" + generation);
     }
 
     /**
@@ -4651,13 +4669,22 @@ final class LlvmFunctionEmitter {
         String error = load(op, "i8*", pending);
         BindingId binding = payload.catchBinding();
         String representation = LlvmTypeMapper.DATA;
-        String slot = bindingSlot(binding, 0, representation);
         String datum = emitTemporary(op, "insertvalue %struct.deal_data"
             + " { i32 " + LlvmTypeMapper.DATA_ERROR + ", i32 0, double 0.0,"
             + " i8* null }, i8* " + error + ", 3");
-        emit("store %struct.deal_data " + datum + ", %struct.deal_data* "
-            + slot);
-        rootBindingSlot(binding, 0, RuntimeDescriptor.Unknown.INSTANCE, slot, op);
+        if (session.cellBinding(unit, binding, 0)) {
+            // The catch binding is captured or reassigned, so its storage is a
+            // heap cell (C5/M6): the cell itself must carry the caught Error,
+            // never a direct slot the catch block's BINDING_ALLOC would then
+            // shadow with an `undefined` cell.
+            publishCellDatum(binding, 0, datum, op);
+        } else {
+            String slot = bindingSlot(binding, 0, representation);
+            emit("store %struct.deal_data " + datum + ", %struct.deal_data* "
+                + slot);
+            rootBindingSlot(binding, 0, RuntimeDescriptor.Unknown.INSTANCE, slot,
+                op);
+        }
         emitBlock(payload.catchBlock(), join);
         startSegment(join);
     }

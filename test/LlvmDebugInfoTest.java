@@ -43,12 +43,18 @@ import java.util.regex.Pattern;
  */
 public final class LlvmDebugInfoTest {
 
-    /** The main module: it calls the second module's export. */
+    /** The main module: it calls the second module's export through a
+     * name-less function expression, whose {@code DISubprogram} carries the
+     * generated {@code F<id>} in both name fields (C8). */
     private static final String MAIN_SOURCE = """
         import * as lib from "./lib";
 
         export function main(): null {
           let value: number = lib.compute(0);
+          let bump: (n: number) => number = function (n: number): number {
+            return n + 1;
+          };
+          let next: number = bump(value);
           return null;
         }
         """;
@@ -71,6 +77,14 @@ public final class LlvmDebugInfoTest {
     /** The main module's call line and the read of the imported export. */
     private static final int MAIN_CALL_LINE = 4;
     private static final int MAIN_CALL_COLUMN = 23;
+
+    /** The main module's declared entry function line. */
+    private static final int MAIN_DECL_LINE = 3;
+
+    /** True when a name is the generated {@code F<id>}/type spelling. */
+    private static boolean generatedName(String name) {
+        return name != null && name.matches("[FT][0-9]+");
+    }
 
     private static final List<Integer> LEVELS = List.of(0, 2);
 
@@ -278,14 +292,33 @@ public final class LlvmDebugInfoTest {
         //    declared line.
         List<Subprogram> subprograms = subprograms(product);
         requireSubprogram(subprograms, "compute", "src/lib.deal", LIB_DECL_LINE);
-        requireSubprogram(subprograms, "main", "src/main.deal", 3);
+        requireSubprogram(subprograms, "main", "src/main.deal", MAIN_DECL_LINE);
+        // C8's anonymous form: a name-less function expression carries the
+        // generated F<id> in both name fields, and no named DEAL function is
+        // spelled with the generated name. The rejection is therefore scoped
+        // to the named form: a generated spelling in DW_AT_name is accepted
+        // exactly when DW_AT_linkage_name is the same spelling.
+        boolean anonymous = false;
         for (Subprogram subprogram : subprograms) {
-            if (subprogram.name().matches("[FT][0-9]+")) {
+            if (!generatedName(subprogram.name())) {
+                continue;
+            }
+            if (!subprogram.name().equals(subprogram.linkageName())) {
                 throw new AssertionError("a DISubprogram of "
                     + subprogram.declFile() + " carries the generated spelling "
-                    + subprogram.name() + " as its DW_AT_name instead of the "
-                    + "DEAL source name");
+                    + subprogram.name() + " as its DW_AT_name with DW_AT_"
+                    + "linkage_name (\"" + subprogram.linkageName() + "\") "
+                    + "instead of the DEAL source name");
             }
+            if (subprogram.declFile() != null
+                    && subprogram.declFile().endsWith("src/main.deal")) {
+                anonymous = true;
+            }
+        }
+        if (!anonymous) {
+            throw new AssertionError("the debug information carries no "
+                + "DISubprogram of the name-less function expression (the "
+                + "generated F<id> is expected in both name fields)");
         }
         for (String source : List.of("src/lib.deal", "src/main.deal")) {
             boolean named = subprograms.stream()
@@ -485,56 +518,6 @@ public final class LlvmDebugInfoTest {
             throw new AssertionError("the carried error's " + field + " is '"
                 + actual + "', expected '" + expected + "'");
         }
-    }
-
-    /**
-     * Requires one {@code DISubprogram} whose {@code DW_AT_name} is the DEAL
-     * source name, whose {@code DW_AT_linkage_name} is the generated
-     * {@code F<id>}, and whose {@code DW_AT_decl_line} is the declared line.
-     */
-    private static void requireSubprogram(String info, String sourceName,
-            int declaredLine) {
-        Matcher matcher = Pattern.compile(
-            "DW_TAG_subprogram\\n(?:.*\\n)*?\\s*DW_AT_linkage_name\\t\\(\""
-                + "(F[0-9]+)\"\\)\\n\\s*DW_AT_name\\t\\(\"([^\"]*)\"\\)\\n"
-                + "\\s*DW_AT_decl_file\\t\\(\"([^\"]*)\"\\)\\n"
-                + "\\s*DW_AT_decl_line\\t\\(([0-9]+)\\)")
-            .matcher(info);
-        boolean found = false;
-        while (matcher.find()) {
-            if (!sourceName.equals(matcher.group(2))) {
-                continue;
-            }
-            int line = Integer.parseInt(matcher.group(4));
-            if (line != declaredLine) {
-                throw new AssertionError("the DISubprogram for " + sourceName
-                    + " declares line " + line + ", expected " + declaredLine);
-            }
-            if (!matcher.group(3).endsWith(sourceName.replace("main", "main")
-                    .replace("compute", "compute"))) {
-                // The declaration file of a function must be its own source.
-                continue;
-            }
-            found = true;
-        }
-        if (!found) {
-            throw new AssertionError("the debug information carries no "
-                + "DISubprogram with DW_AT_name (\"" + sourceName
-                + "\") beside a generated F<id> DW_AT_linkage_name at declared "
-                + "line " + declaredLine);
-        }
-    }
-
-    private static String dwarfdump(String mode, Path product) throws IOException {
-        NativeCompiler.Result dump = NativeCompiler.run(
-            List.of("llvm-dwarfdump", mode, product.toString()),
-            product.getParent());
-        if (dump.exitCode() != 0) {
-            throw new AssertionError("llvm-dwarfdump " + mode + " exited "
-                + dump.exitCode() + ": "
-                + dump.stderr().replace("\n", "\\n"));
-        }
-        return dump.stdout();
     }
 
     private static void deleteTree(Path root) {

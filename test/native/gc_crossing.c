@@ -6,9 +6,12 @@
  * The native stress suite uses this unit for four lifetimes that generated code
  * alone cannot construct:
  *
- *   - `makeHolder` builds a class instance carrying a nested string array with
- *     the boxed construction surface, so the return crossing materializes a
- *     host-built graph that DEAL then owns;
+ *   - `makeHolder` builds a class instance carrying a nested string array and a
+ *     host-built record (table) with the boxed construction surface, so the
+ *     return crossing materializes a host-built class/table/array graph that
+ *     DEAL then owns; one record member aliases the class's own array carrier,
+ *     so the crossing's alias-identity preservation and the table carrier's
+ *     own rooting are both observable after full collections (R11, M5);
  *   - `retain`/`retainedLabel`/`release` convert a crossing value to an opaque
  *     handle and read it back after the suite's full collections, so the handle
  *     table's root is what keeps the value alive;
@@ -72,7 +75,46 @@ static deal_host_result number_result(double value) {
   return ok_result(carrier);
 }
 
-/* One host-built class instance with a nested string array. */
+/* Builds the record member of the host graph: an insertion-ordered table whose
+ * members are a number, a string, the class's own tag array (one managed array,
+ * two references to it) and a nested table. */
+static deal_host_result build_record(deal_value tags, deal_value *out) {
+  deal_value record;
+  if (deal_table_new(&record) != DEAL_OK) {
+    return failure_result("E_HOST_GCCROSS", "record construction failed");
+  }
+  {
+    deal_value three;
+    if (deal_number(3.0, &three) != DEAL_OK
+        || deal_table_set(record, "alpha", 5u, three) != DEAL_OK) {
+      return failure_result("E_HOST_GCCROSS", "record number member failed");
+    }
+  }
+  {
+    deal_value two;
+    if (deal_string_new("two", 3u, &two) != DEAL_OK
+        || deal_table_set(record, "beta", 4u, two) != DEAL_OK) {
+      return failure_result("E_HOST_GCCROSS", "record string member failed");
+    }
+  }
+  if (deal_table_set(record, "tags", 4u, tags) != DEAL_OK) {
+    return failure_result("E_HOST_GCCROSS", "record alias member failed");
+  }
+  {
+    deal_value nested;
+    deal_value deep;
+    if (deal_table_new(&nested) != DEAL_OK
+        || deal_number(1.0, &deep) != DEAL_OK
+        || deal_table_set(nested, "deep", 4u, deep) != DEAL_OK
+        || deal_table_set(record, "nested", 6u, nested) != DEAL_OK) {
+      return failure_result("E_HOST_GCCROSS", "record nested member failed");
+    }
+  }
+  *out = record;
+  return ok_result(record);
+}
+
+/* One host-built class instance with a nested string array and record. */
 static deal_host_result make_holder_impl(const deal_value *args, size_t argc) {
   const void *bytes = NULL;
   size_t length = 0;
@@ -108,6 +150,14 @@ static deal_host_result make_holder_impl(const deal_value *args, size_t argc) {
   }
   if (deal_host_gccross_Holder_tags_set(holder, tags) != DEAL_OK) {
     return failure_result("E_HOST_GCCROSS", "tags field store failed");
+  }
+  deal_value record;
+  deal_host_result built = build_record(tags, &record);
+  if (built.failed) {
+    return built;
+  }
+  if (deal_host_gccross_Holder_record_set(holder, record) != DEAL_OK) {
+    return failure_result("E_HOST_GCCROSS", "record field store failed");
   }
   return ok_result(holder);
 }
@@ -205,6 +255,7 @@ const deal_host_field deal_host_fields_gccross_Holder[] = {
     {"label", "string", 0},
     {"count", "number", 0},
     {"tags", "[string]", 0},
+    {"record", "record", 0},
 };
 
 /* The module's declared class records; a class export entry points at one of
