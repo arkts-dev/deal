@@ -1797,7 +1797,10 @@ public final class LlvmHostAbiTest {
             return;
         }
         String frame = label.group(1);
-        String sourceFile = root.getFileName() + "/src/main.deal";
+        // C8: the display name is project-relative, independent of where the
+        // project publishes, so the driver projection never carries the
+        // publication-root layout.
+        String sourceFile = "src/main.deal";
         Path unit = Files.createDirectories(
             scratch.resolve("driver-callback-unit")).resolve("probe.c");
         Files.writeString(unit, driverCallbackHostUnit(symbol),
@@ -2863,6 +2866,7 @@ public final class LlvmHostAbiTest {
                 deal.checker.BuiltinErrorDeclaration.synthesized(
                     built.input().modules().get(0).ast().span()),
                 callbacks, deal.codegen.Backend.LLVM, false,
+                root.toString(),
                 deal.distribution.DistributionHome.forManifestDirectory(
                     root.resolve("src").toString()), stager);
             check(emitted.emitted(), "the callback-aware emission publishes: "

@@ -1898,7 +1898,8 @@ public final class CompilationOrchestrator {
             requirementManifests.manifests(), hostDeclarationSurface,
             declarationModuleIdentities(),
             builtinErrorDeclaration(checked.input()),
-            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED, distributionHome, stager);
+            java.util.Set.of(), backend, SOURCE_MAPS_ENABLED,
+            context.projectRoot(), distributionHome, stager);
         if (result.emitted()) {
             semanticEmissionCount++;
             recordProducedProject(result.producedProject());

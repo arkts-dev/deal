@@ -125,6 +125,11 @@ public final class ProductionProjectEmission {
     }
 
 
+    /**
+     * The production arm over the compile's declared inputs when the caller
+     * has no project context: the native arm's display projection keeps the
+     * compiled file's own name (never an absolute path).
+     */
     public static Result run(
             CompilerInvocation invocation,
             CheckedProjectInput checkedProject,
@@ -136,6 +141,41 @@ public final class ProductionProjectEmission {
             Set<String> callbackExports,
             Backend backend,
             boolean sourceMap,
+            DistributionHome distributionHome,
+            PublicationStager stager) throws IOException {
+        return run(invocation, checkedProject, interfaceIndex,
+            requirementManifests, declarationSurface,
+            declarationModuleIdentities, builtinError, callbackExports, backend,
+            sourceMap, null, distributionHome, stager);
+    }
+
+    /**
+     * The production arm over the compile's declared inputs with the
+     * resolved project root available to the one native arm's display
+     * projection.
+     *
+     * <p>{@code projectRoot} is the resolved project root of the compile
+     * (the manifest directory, {@code ProjectContext.projectRoot()}). The
+     * native arm derives every source's display name from it
+     * ({@code llvm-native-codegen-cfg-ssa} C8), so the same project renders
+     * the same {@code DIFile} and origin spellings whatever output root it
+     * publishes to. The other arms keep their {@link SourceMapPaths}
+     * sidecar spelling. A {@code null} root (a direct seam caller that has
+     * no project context) keeps the compiled file's own name, never a
+     * layout-dependent absolute path.</p>
+     */
+    public static Result run(
+            CompilerInvocation invocation,
+            CheckedProjectInput checkedProject,
+            ProjectInterfaceIndex interfaceIndex,
+            List<SemanticRequirementManifest> requirementManifests,
+            HostDeclarationSurface declarationSurface,
+            Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
+            BuiltinErrorDeclaration builtinError,
+            Set<String> callbackExports,
+            Backend backend,
+            boolean sourceMap,
+            String projectRoot,
             DistributionHome distributionHome,
             PublicationStager stager) throws IOException {
         Objects.requireNonNull(invocation, "invocation must not be null");
@@ -187,7 +227,7 @@ public final class ProductionProjectEmission {
         if (backend == Backend.LLVM) {
             return emitLlvmProject(project, lowering, checkedProject,
                 declarationSurface, declarationModuleIdentities, invocation,
-                distributionHome, stager);
+                projectRoot, distributionHome, stager);
         }
 
         // (4) The one emission per target — with the one source-map
@@ -356,13 +396,14 @@ public final class ProductionProjectEmission {
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
             CompilerInvocation invocation,
+            String projectRoot,
             DistributionHome distributionHome,
             PublicationStager stager) throws IOException {
         LlvmEmissionInput input;
         LlvmProjectEmission emission;
         try {
             input = llvmEmissionInput(project, lowering, checkedProject,
-                declarationSurface, declarationModuleIdentities, stager);
+                declarationSurface, declarationModuleIdentities, projectRoot);
             emission = LlvmSemanticEmitter.emitProductionProject(input);
         } catch (IllegalStateException emitterGap) {
             return new Result(Outcome.FAILED,
@@ -411,15 +452,47 @@ public final class ProductionProjectEmission {
             CheckedProjectInput checkedProject,
             HostDeclarationSurface declarationSurface,
             Map<ModuleId, CanonicalModuleIdentity> declarationModuleIdentities,
-            PublicationStager stager) {
+            String projectRoot) {
         java.util.Map<String, String> displayNames = new LinkedHashMap<>();
         for (CheckedModuleInput module : checkedProject.modules()) {
             displayNames.put(module.sourceId(),
-                SourceMapPaths.sourceDisplay(module.sourceId(),
-                    stager.publicationRoot()));
+                llvmSourceDisplay(projectRoot, module.sourceId()));
         }
         return new LlvmEmissionInput(project, lowering.tables(),
             lowering.registries(), displayNames, declarationSurface);
+    }
+
+    /**
+     * The project-relative display name the native arm's debug metadata and
+     * origin records carry ({@code llvm-native-codegen-cfg-ssa} C8: a
+     * project-relative spelling, never an absolute path, and independent of
+     * the publication root so the same project always renders the same
+     * module).
+     *
+     * <p>The name is the compiled source relativized against the resolved
+     * project root — never against the live output root, which is why the
+     * documented {@code --output <artifactsDir>} form keeps the identical
+     * {@code DIFile}, origin atoms and IR bytes. A source outside the
+     * project root, and a caller with no project context, keep the compiled
+     * file's own name: both spellings stay local and deterministic. The
+     * output-root projection {@link SourceMapPaths#sourceDisplay} stays the
+     * JavaScript arm's sidecar spelling.</p>
+     */
+    private static String llvmSourceDisplay(String projectRoot,
+                                            String sourceId) {
+        Path source = Path.of(sourceId).toAbsolutePath().normalize();
+        if (projectRoot != null) {
+            try {
+                Path relative = Path.of(projectRoot).toAbsolutePath()
+                    .normalize().relativize(source);
+                if (!relative.startsWith("..") && !relative.isAbsolute()) {
+                    return relative.toString().replace('\\', '/');
+                }
+            } catch (IllegalArgumentException notRelativizable) {
+                // Different path roots: keep the local file spelling below.
+            }
+        }
+        return source.getFileName().toString();
     }
 
     /**

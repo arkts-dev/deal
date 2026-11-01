@@ -108,12 +108,19 @@ public final class LlvmDebugInfoTest {
                 check("two-module -O" + level, () ->
                     verify(published, scratch, level));
             }
+            // The debug and origin coordinates are project-relative, never
+            // publication-root dependent: the same project compiled to a
+            // non-default --output root renders the identical module and the
+            // identical source spelling.
+            check("non-default --output root", () ->
+                verifyProjectRelative(published, project, scratch));
         } finally {
             deleteTree(scratch);
         }
         System.out.println();
         System.out.println("Two-module debug info: " + passed + " passed, "
-            + failed + " failed (" + LEVELS.size() + " level cases)");
+            + failed + " failed (" + LEVELS.size() + " level cases and the"
+            + " non-default output-root case)");
         if (failed != 0) {
             System.out.println("Two-module debug info: FAIL");
             System.exit(1);
@@ -158,9 +165,19 @@ public final class LlvmDebugInfoTest {
     }
 
     private static Path compile(Path root) throws IOException {
+        return compile(root, null);
+    }
+
+    /**
+     * The one production compile of the project into the given
+     * {@code --output} root; {@code null} keeps the manifest default
+     * ({@code <project>/build/llvm}).
+     */
+    private static Path compile(Path root, String output) throws IOException {
         Path source = root.resolve("src/main.deal").toAbsolutePath().normalize();
         ProjectLocator.LocateResult located = ProjectLocator.locate(
-            source.toString(), new CliOverrides(Backend.LLVM.cliName(), null));
+            source.toString(),
+            new CliOverrides(Backend.LLVM.cliName(), output));
         if (located.context() == null) {
             throw new AssertionError("the two-module project did not resolve: "
                 + (located.e2010() != null ? located.e2010().message() : "")
@@ -335,6 +352,46 @@ public final class LlvmDebugInfoTest {
             LIB_ERROR_LINE, LIB_ERROR_COLUMN);
         requireLineEntry(lineTableFor(product, "src/main.deal"), "src/main.deal",
             MAIN_CALL_LINE, MAIN_CALL_COLUMN);
+    }
+
+    /**
+     * C8/C9 under the documented {@code --output <artifactsDir>} form: a
+     * shallow and a deeply nested output root produce the very same textual
+     * module as the default root, no absolute or layout-prefixed source
+     * spelling reaches the IR, and the non-default product's DWARF and
+     * carried error coordinate still name the project-relative source.
+     */
+    private static void verifyProjectRelative(Path published, Path project,
+                                              Path scratch) throws Exception {
+        Path shallow = scratch.resolve("out-nonddefault");
+        Path deep = scratch.resolve("out-nested/deeper/out");
+        Path fromShallow = compile(project, shallow.toString());
+        Path fromDeep = compile(project, deep.toString());
+        byte[] reference = Files.readAllBytes(published.resolve("main.ll"));
+        byte[] shallowBytes = Files.readAllBytes(fromShallow.resolve("main.ll"));
+        byte[] deepBytes = Files.readAllBytes(fromDeep.resolve("main.ll"));
+        if (!java.util.Arrays.equals(reference, shallowBytes)
+                || !java.util.Arrays.equals(reference, deepBytes)) {
+            throw new AssertionError("the same project publishes different"
+                + " textual modules for different output roots");
+        }
+        String module = new String(shallowBytes, StandardCharsets.UTF_8);
+        for (String absolute : List.of(scratch.toString(),
+                project.toAbsolutePath().normalize().toString())) {
+            if (module.contains(absolute)) {
+                throw new AssertionError("the emitted module carries the"
+                    + " absolute path " + absolute);
+            }
+        }
+        for (String source : List.of("src/lib.deal", "src/main.deal")) {
+            if (!module.contains("DIFile(filename: \"" + source + "\"")) {
+                throw new AssertionError("the emitted module carries no"
+                    + " project-relative DIFile for " + source);
+            }
+        }
+        // The non-default product's debug information and carried-error
+        // projection keep the same project-relative coordinates.
+        verify(fromShallow, scratch, 0);
     }
 
     /** One generated function's DWARF names and declared position. */
