@@ -449,6 +449,10 @@ typedef struct deal_host_box {
     deal_host_function function;
     deal_async_token token;
     uint32_t unicode_defect;
+    /* Published identity, rooted by the crossing. Never set for a partial
+     * conversion; boxed contents remain the host's own presentation. */
+    int materialized;
+    deal_data managed;
 } deal_host_box;
 
 /* The union of every runtime-owned element storage slot (C3), so one staged
@@ -983,6 +987,7 @@ typedef struct {
     size_t count;
     size_t box_capacity;
     size_t value_capacity;
+    size_t depth;
 } deal_host_memo;
 
 static deal_data *deal_host_memo_lookup(deal_host_memo *memo,
@@ -1685,10 +1690,41 @@ static deal_error *deal_host_materialize_function(deal_host_crossing *crossing,
     return NULL;
 }
 
+static deal_error *deal_host_materialize_node(deal_host_crossing *crossing,
+                                              deal_host_box *box,
+                                              deal_host_memo *memo,
+                                              deal_data *out);
+
 static deal_error *deal_host_materialize(deal_host_crossing *crossing,
                                          deal_host_box *box,
                                          deal_host_memo *memo,
                                          deal_data *out) {
+    if (box->materialized != 0) {
+        *out = box->managed;
+        return NULL;
+    }
+    size_t initial_count = memo->count;
+    memo->depth += 1u;
+    deal_error *failure = deal_host_materialize_node(crossing, box, memo, out);
+    memo->depth -= 1u;
+    if (failure == NULL && memo->depth == 0u) {
+        /* Commit identities only after the whole graph materializes. A failed
+         * graph may have memoized a shell to close a cycle; it must not become
+         * the answer to a later retry after the host repairs its carrier. */
+        for (size_t index = 0; index < memo->count; index += 1u) {
+            memo->boxes[index]->managed = memo->values[index];
+            memo->boxes[index]->materialized = 1;
+        }
+    } else if (failure != NULL) {
+        memo->count = initial_count;
+    }
+    return failure;
+}
+
+static deal_error *deal_host_materialize_node(deal_host_crossing *crossing,
+                                              deal_host_box *box,
+                                              deal_host_memo *memo,
+                                              deal_data *out) {
     deal_data *existing = deal_host_memo_lookup(memo, box);
     if (existing != NULL) {
         *out = *existing;
@@ -3153,6 +3189,16 @@ deal_status deal_array_set(deal_value array, int64_t index, deal_value element) 
         if (index < 0 || (size_t)index > box->slot_count) {
             return DEAL_STATUS_BOUNDS;
         }
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            if (status == DEAL_OK) {
+                status = deal_array_set(view, index, element);
+            }
+            if (status != DEAL_OK) {
+                return status;
+            }
+        }
         if ((size_t)index == box->slot_count) {
             box->slots = deal_host_grow(box->slots, &box->slot_capacity,
                 box->slot_count, sizeof(*box->slots),
@@ -3274,6 +3320,16 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
     if (box != NULL) {
         if (box->kind != DEAL_HOST_BOX_RECORD) {
             return DEAL_STATUS_KIND;
+        }
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            if (status == DEAL_OK) {
+                status = deal_table_set(view, key, keyLength, value);
+            }
+            if (status != DEAL_OK) {
+                return status;
+            }
         }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             deal_host_member *member = &box->members[index];
@@ -3403,6 +3459,16 @@ deal_status deal_table_delete(deal_value table, const void *key,
                     || (keyLength != 0u
                         && memcmp(member->key_bytes, key, keyLength) != 0)) {
                 continue;
+            }
+            if (box->materialized != 0) {
+                deal_value view;
+                status = deal_host_datum_carrier(box->managed, &view);
+                if (status == DEAL_OK) {
+                    status = deal_table_delete(view, key, keyLength);
+                }
+                if (status != DEAL_OK) {
+                    return status;
+                }
             }
             deal_platform_release(member->key_bytes);
             for (size_t rest = index + 1u; rest < box->member_count;
@@ -3559,6 +3625,16 @@ deal_status deal_field_set(deal_value object, const char *field,
         return status;
     }
     if (box != NULL) {
+        if (box->materialized != 0) {
+            deal_value view;
+            status = deal_host_datum_carrier(box->managed, &view);
+            if (status == DEAL_OK) {
+                status = deal_field_set(view, field, value);
+            }
+            if (status != DEAL_OK) {
+                return status;
+            }
+        }
         for (size_t index = 0; index < box->member_count; index += 1u) {
             if (deal_host_text_equal(box->members[index].key_bytes, field)) {
                 box->members[index].value = value;
@@ -3701,6 +3777,16 @@ deal_status deal_field_delete(deal_value object, const char *field) {
         for (size_t index = 0; index < box->member_count; index += 1u) {
             if (!deal_host_text_equal(box->members[index].key_bytes, field)) {
                 continue;
+            }
+            if (box->materialized != 0) {
+                deal_value view;
+                status = deal_host_datum_carrier(box->managed, &view);
+                if (status == DEAL_OK) {
+                    status = deal_field_delete(view, field);
+                }
+                if (status != DEAL_OK) {
+                    return status;
+                }
             }
             deal_platform_release(box->members[index].key_bytes);
             for (size_t rest = index + 1u; rest < box->member_count;

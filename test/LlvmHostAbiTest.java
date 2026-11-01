@@ -871,6 +871,7 @@ public final class LlvmHostAbiTest {
             testRegistrationProtocol(scratch, project);
             testExportInvokeDriver(scratch, project, output);
             testValueSurfaceAndHandles(scratch, output);
+            testCarrierRegressions(scratch);
             testArrayCarrierResourceFault(scratch, output);
             testFunctionSlotViewStore(scratch);
             testCallbackReentry(scratch);
@@ -2556,6 +2557,58 @@ public final class LlvmHostAbiTest {
             checkEq(run.stderr(), stressed.stderr(), "-O" + level + " the"
                 + " unconsumed-token case is byte-identical under"
                 + " DEAL_GC_STRESS");
+        }
+    }
+
+    /** Separate stores, graph retries and return must preserve one identity. */
+    private static void testCarrierRegressions(Path scratch) throws Exception {
+        Path root = Files.createDirectories(scratch.resolve("carrier-regressions"));
+        Files.createDirectories(root.resolve("src"));
+        Files.createDirectories(root.resolve("bindings"));
+        Files.writeString(root.resolve("deal.json"), DEAL_JSON);
+        Files.writeString(root.resolve("bindings/probe.d.deal"), """
+            export function aliases(a: unknown[], r: Record<string, unknown>): unknown;
+            """);
+        Files.writeString(root.resolve("src/main.deal"), """
+            import * as p from "host/probe";
+            function check(ok: boolean): null {
+              if (!ok) { throw {code: "TEST_FAIL", message: "carrier identity"}; }
+              return null;
+            }
+            export function main(): null {
+              let a: unknown[] = [];
+              let r: Record<string, unknown> = {};
+              let u: unknown = p.aliases(a, r);
+              check(a.length === 2);
+              check(a[0] === a[1]);
+              check(u === a[0]);
+              check(r.a === u);
+              check(r.b === u);
+              check((r.self as Record<string, unknown>) === r);
+              let child: Record<string, unknown> = u as Record<string, unknown>;
+              check(child.self === u);
+              check((child.value as number) === 7);
+              check((child.later as number) === 7);
+              check(!Object.hasOwn(child, "deleted"));
+              return null;
+            }
+            """);
+        compile(root);
+        Path host = root.resolve("probe.c");
+        Files.copy(REPO.resolve("test/native/abi_regression.c"), host);
+        for (int level : LEVELS) {
+            NativeCompiler.Result normal = build(root, level, host, root);
+            checkEq(0, normal.exitCode(), "carrier regressions -O" + level
+                + ": " + normal.describe());
+            checkEq("", normal.stdout(), "carrier regressions stdout");
+            checkEq("", normal.stderr(), "carrier regressions stderr");
+            NativeCompiler.Result stressed = NativeCompiler.execute(
+                root.resolve("product-" + level + "-probe.c"), root,
+                Map.of("DEAL_GC_STRESS", "1"));
+            checkEq(0, stressed.exitCode(), "carrier regressions stress -O"
+                + level + ": " + stressed.describe());
+            checkEq("", stressed.stdout(), "carrier regressions stress stdout");
+            checkEq("", stressed.stderr(), "carrier regressions stress stderr");
         }
     }
 
