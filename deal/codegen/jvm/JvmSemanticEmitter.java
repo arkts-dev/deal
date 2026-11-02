@@ -416,12 +416,29 @@ public final class JvmSemanticEmitter {
 
         // -- naming ---------------------------------------------------------------
 
+        // Constant pools are bounded independently of method size. Large
+        // closures distribute slots and callable code among nested classes in
+        // the same source artifact, without changing storage/capture identity.
+        private boolean partitionClasses;
+
+        private String storageOwner(long id) {
+            return partitionClasses ? "__Slots" + (id / 512) + "." : "";
+        }
+
         protected String slot(ValueId id) {
-            return "v" + id.id();
+            return storageOwner(id.id()) + "v" + id.id();
         }
 
         protected String cell(BindingId id, long generation) {
-            return "b" + id.id() + "g" + generation;
+            return storageOwner(id.id()) + "b" + id.id() + "g" + generation;
+        }
+
+        private String functionOwner(FunctionId id) {
+            return partitionClasses ? "__Fn" + id.id() + "." : "";
+        }
+
+        private String stateHelper(FunctionId id) {
+            return functionOwner(id) + "__state" + id.id();
         }
 
         @Override
@@ -430,7 +447,7 @@ public final class JvmSemanticEmitter {
         }
 
         String fnFactory(FunctionId id) {
-            return "F" + id.id();
+            return functionOwner(id) + "F" + id.id();
         }
 
         String loopLabel(OpId opId) {
@@ -534,6 +551,7 @@ public final class JvmSemanticEmitter {
         // -- emission ----------------------------------------------------------------
 
         EmissionResult emit() {
+            partitionClasses = units.values().stream().mapToLong(u -> u.ops().size()).sum() > 4096;
             out.append("import deal.codegen.jvm.JvmRuntime;\n");
             out.append("import deal.codegen.jvm.JvmJson;\n");
             out.append("import java.util.List;\n");
@@ -631,8 +649,22 @@ public final class JvmSemanticEmitter {
                     }
                 }
             }
-            for (String field : fields) {
-                out.append("  static Object ").append(field).append(";\n");
+            if (partitionClasses) {
+                Map<String, List<String>> storage = new LinkedHashMap<>();
+                for (String field : fields) {
+                    int dot = field.indexOf('.');
+                    storage.computeIfAbsent(field.substring(0, dot), ignored -> new ArrayList<>())
+                        .add(field.substring(dot + 1));
+                }
+                for (var entry : storage.entrySet()) {
+                    out.append("  static final class ").append(entry.getKey()).append(" {\n");
+                    for (String field : entry.getValue())
+                        out.append("    static Object ").append(field).append(";\n");
+                    out.append("  }\n");
+                }
+            } else {
+                for (String field : fields)
+                    out.append("  static Object ").append(field).append(";\n");
             }
 
             if (hostAbi != null) {
@@ -641,8 +673,11 @@ public final class JvmSemanticEmitter {
             // Function factories (every module).
             for (LoweredModuleUnit moduleUnit : units.values()) {
                 for (LoweredFunction function : moduleUnit.functions().values()) {
+                    if (partitionClasses)
+                        out.append("  static final class __Fn").append(function.functionId().id()).append(" {\n");
                     emitFunctionStateHelpers(function);
                     emitFunctionFactory(function);
+                    if (partitionClasses) out.append("  }\n");
                 }
             }
             // The generated class carriers (E5): one static nested class
@@ -1102,7 +1137,7 @@ public final class JvmSemanticEmitter {
                 }
                 params.append("Object c" + capture.binding().id());
             }
-            out.append("  static JvmRuntime.FunctionValue ").append(fnFactory(functionId))
+            out.append("  static JvmRuntime.FunctionValue F").append(functionId.id())
                 .append('(').append(params).append(") {\n");
             out.append("    return new JvmRuntime.FunctionValue(args -> {\n");
             List<OpId> bodyOps = requireFunctionBody(function, tableOfFunction(function));
@@ -3405,7 +3440,7 @@ public final class JvmSemanticEmitter {
                 .append(" = __bodyActive.contains(").append(callee.id())
                 .append("L);\n");
             out.append(indent(indent)).append("Object[] ").append(saved)
-                .append(" = __state").append(callee.id()).append("Save();\n");
+                .append(" = ").append(stateHelper(callee)).append("Save();\n");
             out.append(indent(indent)).append("__bodyActive.add(")
                 .append(callee.id()).append("L);\n");
             return new StateSlot(previous, saved);
@@ -3423,7 +3458,7 @@ public final class JvmSemanticEmitter {
             if (slot == null) {
                 return;
             }
-            out.append(indent(indent)).append("__state").append(callee.id())
+            out.append(indent(indent)).append(stateHelper(callee))
                 .append("Restore(").append(slot.saved()).append(");\n");
             out.append(indent(indent)).append("if (!").append(slot.previous())
                 .append(") {\n");
@@ -3456,7 +3491,7 @@ public final class JvmSemanticEmitter {
                 .append(" = __bodyActive.contains(").append(callee.id())
                 .append("L);\n");
             out.append(indent(indent)).append("Object[] ").append(saved)
-                .append(" = __state").append(callee.id()).append("Save();\n");
+                .append(" = ").append(stateHelper(callee)).append("Save();\n");
             out.append(indent(indent)).append("__bodyActive.add(")
                 .append(callee.id()).append("L);\n");
             return new StateSlot(previous, saved);
@@ -3468,7 +3503,7 @@ public final class JvmSemanticEmitter {
             if (slot == null) {
                 return;
             }
-            out.append(indent(indent)).append("__state").append(callee.id())
+            out.append(indent(indent)).append(stateHelper(callee))
                 .append("Restore(").append(slot.saved()).append(");\n");
             // A re-entrant invocation leaves the enclosing invocation's
             // marker in place; only the outermost one clears it.

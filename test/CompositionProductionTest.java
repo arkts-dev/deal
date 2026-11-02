@@ -19,7 +19,12 @@ public final class CompositionProductionTest {
     private static final List<Backend> BACKENDS = List.of(Backend.JS, Backend.LUAJIT, Backend.JVM);
 
     static void execute(String source, String expected, Path root, Path host) throws Exception {
-        for (Backend backend : BACKENDS) {
+        execute(source, expected, root, host, BACKENDS);
+    }
+
+    static void execute(String source, String expected, Path root, Path host,
+                        List<Backend> backends) throws Exception {
+        for (Backend backend : backends) {
             Path project = root.resolve(backend.name());
             Path src = project.resolve("src");
             Path out = project.resolve("out");
