@@ -1,0 +1,4 @@
+// @spec: Lexical elements — Syntactic grammar (normative)
+// @description: Reject non-TypeScript syntax: bare-async-function.
+// @expected: compile-error E1042
+import * as c from "std/console";export function main():null{async function():Promise<number>{return 1;};c.log("OK");return null;}

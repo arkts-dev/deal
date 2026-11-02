@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DEAL v1.4 template-literal structure scanner (docs/spec-v1.5.md lexical
+ * DEAL v1.5 template-literal structure scanner (docs/spec-v1.5.md lexical
  * grammar).
  *
  * <pre>
@@ -19,6 +19,10 @@ import java.util.List;
  * expression lexical rules apply: whitespace including line terminators,
  * {@code //} and {@code /* *&#47;} comments, the five-escape quoted strings,
  * nested template literals, and balanced braces.</p>
+ *
+ * <p>Numeric/hex/Unicode escape spellings must be syntactically valid in
+ * untagged TypeScript templates, but remain raw text in DEAL. An even
+ * backslash run does not start an escape spelling.</p>
  *
  * <p>The <em>trailing backslash</em> rule closes the text run: the run of
  * backslashes that ends a TemplateText run and immediately precedes its
@@ -83,14 +87,15 @@ public final class TemplateScanner {
         /** The closing backtick of the template literal. */
         CLOSING_BACKTICK,
         /** The {@code ${} opener of an interpolation. */
-        INTERPOLATION_OPENER
+        INTERPOLATION_OPENER,
+        /** An unpaired backslash starts an invalid numeric/hex/Unicode escape. */
+        ESCAPE_PREFIX
     }
 
     /**
-     * One broken TemplateText trailing-backslash rule: the half-open UTF-16
-     * range of an odd trailing backslash run together with the delimiter it
-     * precedes. The run and delimiter are contiguous, so the range names
-     * both sides of the violation.
+     * A broken TemplateText restriction: the half-open UTF-16 range of an
+     * odd trailing backslash run with its delimiter, or an invalid escape
+     * prefix. No escape is decoded and structural recovery is unchanged.
      */
     public record Violation(int start, int end, Delimiter delimiter) {
     }
@@ -174,7 +179,21 @@ public final class TemplateScanner {
                     List.copyOf(segments), List.copyOf(violations));
             }
 
-            // Every other scalar — backslash, '}', '$' not followed by '{',
+            if (c == '\\') {
+                int end = pos + 1;
+                while (end < source.length() && source.charAt(end) == '\\') end++;
+                if (((end - pos) & 1) != 0 && end < source.length()) {
+                    char next = source.charAt(end);
+                    if (invalidEscape(source, end, next)) {
+                        violations.add(new Violation(end - 1, end + 1,
+                            Delimiter.ESCAPE_PREFIX));
+                    }
+                }
+                pos = end;
+                continue;
+            }
+
+            // Every other scalar — '}', '$' not followed by '{',
             // whitespace, quoted strings are not special at TemplateText
             // level — is ordinary text.
             pos++;
@@ -183,6 +202,38 @@ public final class TemplateScanner {
         addText(segments, textStart, pos);
         return new Scan(Status.EOF, pos, List.copyOf(segments),
             List.copyOf(violations));
+    }
+
+    private static boolean invalidEscape(String source, int pos, char next) {
+        if (next >= '1' && next <= '9') return true;
+        if (next == '0') return pos + 1 < source.length()
+            && source.charAt(pos + 1) >= '0' && source.charAt(pos + 1) <= '9';
+        if (next == 'x') return !hexDigits(source, pos + 1, 2);
+        if (next != 'u') return false;
+        if (pos + 1 >= source.length() || source.charAt(pos + 1) != '{')
+            return !hexDigits(source, pos + 1, 4);
+        int i = pos + 2;
+        long value = 0;
+        int digits = 0;
+        while (i < source.length() && hex(source.charAt(i)) >= 0) {
+            // Saturate rather than overflow on an arbitrarily long spelling.
+            value = Math.min(0x110000L, value * 16 + hex(source.charAt(i++)));
+            digits++;
+        }
+        return digits == 0 || value > 0x10ffff || i >= source.length() || source.charAt(i) != '}';
+    }
+
+    private static boolean hexDigits(String source, int start, int count) {
+        if (start + count > source.length()) return false;
+        for (int i = start; i < start + count; i++) if (hex(source.charAt(i)) < 0) return false;
+        return true;
+    }
+
+    private static int hex(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
     }
 
     /**

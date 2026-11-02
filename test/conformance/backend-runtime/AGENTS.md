@@ -11,4 +11,6 @@ CorpusConformanceTest discovers cases and parses invocation plans: main once, th
 - Catch/Record reads remain unknown until checked extraction or supported refinement. Preserve shadowing, async invalidation and actual consuming-boundary negatives; do not assume unsupported post-termination narrowing.
 - Presence uses Object.hasOwn without refinement. Distinguish absence, null and stored undefined. Delete Record keys/optional fields, never array elements. Void completion is not null.
 
+Dynamic-recursion fixtures exercise mutable bindings, arrays, Records, assertions, adapters, caught throws and escaped per-activation local cells; named/nonrecursive controls remain distinct. Async fixtures pin public completion invocations rather than merely calling main. Syntax controls preserve parenthesized expressions, separated minus tokens and literal valid template escape spellings.
+
 Synchronize migrated source coordinates without weakening expectations.

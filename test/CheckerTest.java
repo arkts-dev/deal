@@ -210,7 +210,25 @@ public class CheckerTest {
     // Main
     // =========================================================================
 
+    static void testNestedDeclarationValidation() {
+        for (String name : List.of("switch", "enum", "Object", "Promise", "Record", "undefined", "bad$name")) {
+            assertError(checkProgram("function outer():null{function " + name
+                + "():number{return 1;}return null;}"), "E2008", "nested name " + name);
+        }
+        for (String declarations : List.of(
+                "function f():number{return 1;}function f():number{return 2;}",
+                "let f:number=1;function f():number{return 2;}")) {
+            assertError(checkProgram("function outer():null{" + declarations + "return null;}"),
+                "E2002", "nested redeclaration");
+        }
+        assertNoErrors(checkProgram("function f():number{return 1;}function outer():null{"
+            + "let before=f();function f():number{return 2;}let after=f();"
+            + "{function f():number{return 3;}let inner=f();}return null;}"),
+            "nested shadowing retains declaration order");
+    }
+
     public static void main(String[] args) {
+        testNestedDeclarationValidation();
         System.out.println("=== Running Type Checker Tests ===");
 
         // -- Name Resolution --

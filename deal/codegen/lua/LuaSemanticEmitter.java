@@ -1437,6 +1437,10 @@ public final class LuaSemanticEmitter {
             out.append("  return __frameWrap(")
                 .append(luaString(frameLabel(functionId)))
                 .append(", function(...)\n");
+            // Save at carrier entry, not merely at statically resolved calls.
+            // pcall balances restoration for returns, throws and async drains.
+            String activation = emitInvocationStateSave(functionId, null);
+            out.append("    local __activationOk, __activationResult = pcall(function(...)\n");
             emitBodyFunctionPreamble();
             int argIndex = 1;
             List<OpId> bodyOps = requireFunctionBody(function, tableOfFunction(function));
@@ -1474,6 +1478,10 @@ public final class LuaSemanticEmitter {
             // invalid — one uniform trampoline keeps every shape valid).
             out.append("::").append(returnLabel(functionId)).append("::\n");
             out.append("  return __rvcT\n");
+            out.append("    end, ...)\n");
+            emitInvocationStateRestore(functionId, activation);
+            out.append("    if not __activationOk then error(__activationResult, 0) end\n");
+            out.append("    return __activationResult\n");
             out.append("  end)\n");
             out.append("end\n");
             currentFunctionId = null;

@@ -1140,6 +1140,13 @@ public final class JvmSemanticEmitter {
             out.append("  static JvmRuntime.FunctionValue F").append(functionId.id())
                 .append('(').append(params).append(") {\n");
             out.append("    return new JvmRuntime.FunctionValue(args -> {\n");
+            // The carrier owns activation storage, including dynamic, host and
+            // async invocations that cannot name the callee at the call site.
+            boolean preserveState = !bodyStateKeys(functionId).isEmpty();
+            if (preserveState) {
+                out.append("      Object[] __activation = ").append(stateHelper(functionId))
+                    .append("Save();\n      try {\n");
+            }
             List<OpId> bodyOps = requireFunctionBody(function, tableOfFunction(function));
             currentFunction = function;
             int paramCount = function.descriptor().paramTypes().size();
@@ -1234,6 +1241,10 @@ public final class JvmSemanticEmitter {
             }
             if (segmented || (reachable && (tail == null || tail.kind() != SemanticOpKind.RETURN))) {
                 out.append("      return JvmRuntime.UNDEFINED;\n");
+            }
+            if (preserveState) {
+                out.append("      } finally {\n        ").append(stateHelper(functionId))
+                    .append("Restore(__activation);\n      }\n");
             }
             out.append("    }, ")
                 .append(javaString(descriptorText(function.descriptor())))

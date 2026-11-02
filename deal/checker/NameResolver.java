@@ -648,8 +648,14 @@ public final class NameResolver {
     }
 
     private void walkFuncDecl(FunctionDeclaration fd) {
-        // F2: Define nested function name in the enclosing scope.
-        // For module-level functions, the name is already hoisted.
+        // Module functions were validated and hoisted; nested declarations
+        // must validate their own name and cannot silently reuse a local.
+        if (currentScope != root) {
+            checkNoDollar(fd.name(), fd.span());
+            if (currentScope.containsLocally(fd.name())) {
+                error(DiagnosticCode.E2002, "Redeclaration of '" + fd.name() + "'", fd.span());
+            }
+        }
         if (!currentScope.containsLocally(fd.name())) {
             Type funcType = resolveResultTypeNode(fd.returnType());
             List<Type> paramTypes = new ArrayList<>();

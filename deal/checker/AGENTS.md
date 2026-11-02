@@ -12,6 +12,6 @@ Own resolution, typing, narrowing and facts. Diagnostics are deterministic/targe
 - Each while-body entry receives fresh true-guard refinement with ordinary invalidation; body refinements cannot cross back-edges. Unknown equality permits neither narrowing nor conversion.
 - Bindings reject eval/arguments and reserved words; async/as/from/of are contextual identifiers. Keyword properties remain legal. Reject duplicate surface nullish union members before unknown absorption.
 - Declarations/imports are immutable; function-valued variables remain mutable. Resolve signatures in their enclosing scope, excluding shadowing parameters.
-- Nested functions follow declaration order; modules hoist. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
+- Nested functions follow declaration order; modules hoist. Validate nested declaration names (reserved/builtin/$) and reject same-scope redeclaration without forbidding ordinary outer shadowing. Reject namespace/metadata data, duplicate properties and array deletion. Record keys remain string data; class members are declared-field accesses.
 
 Test acceptance/rejection independently of emitters.

@@ -1,0 +1,67 @@
+// @spec: Async/Await — Async operation semantics; Functions — Closures and captured variables
+// @description: Recursive async dynamic bindings and array callees preserve activation state; synchronous dynamic recursion inside an async body and named async recursion are controls.
+// @expected: runtime-ok
+// @features: async, await, functions, recursion, mutation
+function check(ok:boolean):void{
+  if(!ok){
+    throw {
+      code:"TEST",message:"async dynamic activation"
+    };
+  }
+}
+export function main():null{
+  return null;
+}
+export async function drive():Promise<number>{
+  {
+    // async-array-recursion
+    let fs:((n:number)=>Promise<number>)[]=[async function(n:number):Promise<number>{
+      return 0;
+    }
+    ];
+    fs[0]=async function(n:number):Promise<number>{
+      if(n===0){
+        return 0;
+      }
+      return n+await fs[0](n-1);
+    };
+    check(await fs[0](3)===6);
+  }
+  {
+    // async-dynamic-recursion
+    let f:(n:number)=>Promise<number>=async function(n:number):Promise<number>{
+      return 0;
+    };
+    f=async function(n:number):Promise<number>{
+      if(n===0){
+        return 0;
+      }
+      return n+await f(n-1);
+    };
+    check(await f(3)===6);
+  }
+  {
+    // async-static-control
+    async function f(n:number):Promise<number>{
+      if(n===0){
+        return 0;
+      }
+      return n+await f(n-1);
+    }
+    check(await f(3)===6);
+  }
+  {
+    // async-sync-dynamic
+    let f:(n:number)=>number=function(n:number):number{
+      return 0;
+    };
+    f=function(n:number):number{
+      if(n===0){
+        return 0;
+      }
+      return n+f(n-1);
+    };
+    check(f(3)===6);
+  }
+  return 1;
+}

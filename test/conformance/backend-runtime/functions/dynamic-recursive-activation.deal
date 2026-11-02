@@ -1,0 +1,145 @@
+// @spec: Functions — Closures and captured variables
+// @description: Dynamic recursion preserves evaluated operands and local activation state across mutable bindings, arrays, records, assertions, adapters and abrupt completion; named and nonrecursive controls remain correct.
+// @expected: runtime-ok
+// @features: functions, recursion, closures, mutation, arity
+import * as c from "std/console";
+function check(ok:boolean):void{
+  if(!ok){
+    throw {
+      code:"TEST",message:"dynamic activation"
+    };
+  }
+}
+export function main():null{
+  {
+    // factorial-nonrecursive-control
+    let f:(n:number)=>number=function(n:number):number{
+      return 0;
+    };
+    f=function(n:number):number{
+      return n*2;
+    };
+    check(f(5)===10);
+  }
+  {
+    // factorial-static-control
+    function f(n:number):number{
+      if(n===0){
+        return 1;
+      }
+      return n*f(n-1);
+    }
+    check(f(5)===120);
+  }
+  {
+    // factorial
+    let f:(n:number)=>number=function(n:number):number{
+      return 0;
+    };
+    f=function(n:number):number{
+      if(n===0){
+        return 1;
+      }
+      return n*f(n-1);
+    };
+    check(f(5)===120);
+  }
+  {
+    // sum-array
+    let fs:((n:number)=>number)[]=[function(n:number):number{
+      return 0;
+    }
+    ];
+    fs[0]=function(n:number):number{
+      if(n===0){
+        return 0;
+      }
+      return n+fs[0](n-1);
+    };
+    check(fs[0](3)===6);
+  }
+  {
+    // sum-direct-unknown
+    function f(n:number):number{
+      if(n===0){
+        return 0;
+      }
+      let u:unknown=f;
+      return n+(u as (n:number)=>number)(n-1);
+    }
+    check(f(3)===6);
+  }
+  {
+    // sum-record
+    let t:Record<string,unknown>={
+    };
+    t.f=function(n:number):number{
+      if(n===0){
+        return 0;
+      }
+      return n+(t.f as (n:number)=>number)(n-1);
+    };
+    check((t.f as (n:number)=>number)(3)===6);
+  }
+  {
+    // sum-through-adapter
+    let f:(n:number)=>number=function(n:number):number{
+      return 0;
+    };
+    let a:(n:number,x:number)=>number=f;
+    f=function(n:number):number{
+      if(n===0){
+        return 0;
+      }
+      return n+a(n-1,99);
+    };
+    a=f;
+    check(a(3,99)===6);
+  }
+  {
+    // sum-throws-caught
+    let f:(n:number)=>number=function(n:number):number{
+      return 0;
+    };
+    f=function(n:number):number{
+      if(n===0){
+        throw {
+          code:"X",message:"x"
+        };
+      }
+      try{
+        let child=f(n-1);
+        return n+child;
+      }
+      catch(e){
+        return n;
+      }
+    };
+    check(f(3)===6);
+  }
+  {
+    let visits=0;
+    let escaped:(()=>number)[]=[];
+    let f:(n:number)=>number=function(n:number):number{
+      return 0;
+    };
+    f=function(n:number):number{
+      let local=n;
+      escaped[escaped.length]=function():number{
+        return local;
+      };
+      visits=visits+1;
+      if(n===0){
+        return 0;
+      }
+      let result=f(n-1);
+      local=local+10;
+      return n+result;
+    };
+    check(f(3)===6 && visits===4);
+    check(escaped[0]()===13 && escaped[1]()===12 && escaped[2]()===11 && escaped[3]()===0);
+    check(f(1)===1 && visits===6 && escaped[0]()===13 && escaped[4]()===11);
+  }
+  c.log("ACTIVATION_OK");
+  return null;
+}

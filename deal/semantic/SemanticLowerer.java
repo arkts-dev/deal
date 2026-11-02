@@ -10547,6 +10547,13 @@ public final class SemanticLowerer {
                     + " has no registered FunctionExecutionBinding (producer defect)",
                         identifier.span());
             }
+            if (binding instanceof FunctionExecutionBinding.DynamicFunctionValue) {
+                // Conservative assignment analysis can classify a captured
+                // declaration read dynamically (including same-spelled writes
+                // in sibling scopes). Invoke the evaluated carrier, as the
+                // synchronous declared-name path does; never rebuild a body.
+                return lowerDynamicAwait(call, slot, awaitSpan, identifier.name(), calleeValue);
+            }
             if (!(binding instanceof FunctionExecutionBinding.LoweredBody)) {
                 throw new ConstructUnlowered("await callee '" + identifier.name()
                     + "' identity " + calleeValue + " resolves the static class "

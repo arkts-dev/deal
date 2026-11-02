@@ -1,0 +1,4 @@
+// @spec: Lexical elements — Syntactic grammar (normative)
+// @description: Reject non-TypeScript syntax: nested-reserved.
+// @expected: compile-error E2008
+import * as c from "std/console";export function main():null{function switch():number{return 1;}let x=switch();c.log("OK");return null;}

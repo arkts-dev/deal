@@ -1,0 +1,4 @@
+// @spec: Lexical elements — Syntactic grammar (normative)
+// @description: Reject non-TypeScript syntax: template-brace.
+// @expected: compile-error E1042
+import * as c from "std/console";export function main():null{let x:string=`\u{}`;c.log("OK");return null;}

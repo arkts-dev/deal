@@ -853,6 +853,7 @@ public final class Lexer {
     private static String templateTrailingBackslashMessage(
             TemplateScanner.Delimiter delimiter) {
         return switch (delimiter) {
+            case ESCAPE_PREFIX -> "Invalid template literal: malformed numeric, hexadecimal or Unicode escape spelling";
             case CLOSING_BACKTICK -> "Invalid template literal: trailing"
                 + " backslashes before the closing backtick must form pairs";
             case INTERPOLATION_OPENER -> "Invalid template literal: trailing"
@@ -987,7 +988,14 @@ public final class Lexer {
                 yield makeToken(TokenType.DOT, ".");
             }
             case '+' -> { bump(); yield makeToken(TokenType.PLUS, "+"); }
-            case '-' -> { bump(); yield makeToken(TokenType.MINUS, "-"); }
+            case '-' -> {
+                bump();
+                if (pos < source.length() && source.charAt(pos) == '-') {
+                    error(DiagnosticCode.E1042, "Adjacent '-' tokens require whitespace or a comment",
+                        tokenStartRange());
+                }
+                yield makeToken(TokenType.MINUS, "-");
+            }
             case '/' -> { bump(); yield makeToken(TokenType.SLASH, "/"); }
             case '?' -> { bump(); yield makeToken(TokenType.QUESTION, "?"); }
             case ':' -> { bump(); yield makeToken(TokenType.COLON, ":"); }

@@ -46,7 +46,7 @@ let name: string = "Ada";
 let msg: string = `Hello ${name}!`; // "Hello Ada!"
 ```
 
-The expression inside `${}` must have type `string`. No implicit string conversion.
+Interpolations require `string`; no implicit conversion. Text stays raw; escape spellings follow TypeScript untagged-template syntax.
 
 ```ts
 let n: number = 42;
@@ -94,7 +94,7 @@ NumberLiteral ::= DecimalInteger
 StringLiteral ::= '"' StringCharacter* '"' | '\'' StringCharacter* '\''
 
 TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
-TemplateText ::= /* maximal nonempty text excluding line-terminators, '`', '${'; trailing backslashes form pairs */
+TemplateText ::= /* maximal nonempty text excluding line-terminators, '`', '${'; trailing backslashes pair */
 
 StringCharacter ::= /* any SourceCharacter except line terminators and unescaped quote */
  | '\n' | '\t' | '\\' | '\"' | '\''
@@ -115,8 +115,6 @@ Punctuator ::= '{' | '}' | '(' | ')' | '[' | ']' | ':' | ';' | ',' | '?'
 ```
 
 ### Syntactic grammar (normative)
-
-This grammar defines the statement/expression separation, block semantics, assignment targets, record key syntax, function-call expression form, and operator precedence.
 
 ```antlr
 Program ::= ImportDeclaration* TopLevelDeclaration*
@@ -143,7 +141,7 @@ Block ::= '{' Statement* '}'
 
 ClassDeclaration ::= 'class' Identifier '{' ClassField* '}'
 
-ClassField ::= Identifier '?'? ':' Type ';'
+ClassField ::= Identifier '?'? ':' Type ';' /* field name cannot be 'constructor' */
 
 FunctionDeclaration ::= AsyncPrefix? 'function' Identifier '(' ParameterList? ')' ':' ReturnType Block
 
@@ -161,7 +159,7 @@ VariableDeclaration ::= 'let' Identifier TypeAnnotation? '=' Expression ';'
 
 TypeAnnotation ::= ':' Type
 
-ExpressionStatement ::= Expression ';'
+ExpressionStatement ::= Expression ';' /* cannot begin with 'function' or 'async function' */
 
 ReturnStatement ::= 'return' Expression? ';'
 
@@ -256,6 +254,8 @@ FunctionExpression ::= AsyncPrefix? 'function' '(' ParameterList? ')' ':' Return
 LeftHandSideExpression ::= Identifier
  | PostfixExpression
 ```
+
+Adjacent minus operators require whitespace or comments.
 
 ### Semicolon rules
 

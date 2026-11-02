@@ -2501,8 +2501,19 @@ public class ParserTest {
     static void testAsyncExprStatement() {
         System.out.println("-- Async Function as Expression Statement --");
 
-        // Bare async function expression as a statement
-        ParseResult r = parse("async function(): Promise<number> { return 5; };");
+        // TypeScript expression statements require parentheses here.
+        assertParseError(parse("async function(): Promise<number> { return 5; };"),
+            "E1042", "bare async expression statement");
+        assertParseError(parse("function(): number { return 5; };"),
+            "E1042", "bare expression statement");
+        assertParseError(parse("function(): number { return 5; }();"),
+            "E1042", "bare immediate call");
+        assertParseError(parse("class X { constructor: number; }"),
+            "E1042", "constructor field");
+        assertParseError(parse("class X { constructor?: number; }"),
+            "E1042", "optional constructor field");
+        assertNoParseErrors(parse("let x = async;"), "contextual async expression");
+        ParseResult r = parse("(async function(): Promise<number> { return 5; });");
         ProgramNode prog = r.program();
         assertNoParseErrors(r, "async expr statement");
         assertStmtCount(prog, 1, "one statement");

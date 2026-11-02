@@ -282,6 +282,7 @@ public final class Parser {
                         && tokens.get(pos + 2).type() == TokenType.LPAREN) {
                     yield parseFunctionDeclaration();
                 }
+                error(DiagnosticCode.E1042, "Function expression statements require parentheses", peek());
                 yield parseExpressionStatement();
             }
             case ASYNC  -> {
@@ -292,6 +293,9 @@ public final class Parser {
                         && pos + 3 < tokens.size()
                         && tokens.get(pos + 3).type() == TokenType.LPAREN) {
                     yield parseFunctionDeclaration();
+                }
+                if (pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.FUNCTION) {
+                    error(DiagnosticCode.E1042, "Function expression statements require parentheses", peek());
                 }
                 yield parseExpressionStatement();
             }
@@ -396,6 +400,9 @@ public final class Parser {
             return null;
         }
         Token nameToken = advance();
+        if (nameToken.lexeme().equals("constructor")) {
+            error(DiagnosticCode.E1042, "Class fields cannot be named 'constructor'", nameToken);
+        }
         boolean optional = match(TokenType.QUESTION);
 
         if (!match(TokenType.COLON)) {

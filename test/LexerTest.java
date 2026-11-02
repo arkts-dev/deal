@@ -179,6 +179,7 @@ public class LexerTest {
         testStringLiterals();
         testTemplateLiterals();
         testTemplateTrailingBackslashPairs();
+        testTypeScriptTokenRestrictions();
         testIdentifiers();
         testCompleteLine();
         testLineColumnTracking();
@@ -704,6 +705,22 @@ public class LexerTest {
      * the token keeps the raw scalars. Every odd case carries an even control
      * that is admitted unchanged.
      */
+    static void testTypeScriptTokenRestrictions() {
+        for (String suffix : List.of("xG1", "x4", "uZZZZ", "u{}", "u{110000}", "00", "01", "1", "8", "9")) {
+            LexResult bad = tokenize("`\\" + suffix + "`");
+            assertDiagnosticCode(bad.diagnostics(), "E1042", "template prefix " + suffix);
+            assertRange(findDiag(bad, "E1042"), "test.deal", 1, 2, 1, 4, 1, 3,
+                "template prefix range " + suffix);
+            assertNoDiagnostics(tokenize("`\\\\" + suffix + "`").diagnostics(), "paired prefix " + suffix);
+        }
+        for (String text : List.of("1--2", "x--y", "--x")) {
+            assertDiagnosticCode(tokenize(text).diagnostics(), "E1042", "adjacent minus " + text);
+        }
+        for (String text : List.of("1- -2", "x-/*gap*/-y", "- -x", "`\\n`", "`\\q`", "`\\0`", "`\\x41`", "`\\u0041`", "`\\u{10FFFF}`", "`\\u{00000000041}`")) {
+            assertNoDiagnostics(tokenize(text).diagnostics(), "syntax control " + text);
+        }
+    }
+
     static void testTemplateTrailingBackslashPairs() {
         System.out.println("-- TemplateText trailing backslash pairs --");
         String closingMessage = "Invalid template literal: trailing"

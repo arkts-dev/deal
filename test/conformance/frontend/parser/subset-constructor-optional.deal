@@ -1,0 +1,4 @@
+// @spec: Lexical elements — Syntactic grammar (normative)
+// @description: Reject non-TypeScript syntax: constructor-optional.
+// @expected: compile-error E1042
+import * as c from "std/console";class X{constructor?:number;}export function main():null{let x:X={};c.log("OK");return null;}

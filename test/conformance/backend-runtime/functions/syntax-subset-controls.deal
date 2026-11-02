@@ -1,0 +1,35 @@
+// @spec: Lexical elements — Syntactic grammar (normative)
+// @description: Parenthesized functions, separated minus tokens, valid raw escape spellings, paired backslashes and ordinary class fields remain admitted TypeScript syntax.
+// @expected: runtime-ok
+// @features: parser, templates, functions, classes
+import * as c from "std/console";
+
+class X {
+  ctor: number;
+  optional?: number;
+}
+
+function check(ok: boolean): void {
+  if (!ok) { throw { code: "TEST", message: "syntax control" }; }
+}
+
+export function main(): null {
+  let x: X = { ctor: 1 };
+  check(x.ctor === 1);
+  (async function(): Promise<number> { return 1; });
+  check((function(): number { return 1; })() === 1);
+  (function(): number { return 1; });
+  check(1- -2 === 3 && 1-/*gap*/-2 === 3);
+  function f(): number { return 1; }
+  check(f() === 1);
+  check(`\\u{}` === "\\\\u{}");
+  check(`\\xG1` === "\\\\xG1");
+  check(`\\uZZZZ` === "\\\\uZZZZ");
+  // Valid TypeScript spellings are still literal text, never decoded.
+  check(`\x41` === "\\x41");
+  check(`\u0041` === "\\u0041");
+  check(`\u{10FFFF}` === "\\u{10FFFF}");
+  check(`\0` === "\\0");
+  c.log("SYNTAX_OK");
+  return null;
+}
