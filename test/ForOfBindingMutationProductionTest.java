@@ -188,18 +188,7 @@ public final class ForOfBindingMutationProductionTest {
     }
 
     private static String absoluteClasspath() {
-        StringBuilder resolved = new StringBuilder();
-        for (String entry : System.getProperty("java.class.path", "")
-                .split(File.pathSeparator)) {
-            if (entry.isEmpty()) {
-                continue;
-            }
-            if (resolved.length() > 0) {
-                resolved.append(File.pathSeparator);
-            }
-            resolved.append(Path.of(entry).toAbsolutePath().normalize());
-        }
-        return resolved.toString();
+        return TestClasspath.absolute(TestClasspath.EmptyEntry.OMIT);
     }
 
     private static void writeFile(Path root, String relative, String content)

@@ -1,0 +1,59 @@
+// @spec: Functions — Closures and captured variables; for-of
+// @description: Nested for-of temporaries stay distinct in arrays, Unicode strings, mixed loops and lambdas; captures retain fresh mutable iteration cells
+// @expected: runtime-ok
+// @features: for-of, closures, unicode
+import * as c from "std/console";
+
+function check(ok:boolean):void {
+  if(!ok){throw {code:"TEST_FAIL",message:"nested for-of"};}
+}
+
+export function main():null {
+  let total:number=0;
+  for(let x of [1,2]){for(let y of [3,4]){total=total+x+y;}}
+  check(total===20);
+  let text:string="";
+  for(let x of "a😀"){for(let y of "b𝄞"){text=text+x+y;}}
+  check(text==="aba𝄞😀b😀𝄞");
+  total=0;
+  for(let x of [1,2]){for(let y of "a😀"){if(y==="😀"){total=total+x;}}}
+  check(total===3);
+  text="";
+  for(let x of "a😀"){for(let y of [1,2]){text=text+x;}}
+  check(text==="aa😀😀");
+
+  let readers:(()=>number)[]=[];
+  for(let x of [1,2]){for(let y of [3,4]){
+    readers[readers.length]=function():number{return x*10+y;};
+    y=y+1;
+  }}
+  check(readers.length===4);
+  check(readers[0]()===14 && readers[1]()===15 && readers[2]()===24 && readers[3]()===25);
+  let strings:(()=>string)[]=[];
+  for(let x of "a😀"){for(let y of "b𝄞"){
+    strings[strings.length]=function():string{return x+y;};
+  }}
+  check(strings[0]()==="ab" && strings[1]()==="a𝄞" && strings[2]()==="😀b" && strings[3]()==="😀𝄞");
+  strings=[];
+  for(let x of [1,2]){for(let y of "a😀"){
+    strings[strings.length]=function():string{if(x===1){return y;}return y+"!";};
+  }}
+  check(strings[0]()==="a" && strings[1]()==="😀" && strings[2]()==="a!" && strings[3]()==="😀!");
+  strings=[];
+  for(let x of "a😀"){for(let y of [1,2]){
+    strings[strings.length]=function():string{if(y===1){return x;}return x+"!";};
+  }}
+  check(strings[0]()==="a" && strings[1]()==="a!" && strings[2]()==="😀" && strings[3]()==="😀!");
+
+  let run:()=>number=function():number{
+    let n:number=0;
+    for(let x of [1,2]){for(let y of [3,4]){n=n+x+y;}}
+    for(let x of "a😀"){for(let y of "b𝄞"){if(x!==y){n=n+1;}}}
+    for(let x of [1,2]){for(let y of "b𝄞"){let f:()=>number=function():number{return x;};n=n+f();}}
+    for(let x of "a😀"){for(let y of [1,2]){let f:()=>string=function():string{return x;};if(f()===x){n=n+y;}}}
+    return n;
+  };
+  check(run()===36);
+  c.log("NESTED_OK");
+  return null;
+}

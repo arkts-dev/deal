@@ -897,12 +897,7 @@ public final class ClassConstructionValidator {
 
         /** The declared field of one layout, or {@code null}. */
         private static ClassLayout.FieldLayout fieldOf(ClassLayout layout, String name) {
-            for (ClassLayout.FieldLayout field : layout.fields()) {
-                if (field.name().equals(name)) {
-                    return field;
-                }
-            }
-            return null;
+            return layout.fieldOf(name);
         }
 
         private static RuntimeDescriptor readResultDescriptorOf(

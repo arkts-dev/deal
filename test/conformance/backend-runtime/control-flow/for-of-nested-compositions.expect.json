@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "backends": ["js", "luajit", "jvm"],
+  "expected": {
+    "mode": "runtime-ok",
+    "transcript": {"stdout": "NESTED_OK\n", "stderr": ""},
+    "exitCode": 0
+  }
+}

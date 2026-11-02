@@ -53,6 +53,14 @@ public record ClassLayout(ClassId classId, List<FieldLayout> fields) {
         }
     }
 
+    /** First declared field with this name, or null; does not resolve providers. */
+    public FieldLayout fieldOf(String name) {
+        for (FieldLayout field : fields) {
+            if (field.name().equals(name)) return field;
+        }
+        return null;
+    }
+
     public ClassLayout(ClassId classId, List<FieldLayout> fields) {
         this.classId = Objects.requireNonNull(classId, "classId must not be null");
         this.fields = List.copyOf(fields);

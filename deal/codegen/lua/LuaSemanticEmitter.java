@@ -4694,12 +4694,7 @@ private void emitStdlib(SemanticOp op) {
 
         /** The declared layout entry of one field name, or null. */
         private ClassLayout.FieldLayout fieldOf(ClassLayout layout, String name) {
-            for (ClassLayout.FieldLayout field : layout.fields()) {
-                if (field.name().equals(name)) {
-                    return field;
-                }
-            }
-            return null;
+            return layout.fieldOf(name);
         }
 
         private void emitBranch(SemanticOp op) {

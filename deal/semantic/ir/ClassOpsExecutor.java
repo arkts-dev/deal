@@ -2295,12 +2295,7 @@ public final class ClassOpsExecutor {
 
     /** The layout field of {@code name} in declaration order, or {@code null}. */
     private static ClassLayout.FieldLayout fieldOf(ClassLayout layout, java.lang.String name) {
-        for (ClassLayout.FieldLayout field : layout.fields()) {
-            if (field.name().equals(name)) {
-                return field;
-            }
-        }
-        return null;
+        return layout.fieldOf(name);
     }
 
     /** The named-parameter values of one two-parameter arm render. */

@@ -2745,12 +2745,7 @@ case "NUMBER_ADD" -> {
 
     /** True iff {@code needle} occurs at {@code offset} of {@code haystack}. */
     private static boolean matchAt(int[] haystack, int[] needle, int offset) {
-        for (int i = 0; i < needle.length; i++) {
-            if (haystack[offset + i] != needle[i]) {
-                return false;
-            }
-        }
-        return true;
+        return deal.semantic.ir.UnicodeScalars.matchAt(haystack, needle, offset);
     }
 
     /**
@@ -2759,15 +2754,7 @@ case "NUMBER_ADD" -> {
      * subsequence search.
      */
     private static int indexOfSubsequence(int[] haystack, int[] needle, int fromIndex) {
-        if (needle.length == 0) {
-            return fromIndex <= haystack.length ? fromIndex : -1;
-        }
-        for (int i = Math.max(0, fromIndex); i + needle.length <= haystack.length; i++) {
-            if (matchAt(haystack, needle, i)) {
-                return i;
-            }
-        }
-        return -1;
+        return deal.semantic.ir.UnicodeScalars.indexOfSubsequence(haystack, needle, fromIndex);
     }
 
     /** Appends code points to the builder in order. */

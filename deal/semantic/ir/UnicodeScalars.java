@@ -11,6 +11,23 @@ public final class UnicodeScalars {
         // Static surface only; pure and stateless.
     }
 
+    /** Match already validated scalar arrays; callers provide an in-range window. */
+    public static boolean matchAt(int[] haystack, int[] needle, int offset) {
+        for (int i = 0; i < needle.length; i++) {
+            if (haystack[offset + i] != needle[i]) return false;
+        }
+        return true;
+    }
+
+    /** Literal scalar search; retains the empty-needle position contract. */
+    public static int indexOfSubsequence(int[] haystack, int[] needle, int fromIndex) {
+        if (needle.length == 0) return fromIndex <= haystack.length ? fromIndex : -1;
+        for (int i = Math.max(0, fromIndex); i + needle.length <= haystack.length; i++) {
+            if (matchAt(haystack, needle, i)) return i;
+        }
+        return -1;
+    }
+
     // =========================================================================
     // ScalarString: the closed ADT
     // =========================================================================

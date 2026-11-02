@@ -1,0 +1,2 @@
+# Test-only stateful generation/shrinking; no production dependency.
+hypothesis==6.151.9

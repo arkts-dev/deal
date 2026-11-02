@@ -13,6 +13,21 @@ public final class SemanticEmitterShared {
     private SemanticEmitterShared() {
     }
 
+    /** Direct STDLIB_PARAMETER children, ordered by recorded operation id. */
+    public static java.util.List<deal.semantic.ir.SemanticOp> stdlibParamBoundaries(
+            deal.semantic.ir.SemanticOp parent,
+            Iterable<deal.semantic.ir.SemanticOp> operations) {
+        var result = new java.util.ArrayList<deal.semantic.ir.SemanticOp>();
+        for (var candidate : operations) {
+            if (candidate.kind() == deal.semantic.ir.SemanticOpKind.BOUNDARY
+                    && parent.opId().equals(candidate.origin().parentOpId())
+                    && ((deal.semantic.ir.KindPayload.BoundaryPayload) candidate.payload()).kind()
+                        == deal.semantic.ir.BoundaryKind.STDLIB_PARAMETER) result.add(candidate);
+        }
+        result.sort(java.util.Comparator.comparingLong(candidate -> candidate.opId().id()));
+        return result;
+    }
+
     /**
      * The static runtime kind of a descriptor for atomization/checks:
      * {@code null}, {@code bool}, {@code int}, {@code number},

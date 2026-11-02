@@ -3178,18 +3178,7 @@ private void emitBindingLoad(SemanticOp op) {
 
         /** The STDLIB_PARAMETER children of one call, in one-based order. */
         private List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
-            List<SemanticOp> boundaries = new ArrayList<>();
-            for (SemanticOp candidate : opsById.values()) {
-                if (candidate.kind() == SemanticOpKind.BOUNDARY
-                        && op.opId().equals(candidate.origin().parentOpId())
-                        && ((KindPayload.BoundaryPayload) candidate.payload())
-                            .kind() == BoundaryKind.STDLIB_PARAMETER) {
-                    boundaries.add(candidate);
-                }
-            }
-            boundaries.sort(java.util.Comparator.comparingLong(
-                candidate -> candidate.opId().id()));
-            return boundaries;
+            return deal.codegen.SemanticEmitterShared.stdlibParamBoundaries(op, opsById.values());
         }
 
         /** The single recorded STDLIB_RETURN cell of one call, or null. */
@@ -4233,12 +4222,7 @@ private void emitBindingLoad(SemanticOp op) {
         /** One declared field of a layout, or null. */
         private static ClassLayout.FieldLayout fieldOf(ClassLayout layout,
                                                        String name) {
-            for (ClassLayout.FieldLayout field : layout.fields()) {
-                if (field.name().equals(name)) {
-                    return field;
-                }
-            }
-            return null;
+            return layout.fieldOf(name);
         }
 
         /**

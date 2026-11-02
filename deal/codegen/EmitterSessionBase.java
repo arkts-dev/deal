@@ -514,18 +514,7 @@ public abstract class EmitterSessionBase {
 
     /** The STDLIB_PARAMETER children in one-based declared order. */
     protected final List<SemanticOp> stdlibParamBoundaries(SemanticOp op) {
-        List<SemanticOp> result = new ArrayList<>();
-        for (SemanticOp candidate : opsById.values()) {
-            if (candidate.kind() == SemanticOpKind.BOUNDARY
-                    && op.opId().equals(candidate.origin().parentOpId())
-                    && ((KindPayload.BoundaryPayload) candidate.payload()).kind()
-                        == BoundaryKind.STDLIB_PARAMETER) {
-                result.add(candidate);
-            }
-        }
-        result.sort(java.util.Comparator.comparingLong(candidate ->
-            candidate.opId().id()));
-        return result;
+        return SemanticEmitterShared.stdlibParamBoundaries(op, opsById.values());
     }
 
     protected final SemanticOp boundaryChildOfKind(SemanticOp op, BoundaryKind kind) {

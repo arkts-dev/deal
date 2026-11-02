@@ -9,4 +9,6 @@ Extend distinct regressions, not inventories. Batch gate-local preparation; inva
 - Validate typed/raw/text mutations independently, with coherent fresh digests and provider facts. Preserve assignment RHS/storage identity, once-only adapter evaluation and genuine closure bindings.
 - Execute generated and deployed runtime consumers separately, including Lua load orders, host/async crossings, class cycles and generic versus generated JSON rules. Method-size tests must compile and execute recursion, captures and transfers, not inspect text alone.
 
+Hypothesis boundary tests require `python3 -m pip install -r test/requirements.txt`. Generate valid typed traces and independently model effects/values; shrink failures without accepting source rejection as preservation. Keep transient examples under ignored scratch-review, not tracked source.
+
 Keep fixture-specific contracts in executable tests and the nearest policy.

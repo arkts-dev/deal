@@ -1650,12 +1650,7 @@ public final class SharedStdlibSemantics {
 
     /** True iff {@code needle} occurs at {@code offset} of {@code haystack}. */
     private static boolean matchAt(int[] haystack, int[] needle, int offset) {
-        for (int i = 0; i < needle.length; i++) {
-            if (haystack[offset + i] != needle[i]) {
-                return false;
-            }
-        }
-        return true;
+        return UnicodeScalars.matchAt(haystack, needle, offset);
     }
 
     /**
@@ -1664,15 +1659,7 @@ public final class SharedStdlibSemantics {
      * subsequence search.
      */
     private static int indexOfSubsequence(int[] haystack, int[] needle, int fromIndex) {
-        if (needle.length == 0) {
-            return fromIndex <= haystack.length ? fromIndex : -1;
-        }
-        for (int i = Math.max(0, fromIndex); i + needle.length <= haystack.length; i++) {
-            if (matchAt(haystack, needle, i)) {
-                return i;
-            }
-        }
-        return -1;
+        return UnicodeScalars.indexOfSubsequence(haystack, needle, fromIndex);
     }
 
     /** Appends code points to the builder in order. */
