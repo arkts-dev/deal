@@ -582,6 +582,8 @@ public final class LlvmTypeMapper {
     public static final int DATA_CLASS = 7;
     public static final int DATA_FUNCTION = 8;
     public static final int DATA_ERROR = 9;
+    /** Retained host-only leaf; emitted DEAL values never construct this tag. */
+    public static final int DATA_OPAQUE = 10;
 
     /**
      * The staged representation of one descriptor, or empty when the value

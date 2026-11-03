@@ -4881,8 +4881,10 @@ final class LlvmFunctionEmitter {
     private String elementOperand(RuntimeDescriptor element,
                                   RuntimeDescriptor actual, ValueId value,
                                   SemanticOp op) {
-        String type = LlvmTypeMapper.slotTypeOf(element);
+        String type = element instanceof RuntimeDescriptor.Number
+            ? LlvmTypeMapper.DATA : LlvmTypeMapper.slotTypeOf(element);
         String stored = convert(value, actual, element, op);
+        if (element instanceof RuntimeDescriptor.Number) stored = emitDatum(element, stored, op);
         if (element instanceof RuntimeDescriptor.Boolean) {
             stored = emitTemporary(op, "zext i1 " + stored + " to i8");
         }
@@ -5115,15 +5117,17 @@ final class LlvmFunctionEmitter {
                 + " @deal_container_array_element(" + LlvmTypeMapper.ARRAY + " "
                 + array + ", i64 " + offset + ")");
             RuntimeDescriptor element = arrayType.element();
-            String type = LlvmTypeMapper.slotTypeOf(element);
+            String type = element instanceof RuntimeDescriptor.Number
+                ? LlvmTypeMapper.DATA : LlvmTypeMapper.slotTypeOf(element);
             String slot = emitTemporary(op, "bitcast i8* " + pointer + " to "
                 + type + "*");
             String loaded = emitTemporary(op, "load " + type + ", " + type
                 + "* " + slot);
-            String value = element instanceof RuntimeDescriptor.Boolean
-                ? emitTemporary(op, "trunc i8 " + loaded + " to "
-                    + LlvmTypeMapper.BOOLEAN_SSA)
-                : loaded;
+            String value = element instanceof RuntimeDescriptor.Number
+                ? LlvmDataValues.unbox(session, sink, element, loaded)
+                : element instanceof RuntimeDescriptor.Boolean
+                    ? emitTemporary(op, "trunc i8 " + loaded + " to "
+                        + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
             storeResultOf(op, element, value);
             return;
         }
@@ -5377,15 +5381,17 @@ final class LlvmFunctionEmitter {
         String pointer = emitTemporary(op, "call i8*"
             + " @deal_container_array_element(" + LlvmTypeMapper.ARRAY + " "
             + array + ", i64 " + index + ")");
-        String type = LlvmTypeMapper.slotTypeOf(arrayType.element());
+        String type = arrayType.element() instanceof RuntimeDescriptor.Number
+            ? LlvmTypeMapper.DATA : LlvmTypeMapper.slotTypeOf(arrayType.element());
         String slot = emitTemporary(op, "bitcast i8* " + pointer + " to "
             + type + "*");
         String loaded = emitTemporary(op, "load " + type + ", " + type + "* "
             + slot);
-        String value = arrayType.element() instanceof RuntimeDescriptor.Boolean
-            ? emitTemporary(op, "trunc i8 " + loaded + " to "
-                + LlvmTypeMapper.BOOLEAN_SSA)
-            : loaded;
+        String value = arrayType.element() instanceof RuntimeDescriptor.Number
+            ? LlvmDataValues.unbox(session, sink, arrayType.element(), loaded)
+            : arrayType.element() instanceof RuntimeDescriptor.Boolean
+                ? emitTemporary(op, "trunc i8 " + loaded + " to "
+                    + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
         bindIteration(binding, generation, element, representation, value, op);
         loops.push(new LoopTargets(op.opId().id(), header, latch, exit));
         emitBlock(payload.body(), latch);
@@ -5571,17 +5577,13 @@ final class LlvmFunctionEmitter {
                 }
                 continue;
             }
-            String stored = convert(value, descriptorOfValue(value),
-                field.layout().descriptor(), op);
-            if (field.layout().descriptor()
-                    instanceof RuntimeDescriptor.Boolean) {
-                stored = emitTemporary(op, "zext i1 " + stored + " to i8");
-            }
+            String stored = emitDatum(field.layout().descriptor(),
+                convert(value, descriptorOfValue(value), field.layout().descriptor(), op), op);
             String target = fieldPointer(op, def.recordName(), typed, 0,
                 field.structIndex());
             emit("store " + field.slotType() + " " + stored + ", "
                 + field.slotType() + "* " + target);
-            emitFieldBarrier(op, def, field, typed, target, stored);
+            emitFieldBarrier(op, def, typed, target);
             if (field.presenceIndex() >= 0) {
                 emit("store i8 1, i8* "
                     + fieldPointer(op, def.recordName(), typed, 0,
@@ -5711,13 +5713,11 @@ final class LlvmFunctionEmitter {
             LlvmTypeMapper.classRepresentation(payload.classId()), op);
         String slot = fieldPointer(op, def.recordName(), instance, 0,
             field.structIndex());
-        if (field.presenceIndex() < 0) {
+        if (field.layout().required()) {
             String loaded = emitTemporary(op, "load " + field.slotType() + ", "
                 + field.slotType() + "* " + slot);
-            String value = field.layout().descriptor()
-                instanceof RuntimeDescriptor.Boolean
-                ? emitTemporary(op, "trunc i8 " + loaded + " to "
-                    + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
+            String value = LlvmDataValues.unbox(session, sink,
+                field.layout().descriptor(), loaded);
             storeResultOf(op, field.layout().descriptor(), value);
             return;
         }
@@ -5752,10 +5752,8 @@ final class LlvmFunctionEmitter {
         startSegment(presentLabel);
         String loaded = emitTemporary(op, "load " + field.slotType() + ", "
             + field.slotType() + "* " + slot);
-        String value = field.layout().descriptor()
-            instanceof RuntimeDescriptor.Boolean
-            ? emitTemporary(op, "trunc i8 " + loaded + " to "
-                + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
+        String value = LlvmDataValues.unbox(session, sink,
+            field.layout().descriptor(), loaded);
         String converted = coerce(field.layout().descriptor(), readType, value, op);
         emit("store " + representation + " " + converted + ", "
             + representation + "* " + target);
@@ -5813,16 +5811,14 @@ final class LlvmFunctionEmitter {
         LlvmClassPlans.Field field = def.fields().get(index);
         String instance = loadValue(payload.classValue(),
             LlvmTypeMapper.classRepresentation(payload.classId()), op);
-        String stored = convert(payload.value(), descriptorOfValue(payload.value()),
-            field.layout().descriptor(), op);
-        if (field.layout().descriptor() instanceof RuntimeDescriptor.Boolean) {
-            stored = emitTemporary(op, "zext i1 " + stored + " to i8");
-        }
+        String stored = emitDatum(field.layout().descriptor(),
+            convert(payload.value(), descriptorOfValue(payload.value()),
+                field.layout().descriptor(), op), op);
         String slot = fieldPointer(op, def.recordName(), instance, 0,
             field.structIndex());
         emit("store " + field.slotType() + " " + stored + ", "
             + field.slotType() + "* " + slot + debugAttachment(op));
-        emitFieldBarrier(op, def, field, instance, slot, stored);
+        emitFieldBarrier(op, def, instance, slot);
         if (field.presenceIndex() >= 0) {
             emit("store i8 1, i8* "
                 + fieldPointer(op, def.recordName(), instance, 0,
@@ -5831,35 +5827,16 @@ final class LlvmFunctionEmitter {
     }
 
     /**
-     * The M2 insertion barrier of one class-field store, run on the committed
-     * slot: a persistent datum slot shades the datum's managed payload through
-     * the tag-aware entry, and every other managed-reference slot shades the
-     * just-stored referent. A scalar, scalar-nullish or presence slot stores no
-     * managed reference and needs none.
+     * The M2 tag-aware barrier of the committed field datum. All fields retain
+     * actual data; scalar and singleton tags have no referent to shade.
      */
     private void emitFieldBarrier(SemanticOp op, LlvmClassPlans.ClassDef def,
-                                  LlvmClassPlans.Field field, String instance,
-                                  String slot, String stored) {
-        if (!LlvmClassPlans.holdsManagedReference(field)) {
-            return;
-        }
+                                  String instance, String slot) {
         String container = emitTemporary(op, "bitcast " + def.recordName()
             + "* " + instance + " to i8*");
-        if (LlvmClassPlans.isTaggedDatum(field)) {
-            session.referenceRuntimeEntry("deal_store_barrier_data");
-            emit("call void @deal_store_barrier_data(i8* " + container + ", "
-                + LlvmTypeMapper.DATA + "* " + slot + ")"
-                + debugAttachment(op));
-            return;
-        }
-        session.referenceRuntimeEntry("deal_store_barrier");
-        String referent = LlvmTypeMapper.REFERENCE_NULLISH.equals(
-            field.slotType())
-            ? stored
-            : emitTemporary(op, "bitcast " + field.slotType() + " " + stored
-                + " to i8*");
-        emit("call void @deal_store_barrier(i8* " + container + ", i8* "
-            + referent + ")" + debugAttachment(op));
+        session.referenceRuntimeEntry("deal_store_barrier_data");
+        emit("call void @deal_store_barrier_data(i8* " + container + ", "
+            + LlvmTypeMapper.DATA + "* " + slot + ")" + debugAttachment(op));
     }
 
     /** One class field delete: the field's presence returns to absent (R2). */
@@ -5874,7 +5851,7 @@ final class LlvmFunctionEmitter {
                 + payload.field() + "'");
         }
         LlvmClassPlans.Field field = def.fields().get(index);
-        if (field.presenceIndex() < 0) {
+        if (field.layout().required()) {
             throw new deal.codegen.SharedEmissionFailure(
                 "LlvmSemanticEmitter rejects the delete of the required field '"
                     + payload.field() + "' of " + payload.classId().text()

@@ -429,6 +429,10 @@ typedef struct {
     void *key_bytes;
     size_t key_length;
     deal_value value;
+    /* Raw host-map keys may be nonstrings. Keep the actual carrier until
+     * ingress validation; never coerce it into the string-keyed DEAL Record. */
+    deal_value raw_key;
+    uint32_t has_raw_key;
 } deal_host_member;
 
 typedef struct deal_host_box {
@@ -719,7 +723,7 @@ static const deal_host_class_access *deal_host_class_access_of_instance(
             deal_host_classes_emitted[index].access;
         deal_check_input probe = {0};
         uint8_t present = 0;
-        if (access->read(&datum, 0u, &probe, &present, access->context) != 0) {
+        if (access->read(&datum, access->declared->field_count, &probe, &present, access->context) != 0) {
             if (atom_out != NULL) {
                 *atom_out = deal_host_classes_emitted[index].atom;
             }
@@ -1204,7 +1208,7 @@ static uint32_t deal_host_element_storage(deal_descriptor *element) {
     case DEAL_DESCRIPTOR_UNKNOWN:
         return DEAL_LAYOUT_ELEMENT_DATUM;
     case DEAL_DESCRIPTOR_NUMBER:
-        return DEAL_LAYOUT_ELEMENT_NUMBER;
+        return DEAL_LAYOUT_ELEMENT_DATUM;
     case DEAL_DESCRIPTOR_BOOLEAN:
         return DEAL_LAYOUT_ELEMENT_BOOLEAN;
     default:
@@ -1239,6 +1243,10 @@ void deal_host_present_datum(deal_data datum, deal_check_input *out) {
     memset(out, 0, sizeof(*out));
     out->presentation = DEAL_PRESENT_DATUM;
     out->datum = datum;
+    if (datum.tag == DEAL_DATA_OPAQUE) {
+        out->presentation = DEAL_PRESENT_OPAQUE;
+        return;
+    }
     void *referent = deal_data_referent(&datum);
     if (referent == NULL) {
         return;
@@ -1398,6 +1406,17 @@ static deal_error *deal_host_materialize_record(deal_host_crossing *crossing,
     deal_host_memo_record(memo, box, created);
     for (size_t index = 0; index < box->member_count; index += 1u) {
         deal_host_member *member = &box->members[index];
+        if (member->has_raw_key) {
+            deal_check_input key;
+            deal_error *cause = NULL;
+            if (deal_host_value_presentation(member->raw_key, &key, &cause) != DEAL_OK)
+                return cause != NULL ? cause : deal_host_carrier_reject(
+                    deal_descriptor_intern("string"), "table", &crossing->origin);
+            deal_check_context context = {&crossing->origin, 0u};
+            deal_outcome rejected = deal_check_value(deal_descriptor_intern("string"),
+                key, DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
+            if (rejected.error != NULL) return rejected.error;
+        }
         uint32_t defect = 0u;
         if (!deal_host_bytes_are_scalars(member->key_bytes, member->key_length,
                 &defect)) {
@@ -2751,6 +2770,10 @@ static deal_status deal_host_datum_carrier(deal_data datum, deal_value *out) {
         return deal_boolean(datum.number != 0.0 ? 1 : 0, out);
     case DEAL_DATA_NUMBER:
         return deal_number(datum.number, out);
+    case DEAL_DATA_OPAQUE:
+        /* Host-only leaves remain in their owning graph for later checked
+         * rejection; do not expose a view with no admitted DEAL kind. */
+        return DEAL_STATUS_KIND;
     default:
         if (datum.reference == NULL) {
             return DEAL_STATUS_KIND;
@@ -3455,6 +3478,7 @@ deal_status deal_table_set(deal_value table, const void *key, size_t keyLength,
         deal_host_member *member = &box->members[box->member_count];
         member->key_bytes = NULL;
         member->key_length = keyLength;
+        member->has_raw_key = 0u;
         if (keyLength != 0u) {
             member->key_bytes = deal_platform_allocate(keyLength);
             if (member->key_bytes == NULL) {
@@ -3764,6 +3788,7 @@ deal_status deal_field_set(deal_value object, const char *field,
         }
         memcpy(member->key_bytes, field, length + 1u);
         member->key_length = length;
+        member->has_raw_key = 0u;
         member->value = value;
         box->member_count += 1u;
         return DEAL_OK;

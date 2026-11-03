@@ -335,6 +335,11 @@ public final class LlvmRuntimeAbiMirrorTest {
         check(rtHeader.contains("DEAL_PRESENT_INVALID_UNICODE = 4,")
                 && rtHeader.contains("DEAL_PRESENT_RAW_FUNCTION = 5"),
             "raw native callable presentation appends without changing existing discriminants");
+        check(rtHeader.contains("DEAL_DATA_ERROR = 9,")
+                && rtHeader.contains("DEAL_DATA_OPAQUE = 10")
+                && rtHeader.contains("DEAL_PRESENT_OPAQUE = 6"),
+            "retained opaque host leaves append tags without changing existing ABI discriminants");
+        checkEq(10, LlvmTypeMapper.DATA_OPAQUE, "opaque data tag mirrors the appended C discriminant");
         // The shared value-surface records (R4, R2): the check input, its
         // recorded context, the class layout and one supplied field, whose field
         // order the emitted IR follows. The check input, the class field and the

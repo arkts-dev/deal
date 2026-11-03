@@ -1,6 +1,6 @@
 #include "host/probe.h"
-#include "native_helpers.h"
-static deal_host_result impl_mutate(const deal_value *args,size_t argc){(void)argc;checked(deal_field_set(args[0],"x",null_value()));return result(undefined_value());}
+#include "native_hostile.h"
+static deal_host_result impl_mutate(const deal_value *args,size_t argc){(void)argc;fixture_class_field(args[0],"x",null_value(),1);return result(undefined_value());}
 const deal_host_field deal_host_fields_probe_C[] = {
   {"x", "number", 1},
 };

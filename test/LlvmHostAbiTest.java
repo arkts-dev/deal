@@ -2774,9 +2774,9 @@ public final class LlvmHostAbiTest {
         String module = Files.readString(output.resolve("main.ll"),
             StandardCharsets.UTF_8);
         check(module.contains(".layout.refs = private unnamed_addr constant"
-                + " [1 x i32] [i32 8]"),
-            "the emitted class layout maps the function-typed slot as a managed"
-                + " reference");
+                + " [1 x i32] [i32 32]"),
+            "the emitted class layout traces the function datum's reference"
+                + " after the atom, presence byte and datum scalar payload");
         Path hostUnit = REPO.resolve("test/native/slot.c");
         for (int level : LEVELS) {
             Path product = scratch.resolve("slot-product-" + level);

@@ -64,7 +64,8 @@ typedef enum {
   DEAL_KIND_NUMBER, DEAL_KIND_STRING, DEAL_KIND_TABLE,
   DEAL_KIND_ARRAY, DEAL_KIND_FUNCTION, DEAL_KIND_CLASS,
   DEAL_KIND_ASYNC_OPERATION, DEAL_KIND_NOTHING, DEAL_KIND_INVALID_UNICODE,
-  DEAL_KIND_UNDEFINED /* appended: preserve earlier C transport discriminants */
+  DEAL_KIND_UNDEFINED, /* appended: preserve earlier C transport discriminants */
+  DEAL_KIND_OPAQUE /* unsupported host object, never admitted as unknown */
 } deal_value_kind;   /* the closed actual-kind classification */
 
 typedef enum { DEAL_FAILURE_HOST_TEXT = 0, DEAL_FAILURE_DEAL_ERROR = 1 } deal_failure_kind;
@@ -231,8 +232,9 @@ typedef struct deal_export_entry deal_export_entry;
 /*
  * The closed persistent data tags (R3). `missing`, `nothing`, invalid Unicode
  * and async-operation presentations are deliberately absent: they are not
- * `unknown` data, and an untyped boundary rejects them before it publishes
- * managed data.
+ * `unknown` data, and an untyped boundary rejects them before publication.
+ * Opaque is a retained host-only leaf used for live graph rejection, never
+ * an admitted DEAL value; its managed reference preserves host identity.
  */
 typedef enum {
     DEAL_DATA_UNDEFINED = 0,
@@ -244,7 +246,8 @@ typedef enum {
     DEAL_DATA_TABLE = 6,
     DEAL_DATA_CLASS = 7,
     DEAL_DATA_FUNCTION = 8,
-    DEAL_DATA_ERROR = 9
+    DEAL_DATA_ERROR = 9,
+    DEAL_DATA_OPAQUE = 10 /* retained host-only leaf; data checks reject it */
 } deal_data_tag;
 
 /*
@@ -334,7 +337,8 @@ typedef enum {
     DEAL_PRESENT_NOTHING = 2,
     DEAL_PRESENT_ASYNC_OPERATION = 3,
     DEAL_PRESENT_INVALID_UNICODE = 4,
-    DEAL_PRESENT_RAW_FUNCTION = 5 /* host callable without a DEAL signature; never data */
+    DEAL_PRESENT_RAW_FUNCTION = 5, /* host callable without a DEAL signature */
+    DEAL_PRESENT_OPAQUE = 6 /* retained unsupported host object; never data */
 } deal_presentation;
 
 /* The closed encoding defects of an `invalid-unicode` presentation: the two

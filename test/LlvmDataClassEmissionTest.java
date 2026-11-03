@@ -43,7 +43,7 @@ import java.util.regex.Pattern;
  *       ops, the generated JSON walks and their plan records, the emitted
  *       layout table and the descriptor atoms;</li>
  *   <li>the emitted class instance record carries the class atom, one presence
- *       byte per optional field and one typed slot per declared field, and the
+ *       byte and one actual tagged datum per declared field, and the
  *       emitted layout metadata is installed before any unit initialization;</li>
  *   <li>two compiles of one project are byte-identical (C9);</li>
  *   <li>the executed fixtures observe their outcomes through the pinned
@@ -1305,7 +1305,7 @@ public final class LlvmDataClassEmissionTest {
         expected.put("the instance allocation", "@deal_alloc(");
         expected.put("the builtin Error construction", "@deal_error_create_strings(");
         expected.put("the array position arm", "@deal_error_array_position(");
-        expected.put("a class field store barrier", "call void @deal_store_barrier(");
+        expected.put("a class field store barrier", "call void @deal_store_barrier_data(");
         expected.put("the emitted class plans", "deal_class_plan_lookup");
         for (Map.Entry<String, String> entry : expected.entrySet()) {
             check(module.contains(entry.getValue()), "the module renders "
@@ -1326,7 +1326,7 @@ public final class LlvmDataClassEmissionTest {
 
     /**
      * The emitted per-layout class metadata: the typed instance record (class
-     * atom, optional-field presence bytes and one typed slot per declared
+     * atom, field presence bytes and one persistent datum per declared
      * field), the layout record's ascending aligned reference offsets inside
      * the payload, and the declaration-order field table the runtime reads.
      */
@@ -1344,7 +1344,7 @@ public final class LlvmDataClassEmissionTest {
             checkEq("i8*", members.get(0).strip(),
                 "the class record starts with the class atom pointer");
             check(members.get(1).strip().equals("i8"),
-                "the class record carries one presence byte per optional field");
+                "the class record carries a presence byte for every field");
         }
         checkEq(1, classes, "every declared class carries one emitted"
             + " instance record");
@@ -1387,10 +1387,9 @@ public final class LlvmDataClassEmissionTest {
     }
 
     /**
-     * The emitted storage of a declared {@code null}/{@code undefined}
-     * position (C3): one reference slot holding the distinct runtime singleton,
-     * in a class instance and in an array, so the declared type is a value of
-     * its own type everywhere it is emitted or decoded.
+     * Declared singleton storage retains actual tags in class fields and
+     * distinct runtime singleton references in arrays. Neither representation
+     * may collapse a present singleton into absence.
      */
     private static void testSingletonSlotStorage(Path scratch) throws Exception {
         System.out.println("-- the declared null/undefined slot storage (C3) --");
@@ -1398,23 +1397,20 @@ public final class LlvmDataClassEmissionTest {
             nullishFixture());
         String module = Files.readString(published.resolve("main.ll"),
             StandardCharsets.UTF_8);
-        // Box { n?: null; value: null; omitted: undefined }: the class atom,
-        // one presence byte for the optional field, and one singleton pointer
-        // slot per declared field.
+        // Box keeps three presence bytes and three actual tagged data slots;
+        // singleton values remain distinct from absent optional fields.
         check(module.contains("%struct.deal_class._src_main_deal_Box.")
-                && module.contains(" = type { i8*, i8, i8*, i8*, i8* }"),
-            "a declared null/undefined field occupies one singleton pointer"
-                + " slot beside the presence byte");
+                && module.contains(" = type { i8*, i8, i8, i8, %struct.deal_data, %struct.deal_data, %struct.deal_data }"),
+            "null/undefined fields retain actual tagged data beside presence");
         MatchResult box = offsets(module, 0);
-        checkEq(40, box.size(), "the singleton field slots are pointer-sized");
-        checkEq(List.of(16, 24, 32), box.references(), "every null/undefined"
-            + " field slot is one traced reference slot after the presence"
-            + " byte (the runtime never traces a singleton as heap storage)");
-        // The canonical `null|undefined` optional field is one singleton slot
-        // as well, never presence metadata standing in for a value.
+        checkEq(88, box.size(), "singleton fields retain actual tagged storage");
+        checkEq(List.of(32, 56, 80), box.references(), "each field traces its"
+            + " datum reference after the presence bytes; singleton tags"
+            + " themselves have no heap referent");
+        // A null|undefined value is tagged data too, not a presence flag.
         check(module.contains("%struct.deal_class._src_main_deal_Mixed.")
-                && module.contains(" = type { i8*, i8, i8* }"),
-            "a `null|undefined` field is one singleton pointer slot");
+                && module.contains(" = type { i8*, i8, %struct.deal_data }"),
+            "a null|undefined field retains actual tagged storage");
         // A null/undefined array element is the published reference element
         // storage, the same layout a managed-reference element uses, so the
         // emitted element access and the runtime JSON rebuild agree.
@@ -1428,8 +1424,8 @@ public final class LlvmDataClassEmissionTest {
 
     /**
      * The builtin {@code Error} value's representation (C3): the instance is
-     * the runtime's own {@code deal_error*} record, so a class field declared
-     * {@code Error} is one {@code deal_error*} slot and every route that boxes
+     * the runtime's own {@code deal_error*} record, so an Error-tagged class
+     * field retains that reference and every route that boxes
      * a statically Error-typed value into an {@code unknown} position — a
      * variable declaration, a class literal field, a field write, an array
      * element and the {@code typeof} projection — publishes that same pointer
@@ -1459,9 +1455,9 @@ public final class LlvmDataClassEmissionTest {
             "the emitted module defines no per-layout record for the builtin"
                 + " Error (its representation is the runtime record)");
         check(module.contains("%struct.deal_class._src_main_deal_Bag.")
-                && module.contains(" = type { i8*, %struct.deal_data,"
-                    + " %struct.deal_error* }"),
-            "an Error field is one `deal_error*` slot beside the datum slot");
+                && module.contains(" = type { i8*, i8, i8, %struct.deal_data,"
+                    + " %struct.deal_data }"),
+            "an Error field retains its managed pointer in a tagged datum");
         check(count(module, "bitcast %struct.deal_error* ") >= 5,
             "every boxing route publishes the Error record pointer as the"
                 + " datum payload: " + count(module, "bitcast %struct.deal_error* ")
@@ -1486,8 +1482,8 @@ public final class LlvmDataClassEmissionTest {
      * {@code unknown} field's entry names the datum's own {@code reference}
      * member — its slot offset plus {@code offsetof(deal_data, reference)} as
      * the pinned toolchain computes it from the published record — never the
-     * tag word the slot starts with, and every store into such a slot and into
-     * a managed pointer slot runs its insertion barrier.
+     * tag word the slot starts with; every field store runs its tag-aware
+     * insertion barrier, including fields with concrete declarations.
      */
     private static void testDatumReferenceMap(Path scratch) throws Exception {
         System.out.println("-- the persistent-datum reference map (C3, M1/M2) --");
@@ -1498,8 +1494,8 @@ public final class LlvmDataClassEmissionTest {
         List<List<String>> records = classRecords(module);
         int datumClass = -1;
         for (int index = 0; index < records.size(); index++) {
-            if (records.get(index).stream().anyMatch(member ->
-                    member.strip().equals("%struct.deal_data"))) {
+            if (records.get(index).stream().filter(member ->
+                    member.strip().equals("%struct.deal_data")).count() == 3) {
                 checkEq(-1, datumClass, "exactly one declared class holds a"
                     + " persistent-datum slot");
                 datumClass = index;
@@ -1510,14 +1506,13 @@ public final class LlvmDataClassEmissionTest {
         if (datumClass < 0) {
             return;
         }
-        // The declared fields after the class atom and the presence bytes; the
-        // fixture declares none optional, so every member is one field slot.
-        List<String> members = records.get(datumClass).subList(1,
+        // Three presence bytes follow the atom, then three aligned data slots.
+        List<String> members = records.get(datumClass).subList(4,
             records.get(datumClass).size());
         checkEq(3, members.size(), "the fixture class emits one slot per"
             + " declared field");
         List<Integer> slots = new ArrayList<>();
-        int offset = 8;                    // the class atom pointer
+        int offset = 11;                   // atom and three presence bytes
         for (String member : members) {
             offset = roundUp(offset,
                 LlvmTypeMapper.alignmentOfIrType(member));
@@ -1529,24 +1524,21 @@ public final class LlvmDataClassEmissionTest {
         // managed member follows one u32 pair and one binary64 value.
         checkEq(16, referenceOffset, "the published datum carries its"
             + " reference member after tag, reserved and number");
-        checkEq(List.of(slots.get(0) + referenceOffset, slots.get(1)),
+        checkEq(slots.stream().map(slot -> slot + referenceOffset).toList(),
             offsets(module, datumClass).references(),
             "the datum slot's reference-map entry names the datum's own"
                 + " reference member, never its tag word");
         check(offsets(module, datumClass).references().get(0) != slots.get(0),
             "the datum slot's reference entry is not the slot start");
-        // The allocation of a class instance stores through the same two
-        // entries: the tag-aware barrier for the datum slot and the pointer
-        // barrier for the managed slot, at construction and at every later
-        // field write (M2).
+        // All field data run the tag-aware barrier at construction and later
+        // writes; declarations still govern admission, not storage tagging.
         check(count(module, "call void @deal_store_barrier_data(") >= 2,
             "every store into a persistent-datum slot runs the tag-aware"
                 + " insertion barrier");
-        check(count(module, "call void @deal_store_barrier(") >= 2,
-            "every store into a managed pointer slot runs the insertion"
-                + " barrier");
-        check(module.contains("declare void @deal_store_barrier(i8*, i8*)")
-                && module.contains(
+        check(count(module, "call void @deal_store_barrier_data(") >= 6,
+            "construction and later writes barrier all field data, including"
+                + " managed referents and scalar tags");
+        check(module.contains(
                     "declare void @deal_store_barrier_data(i8*, %struct.deal_data*)"),
             "the emitted module declares the published barrier entries");
     }

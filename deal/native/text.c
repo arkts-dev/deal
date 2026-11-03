@@ -321,6 +321,7 @@ int deal_data_same(const deal_data *a, const deal_data *b) {
     case DEAL_DATA_CLASS:
     case DEAL_DATA_FUNCTION:
     case DEAL_DATA_ERROR:
+    case DEAL_DATA_OPAQUE:
         return a->reference == b->reference;
     }
     deal_platform_fault("data: tag outside the closed set");

@@ -45,12 +45,13 @@ static int deal_data_tag_is_nullish(deal_data_tag tag) {
 static int deal_data_tag_is_managed(deal_data_tag tag) {
     return tag == DEAL_DATA_STRING || tag == DEAL_DATA_ARRAY
         || tag == DEAL_DATA_TABLE || tag == DEAL_DATA_CLASS
-        || tag == DEAL_DATA_FUNCTION || tag == DEAL_DATA_ERROR;
+        || tag == DEAL_DATA_FUNCTION || tag == DEAL_DATA_ERROR
+        || tag == DEAL_DATA_OPAQUE;
 }
 
 /* Rejects a tag outside the closed persistent data set. */
 static void deal_data_require_tag(deal_data_tag tag) {
-    if ((int)tag < (int)DEAL_DATA_UNDEFINED || (int)tag > (int)DEAL_DATA_ERROR) {
+    if ((int)tag < (int)DEAL_DATA_UNDEFINED || (int)tag > (int)DEAL_DATA_OPAQUE) {
         deal_platform_fault("data: tag outside the closed set");
     }
 }

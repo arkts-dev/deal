@@ -595,6 +595,7 @@ deal_string *deal_descriptor_type_name(const deal_data *value) {
     case DEAL_DATA_TABLE:
     case DEAL_DATA_CLASS:
     case DEAL_DATA_ERROR:
+    case DEAL_DATA_OPAQUE:
         return deal_typeof_name(DEAL_TYPEOF_OBJECT);
     }
     deal_platform_fault("descriptor: typeof of a datum tag outside the closed set");
@@ -647,6 +648,9 @@ static deal_classification deal_check_classify(const deal_check_input *input) {
     case DEAL_PRESENT_RAW_FUNCTION:
         classification.kind = DEAL_KIND_FUNCTION;
         return classification;
+    case DEAL_PRESENT_OPAQUE:
+        classification.kind = DEAL_KIND_OPAQUE;
+        return classification;
     case DEAL_PRESENT_DATUM:
         break;
     default:
@@ -654,6 +658,9 @@ static deal_classification deal_check_classify(const deal_check_input *input) {
     }
     classification.referent = input->datum.reference;
     switch ((deal_data_tag)input->datum.tag) {
+    case DEAL_DATA_OPAQUE:
+        classification.kind = DEAL_KIND_OPAQUE;
+        return classification;
     case DEAL_DATA_UNDEFINED:
         classification.kind = DEAL_KIND_UNDEFINED;
         return classification;
@@ -716,6 +723,7 @@ static const char *deal_check_typed_token(const deal_classification *classificat
     case DEAL_KIND_INVALID_UNICODE:
         return "invalid-unicode";
     case DEAL_KIND_TABLE:
+    case DEAL_KIND_OPAQUE:
         return "table";
     case DEAL_KIND_ARRAY:
         return "array";
@@ -1401,11 +1409,20 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
                 if (!access->read(&datum, index - 1u, &child, &present, access->context))
                     deal_platform_fault("check: class access rejected its instance");
                 if (present == 0u && field->optional) continue;
-                if (present == 0u) child.presentation = DEAL_PRESENT_MISSING;
-                else if (child.presentation == DEAL_PRESENT_DATUM)
+                if (present == 0u) {
+                    child.presentation = DEAL_PRESENT_MISSING;
+                    deal_classification missing = deal_check_classify(&child);
+                    deal_check_failure failure = {DEAL_CHECK_KIND_MISMATCH,
+                        field->descriptor, field->descriptor, "undefined"};
+                    outcome.error = deal_check_render(DEAL_BOUNDARY_TYPE_DESCRIPTOR,
+                        &failure, &missing, context);
+                    break;
+                }
+                if (child.presentation == DEAL_PRESENT_DATUM)
                     child = deal_live_datum(child.datum);
                 deal_live_push(&walk, child, field->descriptor);
             }
+            if (outcome.error != NULL) break;
         }
     }
     deal_platform_release(walk.items);

@@ -1680,6 +1680,7 @@ static const char *deal_json_carrier_token(const deal_check_input *input) {
     case DEAL_DATA_TABLE:
     case DEAL_DATA_CLASS:
     case DEAL_DATA_ERROR:
+    case DEAL_DATA_OPAQUE:
         return "table";
     }
     deal_platform_fault("json: datum tag outside the closed set");
@@ -1912,6 +1913,7 @@ static int deal_json_emit(deal_json_encoder *encoder,
     }
     case DEAL_DATA_UNDEFINED:
     case DEAL_DATA_FUNCTION:
+    case DEAL_DATA_OPAQUE:
         break;
     }
     return 3;
@@ -2280,7 +2282,7 @@ static uint32_t deal_json_element_storage(deal_descriptor *element) {
     case DEAL_DESCRIPTOR_UNKNOWN:
         return DEAL_LAYOUT_ELEMENT_DATUM;
     case DEAL_DESCRIPTOR_NUMBER:
-        return DEAL_LAYOUT_ELEMENT_NUMBER;
+        return DEAL_LAYOUT_ELEMENT_DATUM;
     case DEAL_DESCRIPTOR_BOOLEAN:
         return DEAL_LAYOUT_ELEMENT_BOOLEAN;
     case DEAL_DESCRIPTOR_STRING:

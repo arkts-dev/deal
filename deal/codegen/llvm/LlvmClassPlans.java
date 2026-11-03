@@ -18,8 +18,8 @@ import java.util.Objects;
  *
  * <p>For every declared class this member emits, once per layout:</p>
  * <ul>
- *   <li>the typed instance record of C3 — a class atom, one presence byte per
- *       optional field and one typed slot per declared field;</li>
+ *   <li>the typed instance record of C3 — a class atom, one presence byte and
+ *       one persistent datum per declared field;</li>
  *   <li>the published {@code deal_layout} metadata with the payload size and
  *       the ascending, 8-aligned byte offsets of its managed-reference members
  *       — the pointer slot itself, or a persistent datum's own
@@ -55,7 +55,7 @@ final class LlvmClassPlans {
     /** One declared class with its emitted instance-layout facts. */
     record ClassDef(ClassId classId, ClassLayout layout, int index, int layoutId,
                     String recordName, String atomText, List<Field> fields,
-                    int optionalCount, int size, List<Integer> referenceOffsets) {
+                    int presenceCount, int size, List<Integer> referenceOffsets) {
 
         /** The module symbol of the class's emitted instance-layout metadata. */
         String layoutSymbol() {
@@ -112,36 +112,27 @@ final class LlvmClassPlans {
     }
 
     private static ClassDef define(ClassLayout layout, int index) {
-        int optionalCount = 0;
-        for (ClassLayout.FieldLayout field : layout.fields()) {
-            if (!field.required()) {
-                optionalCount++;
-            }
-        }
+        // Host aliases can remove required fields or store a different kind.
+        // Keep actual presence and data independently of the declared descriptor.
+        int presenceCount = layout.fields().size();
         int offset = 8;                       // the class atom pointer
-        offset += optionalCount;              // one presence byte per optional field
+        offset += presenceCount;              // one presence byte per field
         List<Field> fields = new ArrayList<>();
         List<Integer> references = new ArrayList<>();
         int presence = 0;
         for (int position = 0; position < layout.fields().size(); position++) {
             ClassLayout.FieldLayout field = layout.fields().get(position);
-            String slotType = LlvmTypeMapper.slotTypeOf(field.descriptor());
+            String slotType = LlvmTypeMapper.DATA;
             int alignment = LlvmTypeMapper.alignmentOfIrType(slotType);
             int remainder = offset % alignment;
             if (remainder != 0) {
                 offset += alignment - remainder;
             }
-            int structIndex = 1 + optionalCount + position;
+            int structIndex = 1 + presenceCount + position;
             fields.add(new Field(field, slotType, offset, structIndex,
-                field.required() ? -1 : presence));
-            int referenceOffset = managedReferenceOffset(slotType,
-                field.descriptor(), offset);
-            if (referenceOffset >= 0) {
-                references.add(referenceOffset);
-            }
-            if (!field.required()) {
-                presence++;
-            }
+                presence));
+            references.add(offset + LlvmTypeMapper.dataReferenceOffset());
+            presence++;
             offset += LlvmTypeMapper.sizeOfIrType(slotType);
         }
         int alignment = 8;
@@ -150,50 +141,14 @@ final class LlvmClassPlans {
         return new ClassDef(layout.classId(), layout, index,
             LlvmSession.EMITTED_LAYOUT_BASE + index,
             LlvmTypeMapper.classRecordName(layout.classId()),
-            layout.classId().text(), List.copyOf(fields), optionalCount, size,
+            layout.classId().text(), List.copyOf(fields), presenceCount, size,
             List.copyOf(references));
     }
 
     /**
-     * The payload byte offset of one slot's managed-reference member, or -1
-     * when the slot holds no managed reference (M1/M4). A persistent datum
-     * ({@code unknown}) holds its referent in its own {@code reference} member,
-     * so the reference map names that member and never the tag word the slot
-     * starts with; every other managed slot is one pointer at the slot start,
-     * including a function-typed slot: a {@code deal_fn*} is a managed object
-     * (`isManagedValue`), so its slot is traced and barriered like any other
-     * managed reference and a function value stored in a declared class field
-     * survives every collection (C3/M1/M2).
+     * Field data retain actual tags independently of declared descriptors;
+     * each field traces and barriers its datum's reference member.
      */
-    private static int managedReferenceOffset(String slotType,
-                                              RuntimeDescriptor descriptor,
-                                              int slotOffset) {
-        if (descriptor instanceof RuntimeDescriptor.Unknown) {
-            return slotOffset + LlvmTypeMapper.dataReferenceOffset();
-        }
-        if (descriptor instanceof RuntimeDescriptor.Func
-                || LlvmTypeMapper.isManagedPointer(descriptor)) {
-            return slotOffset;
-        }
-        return LlvmTypeMapper.REFERENCE_NULLISH.equals(slotType)
-            ? slotOffset : -1;
-    }
-
-    /**
-     * Whether one slot holds a managed reference the M2 barrier must shade:
-     * a pointer slot shades its referent through {@code deal_store_barrier} and
-     * a persistent datum through the tag-aware {@code deal_store_barrier_data}.
-     */
-    static boolean holdsManagedReference(Field field) {
-        return managedReferenceOffset(field.slotType(),
-            field.layout().descriptor(), field.offset()) >= 0;
-    }
-
-    /** Whether one slot is a persistent tagged datum ({@code unknown}, C3). */
-    static boolean isTaggedDatum(Field field) {
-        return field.layout().descriptor() instanceof RuntimeDescriptor.Unknown;
-    }
-
     private final LlvmSession session;
 
     LlvmClassPlans(LlvmSession session) {
@@ -210,7 +165,7 @@ final class LlvmClassPlans {
         for (ClassDef def : session.classes()) {
             List<String> members = new ArrayList<>();
             members.add("i8*");
-            for (int presence = 0; presence < def.optionalCount(); presence++) {
+            for (int presence = 0; presence < def.presenceCount(); presence++) {
                 members.add("i8");
             }
             for (Field field : def.fields()) {
@@ -482,20 +437,13 @@ final class LlvmClassPlans {
                 + " %struct.deal_data* %values, i64 " + index);
             String datum = ir.temp("load %struct.deal_data,"
                 + " %struct.deal_data* " + indexValue);
-            String native_ = LlvmDataValues.unbox(session, ir,
-                field.layout().descriptor(), datum);
-            if (field.layout().descriptor()
-                    instanceof RuntimeDescriptor.Boolean) {
-                native_ = ir.temp("zext i1 " + native_ + " to i8");
-            }
+            String native_ = datum;
             String slot = ir.temp("getelementptr " + def.recordName() + ", "
                 + def.recordName() + "* " + typed + ", i32 0, i32 "
                 + field.structIndex());
             ir.line("store " + field.slotType() + " " + native_ + ", "
                 + field.slotType() + "* " + slot);
-            if (holdsManagedReference(field)) {
-                storeBarrier(ir, field, instance, slot, native_);
-            }
+            storeBarrier(ir, instance, slot);
             if (field.presenceIndex() >= 0) {
                 // The runtime's presence array is indexed by the field's
                 // declaration position (R6), never by its optional ordinal.
@@ -522,27 +470,13 @@ final class LlvmClassPlans {
     }
 
     /**
-     * The M2 insertion barrier of one class-field store, run on the committed
-     * slot: a persistent datum slot shades the datum's managed payload through
-     * the tag-aware entry, and every other managed-reference slot shades the
-     * just-stored referent.
+     * Shade the committed datum's managed payload through the M2 tag-aware
+     * barrier; scalar tags and singleton values shade no referent.
      */
-    private void storeBarrier(Ir ir, Field field, String instance,
-                              String slot, String value) {
-        if (isTaggedDatum(field)) {
-            session.referenceRuntimeEntry("deal_store_barrier_data");
-            ir.line("call void @deal_store_barrier_data(i8* " + instance
-                + ", " + LlvmTypeMapper.DATA + "* " + slot + ")");
-            return;
-        }
-        session.referenceRuntimeEntry("deal_store_barrier");
-        String referent = LlvmTypeMapper.REFERENCE_NULLISH.equals(
-            field.slotType())
-            ? value
-            : ir.temp("bitcast " + field.slotType() + " " + value
-                + " to i8*");
-        ir.line("call void @deal_store_barrier(i8* " + instance + ", i8* "
-            + referent + ")");
+    private void storeBarrier(Ir ir, String instance, String slot) {
+        session.referenceRuntimeEntry("deal_store_barrier_data");
+        ir.line("call void @deal_store_barrier_data(i8* " + instance
+            + ", " + LlvmTypeMapper.DATA + "* " + slot + ")");
     }
 
     /**
@@ -597,20 +531,13 @@ final class LlvmClassPlans {
                 + " i32 0, i32 2");
             String datum = ir.temp("load %struct.deal_data,"
                 + " %struct.deal_data* " + datumPointer);
-            String nativeValue = LlvmDataValues.unbox(session, ir,
-                field.layout().descriptor(), datum);
-            if (field.layout().descriptor()
-                    instanceof RuntimeDescriptor.Boolean) {
-                nativeValue = ir.temp("zext i1 " + nativeValue + " to i8");
-            }
+            String nativeValue = datum;
             String slot = ir.temp("getelementptr " + def.recordName() + ", "
                 + def.recordName() + "* " + typed + ", i32 0, i32 "
                 + field.structIndex());
             ir.line("store " + field.slotType() + " " + nativeValue + ", "
                 + field.slotType() + "* " + slot);
-            if (holdsManagedReference(field)) {
-                storeBarrier(ir, field, "%instance", slot, nativeValue);
-            }
+            storeBarrier(ir, "%instance", slot);
             if (field.presenceIndex() >= 0) {
                 String presenceSlot = ir.temp("getelementptr " + def.recordName()
                     + ", " + def.recordName() + "* " + typed + ", i32 0, i32 "
@@ -648,9 +575,9 @@ final class LlvmClassPlans {
 
     /**
      * The {@code read_field} seam of {@code JsonToClass}: one declaration-order
-     * field of the instance as its closed check presentation, with the carried
-     * class atom of a class-typed field, or 0 when the datum is not an instance
-     * of the plan's class. An absent optional field answers presence 0. The
+     * field as its actual closed check presentation, or 0 when the datum is
+     * not an instance of the plan's class. Any absent field answers presence 0;
+     * validation distinguishes required absence from an admitted undefined. The
      * class is identified by its nominal tag alone, so an index outside the
      * declared field list answers "this is my class, no such field": a
      * zero-declared-field class is identifiable without having a field to read
@@ -699,41 +626,15 @@ final class LlvmClassPlans {
                 + field.slotType() + "* " + ir.temp("getelementptr "
                     + def.recordName() + ", " + def.recordName()
                     + "* %typed, i32 0, i32 " + field.structIndex()));
-            String native_ = slot;
-            if (field.layout().descriptor()
-                    instanceof RuntimeDescriptor.Boolean) {
-                native_ = ir.temp("trunc i8 " + slot + " to i1");
-            }
-            String datum;
-            if (field.layout().descriptor() instanceof RuntimeDescriptor.Null
-                    || field.layout().descriptor() instanceof RuntimeDescriptor.Undefined) {
-                // Read the stored singleton, not its static field type: a host
-                // alias can corrupt the pointer before a later graph check.
-                session.referenceRuntimeEntry("deal_value_is_null");
-                String isNull = ir.temp("call i32 @deal_value_is_null(i8* " + slot + ")");
-                String tag = ir.temp("select i1 " + ir.temp("icmp ne i32 " + isNull + ", 0")
-                    + ", i32 " + LlvmTypeMapper.DATA_NULL + ", i32 " + LlvmTypeMapper.DATA_UNDEFINED);
-                datum = ir.temp("insertvalue %struct.deal_data zeroinitializer, i32 " + tag + ", 0");
-            } else {
-                datum = LlvmDataValues.box(session, ir, field.layout().descriptor(), native_);
-            }
+            String datum = slot;
             ir.line("store i8 1, i8* %present");
-            ir.line("store i32 " + LlvmTypeMapper.PRESENTATION_DATUM
-                + ", i32* " + ir.temp("getelementptr"
-                    + " %struct.deal_check_input, %struct.deal_check_input*"
-                    + " %value, i32 0, i32 0"));
-            ir.line("store %struct.deal_data " + datum
-                + ", %struct.deal_data* " + ir.temp("getelementptr"
-                    + " %struct.deal_check_input, %struct.deal_check_input*"
-                    + " %value, i32 0, i32 2"));
-            if (field.layout().descriptor()
-                    instanceof RuntimeDescriptor.Class classType) {
-                ir.line("store " + stringPointer(
-                        classType.classId().text())
-                    + ", i8** " + ir.temp("getelementptr"
-                        + " %struct.deal_check_input, %struct.deal_check_input*"
-                        + " %value, i32 0, i32 3"));
-            }
+            // Derive identity/signature from the stored datum, never the
+            // field declaration. This also preserves raw callable presentation.
+            session.referenceRuntimeEntry("deal_host_present_datum");
+            String datumSlot = ir.temp("alloca %struct.deal_data");
+            ir.line("store %struct.deal_data " + datum + ", %struct.deal_data* " + datumSlot);
+            ir.line("call void @deal_host_present_datum(%struct.deal_data* byval(%struct.deal_data) align 8 "
+                + datumSlot + ", %struct.deal_check_input* %value)");
             ir.line("ret i32 1");
         }
         // The instance carries this plan's atom, so it is this plan's class

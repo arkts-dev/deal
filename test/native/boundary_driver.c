@@ -440,6 +440,17 @@ static void check_value_matrix(void) {
     raw_checked = deal_check_value(deal_descriptor_intern("unknown"), raw_function,
         DEAL_BOUNDARY_HOST_SYNC_RETURN, &raw_context);
     check(raw_checked.error != NULL, "raw callable is not admitted as unknown data");
+    deal_check_input opaque = plain_input(DEAL_PRESENT_OPAQUE, 0u);
+    raw_checked = deal_check_value(deal_descriptor_intern("unknown"), opaque,
+        DEAL_BOUNDARY_HOST_SYNC_RETURN, &raw_context);
+    check(raw_checked.error != NULL, "opaque host objects reject before unknown admission");
+    check(deal_error_message(raw_checked.error, &raw_text)
+        && strcmp(raw_text, "return value 1 type mismatch: expected unknown") == 0,
+        "opaque ingress retains the registry-rendered host cell message");
+    check(deal_error_expected(raw_checked.error, &raw_text) && strcmp(raw_text, "unknown") == 0,
+        "opaque rejection retains the declared descriptor");
+    check(deal_error_actual(raw_checked.error, &raw_text) && strcmp(raw_text, "table") == 0,
+        "opaque rejection retains its shared host object token");
     /* The host parameter and host return cells. */
     run_check("number", DEAL_BOUNDARY_HOST_PARAMETER, 2, "string", "-",
         datum_input(text));

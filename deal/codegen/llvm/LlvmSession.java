@@ -233,7 +233,7 @@ final class LlvmSession extends EmitterSessionBase {
      */
     int elementLayout(RuntimeDescriptor element) {
         return switch (element) {
-            case RuntimeDescriptor.Number ignored -> ELEMENT_LAYOUT_NUMBER;
+            case RuntimeDescriptor.Number ignored -> ELEMENT_LAYOUT_DATUM;
             case RuntimeDescriptor.Boolean ignored -> ELEMENT_LAYOUT_BOOLEAN;
             case RuntimeDescriptor.Unknown ignored -> ELEMENT_LAYOUT_DATUM;
             // A `null`/`undefined` element position holds the distinct
