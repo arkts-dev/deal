@@ -52,7 +52,9 @@ import java.util.regex.Pattern;
  *       supplied one-based origin, and the passing forms (nullish members,
  *       {@code unknown} admission, persistent array element descriptors,
  *       nominal class identity, carried signatures, absent reads projecting
- *       undefined);</li>
+ *       undefined), plus live deep/cyclic/shared graphs, every array storage
+ *       layout and post-admission Unicode/callable/Error corruption followed
+ *       by identity-preserving repair and collection;</li>
  *   <li>the scalar boundary helpers, which publish the same arm tuple and
  *       project the native payload on success;</li>
  *   <li>class construction: required presence, omitted optionals, present

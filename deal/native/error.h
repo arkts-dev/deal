@@ -260,6 +260,9 @@ deal_error *deal_error_create(const char *code, const char *message,
 deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
                                       const deal_origin *origin);
 
+/* First THROW binds origin/frames on this instance; rethrows preserve them. */
+void deal_error_raise(deal_error *error, const deal_origin *origin);
+
 /* The `code` and `message` class fields as DEAL strings, or NULL when the
  * record carries no such text: a read of the builtin instance's own field. */
 deal_string *deal_error_code_value(deal_error *error);

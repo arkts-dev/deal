@@ -1,7 +1,7 @@
 /*
  * test/native/module_stub.c — a stand-in for the emitted project module.
  *
- * It defines exactly the six export-surface functions of `deal/native/entry.h`
+ * It defines exactly the seven export-surface functions of `deal/native/entry.h`
  * and the module-defined `deal_project_arm_table` (C2, H6), so the runtime's
  * entry, terminal, accessor and transport symbols are exercised by a real link
  * in both build shapes. `DEAL_STUB_CASE` selects the behaviour under test; the
@@ -309,5 +309,11 @@ deal_outcome deal_export_invoke(deal_export_entry *entry) {
 }
 
 deal_outcome deal_async_export_invoke(deal_export_entry *entry) {
+    return deal_export_invoke(entry);
+}
+
+deal_outcome deal_async_export_invoke_value(deal_export_entry *entry,
+                                            deal_data *value) {
+    if (value != NULL) *value = deal_data_of_number(42);
     return deal_export_invoke(entry);
 }

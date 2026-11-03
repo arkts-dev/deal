@@ -75,6 +75,7 @@ final class LlvmFunctionEmitter {
     private final List<String> entryInit = new ArrayList<>();
     private final Map<Long, String> valueSlots = new LinkedHashMap<>();
     private final Map<Long, String> valueSlotTypes = new LinkedHashMap<>();
+    private final Map<Long, String> deferredReads = new LinkedHashMap<>();
     private final Map<String, String> bindingSlots = new LinkedHashMap<>();
     private final Map<String, String> bindingSlotTypes = new LinkedHashMap<>();
     /**
@@ -321,7 +322,8 @@ final class LlvmFunctionEmitter {
                 function.descriptor().paramTypes().get(index)))
                 .append(" %p").append(index);
         }
-        out.append(") !dbg !").append(currentDebugScope).append(" {\n");
+        out.append(", %struct.deal_origin* %callorigin) !dbg !")
+            .append(currentDebugScope).append(" {\n");
         out.append("Lentry:\n");
         for (String alloca : allocas) {
             out.append(LlvmIrPrinter.indent(1)).append(alloca).append('\n');
@@ -814,12 +816,9 @@ final class LlvmFunctionEmitter {
     }
 
     /**
-     * {@code instanceof C}: the nominal tag test (C6). The builtin
-     * {@code Error} class is the one class identity whose tag the persistent
-     * datum carries without an emitted class layout; every other class target
-     * belongs to the data/class stage and is rejected by the classifier. A
-     * data value of any other static type is never an instance, and a record
-     * is never retagged.
+     * {@code instanceof C}: the nominal tag test (C6). Nullable class values
+     * are boxed before testing, so neither nullish singleton is dereferenced.
+     * A record is never retagged; Error has its own persistent datum tag.
      */
     private String emitInstanceOf(SemanticOp op,
                                   KindPayload.UnaryPayload payload,
@@ -833,12 +832,13 @@ final class LlvmFunctionEmitter {
             return classType.classId().equals(targetClass.classId())
                 ? "true" : "false";
         }
-        if (!(operandDescriptor instanceof RuntimeDescriptor.Unknown)) {
-            // A number, boolean, string, nullish, container or function value
-            // is never a nominal class instance (R2).
+        if (!(operandDescriptor instanceof RuntimeDescriptor.Unknown)
+                && !(operandDescriptor instanceof RuntimeDescriptor.Nullable)) {
             return "false";
         }
-        String datum = loadRepresentation(input, operandDescriptor, op);
+        String value = loadRepresentation(input, operandDescriptor, op);
+        String datum = operandDescriptor instanceof RuntimeDescriptor.Unknown
+            ? value : emitDatum(operandDescriptor, value, op);
         String tag = emitTemporary(op, "extractvalue %struct.deal_data "
             + datum + ", 0");
         if (targetClass.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
@@ -1275,8 +1275,7 @@ final class LlvmFunctionEmitter {
             // proved (R4): the cell already holds the persistent datum, so the
             // refinement validates it and projects the refined representation
             // out of it, exactly as the direct binding's read does.
-            storeResult(op, stagedRepresentation(cellReadType),
-                narrowedFromDatum(op, declared, cellReadType, datum));
+            deferRead(op, datum);
             return;
         }
         String slot = bindingSlot(payload.binding(), payload.generation(),
@@ -1293,91 +1292,9 @@ final class LlvmFunctionEmitter {
         }
         // A narrowed read: the binding declares a wider type — a nullish form
         // or `unknown` — and this read observes the refinement the frontend
-        // proved (R4). The read keeps the value the binding holds and projects
-        // it onto the refined type's own representation; nothing is coerced,
-        // retagged or replaced.
-        storeResult(op, stagedRepresentation(loadedType),
-            projectNarrowedRead(op, declared, loadedType, loaded));
-    }
-
-    /**
-     * Projects one narrowed binding read onto the refined type's own
-     * representation (C3). The binding's declared form is either the persistent
-     * {@code unknown} datum or a nullish form; both carry the value in one
-     * place — the datum itself, or the scalar tagged struct's {@code value}/
-     * reference-nullish pointer — so the read goes through the one datum
-     * authority: the held value is boxed where needed and the refined
-     * representation is unboxed out of it. The refinement is optimistic across
-     * calls and an indirect mutation can leave a declared member in the slot
-     * (docs/spec-v1.5.md, narrowing invalidation), so the read first validates
-     * the value it actually holds against the refined descriptor at its own
-     * origin: a stale refinement fails with the declared E8001 arm there
-     * instead of yielding a base value the binding never held. Every other
-     * narrowed read is a producer fact this stage cannot render and fails
-     * closed (C9).
-     */
-    private String projectNarrowedRead(SemanticOp op, RuntimeDescriptor declared,
-                                       RuntimeDescriptor refined,
-                                       String loaded) {
-        boolean datum = declared instanceof RuntimeDescriptor.Unknown;
-        boolean nullishBase = declared instanceof RuntimeDescriptor.Nullable nullable
-            && LlvmTypeMapper.admits(nullable, refined);
-        if (!datum && !nullishBase) {
-            throw new deal.codegen.SharedEmissionFailure(
-                "LlvmSemanticEmitter rejects the narrowed read " + op.opId()
-                    + ": the declared type '" + declared.canonicalSpecText()
-                    + "' does not refine to '" + refined.canonicalSpecText()
-                    + "' (C9)",
-                op.origin().span().range());
-        }
-        if (!LlvmTypeMapper.hasDatumForm(refined)) {
-            throw new deal.codegen.SharedEmissionFailure(
-                "LlvmSemanticEmitter rejects the narrowed read " + op.opId()
-                    + ": the refined type '" + refined.canonicalSpecText()
-                    + "' has no persistent data form (C9)",
-                op.origin().span().range());
-        }
-        // The datum of the value the binding holds: an `unknown` binding stores
-        // it directly, and a nullish binding's own form keeps a declared member
-        // as its own singleton tag (R2).
-        String held = datum ? loaded
-            : LlvmDataValues.box(session, sink, declared, loaded);
-        return narrowedFromDatum(op, declared, refined, held);
-    }
-
-    /**
-     * Validates one held persistent datum against the refined descriptor and
-     * projects the refined representation out of it (C3, R4). A stale
-     * refinement fails with the declared arm instead of yielding a base value
-     * the binding never held: at the read's own origin on the typed boundary,
-     * or — when the read feeds a declared host parameter position — at that
-     * parameter cell's {@code HOST_PARAMETER} boundary with its one-based index
-     * and the crossing's origin (H2/H4), because the cell is the position that
-     * owns the projection.
-     */
-    private String narrowedFromDatum(SemanticOp op, RuntimeDescriptor declared,
-                                     RuntimeDescriptor refined, String held) {
-        if (!LlvmTypeMapper.hasDatumForm(refined)) {
-            throw new deal.codegen.SharedEmissionFailure(
-                "LlvmSemanticEmitter rejects the narrowed read " + op.opId()
-                    + ": the refined type '" + refined.canonicalSpecText()
-                    + "' has no persistent data form (C9)",
-                op.origin().span().range());
-        }
-        String slot = newAlloca("%struct.deal_check_input", "checked");
-        emit("store %struct.deal_check_input "
-            + checkInputRecordOf(op, declared, held)
-            + ", %struct.deal_check_input* " + slot);
-        HostParameterCell cell = op.result() instanceof ValueId result
-            ? hostParameterCells().get(result.id()) : null;
-        if (cell == null) {
-            emitCheckCall(op, refined, slot);
-        } else {
-            emitCheckCall(op, refined, slot,
-                LlvmRuntimeAbi.BOUNDARY_HOST_PARAMETER, cell.crossing(),
-                cell.index());
-        }
-        return LlvmDataValues.unbox(session, sink, refined, held);
+        // proved (R4). Keep/root the original datum; the consuming boundary
+        // owns validation, origin and projection. Nothing is retagged.
+        deferRead(op, LlvmDataValues.box(session, sink, declared, loaded));
     }
 
     private void emitBindingWrite(SemanticOp op) {
@@ -1600,20 +1517,41 @@ final class LlvmFunctionEmitter {
 
     /**
      * The typed-boundary check ({@code llvm-native-runtime-value-model} R4/R5).
-     * A boundary whose static operand type already proves the declared
-     * descriptor renders nothing; the {@code as T} assertion renders the
-     * descriptor-driven check and its declared E8001 arm, so a mismatch fails
-     * at the assertion's own origin with the arm's own tuple and no coercion,
-     * construction or identity change. The container/class/host boundaries of
-     * the later stages extend the same input construction.
+     * Static scalar proofs need no check, but managed graphs require live
+     * validation after possible host mutation. Assertions retain their E8001
+     * tuple and origin without coercion, construction or identity change.
+     * Resultless call/task cells execute at their owner's actual result;
+     * function returns use each RETURN's value, not a sibling return's input.
      */
     private void emitBoundary(SemanticOp op) {
         KindPayload.BoundaryPayload payload =
             (KindPayload.BoundaryPayload) op.payload();
         if (!(op.result() instanceof ValueId)) {
-            // A boundary without a result is a checked position whose value
-            // keeps its own static type: a statically proven one is elided
-            // and every other one is rejected by the classifier.
+            // Crossing positions execute in their owning call, before entry or
+            // on its actual result, never as a second post-call parameter check.
+            if (switch (payload.kind()) {
+                case HOST_TO_DEAL, DEAL_TO_HOST, EXTERNAL_PARAMETER, EXTERNAL_RETURN,
+                     STDLIB_PARAMETER, STDLIB_RETURN -> true;
+                default -> false;
+            }) return;
+            if (payload.kind() == deal.semantic.ir.BoundaryKind.FUNCTION_RETURN) return;
+            for (SemanticOp owner : unit.ops()) {
+                if (owner.payload() instanceof KindPayload.AsyncStartPayload start
+                        && op.opId().equals(start.returnBoundaryOpId())) return;
+                if (owner.payload() instanceof KindPayload.AwaitPayload await
+                        && op.opId().equals(await.completionBoundaryOpId())) return;
+                if (owner.payload() instanceof KindPayload.CallPayload call
+                        && (op.opId().equals(call.returnBoundaryOpId())
+                            || call.dynamicReturnBoundary() != null
+                                && op.opId().equals(call.dynamicReturnBoundary().dealBodyBoundaryOpId()))) return;
+            }
+            if (payload.kind() == deal.semantic.ir.BoundaryKind.CLASS_FIELD_ASSIGNMENT
+                    && op.origin().parentOpId() != null
+                    && unitOp(op.origin().parentOpId()).kind() == SemanticOpKind.FIELD_WRITE) return;
+            if (needsLiveCheck(payload.descriptor())) {
+                String input = checkInput(op, payload.input(), descriptorOfValue(payload.input()));
+                emitCheckCall(op, payload.descriptor(), input);
+            }
             return;
         }
         ValueId result = (ValueId) op.result();
@@ -1621,14 +1559,24 @@ final class LlvmFunctionEmitter {
         RuntimeDescriptor actual = descriptorOfValue(payload.input());
         String representation = stagedRepresentation(declared);
         if (LlvmTypeMapper.convertible(declared, actual)) {
-            // The operand's own static type already proves the declared
-            // descriptor, so the boundary is the identity of that value.
+            if (needsLiveCheck(declared))
+                emitCheckCall(op, declared, checkInput(op, payload.input(), actual));
             storeResult(op, representation,
                 convert(payload.input(), actual, declared, op));
             return;
         }
         String checked = checkValue(op, payload.input(), actual, declared);
         storeResult(op, representation, checked);
+    }
+
+    private static boolean needsLiveCheck(RuntimeDescriptor descriptor) {
+        if (descriptor instanceof RuntimeDescriptor.Nullable nullable)
+            return needsLiveCheck(nullable.inner());
+        return descriptor instanceof RuntimeDescriptor.Unknown
+            || descriptor instanceof RuntimeDescriptor.Table
+            || descriptor instanceof RuntimeDescriptor.Array
+            || descriptor instanceof RuntimeDescriptor.Class
+            || descriptor instanceof RuntimeDescriptor.Func;
     }
 
     /**
@@ -1671,14 +1619,15 @@ final class LlvmFunctionEmitter {
                                String inputSlot, int boundaryKind,
                                SemanticOp originOp, int parameterIndex) {
         session.referenceRuntimeEntry("deal_descriptor_intern");
-        session.referenceRuntimeEntry("deal_check_value");
+        String checkEntry = needsLiveCheck(declared) ? "deal_check_live_value" : "deal_check_value";
+        session.referenceRuntimeEntry(checkEntry);
         String atom = emitTemporary(op, "call"
             + " %struct.deal_descriptor* @deal_descriptor_intern("
             + session.data.operand(session.data.intern(
                 declared.canonicalSpecText())) + ")");
         String context = checkContext(op, originOp, parameterIndex);
         String outcome = emitTemporary(op, "call %struct.deal_outcome"
-            + " @deal_check_value(%struct.deal_descriptor* " + atom
+            + " @" + checkEntry + "(%struct.deal_descriptor* " + atom
             + ", %struct.deal_check_input* byval(%struct.deal_check_input) "
             + inputSlot + ", i32 " + boundaryKind
             + ", %struct.deal_check_context* " + context + ")");
@@ -1691,6 +1640,48 @@ final class LlvmFunctionEmitter {
             + proceedLabel);
         terminated = true;
         startSegment(failureLabel);
+        if (op.payload() instanceof KindPayload.BoundaryPayload boundary
+                && boundary.kind() == deal.semantic.ir.BoundaryKind.ASSERTION) {
+            // ASSERTION owns E8001 even when its descriptor check discovers a
+            // signature or nominal-identity mismatch. Preserve the actual
+            // presentation, not the failed check's signature-specific token.
+            session.referenceRuntimeEntry("deal_check_token");
+            session.referenceRuntimeEntry("deal_error_materialize");
+            String actual = emitTemporary(op, "call i8* @deal_check_token(%struct.deal_check_input* " + inputSlot + ")");
+            String parameter = newAlloca("%struct.deal_arm_parameter", "assertionkind");
+            emit("store %struct.deal_arm_parameter { "
+                + session.data.operand(session.data.intern("kind")) + ", "
+                + session.data.operand(session.data.intern(deal.semantic.ir.FailureProjections.kindText(declared)))
+                + " }, %struct.deal_arm_parameter* " + parameter);
+            String assertionError = emitTemporary(op, "call %struct.deal_error* @deal_error_materialize(i32 0, %struct.deal_arm_parameter* "
+                + parameter + ", i64 1, " + session.data.operand(session.data.intern(
+                    deal.semantic.ir.FailureProjections.kindToken(declared)))
+                + ", i8* " + actual + ", %struct.deal_origin* " + originValue(op) + ", %struct.deal_error* null)");
+            error = emitTemporary(op, "bitcast %struct.deal_error* " + assertionError + " to i8*");
+        } else if (op.payload() instanceof KindPayload.BoundaryPayload boundary
+                && boundary.kind() == deal.semantic.ir.BoundaryKind.ARRAY_LITERAL_ELEMENT) {
+            int index = -1;
+            for (SemanticOp owner : unit.ops()) {
+                if (owner.payload() instanceof KindPayload.ArrayNewPayload array) {
+                    int found = array.elementBoundaryOpIds().indexOf(op.opId());
+                    if (found >= 0) { index = found + 1; break; }
+                }
+            }
+            if (index < 1) throw new IllegalStateException("array element boundary without owner");
+            session.referenceRuntimeEntry("deal_check_token");
+            session.referenceRuntimeEntry("deal_error_materialize");
+            String actual = emitTemporary(op, "call i8* @deal_check_token(%struct.deal_check_input* " + inputSlot + ")");
+            String parameter = newAlloca("%struct.deal_arm_parameter", "elementindex");
+            emit("store %struct.deal_arm_parameter { "
+                + session.data.operand(session.data.intern("oneBasedIndex")) + ", "
+                + session.data.operand(session.data.intern(Integer.toString(index)))
+                + " }, %struct.deal_arm_parameter* " + parameter);
+            String cause = emitTemporary(op, "bitcast i8* " + error + " to %struct.deal_error*");
+            String elementError = emitTemporary(op, "call %struct.deal_error* @deal_error_materialize(i32 5, %struct.deal_arm_parameter* "
+                + parameter + ", i64 1, " + session.data.operand(session.data.intern(declared.canonicalSpecText()))
+                + ", i8* " + actual + ", %struct.deal_origin* " + originValue(op) + ", %struct.deal_error* " + cause + ")");
+            error = emitTemporary(op, "bitcast %struct.deal_error* " + elementError + " to i8*");
+        }
         routeFailure(error);
         startSegment(proceedLabel);
     }
@@ -1912,8 +1903,47 @@ final class LlvmFunctionEmitter {
     }
 
     /** Loads one produced value from its SSA slot. */
+    private void deferRead(SemanticOp op, String datum) {
+        ValueId value = (ValueId) op.result();
+        String slot = deferredReads.computeIfAbsent(value.id(), ignored -> newAlloca(LlvmTypeMapper.DATA, "deferred"));
+        emit("store " + LlvmTypeMapper.DATA + " " + datum + ", " + LlvmTypeMapper.DATA + "* " + slot);
+        rootSlotWrite(RuntimeDescriptor.Unknown.INSTANCE, slot, datum, op);
+    }
+
     private String loadValue(ValueId value, String type, SemanticOp op) {
+        String deferred = deferredReads.get(value.id());
+        if (deferred != null) {
+            String datum = load(op, LlvmTypeMapper.DATA, deferred);
+            RuntimeDescriptor refined = descriptorOfValue(value);
+            SemanticOp position = consumingBoundary(value, op);
+            String input = newAlloca("%struct.deal_check_input", "deferredinput");
+            emit("store %struct.deal_check_input " + checkInputRecordOf(op,
+                RuntimeDescriptor.Unknown.INSTANCE, datum) + ", %struct.deal_check_input* " + input);
+            HostParameterCell host = hostParameterCells().get(value.id());
+            if (host != null) {
+                emitCheckCall(op, refined, input, LlvmRuntimeAbi.BOUNDARY_HOST_PARAMETER, host.crossing(), host.index());
+            } else {
+                emitCheckCall(position, refined, input);
+            }
+            return LlvmDataValues.unbox(session, sink, refined, datum);
+        }
         return load(op, type, valueSlot(value, type));
+    }
+
+    private SemanticOp consumingBoundary(ValueId value, SemanticOp consumer) {
+        if (consumer != null && consumer.payload() instanceof KindPayload.CallPayload call) {
+            for (OpId id : call.parameterBoundaryOpIds()) {
+                SemanticOp boundary = unitOp(id);
+                if (boundary.payload() instanceof KindPayload.BoundaryPayload position
+                        && position.input().equals(value)) return boundary;
+            }
+        }
+        for (SemanticOp boundary : unit.ops()) {
+            if (boundary.payload() instanceof KindPayload.BoundaryPayload position
+                    && position.input().equals(value)
+                    && position.kind() != deal.semantic.ir.BoundaryKind.MODULE_EXPORT) return boundary;
+        }
+        return consumer;
     }
 
     private String load(SemanticOp op, String type, String slot) {
@@ -2601,7 +2631,7 @@ final class LlvmFunctionEmitter {
 
     /** The IR type of one boxed apply thunk. */
     private static String thunkType() {
-        return "%struct.deal_outcome_data (i8*, %struct.deal_check_input*,"
+        return "void (%struct.deal_outcome_data*, i8*, %struct.deal_check_input*,"
             + " i32, %struct.deal_origin*)*";
     }
 
@@ -2902,6 +2932,20 @@ final class LlvmFunctionEmitter {
             emitDynamicCall(op, payload, (ValueId) creation.result());
             return;
         }
+        if (payload.callee() instanceof KindPayload.CallCallee.Static fixed) {
+            OpId materializing = switch (fixed.binding()) {
+                case deal.semantic.ir.FunctionExecutionBinding.HostFunctionValue host -> host.materializingBoundaryOpId();
+                case deal.semantic.ir.FunctionExecutionBinding.DynamicFunctionValue dynamic -> dynamic.materializingOpId();
+                default -> null;
+            };
+            if (materializing != null) {
+                SemanticOp creation = unitOp(materializing);
+                ValueId value = creation.payload() instanceof KindPayload.BoundaryPayload boundary
+                    ? boundary.input() : (ValueId) creation.result();
+                emitDynamicCall(op, payload, value);
+                return;
+            }
+        }
         FunctionId callee = calleeOf(payload);
         LoweredFunction calleeFunction = session.function(callee);
         List<RuntimeDescriptor> parameterTypes =
@@ -2915,23 +2959,19 @@ final class LlvmFunctionEmitter {
         // type proofs exactly because the lowered static type already proves
         // the declared descriptor (the classifier's rule).
         for (OpId boundary : payload.parameterBoundaryOpIds()) {
-            recordOrigin(unitOp(boundary));
+            SemanticOp position = unitOp(boundary);
+            recordOrigin(position);
+            KindPayload.BoundaryPayload parameter = (KindPayload.BoundaryPayload) position.payload();
+            if (needsLiveCheck(parameter.descriptor())) {
+                emitCheckCall(position, parameter.descriptor(), checkInput(position,
+                    parameter.input(), descriptorOfValue(parameter.input())));
+            }
         }
         if (payload.returnBoundaryOpId() != null) {
             recordOrigin(unitOp(payload.returnBoundaryOpId()));
         }
         String environment = "%struct.deal_fn* null";
         if (!calleeFunction.captures().isEmpty()) {
-            for (BindingGeneration capture : calleeFunction.captures()) {
-                if (!session.moduleScopedAcrossProject(capture.binding(),
-                        capture.generation())) {
-                    throw new deal.codegen.SharedEmissionFailure(
-                        "LlvmSemanticEmitter rejects the direct call of "
-                            + callee + " of " + op.opId() + ": its capture of "
-                            + capture.binding() + " is no module-scope cell",
-                        op.origin().span().range());
-                }
-            }
             environment = LlvmTypeMapper.FN_POINTER + " "
                 + emitClosure(callee, calleeFunction.captures(),
                     calleeFunction.descriptor(), op);
@@ -2943,7 +2983,7 @@ final class LlvmFunctionEmitter {
             }
             RuntimeDescriptor declared = parameterTypes.get(index);
             ValueId argument = op.operands().get(index);
-            RuntimeDescriptor actual = op.operandTypes().get(index);
+            RuntimeDescriptor actual = descriptorOfValue(argument);
             String value = convert(argument, actual, declared, op);
             String abi = LlvmTypeMapper.abiParameterType(declared);
             if (declared instanceof RuntimeDescriptor.Boolean) {
@@ -2956,7 +2996,8 @@ final class LlvmFunctionEmitter {
         String result = "%call" + op.opId().id();
         emit(result + " = call " + outcome + " @F" + callee.id()
             + "(" + environment
-            + (arguments.length() == 0 ? "" : ", " + arguments) + ")"
+            + (arguments.length() == 0 ? "" : ", " + arguments)
+            + ", %struct.deal_origin* " + originValue(op) + ")"
             + debugAttachment(op));
         emit("%callerr" + op.opId().id() + " = extractvalue " + outcome + " "
             + result + ", 0");
@@ -3413,9 +3454,10 @@ final class LlvmFunctionEmitter {
             session.referenceRuntimeEntry(entry);
         }
         StringBuilder out = new StringBuilder();
-        out.append("define internal %struct.deal_outcome_data @")
+        out.append("define internal void @")
             .append(adapterThunkName(opId))
-            .append("(i8* %functionvalue, %struct.deal_check_input* %arguments,"
+            .append("(%struct.deal_outcome_data* sret(%struct.deal_outcome_data) %returned,"
+                + " i8* %functionvalue, %struct.deal_check_input* %arguments,"
                 + " i32 %count, %struct.deal_origin* %origin) {\n");
         out.append("Lthunk:\n");
         out.append(LlvmIrPrinter.indent(1)).append("call void"
@@ -3512,23 +3554,42 @@ final class LlvmFunctionEmitter {
         out.append(LlvmIrPrinter.indent(1))
             .append("call void @deal_root_frame_leave()\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("ret %struct.deal_outcome_data %signaturefailure\n");
+            .append("store %struct.deal_outcome_data %signaturefailure,"
+                + " %struct.deal_outcome_data* %returned\n  ret void\n");
         out.append("invoke:\n");
         out.append(LlvmIrPrinter.indent(1))
             .append("%appliedslot = alloca %struct.deal_outcome_data\n");
-        out.append(LlvmIrPrinter.indent(1)).append("call void"
-            + " @deal_fn_apply(%struct.deal_outcome_data*"
-            + " sret(%struct.deal_outcome_data) %appliedslot,"
-            + " %struct.deal_fn* %source, %struct.deal_check_input* %arguments,"
-            + " i32 ").append(source.paramTypes().size())
-            .append(", %struct.deal_origin* %origin)\n");
+        if (source.isAsync()) {
+            session.referenceRuntimeEntry("deal_async_start");
+            session.referenceRuntimeEntry("deal_async_await");
+            out.append("  %started = call %struct.deal_outcome_reference @deal_async_start("
+                + "%struct.deal_fn* %source, %struct.deal_check_input* %arguments, i32 ")
+                .append(source.paramTypes().size()).append(", %struct.deal_origin* %origin)\n")
+                .append("  %starterror = extractvalue %struct.deal_outcome_reference %started, 0\n")
+                .append("  %startfailed = icmp ne i8* %starterror, null\n")
+                .append("  br i1 %startfailed, label %startfail, label %awaitsource\n")
+                .append("startfail:\n  %startfailure = insertvalue %struct.deal_outcome_data zeroinitializer, i8* %starterror, 0\n")
+                .append("  store %struct.deal_outcome_data %startfailure, %struct.deal_outcome_data* %appliedslot\n  br label %appliedsource\n")
+                .append("awaitsource:\n  %operation = extractvalue %struct.deal_outcome_reference %started, 1\n")
+                .append("  call void @deal_async_await(%struct.deal_outcome_data* sret(%struct.deal_outcome_data) %appliedslot, i8* %operation, ")
+                .append(session.data.operand(session.data.intern(source.returnType().canonicalSpecText())))
+                .append(", %struct.deal_origin* %origin)\n  br label %appliedsource\nappliedsource:\n");
+        } else {
+            out.append(LlvmIrPrinter.indent(1)).append("call void"
+                + " @deal_fn_apply(%struct.deal_outcome_data*"
+                + " sret(%struct.deal_outcome_data) %appliedslot,"
+                + " %struct.deal_fn* %source, %struct.deal_check_input* %arguments,"
+                + " i32 ").append(source.paramTypes().size())
+                .append(", %struct.deal_origin* %origin)\n");
+        }
         out.append(LlvmIrPrinter.indent(1))
             .append("%applied = load %struct.deal_outcome_data,"
                 + " %struct.deal_outcome_data* %appliedslot\n");
         out.append(LlvmIrPrinter.indent(1))
             .append("call void @deal_root_frame_leave()\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("ret %struct.deal_outcome_data %applied\n}\n");
+            .append("store %struct.deal_outcome_data %applied,"
+                + " %struct.deal_outcome_data* %returned\n  ret void\n}\n");
         return out.toString();
     }
 
@@ -3603,6 +3664,9 @@ final class LlvmFunctionEmitter {
             // runtime allocates the record and token and calls the host entry
             // with the checked argument carriers at the token-bound crossing.
             carrier = emitHostAsyncCarrier(op, host);
+        } else if (payload.callee() instanceof KindPayload.CallCallee.Static callee
+                && callee.binding() instanceof deal.semantic.ir.FunctionExecutionBinding.AdapterBinding adapter) {
+            carrier = emitAsyncCalleeCheck(op, (ValueId) unitOp(adapter.adaptOpId()).result());
         } else if (payload.callee()
                 instanceof KindPayload.CallCallee.Static callee) {
             FunctionId function = switch (callee.binding()) {
@@ -3616,17 +3680,6 @@ final class LlvmFunctionEmitter {
                     op.origin().span().range());
             };
             LoweredFunction lowered = session.function(function);
-            for (BindingGeneration capture : lowered.captures()) {
-                if (!session.moduleScopedAcrossProject(capture.binding(),
-                        capture.generation())) {
-                    throw new deal.codegen.SharedEmissionFailure(
-                        "LlvmSemanticEmitter rejects the ASYNC_START of the"
-                            + " function " + function + " of " + op.opId()
-                            + ": its capture of " + capture.binding()
-                            + " is no module-scope cell",
-                        op.origin().span().range());
-                }
-            }
             carrier = emitClosure(function, lowered.captures(),
                 lowered.descriptor(), op);
         } else if (payload.callee()
@@ -3654,7 +3707,7 @@ final class LlvmFunctionEmitter {
         branchOnFailure(op, error, "asyncstart");
         String operation = emitTemporary(op,
             "extractvalue %struct.deal_outcome_reference " + started + ", 1");
-        emit("store i8* " + operation + ", i8** " + tokenSlot(token, "i8*"));
+        emit("store i8* " + operation + ", i8** " + tokenSlot(canonical(token), "i8*"));
     }
 
     /**
@@ -3793,9 +3846,10 @@ final class LlvmFunctionEmitter {
     String emitStdlibThunk(deal.semantic.ir.StdlibFunctionId function) {
         session.referenceRuntimeEntry("deal_std_call");
         StringBuilder out = new StringBuilder();
-        out.append("define internal %struct.deal_outcome_data @")
+        out.append("define internal void @")
             .append(stdlibThunkName(function))
-            .append("(i8* %functionvalue, %struct.deal_check_input* %arguments,"
+            .append("(%struct.deal_outcome_data* sret(%struct.deal_outcome_data) %returned,"
+                + " i8* %functionvalue, %struct.deal_check_input* %arguments,"
                 + " i32 %count, %struct.deal_origin* %origin) {\n");
         out.append("Lthunk:\n");
         out.append(LlvmIrPrinter.indent(1))
@@ -3810,7 +3864,8 @@ final class LlvmFunctionEmitter {
             .append("%result = load %struct.deal_outcome_data,"
                 + " %struct.deal_outcome_data* %slot\n");
         out.append(LlvmIrPrinter.indent(1))
-            .append("ret %struct.deal_outcome_data %result\n}\n");
+            .append("store %struct.deal_outcome_data %result,"
+                + " %struct.deal_outcome_data* %returned\n  ret void\n}\n");
         return out.toString();
     }
 
@@ -3839,9 +3894,10 @@ final class LlvmFunctionEmitter {
         int thunkScope = session.debug.subprogram(
             session.displayName(session.ownerOf(id)), function.sourceName(),
             thunkName(id), Math.max(1, declarationLine(function)));
-        out.append("define internal %struct.deal_outcome_data @")
+        out.append("define internal void @")
             .append(thunkName(id))
-            .append("(i8* %functionvalue, %struct.deal_check_input* %arguments,"
+            .append("(%struct.deal_outcome_data* sret(%struct.deal_outcome_data) %returned,"
+                + " i8* %functionvalue, %struct.deal_check_input* %arguments,"
                 + " i32 %count, %struct.deal_origin* %origin) !dbg !")
             .append(thunkScope).append(" {\n");
         out.append("Lthunk:\n");
@@ -3898,7 +3954,7 @@ final class LlvmFunctionEmitter {
         out.append(LlvmIrPrinter.indent(1)).append("%body = call ").append(outcome)
             .append(" @F").append(id.id()).append("(%struct.deal_fn* %carrier")
             .append(arguments.length() == 0 ? "" : ", " + arguments)
-            .append(")").append(thunkDebug).append('\n');
+            .append(", %struct.deal_origin* %origin)").append(thunkDebug).append('\n');
         out.append(LlvmIrPrinter.indent(1)).append("%bodyerror = extractvalue ")
             .append(outcome).append(" %body, 0\n");
         out.append(LlvmIrPrinter.indent(1)).append("%bodyfailed = icmp ne i8*"
@@ -3910,8 +3966,8 @@ final class LlvmFunctionEmitter {
             + " %struct.deal_outcome_data zeroinitializer, i8* %bodyerror, 0\n");
         out.append(LlvmIrPrinter.indent(1)).append("call void"
             + " @deal_root_frame_leave()\n");
-        out.append(LlvmIrPrinter.indent(1)).append("ret %struct.deal_outcome_data"
-            + " %failed\n");
+        out.append(LlvmIrPrinter.indent(1)).append("store %struct.deal_outcome_data"
+            + " %failed, %struct.deal_outcome_data* %returned\n  ret void\n");
         out.append("bodyok:\n");
         String boxed = thunkBox(out, result, outcome, "%body");
         out.append(LlvmIrPrinter.indent(1)).append("%completed = insertvalue"
@@ -3919,8 +3975,8 @@ final class LlvmFunctionEmitter {
             .append(boxed).append(", 1\n");
         out.append(LlvmIrPrinter.indent(1)).append("call void"
             + " @deal_root_frame_leave()\n");
-        out.append(LlvmIrPrinter.indent(1)).append("ret %struct.deal_outcome_data"
-            + " %completed\n");
+        out.append(LlvmIrPrinter.indent(1)).append("store %struct.deal_outcome_data"
+            + " %completed, %struct.deal_outcome_data* %returned\n  ret void\n");
         out.append("}\n");
         return out.toString();
     }
@@ -4099,9 +4155,9 @@ final class LlvmFunctionEmitter {
             + " @deal_root_frame_leave()\n");
         out.append(LlvmIrPrinter.indent(1)).append("call void"
             + " @deal_call_frame_pop()\n");
-        out.append(LlvmIrPrinter.indent(1)).append("ret"
+        out.append(LlvmIrPrinter.indent(1)).append("store"
             + " %struct.deal_outcome_data %parameterfailed").append(index)
-            .append('\n');
+            .append(", %struct.deal_outcome_data* %returned\n  ret void\n");
         out.append("paramok").append(index).append(":\n");
         Integer rootIndex = rootSlotsByParam.get(index);
         if (rootIndex != null) {
@@ -4694,6 +4750,9 @@ final class LlvmFunctionEmitter {
         KindPayload.ThrowPayload payload = (KindPayload.ThrowPayload) op.payload();
         String instance = loadRepresentation(payload.errorValue(),
             descriptorOfValue(payload.errorValue()), op);
+        session.referenceRuntimeEntry("deal_error_raise");
+        emit("call void @deal_error_raise(" + LlvmTypeMapper.ERROR_POINTER + " "
+            + instance + ", %struct.deal_origin* " + originValue(op) + ")");
         String error = emitTemporary(op, "bitcast " + LlvmTypeMapper.ERROR_POINTER
             + " " + instance + " to i8*");
         routeFailure(error);
@@ -4720,7 +4779,12 @@ final class LlvmFunctionEmitter {
     private void emitReturn(SemanticOp op) {
         KindPayload.ReturnPayload payload =
             (KindPayload.ReturnPayload) op.payload();
-        recordOrigin(unitOp(payload.returnBoundaryOpId()));
+        SemanticOp boundary = unitOp(payload.returnBoundaryOpId());
+        recordOrigin(boundary);
+        if (boundary.payload() instanceof KindPayload.BoundaryPayload position
+                && needsLiveCheck(position.descriptor()))
+            emitCheckCall(boundary, position.descriptor(), checkInput(boundary,
+                payload.value(), descriptorOfValue(payload.value())));
         LoweredFunction function = session.function(payload.function());
         RuntimeDescriptor result = function.descriptor().returnType();
         String outcome = LlvmTypeMapper.outcomeType(result);
@@ -5417,7 +5481,7 @@ final class LlvmFunctionEmitter {
             + loadValue(code, LlvmTypeMapper.STRING, op) + ", "
             + LlvmTypeMapper.STRING + " "
             + loadValue(message, LlvmTypeMapper.STRING, op) + ","
-            + " %struct.deal_origin* " + originValue(op) + ")");
+            + " %struct.deal_origin* null)");
         storeResult(op, LlvmTypeMapper.ERROR_POINTER, instance);
     }
 
@@ -5712,6 +5776,15 @@ final class LlvmFunctionEmitter {
     private void emitFieldWrite(SemanticOp op) {
         KindPayload.FieldWritePayload payload =
             (KindPayload.FieldWritePayload) op.payload();
+        for (SemanticOp boundary : unit.ops()) {
+            if (op.opId().equals(boundary.origin().parentOpId())
+                    && boundary.payload() instanceof KindPayload.BoundaryPayload position
+                    && position.kind() == deal.semantic.ir.BoundaryKind.CLASS_FIELD_ASSIGNMENT
+                    && needsLiveCheck(position.descriptor())) {
+                emitCheckCall(boundary, position.descriptor(), checkInput(boundary,
+                    position.input(), descriptorOfValue(position.input())));
+            }
+        }
         if (payload.classId().equals(deal.semantic.ir.ClassId.ERROR)) {
             String accessor = switch (payload.field()) {
                 case "code" -> "deal_error_set_code_value";
@@ -5875,7 +5948,7 @@ final class LlvmFunctionEmitter {
                 "i8* bitcast (" + LlvmClassPlans.PLAN_TYPE + "* (i8*, i8*)* @"
                     + LlvmClassPlans.LOOKUP_NAME + " to i8*)",
                 "i8* null",
-                "%struct.deal_origin* " + originValue(op)));
+                "%struct.deal_origin* %callorigin"));
         String error = emitTemporary(op, "extractvalue"
             + " %struct.deal_outcome_string " + outcome + ", 0");
         branchOnFailure(op, error, "json");
@@ -5947,7 +6020,7 @@ final class LlvmFunctionEmitter {
                 out.append(LlvmIrPrinter.indent(1)).append("%main = call ")
                     .append(LlvmTypeMapper.outcomeType(result))
                     .append(" @F").append(main.id())
-                    .append("(%struct.deal_fn* null)\n");
+                    .append("(%struct.deal_fn* null, %struct.deal_origin* null)\n");
                 out.append(LlvmIrPrinter.indent(1))
                     .append("ret %struct.deal_outcome %main\n");
             } else {
@@ -6316,6 +6389,50 @@ final class LlvmFunctionEmitter {
         out.append(LlvmIrPrinter.indent(1))
             .append("ret %struct.deal_outcome { i8* null }\n}\n");
         return out.toString();
+    }
+
+    /** Actual async completion through the opaque export surface. */
+    String emitAsyncExportInvokeValue() {
+        session.referenceRuntimeEntry("deal_async_export_value");
+        session.referenceRuntimeEntry("deal_async_export_value_host");
+        session.referenceRuntimeEntry("deal_platform_fault");
+        String origin = "@" + session.data.origin(
+            session.displayName(unit.moduleId()), 1, 1);
+        String reason = session.data.operand(session.data.intern(
+            "async: value invocation requires an async export and result slot"));
+        return """
+            define %struct.deal_outcome @deal_async_export_invoke_value(%struct.deal_export_entry* %entry, %struct.deal_data* %value) {
+            Lentry:
+              %noentry = icmp eq %struct.deal_export_entry* %entry, null
+              %novalue = icmp eq %struct.deal_data* %value, null
+              %invalid = or i1 %noentry, %novalue
+              br i1 %invalid, label %fault, label %classify
+            classify:
+              %asyncp = getelementptr %struct.deal_export_entry, %struct.deal_export_entry* %entry, i32 0, i32 2
+              %async = load i32, i32* %asyncp
+              %isasync = icmp eq i32 %async, 1
+              br i1 %isasync, label %invoke, label %fault
+            invoke:
+              %hostp = getelementptr %struct.deal_export_entry, %struct.deal_export_entry* %entry, i32 0, i32 3
+              %host = load i32, i32* %hostp
+              %ishost = icmp eq i32 %host, 1
+              %functionp = getelementptr %struct.deal_export_entry, %struct.deal_export_entry* %entry, i32 0, i32 4
+              %function = load %struct.deal_fn*, %struct.deal_fn** %functionp
+              %descriptorp = getelementptr %struct.deal_export_entry, %struct.deal_export_entry* %entry, i32 0, i32 1
+              %descriptor = load i8*, i8** %descriptorp
+              br i1 %ishost, label %hostcall, label %dealcall
+            hostcall:
+              %record = bitcast %struct.deal_fn* %function to %struct.deal_host_export*
+              %hostout = call %struct.deal_outcome @deal_async_export_value_host(%struct.deal_host_export* %record, i8* %descriptor, %struct.deal_origin* ORIGIN, %struct.deal_data* %value)
+              ret %struct.deal_outcome %hostout
+            dealcall:
+              %out = call %struct.deal_outcome @deal_async_export_value(%struct.deal_fn* %function, i8* %descriptor, %struct.deal_origin* ORIGIN, %struct.deal_data* %value)
+              ret %struct.deal_outcome %out
+            fault:
+              call void @deal_platform_fault(REASON)
+              unreachable
+            }
+            """.replace("ORIGIN", origin).replace("REASON", reason);
     }
 
     /**

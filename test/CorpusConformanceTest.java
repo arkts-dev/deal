@@ -406,6 +406,30 @@ public class CorpusConformanceTest {
     // Discovery and classification
     // =========================================================================
 
+    /** The native lane shares this runner's backend-runtime population. The
+     * frontend tree belongs to the frontend suites, not additional native
+     * execution obligations (including its intentionally entryless modules). */
+    static List<deal.test.conformance.CorpusDiscovery.Fixture> nativeCorpusFixtures(Path root) throws IOException {
+        var discovery = deal.test.conformance.CorpusDiscovery.discover(root);
+        if (!discovery.failures().isEmpty())
+            throw new IllegalStateException("HARNESS_DEFECT: " + discovery.failures());
+        var fixtures = discovery.fixtures().stream()
+            .filter(f -> f.phase().equals("backend-runtime")).toList();
+        for (var fixture : fixtures) {
+            Path sidecar = fixture.sidecarPath(root);
+            if (!fixture.runtimeClassified() && !Files.isRegularFile(sidecar)) continue;
+            if (!Files.isRegularFile(sidecar))
+                throw new IllegalStateException("HARNESS_DEFECT: missing sidecar: " + fixture.corpusPath());
+            var context = new deal.test.conformance.SidecarSchemaValidator.ValidationContext(
+                fixture.corpusPath(), fixture.expected(),
+                deal.test.conformance.CorpusDiscovery.compilationSet(fixture, discovery.corpusByPath(), root),
+                discovery.corpusModuleIndex());
+            var invalid = deal.test.conformance.SidecarSchemaValidator.validate(context, Files.readString(sidecar));
+            if (invalid.isPresent()) throw new IllegalStateException("HARNESS_DEFECT: " + invalid.get());
+        }
+        return fixtures;
+    }
+
     private static List<TestFile> discoverTests() throws IOException {
         Path backendRoot = conformanceRoot.resolve("backend-runtime");
         List<TestFile> result = new ArrayList<>();
@@ -751,7 +775,7 @@ public class CorpusConformanceTest {
      * diagnostics and the compile-error tests fail.
      */
     @SuppressWarnings("deprecation")
-    private static List<CompilerDiagnostic> frontendDiagnostics(Path file) {
+    static List<CompilerDiagnostic> frontendDiagnostics(Path file) {
         List<CompilerDiagnostic> all = new ArrayList<>();
         try {
             String source = sourceSnapshot(file).stripped();

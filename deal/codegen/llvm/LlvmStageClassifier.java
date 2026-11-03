@@ -180,7 +180,7 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.FunctionAdaptPayload.class, STATIC_ONLY);
         map.put(KindPayload.DeletePayload.class, STATIC_ONLY);
         map.put(KindPayload.ExternalEntryPayload.class, REJECTED);
-        map.put(KindPayload.CallbackInvokePayload.class, REJECTED);
+        map.put(KindPayload.CallbackInvokePayload.class, STATIC_ONLY);
         map.put(KindPayload.StdlibCallPayload.class, STAGED);
         map.put(KindPayload.AsyncStartPayload.class, STAGED);
         map.put(KindPayload.AwaitPayload.class, STAGED);
@@ -772,12 +772,9 @@ public final class LlvmStageClassifier {
                 case deal.semantic.ir.FunctionExecutionBinding.HostFunction ignored ->
                     Optional.empty();
                 case deal.semantic.ir.FunctionExecutionBinding.HostFunctionValue ignored ->
-                    // A host-materialized function value is invoked through its
-                    // managed carrier (the dynamic call arm), never through a
-                    // static export record.
-                    Optional.of(reject(op, "a CALL of a host function value"));
+                    Optional.empty();
                 case deal.semantic.ir.FunctionExecutionBinding.DynamicFunctionValue ignored ->
-                    Optional.of(reject(op, "a CALL of a dynamic function value"));
+                    Optional.empty();
             };
         }
         return Optional.of(reject(op, "the CALL callee shape"));
@@ -1038,8 +1035,7 @@ public final class LlvmStageClassifier {
         // A class-typed operand answers by nominal identity, and an `unknown`
         // datum by the class atom its instance carries (R2: a datum is never
         // retagged); any other data value is never an instance.
-        if (operand instanceof RuntimeDescriptor.Class
-                || operand instanceof RuntimeDescriptor.Unknown) {
+        if (LlvmTypeMapper.hasDatumForm(operand)) {
             return Optional.empty();
         }
         if (LlvmTypeMapper.isStaticSingleton(operand)) {

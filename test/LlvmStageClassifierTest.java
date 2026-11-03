@@ -287,6 +287,9 @@ public final class LlvmStageClassifierTest {
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.payload(KindPayload.ThrowPayload.class),
             "the throw payload variant is staged");
+        checkEq(StageSupport.STATIC_ONLY,
+            LlvmStageClassifier.payload(KindPayload.CallbackInvokePayload.class),
+            "the callback payload carries a recorded, statically resolved DEAL function");
         checkEq(StageSupport.STAGED,
             LlvmStageClassifier.payload(KindPayload.ConstPayload.class),
             "the constant payload variant is staged");

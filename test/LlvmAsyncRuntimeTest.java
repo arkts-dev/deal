@@ -33,7 +33,7 @@ import java.util.stream.Stream;
  *       async export creates the export's own carrier before the start call,
  *       {@code AWAIT} carries the completion descriptor to the await origin,
  *       {@code deal_async_export_invoke} dispatches the record's async marker
- *       to the async export surface, the module defines exactly six
+ *       to the async export surface, the module defines exactly seven
  *       export-surface functions and no process entry, and the IR is valid and
  *       deterministic;</li>
  *   <li>one delivery routine serves the synchronous-complete (DEAL function),
@@ -478,6 +478,7 @@ public final class LlvmAsyncRuntimeTest {
         Path scratch = NativeCompiler.executableScratch("llvm-async");
         try {
             testEmittedAsyncSurface(scratch);
+            testPublicCompletionValues(scratch);
             testConformingCompletions(scratch);
             testPendingCompletions(scratch);
             testCompletionBoundaryArms(scratch);
@@ -509,7 +510,7 @@ public final class LlvmAsyncRuntimeTest {
      * Criterion 1: the production emission of the async facts at both levels —
      * one ASYNC_START per await whose host callee carries the export's own
      * carrier, the completion descriptor at the await origin, the async export
-     * surface dispatch, six export-surface functions, no process entry, valid
+     * surface dispatch, value-bearing invocation, no process entry, valid
      * IR and identical bytes on a second compile.
      */
     private static void testEmittedAsyncSurface(Path scratch) throws Exception {
@@ -576,6 +577,67 @@ public final class LlvmAsyncRuntimeTest {
             "two compiles of the async project emit identical module bytes");
         check(Files.isRegularFile(output.resolve("host/async.h")),
             "the async host declaration header is one published artifact");
+    }
+
+    private static void testPublicCompletionValues(Path scratch) throws Exception {
+        Path output = compile(scratch, "public-values", """
+            export async function positive(): Promise<number> { return 42; }
+            export async function negativeZero(): Promise<number> { return -0; }
+            export async function empty(): Promise<void> { return; }
+            export async function managed(): Promise<string> { let n = "42"; return `answer:${n}`; }
+            export async function failure(): Promise<number> { throw {code:"PUBLIC_FAIL",message:"failed"}; }
+            export function main(): null { return null; }
+            """);
+        String source = """
+            #include "deal/native/entry.h"
+            #include <string.h>
+            int main(void) {
+                if (deal_project_start().error != NULL) return 2;
+                deal_module *module = deal_project_exports("main");
+                if (module == NULL) return 3;
+                const char *names[] = {"positive","negativeZero","empty","managed","failure"};
+                for (size_t i=0;i<5u;i++) {
+                    deal_export_entry *entry=deal_export_lookup(module,names[i]);
+                    if (entry == NULL) return 4;
+                    deal_data value=deal_data_of_number(123);
+                    deal_outcome outcome=deal_async_export_invoke_value(entry,&value);
+                    if (i==4u) {
+                        const char *code=NULL;
+                        if (outcome.error==NULL||!deal_error_code(outcome.error,&code)
+                            ||strcmp(code,"PUBLIC_FAIL")||value.number!=123) return 5;
+                    } else {
+                        if (outcome.error!=NULL) return 6;
+                        if (i<2u && value.tag!=DEAL_DATA_NUMBER) return 7;
+                        if (i==0u && value.number!=42) return 8;
+                        if (i==1u) { uint64_t bits; memcpy(&bits,&value.number,sizeof bits);
+                            if (bits!=UINT64_C(0x8000000000000000)) return 9; }
+                        if (i==2u && value.tag!=DEAL_DATA_UNDEFINED) return 10;
+                        if (i==3u) {
+                            if (value.tag!=DEAL_DATA_STRING) return 11;
+                            deal_root_scope_push();
+                            (void)deal_root_scope_hold(value.reference);
+                            deal_gc_collect_full();
+                            deal_string *text=value.reference;
+                            if (deal_text_byte_length(text)!=9u
+                                ||memcmp(deal_text_bytes(text),"answer:42",9u)) return 12;
+                            deal_root_scope_pop();
+                        }
+                    }
+                }
+                return 0;
+            }
+            """;
+        for (int level : LEVELS) {
+            Path product=scratch.resolve("public-values-o"+level);
+            NativeCompiler.build(new deal.toolchain.NativeBuildRequest(output,
+                product,level,List.of(),source));
+            for (var environment : List.of(Map.<String,String>of(),Map.of("DEAL_GC_STRESS","1"))) {
+                var run=NativeCompiler.execute(product,scratch,environment);
+                checkEq(0,run.exitCode(),"public completion values/failure preserve binary64: "+run.describe());
+                checkEq("",run.stdout(),"completion access has no transcript side effect");
+                checkEq("",run.stderr(),"completion access has no infrastructure fault");
+            }
+        }
     }
 
     // =========================================================================
@@ -871,6 +933,21 @@ public final class LlvmAsyncRuntimeTest {
         System.out.println("-- the completion ingress statuses (H5/R3) --");
         Path output = compile(scratch, "ingress", INGRESS_APP);
         runExecuted(scratch, output, "ingress", 14, "ingress:ok\n", 0, "");
+        Path rejected = compile(scratch, "nested-ingress", """
+            import * as probe from "host/async";
+            import * as c from "std/console";
+            export async function run(): Promise<null> {
+              let caught = false;
+              try { await probe.ingress(); }
+              catch (e) { if (e instanceof Error) { caught = e.code === "E8010"; } }
+              if (!caught) { throw {code:"FAIL", message:"lost graph rejection"}; }
+              c.log("nested:rejected");
+              return null;
+            }
+            export function main(): null { return null; }
+            """);
+        runExecuted(scratch, rejected, "nested-ingress", 16,
+            "nested:rejected\n", 0, "");
     }
 
     /**

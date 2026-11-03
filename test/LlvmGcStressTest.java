@@ -100,7 +100,7 @@ public final class LlvmGcStressTest {
             """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 1\n"),
         "async-thread", new TestHost("host/async", """
             export function pending(): Promise<number>;
-            """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 2\n"),
+            """, "test/native/async_probe.c", "#define DEAL_HOST_ASYNC_CASE 2\n#define DEAL_HOST_POST_DURING_COLLECTION 1\n"),
         "async-record", new TestHost("host/async", """
             export class Payload {
               value: number;

@@ -1026,6 +1026,165 @@ static void check_failure_admission(void) {
           "the admission entries leave the root depth restored");
 }
 
+/* Live checks must revisit admitted aliases on every operation. These test-only
+ * storage corruptions preserve the root, cycles, signatures and unrelated slots. */
+static deal_outcome_data live_seven(void *function,
+        const deal_check_input *arguments, uint32_t count,
+        const deal_origin *origin) {
+    (void)function; (void)arguments; (void)count; (void)origin;
+    return (deal_outcome_data){NULL, deal_data_of_number(7)};
+}
+
+static deal_outcome live_check(deal_data datum, const char *descriptor) {
+    deal_check_input input = {0};
+    deal_host_present_datum(datum, &input);
+    deal_check_context context = {&test_origin, 0};
+    return deal_check_live_value(deal_descriptor_intern(descriptor), input,
+        DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+}
+
+static void check_live_array(uint32_t layout, const char *descriptor,
+        const char *array_descriptor, const void *element) {
+    deal_root_scope_push();
+    deal_array *array = deal_container_array_new_typed(layout,
+        deal_descriptor_reference(deal_descriptor_intern(descriptor)), 0u);
+    (void)deal_root_scope_hold(array);
+    deal_container_array_append(array, element);
+    deal_data datum = deal_data_of_reference(DEAL_DATA_ARRAY, array);
+    uint32_t recorded = deal_container_array_element_descriptor(array);
+    check(live_check(datum, array_descriptor).error == NULL,
+          "live walking preserves every published array element layout");
+    check(deal_container_array_element_layout(array) == layout
+            && deal_container_array_element_descriptor(array) == recorded
+            && deal_container_array_count(array) == 1u,
+          "live checking leaves layout, persistent descriptor and length unchanged");
+    if (layout == DEAL_LAYOUT_ELEMENT_NUMBER) {
+        const double *value = deal_container_array_element(array, 0u);
+        check(*value == 0.0 && 1.0 / *value < 0.0,
+              "live walking preserves the stored negative zero bits");
+    }
+    deal_root_scope_pop();
+}
+
+static void check_live_graphs(void) {
+    deal_root_scope_push();
+    deal_table *root = deal_container_table_new();
+    (void)deal_root_scope_hold(root);
+    deal_string *next = deal_text_new("next", 4u);
+    (void)deal_root_scope_hold(next);
+    deal_string *leaf_key = deal_text_new("leaf", 4u);
+    (void)deal_root_scope_hold(leaf_key);
+    deal_string *alias_key = deal_text_new("alias", 5u);
+    (void)deal_root_scope_hold(alias_key);
+    deal_table *tail = root;
+    /* Iterative walking must retain the original chain and terminate on a cycle. */
+    for (size_t depth = 0u; depth < 2048u; depth++) {
+        deal_root_scope_push();
+        deal_table *child = deal_container_table_new();
+        (void)deal_root_scope_hold(child);
+        deal_data value = deal_data_of_reference(DEAL_DATA_TABLE, child);
+        deal_container_table_write(tail, next, &value);
+        tail = child;
+        deal_root_scope_pop();
+    }
+    deal_data root_value = deal_data_of_reference(DEAL_DATA_TABLE, root);
+    deal_container_table_write(tail, next, &root_value);
+    deal_string *leaf = deal_text_new("abc", 3u);
+    (void)deal_root_scope_hold(leaf);
+    deal_data text = deal_data_of_reference(DEAL_DATA_STRING, leaf);
+    deal_container_table_write(tail, leaf_key, &text);
+    deal_container_table_write(root, alias_key, &text);
+    check(live_check(root_value, "record").error == NULL,
+          "a deep shared cyclic graph is admitted without changing its identity");
+    check(deal_container_table_read(root, alias_key).reference == leaf,
+          "live admission retains the shared string identity");
+    memcpy((void *)deal_text_bytes(leaf), "\xed\xa0\x80", 3u);
+    deal_outcome rejected = live_check(root_value, "record");
+    check(rejected.error != NULL, "a later live check detects corrupt shared Unicode");
+    if (rejected.error != NULL) {
+        const char *code = NULL;
+        (void)deal_error_code(rejected.error, &code);
+        check(code != NULL && strcmp(code, "E8001") == 0,
+              "live Unicode rejection retains the typed-boundary error code");
+        const char *expected = NULL, *actual = NULL, *file = NULL;
+        int32_t line = 0, column = 0;
+        (void)deal_error_expected(rejected.error, &expected);
+        (void)deal_error_actual(rejected.error, &actual);
+        (void)deal_error_source_file(rejected.error, &file);
+        (void)deal_error_line(rejected.error, &line);
+        (void)deal_error_column(rejected.error, &column);
+        check(expected != NULL && strcmp(expected, "string") == 0
+                && actual != NULL && strcmp(actual, "invalid-unicode") == 0,
+              "live Unicode rejection retains the independently pinned field tuple");
+        check(file != NULL && strcmp(file, test_origin.source_file) == 0
+                && line == test_origin.line && column == test_origin.column,
+              "live graph rejection belongs to the consuming boundary origin");
+    }
+    memcpy((void *)deal_text_bytes(leaf), "abc", 3u);
+    deal_gc_collect_full();
+    check(live_check(root_value, "unknown").error == NULL,
+          "repair admits the same cyclic graph after collection");
+
+    deal_fn *function = deal_fn_create(live_seven, NULL, 0u, "()->number", 0);
+    (void)deal_root_scope_hold(function);
+    deal_data callable = deal_data_of_reference(DEAL_DATA_FUNCTION, function);
+    deal_container_table_write(tail, leaf_key, &callable);
+    check(live_check(root_value, "record").error == NULL,
+          "a nested valid callable is accepted without invocation");
+    /* The thunk is the first published implementation slot in value.c. Byte
+     * mutation avoids an aliasing cast and leaves every other slot untouched. */
+    deal_fn_thunk missing = NULL;
+    memcpy(function, &missing, sizeof(missing));
+    check(live_check(root_value, "record").error != NULL,
+          "a later check rejects a nested callable missing its payload");
+    deal_fn_thunk restored = live_seven;
+    memcpy(function, &restored, sizeof(restored));
+    check(live_check(root_value, "record").error == NULL,
+          "payload repair keeps the callable and graph identities usable");
+    check(deal_container_table_read(tail, leaf_key).reference == function,
+          "live checking never replaces the stored callable");
+
+    double number = -0.0;
+    uint8_t boolean = 1u;
+    deal_data boxed = root_value;
+    check_live_array(DEAL_LAYOUT_ELEMENT_DATUM, "unknown", "[unknown]", &boxed);
+    check_live_array(DEAL_LAYOUT_ELEMENT_REFERENCE, "string", "[string]", &leaf);
+    check_live_array(DEAL_LAYOUT_ELEMENT_NUMBER, "number", "[number]", &number);
+    check_live_array(DEAL_LAYOUT_ELEMENT_BOOLEAN, "boolean", "[boolean]", &boolean);
+    deal_nullish_number_element nullish_number = {DEAL_NULLISH_BASE, -0.0};
+    deal_nullish_boolean_element nullish_boolean = {DEAL_NULLISH_BASE, 1u};
+    for (int32_t tag = DEAL_NULLISH_BASE; tag <= DEAL_NULLISH_UNDEFINED; tag++) {
+        nullish_number.tag = tag;
+        nullish_boolean.tag = tag;
+        check_live_array(DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER, "?!number", "[?!number]", &nullish_number);
+        check_live_array(DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN, "?!boolean", "[?!boolean]", &nullish_boolean);
+    }
+    deal_error *error = deal_error_create("ABC", "message", &test_origin);
+    (void)deal_root_scope_hold(error);
+    const char *code = NULL;
+    (void)deal_error_code(error, &code);
+    deal_data error_value = deal_data_of_reference(DEAL_DATA_ERROR, error);
+    check(live_check(error_value, "Error").error == NULL,
+          "valid builtin Error fields admit the original Error");
+    char *missing_code = NULL;
+    memcpy(error, &missing_code, sizeof(missing_code));
+    check(live_check(error_value, "unknown").error != NULL,
+          "unknown graph validation rejects a builtin Error without code");
+    memcpy(error, &code, sizeof(code));
+    memcpy((void *)code, "\xed\xa0\x80", 3u);
+    check(live_check(error_value, "Error").error != NULL,
+          "builtin Error validation rejects corrupted text without allocating a string");
+    memcpy((void *)code, "ABC", 3u);
+    deal_gc_collect_full();
+    check(live_check(error_value, "Error").error == NULL,
+          "the repaired Error keeps its identity across collection");
+    void *singleton = deal_null_singleton;
+    check_live_array(DEAL_LAYOUT_ELEMENT_REFERENCE, "null|undefined", "[null|undefined]", &singleton);
+    singleton = deal_undefined_singleton;
+    check_live_array(DEAL_LAYOUT_ELEMENT_REFERENCE, "null|undefined", "[null|undefined]", &singleton);
+    deal_root_scope_pop();
+}
+
 int main(void) {
     if (deal_arm_table_installed() != NULL) {
         printf("FAIL: no arm table is installed before the start call\n");
@@ -1046,6 +1205,7 @@ int main(void) {
     check_array_position_arms();
     check_number_text();
     check_failure_admission();
+    check_live_graphs();
     printf(failures == 0 ? "boundary ok\n" : "boundary failed\n");
     return failures == 0 ? 0 : 1;
 }

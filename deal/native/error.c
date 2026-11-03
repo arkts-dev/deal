@@ -304,6 +304,7 @@ struct deal_error {
     int32_t line;
     int32_t column;
     int has_origin;
+    int unraised_construction;
     char *expected;
     char *actual;
     char **frames;
@@ -383,6 +384,7 @@ static deal_error *deal_error_allocate(const char *code, const char *message,
     error->line = 0;
     error->column = 0;
     error->has_origin = 0;
+    error->unraised_construction = 0;
     error->expected = NULL;
     error->actual = NULL;
     error->frames = NULL;
@@ -440,10 +442,31 @@ deal_error *deal_error_create_strings(deal_string *code, deal_string *message,
     }
     char *code_text = deal_error_text_of_string(code);
     char *message_text = deal_error_text_of_string(message);
-    deal_error *error = deal_error_allocate(code_text, message_text, origin, 1);
+    deal_error *error = deal_error_allocate(code_text, message_text, origin, origin != NULL);
+    error->unraised_construction = origin == NULL;
     deal_platform_release(code_text);
     deal_platform_release(message_text);
     return error;
+}
+
+void deal_error_raise(deal_error *error, const deal_origin *origin) {
+    if (error == NULL || origin == NULL) {
+        deal_platform_fault("error raise: missing instance or origin");
+    }
+    if (!error->unraised_construction) return;
+    error->unraised_construction = 0;
+    error->source_file = deal_platform_duplicate(origin->source_file);
+    error->line = origin->line;
+    error->column = origin->column;
+    error->has_origin = 1;
+    uint32_t count = deal_call_frame_depth();
+    if (count != 0u) {
+        error->frames = deal_platform_allocate((size_t)count * sizeof(char *));
+        for (uint32_t index = 0u; index < count; ++index) {
+            error->frames[index] = deal_platform_duplicate(deal_call_frame_label(index));
+        }
+        error->frame_count = count;
+    }
 }
 
 deal_string *deal_error_code_value(deal_error *error) {

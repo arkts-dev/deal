@@ -36,7 +36,9 @@
  * are polled; it never changes observable behavior and the pump never spins. */
 #define DEAL_PUMP_SLICE_NS 10000000
 
-/* The waiting thread only: completes the token's operation with a carrier. */
+/* The waiting thread only: completes with a carrier, or its materialization
+ * Error if recursive graph admission fails. Such a rejection consumes the
+ * completion exactly once without publishing the rejected graph. */
 deal_status deal_async_complete_value(deal_async_token token, deal_value value);
 
 /* The waiting thread only: completes it with host error text or a relayed DEAL
@@ -86,9 +88,9 @@ deal_outcome_data deal_async_await(void *operation,
  * completion check runs against the result atom of
  * `signature_descriptor` (the export entry's own declared canonical
  * signature), so a `Promise<void>` export completes as undefined and never as
- * `null`. Answers the carried failure only; the export surface has no value
- * slot. A non-async function value or a parameterized signature is a producer
- * defect.
+ * `null`. Answers the carried failure. Value-bearing forms write the actual
+ * checked completion on success only; callers root it across allocation.
+ * Non-async values and parameterized signatures are producer defects.
  */
 deal_outcome deal_async_export_call(deal_fn *function,
                                     const char *signature_descriptor,
@@ -104,5 +106,14 @@ deal_outcome deal_async_export_call(deal_fn *function,
 deal_outcome deal_async_export_call_host(const deal_host_export *exported,
                                          const char *signature_descriptor,
                                          const deal_origin *origin);
+
+/* Value-bearing counterparts; a NULL value pointer discards the completion. */
+deal_outcome deal_async_export_value(deal_fn *function,
+                                     const char *signature_descriptor,
+                                     const deal_origin *origin, deal_data *value);
+deal_outcome deal_async_export_value_host(const deal_host_export *exported,
+                                          const char *signature_descriptor,
+                                          const deal_origin *origin,
+                                          deal_data *value);
 
 #endif /* DEAL_NATIVE_ASYNC_H */

@@ -481,6 +481,11 @@ final class LlvmSession extends EmitterSessionBase {
                     && alloc.generation() == generation) {
                 return alloc.scope().equals(initBlock);
             }
+            if (op.payload() instanceof KindPayload.RecursiveGroupInitPayload group
+                    && generation == 0 && group.bindings().contains(binding)
+                    && memberOps(initBlock).stream().anyMatch(member -> member.opId().equals(op.opId()))) {
+                return true;
+            }
         }
         return false;
     }

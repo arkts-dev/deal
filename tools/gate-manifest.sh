@@ -14,6 +14,7 @@ TEST_MAINS=(
   'fg|=== Running v1.5 Frontend Contracts ===|java -ea -cp build deal.test.Language15FrontendTest'
   'fg|=== Running v1.5 Production Runtime Contracts ===|java -ea -cp build deal.test.Language15RuntimeTest'
   'bg|=== Launching Production Corpus Conformance (JS/LuaJIT/JVM) ===|java -ea -cp build deal.test.CorpusConformanceTest test/conformance/'
+  'bg|=== Running Native Corpus Conformance O0/O2 and Requirement Accounting ===|java -ea -cp build deal.test.LlvmConformanceTest'
   'fg|=== Running Diagnostic Range Tests ===|java -ea -cp build deal.test.DiagnosticRangeTest'
   'fg|=== Running Diagnostic Classification Tests ===|java -ea -cp build deal.test.DiagnosticClassificationTest'
   'fg|=== Running Checked Project Builder Tests (ISSUE-0288) ===|java -ea -cp build deal.test.CheckedProjectBuilderTest'

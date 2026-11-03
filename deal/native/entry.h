@@ -4,10 +4,10 @@
  * Declares the whole entry surface once (`llvm-native-runtime-value-model` R9,
  * `llvm-native-host-abi-and-async` H6), and every symbol has exactly one owner:
  *
- *   - the emitted project module defines the six export-surface functions
+ *   - the emitted project module defines the seven export-surface functions
  *     `deal_project_start`, `deal_project_run_main`, `deal_project_exports`,
- *     `deal_export_lookup`, `deal_export_invoke` and
- *     `deal_async_export_invoke`, because it owns the module walk and the
+ *     `deal_export_lookup`, `deal_export_invoke`, `deal_async_export_invoke`
+ *     and `deal_async_export_invoke_value`, because it owns the module walk and the
  *     per-unit export tables those functions read
  *     (`llvm-native-codegen-cfg-ssa` C2). `deal_module` and `deal_export_entry`
  *     are opaque here; their layout exists only in the emitted module.
@@ -51,6 +51,12 @@ deal_outcome deal_export_invoke(deal_export_entry *entry);
 
 /* Invokes an async export, pumped to completion. */
 deal_outcome deal_async_export_invoke(deal_export_entry *entry);
+
+/* Actual checked async completion; writes value only on success.
+ * entry must name a zero-arity async export; value must be non-NULL.
+ * The caller roots a managed result before any subsequent allocation. */
+deal_outcome deal_async_export_invoke_value(deal_export_entry *entry,
+                                            deal_data *value);
 
 /* -- defined by entry.c: the process-level terminal projection ----------- */
 

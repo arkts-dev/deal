@@ -18,7 +18,7 @@ import java.util.Map;
  * layouts of the emitted module and of the runtime ABI mirror, the
  * declarations of the runtime entries the emitted facts reference, the static
  * data (strings, origins, the closed failure-arm table, the per-unit
- * {@code deal_module} records), the generated functions, the six
+ * {@code deal_module} records), the generated functions, the seven
  * export-surface definitions of {@code entry.h}, and the debug metadata.</p>
  *
  * <p>The emitted module defines no process entry and no runtime-owned symbol
@@ -92,7 +92,7 @@ final class LlvmModule {
     /**
      * Every generated definition of the module, keyed by its IR name: the
      * per-unit module-initialization functions in project order, every
-     * lowered function in id order, then the six export-surface functions
+     * lowered function in id order, then the export-surface functions
      * (C2) and the byte-equality helper the lookup entry uses.
      */
     private Map<String, String> functions() {
@@ -148,6 +148,8 @@ final class LlvmModule {
         functions.put("deal_export_invoke", entryEmitter.emitExportInvoke());
         functions.put("deal_async_export_invoke",
             entryEmitter.emitAsyncExportInvoke());
+        functions.put("deal_async_export_invoke_value",
+            entryEmitter.emitAsyncExportInvokeValue());
         functions.put("deal_text_equals", entryEmitter.emitTextEquals());
         functions.put("deal_class_plans_init",
             session.classPlans().initFunction());

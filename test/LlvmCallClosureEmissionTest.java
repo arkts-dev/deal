@@ -398,10 +398,10 @@ public final class LlvmCallClosureEmissionTest {
             "a dynamic call boxes its arguments into the recorded presentations");
         // The adapter is one closure over the source cell.
         check(module.contains("@A") && module.contains("@deal_fn_create(i8*"
-                + " bitcast (%struct.deal_outcome_data (i8*, %struct.deal_check_input*,"
+                + " bitcast (void (%struct.deal_outcome_data*, i8*, %struct.deal_check_input*,"
                 + " i32, %struct.deal_origin*)* @A"),
             "an arity-extension adapter is one emitted closure");
-        check(Pattern.compile("@A\\d+\\(i8\\* %functionvalue").matcher(module).find(),
+        check(Pattern.compile("@A\\d+\\(%struct\\.deal_outcome_data\\* sret\\(%struct\\.deal_outcome_data\\) %returned, i8\\* %functionvalue").matcher(module).find(),
             "the adapter thunk carries the source function value");
         // Module-level carriers are static roots (M5).
         check(module.contains("@deal_static_root_register("),
@@ -638,7 +638,7 @@ public final class LlvmCallClosureEmissionTest {
             + LlvmRuntimeAbi.BOUNDARY_FUNCTION_SIGNATURE + ", ");
         boolean thunkSignature = false;
         for (String chunk : module.split("\\ndefine ")) {
-            if (!chunk.startsWith("internal %struct.deal_outcome_data @T")) {
+            if (!chunk.startsWith("internal void @T")) {
                 continue;
             }
             if (signatureCheck.matcher(chunk).find()) {
@@ -1444,12 +1444,12 @@ public final class LlvmCallClosureEmissionTest {
             NativeCompiler.Result run = runProduct(scratch, mismatch, level,
                 "assertion-signature", true);
             checkEq(1, run.exitCode(), "-O" + level + " the mismatched function"
-                + " assertion reaches its E8010 arm: " + run.describe());
-            check(run.stdout().contains("DEAL_ERROR_CODE: E8010"),
-                "-O" + level + " the assertion reports E8010: "
+                + " assertion reaches its E8001 arm: " + run.describe());
+            check(run.stdout().contains("DEAL_ERROR_CODE: E8001"),
+                "-O" + level + " the assertion reports E8001: "
                     + run.describe());
             check(run.stdout().contains("\"line\":5"),
-                "-O" + level + " the E8010 arm carries the assertion's own"
+                "-O" + level + " the E8001 arm carries the assertion's own"
                     + " origin: " + run.describe());
         }
         Path nullish = compileProject(scratch, "assertion-nullish",
@@ -1797,7 +1797,7 @@ public final class LlvmCallClosureEmissionTest {
      * contributes). Source evaluation happens in the creating activation.
      */
     private static void assertShimFrameDiscipline(String module, String name) {
-        Matcher thunks = Pattern.compile("@(A\\d+)\\(i8\\* %functionvalue")
+        Matcher thunks = Pattern.compile("@(A\\d+)\\(%struct\\.deal_outcome_data\\* sret\\(%struct\\.deal_outcome_data\\) %returned, i8\\* %functionvalue")
             .matcher(module);
         int thunkCount = 0;
         while (thunks.find()) {

@@ -10,7 +10,7 @@
  * the observation itself. The class walks' expectations are authored from
  * docs/spec-v1.5.md's `@jsonable` rules.
  *
- * The driver is also the emitted module for the runtime: it defines the six
+ * The driver is also the emitted module for the runtime: it defines the seven
  * export-surface functions and the closed arm table, installs the table from
  * `deal_project_start`, and stands in for the emitted per-class JSON plans with
  * two test plans over a record-shaped instance (a driver-side stand-in for the
@@ -51,7 +51,7 @@
 #include "deal/native/value.h"
 
 /* =========================================================================
- * The emitted module surface: the closed arm table and the six exports
+ * The emitted module surface: the closed arm table and the seven exports
  * ========================================================================= */
 
 static const char *const arm_parameters_0[] = {"kind"};
@@ -174,6 +174,12 @@ deal_outcome deal_export_invoke(deal_export_entry *entry) {
 }
 
 deal_outcome deal_async_export_invoke(deal_export_entry *entry) {
+    return deal_export_invoke(entry);
+}
+
+deal_outcome deal_async_export_invoke_value(deal_export_entry *entry,
+                                            deal_data *value) {
+    if (value != NULL) *value = deal_data_of_undefined();
     return deal_export_invoke(entry);
 }
 
@@ -478,8 +484,8 @@ static void observe_encode_rules(void) {
     observe_encode("shared-children", deal_data_of_reference(DEAL_DATA_ARRAY, holder));
     deal_root_scope_pop();
 
-    /* A class instance has no generic representation: the closed std/json
-     * rejection arm with the value's carrier-kind token. */
+    /* This deliberately unplanned test-owned class reaches the closed std/json
+     * rejection arm. Ordinary emitted classes use their installed field plans. */
     deal_root_scope_push();
     deal_table *stand_in = deal_container_table_new();
     (void)deal_root_scope_hold(stand_in);

@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  *       {@code deal_arm_record}, {@code deal_arm_table} and
  *       {@code deal_origin}, and the arm-table version and render-scope
  *       discriminants equal the published macros;</li>
- *   <li>the C2 export surface is exactly the six published entry.h
+ *   <li>the C2 export surface is exactly the seven published entry.h
  *       declarations, and the runtime-owned entry surface is exactly the
  *       process entry, the terminal and the ten error accessors;</li>
  *   <li>the closed failure-arm table carries one record per arm in the
@@ -508,8 +508,8 @@ public final class LlvmRuntimeAbiMirrorTest {
         String entryHeader = Files.readString(
             REPO.resolve("deal/native/entry.h"), StandardCharsets.UTF_8);
         Map<String, String> published = parsePrototypes(entryHeader);
-        checkEq(6, LlvmRuntimeAbi.EXPORT_SURFACE.size(),
-            "the module defines exactly six export-surface functions");
+        checkEq(7, LlvmRuntimeAbi.EXPORT_SURFACE.size(),
+            "the module defines error-only and value-bearing export surfaces");
         for (String name : LlvmRuntimeAbi.EXPORT_SURFACE) {
             check(published.containsKey(name),
                 "entry.h declares the export-surface entry " + name);

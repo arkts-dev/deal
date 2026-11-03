@@ -1047,9 +1047,20 @@ static deal_error *deal_host_element_arm(deal_host_crossing *crossing,
         absent.presentation = DEAL_PRESENT_MISSING;
         presented = &absent;
     }
-    return deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND, &parameter,
-        1u, deal_descriptor_text(element), deal_check_token(presented),
-        &crossing->origin, cause);
+    deal_error *inner = deal_error_materialize(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+        &parameter, 1u, deal_descriptor_text(element),
+        deal_check_token(presented), &crossing->origin, cause);
+    deal_root_scope_push();
+    (void)deal_root_scope_hold(inner);
+    char *message = deal_arm_message(DEAL_ARM_ID_ARRAY_ELEMENT_KIND,
+        &parameter, 1u);
+    deal_arm_parameter cell = {"inner", message};
+    deal_error *error = deal_error_materialize(DEAL_ARM_ID_HOST_SYNC_RETURN_CELL,
+        &cell, 1u, deal_descriptor_text(element), deal_check_token(presented),
+        &crossing->origin, inner);
+    deal_arm_text_release(message);
+    deal_root_scope_pop();
+    return error;
 }
 
 /*
@@ -1372,7 +1383,7 @@ static deal_error *deal_host_record_reject(deal_host_crossing *crossing,
     context.parameter_index = 0;
     deal_check_input value = *presented;
     deal_outcome rejected = deal_check_value(deal_descriptor_intern("unknown"),
-        value, DEAL_BOUNDARY_TYPE_DESCRIPTOR, &context);
+        value, DEAL_BOUNDARY_HOST_SYNC_RETURN, &context);
     return rejected.error;
 }
 
@@ -1664,8 +1675,13 @@ static deal_error *deal_host_materialize_function(deal_host_crossing *crossing,
                                                   deal_host_box *box,
                                                   deal_host_memo *memo,
                                                   deal_data *out) {
-    if (box->function == NULL || box->signature == NULL) {
-        deal_platform_fault("host: a function carrier without its entry");
+    if (box->function == NULL || box->signature == NULL
+            || !deal_host_descriptor_is_function(box->signature)) {
+        /* Host-shaped function metadata is untrusted graph data. Reject it
+         * before interning or publishing any carrier, not as an invariant
+         * fault that bypasses the caller's catch. */
+        return deal_host_carrier_reject(deal_descriptor_intern("unknown"),
+            "table", &crossing->origin);
     }
     /* The wrapper object holds the host function; it is one managed object of
      * the host group's own layout, so the function value's capture cell roots it
@@ -4312,8 +4328,9 @@ deal_outcome deal_host_load(const deal_host_declared_module *declared,
                                " descriptor");
         }
         if (match->kind != declaredKind || match->is_async != declaredAsync
-                || !deal_host_text_equal(match->descriptor,
-                    declaredExport->descriptor)
+                || (declaredKind != DEAL_HOST_EXPORT_CLASS
+                    && !deal_host_text_equal(match->descriptor,
+                        declaredExport->descriptor))
                 || (declaredKind == DEAL_HOST_EXPORT_FUNCTION
                     && match->function == NULL)
                 || (declaredKind == DEAL_HOST_EXPORT_ASYNC_FUNCTION
@@ -4326,7 +4343,9 @@ deal_outcome deal_host_load(const deal_host_declared_module *declared,
             return outcome;
         }
         if (declaredKind == DEAL_HOST_EXPORT_CLASS
-                && (match->class_value == NULL
+                && (!deal_host_text_equal(match->descriptor,
+                        declaredExport->descriptor)
+                    || match->class_value == NULL
                     || match->class_value->identity == NULL
                     || !deal_host_text_equal(match->class_value->identity,
                         declaredExport->descriptor))) {
@@ -4337,7 +4356,9 @@ deal_outcome deal_host_load(const deal_host_declared_module *declared,
                 declaredExport->descriptor,
                 match->class_value == NULL
                         || match->class_value->identity == NULL
-                    ? "" : match->class_value->identity,
+                    ? "" : !deal_host_text_equal(match->class_value->identity,
+                        declaredExport->descriptor)
+                        ? match->class_value->identity : match->descriptor,
                 NULL, origin);
             return outcome;
         }

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  * resolved through the production resolution order — with the pinned strict
  * C11 flag list at {@code -O0} and {@code -O2}. The module side is a committed
  * fixture stand-in for the emitted project module
- * ({@code test/native/module_stub.c}); it defines the six export-surface
+ * ({@code test/native/module_stub.c}); it defines the export-surface
  * functions and {@code deal_project_arm_table} and nothing of the runtime, so a
  * link proves the single-definition split of C2/R9/H6.</p>
  *
@@ -952,7 +952,7 @@ public final class NativeRuntimeAbiTest {
             NativeCompiler.driverSources(published, module,
                 fixture("export_probe.c")), exports);
         check(exportsLink.succeeded(),
-            "a driver may call all six export-surface functions: "
+            "a driver may call all export-surface functions: "
                 + exportsLink.describe());
         if (exportsLink.succeeded()) {
             NativeCompiler.Result run = NativeCompiler.execute(exports, scratch,
@@ -963,7 +963,7 @@ public final class NativeRuntimeAbiTest {
                 "every export-surface function is callable once");
         }
 
-        // ... and a module that omits five of them fails the link, naming each.
+        // ... and a module omitting the other definitions fails the link, naming each.
         Path partial = scratch.resolve("ownership-partial-module");
         NativeCompiler.Result partialLink = NativeCompiler.link(published, 2,
             NativeCompiler.driverSources(published,
@@ -975,7 +975,7 @@ public final class NativeRuntimeAbiTest {
                 + partialLink.describe());
         for (String symbol : List.of("deal_project_run_main", "deal_project_exports",
                 "deal_export_lookup", "deal_export_invoke",
-                "deal_async_export_invoke")) {
+                "deal_async_export_invoke", "deal_async_export_invoke_value")) {
             check(partialLink.stderr().contains(symbol),
                 "the missing-definition failure names " + symbol + ": "
                     + partialLink.stderr());

@@ -98,6 +98,8 @@ deal_outcome_reference deal_async_start(deal_fn *callee, const deal_check_input 
 deal_outcome_data deal_async_await(void *operation, const char *completion_descriptor, const deal_origin *origin)
 deal_outcome deal_async_export_call(deal_fn *function, const char *signature_descriptor, const deal_origin *origin)
 deal_outcome deal_async_export_call_host(const deal_host_export *exported, const char *signature_descriptor, const deal_origin *origin)
+deal_outcome deal_async_export_value(deal_fn *function, const char *signature_descriptor, const deal_origin *origin, deal_data *value)
+deal_outcome deal_async_export_value_host(const deal_host_export *exported, const char *signature_descriptor, const deal_origin *origin, deal_data *value)
 deal_status deal_async_post(deal_async_token token, const deal_host_completion *completion)
 deal_completion_frame * deal_platform_frame_alloc(void)
 void deal_platform_frame_free(deal_completion_frame *frame)
@@ -235,6 +237,7 @@ uint32_t deal_descriptor_reference(deal_descriptor *atom)
 deal_descriptor * deal_descriptor_of_reference(uint32_t reference)
 deal_string * deal_descriptor_type_name(const deal_data *value)
 deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input, uint32_t boundary_kind, const deal_check_context *context)
+deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input input, uint32_t boundary_kind, const deal_check_context *context)
 const char * deal_check_token(const deal_check_input *input)
 deal_outcome_number deal_check_number(const deal_data *datum, const deal_check_context *context)
 deal_outcome_boolean deal_check_boolean(const deal_data *datum, const deal_check_context *context)
@@ -254,6 +257,7 @@ void deal_call_frame_pop(void)
 uint32_t deal_call_frame_depth(void)
 deal_error * deal_error_create(const char *code, const char *message, const deal_origin *origin)
 deal_error * deal_error_create_strings(deal_string *code, deal_string *message, const deal_origin *origin)
+void deal_error_raise(deal_error *error, const deal_origin *origin)
 deal_string * deal_error_code_value(deal_error *error)
 deal_string * deal_error_message_value(deal_error *error)
 void deal_error_set_code_value(deal_error *error, deal_string *code)
@@ -265,6 +269,7 @@ char * deal_error_snapshot(const deal_error *error)
 void deal_error_snapshot_release(char *text)
 deal_outcome_data deal_json_parse(deal_string *text, const deal_origin *origin)
 deal_outcome_data deal_json_stringify(deal_data value, const deal_origin *origin)
+void deal_json_plans_install(deal_json_plan_lookup lookup, void *context)
 deal_outcome_data deal_json_from_class(deal_string *text, const deal_json_class_plan *plan, deal_json_plan_lookup lookup, void *lookup_context, const deal_origin *origin)
 deal_outcome_string deal_json_to_class(const deal_json_class_plan *plan, const deal_data *instance, deal_json_plan_lookup lookup, void *lookup_context, const deal_origin *origin)
 deal_outcome_data deal_std_call(uint32_t operation_id, const deal_check_input *arguments, uint32_t argument_count, const deal_origin *origin)
@@ -290,6 +295,7 @@ deal_module * deal_project_exports(const char *module_path)
 deal_export_entry * deal_export_lookup(deal_module *module, const char *name)
 deal_outcome deal_export_invoke(deal_export_entry *entry)
 deal_outcome deal_async_export_invoke(deal_export_entry *entry)
+deal_outcome deal_async_export_invoke_value(deal_export_entry *entry, deal_data *value)
 int deal_project_main(void)
 int deal_error_code(deal_error *error, const char **out)
 int deal_error_message(deal_error *error, const char **out)
@@ -517,7 +523,7 @@ int deal_error_cause_code(deal_error *error, const char **out)
     // =========================================================================
 
     /**
-     * The six export-surface functions the emitted module defines, in
+     * The export-surface functions the emitted module defines, in
      * {@code entry.h} declaration order (C2).
      */
     public static final List<String> EXPORT_SURFACE = List.of(
@@ -526,7 +532,8 @@ int deal_error_cause_code(deal_error *error, const char **out)
         "deal_project_exports",
         "deal_export_lookup",
         "deal_export_invoke",
-        "deal_async_export_invoke");
+        "deal_async_export_invoke",
+        "deal_async_export_invoke_value");
 
     /**
      * The runtime-owned entry-surface symbols the emitted module never

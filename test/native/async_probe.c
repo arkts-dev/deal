@@ -51,6 +51,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <threads.h>
+#ifdef DEAL_HOST_POST_DURING_COLLECTION
+#include <stdatomic.h>
+#endif
 
 #ifndef DEAL_HOST_ASYNC_CASE
 #define DEAL_HOST_ASYNC_CASE 0
@@ -257,12 +260,33 @@ static int pending_done;
 #if DEAL_HOST_ASYNC_CASE == 2
 static thrd_t poster_thread;
 static int poster_off_mutator;
+#ifdef DEAL_HOST_POST_DURING_COLLECTION
+static atomic_int collection_entered;
+static atomic_int completion_posted;
+static void collection_rendezvous(deal_reference_visit visit,
+                                   void *visit_context, void *context) {
+  (void)visit; (void)visit_context; (void)context;
+  atomic_store_explicit(&collection_entered, 1, memory_order_release);
+  while (atomic_load_explicit(&completion_posted, memory_order_acquire) == 0) {
+    thrd_yield();
+  }
+}
+#endif
 
 static int poster(void *context) {
   (void)context;
   /* The poster must observe that it is not the mutator thread (H5). */
   poster_off_mutator = deal_platform_on_mutator_thread() == 0 ? 1 : 0;
-  return post_number(pending_token, 21.0) == 1 ? 0 : 1;
+#ifdef DEAL_HOST_POST_DURING_COLLECTION
+  while (atomic_load_explicit(&collection_entered, memory_order_acquire) == 0) {
+    thrd_yield();
+  }
+#endif
+  int status = post_number(pending_token, 21.0) == 1 ? 0 : 1;
+#ifdef DEAL_HOST_POST_DURING_COLLECTION
+  atomic_store_explicit(&completion_posted, 1, memory_order_release);
+#endif
+  return status;
 }
 #endif
 
@@ -273,9 +297,20 @@ static deal_host_result pending_impl(deal_async_token token,
   pending_token = token;
   pending_done = 0;
 #if DEAL_HOST_ASYNC_CASE == 2
+#ifdef DEAL_HOST_POST_DURING_COLLECTION
+  atomic_store_explicit(&collection_entered, 0, memory_order_relaxed);
+  atomic_store_explicit(&completion_posted, 0, memory_order_relaxed);
+#endif
   if (thrd_create(&poster_thread, poster, NULL) != thrd_success) {
     return failure_result("E_HOST_ASYNC", "the poster thread failed");
   }
+#ifdef DEAL_HOST_POST_DURING_COLLECTION
+  /* The root-source callback runs inside the collector, holds the mutator
+   * there until the other thread publishes, and touches no managed state. */
+  deal_root_source_register(collection_rendezvous, NULL);
+  deal_gc_collect_full();
+  deal_root_source_unregister(collection_rendezvous, NULL);
+#endif
 #endif
   return operation_result(token);
 }
@@ -701,7 +736,31 @@ static deal_host_result text_completion_impl(deal_async_token token,
  * The completion ingress (case 14, H5/R3)
  * ========================================================================= */
 
-#if DEAL_HOST_ASYNC_CASE == 14
+#if DEAL_HOST_ASYNC_CASE == 16
+/* Recursive admission fails before publication. Completion still resolves once
+ * with the carried Error, including when its graph was never read by DEAL. */
+static deal_host_result ingress_impl(deal_async_token token,
+                                     const deal_value *args, size_t argc) {
+  (void)args;
+  (void)argc;
+  deal_value graph, bad;
+  if (deal_table_new(&graph) != DEAL_OK
+      || deal_string_new("\xed\xa0\x80", 3u, &bad) != DEAL_OK
+      || deal_table_set(graph, "unread", 6u, bad) != DEAL_OK
+      || deal_async_complete_value(token, graph) != DEAL_OK) {
+    return failure_result("E_HOST_ASYNC_INGRESS",
+        "nested malformed completion lost its Error");
+  }
+  deal_value number;
+  if (deal_number(7.0, &number) != DEAL_OK
+      || deal_async_complete_value(token, number) != DEAL_STATUS_PROTOCOL) {
+    return failure_result("E_HOST_ASYNC_INGRESS",
+        "a rejected graph completion was not exactly once");
+  }
+  deal_gc_collect_full();
+  return operation_result(token);
+}
+#elif DEAL_HOST_ASYNC_CASE == 14
 /* Neither an async-operation carrier nor the no-value marker is a completion
  * datum (V1.5, R3): both answer the closed kind status and change nothing, so
  * the real completion afterwards is still the one the await observes. */

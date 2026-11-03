@@ -7,8 +7,8 @@
  * numeric tokens parsed directly to `number` (IEEE 754 binary64, round to
  * nearest, ties to even, signed zero and numeric overflow/underflow preserved),
  * scalar-valid strings with surrogate and malformed-UTF-8 rejection, stack-safe
- * traversal without a fixed nesting cap, cycle detection by path-local active
- * identity on encode, and rejection of non-finite serialized numbers.
+ * traversal without a fixed nesting cap, path-local cycle detection on encode,
+ * and non-finite numbers encoded as null.
  *
  * Decoded graphs are persistent tagged data (`deal_data`), never crossing
  * handles: a decoded JSON object is a record, a decoded array records the
@@ -75,9 +75,9 @@ deal_outcome_data deal_json_parse(deal_string *text, const deal_origin *origin);
  * array elements encode as `null`, a record's own keys encode array-index keys
  * ascending first and then in creation order, and a path-local container
  * re-entry is the walk family's cycle arm; shared acyclic children encode
- * twice. An unsupported value kind (a class instance, a builtin `Error`, an
- * async-operation presentation) is the `JSON_STRINGIFY_UNSUPPORTED` arm with
- * the value's carrier-kind token. Neither arm exposes partial output.
+ * twice. Installed class plans provide declared fields; Error emits code/message.
+ * Unsupported presentations use `JSON_STRINGIFY_UNSUPPORTED` with their
+ * carrier-kind token. Neither arm exposes partial output.
  */
 deal_outcome_data deal_json_stringify(deal_data value,
                                       const deal_origin *origin);
@@ -121,9 +121,12 @@ typedef struct {
     void *context;                        /* the emitted module's own context     */
 } deal_json_class_plan;
 
-/* One class atom's emitted plan, or NULL when the atom has no @jsonable plan. */
+/* One class atom's emitted plan, or NULL when the atom has no plan. */
 typedef const deal_json_class_plan *(*deal_json_plan_lookup)(
     const char *class_atom, void *context);
+
+/* Install the project's ordinary class plans for generic JSON traversal. */
+void deal_json_plans_install(deal_json_plan_lookup lookup, void *context);
 
 /*
  * `C$fromJson`: parses `text` as one object root and decodes the plan's fields

@@ -161,7 +161,17 @@ static deal_host_result scalar_same(const deal_value *args, size_t argc) {
     return result;
 }
 
+static deal_host_result delete_first(const deal_value *args, size_t argc) {
+    (void)argc;
+    deal_host_result result = {0};
+    REQUIRE(deal_field_delete(args[0], "first"));
+    REQUIRE(deal_undefined(&result.value));
+    return result;
+}
+
 static const deal_host_export exports[] = {
+    {"deleteFirst", "(unknown)->void", DEAL_HOST_EXPORT_FUNCTION,
+     0, delete_first, NULL, NULL},
     {"aliases", "([unknown],record,(record,[unknown],Error)->number)->unknown", DEAL_HOST_EXPORT_FUNCTION,
      0, aliases, NULL, NULL},
     {"errorFields", "(Error)->Error", DEAL_HOST_EXPORT_FUNCTION,

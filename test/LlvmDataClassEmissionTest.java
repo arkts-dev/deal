@@ -319,6 +319,15 @@ public final class LlvmDataClassEmissionTest {
               if (untyped instanceof Address) { report("T3", "instanceof other"); }
               let narrowed: User = untyped as User;
               if (narrowed.name !== "Ada") { report("T4", "assertion"); }
+              function maybeUser(flag: boolean): User | null { if (flag) { return user; } return null; }
+              let nullableUser = maybeUser(true);
+              let absentUser = maybeUser(false);
+              if (!(nullableUser instanceof User)) { report("T8", "nullable instance"); }
+              if (nullableUser instanceof Address) { report("T9", "nullable other class"); }
+              if (absentUser instanceof User) { report("T10", "null is not instance"); }
+              function maybeUnknown(flag: boolean): unknown { if (flag) { return user; } return null; }
+              if (!(maybeUnknown(true) instanceof User)) { report("T11", "unknown instance"); }
+              if (maybeUnknown(false) instanceof User) { report("T12", "unknown null"); }
 
               let listed: unknown = ["x"];
               if (typeof listed !== "object") { report("T5", "typeof array"); }

@@ -1068,6 +1068,7 @@ typedef struct {
 /* One open container of the encoder's work stack. */
 typedef struct {
     uint32_t kind;                     /* 0 = object, 1 = array, 2 = class */
+    int generic;
     deal_table *table;                 /* object frame */
     deal_string **keys;                /* object frame: own-key order */
     size_t key_count;
@@ -1758,6 +1759,9 @@ static int deal_json_open_container(deal_json_encoder *encoder,
     deal_json_encode_frame *frame = deal_json_encoder_push(encoder);
     frame->identity = referent;
     frame->position = *walk;
+    frame->generic = descriptor == NULL
+        || deal_descriptor_type(descriptor) == DEAL_DESCRIPTOR_UNKNOWN
+        || deal_descriptor_type(descriptor) == DEAL_DESCRIPTOR_RECORD;
     switch ((deal_data_tag)input->datum.tag) {
     case DEAL_DATA_ARRAY: {
         frame->kind = 1u;
@@ -1779,6 +1783,13 @@ static int deal_json_open_container(deal_json_encoder *encoder,
         const char *atom = input->class_atom;
         if (atom == NULL) {
             atom = deal_json_class_atom_of(descriptor);
+        }
+        if (atom == NULL) {
+            /* The emitted class tag is projected through the host presentation
+             * authority; the JSON group never reads an instance layout. */
+            deal_check_input presented;
+            deal_host_present_datum(input->datum, &presented);
+            atom = presented.class_atom;
         }
         if (atom == NULL) {
             deal_platform_fault("json: class value without its canonical atom");
@@ -1812,6 +1823,10 @@ static int deal_json_emit(deal_json_encoder *encoder,
         return 3;
     }
     deal_data_tag tag = (deal_data_tag)position.input.datum.tag;
+    if (position.descriptor != NULL
+            && deal_descriptor_type(position.descriptor) == DEAL_DESCRIPTOR_UNKNOWN) {
+        position.descriptor = NULL;
+    }
     if (tag == DEAL_DATA_UNDEFINED || tag == DEAL_DATA_FUNCTION) {
         /* The v1.5 rules: an undefined/function-valued object member is
          * omitted and such an array element encodes as `null`. A declared
@@ -1873,12 +1888,28 @@ static int deal_json_emit(deal_json_encoder *encoder,
                                         position.descriptor, walk) ? 2 : 0;
     case DEAL_DATA_CLASS:
         if (position.descriptor == NULL) {
-            return 3;
+            if (encoder->lookup == NULL) return 3;
+            deal_host_present_datum(position.input.datum, &position.input);
+            if (position.input.class_atom == NULL
+                    || encoder->lookup(position.input.class_atom,
+                        encoder->lookup_context) == NULL) return 3;
         }
         return deal_json_open_container(encoder, &position.input,
                                         position.descriptor, walk) ? 2 : 0;
-    case DEAL_DATA_ERROR:
-        return 3;
+    case DEAL_DATA_ERROR: {
+        deal_root_scope_push();
+        deal_string *code = deal_error_code_value(position.input.datum.reference);
+        (void)deal_root_scope_hold(code);
+        deal_string *message = deal_error_message_value(position.input.datum.reference);
+        (void)deal_root_scope_hold(message);
+        deal_json_buffer_append(&encoder->text, "{\"code\":", 8u);
+        deal_json_escape(&encoder->text, code);
+        deal_json_buffer_append(&encoder->text, ",\"message\":", 11u);
+        deal_json_escape(&encoder->text, message);
+        deal_json_buffer_byte(&encoder->text, '}');
+        deal_root_scope_pop();
+        return 0;
+    }
     case DEAL_DATA_UNDEFINED:
     case DEAL_DATA_FUNCTION:
         break;
@@ -1949,8 +1980,7 @@ static int deal_json_encode_frames(deal_json_encoder *encoder) {
             deal_json_position position;
             deal_json_element_at(frame->array, element,
                                  frame->element_descriptor, &position.input);
-            position.descriptor = encoder->walk_failures
-                ? frame->element_descriptor : NULL;
+            position.descriptor = frame->generic ? NULL : frame->element_descriptor;
             deal_json_walk_position walk;
             memset(&walk, 0, sizeof(walk));
             walk.base = encoder->frame_count - 1u;
@@ -2728,6 +2758,17 @@ deal_outcome_data deal_json_from_class(deal_string *text,
  * The generic encoder entry (`std/json.stringify`, R6)
  * ========================================================================= */
 
+static deal_json_plan_lookup deal_json_project_lookup;
+static void *deal_json_project_context;
+
+void deal_json_plans_install(deal_json_plan_lookup lookup, void *context) {
+    if (deal_json_project_lookup != NULL && deal_json_project_lookup != lookup) {
+        deal_platform_fault("json: class plans replaced after install");
+    }
+    deal_json_project_lookup = lookup;
+    deal_json_project_context = context;
+}
+
 deal_outcome_data deal_json_stringify(deal_data value,
                                       const deal_origin *origin) {
     deal_outcome_data outcome;
@@ -2745,14 +2786,15 @@ deal_outcome_data deal_json_stringify(deal_data value,
     memset(&encoder, 0, sizeof(encoder));
     encoder.origin = origin;
     encoder.walk_failures = 0;
+    encoder.lookup = deal_json_project_lookup;
+    encoder.lookup_context = deal_json_project_context;
     deal_json_position position;
     memset(&position, 0, sizeof(position));
     position.input.presentation = DEAL_PRESENT_DATUM;
     position.input.unicode_defect = DEAL_UNICODE_MALFORMED;
     position.input.datum = value;
-    /* A class instance has no generic representation: the walk answers the
-     * closed std/json rejection arm with its carrier-kind token, so no class
-     * atom is needed here. */
+    /* The generic walk resolves an ordinary class's own atom and installed
+     * plan when it reaches that datum; no target descriptor is imposed. */
     position.input.class_atom = NULL;
     deal_root_scope_push();
     deal_json_walk_position root;

@@ -43,7 +43,7 @@ import java.util.stream.Stream;
  *   <li>the published set is exactly {@code <entry>.ll} plus the closed D6
  *       runtime set, byte-equal to the distribution files, with no source-map
  *       sidecar, no generated registry, no driver and no build product;</li>
- *   <li>the emitted module carries the pinned triple, defines exactly the six
+ *   <li>the emitted module carries the pinned triple, defines exactly the seven
  *       C2 export-surface functions, defines no process entry and no
  *       runtime-owned symbol, installs the arm table before any unit
  *       initialization, emits the zero-slot prologue/epilogue pair on every
@@ -93,19 +93,8 @@ public final class LlvmProjectEmissionTest {
         }
         """;
 
-    /**
-     * The one fact outside this stage's rendered set: a host declaration
-     * module's import needs the {@code host-sync} load call that fills the
-     * reserved host-import slot, so it carries no staged decision and the
-     * compile fails with one origin-bearing E6005.
-     */
-    /**
-     * The still-unsupported fact: a nullable-boundary projection whose static
-     * operand type does not prove the declared nullish descriptor. The host
-     * import is rendered by the host stage (ISSUE-0912), so it is no longer the
-     * unsupported fixture.
-     */
-    private static final String UNSUPPORTED_SOURCE = """
+    /** Optional-number reads project into the both-member nullish union. */
+    private static final String NULLISH_PROJECTION_SOURCE = """
         class Box {
           total?: number;
         }
@@ -118,11 +107,6 @@ public final class LlvmProjectEmissionTest {
           }
           return null;
         }
-        """;
-
-    /** The unsupported project declares no host declaration module. */
-    private static final String UNSUPPORTED_DECLARATION = """
-        export function fetch(): number;
         """;
 
     private static int passed;
@@ -147,6 +131,7 @@ public final class LlvmProjectEmissionTest {
             testDeterminism(scratch, published, module);
             testStaleAndFailedPublication(scratch, projectRoot, published);
             testFrontendErrorPublishesNothing(scratch);
+            testUnsupportedExportPreservesPublication(scratch, published);
             testPreviouslyUnsupportedFactPublishes(scratch);
             testNoExternalTool(scratch);
             testMissingRuntimeFailsClosed(scratch);
@@ -219,8 +204,8 @@ public final class LlvmProjectEmissionTest {
             check(definitions.contains(name),
                 "the emitted module defines the export-surface entry " + name);
         }
-        checkEq(6, LlvmRuntimeAbi.EXPORT_SURFACE.size(),
-            "the module defines exactly the six C2 export-surface functions");
+        checkEq(7, LlvmRuntimeAbi.EXPORT_SURFACE.size(),
+            "the module defines the error-only and value-bearing C2 export surfaces");
         for (String name : definitions) {
             if (name.startsWith("F") && name.substring(1).matches("\\d+")) {
                 check(module.contains("define internal "),
@@ -521,10 +506,8 @@ public final class LlvmProjectEmissionTest {
                 Files.readAllBytes(recompiled.resolve("main.ll"))),
             "the recompiled module is the same deterministic module");
         // A failing compile into the same output root preserves the prior set.
-        // The failing source is a frontend error: every lowered fact the
-        // v1.5 surface reaches is staged now, so the transactional
-        // publication guard is exercised through the preserved frontend
-        // diagnostic instead of a retired staging gap.
+        // Exercise frontend failure separately from the origin-bearing
+        // production coverage rejection below.
         Path failing = scratch.resolve("scalar-failing");
         writeProject(failing, Map.of("src/main.deal",
             "export function main(): null {\n  let x: number = ;\n"
@@ -571,18 +554,60 @@ public final class LlvmProjectEmissionTest {
             "the frontend diagnostic is preserved, not replaced");
     }
 
+    /** A valid singleton parameter outside the published boxed apply surface. */
+    private static void testUnsupportedExportPreservesPublication(Path scratch,
+            Path published) throws Exception {
+        Path root = scratch.resolve("unsupported-export");
+        writeProject(root, Map.of("src/main.deal", """
+            export function accepts(value: null): null { return value; }
+            export function main(): null { return accepts(null); }
+            """), Map.of("backend", "llvm"));
+        Path entry = root.resolve("src/main.deal");
+        Path fresh = root.resolve("build/llvm");
+        CompileOutcome rejected = compile(entry, fresh, false, false);
+        check(!rejected.success(), "the unsupported export rejects production emission");
+        checkEq(1, rejected.diagnostics().size(), "one coverage diagnostic, not a frontend rejection");
+        if (rejected.diagnostics().size() == 1) {
+            CompilerDiagnostic diagnostic = rejected.diagnostics().getFirst();
+            checkEq("E6005", diagnostic.code(), "the production coverage rejection is E6005");
+            checkEq(entry.toAbsolutePath().toString(), diagnostic.file(),
+                "the coverage rejection retains its source file");
+            checkEq(1, diagnostic.line(), "the export coverage origin starts on line one");
+            checkEq(1, diagnostic.column(), "the export coverage origin starts in column one");
+            check(diagnostic.message().contains("EXPORT_PUBLISH")
+                    && diagnostic.message().contains("'(null)->null'")
+                    && diagnostic.message().contains("SHARED_EMITTER_COVERAGE"),
+                "the diagnostic identifies the independently selected unsupported fact");
+        }
+        check(!Files.exists(fresh), "E6005 publishes no fresh artifact tree");
+        Map<String, byte[]> before = new LinkedHashMap<>();
+        for (String name : filesUnder(published)) before.put(name, Files.readAllBytes(published.resolve(name)));
+        CompileOutcome replacement = compile(entry, published, false, false);
+        check(!replacement.success() && replacement.diagnostics().stream()
+                .anyMatch(d -> d.code().equals("E6005")), "E6005 also rejects replacement publication");
+        checkEq(new ArrayList<>(before.keySet()), filesUnder(published),
+            "coverage rejection preserves the entire prior artifact membership");
+        for (var artifact : before.entrySet())
+            check(java.util.Arrays.equals(artifact.getValue(), Files.readAllBytes(published.resolve(artifact.getKey()))),
+                "coverage rejection preserves prior bytes: " + artifact.getKey());
+        try (Stream<Path> walk = Files.walk(scratch)) {
+            check(walk.noneMatch(path -> path.getFileName().toString().contains(PublicationMarker.STAGE)),
+                "coverage rejection leaves no publication staging tree");
+        }
+    }
+
     /**
      * A previously unclassified nullish narrowing now renders: the declared
      * {@code ?!number} form is admitted by its {@code !number} refinement, so
      * the project compiles and publishes instead of stopping at the retired
-     * staging rejection (C3, R4). The origin-bearing E6005 path itself stays
-     * covered by the classifier's closed-set table.
+     * staging rejection (C3, R4). This is positive representation coverage,
+     * not a substitute for an origin-bearing E6005 publication negative.
      */
     private static void testPreviouslyUnsupportedFactPublishes(Path scratch)
             throws Exception {
         System.out.println("-- a previously unclassified narrowing publishes --");
         Path root = scratch.resolve("previously-unsupported");
-        writeUnsupportedProject(root);
+        writeProject(root, Map.of("src/main.deal", NULLISH_PROJECTION_SOURCE), Map.of("backend", "llvm"));
         Path output = root.resolve("build/llvm");
         CompileOutcome outcome = compile(root.resolve("src/main.deal"), output,
             false, false);
@@ -767,20 +792,6 @@ public final class LlvmProjectEmissionTest {
         if (!outcome.success()) {
             System.exit(1);
         }
-    }
-
-    /**
-     * Writes the one project of a fact outside this stage's rendered set: a
-     * host declaration module and its import (the reserved host-import slot).
-     */
-    private static void writeUnsupportedProject(Path root) throws IOException {
-        Files.createDirectories(root.resolve("src"));
-        Files.writeString(root.resolve("deal.json"),
-            "{\"languageVersion\": \"1.5\", \"moduleRoots\": [\"src\"],"
-                + " \"backend\": \"llvm\"}",
-            StandardCharsets.UTF_8);
-        Files.writeString(root.resolve("src/main.deal"), UNSUPPORTED_SOURCE,
-            StandardCharsets.UTF_8);
     }
 
     private static void writeProject(Path root, Map<String, String> sources,

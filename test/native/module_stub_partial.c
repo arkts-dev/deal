@@ -1,5 +1,5 @@
 /*
- * test/native/module_stub_partial.c — a module stub that omits five of the six
+ * test/native/module_stub_partial.c — a module stub that omits six of the seven
  * export-surface definitions of `deal/native/entry.h` (C2, H6).
  *
  * Linking it must fail with an undefined reference naming the missing

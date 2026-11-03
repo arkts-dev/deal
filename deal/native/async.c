@@ -639,6 +639,15 @@ deal_status deal_async_complete_value(deal_async_token token, deal_value value) 
     deal_error *cause = NULL;
     deal_status status = deal_host_value_presentation(value, &checked, &cause);
     if (status != DEAL_OK) {
+        if (cause != NULL) {
+            /* Failed graph admission is a catchable completion, not a lost
+             * operation or a fabricated success. The rejected graph stays
+             * unpublished; the original materialization Error is carried. */
+            deal_data rejected = deal_data_of_reference(DEAL_DATA_ERROR, cause);
+            deal_async_record_complete(entry->record, &rejected, 1,
+                DEAL_PRESENT_DATUM, DEAL_UNICODE_MALFORMED);
+            return DEAL_OK;
+        }
         return status;
     }
     if (checked.presentation == DEAL_PRESENT_NOTHING) {
@@ -690,9 +699,10 @@ deal_status deal_async_complete_error(deal_async_token token,
  * The async export invocation surface (H6 `ExportInvoke`)
  * ========================================================================= */
 
-deal_outcome deal_async_export_call(deal_fn *function,
-                                    const char *signature_descriptor,
-                                    const deal_origin *origin) {
+deal_outcome deal_async_export_value(deal_fn *function,
+                                     const char *signature_descriptor,
+                                     const deal_origin *origin,
+                                     deal_data *value) {
     deal_outcome outcome;
     outcome.error = NULL;
     if (function == NULL || signature_descriptor == NULL || origin == NULL) {
@@ -720,12 +730,20 @@ deal_outcome deal_async_export_call(deal_fn *function,
     deal_outcome_data awaited = deal_async_await(started.value, result,
         origin);
     outcome.error = awaited.error;
+    if (awaited.error == NULL && value != NULL) *value = awaited.value;
     return outcome;
 }
 
-deal_outcome deal_async_export_call_host(const deal_host_export *exported,
-                                         const char *signature_descriptor,
-                                         const deal_origin *origin) {
+deal_outcome deal_async_export_call(deal_fn *function,
+                                    const char *signature_descriptor,
+                                    const deal_origin *origin) {
+    return deal_async_export_value(function, signature_descriptor, origin, NULL);
+}
+
+deal_outcome deal_async_export_value_host(const deal_host_export *exported,
+                                          const char *signature_descriptor,
+                                          const deal_origin *origin,
+                                          deal_data *value) {
     deal_outcome outcome;
     outcome.error = NULL;
     if (exported == NULL || signature_descriptor == NULL || origin == NULL) {
@@ -746,9 +764,16 @@ deal_outcome deal_async_export_call_host(const deal_host_export *exported,
      * across the allocating start and pump, so one scoped root holds it (M5). */
     deal_root_scope_push();
     uint32_t held = deal_root_scope_hold(carrier.value);
-    outcome = deal_async_export_call(carrier.value, signature_descriptor,
-        origin);
+    outcome = deal_async_export_value(carrier.value, signature_descriptor,
+        origin, value);
     deal_root_scope_release(held);
     deal_root_scope_pop();
     return outcome;
+}
+
+deal_outcome deal_async_export_call_host(const deal_host_export *exported,
+                                         const char *signature_descriptor,
+                                         const deal_origin *origin) {
+    return deal_async_export_value_host(exported, signature_descriptor, origin,
+        NULL);
 }

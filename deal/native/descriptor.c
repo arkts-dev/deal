@@ -20,6 +20,8 @@
 
 #include "deal/native/container.h"
 #include "deal/native/error.h"
+#include "deal/native/entry.h"
+#include "deal/native/host.h"
 #include "deal/native/memory.h"
 #include "deal/native/platform.h"
 #include "deal/native/text.h"
@@ -1171,6 +1173,238 @@ deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
     }
     failure.case_kind = case_kind;
     outcome.error = deal_check_render(boundary_kind, &failure, &value, context);
+    return outcome;
+}
+
+/* A language boundary revalidates live descendants. This worklist holds only
+ * existing objects, rooted by the caller; it allocates platform storage, not
+ * managed objects, until the first failure is materialized. */
+typedef struct {
+    deal_check_input input;
+    deal_descriptor *descriptor;
+} deal_live_item;
+typedef struct {
+    deal_live_item *items;
+    size_t count, capacity;
+    const void **seen;
+    size_t seen_count, seen_capacity;
+} deal_live_walk;
+
+static void deal_live_push(deal_live_walk *walk, deal_check_input input,
+                            deal_descriptor *descriptor) {
+    if (walk->count == walk->capacity) {
+        size_t capacity = walk->capacity == 0u ? 16u
+            : deal_platform_checked_multiply(walk->capacity, 2u);
+        deal_live_item *items = deal_platform_allocate(
+            deal_platform_checked_multiply(capacity, sizeof(*items)));
+        if (items == NULL) deal_platform_fault("check: graph worklist allocation failed");
+        if (walk->count != 0u) memcpy(items, walk->items,
+            deal_platform_checked_multiply(walk->count, sizeof(*items)));
+        deal_platform_release(walk->items);
+        walk->items = items;
+        walk->capacity = capacity;
+    }
+    walk->items[walk->count++] = (deal_live_item){input, descriptor};
+}
+
+static size_t deal_live_hash(const void *object, size_t capacity) {
+    uintptr_t value = (uintptr_t)object;
+    value ^= value >> 17u;
+    value *= (uintptr_t)UINT64_C(0xed5ad4bb);
+    value ^= value >> 11u;
+    return (size_t)value & (capacity - 1u);
+}
+
+/* Insert an identity into this operation's guard; never cache admission. */
+static int deal_live_seen(deal_live_walk *walk, const void *object) {
+    if (walk->seen_count >= walk->seen_capacity / 2u) {
+        size_t capacity = walk->seen_capacity == 0u ? 32u
+            : deal_platform_checked_multiply(walk->seen_capacity, 2u);
+        size_t bytes = deal_platform_checked_multiply(capacity, sizeof(*walk->seen));
+        const void **seen = deal_platform_allocate(bytes);
+        if (seen == NULL) deal_platform_fault("check: graph identity allocation failed");
+        memset(seen, 0, bytes);
+        for (size_t index = 0u; index < walk->seen_capacity; index++) {
+            const void *old = walk->seen[index];
+            if (old == NULL) continue;
+            size_t position = deal_live_hash(old, capacity);
+            while (seen[position] != NULL) position = (position + 1u) & (capacity - 1u);
+            seen[position] = old;
+        }
+        deal_platform_release(walk->seen);
+        walk->seen = seen;
+        walk->seen_capacity = capacity;
+    }
+    size_t position = deal_live_hash(object, walk->seen_capacity);
+    while (walk->seen[position] != NULL) {
+        if (walk->seen[position] == object) return 1;
+        position = (position + 1u) & (walk->seen_capacity - 1u);
+    }
+    walk->seen[position] = object;
+    walk->seen_count++;
+    return 0;
+}
+
+static deal_check_input deal_live_datum(deal_data datum) {
+    deal_check_input input;
+    deal_host_present_datum(datum, &input);
+    if (datum.tag == DEAL_DATA_STRING && !deal_text_is_scalar_sequence(
+            deal_text_bytes(datum.reference), deal_text_byte_length(datum.reference))) {
+        input.presentation = DEAL_PRESENT_INVALID_UNICODE;
+        input.unicode_defect = DEAL_UNICODE_MALFORMED;
+    }
+    return input;
+}
+
+static deal_check_input deal_live_element(deal_array *array, size_t index) {
+    const void *slot = deal_container_array_element(array, index);
+    deal_data datum;
+    switch (deal_container_array_element_layout(array)) {
+    case DEAL_LAYOUT_ELEMENT_DATUM:
+        datum = *(const deal_data *)slot;
+        break;
+    case DEAL_LAYOUT_ELEMENT_NUMBER:
+        datum = deal_data_of_number(*(const double *)slot);
+        break;
+    case DEAL_LAYOUT_ELEMENT_BOOLEAN:
+        datum = deal_data_of_boolean(*(const uint8_t *)slot != 0u);
+        break;
+    case DEAL_LAYOUT_ELEMENT_REFERENCE: {
+        void *reference = *(void *const *)slot;
+        if (deal_value_is_null(reference)) datum = deal_data_of_null();
+        else if (deal_value_is_undefined(reference)) datum = deal_data_of_undefined();
+        else {
+            uint32_t layout = deal_object_layout(reference);
+            deal_data_tag tag;
+            if (layout == DEAL_LAYOUT_STRING) tag = DEAL_DATA_STRING;
+            else if (layout == DEAL_LAYOUT_ARRAY) tag = DEAL_DATA_ARRAY;
+            else if (layout == DEAL_LAYOUT_TABLE) tag = DEAL_DATA_TABLE;
+            else if (layout == DEAL_LAYOUT_ERROR) tag = DEAL_DATA_ERROR;
+            else if (layout == DEAL_LAYOUT_FUNCTION) tag = DEAL_DATA_FUNCTION;
+            else if (layout >= DEAL_LAYOUT_EMITTED_BASE) tag = DEAL_DATA_CLASS;
+            else deal_platform_fault("check: invalid graph reference layout");
+            datum = deal_data_of_reference(tag, reference);
+        }
+        break;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_NUMBER: {
+        const deal_nullish_number_element *value = slot;
+        if (value->tag == DEAL_NULLISH_NULL) datum = deal_data_of_null();
+        else if (value->tag == DEAL_NULLISH_UNDEFINED) datum = deal_data_of_undefined();
+        else if (value->tag == DEAL_NULLISH_BASE) datum = deal_data_of_number(value->value);
+        else deal_platform_fault("check: invalid nullish number tag");
+        break;
+    }
+    case DEAL_LAYOUT_ELEMENT_NULLISH_BOOLEAN: {
+        const deal_nullish_boolean_element *value = slot;
+        if (value->tag == DEAL_NULLISH_NULL) datum = deal_data_of_null();
+        else if (value->tag == DEAL_NULLISH_UNDEFINED) datum = deal_data_of_undefined();
+        else if (value->tag == DEAL_NULLISH_BASE) datum = deal_data_of_boolean(value->value != 0u);
+        else deal_platform_fault("check: invalid nullish boolean tag");
+        break;
+    }
+    default:
+        deal_platform_fault("check: invalid graph element layout");
+    }
+    return deal_live_datum(datum);
+}
+
+deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input input,
+                                   uint32_t boundary_kind,
+                                   const deal_check_context *context) {
+    deal_outcome outcome = deal_check_value(expected, input, boundary_kind, context);
+    if (outcome.error != NULL || input.presentation != DEAL_PRESENT_DATUM) return outcome;
+    deal_live_walk walk = {0};
+    deal_live_push(&walk, input, expected);
+    while (walk.count != 0u) {
+        deal_live_item item = walk.items[--walk.count];
+        deal_descriptor *descriptor = item.descriptor;
+        /* Unknown graph leaves still own their concrete string encoding check. */
+        if (descriptor->kind == DEAL_DESCRIPTOR_UNKNOWN
+                && item.input.presentation == DEAL_PRESENT_INVALID_UNICODE)
+            descriptor = deal_descriptor_intern("string");
+        uint32_t boundary = descriptor->kind == DEAL_DESCRIPTOR_FUNCTION
+            ? DEAL_BOUNDARY_FUNCTION_SIGNATURE : DEAL_BOUNDARY_TYPE_DESCRIPTOR;
+        outcome = deal_check_value(descriptor, item.input, boundary, context);
+        if (outcome.error != NULL) break;
+        if (item.input.presentation != DEAL_PRESENT_DATUM) continue;
+        deal_data datum = item.input.datum;
+        if (!deal_data_is_managed(&datum)) continue;
+        if (datum.tag == DEAL_DATA_FUNCTION) {
+            if (deal_fn_thunk_of(datum.reference) == NULL) {
+                deal_classification value = deal_check_classify(&item.input);
+                deal_check_failure failure = {DEAL_CHECK_KIND_MISMATCH,
+                    deal_descriptor_intern("()->unknown"), deal_descriptor_intern("()->unknown"), "function"};
+                outcome.error = deal_check_render(DEAL_BOUNDARY_TYPE_DESCRIPTOR, &failure, &value, context);
+                break;
+            }
+            continue;
+        }
+        if (datum.tag == DEAL_DATA_STRING) {
+            deal_check_input text = deal_live_datum(datum);
+            if (text.presentation != DEAL_PRESENT_DATUM) {
+                outcome = deal_check_value(deal_descriptor_intern("string"), text,
+                    DEAL_BOUNDARY_TYPE_DESCRIPTOR, context);
+                break;
+            }
+            continue;
+        }
+        if (deal_live_seen(&walk, datum.reference)) continue;
+        if (datum.tag == DEAL_DATA_TABLE) {
+            deal_table *table = datum.reference;
+            /* Reverse push preserves insertion order during the depth-first walk. */
+            size_t count = deal_container_table_count(table);
+            for (size_t index = count; index != 0u; index--) {
+                deal_string *key = deal_container_table_key_at(table, index - 1u);
+                deal_live_push(&walk, deal_live_datum(deal_container_table_read(table, key)),
+                    deal_descriptor_intern("unknown"));
+                deal_live_push(&walk, deal_live_datum(deal_data_of_reference(DEAL_DATA_STRING, key)),
+                    deal_descriptor_intern("string"));
+            }
+        } else if (datum.tag == DEAL_DATA_ARRAY) {
+            deal_array *array = datum.reference;
+            uint32_t recorded = deal_container_array_element_descriptor(array);
+            deal_descriptor *element = recorded == 0u ? deal_descriptor_intern("unknown")
+                : deal_descriptor_of_reference(recorded);
+            for (size_t index = deal_container_array_count(array); index != 0u; index--)
+                deal_live_push(&walk, deal_live_element(array, index - 1u), element);
+        } else if (datum.tag == DEAL_DATA_ERROR) {
+            /* Builtin fields live in error.c's platform text, not an emitted
+             * class record. Inspect without allocating an admitted string from
+             * possibly hostile bytes. The Error itself remains unchanged. */
+            for (size_t index = 0u; index < 2u; index++) {
+                const char *bytes = NULL;
+                int present = index == 0u
+                    ? deal_error_code(datum.reference, &bytes)
+                    : deal_error_message(datum.reference, &bytes);
+                if (present && deal_text_is_scalar_sequence(bytes, strlen(bytes))) continue;
+                deal_check_input field = {0};
+                field.presentation = present ? DEAL_PRESENT_INVALID_UNICODE : DEAL_PRESENT_MISSING;
+                field.unicode_defect = DEAL_UNICODE_MALFORMED;
+                outcome = deal_check_value(deal_descriptor_intern("string"), field,
+                    DEAL_BOUNDARY_TYPE_DESCRIPTOR, context);
+                break;
+            }
+            if (outcome.error != NULL) break;
+        } else if (datum.tag == DEAL_DATA_CLASS) {
+            const deal_host_class_access *access = deal_host_class_access_of(item.input.class_atom);
+            if (access == NULL) deal_platform_fault("check: class has no declared access plan");
+            for (size_t index = access->declared->field_count; index != 0u; index--) {
+                const deal_class_field *field = &access->declared->fields[index - 1u];
+                deal_check_input child = {0};
+                uint8_t present = 0u;
+                if (!access->read(&datum, index - 1u, &child, &present, access->context))
+                    deal_platform_fault("check: class access rejected its instance");
+                if (present == 0u && field->optional) continue;
+                if (present == 0u) child.presentation = DEAL_PRESENT_MISSING;
+                else if (child.presentation == DEAL_PRESENT_DATUM)
+                    child = deal_live_datum(child.datum);
+                deal_live_push(&walk, child, field->descriptor);
+            }
+        }
+    }
+    deal_platform_release(walk.items);
+    deal_platform_release(walk.seen);
     return outcome;
 }
 

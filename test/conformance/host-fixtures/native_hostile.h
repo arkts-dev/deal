@@ -1,0 +1,106 @@
+#ifndef DEAL_CORPUS_NATIVE_HOSTILE_H
+#define DEAL_CORPUS_NATIVE_HOSTILE_H
+#include "native_helpers.h"
+
+/* Fixture-only mirror of crossing-owned carriers. Public constructors reject
+ * these hostile mutations; tests change the existing object, never production
+ * admission or a replacement carrier. Keep this prefix aligned with host.c. */
+typedef struct {
+    void *key_bytes;
+    size_t key_length;
+    deal_value value;
+} fixture_member;
+typedef struct {
+    int kind, is_async, boolean;
+    double number;
+    void *bytes;
+    size_t length;
+    const char *signature;
+    deal_descriptor *element_descriptor;
+    void *slots;
+    size_t slot_count, slot_capacity;
+    fixture_member *members;
+    size_t member_count, member_capacity;
+    deal_host_function function;
+    deal_async_token token;
+    uint32_t unicode_defect;
+    int materialized;
+    deal_data managed;
+} fixture_box;
+static inline fixture_box *fixture_box_of(deal_value value) {
+    void *box = NULL;
+    checked(deal_value_crossing_resolve(deal_value_crossing_active(), value, &box));
+    if (box == NULL) abort();
+    return box;
+}
+static inline deal_host_result fixture_seven(const deal_value *args, size_t argc) {
+    (void)args; (void)argc;
+    return result(number(7));
+}
+static inline deal_value fixture_bad_function(int bad_signature) {
+    deal_value function;
+    checked(deal_function_new(fixture_seven, "()->number", &function));
+    fixture_box *box = fixture_box_of(function);
+    if (bad_signature) box->signature = "garbage";
+    else box->function = NULL;
+    return function;
+}
+/* The managed function shape is mirrored only to remove the payload of an
+ * already stored callable. Its signature, environment and identity survive. */
+typedef struct {
+    deal_fn_thunk thunk;
+    deal_descriptor *signature;
+    void *environment;
+    uint32_t capture_count, is_async;
+} fixture_function;
+static inline void fixture_remove_function_payload(deal_value value) {
+    deal_check_input input;
+    deal_error *cause = NULL;
+    checked(deal_host_value_presentation(value, &input, &cause));
+    if (cause != NULL || input.presentation != DEAL_PRESENT_DATUM
+            || input.datum.tag != DEAL_DATA_FUNCTION) abort();
+    deal_fn_thunk missing = NULL;
+    memcpy((unsigned char *)input.datum.reference + offsetof(fixture_function, thunk),
+        &missing, sizeof(missing));
+}
+typedef struct {
+    size_t byte_length, scalar_count;
+    uint64_t hash;
+    unsigned char bytes[];
+} fixture_string;
+static inline void fixture_surrogate_string(deal_value value) {
+    deal_check_input input;
+    deal_error *cause = NULL;
+    checked(deal_host_value_presentation(value, &input, &cause));
+    if (cause != NULL || input.datum.tag != DEAL_DATA_STRING) abort();
+    unsigned char *string = input.datum.reference;
+    size_t length;
+    memcpy(&length, string + offsetof(fixture_string, byte_length), sizeof(length));
+    if (length != 3u) abort();
+    memcpy(string + offsetof(fixture_string, bytes), "\xed\xa0\x80", 3u);
+    size_t scalars = 1u;
+    memcpy(string + offsetof(fixture_string, scalar_count), &scalars, sizeof(scalars));
+}
+/* Error text is platform-owned. Replace only the selected field; retain the
+ * old pointer for repair, without making invalid text into a DEAL string. */
+typedef struct { char *code, *message; } fixture_error_text;
+static inline char *fixture_error_text_replace(deal_value value, int message,
+        char *replacement) {
+    deal_check_input input;
+    deal_error *cause = NULL;
+    checked(deal_host_value_presentation(value, &input, &cause));
+    if (cause != NULL || input.datum.tag != DEAL_DATA_ERROR) abort();
+    unsigned char *slot = input.datum.reference;
+    slot += message ? offsetof(fixture_error_text, message) : offsetof(fixture_error_text, code);
+    char *previous;
+    memcpy(&previous, slot, sizeof(previous));
+    memcpy(slot, &replacement, sizeof(replacement));
+    return previous;
+}
+static inline void fixture_bad_key(deal_value table) {
+    /* Existing key storage has equal size; preserve member/value/order. */
+    fixture_box *box = fixture_box_of(table);
+    if (box->member_count != 1u || box->members[0].key_length != 3u) abort();
+    memcpy(box->members[0].key_bytes, "\xed\xa0\x80", 3u);
+}
+#endif

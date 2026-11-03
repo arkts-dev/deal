@@ -51,8 +51,9 @@
  * array and an array whose elements happen to match another element type keep
  * the type they were built with. The elements themselves were admitted at their
  * store boundary (the array store, the JSON decode or the host crossing that
- * built them), so the check never re-scans present elements and never infers a
- * descriptor from them.
+ * built them), so the shallow check never infers a descriptor from elements.
+ * Live language-boundary checking also validates current reachable storage
+ * against that recorded descriptor after potentially hostile alias mutation.
  *
  * Class construction (`ConstructClass`, R2). Supplied fields are validated
  * once, in the recorded declaration order, at their own recorded origins:
@@ -182,6 +183,13 @@ typedef struct {
 deal_outcome deal_check_value(deal_descriptor *expected, deal_check_input input,
                               uint32_t boundary_kind,
                               const deal_check_context *context);
+
+/* Checks the descriptor and the current reachable managed graph before a
+ * language boundary commits. The cycle guard is local to this check; retained
+ * aliases can invalidate a graph after any earlier successful admission. */
+deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input input,
+                                   uint32_t boundary_kind,
+                                   const deal_check_context *context);
 
 /*
  * The typed-boundary token of one checked presentation: the closed

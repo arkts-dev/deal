@@ -396,6 +396,11 @@ final class LlvmClassPlans {
                     .append(optional).append('\n');
             }
         }
+        if (!classes.isEmpty()) {
+            session.referenceRuntimeEntry("deal_json_plans_install");
+            out.append("  call void @deal_json_plans_install(i8* bitcast (%struct.deal_json_class_plan* (i8*, i8*)* @")
+                .append(LOOKUP_NAME).append(" to i8*), i8* null)\n");
+        }
         out.append(LlvmIrPrinter.indent(1)).append("ret void\n}\n");
         return out.toString();
     }
@@ -615,15 +620,23 @@ final class LlvmClassPlans {
             ir.line("br label %done");
         }
         ir.label("clear");
+        ir.line("switch i64 %index, label %done [ " + arms.toString()
+            .replace("label %field", "label %clearfield") + "]");
         for (int index = 0; index < def.fields().size(); index++) {
             Field field = def.fields().get(index);
-            if (field.presenceIndex() < 0) {
-                continue;
+            ir.label("clearfield" + index);
+            if (field.presenceIndex() >= 0) {
+                String presenceSlot = ir.temp("getelementptr " + def.recordName()
+                    + ", " + def.recordName() + "* " + typed + ", i32 0, i32 "
+                    + (1 + field.presenceIndex()));
+                ir.line("store i8 0, i8* " + presenceSlot);
+                String slot = ir.temp("getelementptr " + def.recordName() + ", "
+                    + def.recordName() + "* " + typed + ", i32 0, i32 "
+                    + field.structIndex());
+                ir.line("store " + field.slotType() + " zeroinitializer, "
+                    + field.slotType() + "* " + slot);
             }
-            String presenceSlot = ir.temp("getelementptr " + def.recordName()
-                + ", " + def.recordName() + "* " + typed + ", i32 0, i32 "
-                + (1 + field.presenceIndex()));
-            ir.line("store i8 0, i8* " + presenceSlot);
+            ir.line("br label %done");
         }
         ir.line("br label %done");
         ir.label("done");

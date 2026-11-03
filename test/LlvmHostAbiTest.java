@@ -259,10 +259,10 @@ public final class LlvmHostAbiTest {
                   "a wrong-element class array was admitted as DEAL data");
           } catch (value) {
             let element: Error = value as Error;
-            check(element.code === "E8003",
-                  "the wrong-element class array rejected at its element");
-            check(element.message === "array element 1 type mismatch",
-                  "the element arm's own message");
+            check(element.code === "E8010",
+                  "the host return owns the wrong-element rejection");
+            check(element.message === "return value 1 type mismatch: array element 1 type mismatch",
+                  "the host cell wraps the element arm's message");
             rejected = true;
           }
           check(rejected, "the wrong-element class array crossing rejected");
@@ -417,9 +417,9 @@ public final class LlvmHostAbiTest {
             check(holes.length < 0, "a sparse host array was admitted");
           } catch (value) {
             let e: Error = value as Error;
-            check(e.code === "E8003", "the hole renders E8003");
-            check(e.message === "array element 1 type mismatch",
-                  "the element arm names the one-based hole index");
+            check(e.code === "E8010", "the host return owns the hole rejection");
+            check(e.message === "return value 1 type mismatch: array element 1 type mismatch",
+                  "the host cell retains the one-based hole index");
             holeRejected = true;
           }
           check(holeRejected,
@@ -1873,8 +1873,8 @@ public final class LlvmHostAbiTest {
             relay:code=E_CALLBACK_DRIVER
             relay:message=the driver callback threw
             relay:file=%s
-            relay:line=4
-            relay:column=21
+            relay:line=8
+            relay:column=3
             relay:frames=1
             relay:frame0=%s
             relay:cause=absent
@@ -1884,8 +1884,8 @@ public final class LlvmHostAbiTest {
             later:code=E_CALLBACK_DRIVER
             later:message=the driver callback threw
             later:file=%s
-            later:line=4
-            later:column=21
+            later:line=8
+            later:column=3
             later:frames=1
             later:frame0=%s
             later:cause=absent
@@ -2574,6 +2574,7 @@ public final class LlvmHostAbiTest {
               mutate: (child: Record<string, unknown>, a: unknown[], e: Error) => number): unknown;
             export function errorFields(e: Error): Error;
             export function scalarSame(s: string, n: number, z: number): boolean;
+            export function deleteFirst(value: unknown): void;
             """);
         Files.writeString(root.resolve("src/main.deal"), """
             import * as p from "host/probe";
@@ -2581,7 +2582,14 @@ public final class LlvmHostAbiTest {
               if (!ok) { throw {code: "TEST_FAIL", message: "carrier identity"}; }
               return null;
             }
+            class OptionalPair { first?: string; second?: string; }
             export function main(): null {
+              let pair: OptionalPair = {first:"remove", second:"keep"};
+              p.deleteFirst(pair);
+              check(!Object.hasOwn(pair, "first"));
+              check(pair.first === undefined);
+              check(Object.hasOwn(pair, "second"));
+              check((pair.second as string) === "keep");
               let a: unknown[] = [];
               let r: Record<string, unknown> = {};
               function mutate(child: Record<string, unknown>, nested: unknown[], e: Error): number {
