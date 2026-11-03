@@ -704,8 +704,19 @@ final class LlvmClassPlans {
                     instanceof RuntimeDescriptor.Boolean) {
                 native_ = ir.temp("trunc i8 " + slot + " to i1");
             }
-            String datum = LlvmDataValues.box(session, ir,
-                field.layout().descriptor(), native_);
+            String datum;
+            if (field.layout().descriptor() instanceof RuntimeDescriptor.Null
+                    || field.layout().descriptor() instanceof RuntimeDescriptor.Undefined) {
+                // Read the stored singleton, not its static field type: a host
+                // alias can corrupt the pointer before a later graph check.
+                session.referenceRuntimeEntry("deal_value_is_null");
+                String isNull = ir.temp("call i32 @deal_value_is_null(i8* " + slot + ")");
+                String tag = ir.temp("select i1 " + ir.temp("icmp ne i32 " + isNull + ", 0")
+                    + ", i32 " + LlvmTypeMapper.DATA_NULL + ", i32 " + LlvmTypeMapper.DATA_UNDEFINED);
+                datum = ir.temp("insertvalue %struct.deal_data zeroinitializer, i32 " + tag + ", 0");
+            } else {
+                datum = LlvmDataValues.box(session, ir, field.layout().descriptor(), native_);
+            }
             ir.line("store i8 1, i8* %present");
             ir.line("store i32 " + LlvmTypeMapper.PRESENTATION_DATUM
                 + ", i32* " + ir.temp("getelementptr"

@@ -1246,6 +1246,7 @@ void deal_host_present_datum(deal_data datum, deal_check_input *out) {
     switch (deal_host_kind_of_object(referent)) {
     case DEAL_KIND_FUNCTION:
         out->signature = deal_fn_signature(referent);
+        if (out->signature == NULL) out->presentation = DEAL_PRESENT_RAW_FUNCTION;
         return;
     case DEAL_KIND_CLASS: {
         const char *atom = NULL;
@@ -1560,7 +1561,10 @@ static deal_error *deal_host_materialize_class(deal_host_crossing *crossing,
     }
     const deal_host_class_access *access = deal_host_class_access_of(atom);
     if (access == NULL) {
-        deal_platform_fault("host: no emitted layout for a host-built class");
+        /* A well-formed host class atom need not name a class declared by the
+         * project. It is unsupported ingress data, not a runtime invariant. */
+        return deal_host_carrier_reject(deal_descriptor_intern("unknown"),
+            "table", &crossing->origin);
     }
     void *instance = NULL;
     deal_outcome created = access->create(access->context, &instance);
@@ -1828,6 +1832,7 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
         out->datum = deal_host_datum_of_referent(referent);
         if (deal_host_kind_of_object(referent) == DEAL_KIND_FUNCTION) {
             out->signature = deal_fn_signature(referent);
+            if (out->signature == NULL) out->presentation = DEAL_PRESENT_RAW_FUNCTION;
         }
         if (deal_host_kind_of_object(referent) == DEAL_KIND_CLASS) {
             /* The carried class atom of a managed instance, so a class-typed
@@ -1885,6 +1890,13 @@ static deal_status deal_host_classify_into(deal_host_crossing *crossing,
     case DEAL_HOST_BOX_RECORD:
     case DEAL_HOST_BOX_CLASS:
     case DEAL_HOST_BOX_FUNCTION: {
+        /* Raw native callables are not DEAL function wrappers. Preserve their
+         * carrier kind for rejection without inventing a signature/body. */
+        if (box->kind == DEAL_HOST_BOX_FUNCTION && box->signature == NULL
+                && box->function != NULL) {
+            out->presentation = DEAL_PRESENT_RAW_FUNCTION;
+            return DEAL_OK;
+        }
         deal_data datum = deal_data_of_undefined();
         deal_error *failure = deal_host_materialize(crossing, box, memo,
             &datum);
@@ -1956,7 +1968,8 @@ static deal_status deal_host_carrier_of_input(const deal_check_input *input,
         return deal_host_box_publish(box, out);
     }
     case DEAL_PRESENT_INVALID_UNICODE:
-        deal_platform_fault("host: an invalid-Unicode presentation reached a"
+    case DEAL_PRESENT_RAW_FUNCTION:
+        deal_platform_fault("host: an unadmitted presentation reached a"
                             " parameter position");
     }
     deal_platform_fault("host: presentation outside the closed set");
@@ -2326,9 +2339,11 @@ deal_status deal_apply(deal_value function, const deal_value *args, size_t argc,
     /* The function value's own declared signature is the applied crossing's
      * declaration (H4): an argument count it does not declare is the closed
      * protocol status, so the host never reaches an entry with a blind count. */
+    const char *signature = deal_fn_signature(referent);
+    if (signature == NULL) return DEAL_STATUS_KIND;
     size_t declared_parameters = 0u;
     (void)deal_descriptor_parameters(
-        deal_descriptor_intern(deal_fn_signature(referent)),
+        deal_descriptor_intern(signature),
         &declared_parameters);
     if (argc != declared_parameters) {
         return DEAL_STATUS_PROTOCOL;
@@ -3707,6 +3722,8 @@ deal_status deal_field_get(deal_value object, const char *field,
         return deal_host_publish_box(DEAL_HOST_BOX_ASYNC_OPERATION, out);
     case DEAL_PRESENT_INVALID_UNICODE:
         return deal_host_publish_box(DEAL_HOST_BOX_INVALID_UNICODE, out);
+    case DEAL_PRESENT_RAW_FUNCTION:
+        return DEAL_STATUS_KIND;
     }
     deal_platform_fault("host: presentation outside the closed set");
     return DEAL_STATUS_KIND;
@@ -3924,7 +3941,7 @@ deal_status deal_function_signature(deal_value value,
         return status;
     }
     if (box != NULL) {
-        if (box->kind != DEAL_HOST_BOX_FUNCTION) {
+        if (box->kind != DEAL_HOST_BOX_FUNCTION || box->signature == NULL) {
             return DEAL_STATUS_KIND;
         }
         *descriptorText = box->signature;
@@ -3933,7 +3950,9 @@ deal_status deal_function_signature(deal_value value,
     if (deal_host_kind_of_object(referent) != DEAL_KIND_FUNCTION) {
         return DEAL_STATUS_KIND;
     }
-    *descriptorText = deal_fn_signature(referent);
+    const char *signature = deal_fn_signature(referent);
+    if (signature == NULL) return DEAL_STATUS_KIND;
+    *descriptorText = signature;
     return DEAL_OK;
 }
 
@@ -3973,6 +3992,8 @@ deal_status deal_retain(deal_value value, deal_handle *out) {
         retained = checked.datum;
         deal_host_memo_release(&memo);
     } else {
+        if (deal_host_kind_of_object(referent) == DEAL_KIND_FUNCTION
+                && deal_fn_signature(referent) == NULL) return DEAL_STATUS_KIND;
         retained = deal_host_datum_of_referent(referent);
     }
     deal_host_handles_ensure();

@@ -501,7 +501,8 @@ uint32_t deal_fn_capture_count(const deal_fn *function) {
 }
 
 const char *deal_fn_signature(const deal_fn *function) {
-    return deal_descriptor_text(deal_fn_of(function)->signature);
+    deal_descriptor *signature = deal_fn_of(function)->signature;
+    return signature == NULL ? NULL : deal_descriptor_text(signature);
 }
 
 int deal_fn_is_async(const deal_fn *function) {

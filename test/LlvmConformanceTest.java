@@ -143,7 +143,7 @@ public final class LlvmConformanceTest {
         String atom = "@$external/host/probe/C";
         String other = "@$external/host/probe/Other";
         for (String variant : List.of("failed", "signature", "identity", "metadata", "invalid-utf8", "string-surrogate",
-                "typed-unicode", "extra-field", "json-walk", "json-unsupported")) {
+                "typed-unicode", "extra-field", "json-walk", "json-unsupported", "opaque")) {
             Path corpus = NativeCompiler.executableScratch("native-load-case");
             try {
                 Path source = corpus.resolve("backend-runtime/load-" + variant + ".deal");
@@ -152,16 +152,22 @@ public final class LlvmConformanceTest {
                 boolean invalidText = variant.equals("invalid-utf8") || variant.equals("string-surrogate");
                 boolean runtimeCheck = variant.equals("typed-unicode") || variant.equals("extra-field")
                     || variant.equals("json-walk") || variant.equals("json-unsupported");
-                boolean atCall = invalidText || runtimeCheck;
+                boolean atCall = invalidText || runtimeCheck || variant.equals("opaque");
                 String body = "import * as host from \"host/probe\";\n"
                     + (atCall ? "export function main(): null {\n  host.f();\n  return null;\n}\n"
                         : "export function main(): null { return null; }\n");
                 Files.writeString(source, body);
-                Files.writeString(hosts.resolve("probe.d.deal"), atCall ? "export function f(): string;\n"
+                Files.writeString(hosts.resolve("probe.d.deal"), variant.equals("opaque") ? "export function f(): unknown;\n"
+                    : atCall ? "export function f(): string;\n"
                     : variant.equals("signature") ? "export function f(): number;\n" : "export class C { x: number; }\n");
                 deal.semantic.ir.FailureArmId arm;
                 Map<String, String> parameters;
-                if (variant.equals("typed-unicode")) {
+                if (variant.equals("opaque")) {
+                    arm = deal.semantic.ir.FailureArmId.HOST_SYNC_RETURN_CELL;
+                    parameters = Map.of("inner", deal.semantic.ir.FailureContractRegistry.render(
+                        deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_KIND, Map.of("kind", "unknown"),
+                        "unknown", "table", null).message());
+                } else if (variant.equals("typed-unicode")) {
                     arm = deal.semantic.ir.FailureArmId.TYPED_BOUNDARY_INVALID_UNICODE;
                     parameters = Map.of();
                 } else if (variant.equals("extra-field")) {
@@ -193,9 +199,9 @@ public final class LlvmConformanceTest {
                     parameters = Map.of("module", "host/probe", "name", "C", "defaults|fields", "fields");
                 }
                 var failure = deal.semantic.ir.FailureContractRegistry.render(arm, parameters,
-                    invalidText || variant.equals("typed-unicode") ? "string"
+                    variant.equals("opaque") ? "unknown" : invalidText || variant.equals("typed-unicode") ? "string"
                         : variant.equals("json-unsupported") ? "string, number, boolean, or table" : null,
-                    invalidText ? "string" : variant.equals("typed-unicode") ? "invalid-unicode"
+                    variant.equals("opaque") ? "table" : invalidText ? "string" : variant.equals("typed-unicode") ? "invalid-unicode"
                         : variant.equals("json-walk") ? "number"
                         : variant.equals("json-unsupported") ? "table" : null, null);
                 String coordinate = "backend-runtime/load-" + variant + ".deal";
@@ -277,7 +283,22 @@ public final class LlvmConformanceTest {
                                 + "if (checked.error == NULL || deal_host_relay_error(checked.error, &r) != DEAL_OK) abort();\nreturn r;\n}\n"
                                 + "static const deal_host_export exports[] = {{\"f\",\"()->string\",DEAL_HOST_EXPORT_FUNCTION,0,f,NULL,NULL}};\n"
                                 + "const deal_host_module deal_host_module_probe = {\"host/probe\",exports,1u,NULL,0u,NULL};\n";
-                        } else if (invalidText) registration = """
+                        } else if (variant.equals("opaque")) registration = """
+                            static deal_host_result f(const deal_value *args, size_t argc) {
+                                (void)args; (void)argc;
+                                deal_value atom, value;
+                                if (deal_class_atom("@native/Undeclared", &atom) != DEAL_OK
+                                        || deal_class_new(atom, &value) != DEAL_OK) abort();
+                                deal_host_result r = {0}; r.value = value; return r;
+                            }
+                            static const deal_host_export exports[] = {
+                                {"f", "()->unknown", DEAL_HOST_EXPORT_FUNCTION, 0, f, NULL, NULL}
+                            };
+                            const deal_host_module deal_host_module_probe = {
+                                "host/probe", exports, 1u, NULL, 0u, NULL
+                            };
+                            """;
+                        else if (invalidText) registration = """
                             static deal_host_result f(const deal_value *args, size_t argc) {
                                 (void)args; (void)argc; deal_host_result r = {0};
                                 if (deal_string_new(BAD_BYTES, sizeof(BAD_BYTES) - 1u, &r.value) != DEAL_OK) abort();

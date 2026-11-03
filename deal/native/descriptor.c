@@ -644,6 +644,9 @@ static deal_classification deal_check_classify(const deal_check_input *input) {
         classification.kind = DEAL_KIND_INVALID_UNICODE;
         classification.unicode_defect = input->unicode_defect;
         return classification;
+    case DEAL_PRESENT_RAW_FUNCTION:
+        classification.kind = DEAL_KIND_FUNCTION;
+        return classification;
     case DEAL_PRESENT_DATUM:
         break;
     default:
@@ -730,6 +733,8 @@ static const char *deal_check_typed_token(const deal_classification *classificat
 
 /* The shared host-carrier projection of one classified presentation (P2 item 2). */
 static const char *deal_check_carrier_token(const deal_classification *classification) {
+    if (classification->kind == DEAL_KIND_FUNCTION && classification->signature == NULL)
+        return "function";
     switch (classification->kind) {
     case DEAL_KIND_MISSING:
         return "nil";
@@ -744,9 +749,8 @@ static const char *deal_check_carrier_token(const deal_classification *classific
         return "string";
     /* Every other presentation is table-carried at a host cell arm, the closed
      * DEAL function value included: the shared carrier-kind projection of a
-     * function view is `table` (P2 item 2), and this surface has no raw
-     * host-facing function kind to spell `function` (the typed boundary keeps
-     * that token). */
+     * function view is `table` (P2 item 2). Raw callables without a wrapper
+     * signature are handled above and retain the native `function` token. */
     default:
         return "table";
     }
@@ -829,8 +833,9 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
         case DEAL_KIND_TABLE:
         case DEAL_KIND_ARRAY:
         case DEAL_KIND_CLASS:
-        case DEAL_KIND_FUNCTION:
             return DEAL_CHECK_PASS;
+        case DEAL_KIND_FUNCTION:
+            return value->signature != NULL ? DEAL_CHECK_PASS : DEAL_CHECK_KIND_MISMATCH;
         default:
             return DEAL_CHECK_KIND_MISMATCH;
         }
@@ -858,7 +863,7 @@ static deal_check_case deal_check_core(deal_descriptor *descriptor,
         }
         return deal_check_core(descriptor->inner, value, failure);
     case DEAL_DESCRIPTOR_FUNCTION:
-        if (value->kind == DEAL_KIND_FUNCTION) {
+        if (value->kind == DEAL_KIND_FUNCTION && value->signature != NULL) {
             if (strcmp(descriptor->text, value->signature) == 0) {
                 return DEAL_CHECK_PASS;
             }

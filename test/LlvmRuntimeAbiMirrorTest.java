@@ -332,6 +332,9 @@ public final class LlvmRuntimeAbiMirrorTest {
             "the host status enum starts at DEAL_OK = 0");
         check(rtHeader.contains("DEAL_KIND_NULL, DEAL_KIND_MISSING"),
             "the host kind enum starts at DEAL_KIND_NULL");
+        check(rtHeader.contains("DEAL_PRESENT_INVALID_UNICODE = 4,")
+                && rtHeader.contains("DEAL_PRESENT_RAW_FUNCTION = 5"),
+            "raw native callable presentation appends without changing existing discriminants");
         // The shared value-surface records (R4, R2): the check input, its
         // recorded context, the class layout and one supplied field, whose field
         // order the emitted IR follows. The check input, the class field and the

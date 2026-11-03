@@ -10,12 +10,12 @@ static deal_host_result impl_describeAsync(deal_async_token token,const deal_val
 const deal_host_field deal_host_fields_carrierarity_Target[] = {
   {"name", "string", 0},
 };
-const deal_host_class deal_host_class_carrierarity_Target = {"@$external/host/carrierarity/Target", deal_host_fields_carrierarity_Target, 1u};
+const deal_host_class deal_host_class_carrierarity_Target = {DEAL_HOST_CLASS_ATOM_CARRIERARITY_TARGET, deal_host_fields_carrierarity_Target, 1u};
 const deal_host_class deal_host_classes_carrierarity[] = {
-  {"@$external/host/carrierarity/Target", deal_host_fields_carrierarity_Target, 1u},
+  {DEAL_HOST_CLASS_ATOM_CARRIERARITY_TARGET, deal_host_fields_carrierarity_Target, 1u},
 };
 const deal_host_export deal_host_exports_carrierarity[] = {
-  {"Target", "@$external/host/carrierarity/Target", DEAL_HOST_EXPORT_CLASS, 0, NULL, NULL, &deal_host_classes_carrierarity[0]},
-  {"describeAsync", "async(@$external/host/carrierarity/Target,(number)->number)->string", DEAL_HOST_EXPORT_ASYNC_FUNCTION, 1, NULL, impl_describeAsync, NULL},
+  {"Target", DEAL_HOST_CLASS_ATOM_CARRIERARITY_TARGET, DEAL_HOST_EXPORT_CLASS, 0, NULL, NULL, &deal_host_classes_carrierarity[0]},
+  {"describeAsync", "async(" DEAL_HOST_CLASS_ATOM_CARRIERARITY_TARGET ",(number)->number)->string", DEAL_HOST_EXPORT_ASYNC_FUNCTION, 1, NULL, impl_describeAsync, NULL},
 };
 const deal_host_module deal_host_module_carrierarity = {DEAL_HOST_SPECIFIER_CARRIERARITY, deal_host_exports_carrierarity, sizeof deal_host_exports_carrierarity / sizeof deal_host_exports_carrierarity[0], deal_host_classes_carrierarity, 1u, NULL};

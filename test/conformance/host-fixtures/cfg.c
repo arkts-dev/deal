@@ -9,21 +9,21 @@ static deal_host_result impl_describe(const deal_value *args,size_t argc){
 const deal_host_field deal_host_fields_cfg_Endpoint[] = {
   {"path", "string", 0},
 };
-const deal_host_class deal_host_class_cfg_Endpoint = {"@$external/host/cfg/Endpoint", deal_host_fields_cfg_Endpoint, 1u};
+const deal_host_class deal_host_class_cfg_Endpoint = {DEAL_HOST_CLASS_ATOM_CFG_ENDPOINT, deal_host_fields_cfg_Endpoint, 1u};
 const deal_host_field deal_host_fields_cfg_ServerConfig[] = {
   {"port", "number", 0},
-  {"endpoint", "@$external/host/cfg/Endpoint", 0},
+  {"endpoint", DEAL_HOST_CLASS_ATOM_CFG_ENDPOINT, 0},
   {"tags", "[string]", 1},
   {"note", "?string", 1},
 };
-const deal_host_class deal_host_class_cfg_ServerConfig = {"@$external/host/cfg/ServerConfig", deal_host_fields_cfg_ServerConfig, 4u};
+const deal_host_class deal_host_class_cfg_ServerConfig = {DEAL_HOST_CLASS_ATOM_CFG_SERVERCONFIG, deal_host_fields_cfg_ServerConfig, 4u};
 const deal_host_class deal_host_classes_cfg[] = {
-  {"@$external/host/cfg/Endpoint", deal_host_fields_cfg_Endpoint, 1u},
-  {"@$external/host/cfg/ServerConfig", deal_host_fields_cfg_ServerConfig, 4u},
+  {DEAL_HOST_CLASS_ATOM_CFG_ENDPOINT, deal_host_fields_cfg_Endpoint, 1u},
+  {DEAL_HOST_CLASS_ATOM_CFG_SERVERCONFIG, deal_host_fields_cfg_ServerConfig, 4u},
 };
 const deal_host_export deal_host_exports_cfg[] = {
-  {"Endpoint", "@$external/host/cfg/Endpoint", DEAL_HOST_EXPORT_CLASS, 0, NULL, NULL, &deal_host_classes_cfg[0]},
-  {"ServerConfig", "@$external/host/cfg/ServerConfig", DEAL_HOST_EXPORT_CLASS, 0, NULL, NULL, &deal_host_classes_cfg[1]},
-  {"describe", "(@$external/host/cfg/ServerConfig)->string", DEAL_HOST_EXPORT_FUNCTION, 0, impl_describe, NULL, NULL},
+  {"Endpoint", DEAL_HOST_CLASS_ATOM_CFG_ENDPOINT, DEAL_HOST_EXPORT_CLASS, 0, NULL, NULL, &deal_host_classes_cfg[0]},
+  {"ServerConfig", DEAL_HOST_CLASS_ATOM_CFG_SERVERCONFIG, DEAL_HOST_EXPORT_CLASS, 0, NULL, NULL, &deal_host_classes_cfg[1]},
+  {"describe", "(" DEAL_HOST_CLASS_ATOM_CFG_SERVERCONFIG ")->string", DEAL_HOST_EXPORT_FUNCTION, 0, impl_describe, NULL, NULL},
 };
 const deal_host_module deal_host_module_cfg = {DEAL_HOST_SPECIFIER_CFG, deal_host_exports_cfg, sizeof deal_host_exports_cfg / sizeof deal_host_exports_cfg[0], deal_host_classes_cfg, 2u, NULL};

@@ -423,6 +423,23 @@ static void check_value_matrix(void) {
         "(number)->string", function_input);
     run_check("(number)->string", DEAL_BOUNDARY_FUNCTION_SIGNATURE, 0, "number", "-",
         datum_input(number));
+    /* A raw callable has a function kind but no DEAL wrapper/signature. */
+    deal_check_input raw_function = plain_input(DEAL_PRESENT_RAW_FUNCTION, 0u);
+    deal_check_context raw_context = {&test_origin, 0};
+    deal_outcome raw_checked = deal_check_value(deal_descriptor_intern("?(number)->number"),
+        raw_function, DEAL_BOUNDARY_HOST_SYNC_RETURN, &raw_context);
+    const char *raw_text = NULL;
+    check(raw_checked.error != NULL, "raw native callable is rejected");
+    check(deal_error_message(raw_checked.error, &raw_text)
+        && strcmp(raw_text, "return value 1 type mismatch: expected function") == 0,
+        "raw native callable keeps kind rejection instead of a fabricated signature mismatch");
+    check(deal_error_expected(raw_checked.error, &raw_text)
+        && strcmp(raw_text, "?(number)->number") == 0, "raw callable keeps the nullable cell descriptor");
+    check(deal_error_actual(raw_checked.error, &raw_text)
+        && strcmp(raw_text, "function") == 0, "raw callable keeps its native function kind");
+    raw_checked = deal_check_value(deal_descriptor_intern("unknown"), raw_function,
+        DEAL_BOUNDARY_HOST_SYNC_RETURN, &raw_context);
+    check(raw_checked.error != NULL, "raw callable is not admitted as unknown data");
     /* The host parameter and host return cells. */
     run_check("number", DEAL_BOUNDARY_HOST_PARAMETER, 2, "string", "-",
         datum_input(text));
@@ -1143,6 +1160,17 @@ static void check_live_graphs(void) {
           "payload repair keeps the callable and graph identities usable");
     check(deal_container_table_read(tail, leaf_key).reference == function,
           "live checking never replaces the stored callable");
+    /* Remove the signature only; the body, environment and identity survive. */
+    deal_descriptor *saved_signature, *no_signature = NULL;
+    memcpy(&saved_signature, (unsigned char *)function + sizeof(deal_fn_thunk), sizeof(saved_signature));
+    memcpy((unsigned char *)function + sizeof(deal_fn_thunk), &no_signature, sizeof(no_signature));
+    check(deal_fn_thunk_of(function) == live_seven && deal_fn_signature(function) == NULL,
+          "raw callable mutation retains the executable body");
+    check(live_check(root_value, "record").error != NULL,
+          "unread raw callable rejects at the consuming boundary");
+    memcpy((unsigned char *)function + sizeof(deal_fn_thunk), &saved_signature, sizeof(saved_signature));
+    check(live_check(root_value, "record").error == NULL,
+          "signature repair readmits the original graph");
 
     double number = -0.0;
     uint8_t boolean = 1u;

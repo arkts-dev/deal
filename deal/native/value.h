@@ -231,6 +231,7 @@ void *deal_fn_capture(const deal_fn *function, uint32_t index);
 uint32_t deal_fn_capture_count(const deal_fn *function);
 
 /* The carrier's canonical signature text (the interned atom's own text). */
+/* NULL for a hostile native callable with its wrapper signature removed. */
 const char *deal_fn_signature(const deal_fn *function);
 
 /* 1 when the carrier's declared signature carries the async marker. */

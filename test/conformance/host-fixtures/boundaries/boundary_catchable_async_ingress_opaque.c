@@ -1,0 +1,15 @@
+#include "host/probe.h"
+#include "native_helpers.h"
+static deal_host_result f(deal_async_token token, const deal_value *args, size_t argc) {
+    (void)args; (void)argc;
+    deal_value atom, value;
+    checked(deal_class_atom("@host/Opaque", &atom));
+    checked(deal_class_new(atom, &value));
+    return complete(token, value);
+}
+const deal_host_export deal_host_exports_probe[] = {
+    {"f", "async()->unknown", DEAL_HOST_EXPORT_ASYNC_FUNCTION, 1, NULL, f, NULL}
+};
+const deal_host_module deal_host_module_probe = {
+    DEAL_HOST_SPECIFIER_PROBE, deal_host_exports_probe, 1u, NULL, 0u, NULL
+};

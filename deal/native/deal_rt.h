@@ -326,13 +326,15 @@ typedef void (*deal_reference_visit)(void *referent, void *context);
  * internal absent marker (a raw read of an absent slot), `nothing` the
  * no-value production of a result-only position, `async-operation` an
  * operation handle, and `invalid-unicode` a string carrier that is not a
- * Unicode scalar sequence: none of them is `unknown` data. */
+ * Unicode scalar sequence. A raw callable has no DEAL signature. None of
+ * these presentations is `unknown` data. */
 typedef enum {
     DEAL_PRESENT_DATUM = 0,
     DEAL_PRESENT_MISSING = 1,
     DEAL_PRESENT_NOTHING = 2,
     DEAL_PRESENT_ASYNC_OPERATION = 3,
-    DEAL_PRESENT_INVALID_UNICODE = 4
+    DEAL_PRESENT_INVALID_UNICODE = 4,
+    DEAL_PRESENT_RAW_FUNCTION = 5 /* host callable without a DEAL signature; never data */
 } deal_presentation;
 
 /* The closed encoding defects of an `invalid-unicode` presentation: the two

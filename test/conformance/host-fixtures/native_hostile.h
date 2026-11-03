@@ -45,6 +45,23 @@ static inline deal_value fixture_bad_function(int bad_signature) {
     else box->function = NULL;
     return function;
 }
+/* A raw host callable keeps its native entry, but has no DEAL signature. */
+static inline deal_value fixture_raw_function(deal_host_function entry) {
+    deal_value value;
+    checked(deal_function_new(entry, "(number)->number", &value));
+    const char *missing = NULL;
+    memcpy((unsigned char *)fixture_box_of(value) + offsetof(fixture_box, signature),
+        &missing, sizeof(missing));
+    deal_value_kind kind;
+    checked(deal_kind_of(value, &kind));
+    const char *signature = "unchanged";
+    deal_handle handle = 0u;
+    if (kind != DEAL_KIND_FUNCTION
+            || deal_function_signature(value, &signature) != DEAL_STATUS_KIND
+            || strcmp(signature, "unchanged") != 0
+            || deal_retain(value, &handle) != DEAL_STATUS_KIND || handle != 0u) abort();
+    return value;
+}
 /* The managed function shape is mirrored only to remove the payload of an
  * already stored callable. Its signature, environment and identity survive. */
 typedef struct {
@@ -61,6 +78,15 @@ static inline void fixture_remove_function_payload(deal_value value) {
             || input.datum.tag != DEAL_DATA_FUNCTION) abort();
     deal_fn_thunk missing = NULL;
     memcpy((unsigned char *)input.datum.reference + offsetof(fixture_function, thunk),
+        &missing, sizeof(missing));
+}
+static inline void fixture_remove_function_signature(deal_value value) {
+    deal_check_input input;
+    deal_error *cause = NULL;
+    checked(deal_host_value_presentation(value, &input, &cause));
+    if (cause != NULL || input.datum.tag != DEAL_DATA_FUNCTION) abort();
+    deal_descriptor *missing = NULL;
+    memcpy((unsigned char *)input.datum.reference + offsetof(fixture_function, signature),
         &missing, sizeof(missing));
 }
 typedef struct {
@@ -96,6 +122,24 @@ static inline char *fixture_error_text_replace(deal_value value, int message,
     memcpy(&previous, slot, sizeof(previous));
     memcpy(slot, &replacement, sizeof(replacement));
     return previous;
+}
+/* A declared undefined slot is a pointer to the undefined singleton. Change
+ * only that pointer to the null singleton; keep the object and nominal tag. */
+static inline void fixture_undefined_field_to_null(deal_value value, const char *name) {
+    deal_check_input input;
+    deal_error *cause = NULL;
+    checked(deal_host_value_presentation(value, &input, &cause));
+    if (cause != NULL || input.datum.tag != DEAL_DATA_CLASS) abort();
+    const deal_host_class_access *access = deal_host_class_access_of(input.class_atom);
+    if (access == NULL || access->declared->field_count != 1u
+            || strcmp(access->declared->fields[0].name, name)
+            || strcmp(deal_descriptor_text(access->declared->fields[0].descriptor), "undefined")) abort();
+    unsigned char *slot = (unsigned char *)input.datum.reference + sizeof(void *);
+    void *old;
+    memcpy(&old, slot, sizeof(old));
+    if (!deal_value_is_undefined(old)) abort();
+    void *replacement = deal_null_singleton;
+    memcpy(slot, &replacement, sizeof(replacement));
 }
 static inline void fixture_bad_key(deal_value table) {
     /* Existing key storage has equal size; preserve member/value/order. */
