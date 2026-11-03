@@ -1,4 +1,4 @@
-# DEAL — Language Specification v1.5
+# DEAL — Language Specification v1.6
 
 DEAL (Directly Embeddable Agentic Language) uses a strict subset of TypeScript syntax with runtime-enforced static types and distinct semantics. It targets safe, embeddable AI scripting with explicit interoperability boundaries. This specification defines its features, types and execution.
 
@@ -35,7 +35,7 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 | `\"` | double quote (U+0022) |
 | `\'` | single quote (U+0027) |
 
-No octal, hexadecimal, or Unicode escape sequences. A DEAL `string` is a sequence of Unicode scalar values. Source string literals decode to scalar values. Backends may store strings in any representation, but observable string behavior is defined over scalar values. String values accepted from untrusted or backend-native boundaries must reject invalid encodings, including malformed UTF-8 byte sequences and unpaired UTF-16 surrogate code units.
+String literals admit only these escapes. A `string` is a sequence of UTF-16 code units, including unpaired surrogates. Host boundaries reject malformed transport encodings.
 
 ### Template literals
 
@@ -46,7 +46,7 @@ let name: string = "Ada";
 let msg: string = `Hello ${name}!`; // "Hello Ada!"
 ```
 
-Interpolations require `string`; no implicit conversion. Text stays raw; escape spellings follow TypeScript untagged-template syntax.
+Interpolations require `string`; no implicit conversion. Escape decoding follows TypeScript untagged templates.
 
 ```ts
 let n: number = 42;
@@ -94,7 +94,7 @@ NumberLiteral ::= DecimalInteger
 StringLiteral ::= '"' StringCharacter* '"' | '\'' StringCharacter* '\''
 
 TemplateLiteral ::= '`' (TemplateText | '${' Expression '}')* '`'
-TemplateText ::= /* maximal nonempty text excluding line-terminators, '`', '${'; trailing backslashes pair */
+TemplateText ::= /* nonempty TypeScript TemplateCharacter sequence; no unescaped line-terminators */
 
 StringCharacter ::= /* any SourceCharacter except line terminators and unescaped quote */
  | '\n' | '\t' | '\\' | '\"' | '\''
@@ -123,8 +123,7 @@ TopLevelDeclaration ::= FunctionDeclaration
                       | ClassDeclaration
                       | ExportDeclaration
 
-Statement       ::= FunctionDeclaration
-                   | VariableDeclaration
+Statement       ::= VariableDeclaration
                    | ReturnStatement
                    | IfStatement
                    | WhileStatement
@@ -421,7 +420,7 @@ Types must match exactly unless an explicit compatibility rule permits otherwise
 
 Type equality: identical canonical forms; classes by declaration symbol, functions by async marker/parameters/result.
 
-`===` requires equal types, except nullish types admit singleton comparisons and unknown admits null/undefined. Unknown pairs compare data without coercion, retagging or structural comparison. Different runtime kinds differ; null/undefined equal themselves only. Numbers use binary64 equality (NaN differs from itself; signed zeros equal), booleans compare by value, strings by Unicode scalar sequence, arrays/Records/classes/functions by reference identity. `!==` negates `===`.
+`===` requires equal types, except nullish types admit singleton comparisons and unknown admits null/undefined. Unknown pairs compare data without coercion, retagging or structural comparison. Different runtime kinds differ; null/undefined equal themselves only. Numbers use binary64 equality (NaN differs from itself; signed zeros equal), booleans compare by value, strings by UTF-16 code-unit sequence, arrays/Records/classes/functions by reference identity. `!==` negates `===`.
 
 `==` and `!=` are not valid operators.
 
@@ -443,7 +442,7 @@ number vs number
 string vs string
 ```
 
-Strings compare lexicographically by Unicode scalar value; a proper prefix sorts first. No normalization or locale rules apply.
+Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sorts first. No normalization or locale rules apply.
 
 ### Type-of-expression rules
 
@@ -827,8 +826,6 @@ The expression produces a value with its declared signature and may occur wherev
 
 ### Closures and captured variables
 
-Function expressions and nested function declarations may reference variables from enclosing scopes.
-
 Captured variables are captured by binding, not by value. If the captured variable is assigned later, reads through the closure observe the current value of that binding.
 
 ```ts
@@ -915,7 +912,7 @@ Not allowed within the same block scope.
 
 ### Scope
 
-Blocks delimit lexical scopes; declaration order governs visibility.
+Blocks delimit lexical scopes.
 
 ### Name resolution
 
@@ -935,8 +932,8 @@ Shadowing follows [Lexical elements](#lexical-elements) builtin-name restriction
 Declaration order:
 
 - Module-level functions/classes are hoisted for name resolution.
-- Nested functions are block-scoped, initialized upon declaration execution, and visible in their bodies and following statements/bodies. Earlier references resolve outward; unresolved names are compile-time name-resolution errors.
 - `let` declarations are visible only after declaration.
+- A function-expression initializer’s body sees its own `let` binding.
 
 ### Definite return analysis
 
@@ -1096,11 +1093,11 @@ for (let x of xs) {
 
 let s: string = "abc";
 for (let c of s) {
-  // c: string, one Unicode scalar value
+  // c: string, one code point
 }
 ```
 
-Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings yield successive scalars. Infer `T` or `string`; reject binding annotations. See [Closures](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
+Evaluate the `T[]` or `string` iterable once. Arrays visit successive indexes from zero using live length/contents: appends and unvisited replacements are observed; variable reassignment cannot redirect traversal. Strings follow JavaScript string iteration. Infer `T` or `string`; reject binding annotations. See [Closures](#closures-and-captured-variables) for binding freshness. Supports `break` and `continue`.
 
 ---
 
@@ -1336,11 +1333,11 @@ A project may define `deal.json` at its root:
 
 ```json
 {
- "languageVersion": "1.5",
+ "languageVersion": "1.6",
  "moduleRoots": ["src"],
  "output": "build/lua",
  "backend": "luajit",
- "stdlib": "1.5",
+ "stdlib": "1.6",
  "dependencies": {},
  "externals": {
   "host/log": {
@@ -1352,7 +1349,7 @@ A project may define `deal.json` at its root:
 
 Rules:
 
-- `languageVersion` must be `"1.5"` and governs all source and declaration files in the project.
+- `languageVersion` must be `"1.6"` and governs all source and declaration files in the project.
 - `moduleRoots` participate in import resolution.
 - DEAL has no package registry. `dependencies` is reserved for local/package-manager integration later.
 - Standard library modules may be described by bundled `.d.deal` files, but are resolved as part of the language distribution rather than as project external host modules.
@@ -1382,12 +1379,7 @@ export function split(s: string, sep: string): string[];
 export function trim(s: string): string;
 ```
 
-Lengths and positions count Unicode scalars; lengths are exact. Searches are literal, not patterns.
-
-- `substring`: `start` and `end` require integral numbers; otherwise raise `E8001` (`substring bounds must be finite integers`). Clamp bounds to `0..length`; start is inclusive, end exclusive; reversed ranges yield `""`.
-- `replace`: all non-overlapping matches, left-to-right; empty search returns input; literal replacement.
-- `split`: empty input yields `[]`; empty separator splits scalars; otherwise preserves empty parts.
-- `trim`: removes only U+0009–U+000D and U+0020 from both ends.
+Follow [ECMAScript String semantics](https://tc39.es/ecma262/#sec-properties-of-the-string-prototype-object) for the declared signatures: `length` reads the length property; `contains` calls `includes`; other functions call the corresponding methods.
 
 #### `std/table.d.deal`
 
@@ -1457,7 +1449,7 @@ Check every untyped host-to-DEAL crossing:
 let f: (x: number) => number = lib.f;
 ```
 
-Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects ingress before publication for malformed Unicode/unsupported leaves, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [validation](#backend-conformance-contract).
+Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects unsupported leaves before publication, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [validation](#backend-conformance-contract).
 
 
 #### Function ABI
@@ -1483,7 +1475,7 @@ cause (if applicable)
 ### Source maps and debugging
 
 - Source-emitting backends provide statement-group source comments and source-map sidecars; native backends provide debug metadata. Mappings preserve original files, lines and columns across modules.
-- Runtime errors report original `.deal` locations: one-based lines and Unicode-scalar columns; tabs count one column; CRLF counts one line break.
+- Runtime errors report original `.deal` locations: one-based lines and UTF-16-code-unit columns; tabs count one column; CRLF counts one line break.
 - Stack traces include generated and original function names.
 
 ---
@@ -1616,7 +1608,7 @@ These representation mappings preserve, and cannot override, the source semantic
 | missing optional field | absent key or `__MISSING` internally |
 | `boolean` | Lua boolean |
 | `number` | Lua number |
-| `string` | Lua string containing valid UTF-8 |
+| `string` | Lua string |
 | `Record<string, unknown>` | Lua table |
 | `ClassName` | Lua table tagged with class symbol |
 | `T[]` | Lua table with 1-based contiguous storage |
@@ -1650,7 +1642,7 @@ Missing fields use nil/metadata; translate missing reads and void completion to 
 | missing optional field | presence bit or distinct `Missing` sentinel |
 | `boolean` | primitive `boolean` |
 | `number` | primitive `double` |
-| `string` | non-null `java.lang.String` with no unpaired surrogate code units |
+| `string` | non-null `java.lang.String` |
 | `Record<string, unknown>` | `DealTable` runtime object |
 | `ClassName` | generated record class or `TClassObject` runtime shape |
 | `T[]` | `DealArray<T>` runtime object or specialized primitive array |

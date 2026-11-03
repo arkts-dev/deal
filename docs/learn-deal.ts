@@ -1,4 +1,4 @@
-// Learn DEAL — companion to docs/spec-v1.5.md, not a specification.
+// Learn DEAL — companion to docs/spec-v1.6.md, not a specification.
 // The sections below are independent examples, not one source module.
 // Imports precede declarations. Executable statements belong in functions.
 
@@ -110,11 +110,9 @@ export class Settings { name: string; note?: string | null; }
 // preserves null, rejects cycles, substitutes null for declared numeric
 // nonfinite values, and emits either zero sign as 0. JSON numeric tokens round to binary64; parsing preserves -0.
 
-// Standard library string positions count Unicode scalars. Substring
-// bounds must be finite whole numbers; valid bounds are then clamped.
 function text(): string {
-  let size: number = strings.length("a😀b"); // 3
-  let part: string = strings.substring("a😀b", 1, 2); // 😀
+  let size: number = strings.length("a😀b"); // 4
+  let part: string = strings.substring("a😀b", 1, 3); // 😀
   let pieces: string[] = strings.split("a,b", ",");
   return strings.trim(part);
 }

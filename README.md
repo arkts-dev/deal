@@ -1,13 +1,13 @@
-# DEAL Compiler v1.5
+# DEAL Compiler
 
 DEAL: a statically typed, embeddable language using a strict subset of
 TypeScript syntax with runtime-enforced types. Targets: JavaScript, LuaJIT, JVM
 and native Linux x86-64 executables.
-Sole authority: [`docs/spec-v1.5.md`](docs/spec-v1.5.md).
-Projects require `"languageVersion": "1.5"` and stdlib `"1.5"`.
+Sole authority: [`docs/spec-v1.6.md`](docs/spec-v1.6.md).
+Projects require `"languageVersion": "1.6"` and stdlib `"1.6"`.
 
 Semantics differ from TypeScript: nominal classes, runtime-checked `as`
-assertions, invariant arrays and Unicode-scalar string positions. DEAL uses
+assertions and invariant arrays. DEAL uses
 binary64 `number`, safe `unknown`, `Record<string, unknown>` and independent
 null/undefined/presence semantics. Supply required fields explicitly.
 `Promise<R>` denotes async results, not promises. Use DEAL APIs.
@@ -48,9 +48,9 @@ suites print per-fixture results with the optimization level and a final
 pass/fail count; a missing required tool or artifact fails the run instead of
 skipping a case.
 
-Executable v1.5 examples are in [`test/conformance/backend-runtime/language15/`](test/conformance/backend-runtime/language15/),
+Executable examples are in [`test/conformance/backend-runtime/`](test/conformance/backend-runtime/),
 with a language guide in [`docs/learn-deal.ts`](docs/learn-deal.ts) and
-an executable [capability demo](docs/deal-v1.5-capabilities.deal).
+an executable [capability demo](docs/deal-capabilities.deal).
 
 ## Build and Test
 
@@ -73,7 +73,7 @@ a failure, never a pass.
 
 ## Distribution
 
-Build the packaged compiler with its matched v1.5 runtime and standard library:
+Build the packaged compiler with its matched runtime and standard library:
 
 ```bash
 ./tools/build-release.sh

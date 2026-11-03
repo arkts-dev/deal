@@ -1,6 +1,6 @@
 # DEAL language guide
 
-DEAL: a strict TypeScript syntax subset with distinct semantics. Authority: [v1.5 specification](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.5.md) (online).
+DEAL: a strict TypeScript syntax subset with distinct semantics. Authority: [v1.6 specification](https://github.com/arkts-dev/deal/blob/master/docs/spec-v1.6.md) (online).
 
 ## Syntax
 
@@ -14,7 +14,7 @@ Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>
 
 Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
 
-Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Indexes/bounds require finite whole numbers. Round deliberately through math.floor/ceil; format through typed helpers or host APIs. Conditions require boolean; concatenation/interpolation require strings. Use ===/!== with compatible types or admitted nullish comparisons.
+Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Array indexes require finite whole numbers. Round deliberately through math.floor/ceil; format through typed helpers or host APIs. Conditions require boolean; concatenation/interpolation require strings. Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 
@@ -36,7 +36,7 @@ Use Record<string, unknown>. Every read infers unknown; explicitly check interme
 
 ## Arrays
 
-Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Decoded JSON arrays carry unknown elements: check values individually or use generated typed decoding. String for-of yields Unicode scalars.
+Arrays are zero-based with runtime-enforced invariant descriptors, unlike TypeScript arrays; emptiness cannot justify retagging. Annotate empty literals. Append at length; iterate with inferred for-of bindings or explicit while indexes. Deleted slots read undefined; out-of-bounds reads fail. Decoded JSON arrays carry unknown elements: check values individually or use generated typed decoding.
 
 ## JSON serialization (`@jsonable`)
 
@@ -77,7 +77,7 @@ export function absNumber(x: number): number;
 export function nowMillis(): number;
 ```
 
-String positions count Unicode scalars, not JavaScript UTF-16 units. Use declared, implemented host APIs.
+Use declared, implemented host APIs.
 
 ## Error handling
 

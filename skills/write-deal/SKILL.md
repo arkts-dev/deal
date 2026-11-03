@@ -5,7 +5,7 @@ description: Write DEAL .deal/.d.deal source and projects using a strict TypeScr
 
 # Write DEAL
 
-Read project instructions and `deal.json`. Follow the bundled [language guide](references/language.md) and examples for languageVersion/stdlib 1.5. The guide links the authoritative specification online when clarification is needed. Resolve bundled links within this directory, independently of the compiler checkout.
+Read project instructions and `deal.json`. Follow the bundled [language guide](references/language.md) and examples. The guide links the authoritative specification online when clarification is needed. Resolve bundled links within this directory, independently of the compiler checkout.
 
 Read the relevant rules and example before writing:
 

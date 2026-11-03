@@ -14,7 +14,7 @@ catch (_) {
 const root = path.resolve(__dirname, "../..");
 const inputPaths = process.argv.slice(2);
 const defaultSelection = !inputPaths.length;
-if (defaultSelection) inputPaths.push("test/ir-goldens/fixtures", "std", "skills/write-deal/examples", "docs/spec-v1.5.md", "docs/learn-deal.ts", "docs/deal-v1.5-capabilities.deal");
+if (defaultSelection) inputPaths.push("test/ir-goldens/fixtures", "std", "skills/write-deal/examples", "docs/spec-v1.6.md", "docs/learn-deal.ts", "docs/deal-capabilities.deal");
 const sources = new Map();
 // Compile-error fixtures include deliberately invalid TypeScript syntax. All
 // admitted/runtime sources, companions and host declarations still participate,
