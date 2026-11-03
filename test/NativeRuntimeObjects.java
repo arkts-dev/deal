@@ -126,7 +126,8 @@ final class NativeRuntimeObjects {
         if (directory == null) {
             String shared = System.getProperty("deal.test.native.objects");
             directory = shared == null ? Files.createTempDirectory(
-                NativeCompiler.repository().resolve("build"), "native-objects-") : Path.of(shared);
+                NativeCompiler.repository().resolve("build"), "native-objects-")
+                : Path.of(shared).toAbsolutePath().normalize();
             // The gate clears build before any suite; standalone
             // suites use fresh preparation, so system/compiler changes cannot leak.
             if (shared == null) Runtime.getRuntime().addShutdownHook(new Thread(() -> {

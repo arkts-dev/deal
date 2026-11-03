@@ -685,14 +685,15 @@ public final class LlvmProjectEmissionTest {
         for (int level : new int[] {0, 2}) {
             Path product = productRoot.resolve("native/main");
             Files.createDirectories(product.getParent());
-            NativeCompiler.Result link = NativeCompiler.link(published, level,
-                NativeCompiler.productSources(published,
-                    List.of(published.resolve("main.ll"))), product);
-            checkEq(0, link.exitCode(), "-O" + level
-                + " the published module and runtime link: " + link.describe());
-            if (link.exitCode() != 0) {
-                continue;
-            }
+            var link = NativeCompiler.build(new deal.toolchain.NativeBuildRequest(
+                published, product, level, List.of(), null));
+            check(Files.isExecutable(link.productPath()), "-O" + level
+                + " the published module and runtime link");
+            long runtimeSources = link.command().stream().filter(arg ->
+                NativeRuntime.TRANSLATION_UNITS.stream().anyMatch(name -> arg.endsWith("/" + name))).count();
+            checkEq(Boolean.getBoolean("deal.test.native.cold")
+                    ? (long) NativeRuntime.TRANSLATION_UNITS.size() : 0L, runtimeSources,
+                "-O" + level + " planned builds use prepared runtime objects unless explicitly cold");
             NativeCompiler.Result run = NativeCompiler.execute(product,
                 scratch, Map.of());
             checkEq(0, run.exitCode(), "-O" + level

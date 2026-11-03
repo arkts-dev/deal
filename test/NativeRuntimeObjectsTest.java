@@ -12,13 +12,25 @@ public final class NativeRuntimeObjectsTest {
             Path root = Path.of(args[0]);
             Path work = Files.createDirectories(Path.of(args[1]).resolve("child-" + ProcessHandle.current().pid()));
             execute(root, root.resolve("deal/native/main.c"), work, 3);
-            System.out.println(prepare(root, root.resolve("deal/native/main.c"), 0, List.of()).getFirst());
+            Path object = prepare(root, root.resolve("deal/native/main.c"), 0, List.of()).getFirst();
+            check(object.toString().endsWith(".o"), "relative cache directory must prepare, not silently rebuild sources");
+            System.out.println(object);
             return;
         }
         Path scratch = NativeCompiler.executableScratch("native-object-controls");
         try {
             Path root = Files.createDirectories(scratch.resolve("published"));
             NativeCompiler.deployDeploymentSet(root);
+            // Exercise the actual deployed runtime before replacing units with negative controls.
+            for (int level : new int[]{0, 2}) {
+                var units = NativeCompiler.runtimeTranslationUnits(root);
+                var objects = NativeRuntimeObjects.prepare(root, level, units, List.of());
+                check(objects.size() == units.size() && objects.stream().allMatch(p ->
+                    p.isAbsolute() && p.toString().endsWith(".o") && Files.isRegularFile(p)),
+                    "complete published runtime prepares at O" + level);
+                check(objects.equals(NativeRuntimeObjects.prepare(root, level, units, List.of())),
+                    "complete published runtime reuses every object at O" + level);
+            }
             Path source = root.resolve("deal/native/main.c");
             Path header = root.resolve("deal/native/entry.h");
             Files.writeString(header, "#define TEST_RESULT 3\n");
@@ -27,7 +39,7 @@ public final class NativeRuntimeObjectsTest {
             // Independent JVMs compete for an initially empty shared key.
             List<String> child = List.of(Path.of(System.getProperty("java.home"), "bin/java").toString(),
                 "-Djava.io.tmpdir=" + System.getProperty("java.io.tmpdir"),
-                "-Ddeal.test.native.objects=" + scratch.resolve("shared"), "-ea", "-cp",
+                "-Ddeal.test.native.objects=" + NativeCompiler.repository().relativize(scratch.resolve("shared")), "-ea", "-cp",
                 System.getProperty("java.class.path"), NativeRuntimeObjectsTest.class.getName(),
                 root.toString(), scratch.toString());
             try (var workers = java.util.concurrent.Executors.newFixedThreadPool(2)) {
