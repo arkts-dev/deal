@@ -1,1 +1,0 @@
-module.exports={Node:{$kind:"class",$classname:"@$external/host/probe/Node"},mutate:v=>{delete v.x;}};

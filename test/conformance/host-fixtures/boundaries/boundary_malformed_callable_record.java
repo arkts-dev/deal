@@ -1,1 +1,1 @@
-final class HostProbe{public static Object f(){return new Object();}}
+final class HostProbe{public static Object f(){var r=new deal.codegen.jvm.JvmRuntime.Table();r.write("f",new deal.codegen.jvm.JvmRuntime.FunctionValue(null,"()->number"));return r;}}

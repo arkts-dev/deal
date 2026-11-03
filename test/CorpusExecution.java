@@ -93,8 +93,13 @@ final class CorpusExecution {
             var context = new SidecarSchemaValidator.ValidationContext("control.deal", "runtime-ok", List.of(), Set.of());
             if (SidecarSchemaValidator.validate(context, sidecar).isEmpty()) throw new AssertionError("unexplained backend loss accepted");
             String explained = sidecar.replace("\"version\":1", "\"version\":1,\"backendReason\":\"Native JS property descriptor control\"");
-            if (SidecarSchemaValidator.validate(context, explained).isPresent()) throw new AssertionError("declared capability subset refused");
-            String pinned = explained.replace("\"version\":1", "\"version\":1,\"completions\":{\"check\":{\"descriptor\":\"number\",\"number\":\"-0\"}}");
+            if (SidecarSchemaValidator.validate(context, explained).isEmpty()) throw new AssertionError("explained backend loss accepted");
+            for (String lanes : List.of("\"js\",\"jvm\"", "\"js\",\"luajit\"", "\"luajit\",\"jvm\"", "\"jvm\"", "\"luajit\"", ""))
+                if (SidecarSchemaValidator.validate(context, sidecar.replace("\"backends\":[\"js\"]", "\"backends\":[" + lanes + "]")).isEmpty())
+                    throw new AssertionError("backend subset accepted: " + lanes);
+            String uniform = sidecar.replace("[\"js\"]", "[\"js\",\"luajit\",\"jvm\"]");
+            if (SidecarSchemaValidator.validate(context, uniform).isPresent()) throw new AssertionError("full backend matrix refused");
+            String pinned = uniform.replace("\"version\":1", "\"version\":1,\"completions\":{\"check\":{\"descriptor\":\"number\",\"number\":\"-0\"}}");
             if (SidecarSchemaValidator.validate(context, pinned).isPresent()) throw new AssertionError("valid completion pin refused");
             for (String invalid : List.of(pinned.replace("\"-0\"", "\"NaN\""), pinned.replace("\"number\":\"-0\"", "\"number\":0"),
                     pinned.replace("\"descriptor\":\"number\"", "\"descriptor\":\"unknown\"")))

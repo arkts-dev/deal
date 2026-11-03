@@ -1,1 +1,1 @@
-return {f=function(v)end}
+return {f=function(v)v[1]=9 end}

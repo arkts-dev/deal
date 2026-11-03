@@ -15,6 +15,7 @@ import deal.semantic.CompilerProfileProvider;
 import deal.semantic.ReleaseConfiguration;
 import deal.semantic.ir.ReleaseState;
 import deal.types.Type;
+import deal.test.conformance.SidecarSchemaValidator;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -243,8 +244,8 @@ public class CorpusConformanceTest {
             List<Classified> classified = classifyAll(tests);
             computeCompanionAccounting(tests, classified);
             for (Classified item : classified) if (item.kind() == Kind.APPLICABLE) {
-                var sidecar = sidecarOf(item.test().path());
-                for (String backend : sidecar.byBackend().keySet()) requiredLegs.add(item.test().relativePath() + ":" + backend);
+                for (String backend : SidecarSchemaValidator.BACKEND_NAMES)
+                    requiredLegs.add(item.test().relativePath() + ":" + backend);
             }
 
             for (Classified item : classified) if (item.kind() == Kind.FRONTEND) {
@@ -264,7 +265,7 @@ public class CorpusConformanceTest {
             System.out.println("Discovered " + tests.size()
                 + " backend-runtime conformance test(s): " + frontend
                 + " frontend-classified, " + applicable
-                + " runtime fixtures (explicit backend obligations), " + companions
+                + " runtime fixtures (all three backends required), " + companions
                 + " companions (classified support modules)");
             System.out.println();
 
@@ -600,9 +601,7 @@ public class CorpusConformanceTest {
                 case FRONTEND -> runFrontend(classified);
                 case APPLICABLE -> {
                     Outcome last = null;
-                    var declared = sidecarOf(classified.test().path()).byBackend().keySet();
                     for (Backend target : List.of(Backend.JS, Backend.LUAJIT, Backend.JVM)) {
-                        if (!declared.contains(target.name().toLowerCase(Locale.ROOT))) continue;
                         TARGET.set(target);
                         try { last = runApplicable(classified); }
                         catch (Throwable e) {
@@ -2498,7 +2497,7 @@ function $snapshot($err) {
             System.exit(1);
         }
         System.out.println("Gates PASSED: frontend 100%; backend-runtime "
-            + "on all three production backends zero failures and 100% of the declared "
+            + "on all three production backends zero failures, zero exclusions and 100% of the "
             + denominator + "-test denominator; companion counts equal the "
             + "on-disk corpus and every companion standalone-compiles and "
             + "participates in its importers' temp projects.");

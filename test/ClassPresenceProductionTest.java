@@ -93,7 +93,76 @@ public final class ClassPresenceProductionTest {
         return result;
     }
 
+    /** JS/Lua raw tables can represent hostile states excluded by JVM typed storage. */
+    private static void rawHostFieldMutations() throws Exception {
+        Path root = Files.createTempDirectory("raw-host-fields-");
+        try {
+            Path host = root.resolve("host");
+            Files.createDirectories(host);
+            String imports = "import * as console from \"std/console\";import * as host from \"host/probe\";";
+            int cases = 0;
+            for (String field : List.of("number", "unknown")) {
+                for (String parameter : List.of("C", "unknown")) {
+                    Files.writeString(host.resolve("probe.d.deal"), "export class C{x:" + field
+                        + ";}export function mutate(v:" + parameter + "):void;");
+                    rawHost(host, "C", "delete v.x;", "v.x=nil;");
+                    CompositionProductionTest.execute(imports + "export function main():null{"
+                        + "let n:host.C={x:1};host.mutate(n);if(Object.hasOwn(n,\"x\")){"
+                        + "throw {code:\"TEST\",message:\"required field still present\"};}console.log(\"ABSENT\");return null;}",
+                        "ABSENT\n", root.resolve("live-" + field + "-" + parameter), host,
+                        List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
+                    cases++;
+                }
+            }
+            Files.writeString(host.resolve("probe.d.deal"),
+                "export class Node{x:unknown;next:Node|null;}export function mutate(v:Node):void;");
+            rawHost(host, "Node", "delete v.x;", "v.x=nil;");
+            for (String boundary : List.of("assert", "parameter", "return")) {
+                String operation = switch (boundary) {
+                    case "assert" -> "let d=n as host.Node;";
+                    case "parameter" -> "consume(n);";
+                    default -> "let d=get();";
+                };
+                CompositionProductionTest.execute(imports
+                    + "function consume(n:host.Node):void{}function identity(n:host.Node):host.Node{return n;}"
+                    + "export function main():null{let n:host.Node={x:1,next:null};n.next=n;"
+                    + "function get():host.Node{console.log(\"RETURN_BODY\");return n;}host.mutate(n);try{"
+                    + operation + "console.log(\"OK\");}catch(e){console.log(\"REJECT\");}return null;}",
+                    boundary.equals("return") ? "RETURN_BODY\nREJECT\n" : "REJECT\n", root.resolve("cycle-" + boundary), host,
+                    List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
+                cases++;
+            }
+            for (String[] shape : List.of(new String[]{"x?:number", "1", "undefined"},
+                    new String[]{"x:number", "1", "delete"}, new String[]{"x:number", "1", "null"},
+                    new String[]{"x:number", "1", "undefined"}, new String[]{"x:undefined", "undefined", "delete"},
+                    new String[]{"x:unknown", "1", "delete"})) {
+                Files.writeString(host.resolve("probe.d.deal"), "export class C{" + shape[0]
+                    + ";}export function mutate(v:unknown):void;");
+                String js = shape[2].equals("delete") ? "delete v.x;" : "v.x=" + shape[2] + ";";
+                String lua = shape[2].equals("delete") ? "v.x=nil;"
+                    : "v.x=rt.__" + shape[2].toUpperCase(java.util.Locale.ROOT) + ";";
+                rawHost(host, "C", js, lua);
+                CompositionProductionTest.execute(imports + "export function main():null{let n:host.C={x:"
+                    + shape[1] + "};host.mutate(n);try{let d=n as host.C;console.log(\"OK\");}"
+                    + "catch(e){console.log(\"REJECT\");}return null;}", "REJECT\n",
+                    root.resolve("presence-" + cases++), host,
+                    List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
+            }
+            if (cases != 13) throw new AssertionError("lost raw-field mutation check");
+            System.out.println("Raw JS/Lua host fields: 13 checks, 26 executions passed");
+        } finally { CompositionProductionTest.remove(root); }
+    }
+
+    private static void rawHost(Path host, String name, String js, String lua) throws Exception {
+        Files.writeString(host.resolve("probe.js"), "module.exports={" + name
+            + ":{$kind:\"class\",$classname:\"@$external/host/probe/" + name + "\"},mutate:v=>{" + js + "}};");
+        Files.writeString(host.resolve("probe.lua"), "local rt=require(\"deal.runtime\");local K=rt.__keys;return {"
+            + name + "={[K.kind]=\"class\",[K.classname]=\"@$external/host/probe/" + name
+            + "\"},mutate=function(v)" + lua + "end}");
+    }
+
     public static void main(String[] args) throws Exception {
+        rawHostFieldMutations();
         Path home = Path.of("").toAbsolutePath();
         Path project = Files.createTempDirectory("deal-class-presence-");
         Path source = project.resolve("src/main.deal");

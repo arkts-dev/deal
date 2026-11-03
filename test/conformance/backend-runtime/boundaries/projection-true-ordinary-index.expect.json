@@ -1,7 +1,9 @@
 {
   "version": 1,
   "backends": [
-    "js"
+    "js",
+    "luajit",
+    "jvm"
   ],
   "expected": {
     "mode": "runtime-ok",
@@ -11,6 +13,5 @@
     },
     "exitCode": 0
   },
-  "backendReason": "JavaScript native array property descriptors and defineProperty projection.",
   "hostFixture": "boundaries/boundary_projection_false_ordinary_index"
 }

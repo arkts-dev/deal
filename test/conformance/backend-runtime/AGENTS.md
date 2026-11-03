@@ -1,6 +1,6 @@
 # Runtime Conformance
 
-Execute production artifacts and assert values, effects, exact failures/origins, nominal identity and evaluation order. Every declared backend participates; missing tools, exports, host companions or completions fail. Do not bless AST-only behavior.
+Execute production artifacts and assert values, effects, exact failures/origins, nominal identity and evaluation order. Every case requires JS/LuaJIT/JVM with identical expectations and zero exclusions; missing tools, exports, host companions or completions fail. Do not bless AST-only behavior.
 
 CorpusConformanceTest discovers cases and parses invocation plans: main once, then eligible zero-arity exports in declaration order. Reconcile transcript-external receipts. Sidecar-pinned numeric async exports use public invokers and raw binary64 comparison: JSON 1/1.0 agree; signed zeros differ. Negatives with probes require empty main and one failing probe; split independent throws. Assert computed results locally; preserve focused consumers.
 
@@ -13,4 +13,4 @@ CorpusConformanceTest discovers cases and parses invocation plans: main once, th
 
 Dynamic-recursion fixtures exercise mutable bindings, arrays, Records, assertions, adapters, caught throws and escaped per-activation local cells; named/nonrecursive controls remain distinct. Async fixtures pin public completion invocations rather than merely calling main. Syntax controls preserve parenthesized expressions, separated minus tokens and literal valid template escape spellings.
 
-Synchronize migrated source coordinates without weakening expectations.
+Host setup must supply equivalent array intent/descriptors and malformed-callable inputs across backends. Native reflection and field states unrepresentable in JVM typed storage belong to focused host-integration suites. Synchronize migrated source coordinates without weakening expectations.

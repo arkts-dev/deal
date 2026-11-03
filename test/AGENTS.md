@@ -11,4 +11,4 @@ Extend distinct regressions, not inventories. Batch gate-local preparation; inva
 
 Hypothesis boundary tests require `python3 -m pip install -r test/requirements.txt`. Generate valid typed traces and independently model effects/values; shrink failures without accepting source rejection as preservation. Keep transient examples under ignored scratch-review, not tracked source.
 
-Use bounded deterministic composition/history matrices without new frameworks: assert independent observations for every enumerated case, and batch artifacts without dropping cases. Keep fixture-specific contracts in executable tests and the nearest policy.
+Use bounded deterministic composition/history matrices without new frameworks: assert independent observations for every enumerated case, and batch artifacts without dropping cases. Keep fixture-specific contracts in executable tests and the nearest policy. Common runtime conformance requires JS/LuaJIT/JVM with no exclusions. Native JS reflection lives in JsBackendTest; raw JS/Lua field states unrepresentable in JVM typed storage live in ClassPresenceProductionTest. Preserve their executed assertions, not dummy host implementations.

@@ -1,1 +1,1 @@
-final class HostProbe{public static Object f(Object v){return deal.codegen.jvm.JvmRuntime.UNDEFINED;}}
+final class HostProbe{public static void f($DealRt.__RefArray v){v.data[0]=9.0;}}

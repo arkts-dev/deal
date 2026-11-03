@@ -1,1 +1,0 @@
-module.exports={f:v=>{if(Object.getOwnPropertyDescriptor(v,"length").value===v.length)console.log("COHERENT");else console.log("INCONSISTENT");}};

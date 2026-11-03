@@ -79,6 +79,71 @@ import java.util.stream.Stream;
  */
 public class JsBackendTest {
 
+    /** Native JS descriptors/Proxy operations are host integration, not language syntax. */
+    private static void testNativeArrayReflection() throws Exception {
+        Path root = Files.createTempDirectory("js-array-reflection-");
+        try {
+            Path host = root.resolve("host");
+            Files.createDirectories(host);
+            Files.writeString(host.resolve("probe.d.deal"), "export function f(v:unknown[]):void;");
+            String imports = "import * as console from \"std/console\";"
+                + "import * as host from \"host/probe\";import * as json from \"std/json\";";
+            String[] mutations = {
+                "Object.defineProperty(v,\"0\",{value:9,writable:true,enumerable:true,configurable:true});",
+                "if(Object.getOwnPropertyDescriptor(v,\"length\").value===v.length)console.log(\"COHERENT\");else throw Error(\"inconsistent length\");"
+            };
+            for (boolean parsed : List.of(false, true)) {
+                for (int operation = 0; operation < mutations.length; operation++) {
+                    String array = parsed
+                        ? "let r=json.parse(\"{\\\"a\\\":[1,2]}\");let a=r.a as unknown[];"
+                        : "let a:unknown[]=[1,2];";
+                    String assertion = operation == 1 ? ""
+                        : "if((a[0] as number)!==9){throw {code:\"TEST\",message:\"stale projection\"};}console.log(\"LIVE\");";
+                    Files.writeString(host.resolve("probe.js"), "module.exports={f:v=>{" + mutations[operation] + "}};");
+                    CompositionProductionTest.execute(imports + "export function main():null{" + array
+                        + "host.f(a);" + assertion + "return null;}",
+                        operation == 1 ? "COHERENT\n" : "LIVE\n",
+                        root.resolve("projection-" + parsed + "-" + operation), host, List.of(Backend.JS));
+                    check(true, "native JS array projection: parsed=" + parsed + " operation=" + operation);
+                }
+            }
+            Files.writeString(host.resolve("probe.js"), """
+                module.exports={f:a=>{
+                  const rejects=[
+                    ()=>Object.defineProperty(a,"length",{value:0,enumerable:true}),
+                    ()=>Object.defineProperty(a,"length",{value:0,configurable:true}),
+                    ()=>Object.defineProperty(a,"length",{value:0,writable:false}),
+                    ()=>Object.defineProperty(a,"length",{get:()=>0}),
+                    ()=>Object.defineProperty(a,"0",{value:9,writable:false}),
+                    ()=>Object.defineProperty(a,"0",{value:9,enumerable:false}),
+                    ()=>Object.defineProperty(a,"0",{value:9,configurable:false}),
+                    ()=>Object.preventExtensions(a)
+                  ];
+                  for(const reject of rejects){
+                    let caught=false;
+                    try{reject();}catch(e){if(!(e instanceof TypeError))throw e;caught=true;}
+                    if(!caught)throw Error("operation unexpectedly accepted");
+                    if(a.length!==2||a[0]!==1||a[1]!==2)throw Error("rejected operation mutated storage");
+                  }
+                  if(Reflect.deleteProperty(a,"0")||Reflect.set(a,"length",3)||Reflect.set(a,"4",9))throw Error("invalid write accepted");
+                  if(a.length!==2||a[0]!==1||a[1]!==2)throw Error("failed write mutated storage");
+                  Object.defineProperty(a,"0",{value:9,writable:true,enumerable:true,configurable:true});
+                  Object.defineProperty(a,"length",{value:1,writable:true,enumerable:false,configurable:false});
+                }};
+                """);
+            CompositionProductionTest.execute(imports + """
+                export function main():null {
+                    let r=json.parse("{\\"a\\":[1,2]}");
+                    let a=r.a as unknown[];
+                    host.f(a);
+                    if(a.length!==1 || (a[0] as number)!==9){throw {code:"TEST",message:"retry lost live storage"};}
+                    console.log("LIVE");return null;
+                }
+                """, "LIVE\n", root.resolve("reject-repair-retry"), host, List.of(Backend.JS));
+            check(true, "native JS rejected reflection preserves live storage and permits retry");
+        } finally { CompositionProductionTest.remove(root); }
+    }
+
     private static int passed = 0;
     private static int failed = 0;
     private static Path tmpDir;
@@ -131,6 +196,7 @@ public class JsBackendTest {
             testUnsupportedConstructsRejected();
             testHostAbiEmissionPins();
             testHostAbiOrchestratorNode();
+            testNativeArrayReflection();
             testHostOccurrenceAndTraversalNode();
             testSourceMapSidecarsEmitted();
             testIntArithmeticEdgeCodes();

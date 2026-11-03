@@ -103,7 +103,7 @@ public final class SidecarSchemaValidator {
     // =========================================================================
 
     private static final Set<String> ROOT_FIELDS =
-        Set.of("version", "backends", "expected", "mode", "diagnostic", "backendReason", "completions", "hostFixture");
+        Set.of("version", "backends", "expected", "mode", "diagnostic", "completions", "hostFixture");
 
     private static final Set<String> RUNTIME_EXPECTATION_FIELDS =
         Set.of("mode", "transcript", "exitCode", "error");
@@ -191,14 +191,6 @@ public final class SidecarSchemaValidator {
         }
         var completions = validateCompletions(context, rootFields.get("completions"));
         if (completions.isPresent()) return completions;
-        if (rootFields.containsKey("backendReason")) {
-            var reason = rootFields.get("backendReason");
-            if (!(reason instanceof CanonicalJson.Str text) || text.value().isBlank())
-                return failure(context, "backendReason", "requires a nonempty fixture-specific capability reason");
-        }
-        if (rootFields.get("backends") instanceof CanonicalJson.Arr lanes
-                && lanes.items().size() < BACKEND_NAMES.size() && !rootFields.containsKey("backendReason"))
-            return failure(context, "backendReason", "a backend subset requires an explicit capability reason");
         return validateRuntimeSidecar(context, rootFields);
     }
 
@@ -380,7 +372,7 @@ public final class SidecarSchemaValidator {
             }
             names.add(name.value());
         }
-        if (names.isEmpty()) {
+        if (!new java.util.HashSet<>(names).equals(new java.util.HashSet<>(BACKEND_NAMES))) {
             return failure(context, "backends",
                 "a runtime sidecar must name exactly the three backends "
                     + "luajit, jvm, js (got "

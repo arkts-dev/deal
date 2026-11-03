@@ -1,1 +1,0 @@
-module.exports={C:{$kind:"class",$classname:"@$external/host/probe/C"},mutate:v=>{delete v.x;}};

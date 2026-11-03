@@ -2,7 +2,8 @@
   "version": 1,
   "backends": [
     "js",
-    "luajit"
+    "luajit",
+    "jvm"
   ],
   "expected": {
     "mode": "runtime-ok",
@@ -12,6 +13,5 @@
     },
     "exitCode": 0
   },
-  "backendReason": "Companion uses native string arrays on JS/Lua; the frozen JVM companion uses the wrong reference-array ABI.",
   "hostFixture": "boundaries/boundary_transport_string_array_false"
 }
