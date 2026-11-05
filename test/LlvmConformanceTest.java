@@ -12,6 +12,12 @@ public final class LlvmConformanceTest {
     private static NativeCorpusAccounting accounting;
 
     public static void main(String[] args) throws Exception {
+        if (Arrays.equals(args, new String[]{"--requirements"})) {
+            accounting = new NativeCorpusAccounting();
+            nativeNumericCases();
+            NativeRequirementCases.run(accounting);
+            return;
+        }
         Path corpus = Path.of("test/conformance").toAbsolutePath().normalize();
         var fixtures = CorpusConformanceTest.nativeCorpusFixtures(corpus);
         accounting = args.length == 0 ? new NativeCorpusAccounting() : null;
@@ -24,6 +30,7 @@ public final class LlvmConformanceTest {
             nativeTransportCase();
             nativeCallbackCase();
             nativeNumericCases();
+            NativeRequirementCases.run(accounting);
         }
         int passed = 0, failed = 0;
         for (var fixture : fixtures) {
@@ -626,6 +633,11 @@ public final class LlvmConformanceTest {
                   check(math.sqrt(nan) !== math.sqrt(nan));
                   check(math.sqrt(1 / 0) === 1 / 0);
                   check(1 / math.sqrt(-0) === -1 / 0);
+                  let a: string = "a";
+                  let b: string = "b";
+                  check(a <= b); check(a <= a); check(!(b <= a));
+                  check(b > a); check(!(a > b)); check(!(a > a));
+                  check(b >= a); check(a >= a); check(!(a >= b));
                   return null;
                 }
                 """;

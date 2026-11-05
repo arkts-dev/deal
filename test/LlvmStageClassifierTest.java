@@ -217,14 +217,13 @@ public final class LlvmStageClassifierTest {
                 "FIELD_DELETE", "JSON_FROM_CLASS", "JSON_TO_CLASS",
                 "MODULE_INIT", "MODULE_IMPORT", "EXPORT_READ",
                 "EXPORT_PUBLISH", "ENTRY_INVOKE", "STDLIB_CALL",
-                "ASYNC_START", "AWAIT"),
+                "ASYNC_START", "AWAIT", "OPTIONAL_READ"),
             stagedKinds, "the staged operation kinds");
         checkEq(Set.of("BOUNDARY", "DELETE", "FUNCTION_ADAPT", "CALLBACK_INVOKE"),
             staticKinds, "the statically-proven operation kinds are the typed"
                 + " boundary, the delete envelope, the adapter shape and the"
                 + " host-driven callback entry");
-        check(rejectedKinds.contains("OPTIONAL_READ")
-                && rejectedKinds.contains("CLASS_FACTORY")
+        check(rejectedKinds.contains("CLASS_FACTORY")
                 && rejectedKinds.contains("EXTERNAL_ENTRY"),
             "the runtime-service op families outside this stage are rejected: "
                 + rejectedKinds);

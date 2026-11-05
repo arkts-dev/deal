@@ -13,7 +13,26 @@ final class NativeCorpusAccounting {
     private final Set<BinarySelector> binary = EnumSet.noneOf(BinarySelector.class);
     private final Set<UnarySelector> unary = EnumSet.noneOf(UnarySelector.class);
     private final Set<FailureArmId> arms = EnumSet.noneOf(FailureArmId.class);
+    private final Set<BoundaryKind> runtimeBoundaries = EnumSet.noneOf(BoundaryKind.class);
+    private final Set<FailureArmId> materializedArms = EnumSet.noneOf(FailureArmId.class);
     private int cases;
+
+    /** Physical runtime services do not publish semantic BOUNDARY ops. */
+    void runtimeBoundary(BoundaryKind boundary) { runtimeBoundaries.add(boundary); }
+
+    /** Compare every field of a real C arm materialization with its independent registry tuple.
+     * This is ABI contract coverage, never a claim that sqrt throws or C loads JS tables. */
+    void materializedArm(FailureArmId id, Map<String, String> parameters,
+            String code, String message, String expected, String actual) {
+        var tuple = FailureContractRegistry.render(id, parameters, expected, actual, null);
+        if (!tuple.code().name().equals(code) || !tuple.message().equals(message)
+                || !Objects.equals(tuple.expected(), expected) || !Objects.equals(tuple.actual(), actual))
+            throw new AssertionError("native materialized tuple mismatch: " + id);
+        // Only retained, source-inapplicable ABI contracts can use this channel.
+        // Every ordinary failure arm still requires its case-local execution pin.
+        if (id == FailureArmId.SQRT_NEGATIVE || id == FailureArmId.HOST_LOAD_RAW_SHAPE
+                || id == FailureArmId.HOST_LOAD_NOT_A_MODULE) materializedArms.add(id);
+    }
 
     void executed(ExecutableLoweredProject project, SidecarExpectations.ErrorExpectation pin) {
         cases++;
@@ -112,20 +131,27 @@ final class NativeCorpusAccounting {
             null, null, null, Optional.of("string"), unpinned.actual(), unpinned.frames(), unpinned.cause()));
         if (!accounting.arms.contains(FailureArmId.HOST_STRING_SURROGATE))
             throw new AssertionError("accounting refused a fully pinned inner failure");
+        accounting.materializedArm(FailureArmId.HOST_PARAMETER_CELL,
+            Map.of("index", "1", "inner", inner), failure.code().name(), failure.message(), "number", "string");
+        if (accounting.materializedArms.contains(FailureArmId.HOST_PARAMETER_CELL))
+            throw new AssertionError("ABI materialization substituted for a source failure-site pin");
     }
 
     void verify() {
         Set<SemanticOpKind> missingOps = EnumSet.allOf(SemanticOpKind.class); missingOps.removeAll(operations);
-        Set<BoundaryKind> missingBoundaries = EnumSet.allOf(BoundaryKind.class); missingBoundaries.removeAll(boundaries);
+        Set<BoundaryKind> missingBoundaries = EnumSet.allOf(BoundaryKind.class);
+        missingBoundaries.removeAll(boundaries); missingBoundaries.removeAll(runtimeBoundaries);
         Set<StdlibFunctionId> missingStdlib = EnumSet.allOf(StdlibFunctionId.class); missingStdlib.removeAll(stdlib);
         Set<BinarySelector> missingBinary = EnumSet.allOf(BinarySelector.class); missingBinary.removeAll(binary);
         Set<UnarySelector> missingUnary = EnumSet.allOf(UnarySelector.class); missingUnary.removeAll(unary);
-        Set<FailureArmId> excluded = EnumSet.of(FailureArmId.HOST_LOAD_RAW_SHAPE, FailureArmId.HOST_LOAD_NOT_A_MODULE);
-        Set<FailureArmId> missingArms = EnumSet.allOf(FailureArmId.class); missingArms.removeAll(arms); missingArms.removeAll(excluded);
+        Set<FailureArmId> missingArms = EnumSet.allOf(FailureArmId.class);
+        missingArms.removeAll(arms); missingArms.removeAll(materializedArms);
         System.out.println("Native accounting: " + cases + " verdict-checked cases; ops=" + operations.size()
             + "/" + SemanticOpKind.values().length + ", boundaries=" + boundaries.size() + "/" + BoundaryKind.values().length
             + ", stdlib=" + stdlib.size() + "/" + StdlibFunctionId.values().length
-            + ", arms=" + arms.size() + "/" + FailureArmId.values().length + ", excluded=" + excluded);
+            + ", failure-site arms=" + arms.size() + "/" + FailureArmId.values().length);
+        System.out.println("Native runtime contracts: boundaries=" + runtimeBoundaries
+            + "; materialized ABI arms=" + materializedArms + "; exclusions=[]");
         System.out.println("Native accounting evidenced arms: " + arms);
         System.out.println("Native accounting missing: ops=" + missingOps + "; boundaries=" + missingBoundaries
             + "; stdlib=" + missingStdlib + "; binary=" + missingBinary + "; unary=" + missingUnary + "; arms=" + missingArms);

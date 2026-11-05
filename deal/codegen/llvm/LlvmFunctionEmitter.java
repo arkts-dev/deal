@@ -649,6 +649,7 @@ final class LlvmFunctionEmitter {
             case TABLE_NEW -> emitTableNew(op);
             case ARRAY_LENGTH -> emitArrayLength(op);
             case MEMBER_READ -> emitMemberRead(op);
+            case OPTIONAL_READ -> emitOptionalRead(op);
             case MEMBER_WRITE -> emitMemberWrite(op);
             case MEMBER_DELETE -> emitMemberDelete(op);
             case INDEX_NORMALIZE -> emitIndexNormalize(op);
@@ -1850,6 +1851,8 @@ final class LlvmFunctionEmitter {
             throw new IllegalStateException("the value " + value
                 + " has no producing op in the lowered project");
         }
+        if (producer.resultType() == deal.semantic.ir.InternalResultType.INTERNAL_MISSING)
+            return RuntimeDescriptor.Unknown.INSTANCE;
         if (!(producer.resultType() instanceof RuntimeDescriptor descriptor)) {
             throw new IllegalStateException("the value " + value
                 + " carries no descriptor");
@@ -5003,7 +5006,30 @@ final class LlvmFunctionEmitter {
             LlvmTypeMapper.DATA, List.of(
                 LlvmTypeMapper.TABLE + " " + table,
                 LlvmTypeMapper.STRING + " " + key));
-        storeResultOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum);
+        if (op.resultType() == deal.semantic.ir.InternalResultType.INTERNAL_MISSING) {
+            String slot = valueSlot((ValueId) op.result(), LlvmTypeMapper.DATA);
+            emit("store " + LlvmTypeMapper.DATA + " " + datum + ", " + LlvmTypeMapper.DATA + "* " + slot);
+            rootSlotWrite(RuntimeDescriptor.Unknown.INSTANCE, slot, datum, op);
+        } else {
+            storeResultOf(op, RuntimeDescriptor.Unknown.INSTANCE, datum);
+        }
+    }
+
+    /** Raw absent slots are already undefined datums; preserve present data
+     * until the envelope's own contextual boundary validates it. */
+    private void emitOptionalRead(SemanticOp op) {
+        KindPayload.OptionalReadPayload payload = (KindPayload.OptionalReadPayload) op.payload();
+        String datum = payload.value() == null
+            ? "{ i32 0, i32 0, double 0.0, i8* null }"
+            : load(op, LlvmTypeMapper.DATA, valueSlot(payload.value(), LlvmTypeMapper.DATA));
+        RuntimeDescriptor declared = (RuntimeDescriptor) op.resultType();
+        String input = newAlloca("%struct.deal_check_input", "optionalinput");
+        emit("store %struct.deal_check_input " + checkInputRecordOf(op,
+            RuntimeDescriptor.Unknown.INSTANCE, datum) + ", %struct.deal_check_input* " + input);
+        SemanticOp boundary = unit.ops().stream().filter(candidate -> candidate.payload() instanceof KindPayload.BoundaryPayload
+            && op.opId().equals(candidate.origin().parentOpId())).findFirst().orElse(op);
+        emitCheckCall(boundary, declared, input);
+        storeResult(op, stagedRepresentation(declared), LlvmDataValues.unbox(session, sink, declared, datum));
     }
 
     /** One record-member write: null and undefined stay present (R2). */

@@ -109,13 +109,13 @@ public final class LlvmStageClassifier {
                  INDEX_WRITE, INDEX_DELETE, HAS_FIELD, FOR_EACH, CLASS_NEW,
                  FIELD_READ, FIELD_WRITE, FIELD_DELETE, JSON_FROM_CLASS,
                  JSON_TO_CLASS, RECURSIVE_GROUP_INIT, STDLIB_CALL, ASYNC_START,
-                 AWAIT -> STAGED;
+                 AWAIT, OPTIONAL_READ -> STAGED;
             // CALLBACK_INVOKE emits the host-driven re-entry of one DEAL
             // function: the recorded `HOST_TO_DEAL` parameter boundaries and
             // the `DEAL_TO_HOST` return boundary with the relay-or-discard
             // failure channel (H4).
             case BOUNDARY, DELETE, FUNCTION_ADAPT, CALLBACK_INVOKE -> STATIC_ONLY;
-            case OPTIONAL_READ, EXTERNAL_ENTRY, CLASS_FACTORY -> REJECTED;
+            case EXTERNAL_ENTRY, CLASS_FACTORY -> REJECTED;
         };
     }
 
@@ -174,7 +174,7 @@ public final class LlvmStageClassifier {
         map.put(KindPayload.IndexReadPayload.class, STATIC_ONLY);
         map.put(KindPayload.IndexWritePayload.class, STATIC_ONLY);
         map.put(KindPayload.IndexDeletePayload.class, STAGED);
-        map.put(KindPayload.OptionalReadPayload.class, REJECTED);
+        map.put(KindPayload.OptionalReadPayload.class, STAGED);
         map.put(KindPayload.HasFieldPayload.class, STAGED);
         map.put(KindPayload.RecursiveGroupInitPayload.class, STAGED);
         map.put(KindPayload.FunctionAdaptPayload.class, STATIC_ONLY);
@@ -412,11 +412,7 @@ public final class LlvmStageClassifier {
             case KindPayload.ModuleInitPayload ignored -> Optional.empty();
             case KindPayload.BreakPayload ignored -> Optional.empty();
             case KindPayload.ContinuePayload ignored -> Optional.empty();
-            case KindPayload.OptionalReadPayload ignored ->
-                Optional.of(reject(op, "the OPTIONAL_READ envelope of a"
-                    + " missing-capable raw record read: a record read is"
-                    + " `unknown` and needs an explicit assertion, so no valid"
-                    + " v1.5 program reaches this envelope"));
+            case KindPayload.OptionalReadPayload ignored -> Optional.empty();
             case KindPayload.StringConcatPayload concat ->
                 stringConcatReason(unit, op, concat);
             case KindPayload.ArrayNewPayload array ->
