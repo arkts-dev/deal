@@ -10,7 +10,7 @@ Features not described in this specification do not exist in the language.
 
 - Tokens and property-name rules are defined by the [lexical grammar](#lexical-grammar-normative). Follow TypeScript module identifier rules by position: `switch`/`enum` cannot name bindings.
 - User-declared identifiers must not contain `$`. Compiler-generated names containing `$` are source-visible only when specified, such as `C$fromJson` and `C$toJson`.
-- `Record`, `Promise`, `Object`, `undefined` are unshadowable builtins.
+- `Record`, `Promise`, `Object`, `Array`, `String`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
 
@@ -35,7 +35,7 @@ Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 | `\"` | double quote (U+0022) |
 | `\'` | single quote (U+0027) |
 
-String literals admit only these escapes. A `string` is a sequence of UTF-16 code units, including unpaired surrogates. Host boundaries reject malformed transport encodings.
+A string is a sequence of UTF-16 code units, including lone surrogates. Literals admit only these escapes. Every backend's host transport must preserve code units exactly and reject malformed encodings.
 
 ### Template literals
 
@@ -192,8 +192,10 @@ DeclarationExport ::= 'export' (ExternalFunctionDeclaration | ClassDeclaration)
 
 Expression ::= AssignmentExpression
 
-AssignmentExpression ::= LogicalOrExpression
+AssignmentExpression ::= ConditionalExpression
  | LeftHandSideExpression '=' AssignmentExpression
+
+ConditionalExpression ::= LogicalOrExpression ('?' AssignmentExpression ':' AssignmentExpression)?
 
 LogicalOrExpression ::= LogicalAndExpression ('||' LogicalAndExpression)*
 
@@ -246,7 +248,7 @@ ObjectLiteral ::= '{' PropertyList? '}'
 
 PropertyList ::= Property (',' Property)* ','?
 
-Property ::= Identifier ':' Expression
+Property ::= (Identifier | StringLiteral | '[' Expression ']') ':' Expression
 
 FunctionExpression ::= AsyncPrefix? 'function' '(' ParameterList? ')' ':' ReturnType Block
 
@@ -338,7 +340,7 @@ Constraints:
 
 ### Narrowing and checked assertions
 
-Basic narrowing:
+Only locals and parameters narrow. Null/undefined `===`/`!==` tests select or remove that member; unknown complements stay unknown. `!` swaps true/false refinements. Short-circuit `&&` checks its RHS under the left operand's true refinement; `||` under its false refinement. `if` and ternary branches receive the corresponding condition refinements. Continuation retains facts common to paths that reach it.
 
 ```ts
 let n: number | null | undefined = 1;
@@ -347,16 +349,10 @@ if (n !== null) {
 }
 ```
 
-Narrow locals/parameters only. Null/undefined `===`/`!==` tests select/remove that member; unknown complements stay unknown.
-
 ```ts
-function use(value: string | undefined): void {
- if (value === undefined) {
-  return;
- } else {
-  let text: string = value; // narrowed
- }
- let text: string = value; // error: outside narrowing block
+function use(value: string | null | undefined): void {
+ if (value === null || value === undefined) { return; }
+ let text: string = value; // narrowed
 }
 ```
 
@@ -545,7 +541,7 @@ export class User {
 
 Non-jsonable fields produce compile-time errors at their declarations.
 
-Circular `@jsonable` dependencies, including through arrays and nullish wrappers, are compile-time errors.
+Allow recursive `@jsonable` schemas; apply [runtime cycle rejection](#json-encoding).
 
 In declaration files, `// @jsonable` has no effect; compatible `C$fromJson` and `C$toJson` functions may be declared explicitly.
 
@@ -556,7 +552,7 @@ export function C$fromJson(s: string): C | null;
 export function C$toJson(v: C): string;
 ```
 
-**fromJson.** Parses an object; rejects extra keys, missing required-present keys, and duplicate decoded property names at every object nesting level. Decodes fields recursively in declaration order; missing optionals stay absent. Failure returns `null`, never throws or publishes partial instances.
+**fromJson.** Parses an object; rejects extra keys, missing required-present keys, and duplicate decoded property names at every object nesting level. Decodes fields recursively in declaration order; array fields receive validated element descriptors; missing optionals stay absent. Failure returns `null`, never throws or publishes partial instances.
 
 ```ts
 let invalid: User | null = User$fromJson("{\"name\":\"Ada\",\"naem\":\"Bob\"}"); // null: extra key
@@ -610,7 +606,7 @@ let v: User = { id: 2, name: "Bob", nick: "b", bio: null, active: false };
 let missing: User = { name: "Ada" }; // compile-time error: required fields omitted
 ```
 
-- Evaluate supplied field expressions exactly once, left-to-right in literal order.
+- Computed keys are forbidden. Evaluate supplied field expressions exactly once, left-to-right in literal order.
 - Every required-present field must occur exactly once. Optional fields may be omitted. Extra fields are rejected.
 - Validate the supplied field values; tag and publish the instance only after successful validation. Failure retains earlier expression effects but publishes no partial instance.
 
@@ -636,8 +632,6 @@ p.nick = undefined;              // now present
 let present = Object.hasOwn(p, "nick"); // true
 p.nick = null;                   // present-null
 ```
-
-`Object.hasOwn(obj, key)` returns boolean: own presence, without narrowing. Evaluate receiver then key once. Classes require a literal declared-field name; records accept string expressions. No general Object API or literal-string types.
 
 ```ts
 class Profile { nick?: string | null; }
@@ -977,14 +971,12 @@ data.name = null;                  // present-null
 
 ### Literal keys and deletion
 
-Record literal keys must be distinct.
+Computed Record keys (`{ [key]: value }`) must be strings. Evaluate each key before its value, once, in property order. Duplicate decoded keys are compile-time errors when statically known; otherwise raise Error.
 
 ```ts
-let data: Record<string, unknown> = { name: "Ada", age: 36 };
-// Quoted/computed literal keys are unsupported; use indexed writes:
-let key: string = "extra";
-data[key] = 1;
-delete data[key];
+let data: Record<string, unknown> = { "content-type": "text/plain" };
+data["extra"] = 1;
+delete data["extra"];
 ```
 
 Deletion removes an own key. Reads of absent keys yield undefined; present keys may hold any data value. Stored classes/arrays/functions retain their tags, element descriptors and identities.
@@ -993,7 +985,7 @@ Deletion removes an own key. Reads of absent keys yield undefined; present keys 
 
 ### Array type and semantics
 
-`T[]` is invariant in T, admits any data element type, and preserves element descriptors governing writes through unknown/host aliases. json.parse arrays, including nested/empty/Record descendants, retain unknown descriptors. C$fromJson fields and fresh host arrays admitted as T[] receive T descriptors after validation. Host-crossing arrays retain descriptors/identity. Assertions never infer/retag descriptors: parsed [1] cannot assert number[].
+`T[]` is invariant in T; persistent element descriptors check writes through all aliases. See [checked assertions](#narrowing-and-checked-assertions).
 
 ### Indexing
 
@@ -1066,12 +1058,10 @@ if (b) { }
 
 ### Conditional
 
+`condition ? a : b` evaluates only the selected branch. Branches receive contextual types; otherwise infer identical types or a permitted nullish union, rejecting incompatible branches.
+
 ```ts
-if (boolean_expr) {
- consume();
-} else {
- recover();
-}
+let result = condition ? a : b;
 ```
 
 ### While
@@ -1352,71 +1342,93 @@ Rules:
 - `languageVersion` must be `"1.6"` and governs all source and declaration files in the project.
 - `moduleRoots` participate in import resolution.
 - DEAL has no package registry. `dependencies` is reserved for local/package-manager integration later.
-- Standard library modules may be described by bundled `.d.deal` files, but are resolved as part of the language distribution rather than as project external host modules.
 - `externals` declares host modules available to the compiler; importing an unlisted external is a compile-time error. External entries describe host declarations only; `nativeLibrary` is not a valid manifest option.
 
-### Standard library declarations
+### Standard library builtins
 
-The compiler ships practical minimal standard modules. All are imported explicitly.
+Builtins require no imports and support direct calls only, not value references.
 
-#### `std/console.d.deal`
+#### Object
 
-```ts
-export function log(x: string): void;
-export function error(x: string): void;
+```txt
+Object.hasOwn(value, key: string): boolean
+Object.keys(value): string[]
 ```
 
-#### `std/string.d.deal`
+Both accept Records or class instances. `hasOwn` tests own presence without narrowing; class keys require literal declared-field names.
 
-```ts
-export function length(s: string): number;
-export function substring(s: string, start: number, end: number): string;
-export function contains(s: string, part: string): boolean;
-export function startsWith(s: string, part: string): boolean;
-export function endsWith(s: string, part: string): boolean;
-export function replace(s: string, search: string, replacement: string): string;
-export function split(s: string, sep: string): string[];
-export function trim(s: string): string;
+`keys` snapshots present keys, including null/undefined-valued fields. Record order: array-index keys ascending, then other strings in creation order. Classes use declaration order, excluding metadata.
+
+#### Array
+
+```txt
+Array.pop(xs: E[]): E | undefined
+Array.splice(xs: E[], start: number, deleteCount: number): E[]
+Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 ```
 
-Follow [ECMAScript String semantics](https://tc39.es/ecma262/#sec-properties-of-the-string-prototype-object) for the declared signatures: `length` reads the length property; `contains` calls `includes`; other functions call the corresponding methods.
+E and R denote inferred data types, not source generics: E comes from xs, R from the synchronous mapper's result type.
 
-#### `std/table.d.deal`
+`pop` removes and returns the last element; an empty array yields undefined.
 
-```ts
-export function keys(t: Record<string, unknown>): string[];
+`splice` follows ECMAScript argument normalization and deletion, without insertion arguments. Both `pop` and `splice` validate removed elements before mutation.
+
+`from` traverses xs as [for-of](#for-of) does, invoking mapper with each value and index; returns its results in a fresh array.
+
+#### console
+
+```txt
+console.log(x: string): void
+console.error(x: string): void
 ```
 
-Returns present string keys, including null/undefined-valued keys; order is unspecified.
+#### String
 
-#### `std/json.d.deal`
-
-```ts
-export function parse(s: string): Record<string, unknown>;
-export function stringify(value: unknown): string | undefined;
+```txt
+String.length(s: string): number
+String.substring(s: string, start: number, end: number): string
+String.includes(s: string, part: string): boolean
+String.startsWith(s: string, part: string): boolean
+String.endsWith(s: string, part: string): boolean
+String.replace(s: string, search: string, replacement: string): string
+String.split(s: string, sep: string): string[]
+String.trim(s: string): string
 ```
 
-`parse` requires an object root; malformed JSON, duplicate decoded keys and other roots raise Error. Numeric tokens follow [Numbers](#numbers), also in class decoding.
+Follow [ECMAScript String semantics](https://tc39.es/ecma262/#sec-properties-of-the-string-prototype-object): `String.length(s)` reads s.length; other operations apply the corresponding method to s.
+
+#### Numeric conversion
+
+`String(value: number): string` follows ECMAScript Number::toString.
+
+#### JSON
+
+```txt
+JSON.parse(s: string): unknown
+JSON.stringify(value: unknown): string | undefined
+```
+
+`parse` accepts objects, arrays, strings, numbers, booleans or null. Malformed JSON or duplicate decoded keys raise Error. Parsed arrays have unknown element descriptors. Numbers follow [Numbers](#numbers), including class decoding.
 
 ##### JSON encoding
 
-Use JavaScript JSON.stringify value rules: omit undefined/function-valued properties; encode such array elements as null; top-level undefined/function yields undefined. Non-finite numbers become null; finite numbers roundtrip except negative zero becomes `0`. Preserve null; reject cycles, not shared acyclic children. Own-key order: array-index keys ascending, then creation order (declared fields use declaration order). No serialization hooks.
+Follow ECMAScript JSON.stringify omission/substitution rules and exact numeric spelling. Reject cycles, not shared acyclic children; no serialization hooks. Key ordering follows [Object.keys](#object).
 
-#### `std/math.d.deal`
+#### Math
 
-```ts
-export function floor(x: number): number;
-export function ceil(x: number): number;
-export function sqrt(x: number): number;
-export function absNumber(x: number): number;
+```txt
+Math.floor(x: number): number
+Math.ceil(x: number): number
+Math.sqrt(x: number): number
+Math.abs(x: number): number
 ```
 
-`sqrt` preserves NaN, +∞ and signed zero. Negative inputs yield NaN.
+Follow corresponding ECMAScript Math operations.
 
-#### `std/time.d.deal`
+#### Date
 
-```ts
-export function nowMillis(): number;
+```txt
+Date.now(): number
 ```
 
 Returns Unix-epoch wall-clock milliseconds with backend-dependent resolution; readings need not increase.
@@ -1424,11 +1436,8 @@ Returns Unix-epoch wall-clock milliseconds with backend-dependent resolution; re
 Usage:
 
 ```ts
-import * as strings from "std/string";
-import * as json from "std/json";
-
-let parts: string[] = strings.split("a,b", ",");
-let t: Record<string, unknown> = json.parse("{\"name\":\"Ada\"}");
+let parts: string[] = String.split("a,b", ",");
+let t = JSON.parse("{\"name\":\"Ada\"}") as Record<string, unknown>;
 ```
 
 ### Host APIs
@@ -1448,6 +1457,8 @@ Check every untyped host-to-DEAL crossing:
 ```ts
 let f: (x: number) => number = lib.f;
 ```
+
+Host arrays without DEAL descriptors acquire them on first typed admission; existing descriptors survive crossings.
 
 Unknown preserves supported data identity, not opaque hosts. Cycle-safe validation rejects unsupported leaves before publication, including unread Record/container descendants; cycles/sharing retain original identities. See [assertions](#narrowing-and-checked-assertions) and [validation](#backend-conformance-contract).
 
@@ -1740,5 +1751,5 @@ Evaluation is strict and left-to-right:
 4. Short-circuit `&&` and `||`.
 5. Function calls create a new local scope.
 6. Class object literals follow [Construction](#construction).
-7. Record object literal construction evaluates properties left-to-right and stores values as dynamic fields.
+7. Record construction follows [Literal keys](#literal-keys-and-deletion), storing dynamic fields.
 
