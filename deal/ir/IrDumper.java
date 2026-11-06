@@ -1015,7 +1015,7 @@ public final class IrDumper implements Visitor<String> {
 
     private String opStr(BinaryOp op) {
         return switch (op) {
-            case ADD -> "+"; case SUB -> "-"; case MUL -> "*"; case DIV -> "/";
+            case ADD -> "+"; case SUB -> "-"; case MUL -> "*"; case DIV -> "/"; case REM -> "%";
             case POW -> "**"; case EQ -> "==="; case NEQ -> "!==";
             case LT -> "<"; case LTE -> "<="; case GT -> ">"; case GTE -> ">=";
             case AND -> "&&"; case OR -> "||";

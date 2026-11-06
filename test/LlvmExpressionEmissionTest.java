@@ -167,7 +167,7 @@ public final class LlvmExpressionEmissionTest {
           return a !== b;
         }
         function arithmetic(a: number, b: number): number {
-          return a + b - a * b / b;
+          return a + b - a * b / b % b;
         }
         function negate(a: number): number { return -a; }
         function not(a: boolean): boolean { return !a; }
@@ -547,6 +547,7 @@ public final class LlvmExpressionEmissionTest {
             Map.entry(BinarySelector.NUMBER_MUL, new String[] {"ARITHMETIC", "", "fmul"}),
             Map.entry(BinarySelector.NUMBER_DIV_IEEE,
                 new String[] {"ARITHMETIC", "", "fdiv"}),
+            Map.entry(BinarySelector.NUMBER_REM, new String[] {"ARITHMETIC", "", "frem"}),
             Map.entry(BinarySelector.NUMBER_EQ,
                 new String[] {"IEEE_PREDICATE", "oeq", ""}),
             Map.entry(BinarySelector.NUMBER_NE,
@@ -720,8 +721,9 @@ public final class LlvmExpressionEmissionTest {
         check(functionOf(module, "arithmetic").contains("fadd double ")
                 && functionOf(module, "arithmetic").contains("fsub double ")
                 && functionOf(module, "arithmetic").contains("fmul double ")
-                && functionOf(module, "arithmetic").contains("fdiv double "),
-            "the four arithmetic selectors use fadd/fsub/fmul/fdiv");
+                && functionOf(module, "arithmetic").contains("fdiv double ")
+                && functionOf(module, "arithmetic").contains("frem double "),
+            "arithmetic selectors use fadd/fsub/fmul/fdiv/frem");
         check(functionOf(module, "negate").contains("fneg double "),
             "NUMBER_NEG uses fneg double");
         check(!functionOf(module, "negate").contains("fsub double 0.0"),
@@ -1406,7 +1408,7 @@ public final class LlvmExpressionEmissionTest {
     /** C6's pinned instruction family of one selector. */
     private static LlvmSelectorArms.Form c6Form(BinarySelector selector) {
         return switch (selector) {
-            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE ->
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_REM ->
                 LlvmSelectorArms.Form.ARITHMETIC;
             case NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT, NUMBER_GE ->
                 LlvmSelectorArms.Form.IEEE_PREDICATE;
@@ -1711,6 +1713,7 @@ public final class LlvmExpressionEmissionTest {
                     case "fsub" -> left - right;
                     case "fmul" -> left * right;
                     case "fdiv" -> left / right;
+                    case "frem" -> left % right;
                     default -> throw new IllegalStateException("the arm of "
                         + arm.selector() + " names no arithmetic instruction: "
                         + arm.mnemonic());
@@ -1720,6 +1723,7 @@ public final class LlvmExpressionEmissionTest {
                     case NUMBER_SUB -> SharedValueSemantics.numberSub(left, right);
                     case NUMBER_MUL -> SharedValueSemantics.numberMul(left, right);
                     case NUMBER_DIV_IEEE -> SharedValueSemantics.numberDiv(left, right);
+                    case NUMBER_REM -> left % right;
                     default -> throw new IllegalStateException("the arithmetic arm of "
                         + arm.selector() + " has no shared row");
                 };
@@ -1821,7 +1825,7 @@ public final class LlvmExpressionEmissionTest {
     /** The fixture function carrying one selector arm, or {@code null}. */
     private static String sampleFunction(BinarySelector selector) {
         return switch (selector) {
-            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE -> "arithmetic";
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_REM -> "arithmetic";
             case NUMBER_EQ -> "numberEq";
             case NUMBER_NE -> "numberNe";
             case NUMBER_LT -> "numberLt";

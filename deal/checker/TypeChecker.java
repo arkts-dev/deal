@@ -3107,6 +3107,7 @@ public final class TypeChecker {
             case SUB -> "-";
             case MUL -> "*";
             case DIV -> "/";
+            case REM -> "%";
 
             case POW -> "**";
             case EQ -> "===";

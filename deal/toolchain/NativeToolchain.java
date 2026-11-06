@@ -220,6 +220,8 @@ public final class NativeToolchain {
             command.add(driverUnit.toString());
         }
         command.add(registryUnit.toString());
+        // LLVM frem may lower to the platform fmod implementation.
+        command.add("-lm");
         command.add("-o");
         command.add(partial.toString());
         return List.copyOf(command);

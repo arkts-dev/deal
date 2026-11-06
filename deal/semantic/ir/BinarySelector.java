@@ -8,6 +8,7 @@ public enum BinarySelector implements ClosedSelector {
     NUMBER_SUB,
     NUMBER_MUL,
     NUMBER_DIV_IEEE,
+    NUMBER_REM,
 
 
     // Number comparison (IEEE-754, including NaN).

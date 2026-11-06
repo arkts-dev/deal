@@ -2360,6 +2360,9 @@ case "NUMBER_ADD" -> {
             case "NUMBER_DIV_IEEE" -> {
                 return ((Number) l).doubleValue() / ((Number) r).doubleValue();
             }
+            case "NUMBER_REM" -> {
+                return ((Number) l).doubleValue() % ((Number) r).doubleValue();
+            }
             default -> throw new IllegalStateException("unknown arithmetic selector: " + selector);
         }
     }

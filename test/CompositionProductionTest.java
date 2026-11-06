@@ -173,6 +173,17 @@ public final class CompositionProductionTest {
                 + "throw {code:\"TEST\",message:\"const identity or capture\"};}return null;}";
             execute(constBindings, "", root.resolve("const-bindings"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String remainders = "export function main():null {"
+                + "let a:number[]=[5,-5,5,-5,5.5,-5.5,0,-0,1,0,1/0,1,1];"
+                + "let b:number[]=[2,2,-2,-2,2,2,2,2,0,0,2,1/0,0/0];"
+                + "let want:number[]=[1,-1,1,-1,1.5,-1.5,0,-0,0/0,0/0,0/0,1,0/0];"
+                + "let i:number=0;while(i<a.length){let got:number=a[i]%b[i];let expected:number=want[i];"
+                + "if(expected!==expected){if(got===got){throw {code:\"TEST\",message:\"remainder NaN\"};}}"
+                + "else {if(got!==expected || (got===0 && 1/got!==1/expected)){"
+                + "throw {code:\"TEST\",message:\"remainder sign/value\"};}}i=i+1;}"
+                + "if(20%6*2!==4 || 20/2%3!==1){throw {code:\"TEST\",message:\"remainder precedence\"};}return null;}";
+            execute(remainders, "", root.resolve("remainders"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -197,7 +208,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 28 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 35 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

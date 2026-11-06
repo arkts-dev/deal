@@ -14,7 +14,7 @@ Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>
 
 Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
 
-Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. Array indexes require finite whole numbers. Round deliberately through math.floor/ceil; format through typed helpers or host APIs. Conditions require boolean; concatenation/interpolation require strings. Use ===/!== with compatible types or admitted nullish comparisons.
+Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through math.floor/ceil; format through typed helpers or host APIs. Conditions require boolean; concatenation/interpolation require strings. Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 

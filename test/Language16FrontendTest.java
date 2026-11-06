@@ -52,6 +52,10 @@ public final class Language16FrontendTest {
         check("function f(): void { for(const x of [1]) { let g = function():void{x = 2;}; } }", false);
         check("function f(): void { for(const x of [1]) { const y = x; } }", true);
         check("function f(): void { const r:Record<string,unknown> = {const:1}; r.const = 2; }", true);
+        check("function f():number{return 5 % 2;}", true);
+        check("function f():number{return \"5\" % 2;}", false);
+        check("function f(x:unknown):number{return x % 2;}", false);
+        check("function f(x:unknown):number{if(typeof x===\"number\"){return x % 2;}return 0;}", true);
         check("function f(): void { return; }", true);
         check("function f(): void {}", true);
         check("function f(): null { return; }", false);

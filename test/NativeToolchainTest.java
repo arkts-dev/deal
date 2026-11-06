@@ -243,6 +243,7 @@ public final class NativeToolchainTest {
             expected.add(published.resolve(unit).toString());
         }
         expected.add(plan.registryUnit().toString());
+        expected.add("-lm");
         expected.add("-o");
         expected.add(product + NativeToolchain.PARTIAL_SUFFIX);
         checkEq(expected, plan.command(),
@@ -343,11 +344,12 @@ public final class NativeToolchainTest {
         check(driverAt > 0, "the argument vector carries the driver unit");
         checkEq(driverAt + 1, registryAt,
             "the registry follows the driver unit (D4 order)");
-        checkEq("-o", command.get(registryAt + 1),
-            "the output flag follows the registry unit");
+        checkEq("-lm", command.get(registryAt + 1), "the math library follows all units");
+        checkEq("-o", command.get(registryAt + 2),
+            "the output flag follows the math library");
         checkEq(product + NativeToolchain.PARTIAL_SUFFIX,
-            command.get(registryAt + 2), "the output is the fixed partial path");
-        checkEq(registryAt + 3, command.size(),
+            command.get(registryAt + 3), "the output is the fixed partial path");
+        checkEq(registryAt + 4, command.size(),
             "no translation unit follows the registry unit");
 
         NativeBuildResult result = NativeToolchain.build(plan);
@@ -974,6 +976,7 @@ public final class NativeToolchainTest {
                 expected.add(customOutput.resolve(unit).toString());
             }
             expected.add("<scratch>/" + HostsRegistry.UNIT_NAME);
+            expected.add("-lm");
             expected.add("-o");
             expected.add(customPath + NativeToolchain.PARTIAL_SUFFIX);
             checkEq(expected, maskScratchRegistry(printed),

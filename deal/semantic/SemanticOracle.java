@@ -2095,6 +2095,7 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 case NUMBER_SUB -> new Value.NumValue(numberUse(left) - numberUse(right));
                 case NUMBER_MUL -> new Value.NumValue(numberUse(left) * numberUse(right));
                 case NUMBER_DIV_IEEE -> new Value.NumValue(numberUse(left) / numberUse(right));
+                case NUMBER_REM -> new Value.NumValue(numberUse(left) % numberUse(right));
                 default -> throw new IllegalStateException(
                     "selector " + selector + " is not an arithmetic row");
             };

@@ -1073,7 +1073,7 @@ public final class LlvmStageClassifier {
             case NULLABLE_NULL_EQ, NULLABLE_NULL_NE,
                  NULLABLE_UNDEFINED_EQ, NULLABLE_UNDEFINED_NE ->
                 nullableTestReason(op, binary, left, right);
-            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE,
+            case NUMBER_ADD, NUMBER_SUB, NUMBER_MUL, NUMBER_DIV_IEEE, NUMBER_REM,
                  NUMBER_EQ, NUMBER_NE, NUMBER_LT, NUMBER_LE, NUMBER_GT,
                  NUMBER_GE -> numberReason(op, binary, left, right);
         };

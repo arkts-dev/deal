@@ -11244,6 +11244,11 @@ local function __arith(selector, l, r, opKey, digest, parent, origin)
   if selector == "NUMBER_SUB" then return l - r end
   if selector == "NUMBER_MUL" then return l * r end
   if selector == "NUMBER_DIV_IEEE" then return l / r end
+  if selector == "NUMBER_REM" then
+    if l ~= l or r ~= r or l == math.huge or l == -math.huge or r == 0 then return 0/0 end
+    if r == math.huge or r == -math.huge or l == 0 then return l end
+    return math.fmod(l, r)
+  end
   return 0
 end
 local function __arrayRead(opKey, digest, parent, bKey, bDigest, bParent, desc, inner,

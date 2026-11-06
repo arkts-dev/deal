@@ -134,6 +134,7 @@ public final class LlvmSelectorArms {
             case NUMBER_MUL -> new BinaryArm(selector, Form.ARITHMETIC, "", "fmul");
             case NUMBER_DIV_IEEE ->
                 new BinaryArm(selector, Form.ARITHMETIC, "", "fdiv");
+            case NUMBER_REM -> new BinaryArm(selector, Form.ARITHMETIC, "", "frem");
             case NUMBER_EQ -> new BinaryArm(selector, Form.IEEE_PREDICATE, "oeq", "");
             case NUMBER_NE -> new BinaryArm(selector, Form.IEEE_PREDICATE, "une", "");
             case NUMBER_LT -> new BinaryArm(selector, Form.IEEE_PREDICATE, "olt", "");

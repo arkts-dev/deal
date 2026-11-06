@@ -255,6 +255,7 @@ public final class NativeCompiler {
                 optimizationLevel, sources, extraFlags)) {
             command.add(source.toString());
         }
+        command.add("-lm");
         command.add("-o");
         command.add(product.toString());
         return run(command, null);

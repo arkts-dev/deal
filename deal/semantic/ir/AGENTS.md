@@ -12,7 +12,7 @@ Carry active profiles through constructors/guards. Recompute context hashes from
 
 ## Values and operations
 
-- Canonical binary64 atoms preserve signed zero, subnormals, infinities and NaN across typed/raw/text transport. Integer IDs cannot substitute for numeric scalars.
+- NUMBER_REM follows ECMAScript remainder (dividend sign, signed zero, nontrapping NaN/special values), never floor modulo. Canonical binary64 atoms preserve signed zero, subnormals, infinities and NaN across typed/raw/text transport. Integer IDs cannot substitute for numeric scalars.
 - StringSemantics owns UTF-16 algorithms and display-only lone-unit replacement; console display never changes language text or lossless trace transport.
 - Nominal checks validate complete declared field plans using operation-local cycle guards, never lasting certificates. Callable admission validates payload/signature, including unread descendants.
 - Required fields read their declared descriptor; optional reads use RuntimeDescriptor.optionalRead and add undefined. Missing normalizes to undefined, never null. Host failure shapes distinguish language undefined from private absent-carrier nil.

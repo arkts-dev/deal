@@ -13187,7 +13187,7 @@ public final class SemanticLowerer {
         private static boolean isComparisonOperator(BinaryOp op) {
             return switch (op) {
                 case EQ, NEQ, LT, LTE, GT, GTE -> true;
-                case ADD, SUB, MUL, DIV, POW, AND, OR -> false;
+                case ADD, SUB, MUL, DIV, REM, POW, AND, OR -> false;
             };
         }
 
@@ -13291,7 +13291,7 @@ public final class SemanticLowerer {
         /** True iff the operator is one of the six arithmetic operators (I3). */
         private static boolean isArithmeticOperator(BinaryOp op) {
             return switch (op) {
-                case ADD, SUB, MUL, DIV, POW -> true;
+                case ADD, SUB, MUL, DIV, REM, POW -> true;
                 case EQ, NEQ, LT, LTE, GT, GTE, AND, OR -> false;
             };
         }
@@ -13320,6 +13320,7 @@ public final class SemanticLowerer {
                     case SUB -> BinarySelector.NUMBER_SUB;
                     case MUL -> BinarySelector.NUMBER_MUL;
                     case DIV -> BinarySelector.NUMBER_DIV_IEEE;
+                    case REM -> BinarySelector.NUMBER_REM;
                     default -> throw new ConstructUnlowered("arithmetic operator "
                         + binary.op() + " outside the I3 number rows (producer defect)",
                             binary.span());

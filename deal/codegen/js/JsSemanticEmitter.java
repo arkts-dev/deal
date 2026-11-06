@@ -1231,6 +1231,8 @@ case NUMBER_ADD -> "(" + numeric(left) + " + "
                     + numeric(right) + ")";
                 case NUMBER_DIV_IEEE -> "(" + numeric(left) + " / "
                     + numeric(right) + ")";
+                case NUMBER_REM -> "(" + numeric(left) + " % "
+                    + numeric(right) + ")";
                 // The numeric selectors unwrap the read-side number-
                 // variant carrier ($rt.numOf) exactly like the shared
                 // executor's number views: a decoded JSON slot stays
