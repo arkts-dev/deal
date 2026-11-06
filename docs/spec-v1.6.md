@@ -126,6 +126,8 @@ Punctuator ::= '{' | '}' | '(' | ')' | '[' | ']' | ':' | ';' | ',' | '?'
 ```antlr
 Program ::= ImportDeclaration* TopLevelDeclaration*
 
+DeclarationProgram ::= ImportDeclaration* (ClassDeclaration | DeclarationExport)*
+
 TopLevelDeclaration ::= FunctionDeclaration
                       | ClassDeclaration
                       | ExportDeclaration
@@ -247,9 +249,9 @@ PrimaryExpression ::= NullLiteral
  | UndefinedLiteral
  | BooleanLiteral
  | NumberLiteral
-  | StringLiteral
-  | TemplateLiteral
-  | Identifier
+ | StringLiteral
+ | TemplateLiteral
+ | Identifier
  | '(' Expression ')'
  | ArrayLiteral
  | ObjectLiteral
@@ -384,7 +386,7 @@ Narrowing invalidation:
 - Narrowing cannot cross functions/back-edges. Each while-body entry, including after continue, receives fresh true-guard refinement; assignment/await invalidate normally, without body-to-guard propagation.
 - `await` invalidates all enclosing-function refinements.
 
-`typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/records/classes). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
+`typeof x` returns `undefined`, `boolean`, `number`, `string`, `function`, or `object` (null/arrays/Records/classes/Errors). Direct tests `typeof x === "kind"` narrow unknown in the matching branch for the first four kinds; `!==` narrows the else branch. Other branches stay unknown; no object/function structural inference. `instanceof C` tests nominal tags (including Error) and narrows the true branch to C; other values yield false, never retagging records.
 
 `e as T` evaluates once, descriptor-checks data type T, and raises E8001 on mismatch; no coercion/construction. Allow unknown sources or compatibility in either direction. Array checks require a compatible persistent element descriptor, not merely currently matching elements.
 
@@ -464,7 +466,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | `"abc"` | `string` |
 | `` `a${x}b` `` | `string` |
 | `(e)` | same type as `e` |
-| variable declared with type `T` | `T` |
+| variable reference | declared type, refined by [narrowing](#narrowing-and-checked-assertions) |
 | `a + b` where both `number` | `number` |
 | `a + b` where both `string` | `string` (concatenation; no implicit conversions) |
 | any other `+` | error |
@@ -477,7 +479,7 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 | `!a` | `a` must be `boolean`, result `boolean` |
 | `-a` where `a: number` | `number` |
 | any other unary `-` | error |
-| array literal `[e1, ..., eN]` | `T[]` where all `e_i` have the same `T` |
+| array literal `[e1, ..., eN]` | see [Array literals](#array-literals) |
 | record literal `{ p: e, ... }` | `Record<string, unknown>` with target context |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
 | index `a[b]` where `a: T[]`, `b: number` | `T` |
@@ -713,10 +715,7 @@ Compile-time call checking:
 - Wrong argument types are compile-time errors; results follow the signature.
 - Async call placement follows [await](#await).
 
-Runtime call checking:
-
-- Function wrappers check parameter and return values.
-- Calls through imported host values are wrapped before being used as typed functions.
+Function wrappers enforce [Typed boundaries](#typed-boundaries); imported host functions are wrapped before typed use.
 
 ### Function expressions
 
@@ -807,7 +806,7 @@ let h = add(1, 2); // number, if add has a statically known function type
 let field = t.someField; // unknown; validate before typed use
 ```
 
-Object literals and empty arrays require context.
+Object literals require context; array literals follow [Array literals](#array-literals).
 
 Disallowed:
 
@@ -845,7 +844,7 @@ Declaration order:
 
 - Module-level functions/classes are hoisted for name resolution.
 - Local declarations are visible only after declaration.
-- A function-expression initializer’s body sees its own binding.
+- Function and arrow initializer bodies see their own binding.
 
 ### Definite return analysis
 
@@ -905,6 +904,10 @@ Deletion removes an own key. Stored classes/arrays/functions retain their tags, 
 
 `T[]` is invariant in T; persistent element descriptors check writes through all aliases. See [checked assertions](#narrowing-and-checked-assertions).
 
+### Array literals
+
+With a target `T[]`, check elements against `T` by normal assignment rules. Without a target, require a nonempty literal whose elements have identical types; infer `T[]`.
+
 ### Indexing
 
 Arrays are 0-based.
@@ -931,7 +934,7 @@ For `xs[i] = value` where `xs: T[]`:
 
 1. `i` must have type `number`.
 2. `value` must be assignable to `T` by normal assignment rules.
-3. After evaluating receiver, index and RHS once in order, require an integral index in `0..length`; otherwise raise `E8002` without writing. Earlier effects remain. Index `length` appends.
+3. Following [assignment evaluation](#operational-semantics), require an integral index in `0..length`; otherwise raise `E8002` without writing. Index `length` appends.
 4. The stored value is runtime-checked against `T`.
 
 ```ts
@@ -1029,7 +1032,7 @@ Error values come from runtime exceptions or builtin `Error(message: string): Er
 throw Error("capacity exceeded");
 ```
 
-The thrown expression must have type `Error`. Execution transfers to the nearest enclosing `catch` block. If no `catch` encloses the `throw`, the error escapes to the host as a `DEALRuntimeError`.
+The thrown expression must have type `Error`. Execution transfers to the nearest dynamically enclosing `catch` block. Uncaught Errors follow [Host error and debugging](#host-error-and-debugging).
 
 ### try / catch
 
@@ -1043,7 +1046,7 @@ try {
 }
 ```
 
-Catch binds the identical Error as unknown. Host failures normalize to Error without replacing DEAL Errors; native code/message/cause are backend-defined. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
+Catch binds the identical Error as unknown. Host failures normalize to Error without replacing DEAL Errors; native code/message/cause are backend-defined. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success. If handling completes normally, execution continues after the statement.
 
 ### Narrowing across try/catch
 
@@ -1199,7 +1202,7 @@ Loading and linking are backend-defined and not source-visible; use `import`.
 
 ### Declaration-file format
 
-Declaration files use `.d.deal`. They contain only leading imports, exports, and class declarations. No executable statements.
+Declaration files use `.d.deal` and follow `DeclarationProgram` in the [syntactic grammar](#syntactic-grammar-normative).
 
 ```ts
 export function print(x: string): null;
@@ -1209,11 +1212,7 @@ export class Point {
 }
 ```
 
-Rules:
-
-- Function declarations end with `;` and have no body.
-- `export class` describes the runtime class shape.
-- Declaration files may describe host modules.
+`export class` describes the runtime class shape.
 
 Host ABI:
 
@@ -1253,7 +1252,7 @@ Rules:
 
 ### Standard library builtins
 
-Builtin operations require no imports and support direct calls only, not value references.
+Builtin functions require no imports and support direct calls only, not value references.
 
 The listed string and array members are **receiver intrinsics**, selected by the receiver's static type.
 
@@ -1331,7 +1330,7 @@ s has type string; `length` is read-only. Follow corresponding [ECMAScript Strin
 
 #### Numeric conversion
 
-`String(value: number): string` follows ECMAScript [Number::toString](https://262.ecma-international.org/16.0/#sec-numeric-types-number-tostring).
+`String(value: number): string` follows ECMAScript [Number::toString](https://262.ecma-international.org/16.0/#sec-numeric-types-number-tostring) with radix 10.
 
 #### Number
 
@@ -1473,7 +1472,7 @@ Accepted implementation/declaration sources must parse as TypeScript. Conformanc
 - binary64 arithmetic, signed-zero behavior, and discrete-position validation
 - JSON encoding/decoding
 
-A backend may choose any internal representation, including erased, partially erased, statically typed, boxed, unboxed, interpreted, source-generated, or bytecode-generated representation, if observable behavior is unchanged.
+A backend may choose its internal representation provided it preserves observable behavior and its [backend ABI](#backend-contracts).
 
 #### Typed boundaries
 
@@ -1586,7 +1585,7 @@ Runtime candidates: emitted path for `S.deal`, then host `require(S)`. Default c
 
 #### Function ABI
 
-Function values are wrappers with explicit `.f(...)` calls, never metatable `__call`. Runtime adapters `as_lua_function` and `from_lua_function` expose DEAL functions to hosts and wrap incoming host functions with signature checks, respectively.
+Function calls use `.f(...)`, never metatable `__call`. Runtime adapters `as_lua_function` and `from_lua_function` expose DEAL functions to hosts and wrap incoming host functions with signature checks, respectively.
 
 #### Async lowering
 
@@ -1621,9 +1620,9 @@ A conforming JVM backend emits Java source, JVM bytecode, or an interpreter over
 
 JVM primitives, final classes, verifier-checked bytecode, signatures and JIT optimization may establish the proofs required by [Typed boundaries](#typed-boundaries).
 
-At dynamic boundaries box booleans/numbers as Boolean/Double; statically typed storage may stay primitive. Required fields use their type's representation; optional fields add a presence bit, independently of nullish payload tags.
+At dynamic boundaries box booleans/numbers as Boolean/Double; statically typed storage may stay primitive. Field presence is independent of nullish payload tags.
 
-Validate Java null at ingress under [Typed boundaries](#typed-boundaries). Void completion uses the Undefined singleton; absence retains separate presence metadata.
+Void completion uses the Undefined singleton; absence retains separate presence metadata.
 
 A JVM backend may implement async lowering with virtual threads, blocking calls, futures, or explicit state machines.
 
@@ -1690,11 +1689,11 @@ Array runtime diagnostics:
 
 | Code | Meaning |
 |---|---|
-| `E8002` | array index is not an integral number or is out of bounds |
+| `E8002` | array index is not integral, is out of bounds, or selects a missing element |
 | `E8003` | array element type check failed |
 
 
-### Operational semantics summary
+### Operational semantics
 
 Evaluation is strict and left-to-right:
 
