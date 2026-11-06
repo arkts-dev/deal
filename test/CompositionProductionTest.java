@@ -146,6 +146,11 @@ public final class CompositionProductionTest {
                     fixturePath.toString()), "", root.resolve(commas), null,
                     List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             }
+            String receiverFixture = "stdlib/string/receiver-intrinsics.deal";
+            execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
+                Path.of("test/conformance/backend-runtime").resolve(receiverFixture)), receiverFixture),
+                "", root.resolve("receiver-corpus"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String catchPaths = "function value(fail: boolean): number {"
                 + "let xs: number[] = [7]; try {if(fail){return xs[2];}return xs[0];}"
                 + "catch(e) {} return 9;}"
@@ -253,6 +258,26 @@ public final class CompositionProductionTest {
                 + "throw {code:\"REFINED\",message:\"String refinement\"};}}return null;}";
             execute(interpolation, "", root.resolve("numeric-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String receiverStrings = "export function main():null{let state=0;"
+                + "let receiver=():string=>{state=state*10+1;return \"  a😀b  \";};"
+                + "let index=(n:number):number=>{state=state*10+n;return n;};"
+                + "let text=receiver().substring(index(2),index(3));"
+                + "if(state!==123 || text!==\"a\" || receiver().length!==8){throw {code:\"ORDER\",message:text};}"
+                + "let s=\"a😀b\";if(s.length!==4 || s.substring(3,1)!==\"😀\" || s.substring(-1,1/0)!==s"
+                + " || !s.includes(\"\\ud83d\") || !s.startsWith(\"a\") || !s.endsWith(\"b\")"
+                + " || s.replace(\"😀\",\"$&$&\")!==\"a😀😀b\" || \"  x\\r\\n\".trim()!==\"x\"){"
+                + "throw {code:\"STRINGS\",message:\"receiver algorithms\"};}"
+                + "let parts=s.split(\"\");if(parts.length!==4 || parts[1]!==\"\\ud83d\" || parts[2]!==\"\\ude00\"){"
+                + "throw {code:\"UNITS\",message:\"split\"};}"
+                + "let broken=():number=>{state=7;throw {code:\"STOP\",message:\"argument\"};};"
+                + "try{receiver().substring(broken(),index(8));}catch(e){}"
+                + "if(state!==7){throw {code:\"ABRUPT\",message:\"argument order\"};}"
+                + "let maybe:string|null=s;if(maybe!==null){if(maybe.trim()!==s){throw {code:\"REFINE\",message:\"receiver\"};}}"
+                + "let invalidated:string|null=s;let clear=():void=>{invalidated=null;};"
+                + "if(invalidated!==null){clear();try{invalidated.trim();throw {code:\"MISSED\",message:\"stale\"};}catch(e){"
+                + "if(e instanceof Error){if(e.code!==\"E8001\"){throw e;}}}}return null;}";
+            execute(receiverStrings, "", root.resolve("receiver-strings"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String multiline = "export function main():null{"
                 + "if(`A\r\nB\rC\nD` !== \"A\\nB\\nC\\nD\""
                 + " || `A\\\r\nB` !== \"AB\" || `x${`a\nb`}y` !== \"xa\\nby\"){"
@@ -283,7 +308,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 70 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 84 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

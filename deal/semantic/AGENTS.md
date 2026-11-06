@@ -24,7 +24,7 @@ Assignment evaluates and yields the original RHS once. Storage may receive an ad
 
 Lower checked refined binding reads through NARROWED_READ where no owning typed boundary already checks consumption: operators, conditions, index receiver/key, Record receivers, length, for-of and presence. Record the refined descriptor and read origin; consumers use the admitted result. Never rewrite declared-nullable reads, null tests or function-boundary reads. Preserve each owning boundary's projection, including E8003 array elements.
 
-Address-chain receiver/key/normalize/commit facts reference the admitted operands without changing child order. Slot-threaded logical operands republish the caller's preallocated condition identity. For-of evaluates once and preserves live traversal and fresh mutable captured iteration cells.
+Address-chain receiver/key/normalize/commit facts reference the admitted operands without changing child order. Slot-threaded logical operands republish the caller's preallocated condition identity. For-of evaluates once and preserves live traversal and fresh mutable captured iteration cells. String receiver calls lower to the existing closed string algorithm selectors, with the admitted receiver before left-to-right admitted arguments. Import-free algorithms carry no invented source export-read or function binding.
 
 Error throw/catch/rethrow keeps one reference identity, current code/message, original diagnostic facts and linked causes. Catch bindings obey ordinary lexical shadowing and fresh per-execution cells; closures retain the captured incarnation. A bare assignment target owns ASSIGNMENT, not an invented identifier read.
 

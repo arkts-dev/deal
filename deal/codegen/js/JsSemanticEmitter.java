@@ -841,6 +841,22 @@ public final class JsSemanticEmitter {
                 + "const $exports = exports;");
             emit("const $rt = $require(" + jsString(runtimeSpecifier(module))
                 + ");");
+            // Algorithm selectors are also used by import-free receiver builtins.
+            // Materialize their deployment dependencies once, without inventing
+            // source namespace bindings or export-read occurrences.
+            java.util.Set<ModuleId> builtinAlgorithms = new java.util.LinkedHashSet<>();
+            for (SemanticOp operation : unit.ops()) {
+                if (operation.payload() instanceof KindPayload.StdlibCallPayload algorithm) {
+                    ModuleId dependency = new ModuleId(stdlibRowOf(operation, algorithm.function()).modulePath());
+                    if (!stdlibSurfaces.containsKey(dependency)) builtinAlgorithms.add(dependency);
+                }
+            }
+            for (ModuleId dependency : builtinAlgorithms) {
+                String name = "$builtin" + stdlibSurfaces.size();
+                emit("const " + name + " = $require(" + jsString(importSpecifier(
+                    dependency.path().replace('.', '/'))) + ");");
+                stdlibSurfaces.put(dependency, name);
+            }
             emit("");
             emit("// The module's private implementation record is registered"
                 + " before any");

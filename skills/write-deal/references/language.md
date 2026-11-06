@@ -50,21 +50,16 @@ JSON parses binary64, preserving negative zero; either zero sign serializes as 0
 
 Import namespaces and qualify exported classes; keep state inside function-owned storage. Imports initialize at most once; cycles reject. Preserve manifest roots, backend, output, languageVersion and external declarations. Keep ancestor manifests unambiguous.
 
+## String operations
+
+Use s.length (read-only UTF-16 unit count), s.substring(start, end), s.includes(part), s.startsWith(part), s.endsWith(part), s.replace(search, replacement), s.split(separator), and s.trim(). These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
+
 ## Standard library declarations
 
 ```deal
 // std/console
 export function log(x: string): void;
 export function error(x: string): void;
-// std/string
-export function length(s: string): number;
-export function substring(s: string, start: number, end: number): string;
-export function contains(s: string, part: string): boolean;
-export function startsWith(s: string, part: string): boolean;
-export function endsWith(s: string, part: string): boolean;
-export function replace(s: string, search: string, replacement: string): string;
-export function split(s: string, sep: string): string[];
-export function trim(s: string): string;
 // std/table
 export function keys(t: Record<string, unknown>): string[];
 // std/json

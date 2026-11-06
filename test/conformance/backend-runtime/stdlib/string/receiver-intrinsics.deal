@@ -1,0 +1,26 @@
+// @spec: Standard library builtins — String
+// @description: Receiver intrinsics preserve UTF-16 units, ECMAScript algorithms and direct-call evaluation order
+// @expected: runtime-ok
+// @features: stdlib, string, closures
+
+export function main(): null {
+  let effects = 0;
+  let receiver = (): string => { effects = effects * 10 + 1; return " a😀b "; };
+  let index = (n: number): number => { effects = effects * 10 + n; return n; };
+  let part = receiver().substring(index(2), index(3));
+  if (effects !== 123 || part !== "\ud83d") {
+    throw { code: "ORDER", message: "receiver and arguments" };
+  }
+  let s = "a😀b";
+  if (s.length !== 4 || !s.includes("\ude00") || !s.startsWith("a") || !s.endsWith("b")
+      || s.substring(3, 1) !== "😀" || s.substring(0/0, 1/0) !== s
+      || s.replace("😀", "$&$&") !== "a😀😀b" || "\r\n x \t".trim() !== "x") {
+    throw { code: "TEXT", message: "receiver algorithms" };
+  }
+  let parts = s.split("");
+  if (parts.length !== 4 || parts[1] !== "\ud83d" || parts[2] !== "\ude00"
+      || String(-0) !== "0" || String(1/0) !== "Infinity") {
+    throw { code: "UNITS", message: "split and conversion" };
+  }
+  return null;
+}

@@ -20,4 +20,6 @@ Template interpolations accept checked string or number values only; they grant 
 
 Expression-bodied arrows check their expression against the declared result, including requiring a void expression for void-result arrows. Their blocks, captures, recursion and async checks otherwise follow ordinary function expressions.
 
+String receiver length is read-only and number-typed. Resolve receiver methods from the checked string type, not member spelling alone; require direct calls and exact declared argument types/arity. Record/class function fields remain ordinary callable values.
+
 Test acceptance/rejection independently of emitters.

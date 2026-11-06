@@ -125,6 +125,7 @@ public final class TypeChecker {
     // -- Async/await tracking --
     private boolean insideAsyncFunction = false;
     private CallExpr directAwaitCallee = null;
+    private ExpressionNode directBuiltinCallee = null;
 
     // -- Current function return type (for return checking) --
     private Type currentReturnType = null;
@@ -1465,8 +1466,8 @@ public final class TypeChecker {
             // D3 (typed-boundary-enforcement): array .length is read-only.
             // Defensive rejection — codegen would otherwise emit invalid
             // `#xs = nil` Lua for a program the checker had accepted.
-            if (objType instanceof Type.Array && mae.field().equals("length")) {
-                error(DiagnosticCode.E3017, "Array length is read-only",
+            if ((objType instanceof Type.Array || objType instanceof Type.String) && mae.field().equals("length")) {
+                error(DiagnosticCode.E3017, "Length is read-only",
                     ds.target().span());
                 return;
             }
@@ -1886,7 +1887,11 @@ public final class TypeChecker {
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
         }
-        Type calleeType = checkExpression(call.callee());
+        ExpressionNode savedBuiltinCallee = directBuiltinCallee;
+        directBuiltinCallee = call.callee();
+        Type calleeType;
+        try { calleeType = checkExpression(call.callee()); }
+        finally { directBuiltinCallee = savedBuiltinCallee; }
         if (calleeType == Type.Error.INSTANCE) {
             for (ExpressionNode arg : call.args()) checkExpression(arg);
             return Type.Error.INSTANCE;
@@ -2099,11 +2104,17 @@ public final class TypeChecker {
 
         String field = mae.field();
 
-        // `length` intrinsic property (arrays only — a
-        // `string` is a Unicode scalar-value sequence and has no `.length`;
-        // string lengths are stdlib `string.length(s)` measured in scalar
-        // values).
-        if (objType instanceof Type.Array && field.equals("length")) {
+        if (objType instanceof Type.String) {
+            StringIntrinsic intrinsic = StringIntrinsic.forMember(field);
+            if (intrinsic != null) {
+                if (mae != directBuiltinCallee) {
+                    error(DiagnosticCode.E3001, "Receiver intrinsics support direct calls only", mae.span());
+                    return Type.Error.INSTANCE;
+                }
+                return intrinsic.signature();
+            }
+        }
+        if ((objType instanceof Type.Array || objType instanceof Type.String) && field.equals("length")) {
             return Type.Number.INSTANCE;
         }
 
@@ -2771,8 +2782,8 @@ public final class TypeChecker {
         }
         if (assign.target() instanceof MemberAccessExpr mae
                 && mae.field().equals("length")
-                && typeOf(mae.object()) instanceof Type.Array) {
-            error(DiagnosticCode.E3017, "Array length is read-only",
+                && (typeOf(mae.object()) instanceof Type.Array || typeOf(mae.object()) instanceof Type.String)) {
+            error(DiagnosticCode.E3017, "Length is read-only",
                 assign.target().span());
             readOnlyTarget = true;
         }

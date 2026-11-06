@@ -52,6 +52,16 @@ public final class Language16FrontendTest {
         check("function f(): void { for(const x of [1]) { let g = function():void{x = 2;}; } }", false);
         check("function f(): void { for(const x of [1]) { const y = x; } }", true);
         check("function f(): void { const r:Record<string,unknown> = {const:1}; r.const = 2; }", true);
+        check("function f(s:string):number{return s.length;}", true);
+        check("function f(s:string):string{return s.substring(1,2).trim().replace(\"a\",\"b\");}", true);
+        check("function f(s:string):boolean{return s.includes(\"a\") && s.startsWith(\"a\") && s.endsWith(\"a\");}", true);
+        check("function f(s:string):string[]{return s.split(\"\");}", true);
+        for (String expression : List.of("s.trim", "s.includes", "s.length=1", "s.substring(1)",
+                "s.trim(1)", "s.includes(1)", "s.contains(\"a\")")) {
+            check("function f(s:string):void{" + expression + ";}", false);
+        }
+        check("function f(s:string|null):string{return s.trim();}", false);
+        check("function f(s:string|null):string{if(s!==null){return s.trim();}return \"\";}", true);
         check("function f():string{return String(1);}", true);
         check("function f(x:unknown):string{if(typeof x===\"number\"){return String(x);}return \"\";}", true);
         for(String expression : List.of("String()", "String(1,2)", "String(\"1\")", "String(true)", "String(null)", "String(undefined)", "String")) {

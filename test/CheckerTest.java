@@ -3738,11 +3738,8 @@ public class CheckerTest {
     }
 
     /**
-     * v1.2 string semantics in type-facing checks: a `string` is a
-     * Unicode scalar-value sequence, so `.length` is not a
-     * compiler-resolved intrinsic on strings (only arrays have it —
-     * string lengths come from stdlib string.length), for-of over a
-     * string yields one `string` per scalar value per iteration, and
+     * String length counts UTF-16 units; for-of combines valid pairs
+     * into a single string per iteration, retaining lone units, and
      * template interpolation accepts string or number.
      */
     static void testV12StringTypeFacingChecks() {
@@ -3751,7 +3748,7 @@ public class CheckerTest {
         CheckerOutput out = checkProgram(
             "function f(s: string): null { let n: number = s.length; return null; }"
         );
-        assertError(out, "E3003", "string .length is not an intrinsic");
+        assertNoErrors(out, "string .length is a number intrinsic");
 
         out = checkProgram(
             "function f(s: string): null {\n" +

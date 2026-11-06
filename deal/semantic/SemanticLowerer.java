@@ -8742,6 +8742,26 @@ public final class SemanticLowerer {
          * pair is interpreted as a stdlib algorithm here (D1).
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
+            if (call.callee() instanceof MemberAccessExpr member
+                    && checkedType(member.object()) instanceof Type.String) {
+                deal.checker.StringIntrinsic intrinsic = deal.checker.StringIntrinsic.forMember(member.field());
+                if (intrinsic != null) {
+                    String algorithm = switch (intrinsic) {
+                        case SUBSTRING -> "substring";
+                        case INCLUDES -> "contains";
+                        case STARTS_WITH -> "startsWith";
+                        case ENDS_WITH -> "endsWith";
+                        case REPLACE -> "replace";
+                        case SPLIT -> "split";
+                        case TRIM -> "trim";
+                    };
+                    StdlibFunctionCatalog.Entry entry = StdlibFunctionCatalog.lookup("std.string", algorithm).orElseThrow();
+                    List<ValueId> arguments = new ArrayList<>();
+                    arguments.add(lowerOperand(member.object()));
+                    for (ExpressionNode argument : call.args()) arguments.add(lowerOperand(argument));
+                    return emitStdlibAlgorithm(entry, arguments, call.span(), slot);
+                }
+            }
             if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
                     && siteCheckerScope().resolve(id.name()) instanceof Symbol.IntrinsicSymbol) {
                 ExpressionNode argument = call.args().getFirst();
@@ -8829,18 +8849,24 @@ public final class SemanticLowerer {
                 // adapter before the parameter cell validates it.
                 args.add(lowerParameterArgument(call, i, false));
             }
+            return emitStdlibAlgorithm(entry, args, call.span(), slot);
+        }
+
+        private ValueId emitStdlibAlgorithm(StdlibFunctionCatalog.Entry entry,
+                List<ValueId> args, Span span, ValueId slot) {
+            StdlibFunctionId function = entry.function();
             List<RuntimeDescriptor> parameterDescriptors = entry.parameterDescriptors();
             if (args.size() != parameterDescriptors.size()) {
                 throw new ConstructUnlowered("stdlib call " + function + " ("
-                    + entry.modulePath() + "." + field + ") with " + args.size()
+                    + entry.modulePath() + "." + entry.exportName() + ") with " + args.size()
                     + " arguments for " + parameterDescriptors.size()
-                    + " declared parameters (the checker admits exact arity only)", call.span());
+                    + " declared parameters (the checker admits exact arity only)", span);
             }
             RuntimeDescriptor resultType = entry.returnDescriptor();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
             OpId opId = ids.nextOpId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(call.span()),
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.USER, anchor, currentParent());
             emit(buildOp(opId, SemanticOpKind.STDLIB_CALL,
                 new KindPayload.StdlibCallPayload(function, args,
@@ -8849,9 +8875,9 @@ public final class SemanticLowerer {
                 SemanticIrValidator.stdlibPolicy(function), origin));
             for (int i = 0; i < args.size(); i++) {
                 emitChildBoundary(BoundaryKind.STDLIB_PARAMETER,
-                    parameterDescriptors.get(i), args.get(i), call.span(), opId);
+                    parameterDescriptors.get(i), args.get(i), span, opId);
             }
-            emitChildBoundary(BoundaryKind.STDLIB_RETURN, resultType, result, call.span(),
+            emitChildBoundary(BoundaryKind.STDLIB_RETURN, resultType, result, span,
                 opId);
             return result;
         }
@@ -12653,6 +12679,11 @@ public final class SemanticLowerer {
                 return materializeImportRead(access, identifier, slot).value();
             }
             Type objectType = checkedType(access.object());
+            if (objectType instanceof Type.String && "length".equals(access.field())) {
+                ValueId receiver = lowerOperand(access.object());
+                return emitStdlibAlgorithm(StdlibFunctionCatalog.lookup("std.string", "length").orElseThrow(),
+                    List.of(receiver), access.span(), slot);
+            }
             if (objectType instanceof Type.Array && "length".equals(access.field())) {
                 return lowerArrayLength(access, slot);
             }
