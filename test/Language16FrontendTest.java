@@ -185,6 +185,14 @@ public final class Language16FrontendTest {
         check("function f(): null { let switch = 1; return null; }", false);
         check("function f(): null { let Object = 1; return null; }", false);
         check("function f(): null { let t: Record<string, unknown> = {}; let k = \"x\"; let b = Object.hasOwn(t,k); return null; }", true);
+        check("class C {x?:number;} function f(c:C,k:string):void{Object.hasOwn(c,k);}",false);
+        check("class C {x?:number;} function f(c:C):void{Object.hasOwn(c,\"missing\");}",false);
+        check("class C {x?:number;} function f(c:C):void{if(Object.hasOwn(c,\"x\")){let n:number=c.x;}}",false);
+        check("function f(r:Record<string,unknown>):void{const detached=Object.hasOwn;}",false);
+        check("function f(r:Record<string,unknown>):void{Object.hasOwn(r);}",false);
+        check("function f(r:Record<string,unknown>):void{Object.hasOwn(r,\"x\",\"y\");}",false);
+        for(String type:java.util.List.of("number","unknown","number[]","null","undefined"))
+            check("function f(x:"+type+"):void{Object.hasOwn(x,\"x\");}",false);
         check("class C { x?: string; } function f(): null { let c: C = {}; let x: string | undefined = c.x; return null; }", true);
         check("function f(x: unknown): void { if (!(x instanceof Error)) {} else { let code: string = x.code; } }", true);
         check("function f(x: unknown): void { if (!(x instanceof Error)) { let code: string = x.code; } }", false);

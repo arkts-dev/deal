@@ -2427,6 +2427,9 @@ case NUMBER_ADD -> new Value.NumValue(numberUse(left) + numberUse(right));
                 return publish(op,
                     new Value.BoolValue(table.entries().containsKey(key)));
             }
+            if (receiver instanceof Value.ErrorValue) {
+                return publish(op, new Value.BoolValue(key.equals("code") || key.equals("message")));
+            }
             if (receiver instanceof Value.ClassValue classValue) {
 
                 ClassLayout layout = instanceLayouts.get(classValue);

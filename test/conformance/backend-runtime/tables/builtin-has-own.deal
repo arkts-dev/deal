@@ -1,0 +1,29 @@
+// @spec: Standard library builtins — Own presence without consuming values or narrowing
+// @expected: runtime-ok
+// @features: tables, classes, closures
+class Item {value:number;optional?:number|null;empty:undefined;}
+function check(ok:boolean,label:string):void{if(!ok){throw {code:label,message:label};}}
+export function main():null {
+  const item:Item={empty:undefined,value:9};
+  check(Object.hasOwn(item,"value") && Object.hasOwn(item,"empty") && !Object.hasOwn(item,"optional"),"class absent");
+  item.optional=null;check(Object.hasOwn(item,"optional"),"class null");
+  delete item.optional;check(!Object.hasOwn(item,"optional"),"class deleted");
+  const error:Error={code:"E",message:"m"};check(Object.hasOwn(error,"code") && Object.hasOwn(error,"message"),"Error");
+  const r:Record<string,unknown>={a:null,b:undefined,f:():number=>9};r.self=r;
+  check(Object.hasOwn(r,"a") && Object.hasOwn(r,"b") && Object.hasOwn(r,"f") && Object.hasOwn(r,"self"),"Record presence");
+  check(!Object.hasOwn(r,"missing") && !Object.hasOwn(r,"__proto__"),"Record absent");
+  r["__proto__"]=null;r["$kind"]=undefined;
+  check(Object.hasOwn(r,"__proto__") && Object.hasOwn(r,"$kind"),"Record metadata keys");
+  delete r.a;check(!Object.hasOwn(r,"a"),"Record deletion");
+  let effects="";const receiver=():Record<string,unknown>=>{effects=effects+"r";return r;};
+  const key=():string=>{effects=effects+"k";return "b";};
+  check(Object.hasOwn(receiver(),key()) && effects==="rk","evaluation order");
+  let stale:string|null="b";const clear=():void=>{stale=null;};
+  let caught=false;
+  if(stale!==null){clear();try{Object.hasOwn(r,stale);}catch(e){caught=(e as Error).code==="E8001";}}
+  check(caught,"stale string key");
+  const fail=():Record<string,unknown>=>{throw {code:"STOP",message:"stop"};};
+  caught=false;effects="";try{Object.hasOwn(fail(),key());}catch(e){caught=(e as Error).code==="STOP";}
+  check(caught && effects==="","abrupt receiver");
+  return null;
+}

@@ -7,7 +7,7 @@ import java.util.List;
 /** Required presence, optional absence and JSON decoding through deployed artifacts. */
 public final class ClassPresenceProductionTest {
     private static final String SOURCE = """
-        import * as console from "std/console";
+        import * as output from "std/console";
         import * as model from "model";
         import * as host from "host/record";
         // @jsonable
@@ -59,7 +59,7 @@ public final class ClassPresenceProductionTest {
             ensure(Object.hasOwn(present, "optionalNullable"));
             ensure((present.optionalNullable as number | null) === null);
           } else { throw {code: "CLASS_NULL", message: "present null"}; }
-          console.log("class-presence-ok");
+          output.log("class-presence-ok");
           return null;
         }
         """;
@@ -99,7 +99,7 @@ public final class ClassPresenceProductionTest {
         try {
             Path host = root.resolve("host");
             Files.createDirectories(host);
-            String imports = "import * as console from \"std/console\";import * as host from \"host/probe\";";
+            String imports = "import * as output from \"std/console\";import * as host from \"host/probe\";";
             int cases = 0;
             for (String field : List.of("number", "unknown")) {
                 for (String parameter : List.of("C", "unknown")) {
@@ -108,7 +108,7 @@ public final class ClassPresenceProductionTest {
                     rawHost(host, "C", "delete v.x;", "v.x=nil;");
                     CompositionProductionTest.execute(imports + "export function main():null{"
                         + "let n:host.C={x:1};host.mutate(n);if(Object.hasOwn(n,\"x\")){"
-                        + "throw {code:\"TEST\",message:\"required field still present\"};}console.log(\"ABSENT\");return null;}",
+                        + "throw {code:\"TEST\",message:\"required field still present\"};}output.log(\"ABSENT\");return null;}",
                         "ABSENT\n", root.resolve("live-" + field + "-" + parameter), host,
                         List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
                     cases++;
@@ -126,8 +126,8 @@ public final class ClassPresenceProductionTest {
                 CompositionProductionTest.execute(imports
                     + "function consume(n:host.Node):void{}function identity(n:host.Node):host.Node{return n;}"
                     + "export function main():null{let n:host.Node={x:1,next:null};n.next=n;"
-                    + "let get:()=>host.Node=function():host.Node{console.log(\"RETURN_BODY\");return n;};host.mutate(n);try{"
-                    + operation + "console.log(\"OK\");}catch(e){console.log(\"REJECT\");}return null;}",
+                    + "let get:()=>host.Node=function():host.Node{output.log(\"RETURN_BODY\");return n;};host.mutate(n);try{"
+                    + operation + "output.log(\"OK\");}catch(e){output.log(\"REJECT\");}return null;}",
                     boundary.equals("return") ? "RETURN_BODY\nREJECT\n" : "REJECT\n", root.resolve("cycle-" + boundary), host,
                     List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
                 cases++;
@@ -143,8 +143,8 @@ public final class ClassPresenceProductionTest {
                     : "v.x=rt.__" + shape[2].toUpperCase(java.util.Locale.ROOT) + ";";
                 rawHost(host, "C", js, lua);
                 CompositionProductionTest.execute(imports + "export function main():null{let n:host.C={x:"
-                    + shape[1] + "};host.mutate(n);try{let d=n as host.C;console.log(\"OK\");}"
-                    + "catch(e){console.log(\"REJECT\");}return null;}", "REJECT\n",
+                    + shape[1] + "};host.mutate(n);try{let d=n as host.C;output.log(\"OK\");}"
+                    + "catch(e){output.log(\"REJECT\");}return null;}", "REJECT\n",
                     root.resolve("presence-" + cases++), host,
                     List.of(deal.codegen.Backend.JS, deal.codegen.Backend.LUAJIT));
             }

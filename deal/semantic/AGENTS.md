@@ -26,6 +26,8 @@ Lower checked refined binding reads through NARROWED_READ where no owning typed 
 
 Address-chain receiver/key/normalize/commit facts reference the admitted operands without changing child order. Slot-threaded logical operands republish the caller's preallocated condition identity. For-of evaluates once and preserves live traversal and fresh mutable captured iteration cells. String receiver calls lower to the existing closed string algorithm selectors, with the admitted receiver before left-to-right admitted arguments. Import-free algorithms carry no invented source export-read or function binding.
 
+Object.hasOwn consumes its receiver and dynamic string key through operand admission in receiver/key order, tests presence without reading values, and never narrows fields. Error owns code/message presence independently of stored values.
+
 Error throw/catch/rethrow keeps one reference identity, current code/message, original diagnostic facts and linked causes. Catch bindings obey ordinary lexical shadowing and fresh per-execution cells; closures retain the captured incarnation. A bare assignment target owns ASSIGNMENT, not an invented identifier read.
 
 ## Classes and JSON

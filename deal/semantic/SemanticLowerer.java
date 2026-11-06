@@ -12843,7 +12843,7 @@ public final class SemanticLowerer {
 
         private ValueId lowerHasField(HasExpr has, ValueId slot) {
             ValueId receiver = lowerOperand(has.object());
-            ValueId key = has.field() == null ? lowerExpression(has.key()) : null;
+            ValueId key = has.field() == null ? lowerOperand(has.key()) : null;
             return emitValueOp(SemanticOpKind.HAS_FIELD,
                 new KindPayload.HasFieldPayload(receiver, has.field(), key),
                 has.span(),

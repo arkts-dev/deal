@@ -2273,8 +2273,12 @@ public final class LuaSemanticEmitter {
                 emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
                 return;
             }
-            out.append(target).append(" = (__member(").append(slot(payload.receiver()))
-                .append(", ").append(payload.dynamicKey() == null ? luaString(payload.key()) : slot(payload.dynamicKey())).append(") ~= __MISSING)\n");
+            out.append("do local value=").append(slot(payload.receiver()))
+                .append("; local key=").append(payload.dynamicKey() == null ? luaString(payload.key()) : slot(payload.dynamicKey()))
+                .append("\n  if value[__dealCarrierKeys.d] then ").append(target).append(" = key=='code' or key=='message'\n")
+                .append("  elseif value[__dealCarrierKeys.c] then ").append(target).append(" = value[__dealCarrierKeys.p][key] == true\n")
+                .append("  else local keys=value[__dealCarrierKeys.keys]; ").append(target)
+                .append(" = (keys ~= nil and keys[key] == true) or rawget(value,key) ~= nil end\nend\n");
             emitResultSuccess(op, target, (RuntimeDescriptor) op.resultType());
         }
 

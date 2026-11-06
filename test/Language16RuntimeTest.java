@@ -90,12 +90,43 @@ public final class Language16RuntimeTest {
         }
         objectKeysAdmission(false);
         objectKeysAdmission(true);
+        hasOwnAdmission();
         arrayRemovalAdmission(false);
         arrayRemovalAdmission(true);
         callableBodyAdmission();
         errorGraphAdmission();
         for (String fixture : List.of("core", "refinement", "assertion", "failures", "equality-loops", "json-values", "audit-scalars")) executeFixture(fixture);
         System.out.println("Language16RuntimeTest: passed (Oracle, JS, LuaJIT, JVM; deployed array descriptors)");
+    }
+
+    private static void hasOwnAdmission() throws Exception {
+        Path work = Files.createTempDirectory(Path.of("build"), "has-admission-").toAbsolutePath();
+        try {
+            Path source = Files.createDirectories(work.resolve("src")).resolve("main.deal");
+            Files.writeString(source, ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(
+                Path.of("test/conformance/backend-runtime/tables/builtin-has-own.deal")))
+                .replace("export function main():null", "export function run():null")
+                + "\nexport function main():null{return null;}\n");
+            Files.writeString(work.resolve("deal.json"),
+                "{\"languageVersion\":\"1.6\",\"stdlib\":\"1.6\",\"moduleRoots\":[\"src\"]}");
+            var invocation = deal.semantic.CompilerProfileProvider.resolve(
+                deal.semantic.ReleaseConfiguration.CURRENT_RELEASE_STATE,
+                deal.semantic.ReleaseConfiguration.releaseCapabilityRegistry());
+            var compiler = new deal.module.CompilationOrchestrator(source, work.resolve("out"),
+                false, false, false, false, deal.codegen.Backend.JS, Map.of(), List.of(source.getParent()), null, null, invocation);
+            if (!compiler.compile()) throw new AssertionError("hasOwn Oracle compilation: " + compiler.diagnostics());
+            var project = Objects.requireNonNull(compiler.producedProject());
+            var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
+            var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
+            project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
+            var result = deal.semantic.SemanticOracle.invokeSyncEntry(project, tables, registries,
+                new deal.semantic.SemanticOracle.HostResponder() {}, compiler.checkedProject().input().entryModule(), "run", List.of());
+            if (!(result.terminal() instanceof deal.semantic.SemanticRuntimeModel.Terminal.Success success)
+                    || !success.resultAtom().equals("null")) throw new AssertionError(result.comparisonReport());
+            long tests = result.trace().stream().filter(e -> e.kind()==deal.semantic.ir.SemanticOpKind.HAS_FIELD
+                && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
+            if (tests!=17) throw new AssertionError("hasOwn Oracle population: " + tests);
+        } finally { CompositionProductionTest.remove(work); }
     }
 
     private static void objectKeysAdmission(boolean hostile) throws Exception {

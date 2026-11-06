@@ -26,6 +26,8 @@ String receiver length is read-only and number-typed. Resolve receiver methods f
 
 Array pop and splice are direct-call-only receiver intrinsics selected by checked array type. Pop takes no arguments and returns the optional element type, including independent null/undefined flags. Splice takes exactly two numbers and returns the same array element type in fresh storage. Class/Record callable fields with these names remain ordinary values.
 
+Object.hasOwn accepts Record/class receivers and string keys without field narrowing; class keys must be literal declared-field names, including Error code/message. Reject detached or wrong-arity builtin calls.
+
 Object.keys is direct-call-only with exactly one checked Record/class argument and a string[] result; unknown, arrays, functions and nullish receivers require appropriate extraction/narrowing. It grants no contextual extraction and never narrows fields.
 
 Test acceptance/rejection independently of emitters.

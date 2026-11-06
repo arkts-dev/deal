@@ -2725,7 +2725,7 @@ public final class TypeChecker {
 
         if (!(objType instanceof Type.Class cls)) {
             error(DiagnosticCode.E4005,
-                "'has' argument must be a class field access, got " + typeName(objType),
+                "Object.hasOwn requires a Record or class instance, got " + typeName(objType),
                 has.span());
             return Type.Error.INSTANCE;
         }
