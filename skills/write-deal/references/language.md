@@ -16,7 +16,7 @@ Data: null, undefined, unknown, boolean, number, string, Record<string, unknown>
 
 Unknown requires checked extraction or typeof/instanceof refinement. Unlike TypeScript's erased as, DEAL assertions check once without coercion, preserving identity; mismatch raises E8001.
 
-Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through math.floor/ceil; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
+Numbers are binary64, preserving signed zero, infinities and NaN; division is nontrapping. The % operator is ECMAScript remainder, retaining the dividend's sign (including signed zero), not floor modulo. Array indexes require finite whole numbers. Round deliberately through Math.floor/ceil; use String(n) for ECMAScript decimal text. Conditions require boolean. String concatenation requires strings; template interpolations accept strings or numbers and format numbers with ECMAScript decimal conversion (including NaN and infinities, with either zero rendered as 0). Use ===/!== with compatible types or admitted nullish comparisons.
 
 ## Classes
 
@@ -54,24 +54,18 @@ Import namespaces and qualify exported classes; keep state inside function-owned
 
 Use s.length (read-only UTF-16 unit count), s.substring(start, end), s.includes(part), s.startsWith(part), s.endsWith(part), s.replace(search, replacement), s.split(separator), and s.trim(). These receiver intrinsics require direct calls, not detached method values. Arguments follow ECMAScript string semantics; for-of combines valid surrogate pairs while length/slicing/splitting retain individual units.
 
+## Builtin calls
+
+Math.floor(x), Math.ceil(x), Math.sqrt(x), and Math.abs(x) take numbers and follow ECMAScript. Date.now() returns epoch milliseconds. console.log(text) and console.error(text) write strings to the respective streams. These builtin namespaces require no imports and support direct calls only; builtin names cannot be shadowed.
+
 ## Standard library declarations
 
 ```deal
-// std/console
-export function log(x: string): void;
-export function error(x: string): void;
 // std/table
 export function keys(t: Record<string, unknown>): string[];
 // std/json
 export function parse(s: string): Record<string, unknown>;
 export function stringify(value: unknown): string | undefined;
-// std/math
-export function floor(x: number): number;
-export function ceil(x: number): number;
-export function sqrt(x: number): number;
-export function absNumber(x: number): number;
-// std/time
-export function nowMillis(): number;
 ```
 
 Use declared, implemented host APIs.

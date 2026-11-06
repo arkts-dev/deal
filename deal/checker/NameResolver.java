@@ -811,7 +811,7 @@ public final class NameResolver {
      * Emits E2008 if it does.
      */
     private void checkNoDollar(String name, Span span) {
-        if (java.util.Set.of("Record", "Promise", "Object", "String", "undefined", "switch", "enum",
+        if (java.util.Set.of("Record", "Promise", "Object", "Array", "String", "JSON", "Math", "Date", "console", "undefined", "switch", "enum",
                 "case", "default", "const", "var", "new", "this", "super", "extends",
                 "implements", "interface", "package", "private", "protected", "public",
                 "static", "yield", "with", "debugger", "do", "finally", "in", "instanceof",

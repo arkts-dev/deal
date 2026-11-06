@@ -36,11 +36,10 @@ public enum ConstructKind {
         + "shared-body callee side, or the retained ABI path",
         List.of(SemanticOpKind.CALL, SemanticOpKind.ASYNC_START, SemanticOpKind.EXTERNAL_ENTRY)),
 
-    /** Required common form: {@code ARRAY_LENGTH}, {@code FIELD_READ}, {@code MEMBER_READ},
-     * or {@code EXPORT_READ} from checked type/symbol. */
-    MEMBER_ACCESS("ARRAY_LENGTH, FIELD_READ, MEMBER_READ, or EXPORT_READ from checked type/symbol",
+    /** Checked member reads or direct builtin algorithms. */
+    MEMBER_ACCESS("ARRAY_LENGTH, FIELD_READ, MEMBER_READ, EXPORT_READ, or builtin STDLIB_CALL from checked type/symbol",
         List.of(SemanticOpKind.ARRAY_LENGTH, SemanticOpKind.FIELD_READ, SemanticOpKind.MEMBER_READ,
-            SemanticOpKind.EXPORT_READ)),
+            SemanticOpKind.EXPORT_READ, SemanticOpKind.STDLIB_CALL)),
 
     /** Required common form: {@code INDEX_NORMALIZE}, {@code INDEX_READ}
      * ({@code ARRAY_ELEMENT_READ} boundary), contextual {@code BOUNDARY}. */

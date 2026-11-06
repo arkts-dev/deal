@@ -2565,8 +2565,7 @@ public class CheckerTest {
                     + "}\n");
             Path controlEntry = control.resolve("src/main.deal");
             Files.writeString(controlEntry,
-                "import * as console from \"std/console\";\n"
-                    + "import * as a from \"./a\";\n"
+                "import * as a from \"./a\";\n"
                     + "import * as aAgain from \"././a\";\n"
                     + "import * as b from \"./b\";\n"
                     + "export function main(): null {\n"
@@ -2978,8 +2977,7 @@ public class CheckerTest {
             }
 
             Path controlEntry = cliProject(root, "control",
-                "import * as console from \"std/console\";\n"
-                    + "class A { n: number; }\n"
+                "class A { n: number; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  let b: A = (a = {n: 7});\n"
@@ -3065,8 +3063,7 @@ public class CheckerTest {
             // A whose factory would be the lexical binding.
             String[] probes = {
                 // explicit provided field, plain class target
-                "import * as console from \"std/console\";\n"
-                    + "class A { n: number; }\n"
+                "class A { n: number; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  {\n"
@@ -3079,8 +3076,7 @@ public class CheckerTest {
                     + "  return null;\n"
                     + "}\n",
                 // nullable class target
-                "import * as console from \"std/console\";\n"
-                    + "class A { n: number; }\n"
+                "class A { n: number; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A | null = {n: 7};\n"
                     + "  {\n"
@@ -3126,8 +3122,7 @@ public class CheckerTest {
             // construction (its field stays string) and a module-level
             // construction after the shadowing block (provided number).
             Path controlEntry = cliProject(root, "control",
-                "import * as console from \"std/console\";\n"
-                    + "class A { n: number; }\nclass B { n: string; }\n"
+                "class A { n: number; }\nclass B { n: string; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  {\n"
@@ -3196,8 +3191,7 @@ public class CheckerTest {
             }
 
             Path controlEntry = cliProject(root, "control",
-                "import * as console from \"std/console\";\n"
-                    + "class A { n: number; }\n"
+                "class A { n: number; }\n"
                     + "export function main(): null {\n"
                     + "  let a: A = {n: 7};\n"
                     + "  let b: A = (a = a);\n"

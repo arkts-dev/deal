@@ -52,6 +52,17 @@ public final class Language16FrontendTest {
         check("function f(): void { for(const x of [1]) { let g = function():void{x = 2;}; } }", false);
         check("function f(): void { for(const x of [1]) { const y = x; } }", true);
         check("function f(): void { const r:Record<string,unknown> = {const:1}; r.const = 2; }", true);
+        for (String name : List.of("Record", "Promise", "Object", "Array", "String", "JSON", "Math", "Date", "console")) {
+            check("function f(" + name + ":number):void{}", false);
+            check("function f():void{let " + name + "=1;}", false);
+            check("class " + name + "{}", false);
+            check("import * as " + name + " from \"host/test\";", false);
+        }
+        check("function f():number{return Math.floor(1.5)+Math.ceil(1.5)+Math.abs(-2)+Math.sqrt(4)+Date.now();}", true);
+        check("function f():void{console.log(\"x\");console.error(\"y\");}", true);
+        for (String expression : List.of("Math.floor", "Date.now", "console.log", "Math.abs()", "Date.now(1)", "console.log(1)", "Math.sqrt(true)")) {
+            check("function f():void{let value=" + expression + ";}", false);
+        }
         check("function f(s:string):number{return s.length;}", true);
         check("function f(s:string):string{return s.substring(1,2).trim().replace(\"a\",\"b\");}", true);
         check("function f(s:string):boolean{return s.includes(\"a\") && s.startsWith(\"a\") && s.endsWith(\"a\");}", true);

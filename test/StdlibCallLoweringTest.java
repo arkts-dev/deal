@@ -376,7 +376,7 @@ public class StdlibCallLoweringTest {
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console";
+                    import * as output from "std/console";
                     import * as str from "std/string";
                     import * as tbl from "std/table";
                     import * as json from "std/json";
@@ -384,8 +384,8 @@ public class StdlibCallLoweringTest {
                     import * as time from "std/time";
 
                     function run(): null {
-                      console.log("log");
-                      console.error("error");
+                      output.log("log");
+                      output.error("error");
                       let n1: number = str.length("abc");
                       let s2: string = str.substring("abc", 1, 2);
                       let b3: boolean = str.contains("abc", "b");
@@ -611,12 +611,12 @@ public class StdlibCallLoweringTest {
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console";
+                    import * as output from "std/console";
                     import * as str from "std/string";
 
-                    function markS(v: string): string { console.log("s"); return v; }
-                    function markB(v: number): number { console.log("b"); return v; }
-                    function markC(v: number): number { console.log("c"); return v; }
+                    function markS(v: string): string { output.log("s"); return v; }
+                    function markB(v: number): number { output.log("b"); return v; }
+                    function markC(v: number): number { output.log("c"); return v; }
 
                     function run(): null {
                       let s: string = str.substring(markS("ab"), markB(0), markC(1));
@@ -809,10 +809,10 @@ public class StdlibCallLoweringTest {
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console";
+                    import * as output from "std/console";
 
                     function run(): null {
-                      let g: (x: string) => void = console.log;
+                      let g: (x: string) => void = output.log;
                       g("x");
                       return null;
                     }
@@ -1148,12 +1148,12 @@ public class StdlibCallLoweringTest {
                     }
                     """,
                 "lib.deal", """
-                    import * as console from "std/console";
+                    import * as output from "std/console";
                     import * as json from "std/json";
                     import * as math from "std/math";
 
                     function run(): null {
-                      console.log("hi");
+                      output.log("hi");
                       let t: Record<string, unknown> = json.parse("{\\"k\\": 1}");
                       let s: string | undefined = json.stringify(t);
                       let f: number = math.floor(1.5);

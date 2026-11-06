@@ -8743,6 +8743,18 @@ public final class SemanticLowerer {
          */
         private ValueId lowerCallSite(CallExpr call, ValueId slot) {
             if (call.callee() instanceof MemberAccessExpr member
+                    && member.object() instanceof IdentifierExpr namespace) {
+                deal.checker.BuiltinCall builtin = deal.checker.BuiltinCall.resolve(namespace.name(), member.field());
+                if (builtin != null) {
+                    StdlibFunctionId algorithm = StdlibFunctionId.valueOf(builtin.name());
+                    StdlibFunctionCatalog.Entry entry = StdlibFunctionCatalog.entries().stream()
+                        .filter(row -> row.function() == algorithm).findFirst().orElseThrow();
+                    List<ValueId> arguments = new ArrayList<>();
+                    for (ExpressionNode argument : call.args()) arguments.add(lowerOperand(argument));
+                    return emitStdlibAlgorithm(entry, arguments, call.span(), slot);
+                }
+            }
+            if (call.callee() instanceof MemberAccessExpr member
                     && checkedType(member.object()) instanceof Type.String) {
                 deal.checker.StringIntrinsic intrinsic = deal.checker.StringIntrinsic.forMember(member.field());
                 if (intrinsic != null) {

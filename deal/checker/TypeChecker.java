@@ -2084,6 +2084,17 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkMemberAccess(MemberAccessExpr mae) {
+        if (mae.object() instanceof IdentifierExpr builtinNamespace) {
+            BuiltinCall builtin = BuiltinCall.resolve(builtinNamespace.name(), mae.field());
+            if (builtin != null) {
+                if (mae != directBuiltinCallee) {
+                    error(DiagnosticCode.E3001, "Builtin operations support direct calls only", mae.span());
+                    return Type.Error.INSTANCE;
+                }
+                typeMap.put(mae.object(), Type.Table.INSTANCE);
+                return builtin.signature();
+            }
+        }
         if (mae.object() instanceof IdentifierExpr id
                 && resolveVisibleBinding(id.name()) instanceof Symbol.ModuleSymbol ms) {
             Type exportType = ms.exports().get(mae.field());

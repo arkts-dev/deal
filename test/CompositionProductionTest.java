@@ -258,6 +258,15 @@ public final class CompositionProductionTest {
                 + "throw {code:\"REFINED\",message:\"String refinement\"};}}return null;}";
             execute(interpolation, "", root.resolve("numeric-templates"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String builtins = "export function main():null{"
+                + "if(Math.floor(1.5)!==1 || Math.ceil(-1.5)!==-1 || Math.abs(-2)!==2 || Math.sqrt(4)!==2"
+                + " || 1/Math.ceil(-0.1)!==-1/0 || 1/Math.abs(-0)!==1/0 || 1/Math.sqrt(-0)!==-1/0"
+                + " || Math.sqrt(-1)===Math.sqrt(-1) || Date.now()<0){throw {code:\"MATH\",message:\"builtin values\"};}"
+                + "let state=0;let arg=():number=>{state=state+1;return -2;};"
+                + "if(Math.abs(arg())!==2 || state!==1){throw {code:\"ORDER\",message:\"builtin effect\"};}"
+                + "console.log(String(Math.abs(-1/0)));console.error(\"BUILTIN\");return null;}";
+            execute(builtins, "Infinity\n", "BUILTIN\n", root.resolve("builtin-namespaces"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String receiverStrings = "export function main():null{let state=0;"
                 + "let receiver=():string=>{state=state*10+1;return \"  a😀b  \";};"
                 + "let index=(n:number):number=>{state=state*10+n;return n;};"
@@ -308,7 +317,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 84 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 91 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }
