@@ -194,6 +194,7 @@ Expression ::= AssignmentExpression
 
 AssignmentExpression ::= ConditionalExpression
  | LeftHandSideExpression '=' AssignmentExpression
+ | ArrowFunction
 
 ConditionalExpression ::= LogicalOrExpression ('?' AssignmentExpression ':' AssignmentExpression)?
 
@@ -252,6 +253,10 @@ Property ::= (Identifier | StringLiteral | '[' Expression ']') ':' Expression
 
 FunctionExpression ::= AsyncPrefix? 'function' '(' ParameterList? ')' ':' ReturnType Block
 
+ArrowFunction ::= AsyncPrefix? '(' ParameterList? ')' ':' ReturnType '=>' ArrowBody
+
+ArrowBody ::= Block | AssignmentExpression /* expression body cannot begin with '{' */
+
 LeftHandSideExpression ::= Identifier
  | PostfixExpression
 ```
@@ -260,7 +265,7 @@ Adjacent minus operators require whitespace or comments.
 
 ### Semicolon rules
 
-Require grammatical semicolons; no automatic insertion. Forbid line terminators, including in comments, between throw/return and their operands or async and function. Bare `return;` remains valid.
+Require grammatical semicolons; no automatic insertion. Forbid line terminators, including in comments, between throw/return and their operands, between async and function or `(`, or before `=>`. Bare `return;` remains valid.
 
 ### Statement/expression separation
 
@@ -745,7 +750,7 @@ Runtime call checking:
 
 ### Function expressions
 
-A function expression has the same type rules as a function declaration:
+Function and arrow expressions follow function-declaration typing:
 
 ```ts
 let f: (x: number) => number = function(x: number): number {
@@ -753,7 +758,11 @@ let f: (x: number) => number = function(x: number): number {
 };
 ```
 
-The expression produces a value with its declared signature and may occur wherever expressions are allowed.
+Arrow expression bodies act as returns; void-result arrows require a void expression.
+
+```ts
+const double = (x: number): number => x * 2;
+```
 
 ### Closures and captured variables
 
