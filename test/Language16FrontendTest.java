@@ -41,6 +41,17 @@ public final class Language16FrontendTest {
             }
             check("function f():void{let text=`🌍" + slashes + "${\"x\"}`;}", true);
         }
+        check("function f(): void { const x = 1; let y: number = x; }", true);
+        check("function f(): void { const x: number = 1; x = 2; }", false);
+        check("function f(): void { const x = 1; x = 2; }", false);
+        check("function f(): void { const x = 1; let g = function():void{x = 2;}; }", false);
+        check("function f(): void { const x = 1; {let x = 2; x = 3;} }", true);
+        check("function f(): void { const x: number; }", false);
+        check("function f(): void { const xs: number[] = [1]; xs[0] = 2; }", true);
+        check("function f(): void { for(const x of [1]) { x = 2; } }", false);
+        check("function f(): void { for(const x of [1]) { let g = function():void{x = 2;}; } }", false);
+        check("function f(): void { for(const x of [1]) { const y = x; } }", true);
+        check("function f(): void { const r:Record<string,unknown> = {const:1}; r.const = 2; }", true);
         check("function f(): void { return; }", true);
         check("function f(): void {}", true);
         check("function f(): null { return; }", false);

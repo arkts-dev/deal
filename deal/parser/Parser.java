@@ -299,7 +299,7 @@ public final class Parser {
                 }
                 yield parseExpressionStatement();
             }
-            case LET       -> parseVariableDeclaration();
+            case LET, CONST -> parseVariableDeclaration();
             case RETURN    -> parseReturnStatement();
             case IF        -> parseIfStatement();
             case WHILE     -> parseWhileStatement();
@@ -518,7 +518,7 @@ public final class Parser {
     // -- VariableDeclaration --
     private StatementNode parseVariableDeclaration() {
         Token letToken = advance();
-        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected variable name after 'let'");
+        Token nameToken = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007, "Expected variable name after '" + letToken.lexeme() + "'");
         if (nameToken == null) { synchronize(); return null; }
 
         Optional<TypeNode> typeAnnotation = Optional.empty();
@@ -538,7 +538,8 @@ public final class Parser {
         optionalSemicolon();
 
         Span sp = spanBetween(letToken, previousOrCurrent());
-        return new VariableDeclaration(sp, nameToken.lexeme(), typeAnnotation, init);
+        return new VariableDeclaration(sp, nameToken.lexeme(), typeAnnotation, init,
+            letToken.type() == TokenType.CONST);
     }
 
     // -- ReturnStatement --
@@ -608,7 +609,8 @@ public final class Parser {
     private StatementNode parseForOfStatement() {
         Token forToken = advance();
         expect(TokenType.LPAREN, DiagnosticCode.E1014, "Expected '(' after 'for'");
-        expect(TokenType.LET, DiagnosticCode.E1007, "Expected 'let' in for-of loop");
+        boolean isConst = match(TokenType.CONST);
+        if (!isConst) expect(TokenType.LET, DiagnosticCode.E1007, "Expected 'let' or 'const' in for-of loop");
         Token name = expect(TokenType.IDENTIFIER, DiagnosticCode.E1007,
             "Expected iteration variable name");
         if (name == null) { synchronize(); return null; }
@@ -626,7 +628,7 @@ public final class Parser {
         expect(TokenType.RPAREN, DiagnosticCode.E1015, "Expected ')' after for-of iterable");
         Block body = parseBlock();
         return new ForOfStatement(spanBetween(forToken, previousOrCurrent()),
-            name.lexeme(), type, iterable, body);
+            name.lexeme(), type, iterable, body, isConst);
     }
 
     // -- Break / Continue --
@@ -1826,7 +1828,7 @@ public final class Parser {
 
     private static boolean isPropertyName(Token token) {
         return switch (token.type()) {
-            case IDENTIFIER, LET, CLASS, FUNCTION, ASYNC, AWAIT, RETURN, IF, ELSE,
+            case IDENTIFIER, LET, CONST, CLASS, FUNCTION, ASYNC, AWAIT, RETURN, IF, ELSE,
                 WHILE, FOR, OF, BREAK, CONTINUE, NULL, TRUE, FALSE, IMPORT, EXPORT,
                 FROM, DELETE, TYPEOF, INSTANCEOF, TRY, CATCH, THROW, AS -> true;
             default -> false;
@@ -2134,7 +2136,7 @@ public final class Parser {
 
     private boolean isStatementBoundary(TokenType type) {
         return switch (type) {
-            case RBRACE, LET, CLASS, FUNCTION, ASYNC, RETURN, IF, WHILE, FOR,
+            case RBRACE, LET, CONST, CLASS, FUNCTION, ASYNC, RETURN, IF, WHILE, FOR,
                  BREAK, CONTINUE, IMPORT, EXPORT, DELETE, TRY, THROW,
                  SEMICOLON, EOF -> true;
             default -> false;

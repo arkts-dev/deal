@@ -39,8 +39,12 @@ public sealed interface Symbol
      * (GitHub #6).</p>
      */
     record VariableSymbol(String name, Type type, boolean isParameter,
-                          ClassSymbol declaredClass, TypeNode declaredType)
+                          ClassSymbol declaredClass, TypeNode declaredType, boolean isConst)
             implements Symbol {
+        public VariableSymbol(String name, Type type, boolean isParameter,
+                              ClassSymbol declaredClass, TypeNode declaredType) {
+            this(name, type, isParameter, declaredClass, declaredType, false);
+        }
         /** The declaration-provenance-free symbol (intrinsics, inference, tests). */
         public VariableSymbol(String name, Type type, boolean isParameter) {
             this(name, type, isParameter, null, null);

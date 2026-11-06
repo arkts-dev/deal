@@ -8,6 +8,7 @@ public enum TokenType {
 
     // -- Keywords (spec v1.1) --
     LET,
+    CONST,
     CLASS,
     FUNCTION,
     ASYNC,

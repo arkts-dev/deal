@@ -4,7 +4,7 @@ DEAL: a strict TypeScript syntax subset with distinct semantics. Authority: [v1.
 
 ## Syntax
 
-Imports precede module-level functions, classes and exports; executable statements stay inside functions. Require let, braces and semicolons. Entry exports synchronous main(): null returning null; no-result helpers use void.
+Imports precede module-level functions, classes and exports; executable statements stay inside functions. Use let or const, braces and semicolons. Const requires an initializer and forbids binding reassignment, including captured and for-of bindings; referenced arrays, Records and class instances remain mutable. Entry exports synchronous main(): null returning null; no-result helpers use void.
 
 Comments: // or /* ... */. `$` bindings are compiler-owned. Property keys need explicit values. Assign with x = x + 1. Function expressions use function; arrows describe types.
 

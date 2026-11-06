@@ -161,6 +161,18 @@ public final class CompositionProductionTest {
                 + "if(f()!==13){throw {code:\"TEST\",message:\"catch expression\"};}return null;}";
             execute(catchPaths, "", root.resolve("catch-paths"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            String constBindings = "class Cell {value:number;}"
+                + "export function main():null {const base:number=3;const xs:number[]=[1,2,3]; const c:Cell={value:0};"
+                + "const r:Record<string,unknown>={old:1}; r.next=base; delete r.old;"
+                + "xs[0]=4; c.value=xs[0];"
+                + "let fs:(()=>number)[]=[]; for(const x of xs){"
+                + "const read:()=>number=function():number{return x;};fs[fs.length]=read;}"
+                + "const down:(n:number)=>number=function(n:number):number{"
+                + "if(n===0){return base;}return down(n-1);};"
+                + "if(fs[0]()!==4 || fs[1]()!==2 || fs[2]()!==3 || c.value!==4 || down(5)!==3){"
+                + "throw {code:\"TEST\",message:\"const identity or capture\"};}return null;}";
+            execute(constBindings, "", root.resolve("const-bindings"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             // Each seed changes values and composition depth, not the language
             // contract. Integer arithmetic here is exactly representable binary64.
             for (int seed = 0; seed < 4; seed++) {
@@ -185,7 +197,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 21 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 28 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

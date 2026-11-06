@@ -50,6 +50,7 @@ public final class Lexer {
 
     private static final Map<String, TokenType> KEYWORDS = Map.ofEntries(
         Map.entry("let",      TokenType.LET),
+        Map.entry("const",    TokenType.CONST),
         Map.entry("class",    TokenType.CLASS),
         Map.entry("function", TokenType.FUNCTION),
         Map.entry("async",    TokenType.ASYNC),

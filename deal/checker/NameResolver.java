@@ -554,12 +554,12 @@ public final class NameResolver {
                 fe.params().stream().map(p -> resolveTypeNode(p.type())).toList(),
                 resolveResultTypeNode(fe.returnType()), fe.isAsync());
             currentScope.define(name, new Symbol.VariableSymbol(name, bindingType, false,
-                declaredClass, vd.typeAnnotation().orElse(null)));
+                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()));
             walkExpression(fe);
         } else {
             walkExpression(vd.initializer());
             currentScope.define(name, new Symbol.VariableSymbol(name, type, false,
-                declaredClass, vd.typeAnnotation().orElse(null)));
+                declaredClass, vd.typeAnnotation().orElse(null), vd.isConst()));
         }
     }
 
@@ -760,7 +760,7 @@ public final class NameResolver {
         // Define the loop variable in the new scope
         currentScope.define(fos.varName(),
             new Symbol.VariableSymbol(fos.varName(), varType, false,
-                varDeclaredClass, fos.varType()));
+                varDeclaredClass, fos.varType(), fos.isConst()));
 
         loopDepth++;
         walkBlock(fos.body()); // Creates block scope, records in scopeMap

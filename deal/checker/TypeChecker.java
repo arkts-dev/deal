@@ -948,7 +948,7 @@ public final class TypeChecker {
                             ? vs.declaredClass() : initDeclaredClass;
                         currentScope.defineReplace(vd.name(),
                             new Symbol.VariableSymbol(vd.name(), targetType, false,
-                                provenance, vs.declaredType()));
+                                provenance, vs.declaredType(), vs.isConst()));
                     }
                 }
             }
@@ -1285,7 +1285,7 @@ public final class TypeChecker {
         SymbolTable bodyScope = scopeMap.get(fos.body());
         if (bodyScope != null && bodyScope.parent() != null) {
             bodyScope.parent().defineReplace(fos.varName(),
-                new Symbol.VariableSymbol(fos.varName(), varType, false));
+                new Symbol.VariableSymbol(fos.varName(), varType, false, null, null, fos.isConst()));
         }
 
         if (iterableType instanceof Type.Array arr) {
@@ -2733,6 +2733,12 @@ public final class TypeChecker {
         if (assign.target() instanceof IdentifierExpr id
                 && !(resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol)) {
             error(DiagnosticCode.E3017, "Assignment requires a variable binding", id.span());
+            readOnlyTarget = true;
+        }
+        if (assign.target() instanceof IdentifierExpr id
+                && resolveVisibleBinding(id.name()) instanceof Symbol.VariableSymbol variable
+                && variable.isConst()) {
+            error(DiagnosticCode.E3017, "Cannot reassign const binding '" + id.name() + "'", id.span());
             readOnlyTarget = true;
         }
         ExpressionNode receiver = assign.target() instanceof MemberAccessExpr member ? member.object()
