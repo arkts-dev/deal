@@ -3641,10 +3641,10 @@ public class JsBackendTest {
             "a literal beyond the signed-32 range rejects before emission "
                 + "(the legacy ±(2^53-1) range is gone)");
 
-        Frontend removedRemainder = compileFrontend(
-            "export function test(): number { return -7 % 3; }", "removed-remainder.deal");
-        check(removedRemainder.errors().stream().anyMatch(d -> d.code().equals("E1001")),
-            "removed remainder syntax rejects before emission");
+        NodeResult remainder = runDealNode(
+            "export function test(): number { return -7 % 3; }", "remainder.deal");
+        check(remainder.exitCode() == 0 && remainder.output().equals("-1"),
+            "remainder retains the dividend sign: " + remainder.output());
 
     }
 
@@ -4360,14 +4360,14 @@ public class JsBackendTest {
     }
 
     private static void testNumModFloored() throws Exception {
-        System.out.println("-- v1.4: remainder syntax is rejected --");
+        System.out.println("-- Node: ECMAScript remainder signs --");
         String[] subjects = { "-5.0 % 2.0", "5.0 % -2.0", "-5.0 % -2.0", "5.0 % 2.0" };
-        for (String subject : subjects) {
-            Frontend rejected = compileFrontend(
-                "export function test(): number { return " + subject + "; }", "nummod.deal");
-            check(rejected.errors().stream().anyMatch(d -> d.code().equals("E1001")
-                    && d.message().equals("Unrecognized character: '%'")),
-                subject + ": number remainder rejects before emission: " + rejected.errors());
+        String[] expected = {"-1", "1", "-1", "1"};
+        for (int i = 0; i < subjects.length; i++) {
+            NodeResult result = runDealNode(
+                "export function test(): number { return " + subjects[i] + "; }", "remainder-signs");
+            check(result.exitCode() == 0 && result.output().equals(expected[i]),
+                subjects[i] + ": remainder result: " + result.output());
         }
     }
 
