@@ -4,7 +4,9 @@ DEAL (Directly Embeddable Agentic Language) uses a strict subset of TypeScript s
 
 Features not described in this specification do not exist in the language.
 
-Examples may omit enclosing functions and declarations.
+Examples are illustrative and may omit enclosing functions and declarations.
+
+ECMAScript references apply within DEAL's grammar and type rules.
 
 ---
 
@@ -14,8 +16,6 @@ Examples may omit enclosing functions and declarations.
 - `Record`, `Promise`, `Object`, `Array`, `String`, `JSON`, `Math`, `Date`, `console`, `undefined` are unshadowable builtins.
 
 ### Comment semantics
-
-Line terminators are LF (`\n`), CRLF (`\r\n`), and CR (`\r`).
 
 - `//` comments extend to end-of-line (line-ending character consumed, not emitted).
 - `/* */` comments do **not** nest. `/* /* */` ends at the first `*/`.
@@ -58,14 +58,9 @@ let msg: string = `Value:
 ${n}`; // "Value:\n42"
 ```
 
-```ts
-let xs: string[] = ["a", "b", "c"];
-let s: string = `Items: ${xs[0]}, ${xs[1]}`;
-```
-
 ### Numbers
 
-`number` is the sole numeric type. Numeric literals and arithmetic follow IEEE 754 binary64 with round-to-nearest, ties-to-even and non-trapping arithmetic. `%` follows ECMAScript [Number::remainder](https://tc39.es/ecma262/#sec-numeric-types-number-remainder).
+`number` is the sole numeric type. Numeric literals and arithmetic follow IEEE 754 binary64 with round-to-nearest, ties-to-even and non-trapping arithmetic. `%` follows ECMAScript [Number::remainder](https://262.ecma-international.org/16.0/#sec-numeric-types-number-remainder).
 
 An **integral number** is a finite `number` with no fractional part. Where required, integrality is checked at runtime without rounding or truncation.
 
@@ -286,12 +281,7 @@ Adjacent minus operators require whitespace or comments.
 
 Require grammatical semicolons; no automatic insertion. Forbid line terminators, including in comments, between throw/return and their operands, between async and function or `(`, or before `=>`. Bare `return;` remains valid.
 
-### Statement/expression separation
-
-`if`, `while` and `for` bodies require `{ ... }`.
-- `Block` is a statement-list and is not an expression. Blocks do not produce values.
-
-Semantics:
+### Statement semantics
 
 - An `if` without `else` evaluates the condition; if true the branch executes.
 - A `while` loop evaluates the condition before each iteration.
@@ -331,7 +321,7 @@ Type := null | undefined | boolean | number | string | unknown
 Result := Type | void
 ```
 
-`RecordValue` spells `Record<string, unknown>`. Nullish flags add null/undefined to a base. Unknown accepts all data but authorizes no unchecked operations. `void` and `Promise<R>` are allowed only in function result positions.
+`RecordValue` spells `Record<string, unknown>`. Nullish flags add null/undefined to a base. Unknown accepts all data but authorizes no unchecked operations.
 
 ### Type grammar (normative)
 
@@ -465,8 +455,6 @@ Strings compare lexicographically by UTF-16 code-unit value; a proper prefix sor
 
 ### Type-of-expression rules
 
-String concatenation uses `+`. Both operands must be `string`.
-
 | Expression | Type |
 |---|---|
 | `null` | `null` |
@@ -493,8 +481,8 @@ String concatenation uses `+`. Both operands must be `string`.
 | record literal `{ p: e, ... }` | `Record<string, unknown>` with target context |
 | class body `{ ... }` with target `ClassName` | `ClassName` (contextual) |
 | index `a[b]` where `a: T[]`, `b: number` | `T` |
-| record member/index read | `unknown`; absent key yields undefined |
-| class member `a.p` | declared type; optional adds undefined |
+| record member/index read | see [Records](#reading-and-writing-fields) |
+| class member `a.p` | see [Field access](#field-access) |
 | `JSON.parse(s)` | see [JSON decoding](#json-decoding) |
 | other sync call `f(...)` | declared result, including void |
 | `await f(...)` for `f: (...) => Promise<R>` | `R`, including void |
@@ -512,7 +500,7 @@ let x: T_target = expr;
 1. Infer the RHS type, using target context for literals and [JSON decoding](#json-decoding).
 2. Accept equal types, nullish widening with an unchanged base, singleton null/undefined into a target admitting that member, or any data value into unknown.
 3. Accept direct function compatibility under [Function type compatibility](#function-type-compatibility), not lifted through arrays/nullish wrappers.
-4. Otherwise reject; unknown-to-concrete assignment needs explicit validation.
+4. Otherwise reject.
 
 ---
 
@@ -645,40 +633,7 @@ u = t; // Error
 
 ### Class assignment semantics
 
-Assignment to a class field is allowed only for declared fields:
-
-```ts
-u.name = "Bob"; // OK
-u.unknown = 1; // Error
-```
-
-Required-present fields cannot be deleted:
-
-```ts
-delete u.name; // Error
-```
-
-Optional fields can be deleted, which makes them missing:
-
-```ts
-delete u.nick; // OK if nick is optional
-```
-
-Assignment to optional fields:
-
-```ts
-u.nick = "Ada"; // OK for nick?: string
-u.nick = null; // error for nick?: string
-```
-
-Assignment to optional nullable fields:
-
-```ts
-u.nick = "Ada"; // OK for nick?: string | null
-u.nick = null; // OK for nick?: string | null
-```
-
-Assignment after deletion restores presence. Storing undefined requires a declared undefined member (or unknown), including at host boundaries:
+Only optional fields can be deleted; deletion makes them missing. Assignment restores presence. Writes follow [Field access](#field-access), including at host boundaries:
 
 ```ts
 class Options { label?: string; raw?: string | undefined; }
@@ -700,9 +655,6 @@ function name(p1: T1, p2: T2): R {
  return expr;
 }
 ```
-
-- Parameter and result annotations are required; parameters cannot be optional.
-- Result annotations follow [Type grammar](#type-grammar-normative); body checking follows the rules below.
 
 ### Return type requirements
 
@@ -731,7 +683,7 @@ An `M`-parameter function is assignable to an `N`-parameter function target **if
 - `M <= N`.
 - Corresponding first `M` parameter types are identical.
 
-Extra target arguments are silently ignored. More actual parameters than target parameters are always rejected.
+Extra target arguments are silently ignored.
 
 ### Nullable return types
 
@@ -945,7 +897,7 @@ data["extra"] = 1;
 delete data["extra"];
 ```
 
-Deletion removes an own key. Reads of absent keys yield undefined; present keys may hold any data value. Stored classes/arrays/functions retain their tags, element descriptors and identities.
+Deletion removes an own key. Stored classes/arrays/functions retain their tags, element descriptors and identities.
 
 ## Arrays
 
@@ -991,7 +943,7 @@ xs[2] = 2; // runtime error if length is 1
 
 ### Length and iteration
 
-Array `length` is a read-only intrinsic of type `number`: the exact element count. Assignment to `.length` is a compile-time error.
+Array `length` is a read-only intrinsic of type `number`: the exact element count.
 
 ```ts
 for (let value of xs) {
@@ -1032,9 +984,11 @@ let result = condition ? a : b;
 
 ### Nullish coalescing and optional chaining
 
-`a ?? b` evaluates a once, evaluating b only for null/undefined. Contextual targets propagate to b. Combine a's non-nullish type and b's type by [conditional](#conditional) rules; if a is nullish-only, use b's type.
+Evaluation follows ECMAScript [coalescing](https://262.ecma-international.org/16.0/#sec-binary-logical-operators), [optional chaining](https://262.ecma-international.org/16.0/#sec-optional-chains) and [deletion](https://262.ecma-international.org/16.0/#sec-delete-operator).
 
-Each optional segment tests its receiver/callee once. If null/undefined, skip the remaining chain and yield undefined; parentheses end chains. Otherwise use ordinary access/call/deletion rules on its non-nullish type. Add undefined only to the completed chain's result. Short-circuited deletion does nothing. Optional void calls are statement-only. Reject async calls in optional chains.
+For `a ?? b`, propagate the contextual target to b. Combine a's non-nullish type with b's type using [conditional](#conditional) rules; if a is nullish-only, use b's type.
+
+Check each optional access, call or deletion on its receiver/callee's non-nullish type. Add undefined only to the completed chain's non-void result. Reject async calls in optional chains.
 
 ### While
 
@@ -1075,7 +1029,7 @@ Error values come from runtime exceptions or builtin `Error(message: string): Er
 throw Error("capacity exceeded");
 ```
 
-`throw` is a statement. The expression must have type `Error`. Execution transfers to the nearest enclosing `catch` block. If no `catch` encloses the `throw`, the error escapes to the host as a `DEALRuntimeError`.
+The thrown expression must have type `Error`. Execution transfers to the nearest enclosing `catch` block. If no `catch` encloses the `throw`, the error escapes to the host as a `DEALRuntimeError`.
 
 ### try / catch
 
@@ -1089,7 +1043,7 @@ try {
 }
 ```
 
-Catch binds the identical Error as unknown; narrow before field access or rethrow. Host failures normalize to Error without replacing DEAL Errors; native code/message/cause are backend-defined. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
+Catch binds the identical Error as unknown. Host failures normalize to Error without replacing DEAL Errors; native code/message/cause are backend-defined. Rethrow preserves fields, origin, frames and cause. Catch is skipped on success; after handling, execution continues after the statement.
 
 ### Narrowing across try/catch
 
@@ -1188,10 +1142,6 @@ Declaration files additionally support external function declarations:
 export function name(p1: T1, p2: T2): R;
 ```
 
-Declaration files may export only functions and classes.
-
-No named export lists, no default export, no re-export, no namespace export.
-
 Exporting a class exports class metadata, not a constructor or callable value. The metadata enables import-side typing and runtime class checks.
 
 ### Import forms and import typing
@@ -1263,7 +1213,6 @@ Rules:
 
 - Function declarations end with `;` and have no body.
 - `export class` describes the runtime class shape.
-- No top-level ambient declarations in implementation `.deal` files.
 - Declaration files may describe host modules.
 
 Host ABI:
@@ -1332,9 +1281,9 @@ ss.join(separator: string): string
 Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 ```
 
-For xs of type E[] and ss of type string[], E and R are inferred data types, not source generics; R comes from the synchronous mapper's result type.
+For xs of type E[] and ss of type string[], E and R denote data types, not source generics; R is the synchronous mapper's explicit result type.
 
-Receiver operations follow [ECMAScript semantics](https://tc39.es/ecma262/#sec-array-objects), except `map` raises E8002 for missing indexes within its initial length. `push`, `pop` and `splice` validate affected elements before mutation.
+Listed receiver operations follow corresponding [ECMAScript semantics](https://262.ecma-international.org/16.0/#sec-array-objects), except `map` raises E8002 for missing indexes within its initial length. `push`, `pop` and `splice` validate affected elements before mutation.
 
 `from` traverses xs as [for-of](#for-of) does, invoking mapper with each value and index; returns its results in a fresh array.
 
@@ -1366,11 +1315,11 @@ s.toLowerCase(): string
 s.toUpperCase(): string
 ```
 
-s has type string; `length` is read-only. Follow corresponding [ECMAScript String semantics](https://tc39.es/ecma262/#sec-string-objects).
+s has type string; `length` is read-only. Follow corresponding [ECMAScript String semantics](https://262.ecma-international.org/16.0/#sec-string-objects).
 
 #### Numeric conversion
 
-`String(value: number): string` follows ECMAScript Number::toString.
+`String(value: number): string` follows ECMAScript [Number::toString](https://262.ecma-international.org/16.0/#sec-numeric-types-number-tostring).
 
 #### JSON
 
@@ -1400,7 +1349,7 @@ let handler: Handler = JSON.parse("{}"); // compile-time error: function field
 
 ##### JSON encoding
 
-Follow ECMAScript JSON.stringify omission/substitution rules and exact numeric spelling. Reject cycles, not shared acyclic children; no serialization hooks. Key ordering follows [Object.keys](#object).
+Follow ECMAScript [JSON.stringify](https://262.ecma-international.org/16.0/#sec-json.stringify) omission/substitution rules and exact numeric spelling. Reject cycles, not shared acyclic children; no serialization hooks. Key ordering follows [Object.keys](#object).
 
 #### Math
 
@@ -1411,7 +1360,7 @@ Math.sqrt(x: number): number
 Math.abs(x: number): number
 ```
 
-Follow corresponding ECMAScript Math operations.
+Follow corresponding [ECMAScript Math operations](https://262.ecma-international.org/16.0/#sec-math-object).
 
 #### Date
 
@@ -1439,12 +1388,6 @@ Backend globals and APIs are unavailable to source code unless exposed through a
 See [Backend contracts](#backend-contracts) for backend-specific representations.
 
 #### Boundary checks
-
-Check every untyped host-to-DEAL crossing:
-
-```ts
-let f: (x: number) => number = lib.f;
-```
 
 Host arrays without DEAL descriptors acquire them on first typed admission; existing descriptors survive crossings.
 
@@ -1491,9 +1434,7 @@ cause (if applicable)
 
 ### Backend conformance contract
 
-Accepted implementation/declaration sources must parse as TypeScript. Conformance tests cover the following observable behavior across backends, including host ingress and egress:
-
-Observable behavior includes:
+Accepted implementation/declaration sources must parse as TypeScript. Conformance tests cover observable behavior across backends, including host ingress and egress:
 
 - compile-time diagnostics, including reserved identifiers, leading-zero literals and forbidden line breaks
 - successful runtime values
@@ -1707,7 +1648,7 @@ E7001: declaration file cannot contain executable statement
 
 ### Runtime diagnostic format
 
-Runtime errors must preserve source location when emitted from generated checks:
+Example:
 
 ```txt
 DEALRuntimeError {
@@ -1736,7 +1677,7 @@ Evaluation is strict and left-to-right:
 1. Evaluate receiver expression before member/index/call arguments.
 2. Evaluate call arguments left-to-right.
 3. Assignment evaluates receiver, index (if present), then RHS once, before validation and write. Variables evaluate only RHS. Its static type is the RHS type; after successful storage, it yields the original RHS value. Any arity adapter is stored, not yielded. Failed validation leaves the target unwritten; earlier effects remain.
-4. Short-circuit `&&` and `||`.
+4. Short-circuit evaluation follows [Type-of-expression rules](#type-of-expression-rules) and [Nullish coalescing and optional chaining](#nullish-coalescing-and-optional-chaining).
 5. Function calls create a new local scope.
 6. Class object literals follow [Construction](#construction).
 7. Record construction follows [Literal keys](#literal-keys-and-deletion), storing dynamic fields.
