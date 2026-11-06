@@ -4,6 +4,8 @@ DEAL (Directly Embeddable Agentic Language) uses a strict subset of TypeScript s
 
 Features not described in this specification do not exist in the language.
 
+Examples may omit enclosing functions and declarations.
+
 ---
 
 ## Lexical elements
@@ -184,8 +186,8 @@ ContinueStatement ::= 'continue' ';'
 
 DeleteStatement ::= 'delete' DeleteTarget ';'
 
-DeleteTarget    ::= PostfixExpression '.' Identifier
-                  | PostfixExpression '[' Expression ']'
+DeleteTarget    ::= PostfixExpression ('.' | '?.') Identifier
+                  | PostfixExpression '?.'? '[' Expression ']'
 /* Array-element deletion is a compile-time error. */
 
 TryStatement    ::= 'try' Block 'catch' '(' Identifier ')' Block
@@ -1032,7 +1034,7 @@ let result = condition ? a : b;
 
 `a ?? b` evaluates a once, evaluating b only for null/undefined. Contextual targets propagate to b. Combine a's non-nullish type and b's type by [conditional](#conditional) rules; if a is nullish-only, use b's type.
 
-Each optional segment tests its receiver/callee once. If null/undefined, skip the remaining chain and yield undefined; parentheses end chains. Otherwise use ordinary access/call rules on its non-nullish type. Add undefined only to the completed chain's result. Optional void calls are statement-only. Reject async calls in optional chains.
+Each optional segment tests its receiver/callee once. If null/undefined, skip the remaining chain and yield undefined; parentheses end chains. Otherwise use ordinary access/call/deletion rules on its non-nullish type. Add undefined only to the completed chain's result. Short-circuited deletion does nothing. Optional void calls are statement-only. Reject async calls in optional chains.
 
 ### While
 
@@ -1323,8 +1325,8 @@ Both accept Records or class instances. `hasOwn` tests own presence without narr
 xs.push(value: E): number
 xs.pop(): E | undefined
 xs.splice(start: number, deleteCount: number): E[]
-xs.map(mapper: (value: E, index: number) => R): R[]
-xs.filter(predicate: (value: E, index: number) => boolean): E[]
+xs.map(mapper: (value: E, index: number, array: E[]) => R): R[]
+xs.filter(predicate: (value: E, index: number, array: E[]) => boolean): E[]
 xs.slice(start: number, end: number): E[]
 ss.join(separator: string): string
 Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
@@ -1333,8 +1335,6 @@ Array.from(xs: E[], mapper: (value: E, index: number) => R): R[]
 For xs of type E[] and ss of type string[], E and R are inferred data types, not source generics; R comes from the synchronous mapper's result type.
 
 Receiver operations follow [ECMAScript semantics](https://tc39.es/ecma262/#sec-array-objects), except `map` raises E8002 for missing indexes within its initial length. `push`, `pop` and `splice` validate affected elements before mutation.
-
-`map`/`filter` callbacks receive only value and index.
 
 `from` traverses xs as [for-of](#for-of) does, invoking mapper with each value and index; returns its results in a fresh array.
 
