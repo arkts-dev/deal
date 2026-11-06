@@ -1190,9 +1190,19 @@ static void check_live_graphs(void) {
     deal_data changed_value = deal_data_of_reference(DEAL_DATA_ARRAY, changed);
     check(live_check(changed_value, "[number]").error == NULL,
           "typed datum array admits before hostile mutation");
+    deal_check_input presented;
+    deal_array_present_element(changed, 0u, &presented);
+    check(presented.presentation == DEAL_PRESENT_DATUM
+            && presented.datum.tag == DEAL_DATA_NUMBER
+            && presented.datum.number == 0.0 && signbit(presented.datum.number),
+          "live slot presentation preserves signed zero without descriptor inference");
     deal_data *slot = deal_container_array_element(changed, 1u);
     *slot = text;
     deal_store_barrier(changed, leaf);
+    deal_array_present_element(changed, 1u, &presented);
+    check(presented.presentation == DEAL_PRESENT_DATUM
+            && presented.datum.tag == DEAL_DATA_STRING && presented.datum.reference == text.reference,
+          "live slot presentation observes hostile replacement before unboxing");
     rejected = live_check(changed_value, "[number]");
     check(rejected.error != NULL, "live typed array rejects a wrong-kind element");
     if (rejected.error != NULL) {

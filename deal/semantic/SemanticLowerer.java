@@ -8771,6 +8771,7 @@ public final class SemanticLowerer {
             if (call.callee() instanceof MemberAccessExpr member
                     && member.object() instanceof IdentifierExpr namespace) {
                 deal.checker.BuiltinCall builtin = deal.checker.BuiltinCall.resolve(namespace.name(), member.field());
+                if (builtin == deal.checker.BuiltinCall.ARRAY_FROM) return lowerArrayFrom(call, slot);
                 if (builtin == deal.checker.BuiltinCall.OBJECT_KEYS) {
                     ExpressionNode argument = call.args().getFirst();
                     ValueId receiver = lowerOperand(argument);
@@ -9377,10 +9378,17 @@ public final class SemanticLowerer {
                     + args.size() + " arguments for " + signature.paramTypes().size()
                     + " parameters (the checker admits exact arity only)", call.span());
             }
+            return emitDynamicInvocation(signature, calleeValue, args, argTypes, call.span(), slot);
+        }
+
+        /** Ordinary indirect invocation, shared by source calls and inferred builtin loops. */
+        private ValueId emitDynamicInvocation(RuntimeDescriptor.Func signature, ValueId calleeValue,
+                                               List<ValueId> args, List<RuntimeDescriptor> argTypes,
+                                               Span span, ValueId slot) {
             RuntimeDescriptor resultType = signature.returnType();
             ValueId result = slot != null ? slot : ids.nextValueId(module, nextOrdinal++, 0);
             AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
-            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(call.span()),
+            SourceOrigin origin = new SourceOrigin(sourceId, toSourceSpan(span),
                 SourceOriginKind.USER, anchor, currentParent());
 
             FunctionContext calleeBody = sameWalkCalleeBody(calleeValue);
@@ -9398,17 +9406,17 @@ public final class SemanticLowerer {
                 // The call-owned cell carries the unattached record RETURN
                 // the closed validator requires.
                 dealBodyBoundaryOpId = emitCallOwnedReturnBoundary(signature, result,
-                    call.span(), callOpId);
+                    span, callOpId);
             }
-            OpId hostBoundaryOpId = emitHostReturnBoundary(signature, result, call.span(),
+            OpId hostBoundaryOpId = emitHostReturnBoundary(signature, result, span,
                 callOpId).opId();
             OpId externalBoundaryOpId = emitExternalReturnBoundary(signature, result,
-                call.span(), callOpId);
+                span, callOpId);
             List<SemanticOp> parameterBoundaryOps = new ArrayList<>();
             List<OpId> parameterBoundaryIds = new ArrayList<>();
             for (int i = 0; i < args.size(); i++) {
                 SemanticOp boundary = buildChildBoundary(BoundaryKind.FUNCTION_PARAMETER,
-                    signature.paramTypes().get(i), args.get(i), call.span(), callOpId);
+                    signature.paramTypes().get(i), args.get(i), span, callOpId);
                 parameterBoundaryOps.add(boundary);
                 parameterBoundaryIds.add(boundary.opId());
             }
@@ -9429,6 +9437,96 @@ public final class SemanticLowerer {
             // dynamic materialization keyed by the call's result identity.
             registerDynamicMaterialization(result, callOpId, resultType);
             return result;
+        }
+
+        /** Expand Array.from into ordinary live iteration, calls and checked append chains. */
+        private ValueId lowerArrayFrom(CallExpr call, ValueId slot) {
+            Span span = call.span();
+            RuntimeDescriptor.Array output = (RuntimeDescriptor.Array) valueDescriptorOf(checkedType(call));
+            RuntimeDescriptor.Array sourceType = (RuntimeDescriptor.Array) valueDescriptorOf(checkedType(call.args().get(0)));
+            RuntimeDescriptor.Func mapperType = (RuntimeDescriptor.Func) callParameterDescriptor(call, 1);
+            ValueId source = lowerOperand(call.args().get(0));
+            BindingId mapperBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(mapperBinding, currentBlock(), true,
+                    BindingCellKind.DIRECT, 0), span, FailurePolicyId.NO_DEAL_FAILURE);
+            ExpressionNode mapperExpression = call.args().get(1);
+            ValueId mapper = positionAdapts(mapperExpression, mapperType)
+                ? lowerPositionAdapter(mapperExpression, mapperType, () -> lowerOperand(mapperExpression))
+                : lowerOperand(mapperExpression);
+            OpId mapperBoundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                new KindPayload.BoundaryPayload(BoundaryKind.VARIABLE_DECLARATION, mapperType, mapper,
+                    new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                call.args().get(1).span(), FailurePolicyId.FUNCTION_SIGNATURE, SourceOriginKind.SYNTHETIC, null);
+            recordPositionAdapterAt(mapper, mapperBoundary, BoundaryKind.VARIABLE_DECLARATION);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(mapperBinding, 0, mapper), span, FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId resultBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            emitUserNullOp(SemanticOpKind.BINDING_ALLOC,
+                new KindPayload.BindingAllocPayload(resultBinding, currentBlock(), true,
+                    BindingCellKind.DIRECT, 0), span, FailurePolicyId.NO_DEAL_FAILURE);
+            ValueId empty = emitValueOp(SemanticOpKind.ARRAY_NEW,
+                new KindPayload.ArrayNewPayload(output.element(), List.of(), List.of()), span,
+                output, FailurePolicyId.NO_DEAL_FAILURE);
+            emitUserNullOp(SemanticOpKind.BINDING_INIT,
+                new KindPayload.BindingInitPayload(resultBinding, 0, empty), span, FailurePolicyId.NO_DEAL_FAILURE);
+            BindingId elementBinding = ids.nextBindingId(module, nextOrdinal++, 0);
+            BlockId body = allocateBlock();
+            OpId loop = emitUserNullOp(SemanticOpKind.FOR_EACH,
+                new KindPayload.ForEachPayload(IterationMode.ARRAY_VALUES, source, elementBinding, 0, body),
+                span, FailurePolicyId.TYPE_DESCRIPTOR);
+            pushBlockParent(loop);
+            pushBlock(body);
+            try {
+                OpId chain = ids.nextOpId(module, nextOrdinal++, 0);
+                chainParents.push(chain);
+                ValueId mapped;
+                List<OpId> children;
+                try {
+                    ValueId destination = emitBuiltinLoad(resultBinding, output, span, null);
+                    OpId receiverOp = producerOpId(destination);
+                    ValueId index = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                        new KindPayload.ArrayLengthPayload(destination), span, RuntimeDescriptor.Number.INSTANCE,
+                        FailurePolicyId.NO_DEAL_FAILURE);
+                    OpId keyOp = producerOpId(index);
+                    ValueId currentMapper = emitBuiltinLoad(mapperBinding, mapperType, span, null);
+                    ValueId element = emitBuiltinLoad(elementBinding, sourceType.element(), span, null);
+                    mapped = emitDynamicInvocation(mapperType, currentMapper, List.of(element, index),
+                        List.of(sourceType.element(), RuntimeDescriptor.Number.INSTANCE), span, null);
+                    OpId valueOp = producerOpId(mapped);
+                    ValueId length = emitChainChildOp(SemanticOpKind.ARRAY_LENGTH,
+                        new KindPayload.ArrayLengthPayload(destination), span, RuntimeDescriptor.Number.INSTANCE,
+                        FailurePolicyId.NO_DEAL_FAILURE);
+                    ValueId position = emitChainChildOp(SemanticOpKind.INDEX_NORMALIZE,
+                        new KindPayload.IndexNormalizePayload(IndexMode.ARRAY_WRITE, index, length), span,
+                        RuntimeDescriptor.Number.INSTANCE, FailurePolicyId.NO_DEAL_FAILURE);
+                    OpId boundary = emitNullOp(SemanticOpKind.BOUNDARY,
+                        new KindPayload.BoundaryPayload(BoundaryKind.ARRAY_ELEMENT_ASSIGNMENT, output.element(), mapped,
+                            new BoundaryRealization.RuntimeValidation(CANONICAL_RUNTIME_VALIDATION_ID)),
+                        span, FailurePolicyId.ARRAY_WRITE_BOUNDS_THEN_ELEMENT, SourceOriginKind.SYNTHETIC, chain);
+                    OpId commit = emitNullOp(SemanticOpKind.INDEX_WRITE,
+                        new KindPayload.IndexWritePayload(destination, position, mapped), span,
+                        FailurePolicyId.NO_DEAL_FAILURE, SourceOriginKind.SYNTHETIC, chain);
+                    children = List.of(receiverOp, keyOp, valueOp, producerOpId(length), producerOpId(position), boundary, commit);
+                } finally { chainParents.pop(); }
+                AnchorId anchor = ids.nextAnchorId(module, nextOrdinal++, 0);
+                emit(buildOp(chain, SemanticOpKind.ASSIGN,
+                    new KindPayload.AssignPayload(AssignTargetKind.ARRAY_SLOT, children), mapped, output.element(),
+                    FailurePolicyId.NO_DEAL_FAILURE,
+                    new SourceOrigin(sourceId, toSourceSpan(span), SourceOriginKind.SYNTHETIC, anchor, currentParent())));
+            } finally {
+                popBlock();
+                popBlockParent();
+            }
+            return emitBuiltinLoad(resultBinding, output, span, slot);
+        }
+
+        private ValueId emitBuiltinLoad(BindingId binding, RuntimeDescriptor descriptor, Span span, ValueId slot) {
+            ValueId value = emitValueOp(SemanticOpKind.BINDING_LOAD,
+                new KindPayload.BindingLoadPayload(binding, 0), span, descriptor,
+                FailurePolicyId.NO_DEAL_FAILURE, slot);
+            registerDynamicMaterialization(value, producerOpId(value), descriptor);
+            return value;
         }
 
         private FunctionContext sameWalkCalleeBody(ValueId calleeValue) {

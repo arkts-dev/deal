@@ -32,4 +32,6 @@ Object.keys is direct-call-only with exactly one checked Record/class argument a
 
 Conditional conditions require boolean and receive no outer result context. Both arms inherit the result context and their guard refinements; merge invalidations at continuation. Context-free branches require identical types or permitted nullish joins. Contextual function arity extension requires selected-arm adapters; void joins require two void results and cannot be stored as data.
 
+Array.from is direct-call-only with exactly an array source and synchronous data-result mapper. Infer E from the source and R from the mapper, never from an enclosing result context. Require mapper compatibility with (E,number)=>R, including ordinary shorter-arity adapters; async/void/nullable sources or incompatible index/element parameters reject.
+
 Test acceptance/rejection independently of emitters.

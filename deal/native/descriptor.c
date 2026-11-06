@@ -1350,6 +1350,10 @@ static deal_check_input deal_live_element(deal_array *array, size_t index) {
     return deal_live_datum(datum);
 }
 
+void deal_array_present_element(deal_array *array, size_t index, deal_check_input *out) {
+    *out = deal_live_element(array, index);
+}
+
 static deal_outcome deal_check_live_value_core(deal_descriptor *expected, deal_check_input input,
                                    uint32_t boundary_kind,
                                    const deal_check_context *context, int wrap_elements) {

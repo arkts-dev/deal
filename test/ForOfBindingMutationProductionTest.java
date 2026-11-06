@@ -328,7 +328,7 @@ public final class ForOfBindingMutationProductionTest {
         return LuaJitAsyncExportInvoker.RESULT_PREFIX + "{\"status\":\"value\","
             + "\"descriptor\":\"" + export.descriptor() + "\",\"value\":"
             + jsonString("number".equals(export.descriptor())
-                ? Double.toString(Double.parseDouble(export.valueJson())) : export.valueJson()) + "}";
+                ? deal.semantic.ir.NumberSemantics.toString(Double.parseDouble(export.valueJson())) : export.valueJson()) + "}";
     }
 
     private static String expectedAsyncTranscript() {
@@ -510,7 +510,7 @@ public final class ForOfBindingMutationProductionTest {
             jsAsyncDriver(), StandardCharsets.UTF_8);
         ProcessOutcome run = runProcess(
             List.of("node", "ForOfBindingDriver.js"), project.out());
-        assertTranscript("js async", run, 0, expectedAsyncTranscript().replaceAll("(\\\"value\\\":\\\"-?[0-9]+)\\.0\\\"", "$1\\\""),
+        assertTranscript("js async", run, 0, expectedAsyncTranscript(),
             "");
     }
 

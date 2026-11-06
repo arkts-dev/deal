@@ -2184,9 +2184,31 @@ public final class SemanticIrValidator {
             case "FOR_EACH" -> {
                 failure = checkSlotEnum(op, unit, facts, "mode", optionalString(payload, "mode"),
                     IterationMode.class);
-                if (failure.isPresent()) {
-                    return failure;
+                if (failure.isPresent()) return failure;
+                ValueId iterable = parseValueIdQuiet(payloadValue(payload, "iterable") instanceof CanonicalJson.Obj obj ? obj : null);
+                RawOp source = null;
+                for (RawOp producer : unit.ops()) {
+                    if (producer.opId().equals(op.opId())) break;
+                    if (iterable != null && iterable.equals(producer.resultValue())
+                            && unit.bodyTable() != null
+                            && unit.bodyTable().opBlocks().get(op.opId()) != null
+                            && java.util.Objects.equals(unit.bodyTable().opBlocks().get(producer.opId()),
+                                unit.bodyTable().opBlocks().get(op.opId()))) source = producer;
                 }
+                RuntimeDescriptor descriptor = null;
+                if (source != null && source.resultType() != null) {
+                    try { descriptor = RuntimeDescriptor.parseCanonicalText(source.resultType()); }
+                    catch (IllegalArgumentException ignored) { /* rejected below */ }
+                }
+                boolean array = "ARRAY_VALUES".equals(optionalString(payload, "mode"));
+                boolean body = unit.bodyTable() != null && unit.bodyTable().blockOps().keySet().stream()
+                    .anyMatch(block -> ContractSnapshotCanonicalizer.semanticIdJson(block).equals(payloadValue(payload, "body")));
+                if (source == null || (array ? !(descriptor instanceof RuntimeDescriptor.Array) : !(descriptor instanceof RuntimeDescriptor.String))
+                        || !body || !"TYPE_DESCRIPTOR".equals(op.failurePolicy())
+                        || op.resultValue() != null || op.resultToken() != null || op.resultType() != null
+                        || !op.operands().isEmpty() || !op.operandTypes().isEmpty())
+                    return fail(op, unit, facts, R_ENUM, SemanticCapability.FOUNDATION_VALUES,
+                        origin(R_ENUM, "FOR_EACH requires a preceding iterable of its selected mode, an owned body and TYPE_DESCRIPTOR policy"));
             }
             case "CLASS_NEW" -> {
                 failure = checkSlotEnum(op, unit, facts, "constructionProvider",

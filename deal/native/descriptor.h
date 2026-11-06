@@ -207,6 +207,10 @@ deal_outcome deal_check_live_value(deal_descriptor *expected, deal_check_input i
  */
 const char *deal_check_token(const deal_check_input *input);
 
+/* Present one live native-layout element, including its carried nominal/function
+ * metadata, before a consuming iteration check. No descriptor is inferred. */
+void deal_array_present_element(deal_array *array, size_t index, deal_check_input *out);
+
 /* Validate the last element at the call origin before committing removal.
  * Empty arrays return undefined; rejection leaves all storage unchanged. */
 deal_outcome_data deal_array_pop(deal_array *array, deal_descriptor *element,

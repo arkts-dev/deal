@@ -1,0 +1,26 @@
+// @spec: Standard library builtins — Array.from retained source and mapper admission
+// @expected: runtime-ok
+// @features: arrays, host-abi, closures
+import * as host from "host/probe";
+class Item {x:number;stable:number;}
+function check(ok:boolean,label:string):void{if(!ok){throw {code:label,message:label};}}
+export function main():null {
+  let live=host.make();let visits=0;
+  let result=Array.from(live,(x:number,i:number):number=>{visits=visits+1;if(i===0){host.grow();}return x+i;});
+  check(visits===3 && result.length===3 && result[0]===4 && result[1]===10 && result[2]===13 && host.size()===3,"host live growth");
+  live=[4,9,11];host.keep(live);let destination:number[]=[77];let before:unknown=destination;visits=0;let caught=false;
+  try{destination=Array.from(live,(x:number,i:number):number=>{visits=visits+1;if(i===0){host.corrupt();}return x;});}
+  catch(e){check((e as Error).code==="E8001","element admission");caught=true;}
+  let after:unknown=destination;check(caught && visits===2 && before===after && destination[0]===77 && host.size()===3,"failed publication preserves destination and stops callbacks");
+  host.repair();const repaired=Array.from(live,(x:number):number=>x);check(repaired[2]===9,"same carrier repair");
+  let fn=(x:number,i:number):number=>x+i;host.poison(fn);caught=false;
+  try{Array.from(live,fn);}catch(e){caught=true;check((e as Error).code==="E8001","mapper body");}
+  check(caught,"mapper body rejected");host.restoreFunction();check(Array.from(live,fn)[1]===10,"mapper body repaired");
+  host.poisonSignature(fn);caught=false;
+  try{Array.from(live,fn);}catch(e){caught=true;check((e as Error).code==="E8001","mapper signature");}
+  check(caught,"mapper signature rejected");host.restoreFunction();check(Array.from(live,fn)[0]===4,"mapper signature repaired");
+  let item:Item={x:7,stable:5};let items:Item[]=[item];visits=0;host.damage(item,false);caught=false;
+  try{Array.from(items,(x:Item):number=>{visits=visits+1;return x.x;});}catch(e){check((e as Error).code==="E8001","nominal admission");caught=true;}
+  check(caught && visits===0,"no nominal callback");host.damage(null,true);check(Array.from(items,(x:Item):number=>x.x)[0]===9,"nominal repaired");
+  return null;
+}

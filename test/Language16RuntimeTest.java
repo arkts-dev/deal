@@ -95,6 +95,7 @@ public final class Language16RuntimeTest {
         objectKeysAdmission(true);
         fixtureAdmission("tables/builtin-has-own.deal", deal.semantic.ir.SemanticOpKind.HAS_FIELD, 17);
         fixtureAdmission("control-flow/conditional-expression.deal", deal.semantic.ir.SemanticOpKind.BRANCH, 102);
+        fixtureAdmission("arrays/from-live.deal", deal.semantic.ir.SemanticOpKind.FOR_EACH, 17);
         arrayRemovalAdmission(false);
         arrayRemovalAdmission(true);
         callableBodyAdmission();
@@ -121,6 +122,7 @@ public final class Language16RuntimeTest {
             if (!compiler.compile()) throw new AssertionError(fixture + " Oracle compilation: " + compiler.diagnostics());
             var project = Objects.requireNonNull(compiler.producedProject());
             if (fixture.contains("conditional")) conditionalAdmission(project, invocation);
+            if (fixture.contains("from-live")) arrayFromAdmission(project, invocation);
             var tables = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.StructuredBodyTable>();
             var registries = new LinkedHashMap<deal.semantic.ir.ModuleId, deal.semantic.ir.ClassFactoryRegistry>();
             project.modules().forEach((id, unit) -> { tables.put(id, unit.bodyTable()); registries.put(id, unit.classFactories()); });
@@ -132,6 +134,56 @@ public final class Language16RuntimeTest {
                 && e.phase()==deal.semantic.SemanticRuntimeModel.Phase.SUCCESS).count();
             if (expected >= 0 && tests!=expected) throw new AssertionError(fixture + " Oracle population: " + tests);
         } finally { CompositionProductionTest.remove(work); }
+    }
+
+    private static void arrayFromAdmission(deal.semantic.ir.ExecutableLoweredProject project,
+            deal.semantic.CompilerInvocation invocation) {
+        var facts = new deal.semantic.ir.SemanticIrValidator.ComparisonFacts(
+            project.interfaceIndex().interfaceIndexDigest(), project.semanticProfile(), invocation.capabilityRegistryHash());
+        if (deal.semantic.ir.SemanticIrValidator.validateText(
+                deal.semantic.ir.SemanticIrValidator.toProjectText(project), facts).isPresent())
+            throw new AssertionError("Array.from project transport");
+        for (var unit : project.modules().values()) {
+            var rebuilt = deal.semantic.ir.RawUnitMaterializer.materialize(deal.semantic.ir.RawUnit.fromTyped(unit));
+            if (!deal.semantic.ir.SemanticIrValidator.toUnitText(unit).equals(deal.semantic.ir.SemanticIrValidator.toUnitText(rebuilt)))
+                throw new AssertionError("Array.from raw round trip");
+            int mutations=0;
+            for (var op : unit.ops()) {
+                if (!(op.payload() instanceof deal.semantic.ir.KindPayload.ForEachPayload loop)) continue;
+                for (String defect : List.of("iterable", "body", "policy", "mode", "binding", "generation", "result", "operand")) {
+                    var payload = new deal.semantic.ir.KindPayload.ForEachPayload(
+                        defect.equals("mode") ? deal.semantic.ir.IterationMode.STRING_SCALARS : loop.mode(),
+                        defect.equals("iterable") ? new deal.semantic.ir.ValueId(Integer.MAX_VALUE) : loop.iterable(),
+                        defect.equals("binding") ? new deal.semantic.ir.BindingId(Integer.MAX_VALUE) : loop.binding(),
+                        defect.equals("generation") ? Integer.MAX_VALUE : loop.generation(),
+                        defect.equals("body") ? new deal.semantic.ir.BlockId(Integer.MAX_VALUE) : loop.body());
+                    var policy = defect.equals("policy") ? deal.semantic.ir.FailurePolicyId.NO_DEAL_FAILURE : op.failurePolicy();
+                    var result = defect.equals("result") ? loop.iterable() : op.result();
+                    var resultType = defect.equals("result") ? deal.semantic.ir.RuntimeDescriptor.Number.INSTANCE : op.resultType();
+                    var operands = defect.equals("operand") ? List.of(loop.iterable()) : op.operands();
+                    var operandTypes = defect.equals("operand") ? List.<deal.semantic.ir.RuntimeDescriptor>of(deal.semantic.ir.RuntimeDescriptor.Number.INSTANCE) : op.operandTypes();
+                    var old = op.contract();
+                    var provisional = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), resultType, operandTypes,
+                        old.selector(), payload, policy, old.referencedSemanticIds(), "pending");
+                    var contract = new deal.semantic.ir.OperationContractSnapshot(old.version(), old.opKind(), resultType, operandTypes,
+                        old.selector(), payload, policy, old.referencedSemanticIds(), deal.semantic.ir.ContractSnapshotCanonicalizer.digest(provisional));
+                    var changed = new deal.semantic.ir.SemanticOp(op.opId(), op.kind(), op.origin(), result, resultType,
+                        operands, operandTypes, payload, policy, contract);
+                    var ops = unit.ops().stream().map(cell -> cell==op ? changed : cell).toList();
+                    var malformed = new deal.semantic.ir.LoweredModuleUnit(unit.formatVersion(),unit.semanticProfile(),unit.moduleId(),
+                        unit.interfaceHash(),unit.loweringContextHash(),unit.requiredCapabilities(),unit.constructCoverage(),unit.classLayouts(),
+                        unit.functions(),unit.moduleInit(),unit.exportPlan(),unit.functionBindings(),ops,unit.bodyTable(),unit.classFactories(),unit.classBindingFacts());
+                    var typed = deal.semantic.ir.SemanticIrValidator.validate(malformed,facts);
+                    var raw = deal.semantic.ir.SemanticIrValidator.validate(deal.semantic.ir.RawUnitMaterializer.materialize(
+                        deal.semantic.ir.RawUnit.fromTyped(malformed)),facts);
+                    var text = deal.semantic.ir.SemanticIrValidator.validateText(deal.semantic.ir.SemanticIrValidator.toUnitText(malformed),facts);
+                    if (typed.isEmpty() || !typed.equals(raw) || !typed.equals(text))
+                        throw new AssertionError("Array.from " + defect + ": " + typed + " / " + raw + " / " + text);
+                    mutations++;
+                }
+            }
+            if (mutations==0) throw new AssertionError("Array.from no iteration mutations");
+        }
     }
 
     private static void conditionalAdmission(deal.semantic.ir.ExecutableLoweredProject project,

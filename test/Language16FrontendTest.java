@@ -76,6 +76,15 @@ public final class Language16FrontendTest {
                 "Object.keys(1)", "Object.keys(null)", "Object.keys(undefined)", "Object.keys([] as number[])", "Object.keys(x)"))
             check("function f(x:unknown):void{" + expression + ";}", false);
         check("class C{x:number;} function f(c:C|null):void{Object.keys(c);}", false);
+        check("function f(xs:number[]):number[]{return Array.from(xs,(x:number,i:number):number=>x+i);}", true);
+        check("function f(xs:number[]):string[]{return Array.from(xs,(x:number):string=>String(x));}", true);
+        check("function f(xs:number[]):number[]{return Array.from(xs,():number=>9);}", true);
+        for (String expression : List.of("Array.from", "Array.from()", "Array.from([1])", "Array.from(1,():number=>1)",
+                "Array.from([1],(x:string):number=>1)", "Array.from([1],async(x:number):Promise<number>=>x)",
+                "Array.from([1],(x:number):void=>console.log(String(x)))", "Array.from([1],(x:number,i:string):number=>x)",
+                "Array.from([1],(x:number,i:number,z:number):number=>x)", "Array.from(xs,(x:number):number=>x)"))
+            check("function f(xs:number[]|null):void{" + expression + ";}", false);
+        check("function f(xs:number[]):string[]{return Array.from(xs,(x:number):number=>x);}", false);
         check("function f(xs:number[]):number[]{return xs.splice(1,2);}", true);
         check("function f(xs:(number|null)[]):(number|null)[]{return xs.splice(1,2);}", true);
         check("function f(xs:unknown[]):unknown[]{return xs.splice(1,2);}", true);

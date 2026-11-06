@@ -554,7 +554,7 @@ public final class LlvmCallClosureEmissionTest {
             "a captured iteration binding is read through the cell");
         boolean perIteration = false;
         for (String chunk : module.split("\\ndefine ")) {
-            int element = chunk.indexOf("@deal_container_array_element(");
+            int element = chunk.indexOf("@deal_array_present_element(");
             int allocated = chunk.indexOf("@deal_cell_alloc_data(");
             if (element >= 0 && allocated > element) {
                 perIteration = true;
@@ -1318,7 +1318,7 @@ public final class LlvmCallClosureEmissionTest {
             runProduct(scratch, identity, level, "adapter-counter");
         }
         Path snapshots = compileProject(scratch, "adapter-value-capture", """
-            import * as console from "std/console";
+            import * as output from "std/console";
             class State { calls: number; }
             function one(): number { return 1; }
             function two(): number { return 2; }
@@ -1327,7 +1327,7 @@ public final class LlvmCallClosureEmissionTest {
             }
             function make(state: State): () => number {
                 state.calls = state.calls + 1;
-                console.log("factory");
+                output.log("factory");
                 return one;
             }
             export function main(): null {
@@ -1343,7 +1343,7 @@ public final class LlvmCallClosureEmissionTest {
                 check(take(source) === 1);
                 let state: State = {calls: 0};
                 let made: (ignored: number) => number = make(state);
-                console.log("after");
+                output.log("after");
                 check(state.calls === 1);
                 check(made(0) === 1);
                 check(made(0) === 1);
@@ -1354,7 +1354,7 @@ public final class LlvmCallClosureEmissionTest {
                 closure = two;
                 live = 4;
                 check(adapted(0) === 4);
-                console.log("OK");
+                output.log("OK");
                 return null;
             }
             """);

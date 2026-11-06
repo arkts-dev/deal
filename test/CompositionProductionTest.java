@@ -208,6 +208,14 @@ public final class CompositionProductionTest {
                 "test/conformance/backend-runtime/control-flow/conditional-expression.deal"))),
                 "", root.resolve("conditional"), null,
                 List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(Path.of(
+                "test/conformance/backend-runtime/arrays/from-live.deal"))),
+                "", root.resolve("array-from"), null,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
+            execute(ConformanceHarnessMetadata.stripClassificationHeaders(Files.readString(Path.of(
+                "test/conformance/backend-runtime/arrays/from-live-host.deal"))),
+                "", root.resolve("array-from-host"), popHost,
+                List.of(Backend.JS, Backend.LUAJIT, Backend.JVM, Backend.LLVM));
             String keysFixture = "tables/builtin-object-keys.deal";
             execute(ConformanceHarnessMetadata.productionCorpusSource(Files.readString(
                 Path.of("test/conformance/backend-runtime").resolve(keysFixture)), keysFixture),
@@ -454,7 +462,7 @@ public final class CompositionProductionTest {
                     + "){throw {code:\"TEST\",message:\"value\"};}c.log(\"COMPOSE_OK\");return null;}";
                 execute(source, "COMPOSE_OK\n", root.resolve("seed" + seed), null);
             }
-            System.out.println("Composition production: 15 composition lanes and 201 revised-syntax executions passed");
+            System.out.println("Composition production: 15 composition lanes and 215 revised-syntax executions passed");
         } finally { remove(root); }
     }
 }

@@ -5477,21 +5477,14 @@ final class LlvmFunctionEmitter {
         emit("br i1 " + inRange + ", label %" + check + ", label %" + exit);
         terminated = true;
         startSegment(check);
-        session.referenceRuntimeEntry("deal_container_array_element");
-        String pointer = emitTemporary(op, "call i8*"
-            + " @deal_container_array_element(" + LlvmTypeMapper.ARRAY + " "
-            + array + ", i64 " + index + ")");
-        String type = arrayType.element() instanceof RuntimeDescriptor.Number
-            ? LlvmTypeMapper.DATA : LlvmTypeMapper.slotTypeOf(arrayType.element());
-        String slot = emitTemporary(op, "bitcast i8* " + pointer + " to "
-            + type + "*");
-        String loaded = emitTemporary(op, "load " + type + ", " + type + "* "
-            + slot);
-        String value = arrayType.element() instanceof RuntimeDescriptor.Number
-            ? LlvmDataValues.unbox(session, sink, arrayType.element(), loaded)
-            : arrayType.element() instanceof RuntimeDescriptor.Boolean
-                ? emitTemporary(op, "trunc i8 " + loaded + " to "
-                    + LlvmTypeMapper.BOOLEAN_SSA) : loaded;
+        session.referenceRuntimeEntry("deal_array_present_element");
+        String input = newAlloca("%struct.deal_check_input", "iterationinput");
+        emit("call void @deal_array_present_element(" + LlvmTypeMapper.ARRAY + " "
+            + array + ", i64 " + index + ", %struct.deal_check_input* " + input + ")");
+        // Retained aliases can invalidate a later element during the body. Check
+        // the live presentation before unboxing or publishing the iteration cell.
+        emitCheckCall(op, arrayType.element(), input);
+        String value = checkedValue(op, arrayType.element(), input);
         bindIteration(binding, generation, element, representation, value, op);
         loops.push(new LoopTargets(op.opId().id(), header, latch, exit));
         emitBlock(payload.body(), latch);
@@ -5744,12 +5737,12 @@ final class LlvmFunctionEmitter {
      */
     private String checkInputRecordOf(SemanticOp op, RuntimeDescriptor actual,
                                       String datum) {
-        // Unknown reads may carry private managed nondata layouts after a
-        // hostile host mutation. Classify those before any closure-layout
-        // dereference; their FUNCTION/TABLE tag alone is not admission.
+        // Unknown and statically function-typed reads can carry invalid private
+        // layouts or missing signatures after hostile alias mutation. Classify
+        // before closure-layout dereference; a FUNCTION/TABLE tag is not admission.
         RuntimeDescriptor base = actual instanceof RuntimeDescriptor.Nullable nullable
             ? nullable.inner() : actual;
-        if (base instanceof RuntimeDescriptor.Unknown) {
+        if (base instanceof RuntimeDescriptor.Unknown || base instanceof RuntimeDescriptor.Func) {
             session.referenceRuntimeEntry("deal_host_present_datum");
             String datumSlot = newAlloca(LlvmTypeMapper.DATA, "presentationdatum");
             emit("store " + LlvmTypeMapper.DATA + " " + datum + ", "

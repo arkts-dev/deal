@@ -1869,6 +1869,11 @@ public final class TypeChecker {
     // =======================================================================
 
     private Type checkCall(CallExpr call) {
+        if (call.callee() instanceof MemberAccessExpr member
+                && member.object() instanceof IdentifierExpr namespace
+                && BuiltinCall.resolve(namespace.name(), member.field()) == BuiltinCall.ARRAY_FROM) {
+            return checkArrayFrom(call, member);
+        }
         if (call.callee() instanceof IdentifierExpr id && id.name().equals("String")
                 && resolveVisibleBinding(id.name()) instanceof Symbol.IntrinsicSymbol builtin) {
             typeMap.put(id, builtin.type());
@@ -1983,6 +1988,46 @@ public final class TypeChecker {
 
         error(DiagnosticCode.E3008, typeName(calleeType) + " is not callable", call.callee().span());
         return Type.Error.INSTANCE;
+    }
+
+    /** Inference is from the source and synchronous mapper, never the enclosing result. */
+    private Type checkArrayFrom(CallExpr call, MemberAccessExpr member) {
+        List<Type> arguments = new ArrayList<>();
+        Type savedExpected = expectedType;
+        Symbol.ClassSymbol savedContext = contextualClassDecl;
+        expectedType = null;
+        contextualClassDecl = null;
+        try {
+            for (ExpressionNode argument : call.args()) arguments.add(checkExpression(argument));
+        } finally {
+            expectedType = savedExpected;
+            contextualClassDecl = savedContext;
+        }
+        typeMap.put(member.object(), Type.Table.INSTANCE);
+        if (arguments.size() != 2) {
+            error(DiagnosticCode.E3009, "Array.from requires exactly two arguments", call.span());
+            typeMap.put(member, BuiltinCall.ARRAY_FROM.signature());
+            return Type.Error.INSTANCE;
+        }
+        if (!(arguments.get(0) instanceof Type.Array source)) {
+            if (arguments.get(0) != Type.Error.INSTANCE)
+                error(DiagnosticCode.E5001, "Array.from requires an array source", call.args().get(0).span());
+            return Type.Error.INSTANCE;
+        }
+        if (!(arguments.get(1) instanceof Type.Func mapper) || mapper.isAsync()
+                || mapper.returnType() instanceof Type.Void) {
+            if (arguments.get(1) != Type.Error.INSTANCE)
+                error(DiagnosticCode.E5001, "Array.from requires a synchronous data-result mapper", call.args().get(1).span());
+            return Type.Error.INSTANCE;
+        }
+        Type.Func signature = new Type.Func(List.of(source.element(), Type.Number.INSTANCE), mapper.returnType());
+        if (!isAssignable(signature, mapper)) {
+            error(DiagnosticCode.E5001, "Array.from mapper must accept the source element and number index", call.args().get(1).span());
+            return Type.Error.INSTANCE;
+        }
+        Type.Array result = new Type.Array(mapper.returnType());
+        typeMap.put(member, new Type.Func(List.of(source, signature), result));
+        return result;
     }
 
     /**

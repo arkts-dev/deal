@@ -74,6 +74,11 @@ function arrays(): number {
   if (tail !== undefined) { values[values.length] = tail; }
   let removed: number[] = values.splice(1, 2);
   values[values.length] = removed[0];
+  // Array.from infers its result element type from a synchronous mapper.
+  // Like for-of it observes live changes to the once-evaluated source.
+  let labels: string[] = Array.from(values, (value: number, index: number): string =>
+    `${index}: ${value}`);
+  console.log(labels[0]);
   values[0] = 99;
   let maybe: (number | null)[] = [1, null, 3];
   let selected: number | null = maybe[1];
